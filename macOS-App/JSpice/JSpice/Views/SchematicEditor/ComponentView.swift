@@ -266,6 +266,25 @@ struct BJTSymbol: View {
             }
             .stroke(Color.primary, lineWidth: 1.5)
 
+            // Emitter arrow (NPN: outward, PNP: inward)
+            Path { path in
+                let r = size * 0.2
+                if isNPN {
+                    // Arrow pointing outward (away from base) on emitter line
+                    let tip = CGPoint(x: r, y: r * 1.2)
+                    path.move(to: CGPoint(x: tip.x - 5, y: tip.y - 2))
+                    path.addLine(to: tip)
+                    path.addLine(to: CGPoint(x: tip.x - 2, y: tip.y - 5))
+                } else {
+                    // PNP: Arrow pointing inward (toward base) on emitter line
+                    let base = CGPoint(x: -r, y: r * 0.5)
+                    path.move(to: CGPoint(x: base.x + 5, y: base.y + 2))
+                    path.addLine(to: base)
+                    path.addLine(to: CGPoint(x: base.x + 2, y: base.y + 5))
+                }
+            }
+            .stroke(Color.primary, lineWidth: 1.5)
+
             // Circle outline
             Circle()
                 .stroke(Color.primary, lineWidth: 1)

@@ -11,7 +11,7 @@ struct MNAResistor: MNAComponent {
 
     var node1: String { nodes[0] }
     var node2: String { nodes[1] }
-    var conductance: Double { 1.0 / resistance }
+    var conductance: Double { 1.0 / max(resistance, 1e-12) }
 
     func stamp(matrix: inout Matrix, rhs: inout Vector, solution: Vector,
                nodeMap: [String: Int], vsMap: [String: Int]) {
@@ -35,9 +35,11 @@ struct MNACapacitor: MNAComponent {
     var node1: String { nodes[0] }
     var node2: String { nodes[1] }
 
-    /// Trapezoidal companion: Geq = 2C/dt, Ieq = Geq*Vprev + Iprev
+    /// Trapezoidal companion: Geq = 2C/dt, Ieq = -Geq*Vprev - Iprev
+    /// Derivation: I(n+1) = (2C/h)*[V(n+1) - V(n)] - I(n)
+    ///           = Geq*V(n+1) + [-Geq*V(n) - I(n)]
     var companionConductance: Double { 2.0 * capacitance / timeStep }
-    var companionCurrent: Double { companionConductance * previousVoltage + previousCurrent }
+    var companionCurrent: Double { -(companionConductance * previousVoltage) - previousCurrent }
 
     func stamp(matrix: inout Matrix, rhs: inout Vector, solution: Vector,
                nodeMap: [String: Int], vsMap: [String: Int]) {
@@ -66,7 +68,9 @@ struct MNAInductor: MNAComponent {
     var node2: String { nodes[1] }
 
     /// Trapezoidal companion: Geq = dt/(2L), Ieq = Iprev + Geq*Vprev
-    var companionConductance: Double { timeStep / (2.0 * inductance) }
+    /// Derivation: I(n+1) = I(n) + (h/2L)*[V(n+1) + V(n)]
+    ///           = Geq*V(n+1) + [I(n) + Geq*V(n)]
+    var companionConductance: Double { timeStep / (2.0 * max(inductance, 1e-18)) }
     var companionCurrent: Double { previousCurrent + companionConductance * previousVoltage }
 
     func stamp(matrix: inout Matrix, rhs: inout Vector, solution: Vector,
@@ -75,7 +79,8 @@ struct MNAInductor: MNAComponent {
         let ieq = companionCurrent
 
         stampConductance(geq, node1: node1, node2: node2, matrix: &matrix, nodeMap: nodeMap)
-        stampCurrentSource(ieq, fromNode: node2, toNode: node1, rhs: &rhs, nodeMap: nodeMap)
+        // Current source direction: ieq flows from node1 to node2 (same as inductor current)
+        stampCurrentSource(ieq, fromNode: node1, toNode: node2, rhs: &rhs, nodeMap: nodeMap)
     }
 }
 
@@ -182,6 +187,16 @@ struct MNADiode: MNAComponent {
     var anodeNode: String { nodes[0] }
     var cathodeNode: String { nodes[1] }
 
+    /// SPICE-style voltage limiting to aid Newton-Raphson convergence
+    private func limitVoltage(_ vd: Double, vt: Double) -> Double {
+        // Limit forward voltage to prevent exp() overflow
+        let vCritical = vt * log(vt / (saturationCurrent * sqrt(2.0)))
+        if vd > vCritical {
+            return vCritical + vt * log(max(1 + (vd - vCritical) / vt, 1e-30))
+        }
+        return vd
+    }
+
     func stamp(matrix: inout Matrix, rhs: inout Vector, solution: Vector,
                nodeMap: [String: Int], vsMap: [String: Int]) {
         let ni = nodeIndex(anodeNode, nodeMap: nodeMap)
@@ -194,15 +209,15 @@ struct MNADiode: MNAComponent {
 
         let vt = emissionCoefficient * thermalVoltage
 
-        // Limit voltage step for convergence
-        let vdLimited = min(vd, 0.8)  // Forward voltage limiting
+        // SPICE-style voltage limiting for convergence
+        let vdLimited = limitVoltage(vd, vt: vt)
 
         // Diode current: Id = Is * (exp(Vd/Vt) - 1)
         let expTerm = exp(vdLimited / vt)
         let id = saturationCurrent * (expTerm - 1)
 
         // Conductance (derivative): Gd = Is/Vt * exp(Vd/Vt)
-        let gd = (saturationCurrent / vt) * expTerm
+        let gd = max((saturationCurrent / vt) * expTerm, 1e-12)  // Minimum gmin for convergence
 
         // Equivalent current for linearized model: Ieq = Id - Gd * Vd
         let ieq = id - gd * vdLimited
@@ -215,7 +230,7 @@ struct MNADiode: MNAComponent {
     }
 }
 
-// MARK: - NPN BJT (Ebers-Moll simplified)
+// MARK: - NPN BJT (Ebers-Moll Transport Model)
 
 struct MNANJPNBJT: MNAComponent {
     let name: String
@@ -231,6 +246,16 @@ struct MNANJPNBJT: MNAComponent {
     var collectorNode: String { nodes[1] }
     var emitterNode: String { nodes[2] }
 
+    /// Voltage limiting for BJT junctions
+    private func limitJunctionVoltage(_ v: Double) -> Double {
+        let vt = thermalVoltage
+        let vCritical = vt * log(vt / (saturationCurrent * sqrt(2.0)))
+        if v > vCritical {
+            return vCritical + vt * log(max(1 + (v - vCritical) / vt, 1e-30))
+        }
+        return v
+    }
+
     func stamp(matrix: inout Matrix, rhs: inout Vector, solution: Vector,
                nodeMap: [String: Int], vsMap: [String: Int]) {
         let nb = nodeIndex(baseNode, nodeMap: nodeMap)
@@ -241,46 +266,71 @@ struct MNANJPNBJT: MNAComponent {
         let vc = nc.map { solution[$0] } ?? 0
         let ve = ne.map { solution[$0] } ?? 0
 
-        let vbe = vb - ve
-        let vbc = vb - vc
+        let vbe = limitJunctionVoltage(vb - ve)
+        let vbc = limitJunctionVoltage(vb - vc)
 
         let vt = thermalVoltage
         let alphaF = beta / (beta + 1)
-        let alphaR = 0.5  // reverse alpha (simplified)
+        let betaR = 1.0  // reverse beta (simplified)
+        let alphaR = betaR / (betaR + 1)
 
-        // Forward and reverse currents
-        let expBE = exp(min(vbe, 0.8) / vt)
-        let expBC = exp(min(vbc, 0.8) / vt)
+        // Junction currents
+        let expBE = exp(vbe / vt)
+        let expBC = exp(vbc / vt)
+        let gmin: Double = 1e-12
 
         let iF = saturationCurrent * (expBE - 1)
         let iR = saturationCurrent * (expBC - 1)
 
-        // Terminal currents (Ebers-Moll)
-        let ic = alphaF * iF - iR
-        let ie = -iF + alphaR * iR
+        // Junction conductances (linearization)
+        let gBE = max((saturationCurrent / vt) * expBE, gmin)
+        let gBC = max((saturationCurrent / vt) * expBC, gmin)
 
-        // Conductances (linearization)
-        let gBE = (saturationCurrent / vt) * expBE
-        let gBC = (saturationCurrent / vt) * expBC
+        // Terminal currents (Ebers-Moll transport model):
+        //   Ic = alphaF * iF - iR
+        //   Ie = -iF + alphaR * iR
+        //   Ib = iF*(1-alphaF) + iR*(1-alphaR) = iF/betaF + iR/betaR
+        //
+        // We stamp the three terminal currents directly as linearized expressions.
+        // Linearized junction currents:
+        //   iF ≈ gBE * Vbe + ieqF  where ieqF = iF - gBE * vbe
+        //   iR ≈ gBC * Vbc + ieqR  where ieqR = iR - gBC * vbc
+        let ieqF = iF - gBE * vbe
+        let ieqR = iR - gBC * vbc
 
-        // Stamp BE junction (as linearized diode)
-        stampConductance(gBE, node1: baseNode, node2: emitterNode, matrix: &matrix, nodeMap: nodeMap)
-        let ieqBE = iF - gBE * min(vbe, 0.8)
-        stampCurrentSource(ieqBE, fromNode: baseNode, toNode: emitterNode, rhs: &rhs, nodeMap: nodeMap)
+        // --- Collector current: Ic = alphaF * (gBE*Vbe + ieqF) - (gBC*Vbc + ieqR) ---
+        // = alphaF*gBE*(Vb-Ve) - gBC*(Vb-Vc) + (alphaF*ieqF - ieqR)
+        let gmF = alphaF * gBE   // forward transconductance
+        let icEq = alphaF * ieqF - ieqR
 
-        // Stamp BC junction
-        stampConductance(gBC, node1: baseNode, node2: collectorNode, matrix: &matrix, nodeMap: nodeMap)
-        let ieqBC = iR - gBC * min(vbc, 0.8)
-        stampCurrentSource(ieqBC, fromNode: baseNode, toNode: collectorNode, rhs: &rhs, nodeMap: nodeMap)
+        // Collector row (current entering collector)
+        if let nc = nc, let nb = nb { matrix[nc, nb] += gmF - gBC }
+        if let nc = nc, let ne = ne { matrix[nc, ne] -= gmF }
+        if let nc = nc              { matrix[nc, nc] += gBC }
+        if let nc = nc              { rhs[nc] += icEq }
 
-        // Stamp current-controlled current source for collector current
-        let gm = alphaF * gBE  // transconductance
-        if let nc = nc, let nb = nb { matrix[nc, nb] += gm }
-        if let nc = nc, let ne = ne { matrix[nc, ne] -= gm }
+        // --- Emitter current: Ie = -(gBE*Vbe + ieqF) + alphaR*(gBC*Vbc + ieqR) ---
+        // = -gBE*(Vb-Ve) + alphaR*gBC*(Vb-Vc) + (-ieqF + alphaR*ieqR)
+        let gmR = alphaR * gBC   // reverse transconductance
+        let ieEq = -ieqF + alphaR * ieqR
 
-        let ieqCollector = alphaF * ieqBE
-        if let nc = nc { rhs[nc] += ieqCollector }
-        if let ne = ne { rhs[ne] -= ieqCollector }
+        // Emitter row (current entering emitter = -Ie leaves emitter)
+        if let ne = ne, let nb = nb { matrix[ne, nb] -= gBE - gmR }
+        if let ne = ne              { matrix[ne, ne] += gBE }
+        if let ne = ne, let nc = nc { matrix[ne, nc] -= gmR }
+        if let ne = ne              { rhs[ne] += ieEq }
+
+        // --- Base current: Ib = iF*(1-alphaF) + iR*(1-alphaR) ---
+        // This is implicitly satisfied by KCL: Ib = -(Ic + Ie)
+        // But we stamp it explicitly for the base row for numerical stability.
+        let gbF = (1 - alphaF) * gBE
+        let gbR = (1 - alphaR) * gBC
+        let ibEq = (1 - alphaF) * ieqF + (1 - alphaR) * ieqR
+
+        if let nb = nb              { matrix[nb, nb] += gbF + gbR }
+        if let nb = nb, let ne = ne { matrix[nb, ne] -= gbF }
+        if let nb = nb, let nc = nc { matrix[nb, nc] -= gbR }
+        if let nb = nb              { rhs[nb] -= ibEq }
     }
 }
 

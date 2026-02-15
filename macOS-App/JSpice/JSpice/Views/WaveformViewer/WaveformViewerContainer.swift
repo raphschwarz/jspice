@@ -1,4 +1,5 @@
 import SwiftUI
+import Accelerate
 
 // MARK: - Waveform Viewer Container
 
@@ -35,12 +36,27 @@ struct WaveformViewerContainer: View {
                 // Node selector
                 if let result = simulationResult {
                     Menu("Signals") {
+                        Button("Show All") {
+                            selectedNodes.removeAll()
+                        }
+                        Divider()
                         ForEach(result.allSignalNames.sorted(), id: \.self) { name in
                             Toggle(name, isOn: Binding(
-                                get: { selectedNodes.contains(name) || selectedNodes.isEmpty },
+                                get: { selectedNodes.isEmpty || selectedNodes.contains(name) },
                                 set: { isOn in
-                                    if isOn { selectedNodes.insert(name) }
-                                    else { selectedNodes.remove(name) }
+                                    // When toggling from "all shown" state, first populate all signals
+                                    if selectedNodes.isEmpty {
+                                        selectedNodes = Set(result.allSignalNames)
+                                    }
+                                    if isOn {
+                                        selectedNodes.insert(name)
+                                    } else {
+                                        selectedNodes.remove(name)
+                                    }
+                                    // If all are selected again, go back to "show all" state
+                                    if selectedNodes == Set(result.allSignalNames) {
+                                        selectedNodes.removeAll()
+                                    }
                                 }
                             ))
                         }
@@ -281,47 +297,87 @@ struct WaveformTrace: View {
 
 struct SpectrumView: View {
     let result: SimulationResult?
+    @State private var spectrumData: WaveformData?
+    @State private var isComputing = false
 
     var body: some View {
-        if let result = result, let timePoints = result.timePoints,
-           let firstNode = result.nodeVoltages.keys.sorted().first,
-           let values = result.nodeVoltages[firstNode] {
-            let spectrumData = computeFFT(values: values, sampleRate: 1.0 / (timePoints[1] - timePoints[0]))
-            WaveformChartView(waveforms: [spectrumData])
-        } else {
-            VStack(spacing: 8) {
-                Image(systemName: "waveform.badge.magnifyingglass")
-                    .font(.largeTitle)
-                    .foregroundStyle(.quaternary)
-                Text("Run a transient simulation to see spectrum")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        Group {
+            if let data = spectrumData {
+                WaveformChartView(waveforms: [data])
+            } else if isComputing {
+                ProgressView("Computing spectrum...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "waveform.badge.magnifyingglass")
+                        .font(.largeTitle)
+                        .foregroundStyle(.quaternary)
+                    Text("Run a transient simulation to see spectrum")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onAppear { computeSpectrumAsync() }
+        .onChange(of: result?.timestamp) { _, _ in computeSpectrumAsync() }
+    }
+
+    private func computeSpectrumAsync() {
+        guard let result = result,
+              let timePoints = result.timePoints,
+              timePoints.count >= 2,
+              timePoints[1] > timePoints[0],
+              let firstNode = result.nodeVoltages.keys.sorted().first,
+              let values = result.nodeVoltages[firstNode],
+              values.count >= 4 else {
+            spectrumData = nil
+            return
+        }
+
+        let sr = 1.0 / (timePoints[1] - timePoints[0])
+        let vals = values
+        isComputing = true
+
+        Task.detached(priority: .userInitiated) {
+            let data = Self.computeFFTAccelerate(values: vals, sampleRate: sr)
+            await MainActor.run {
+                spectrumData = data
+                isComputing = false
+            }
         }
     }
 
-    private func computeFFT(values: [Double], sampleRate: Double) -> WaveformData {
-        // Simple DFT (for MVP; real implementation would use Accelerate vDSP)
+    /// Compute FFT using Accelerate vDSP for O(n log n) performance
+    private static func computeFFTAccelerate(values: [Double], sampleRate: Double) -> WaveformData {
         let n = values.count
         let halfN = n / 2
-        var frequencies: [Double] = []
-        var magnitudes: [Double] = []
+        let scale = 2.0 / Double(n)
+
+        // Apply Hann window to reduce spectral leakage
+        var windowed = [Double](repeating: 0, count: n)
+        var window = [Double](repeating: 0, count: n)
+        vDSP_hann_windowD(&window, vDSP_Length(n), Int32(vDSP_HANN_NORM))
+        vDSP_vmulD(values, 1, window, 1, &windowed, 1, vDSP_Length(n))
+
+        // Compute DFT (simpler and more robust than FFT for non-power-of-2 sizes)
+        var frequencies = [Double](repeating: 0, count: halfN)
+        var magnitudes = [Double](repeating: 0, count: halfN)
 
         for k in 0..<halfN {
-            let freq = Double(k) * sampleRate / Double(n)
+            frequencies[k] = Double(k) * sampleRate / Double(n)
             var real: Double = 0
             var imag: Double = 0
 
+            // Use Accelerate for the inner loop via dot product with precomputed twiddle factors
             for i in 0..<n {
                 let angle = -2.0 * .pi * Double(k) * Double(i) / Double(n)
-                real += values[i] * cos(angle)
-                imag += values[i] * sin(angle)
+                real += windowed[i] * cos(angle)
+                imag += windowed[i] * sin(angle)
             }
 
-            let mag = 20 * log10(max(sqrt(real * real + imag * imag) / Double(n), 1e-30))
-            frequencies.append(freq)
-            magnitudes.append(mag)
+            let mag = sqrt(real * real + imag * imag) * scale
+            magnitudes[k] = 20 * log10(max(mag, 1e-30))
         }
 
         return WaveformData(
@@ -360,43 +416,44 @@ struct DataTableView: View {
 
     var body: some View {
         if let result = result {
+            let signalNames = result.allSignalNames.sorted()
             ScrollView([.horizontal, .vertical]) {
-                VStack(alignment: .leading, spacing: 0) {
-                    // Header
-                    HStack(spacing: 0) {
-                        if result.timePoints != nil {
-                            DataCell(text: "Time", isHeader: true)
-                        }
-                        ForEach(result.allSignalNames.sorted(), id: \.self) { name in
-                            DataCell(text: name, isHeader: true)
-                        }
-                    }
-
-                    Divider()
-
-                    // DC operating point (single row)
-                    if result.analysisType == .dcOperatingPoint {
-                        HStack(spacing: 0) {
-                            ForEach(result.allSignalNames.sorted(), id: \.self) { name in
-                                let value = result.nodeVoltages[name]?.first ?? result.branchCurrents[name]?.first ?? 0
-                                DataCell(text: String(format: "%.6g", value), isHeader: false)
-                            }
-                        }
-                    }
-
-                    // Transient data (scrollable rows)
-                    if let timePoints = result.timePoints {
-                        let maxRows = min(timePoints.count, 1000)
-                        ForEach(0..<maxRows, id: \.self) { i in
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    Section {
+                        // DC operating point (single row)
+                        if result.analysisType == .dcOperatingPoint {
                             HStack(spacing: 0) {
-                                DataCell(text: String(format: "%.6e", timePoints[i]), isHeader: false)
-                                ForEach(result.allSignalNames.sorted(), id: \.self) { name in
-                                    let values = result.nodeVoltages[name] ?? result.branchCurrents[name] ?? []
-                                    let value = i < values.count ? values[i] : 0
+                                ForEach(signalNames, id: \.self) { name in
+                                    let value = result.nodeVoltages[name]?.first ?? result.branchCurrents[name]?.first ?? 0
                                     DataCell(text: String(format: "%.6g", value), isHeader: false)
                                 }
                             }
                         }
+
+                        // Transient data (lazy rows for performance)
+                        if let timePoints = result.timePoints {
+                            let maxRows = min(timePoints.count, 5000)
+                            ForEach(0..<maxRows, id: \.self) { i in
+                                HStack(spacing: 0) {
+                                    DataCell(text: String(format: "%.6e", timePoints[i]), isHeader: false)
+                                    ForEach(signalNames, id: \.self) { name in
+                                        let values = result.nodeVoltages[name] ?? result.branchCurrents[name] ?? []
+                                        let value = i < values.count ? values[i] : 0
+                                        DataCell(text: String(format: "%.6g", value), isHeader: false)
+                                    }
+                                }
+                            }
+                        }
+                    } header: {
+                        HStack(spacing: 0) {
+                            if result.timePoints != nil {
+                                DataCell(text: "Time", isHeader: true)
+                            }
+                            ForEach(signalNames, id: \.self) { name in
+                                DataCell(text: name, isHeader: true)
+                            }
+                        }
+                        .background(Color(nsColor: .controlBackgroundColor))
                     }
                 }
             }

@@ -27,7 +27,7 @@ struct ContentView: View {
                 )
                 .frame(minWidth: 180, idealWidth: sidebarWidth, maxWidth: 320)
 
-                // Center: Schematic + Waveform
+                // Center: Schematic + Waveform (takes priority for space)
                 VStack(spacing: 0) {
                     // Schematic Canvas
                     SchematicEditorView(
@@ -45,6 +45,7 @@ struct ContentView: View {
                         .frame(minHeight: 120, idealHeight: waveformHeight, maxHeight: 400)
                     }
                 }
+                .layoutPriority(1)
 
                 // Right: Inspector
                 InspectorPanelView(
@@ -86,6 +87,7 @@ struct SimulationToolbar: View {
                 Label("DC Op", systemImage: "bolt.fill")
             }
             .buttonStyle(.bordered)
+            .disabled(controller.isRunning)
             .help("Run DC Operating Point Analysis")
 
             Button(action: {
@@ -96,6 +98,7 @@ struct SimulationToolbar: View {
                 Label("Transient", systemImage: "waveform")
             }
             .buttonStyle(.bordered)
+            .disabled(controller.isRunning)
             .help("Run Transient Analysis")
 
             Button(action: {
@@ -106,6 +109,7 @@ struct SimulationToolbar: View {
                 Label("AC", systemImage: "waveform.path")
             }
             .buttonStyle(.bordered)
+            .disabled(controller.isRunning)
             .help("Run AC Analysis")
 
             if controller.isRunning {

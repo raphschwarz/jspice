@@ -172,19 +172,31 @@ struct ParameterEditor: View {
             }
 
             HStack(spacing: 8) {
-                TextField(
-                    parameter.name,
-                    text: Binding(
-                        get: { formatValue(parameter.value) },
-                        set: { newValue in
-                            if let parsed = parseEngineering(newValue) {
-                                parameter.value = max(parameter.min, min(parameter.max, parsed))
-                            }
-                        }
-                    )
-                )
+                // Use @State textValue to avoid infinite update loops
+                // Only sync from parameter -> text when not actively editing
+                TextField(parameter.name, text: $textValue, onEditingChanged: { editing in
+                    isEditing = editing
+                    if editing {
+                        // Starting edit: show current formatted value
+                        textValue = formatValue(parameter.value)
+                    }
+                })
+                .onSubmit {
+                    if let parsed = parseEngineering(textValue) {
+                        parameter.value = max(parameter.min, min(parameter.max, parsed))
+                    }
+                    textValue = formatValue(parameter.value)
+                }
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
+                .onChange(of: parameter.value) { _, newValue in
+                    if !isEditing {
+                        textValue = formatValue(newValue)
+                    }
+                }
+                .onAppear {
+                    textValue = formatValue(parameter.value)
+                }
 
                 // Quick adjustment buttons
                 Button(action: {
@@ -204,16 +216,28 @@ struct ParameterEditor: View {
                 .buttonStyle(.bordered)
             }
 
-            // Slider for continuous adjustment
-            Slider(
-                value: Binding(
-                    get: { log10(max(abs(parameter.value), 1e-18)) },
-                    set: { parameter.value = pow(10, $0) * (parameter.value < 0 ? -1 : 1) }
-                ),
-                in: log10(max(abs(parameter.min), 1e-18))...log10(max(abs(parameter.max), 1e-18))
-            )
+            // Logarithmic slider — only show when range is valid for log scale
+            if sliderRange != nil {
+                Slider(
+                    value: Binding(
+                        get: { log10(max(abs(parameter.value), 1e-18)) },
+                        set: { parameter.value = pow(10, $0) * (parameter.value < 0 ? -1 : 1) }
+                    ),
+                    in: sliderRange!
+                )
+            }
         }
         .padding(.vertical, 2)
+    }
+
+    /// Compute safe slider range, returning nil if range is degenerate
+    private var sliderRange: ClosedRange<Double>? {
+        let absMin = max(abs(parameter.min), 1e-18)
+        let absMax = max(abs(parameter.max), 1e-18)
+        let logMin = log10(min(absMin, absMax))
+        let logMax = log10(max(absMin, absMax))
+        guard logMax > logMin + 0.01 else { return nil }
+        return logMin...logMax
     }
 
     private func formatValue(_ value: Double) -> String {

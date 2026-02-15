@@ -44,17 +44,25 @@ enum SPICENetlistParser {
         var yPosition: CGFloat = 100
         let xSpacing: CGFloat = 150
         var componentCount = 0
+        var foundFirstNonComment = false
 
         let lines = text.components(separatedBy: .newlines)
 
-        for (lineNumber, rawLine) in lines.enumerated() {
+        for (_, rawLine) in lines.enumerated() {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
 
+            // Handle line continuation (+)
             // Skip empty lines and comments
             if line.isEmpty || line.hasPrefix("*") || line.hasPrefix(";") { continue }
 
-            // Skip title line (first non-comment line)
-            if lineNumber == 0 && !line.hasPrefix(".") && !isComponent(line) { continue }
+            // SPICE format: first non-comment line is the title, skip it
+            if !foundFirstNonComment {
+                foundFirstNonComment = true
+                // If it looks like a component or directive, don't skip it
+                if !line.hasPrefix(".") && !isComponent(line) {
+                    continue  // Title line
+                }
+            }
 
             // Control directives
             if line.hasPrefix(".") {
@@ -279,15 +287,15 @@ enum SPICENetlistParser {
     // MARK: - SIN() parsing
 
     private static func parseSinDirective(_ text: String) -> (offset: Double, amplitude: Double, frequency: Double)? {
-        // SIN(Voffset Vamp Freq)
+        // SIN(Voffset Vamp Freq [Td [Theta [Phase]]])
         let upper = text.uppercased()
         guard let sinStart = upper.range(of: "SIN("),
               let sinEnd = upper.range(of: ")", range: sinStart.upperBound..<upper.endIndex) else {
             return nil
         }
 
-        let paramsStr = String(upper[sinStart.upperBound..<sinEnd.lowerBound])
-        let params = paramsStr.split(separator: " ").compactMap { Double($0) }
+        let paramsStr = String(text[text.index(text.startIndex, offsetBy: upper.distance(from: upper.startIndex, to: sinStart.upperBound))..<text.index(text.startIndex, offsetBy: upper.distance(from: upper.startIndex, to: sinEnd.lowerBound))])
+        let params = paramsStr.split(separator: " ").compactMap { try? parseValue(String($0)) }
 
         guard params.count >= 3 else { return nil }
         return (offset: params[0], amplitude: params[1], frequency: params[2])
@@ -311,7 +319,7 @@ enum SPICENetlistExporter {
         let connectivity = NetlistGenerator.buildConnectivity(document: document)
 
         for component in document.components {
-            let nodes = connectivity.nodesForComponent(component.id)
+            let nodes = connectivity.nodesForComponent(component.id, pinCount: component.type.pinCount)
             let nodeStr = nodes.joined(separator: " ")
 
             switch component.type {

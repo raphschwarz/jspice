@@ -26,7 +26,7 @@ enum NetlistGenerator {
         var mnaComponents: [MNAComponent] = []
 
         for component in document.components {
-            let nodes = connectivity.nodesForComponent(component.id)
+            let nodes = connectivity.nodesForComponent(component.id, pinCount: component.type.pinCount)
 
             switch component.type {
             case .resistor:
@@ -192,6 +192,14 @@ enum NetlistGenerator {
 
     // MARK: - Waveform Generation
 
+    /// Normalize angle to [0, 1) cycle fraction, handling negative fmod results
+    private static func normalizedPhase(_ t: Double) -> Double {
+        let twoPi = 2.0 * Double.pi
+        var result = fmod(t, twoPi)
+        if result < 0 { result += twoPi }
+        return result / twoPi
+    }
+
     private static func generateWaveform(
         type: Int,
         amplitude: Double,
@@ -208,11 +216,11 @@ enum NetlistGenerator {
             return amplitude * sin(t)
 
         case 1: // Square
-            let normalized = fmod(t, 2.0 * .pi) / (2.0 * .pi)
+            let normalized = normalizedPhase(t)
             return amplitude * (normalized < dutyCycle ? 1.0 : -1.0)
 
         case 2: // Triangle
-            let normalized = fmod(t, 2.0 * .pi) / (2.0 * .pi)
+            let normalized = normalizedPhase(t)
             if normalized < 0.25 {
                 return amplitude * normalized * 4
             } else if normalized < 0.75 {
@@ -222,11 +230,11 @@ enum NetlistGenerator {
             }
 
         case 3: // Sawtooth
-            let normalized = fmod(t, 2.0 * .pi) / (2.0 * .pi)
+            let normalized = normalizedPhase(t)
             return amplitude * (2 * normalized - 1)
 
         case 4: // Pulse
-            let normalized = fmod(t, 2.0 * .pi) / (2.0 * .pi)
+            let normalized = normalizedPhase(t)
             return normalized < dutyCycle ? amplitude : 0
 
         default:
@@ -258,28 +266,34 @@ struct CircuitConnectivity {
         }
     }
 
-    func nodesForComponent(_ id: UUID) -> [String] {
-        // Find all pins for this component, ordered by pin index
-        var nodes: [(Int, String)] = []
-        for (key, node) in pinToNode {
-            if key.hasPrefix(id.uuidString) {
-                let pinStr = key.split(separator: "_").last.flatMap { String($0) } ?? "0"
-                let pinIndex = Int(pinStr) ?? 0
-                nodes.append((pinIndex, node))
-            }
+    func nodesForComponent(_ id: UUID, pinCount: Int) -> [String] {
+        // Return nodes for all pins in order, defaulting unconnected pins to unique floating nodes
+        var nodes: [String] = []
+        for pin in 0..<pinCount {
+            let key = "\(id)_\(pin)"
+            nodes.append(pinToNode[key] ?? "float_\(id)_\(pin)")
         }
-        return nodes.sorted { $0.0 < $1.0 }.map { $0.1 }
+        return nodes
     }
 
     func nodeName(for componentID: UUID, pin: Int) -> String {
         let key = "\(componentID)_\(pin)"
-        return pinToNode[key] ?? "0"
+        return pinToNode[key] ?? "float_\(componentID)_\(pin)"
+    }
+
+    /// Assign a ground node ("0") to a specific pin
+    mutating func assignGround(component: UUID, pin: Int) {
+        let key = "\(component)_\(pin)"
+        pinToNode[key] = "0"
     }
 }
 
 extension NetlistGenerator {
     static func buildConnectivity(document: CircuitDocument) -> CircuitConnectivity {
         var connectivity = CircuitConnectivity()
+
+        // First, register ground components — any pin connected to a ground component becomes node "0"
+        let groundIDs = Set(document.components.filter { $0.type == .ground }.map { $0.id })
 
         for wire in document.wires {
             connectivity.connect(
@@ -290,18 +304,27 @@ extension NetlistGenerator {
             )
         }
 
-        // Ensure all components have node assignments (unconnected pins get unique nodes)
-        for component in document.components {
-            if component.type == .ground {
-                // Ground component: its pin is always node "0"
-                continue
+        // Now propagate ground: any pin connected to a ground component's pin becomes "0"
+        for wire in document.wires {
+            if groundIDs.contains(wire.startComponentID) {
+                // The end component's pin is connected to ground
+                connectivity.assignGround(component: wire.endComponentID, pin: wire.endPinIndex)
+                // Also mark the ground component's own pin
+                connectivity.assignGround(component: wire.startComponentID, pin: wire.startPinIndex)
             }
-            let nodes = connectivity.nodesForComponent(component.id)
-            if nodes.isEmpty {
-                // Unconnected component - assign floating nodes
-                for pin in 0..<component.type.pinCount {
-                    let key = "\(component.id)_\(pin)"
-                    // Will be assigned by the connectivity struct
+            if groundIDs.contains(wire.endComponentID) {
+                // The start component's pin is connected to ground
+                connectivity.assignGround(component: wire.startComponentID, pin: wire.startPinIndex)
+                connectivity.assignGround(component: wire.endComponentID, pin: wire.endPinIndex)
+            }
+        }
+
+        // Ensure all non-ground components have node assignments per pin
+        for component in document.components where component.type != .ground {
+            for pin in 0..<component.type.pinCount {
+                let key = "\(component.id)_\(pin)"
+                if connectivity.nodeName(for: component.id, pin: pin).hasPrefix("float_") {
+                    // Unconnected pin — assign a unique floating node via self-connect
                     connectivity.connect(
                         component1: component.id,
                         pin1: pin,

@@ -51,6 +51,7 @@ struct SchematicEditorView: View {
     @Binding var document: CircuitDocument
     @ObservedObject var editorState: SchematicEditorState
     @State private var dragOffset: CGSize = .zero
+    @State private var componentDragStart: CGPoint?
 
     var body: some View {
         GeometryReader { geometry in
@@ -149,12 +150,22 @@ struct SchematicEditorView: View {
     private func componentDragGesture(for component: SchematicComponent) -> some Gesture {
         DragGesture()
             .onChanged { value in
+                if componentDragStart == nil {
+                    componentDragStart = component.position
+                }
                 editorState.isDraggingComponent = true
-                if let index = document.components.firstIndex(where: { $0.id == component.id }) {
-                    document.components[index].position = snapToGrid(value.location)
+                if let index = document.components.firstIndex(where: { $0.id == component.id }),
+                   let startPos = componentDragStart {
+                    // Use translation relative to drag start, scaled by zoom
+                    let newPosition = CGPoint(
+                        x: startPos.x + value.translation.width / editorState.zoom,
+                        y: startPos.y + value.translation.height / editorState.zoom
+                    )
+                    document.components[index].position = snapToGrid(newPosition)
                 }
             }
             .onEnded { _ in
+                componentDragStart = nil
                 editorState.isDraggingComponent = false
             }
     }
@@ -244,13 +255,15 @@ extension View {
 struct ScrollGestureView: NSViewRepresentable {
     let action: (CGFloat) -> Void
 
-    func makeNSView(context: Context) -> NSView {
+    func makeNSView(context: Context) -> ScrollCaptureNSView {
         let view = ScrollCaptureNSView()
         view.action = action
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: ScrollCaptureNSView, context: Context) {
+        nsView.action = action
+    }
 }
 
 class ScrollCaptureNSView: NSView {

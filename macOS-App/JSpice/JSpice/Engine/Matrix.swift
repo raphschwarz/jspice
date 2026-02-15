@@ -3,7 +3,7 @@ import Accelerate
 
 // MARK: - Dense Matrix (backed by Accelerate)
 
-/// Row-major dense matrix for MNA solver, backed by Apple's Accelerate framework
+/// Column-major dense matrix for MNA solver, backed by Apple's Accelerate framework
 /// for LAPACK-optimized linear algebra on Apple Silicon.
 struct Matrix: Sendable {
     let rows: Int
@@ -151,8 +151,14 @@ struct ComplexNumber: Sendable {
     var magnitudeDB: Double { 20 * log10(max(magnitude, 1e-30)) }
     var phaseDegrees: Double { phase * 180.0 / .pi }
 
+    var conjugate: ComplexNumber { ComplexNumber(real: real, imag: -imag) }
+
     static func + (lhs: ComplexNumber, rhs: ComplexNumber) -> ComplexNumber {
         ComplexNumber(real: lhs.real + rhs.real, imag: lhs.imag + rhs.imag)
+    }
+
+    static func - (lhs: ComplexNumber, rhs: ComplexNumber) -> ComplexNumber {
+        ComplexNumber(real: lhs.real - rhs.real, imag: lhs.imag - rhs.imag)
     }
 
     static func * (lhs: ComplexNumber, rhs: ComplexNumber) -> ComplexNumber {
@@ -164,5 +170,18 @@ struct ComplexNumber: Sendable {
 
     static func * (lhs: Double, rhs: ComplexNumber) -> ComplexNumber {
         ComplexNumber(real: lhs * rhs.real, imag: lhs * rhs.imag)
+    }
+
+    static func / (lhs: ComplexNumber, rhs: ComplexNumber) -> ComplexNumber {
+        let denom = rhs.real * rhs.real + rhs.imag * rhs.imag
+        guard denom > 0 else { return .zero }
+        return ComplexNumber(
+            real: (lhs.real * rhs.real + lhs.imag * rhs.imag) / denom,
+            imag: (lhs.imag * rhs.real - lhs.real * rhs.imag) / denom
+        )
+    }
+
+    static prefix func - (val: ComplexNumber) -> ComplexNumber {
+        ComplexNumber(real: -val.real, imag: -val.imag)
     }
 }

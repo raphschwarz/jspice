@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import Accelerate
+import os
 
 // MARK: - Audio Engine
 
@@ -17,16 +18,19 @@ final class AudioEngine {
     // MARK: - Properties
 
     private var audioEngine: AVAudioEngine?
-    private var playerNode: AVAudioPlayerNode?
     private var sourceNode: AVAudioSourceNode?
 
-    private var ringBuffer = RingBuffer(capacity: 65536)  // ~1.3s at 48kHz
+    private let ringBuffer = RingBuffer(capacity: 65536)  // ~1.3s at 48kHz
     private var sampleRate: Double = 48000
-    private var isPlaying = false
+    private var _isPlaying = false
 
-    // Level metering
-    private(set) var peakLevel: Float = 0
-    private(set) var rmsLevel: Float = 0
+    // Level metering — atomic for safe access from render thread
+    private let _peakLevel = OSAllocatedUnfairLock(initialState: Float(0))
+    private let _rmsLevel = OSAllocatedUnfairLock(initialState: Float(0))
+
+    var peakLevel: Float { _peakLevel.withLock { $0 } }
+    var rmsLevel: Float { _rmsLevel.withLock { $0 } }
+    var isPlaying: Bool { _isPlaying }
 
     // MARK: - Initialization
 
@@ -51,12 +55,34 @@ final class AudioEngine {
         )!
 
         // Source node renders audio from our ring buffer
-        let source = AVAudioSourceNode(format: format) { [weak self] _, _, frameCount, audioBufferList -> OSStatus in
-            guard let self = self else { return noErr }
-            return self.renderAudio(
-                frameCount: frameCount,
-                audioBufferList: audioBufferList
-            )
+        let rb = ringBuffer
+        let peakRef = _peakLevel
+        let rmsRef = _rmsLevel
+
+        let source = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList -> OSStatus in
+            let bufferList = UnsafeMutableAudioBufferListPointer(audioBufferList)
+            guard let buffer = bufferList.first,
+                  let data = buffer.mData?.assumingMemoryBound(to: Float.self) else {
+                return noErr
+            }
+
+            let frames = Int(frameCount)
+            var peak: Float = 0
+            var sumSquares: Float = 0
+
+            for i in 0..<frames {
+                let sample = Float(rb.read() ?? 0)
+                data[i] = sample
+
+                let absSample = abs(sample)
+                if absSample > peak { peak = absSample }
+                sumSquares += sample * sample
+            }
+
+            peakRef.withLock { $0 = peak }
+            rmsRef.withLock { $0 = sqrt(sumSquares / max(Float(frames), 1)) }
+
+            return noErr
         }
 
         engine.attach(source)
@@ -66,45 +92,14 @@ final class AudioEngine {
         self.sourceNode = source
     }
 
-    // MARK: - Render Callback
-
-    private func renderAudio(
-        frameCount: AVAudioFrameCount,
-        audioBufferList: UnsafeMutablePointer<AudioBufferList>
-    ) -> OSStatus {
-        let bufferList = UnsafeMutableAudioBufferListPointer(audioBufferList)
-        guard let buffer = bufferList.first,
-              let data = buffer.mData?.assumingMemoryBound(to: Float.self) else {
-            return noErr
-        }
-
-        let frames = Int(frameCount)
-        var peak: Float = 0
-        var sumSquares: Float = 0
-
-        for i in 0..<frames {
-            let sample = Float(ringBuffer.read() ?? 0)
-            data[i] = sample
-
-            let absSample = abs(sample)
-            if absSample > peak { peak = absSample }
-            sumSquares += sample * sample
-        }
-
-        peakLevel = peak
-        rmsLevel = sqrt(sumSquares / Float(frames))
-
-        return noErr
-    }
-
     // MARK: - Control
 
     func play() {
-        guard !isPlaying else { return }
+        guard !_isPlaying else { return }
 
         do {
             try audioEngine?.start()
-            isPlaying = true
+            _isPlaying = true
         } catch {
             print("Audio engine failed to start: \(error)")
         }
@@ -112,13 +107,13 @@ final class AudioEngine {
 
     func stop() {
         audioEngine?.stop()
-        isPlaying = false
+        _isPlaying = false
         ringBuffer.reset()
     }
 
     func pause() {
         audioEngine?.pause()
-        isPlaying = false
+        _isPlaying = false
     }
 
     // MARK: - Feed samples from simulation
@@ -174,61 +169,60 @@ final class AudioEngine {
     }
 }
 
-// MARK: - Lock-Free Ring Buffer
+// MARK: - Lock-Free Ring Buffer (SPSC)
 
-/// Thread-safe ring buffer for audio data.
-/// Uses atomic read/write indices for lock-free operation between
+/// Single-producer single-consumer lock-free ring buffer for audio data.
+/// Uses atomic read/write indices for wait-free operation between
 /// the simulation thread (writer) and audio render thread (reader).
+///
+/// IMPORTANT: This is designed for exactly one writer thread and one reader thread.
+/// Multiple concurrent writers or readers require external synchronization.
 final class RingBuffer: @unchecked Sendable {
-    private var buffer: [Double]
-    private let capacity: Int
-    private var writeIndex: Int = 0
-    private var readIndex: Int = 0
-    private let lock = NSLock()  // Simplified; real impl would use atomics
+    private let buffer: UnsafeMutableBufferPointer<Double>
+    private let mask: Int  // capacity - 1 (capacity must be power of 2)
+    private let _writeIndex = OSAllocatedUnfairLock(initialState: Int(0))
+    private let _readIndex = OSAllocatedUnfairLock(initialState: Int(0))
 
-    init(capacity: Int) {
-        self.capacity = capacity
-        self.buffer = [Double](repeating: 0, count: capacity)
+    init(capacity requestedCapacity: Int) {
+        // Round up to power of 2 for fast modulo via bitmask
+        let cap = max(1 << Int(ceil(log2(Double(max(requestedCapacity, 2))))), 2)
+        self.mask = cap - 1
+        let ptr = UnsafeMutablePointer<Double>.allocate(capacity: cap)
+        ptr.initialize(repeating: 0, count: cap)
+        self.buffer = UnsafeMutableBufferPointer(start: ptr, count: cap)
+    }
+
+    deinit {
+        buffer.baseAddress?.deallocate()
     }
 
     var availableToRead: Int {
-        let w = writeIndex
-        let r = readIndex
-        if w >= r {
-            return w - r
-        }
-        return capacity - r + w
+        let w = _writeIndex.withLock { $0 }
+        let r = _readIndex.withLock { $0 }
+        return (w &- r) & mask
     }
 
-    var availableToWrite: Int {
-        capacity - availableToRead - 1
-    }
-
+    /// Write a sample. If buffer is full, the oldest sample is overwritten.
     func write(_ value: Double) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        buffer[writeIndex] = value
-        writeIndex = (writeIndex + 1) % capacity
+        let w = _writeIndex.withLock { $0 }
+        buffer[w & mask] = value
+        _writeIndex.withLock { $0 = (w &+ 1) & mask }
     }
 
+    /// Read a sample. Returns nil if buffer is empty (underrun).
     func read() -> Double? {
-        lock.lock()
-        defer { lock.unlock() }
+        let r = _readIndex.withLock { $0 }
+        let w = _writeIndex.withLock { $0 }
+        guard r != w else { return nil }
 
-        guard readIndex != writeIndex else { return nil }  // Empty
-
-        let value = buffer[readIndex]
-        readIndex = (readIndex + 1) % capacity
+        let value = buffer[r & mask]
+        _readIndex.withLock { $0 = (r &+ 1) & mask }
         return value
     }
 
     func reset() {
-        lock.lock()
-        defer { lock.unlock() }
-
-        readIndex = 0
-        writeIndex = 0
+        _readIndex.withLock { $0 = 0 }
+        _writeIndex.withLock { $0 = 0 }
     }
 }
 

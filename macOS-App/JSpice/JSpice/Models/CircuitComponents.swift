@@ -120,12 +120,19 @@ enum ComponentType: String, Codable, CaseIterable, Identifiable {
                 "saturationCurrent": .init(name: "Is", value: 1e-14, unit: .ampere, min: 1e-18, max: 1e-6),
                 "earlyVoltage": .init(name: "VA", value: 100, unit: .volt, min: 1, max: 1000)
             ]
-        case .nmosFET, .pmosFET:
+        case .nmosFET:
             return [
-                "threshold": .init(name: "Vth", value: 0.7, unit: .volt, min: 0, max: 10),
+                "threshold": .init(name: "Vth", value: 0.7, unit: .volt, min: 0.01, max: 10),
                 "kp": .init(name: "Kp", value: 110e-6, unit: .none, min: 1e-9, max: 1),
                 "channelLength": .init(name: "L", value: 1e-6, unit: .meter, min: 1e-9, max: 1e-3),
                 "channelWidth": .init(name: "W", value: 10e-6, unit: .meter, min: 1e-9, max: 1e-3)
+            ]
+        case .pmosFET:
+            return [
+                "threshold": .init(name: "Vth", value: -0.7, unit: .volt, min: -10, max: -0.01),
+                "kp": .init(name: "Kp", value: 50e-6, unit: .none, min: 1e-9, max: 1),
+                "channelLength": .init(name: "L", value: 1e-6, unit: .meter, min: 1e-9, max: 1e-3),
+                "channelWidth": .init(name: "W", value: 20e-6, unit: .meter, min: 1e-9, max: 1e-3)
             ]
         case .opAmp:
             return [
@@ -183,11 +190,11 @@ enum ComponentType: String, Codable, CaseIterable, Identifiable {
         case .diode:
             return ["anode", "cathode"]
         case .npnBJT:
-            return ["base", "collector", "emitter"]
+            return ["collector", "base", "emitter"]
         case .pnpBJT:
-            return ["base", "collector", "emitter"]
+            return ["collector", "base", "emitter"]
         case .nmosFET, .pmosFET:
-            return ["gate", "drain", "source"]
+            return ["drain", "gate", "source"]
         case .opAmp:
             return ["in+", "in-", "out", "V+", "V-"]
         case .dcVoltageSource, .dcCurrentSource, .acVoltageSource, .signalGenerator:

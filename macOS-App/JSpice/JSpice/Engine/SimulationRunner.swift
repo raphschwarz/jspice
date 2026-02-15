@@ -18,6 +18,9 @@ final class SimulationController: ObservableObject {
     // MARK: - DC Operating Point
 
     func runDCOperatingPoint(document: CircuitDocument) async {
+        // Cancel any running simulation first
+        currentTask?.cancel()
+
         isRunning = true
         statusMessage = "Running DC operating point..."
         progress = 0
@@ -36,7 +39,7 @@ final class SimulationController: ObservableObject {
             )
             statusMessage = "DC operating point complete"
         } catch {
-            statusMessage = "Error: \(error.localizedDescription)"
+            statusMessage = "Error: \(error)"
         }
 
         progress = 1
@@ -46,6 +49,9 @@ final class SimulationController: ObservableObject {
     // MARK: - Transient Analysis
 
     func runTransientAnalysis(document: CircuitDocument) async {
+        // Cancel any running simulation first
+        currentTask?.cancel()
+
         isRunning = true
         statusMessage = "Running transient analysis..."
         progress = 0
@@ -78,7 +84,7 @@ final class SimulationController: ObservableObject {
             } catch {
                 if !Task.isCancelled {
                     await MainActor.run {
-                        self.statusMessage = "Error: \(error.localizedDescription)"
+                        self.statusMessage = "Error: \(error)"
                     }
                 }
             }
@@ -93,6 +99,9 @@ final class SimulationController: ObservableObject {
     // MARK: - AC Analysis
 
     func runACAnalysis(document: CircuitDocument) async {
+        // Cancel any running simulation first
+        currentTask?.cancel()
+
         isRunning = true
         statusMessage = "Running AC analysis..."
         progress = 0
@@ -114,7 +123,7 @@ final class SimulationController: ObservableObject {
             latestACResult = result
             statusMessage = "AC analysis complete"
         } catch {
-            statusMessage = "Error: \(error.localizedDescription)"
+            statusMessage = "Error: \(error)"
         }
 
         progress = 1
@@ -131,7 +140,7 @@ final class SimulationController: ObservableObject {
     }
 
     func documentDidChange(_ document: CircuitDocument) {
-        // Could trigger live re-simulation here
+        // Could trigger live re-simulation here (with debouncing)
     }
 
     func setAudioEnabled(_ enabled: Bool) {
@@ -148,7 +157,8 @@ final class SimulationController: ObservableObject {
         guard let firstNode = result.nodeVoltages.keys.sorted().first,
               let samples = result.nodeVoltages[firstNode],
               let timePoints = result.timePoints,
-              timePoints.count >= 2 else { return }
+              timePoints.count >= 2,
+              timePoints[1] > timePoints[0] else { return }
 
         let sampleRate = 1.0 / (timePoints[1] - timePoints[0])
 
@@ -167,27 +177,9 @@ actor SimulationEngine {
 
     // MARK: - DC Operating Point
 
-    func solveDCOperatingPoint(netlist: MNASolver.Netlist) throws -> MNASolution {
-        try runBlockingSolve(netlist: netlist)
-    }
-
-    private func runBlockingSolve(netlist: MNASolver.Netlist) throws -> MNASolution {
-        // We need to call the solver synchronously but it's an actor
-        // Use a semaphore pattern for synchronous bridge
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<MNASolution, Error>!
-
-        Task {
-            do {
-                let solution = try await solver.solve(netlist: netlist)
-                result = .success(solution)
-            } catch {
-                result = .failure(error)
-            }
-            semaphore.signal()
-        }
-        semaphore.wait()
-        return try result.get()
+    func solveDCOperatingPoint(netlist: MNASolver.Netlist) async throws -> MNASolution {
+        // Use async/await directly — no semaphore deadlock
+        try await solver.solve(netlist: netlist)
     }
 
     // MARK: - Transient Analysis
@@ -198,7 +190,7 @@ actor SimulationEngine {
         stopTime: Double,
         timeStep: Double,
         progressCallback: @Sendable @escaping (Double) -> Void
-    ) throws -> SimulationResult {
+    ) async throws -> SimulationResult {
         let totalSteps = Int((stopTime - startTime) / timeStep)
         var timePoints: [Double] = []
         var nodeVoltageHistory: [String: [Double]] = [:]
@@ -208,7 +200,10 @@ actor SimulationEngine {
         var capacitorStates: [String: (voltage: Double, current: Double)] = [:]
         var inductorStates: [String: (voltage: Double, current: Double)] = [:]
 
-        timePoints.reserveCapacity(totalSteps)
+        // Build connectivity once (not per step)
+        let connectivity = NetlistGenerator.buildConnectivity(document: document)
+
+        timePoints.reserveCapacity(totalSteps + 1)
 
         for step in 0...totalSteps {
             try Task.checkCancellation()
@@ -216,7 +211,7 @@ actor SimulationEngine {
             let currentTime = startTime + Double(step) * timeStep
 
             // Build netlist for this time step with updated companion models
-            var netlist = NetlistGenerator.generate(
+            let netlist = NetlistGenerator.generate(
                 from: document,
                 time: currentTime,
                 timeStep: timeStep,
@@ -224,8 +219,8 @@ actor SimulationEngine {
                 inductorStates: inductorStates
             )
 
-            // Solve
-            let solution = try runBlockingSolve(netlist: netlist)
+            // Solve using async/await (no semaphore)
+            let solution = try await solver.solve(netlist: netlist)
 
             // Record results
             timePoints.append(currentTime)
@@ -236,10 +231,12 @@ actor SimulationEngine {
                 branchCurrentHistory[branch, default: []].append(current)
             }
 
-            // Update companion model states for next step
+            // Update companion model states using correct trapezoidal formulas
             updateCompanionStates(
                 document: document,
                 solution: solution,
+                timeStep: timeStep,
+                connectivity: connectivity,
                 capacitorStates: &capacitorStates,
                 inductorStates: &inductorStates
             )
@@ -268,10 +265,10 @@ actor SimulationEngine {
         stopFreq: Double,
         pointsPerDecade: Int,
         progressCallback: @Sendable @escaping (Double) -> Void
-    ) throws -> ACSimulationResult {
+    ) async throws -> ACSimulationResult {
         // Generate frequency points (logarithmic)
         let decades = log10(stopFreq / startFreq)
-        let totalPoints = Int(decades * Double(pointsPerDecade))
+        let totalPoints = max(Int(decades * Double(pointsPerDecade)), 1)
         var frequencies: [Double] = []
         var magnitudes: [String: [Double]] = [:]
         var phases: [String: [Double]] = [:]
@@ -282,15 +279,12 @@ actor SimulationEngine {
             let freq = startFreq * pow(10, Double(i) / Double(pointsPerDecade))
             frequencies.append(freq)
 
-            // For AC analysis, we solve at the DC operating point,
-            // then compute the small-signal response at each frequency.
-            // Simplified: use transient with short burst and measure gain/phase
-            let omega = 2.0 * .pi * freq
+            // Simplified AC: run transient with several cycles and measure amplitude
             let period = 1.0 / freq
             let simTime = 5 * period  // 5 cycles for steady state
             let dt = period / 100     // 100 points per cycle
 
-            let result = try runTransientAnalysis(
+            let result = try await runTransientAnalysis(
                 document: document,
                 startTime: 0,
                 stopTime: simTime,
@@ -298,16 +292,20 @@ actor SimulationEngine {
                 progressCallback: { _ in }
             )
 
-            // Measure output amplitude and phase relative to input
-            // Take last 2 cycles for measurement
+            // Measure output amplitude from last 2 cycles
             for (node, values) in result.nodeVoltages {
+                guard values.count > 4 else {
+                    magnitudes[node, default: []].append(-200)  // -200 dB = effectively zero
+                    phases[node, default: []].append(0)
+                    continue
+                }
                 let lastQuarter = Array(values.suffix(values.count / 4))
                 let maxVal = lastQuarter.max() ?? 0
                 let minVal = lastQuarter.min() ?? 0
                 let amplitude = (maxVal - minVal) / 2.0
 
                 magnitudes[node, default: []].append(20 * log10(max(amplitude, 1e-30)))
-                phases[node, default: []].append(0)  // Simplified; full impl would use cross-correlation
+                phases[node, default: []].append(0)  // Phase requires cross-correlation (future work)
             }
 
             progressCallback(Double(i) / Double(totalPoints))
@@ -321,52 +319,53 @@ actor SimulationEngine {
         )
     }
 
-    // MARK: - Helper
+    // MARK: - Companion State Updates (trapezoidal-consistent)
 
     private func updateCompanionStates(
         document: CircuitDocument,
         solution: MNASolution,
+        timeStep: Double,
+        connectivity: CircuitConnectivity,
         capacitorStates: inout [String: (voltage: Double, current: Double)],
         inductorStates: inout [String: (voltage: Double, current: Double)]
     ) {
         for component in document.components {
             let label = component.label
+            // Use the actual connectivity to get correct node names
+            let nodes = connectivity.nodesForComponent(component.id, pinCount: component.type.pinCount)
+
             switch component.type {
             case .capacitor:
-                let nodes = nodeNamesForComponent(component, in: document)
-                let v1 = solution.voltage(at: nodes.0)
-                let v2 = solution.voltage(at: nodes.1)
+                guard nodes.count >= 2 else { continue }
+                let v1 = solution.voltage(at: nodes[0])
+                let v2 = solution.voltage(at: nodes[1])
                 let voltage = v1 - v2
                 let cap = component.parameters["capacitance"]?.value ?? 1e-6
-                let prevV = capacitorStates[label]?.voltage ?? 0
-                let dt = document.simulationConfig.transient.timeStep
-                let current = cap * (voltage - prevV) / dt
+                let prevV = capacitorStates[label]?.voltage ?? (component.parameters["initialVoltage"]?.value ?? 0)
+                let prevI = capacitorStates[label]?.current ?? 0
+
+                // Trapezoidal: I(n+1) = (2C/h)*[V(n+1) - V(n)] - I(n)
+                let geq = 2.0 * cap / timeStep
+                let current = geq * (voltage - prevV) - prevI
                 capacitorStates[label] = (voltage: voltage, current: current)
 
             case .inductor:
-                let nodes = nodeNamesForComponent(component, in: document)
-                let v1 = solution.voltage(at: nodes.0)
-                let v2 = solution.voltage(at: nodes.1)
+                guard nodes.count >= 2 else { continue }
+                let v1 = solution.voltage(at: nodes[0])
+                let v2 = solution.voltage(at: nodes[1])
                 let voltage = v1 - v2
                 let ind = component.parameters["inductance"]?.value ?? 1e-3
-                let prevI = inductorStates[label]?.current ?? 0
-                let dt = document.simulationConfig.transient.timeStep
-                let current = prevI + voltage * dt / ind
+                let prevI = inductorStates[label]?.current ?? (component.parameters["initialCurrent"]?.value ?? 0)
+                let prevV = inductorStates[label]?.voltage ?? 0
+
+                // Trapezoidal: I(n+1) = I(n) + (h/2L)*[V(n+1) + V(n)]
+                let geq = timeStep / (2.0 * ind)
+                let current = prevI + geq * (voltage + prevV)
                 inductorStates[label] = (voltage: voltage, current: current)
 
             default:
                 break
             }
         }
-    }
-
-    private func nodeNamesForComponent(_ component: SchematicComponent, in document: CircuitDocument) -> (String, String) {
-        // Find wires connected to this component's pins
-        let connectedWires = document.wires.filter {
-            $0.startComponentID == component.id || $0.endComponentID == component.id
-        }
-        let node1 = "n\(component.id.uuidString.prefix(4))_0"
-        let node2 = "n\(component.id.uuidString.prefix(4))_1"
-        return (node1, node2)
     }
 }

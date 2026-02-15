@@ -17,6 +17,9 @@ let package = Package(
             path: "JSpice",
             resources: [
                 .process("Resources")
+            ],
+            swiftSettings: [
+                .define("TESTING", .when(configuration: .debug))
             ]
         ),
         .testTarget(

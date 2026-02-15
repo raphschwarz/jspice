@@ -14,22 +14,12 @@ import Foundation
 ///
 /// References: JSpice CircuitMatrixSolver.java, Cheng "The MNA approach to linear circuits"
 actor MNASolver {
-    // MARK: - Node Mapping
-
-    private var nodeMap: [String: Int] = [:]  // node name -> matrix index
-    private var voltageSourceMap: [String: Int] = [:]  // VS name -> extra row index
-    private var groundNode: String = "0"
-
-    // MARK: - System
-
-    private var matrixSize: Int = 0
-    private var matrix: Matrix = Matrix(rows: 0, cols: 0)
-    private var rhs: Vector = Vector(count: 0)
 
     // MARK: - Configuration
 
     var maxIterations: Int = 100
     var convergenceTolerance: Double = 1e-9
+    var dampingFactor: Double = 0.5  // Newton-Raphson damping (0 = no damping, 1 = full damping)
 
     // MARK: - Build the system from a netlist
 
@@ -38,129 +28,184 @@ actor MNASolver {
         var groundNodeName: String = "0"
     }
 
-    func solve(netlist: Netlist) throws -> MNASolution {
-        // 1. Map nodes
-        buildNodeMap(from: netlist)
+    // MARK: - Errors
 
-        // 2. Allocate matrix
-        matrixSize = nodeMap.count + voltageSourceMap.count
-        matrix = Matrix(rows: matrixSize, cols: matrixSize)
-        rhs = Vector(count: matrixSize)
+    enum SolverError: Error, CustomStringConvertible {
+        case convergenceFailed(iterations: Int, residual: Double)
+        case emptyNetlist
+        case noNodes
+
+        var description: String {
+            switch self {
+            case .convergenceFailed(let iters, let residual):
+                return "Newton-Raphson failed to converge after \(iters) iterations (residual: \(String(format: "%.2e", residual)))"
+            case .emptyNetlist:
+                return "Netlist contains no components"
+            case .noNodes:
+                return "No circuit nodes found"
+            }
+        }
+    }
+
+    func solve(netlist: Netlist) throws -> MNASolution {
+        guard !netlist.components.isEmpty else {
+            throw SolverError.emptyNetlist
+        }
+
+        // 1. Map nodes (using local state, not instance properties)
+        let (nodeMap, voltageSourceMap, groundNode) = buildNodeMap(from: netlist)
+
+        // 2. Compute matrix size
+        let matrixSize = nodeMap.count + voltageSourceMap.count
+        guard matrixSize > 0 else {
+            throw SolverError.noNodes
+        }
 
         // 3. Check for nonlinear components
         let hasNonlinear = netlist.components.contains { $0.isNonlinear }
 
         if hasNonlinear {
-            return try solveNonlinear(netlist: netlist)
+            return try solveNonlinear(
+                netlist: netlist,
+                nodeMap: nodeMap,
+                vsMap: voltageSourceMap,
+                groundNode: groundNode,
+                matrixSize: matrixSize
+            )
         } else {
-            return try solveLinear(netlist: netlist)
+            return try solveLinear(
+                netlist: netlist,
+                nodeMap: nodeMap,
+                vsMap: voltageSourceMap,
+                groundNode: groundNode,
+                matrixSize: matrixSize
+            )
         }
     }
 
     // MARK: - Linear solve
 
-    private func solveLinear(netlist: Netlist) throws -> MNASolution {
-        matrix.reset()
-        rhs.reset()
-
-        // Stamp all components
-        var mutableMatrix = matrix
-        var mutableRHS = rhs
+    private func solveLinear(
+        netlist: Netlist,
+        nodeMap: [String: Int],
+        vsMap: [String: Int],
+        groundNode: String,
+        matrixSize: Int
+    ) throws -> MNASolution {
+        var matrix = Matrix(rows: matrixSize, cols: matrixSize)
+        var rhs = Vector(count: matrixSize)
         let initialGuess = Vector(count: matrixSize)
 
         for component in netlist.components {
             component.stamp(
-                matrix: &mutableMatrix,
-                rhs: &mutableRHS,
+                matrix: &matrix,
+                rhs: &rhs,
                 solution: initialGuess,
                 nodeMap: nodeMap,
-                vsMap: voltageSourceMap
+                vsMap: vsMap
             )
         }
 
-        // Solve Ax = b
-        let solution = try solveLinearSystem(A: mutableMatrix, b: mutableRHS)
-        return buildSolution(from: solution)
+        let solution = try solveLinearSystem(A: matrix, b: rhs)
+        return buildSolution(from: solution, nodeMap: nodeMap, vsMap: vsMap, groundNode: groundNode)
     }
 
-    // MARK: - Nonlinear solve (Newton-Raphson iteration)
+    // MARK: - Nonlinear solve (Newton-Raphson with damping)
 
-    private func solveNonlinear(netlist: Netlist) throws -> MNASolution {
+    private func solveNonlinear(
+        netlist: Netlist,
+        nodeMap: [String: Int],
+        vsMap: [String: Int],
+        groundNode: String,
+        matrixSize: Int
+    ) throws -> MNASolution {
         var solution = Vector(count: matrixSize)
+        var lastResidual: Double = .infinity
 
         for iteration in 0..<maxIterations {
-            // Reset system
-            var mutableMatrix = Matrix(rows: matrixSize, cols: matrixSize)
-            var mutableRHS = Vector(count: matrixSize)
+            var matrix = Matrix(rows: matrixSize, cols: matrixSize)
+            var rhs = Vector(count: matrixSize)
 
             // Stamp with current solution as linearization point
             for component in netlist.components {
                 component.stamp(
-                    matrix: &mutableMatrix,
-                    rhs: &mutableRHS,
+                    matrix: &matrix,
+                    rhs: &rhs,
                     solution: solution,
                     nodeMap: nodeMap,
-                    vsMap: voltageSourceMap
+                    vsMap: vsMap
                 )
             }
 
             // Solve for new solution
-            let newSolution = try solveLinearSystem(A: mutableMatrix, b: mutableRHS)
+            let newSolution = try solveLinearSystem(A: matrix, b: rhs)
 
             // Check convergence
             let diff = newSolution.difference(from: solution)
             let maxDiff = diff.maxNorm
 
-            solution = newSolution
+            // Apply damping to improve convergence for nonlinear circuits
+            // Damped Newton: x(k+1) = x(k) + alpha * (x_new - x(k))
+            let alpha = 1.0 - dampingFactor * min(1.0, maxDiff / max(lastResidual, 1e-30))
+            for i in 0..<solution.count {
+                solution[i] = solution[i] + alpha * (newSolution[i] - solution[i])
+            }
+
+            lastResidual = maxDiff
 
             if maxDiff < convergenceTolerance {
-                return buildSolution(from: solution)
+                return buildSolution(from: solution, nodeMap: nodeMap, vsMap: vsMap, groundNode: groundNode)
             }
         }
 
-        // Return best solution even if not fully converged
-        return buildSolution(from: solution)
+        // Throw convergence error instead of silently returning bad results
+        throw SolverError.convergenceFailed(iterations: maxIterations, residual: lastResidual)
     }
 
-    // MARK: - Node mapping
+    // MARK: - Node mapping (pure function, no instance state mutation)
 
-    private func buildNodeMap(from netlist: Netlist) {
-        groundNode = netlist.groundNodeName
-        nodeMap.removeAll()
-        voltageSourceMap.removeAll()
+    private func buildNodeMap(from netlist: Netlist) -> (nodeMap: [String: Int], vsMap: [String: Int], ground: String) {
+        let groundNode = netlist.groundNodeName
 
         var nodeNames = Set<String>()
-        var vsCount = 0
+        var vsNames: [String] = []
 
+        // First pass: collect all node names and voltage source names
         for component in netlist.components {
             for node in component.nodes {
-                if node != groundNode {
+                if node != groundNode && node != "gnd" && node != "GND" {
                     nodeNames.insert(node)
                 }
             }
             if component.requiresExtraEquation {
-                voltageSourceMap[component.name] = nodeNames.count + vsCount
-                vsCount += 1
+                vsNames.append(component.name)
             }
         }
 
-        // Assign indices (ground is implicit 0 reference)
+        // Assign node indices (ground is implicit reference)
+        var nodeMap: [String: Int] = [:]
         for (index, name) in nodeNames.sorted().enumerated() {
             nodeMap[name] = index
         }
 
-        // Adjust VS map indices based on final node count
+        // Assign voltage source indices (after node indices)
         let nodeCount = nodeMap.count
-        var newVSMap: [String: Int] = [:]
-        for (name, _) in voltageSourceMap {
-            newVSMap[name] = nodeCount + Array(voltageSourceMap.keys.sorted()).firstIndex(of: name)!
+        var vsMap: [String: Int] = [:]
+        for (index, name) in vsNames.sorted().enumerated() {
+            vsMap[name] = nodeCount + index
         }
-        voltageSourceMap = newVSMap
+
+        return (nodeMap, vsMap, groundNode)
     }
 
     // MARK: - Build solution
 
-    private func buildSolution(from solution: Vector) -> MNASolution {
+    private func buildSolution(
+        from solution: Vector,
+        nodeMap: [String: Int],
+        vsMap: [String: Int],
+        groundNode: String
+    ) -> MNASolution {
         var voltages: [String: Double] = [:]
         var currents: [String: Double] = [:]
 
@@ -171,7 +216,7 @@ actor MNASolver {
             voltages[name] = solution[index]
         }
 
-        for (name, index) in voltageSourceMap {
+        for (name, index) in vsMap {
             currents[name] = solution[index]
         }
 
@@ -213,9 +258,9 @@ protocol MNAComponent {
 }
 
 extension MNAComponent {
-    /// Helper to get matrix index for a node (-1 for ground)
+    /// Helper to get matrix index for a node (nil for ground)
     func nodeIndex(_ node: String, nodeMap: [String: Int]) -> Int? {
-        if node == "0" || node == "gnd" { return nil }
+        if node == "0" || node == "gnd" || node == "GND" { return nil }
         return nodeMap[node]
     }
 
@@ -239,6 +284,7 @@ extension MNAComponent {
     }
 
     /// Stamp a current source between two nodes
+    /// Convention: positive current flows from fromNode to toNode
     func stampCurrentSource(
         _ current: Double,
         fromNode: String,

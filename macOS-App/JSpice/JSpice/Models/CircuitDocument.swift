@@ -76,6 +76,14 @@ struct ProjectMetadata: Codable, Equatable {
     var createdDate: Date = Date()
     var modifiedDate: Date = Date()
     var version: String = "1.0"
+
+    // Exclude dates from equality check (they change on every save)
+    static func == (lhs: ProjectMetadata, rhs: ProjectMetadata) -> Bool {
+        lhs.name == rhs.name &&
+        lhs.author == rhs.author &&
+        lhs.description == rhs.description &&
+        lhs.version == rhs.version
+    }
 }
 
 // MARK: - Simulation Configuration
