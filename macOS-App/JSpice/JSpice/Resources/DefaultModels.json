@@ -1,0 +1,112 @@
+{
+    "version": "1.0",
+    "models": {
+        "diodes": {
+            "1N4148": {
+                "type": "diode",
+                "parameters": {
+                    "saturationCurrent": 2.52e-9,
+                    "emissionCoefficient": 1.752,
+                    "breakdownVoltage": 100,
+                    "description": "Small signal switching diode"
+                }
+            },
+            "1N4001": {
+                "type": "diode",
+                "parameters": {
+                    "saturationCurrent": 14.11e-9,
+                    "emissionCoefficient": 1.984,
+                    "breakdownVoltage": 50,
+                    "description": "General purpose rectifier"
+                }
+            }
+        },
+        "npnTransistors": {
+            "2N3904": {
+                "type": "npnBJT",
+                "parameters": {
+                    "beta": 300,
+                    "saturationCurrent": 6.734e-15,
+                    "earlyVoltage": 74.03,
+                    "description": "General purpose NPN"
+                }
+            },
+            "2N2222": {
+                "type": "npnBJT",
+                "parameters": {
+                    "beta": 200,
+                    "saturationCurrent": 14.34e-15,
+                    "earlyVoltage": 98.5,
+                    "description": "General purpose NPN switching"
+                }
+            }
+        },
+        "pnpTransistors": {
+            "2N3906": {
+                "type": "pnpBJT",
+                "parameters": {
+                    "beta": 200,
+                    "saturationCurrent": 1.41e-15,
+                    "earlyVoltage": 18.7,
+                    "description": "General purpose PNP"
+                }
+            }
+        },
+        "opAmps": {
+            "TL072": {
+                "type": "opAmp",
+                "parameters": {
+                    "openLoopGain": 200000,
+                    "gbwProduct": 3000000,
+                    "inputOffset": 0.003,
+                    "description": "Low-noise JFET-input op-amp"
+                }
+            },
+            "LM741": {
+                "type": "opAmp",
+                "parameters": {
+                    "openLoopGain": 200000,
+                    "gbwProduct": 1000000,
+                    "inputOffset": 0.001,
+                    "description": "General purpose op-amp"
+                }
+            },
+            "NE5532": {
+                "type": "opAmp",
+                "parameters": {
+                    "openLoopGain": 100000,
+                    "gbwProduct": 10000000,
+                    "inputOffset": 0.0005,
+                    "description": "Low-noise audio op-amp"
+                }
+            }
+        }
+    },
+    "templates": {
+        "voltageDivider": {
+            "name": "Voltage Divider",
+            "description": "Simple resistive voltage divider",
+            "spice": "V1 in 0 5\nR1 in out 1k\nR2 out 0 1k\n.tran 1u 10m\n.end"
+        },
+        "rcLowPass": {
+            "name": "RC Low-Pass Filter",
+            "description": "First-order RC low-pass filter at 1kHz",
+            "spice": "V1 in 0 AC 1 SIN(0 1 1000)\nR1 in out 1k\nC1 out 0 159n\n.tran 1u 10m\n.ac dec 20 1 1MEG\n.end"
+        },
+        "commonEmitter": {
+            "name": "Common Emitter Amplifier",
+            "description": "BJT common emitter amplifier stage",
+            "spice": "VCC vcc 0 12\nV1 in 0 AC 1 SIN(0 0.01 1000)\nR1 vcc base 47k\nR2 base 0 10k\nQ1 collector base emitter 2N3904\nRC vcc collector 4.7k\nRE emitter 0 1k\n.tran 1u 10m\n.end"
+        },
+        "invertingAmplifier": {
+            "name": "Inverting Amplifier",
+            "description": "Op-amp inverting amplifier with gain = -10",
+            "spice": "VCC vp 0 15\nVEE 0 vn 15\nV1 in 0 AC 1 SIN(0 0.1 1000)\nR1 in inv 1k\nR2 inv out 10k\n.tran 1u 10m\n.end"
+        },
+        "toneControl": {
+            "name": "Passive Tone Control",
+            "description": "Simple RC tone control circuit for audio",
+            "spice": "V1 in 0 AC 1 SIN(0 1 1000)\nR1 in mid 10k\nC1 mid out 10n\nR2 out 0 10k\n.tran 1u 10m\n.ac dec 20 20 20000\n.end"
+        }
+    }
+}
