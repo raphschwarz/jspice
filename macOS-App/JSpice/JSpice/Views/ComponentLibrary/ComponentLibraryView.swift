@@ -189,7 +189,7 @@ struct ComponentLibraryItem: View {
                 Button(action: { onAdd(type) }) {
                     Image(systemName: "plus.circle.fill")
                         .font(.system(size: 16))
-                        .foregroundStyle(.accentColor)
+                        .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain)
                 .transition(.scale.combined(with: .opacity))

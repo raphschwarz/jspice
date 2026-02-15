@@ -424,7 +424,7 @@ struct DataTableView: View {
                         if result.analysisType == .dcOperatingPoint {
                             HStack(spacing: 0) {
                                 ForEach(signalNames, id: \.self) { name in
-                                    let value = result.nodeVoltages[name]?.first ?? result.branchCurrents[name]?.first ?? 0
+                                    let value: Double = result.nodeVoltages[name]?.first ?? result.branchCurrents[name]?.first ?? 0
                                     DataCell(text: String(format: "%.6g", value), isHeader: false)
                                 }
                             }

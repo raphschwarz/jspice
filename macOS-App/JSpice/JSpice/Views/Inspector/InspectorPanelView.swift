@@ -129,8 +129,8 @@ struct ComponentInspector: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextField("", value: Binding(
-                        get: { component.position.x },
-                        set: { component.position.x = $0 }
+                        get: { Double(component.position.x) },
+                        set: { component.position.x = CGFloat($0 ?? 0) }
                     ), format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 60)
@@ -139,8 +139,8 @@ struct ComponentInspector: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextField("", value: Binding(
-                        get: { component.position.y },
-                        set: { component.position.y = $0 }
+                        get: { Double(component.position.y) },
+                        set: { component.position.y = CGFloat($0 ?? 0) }
                     ), format: .number)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 60)
