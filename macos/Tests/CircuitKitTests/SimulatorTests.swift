@@ -497,3 +497,212 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(Pacing.describe(speed: 0.005), "5 ms per second")
     }
 }
+
+/// Op-amp and OTA models, and the synth building blocks: 555, Schmitt inverter, analog switch, JFET.
+final class SynthPartTests: XCTestCase {
+    private func risingEdges(_ simulator: Simulator, _ index: Int, from start: Double, to end: Double, step: Double,
+                             high: (Simulator) -> Bool) -> [Double] {
+        var edges: [Double] = []
+        var was: Bool?
+        var time = 0.0
+        while time < end {
+            simulator.step()
+            time += step
+            let now = high(simulator)
+            if time > start, let was, !was, now { edges.append(time) }
+            was = now
+        }
+        return edges
+    }
+
+    private func averagePeriod(_ edges: [Double]) -> Double {
+        guard edges.count >= 2 else { return .nan }
+        return (edges.last! - edges.first!) / Double(edges.count - 1)
+    }
+
+    func testOpAmpModelsSlewAtTheirRate() {
+        for (name, rate) in [("TL072", 13e6), ("LM358", 0.3e6)] {
+            var b = CircuitBuilder()
+            b.add(.squareVoltage, (0, 4), (0, 0), ["high": 5, "low": -5, "frequency": 10_000])
+            b.ground((0, 4))
+            b.wire((0, 0), (2, 0), (2, 1), (4, 1))
+            // follower: + at (4,1) with the op-amp flipped, − tied to the output
+            let follower = b.add(.opAmp, (4, 2), (8, 2), Examples.model(.opAmp, name), flipped: true)
+            b.wire((4, 3), (4, 5), (9, 5), (9, 2), (8, 2))
+            b.add(.resistor, (9, 2), (13, 2), ["resistance": 10_000])
+            b.ground((13, 2))
+            let dt = 1e-8
+            let simulator = Simulator(circuit: b.circuit, timeStep: dt)
+            var previous = 0.0
+            var fastest = 0.0
+            for _ in 0..<20_000 {
+                simulator.step()
+                let v = simulator.voltageAcross(follower)
+                fastest = max(fastest, abs(v - previous) / dt)
+                previous = v
+            }
+            XCTAssertEqual(fastest, rate, accuracy: rate * 0.05, name)
+            XCTAssertEqual(simulator.convergenceFailures, 0, name)
+        }
+    }
+
+    func testTriangleLFORunsAtItsDesignFrequency() {
+        let circuit = Examples.lfo.circuit
+        let pacing = Pacing.suggest(for: circuit)
+        XCTAssertEqual(pacing.speed, 1)
+        let simulator = Simulator(circuit: circuit, timeStep: pacing.timeStep)
+        let comparator = circuit.elements.lastIndex { $0.kind == .opAmp }!
+        let integrator = circuit.elements.firstIndex { $0.kind == .opAmp }!
+        var peak = 0.0
+        let edges = risingEdges(simulator, comparator, from: 1, to: 5, step: pacing.timeStep) { simulator in
+            peak = max(peak, abs(simulator.voltageAcross(integrator)))
+            return simulator.voltageAcross(comparator) > 0
+        }
+        // f = R(feedback) / (4 R(divider) R(integrator) C) = 20k / (4 × 10k × 220k × 1 µF)
+        XCTAssertEqual(1 / averagePeriod(edges), 20e3 / (4 * 10e3 * 220e3 * 1e-6), accuracy: 0.1)
+        // the triangle peaks at the swing times R(divider) / R(feedback)
+        XCTAssertEqual(peak, 13.5 * 0.5, accuracy: 0.5)
+        XCTAssertLessThan(simulator.convergenceFailures, 10)
+    }
+
+    func testOTAOutputCurrentFollowsTheBiasCurrent() {
+        for (input, load) in [(0.01, 1000.0), (1.0, 100_000.0)] {
+            var b = CircuitBuilder()
+            b.add(.dcVoltage, (0, 6), (0, 3), ["voltage": input])
+            b.ground((0, 6))
+            b.wire((0, 3), (2, 3))
+            let ota = b.add(.ota, (2, 2), (6, 2), Examples.model(.ota, "LM13700"))
+            b.ground((2, 1))
+            b.add(.resistor, (4, 4), (4, 8), ["resistance": 15_000])
+            b.ground((4, 8))
+            let loadID = b.add(.resistor, (6, 2), (6, 6), ["resistance": load])
+            b.ground((6, 6))
+            let simulator = Simulator(circuit: b.circuit, timeStep: 1e-3)
+            for _ in 0..<10 { simulator.step() }
+            let index = simulator.circuit.index(of: ota)!
+            let biasPin = simulator.terminalVoltages(index)[3]
+            let bias = -biasPin / 15_000
+            let output = simulator.voltageAcross(simulator.circuit.index(of: loadID)!)
+            if input < 0.1 {
+                XCTAssertEqual(biasPin, -13.8, accuracy: 0.05, "the bias pin sits two junctions above V−")
+                XCTAssertEqual(output / load, bias * tanh(input / (2 * 0.025852)), accuracy: bias * 1e-3)
+            } else {
+                XCTAssertEqual(output, 13.5, accuracy: 0.2, "the output clamps below the supply")
+            }
+            XCTAssertEqual(simulator.convergenceFailures, 0)
+        }
+    }
+
+    func testTimerAstableRunsAtItsDesignFrequency() {
+        let circuit = Examples.timerFlasher.circuit
+        let pacing = Pacing.suggest(for: circuit)
+        let simulator = Simulator(circuit: circuit, timeStep: pacing.timeStep)
+        let timer = circuit.elements.firstIndex { $0.kind == .timer555 }!
+        let edges = risingEdges(simulator, timer, from: 1.5, to: 6, step: pacing.timeStep) { $0.isHigh(timer) }
+        // T = ln 2 (RA + 2 RB) C
+        XCTAssertEqual(averagePeriod(edges), log(2) * (1000 + 2 * 68_000) * 10e-6, accuracy: 0.03)
+        XCTAssertEqual(simulator.convergenceFailures, 0)
+    }
+
+    func testSchmittInverterOscillates() {
+        var b = CircuitBuilder()
+        let inverter = b.add(.schmittInverter, (6, 4), (10, 4), Examples.model(.schmittInverter, "CD40106"))
+        b.wire((10, 4), (10, 1))
+        b.add(.resistor, (10, 1), (6, 1), ["resistance": 100_000])
+        b.wire((6, 1), (6, 4))
+        b.add(.capacitor, (6, 4), (6, 8), ["capacitance": 4.7e-6])
+        b.ground((6, 8))
+        let simulator = Simulator(circuit: b.circuit, timeStep: 2e-4)
+        let index = simulator.circuit.index(of: inverter)!
+        let edges = risingEdges(simulator, index, from: 1, to: 4, step: 2e-4) { $0.isHigh(index) }
+        // between thresholds 0.38 and 0.6 of the supply: T = RC (ln(0.62 / 0.4) + ln(0.6 / 0.38))
+        XCTAssertEqual(averagePeriod(edges), 0.47 * (log(0.62 / 0.4) + log(0.6 / 0.38)), accuracy: 0.02)
+    }
+
+    func testSampleAndHoldHoldsBetweenClockPulses() {
+        let circuit = Examples.sampleAndHold.circuit
+        let pacing = Pacing.suggest(for: circuit)
+        let simulator = Simulator(circuit: circuit, timeStep: pacing.timeStep)
+        let toggle = circuit.elements.firstIndex { $0.kind == .analogSwitch }!
+        let buffer = circuit.elements.firstIndex { $0.kind == .opAmp }!
+        let input = circuit.elements.firstIndex { $0.kind == .acVoltage }!
+        var previous: Double?
+        var wasClosed = false
+        var drift = 0.0
+        var sampled = 0
+        for _ in 0..<Int(3 / pacing.timeStep) {
+            simulator.step()
+            let output = simulator.voltageAcross(buffer)
+            let closed = simulator.switchConduction(toggle) > 0.5
+            if !closed, !wasClosed, let previous { drift = max(drift, abs(output - previous)) }
+            if wasClosed && !closed {
+                // just sampled: the output has caught up with the input
+                XCTAssertEqual(output, simulator.voltageAcross(input), accuracy: 0.6)
+                sampled += 1
+            }
+            wasClosed = closed
+            previous = output
+        }
+        XCTAssertGreaterThanOrEqual(sampled, 10)
+        XCTAssertLessThan(drift, 1e-3, "the held voltage should not droop or follow the input")
+    }
+
+    func testJFETConductsIDSSWithGateTiedToSource() {
+        var b = CircuitBuilder()
+        b.add(.dcVoltage, (0, 4), (0, 0), ["voltage": 10])
+        b.wire((0, 0), (4, 0))
+        let jfet = b.add(.njfet, (2, 2), (4, 2), Examples.model(.njfet, "2N5457"))
+        b.wire((2, 2), (2, 4), (4, 4))
+        b.wire((4, 4), (0, 4))
+        b.ground((0, 4))
+        let simulator = Simulator(circuit: b.circuit, timeStep: 1e-3)
+        for _ in 0..<5 { simulator.step() }
+        XCTAssertEqual(simulator.current(simulator.circuit.index(of: jfet)!), 3e-3 * (1 + 0.01 * 10), accuracy: 2e-5)
+    }
+
+    func testAnalogSwitchFollowsItsControlInput() {
+        for control in [12.0, 0.0] {
+            var b = CircuitBuilder()
+            b.add(.dcVoltage, (0, 4), (0, 0), ["voltage": 10])
+            b.wire((0, 0), (2, 0))
+            let toggle = b.add(.analogSwitch, (2, 0), (6, 0), Examples.model(.analogSwitch, "CD4066"))
+            b.add(.resistor, (6, 0), (6, 4), ["resistance": 10_000])
+            b.wire((6, 4), (0, 4))
+            b.ground((0, 4))
+            b.add(.dcVoltage, (8, 2), (8, -2), ["voltage": control])
+            b.ground((8, 2))
+            b.wire((8, -2), (4, -2))
+            let simulator = Simulator(circuit: b.circuit, timeStep: 1e-3)
+            for _ in 0..<5 { simulator.step() }
+            let current = simulator.current(simulator.circuit.index(of: toggle)!)
+            if control > 6 {
+                XCTAssertEqual(current, 10 / 10_125, accuracy: 1e-6)
+            } else {
+                XCTAssertLessThan(abs(current), 1e-8)
+            }
+        }
+    }
+
+    func testModelsMatchTheirParameterDefaults() {
+        for kind in ElementKind.allCases where !kind.models.isEmpty {
+            let element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
+            XCTAssertEqual(element.model?.name, kind.models[0].name, "\(kind)")
+            for model in kind.models {
+                for key in model.values.keys {
+                    XCTAssertTrue(kind.params.contains { $0.key == key }, "\(kind) \(model.name) \(key)")
+                }
+            }
+        }
+    }
+
+    func testTimerPinsSurroundTheChip() {
+        let timer = Element(kind: .timer555, a: GridPoint(0, 0), b: GridPoint(0, 5))
+        XCTAssertEqual(Set(timer.posts).count, 8)
+        // DIS, THR, TRIG and CTRL on one side, VCC, RESET, OUT and GND on the other
+        XCTAssertEqual(Set([6, 5, 1, 4].map { timer.posts[$0].x }).count, 1)
+        XCTAssertEqual(Set([7, 3, 2, 0].map { timer.posts[$0].x }).count, 1)
+        var flipped = timer
+        flipped.flipped = true
+        XCTAssertEqual(flipped.posts[6].x, -timer.posts[6].x)
+    }
+}

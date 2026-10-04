@@ -154,7 +154,7 @@ final class CircuitCanvasView: NSView {
                 : voltages.map { palette.color(forVoltage: $0, scale: voltageScale) }
             var style = SymbolStyle(lineWidth: lineWidth, terminalColors: colors, fill: palette.neutral, accent: accent)
             if live {
-                style.brightness = simulator.brightness(index)
+                style.brightness = element.kind == .analogSwitch ? simulator.switchConduction(index) : simulator.brightness(index)
                 style.memristorState = simulator.memristorState(index)
             }
             if element.kind == .probe { style.fill = palette.text }
@@ -266,6 +266,9 @@ final class CircuitCanvasView: NSView {
         case .currentSource: return SI.format(element[param: "current"], unit: "A")
         case .memristor:
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
+        case .opAmp, .ota, .timer555, .schmittInverter, .analogSwitch, .njfet:
+            // the real part it behaves like
+            return element.model?.name ?? "Custom"
         default: return nil
         }
     }
@@ -307,7 +310,12 @@ final class CircuitCanvasView: NSView {
             if element.kind.isTransistor {
                 anchor = CGPoint(x: b.x + (horizontal ? 0.6 * unit : 0), y: b.y)
                 horizontal = false
-            } else if element.kind == .potentiometer {
+            } else if element.kind == .timer555 {
+                // centred above the chip
+                let points = element.extentPoints.map(screen)
+                anchor = CGPoint(x: (points.map(\.x).min()! + points.map(\.x).max()!) / 2, y: points.map(\.y).min()! - 0.4 * unit)
+                horizontal = true
+            } else if element.kind == .potentiometer || element.kind == .analogSwitch {
                 let wiper = screen(element.wiper)
                 otherSide = horizontal ? wiper.y < anchor.y : wiper.x > anchor.x
             }
@@ -316,6 +324,7 @@ final class CircuitCanvasView: NSView {
             let offset: CGFloat
             switch element.kind {
             case _ where element.kind.isTransistor: offset = 0.4 * unit
+            case .timer555: offset = 0
             case .opAmp: offset = 1.9 * unit
             default: offset = (isProbe ? 1.0 : 1.05) * unit
             }
@@ -420,8 +429,8 @@ final class CircuitCanvasView: NSView {
         let direction = horizontal ? GridPoint(d.x.signum(), 0) : GridPoint(0, d.y.signum())
         if element.kind == .ground {
             element.b = element.a + direction
-        } else if element.kind.isTransistor {
-            element.b = element.a + direction * 2
+        } else if let fixed = element.kind.fixedLength {
+            element.b = element.a + direction * fixed
         } else {
             element.b = element.a + direction * max(2, horizontal ? abs(d.x) : abs(d.y))
         }
@@ -671,7 +680,8 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
     case .probe: return [.voltage]
     case .ground: return []
-    case .opAmp: return [.voltage, .current]
+    case .opAmp, .ota, .timer555, .schmittInverter: return [.voltage, .current]
+    case .analogSwitch: return [.voltage, .current, .resistance]
     default: return [.voltage, .current, .power]
     }
 }

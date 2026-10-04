@@ -29,6 +29,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
     case switches = "Switches"
     case semiconductors = "Semiconductors"
     case amplifiers = "Amplifiers"
+    case timersAndLogic = "Timers & Logic"
     case memristors = "Memristors"
     case instruments = "Instruments"
 
@@ -39,8 +40,9 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case wire, ground, resistor, potentiometer, lamp, capacitor, inductor
     case dcVoltage, acVoltage, squareVoltage, currentSource
     case toggleSwitch, pushButton
-    case diode, zener, led, npn, pnp, nmos, pmos
-    case opAmp
+    case diode, zener, led, npn, pnp, nmos, pmos, njfet
+    case opAmp, ota
+    case timer555, schmittInverter, analogSwitch
     case memristor
     case probe, ammeter
 
@@ -125,7 +127,12 @@ extension ElementKind {
         case .pnp: return "PNP Transistor"
         case .nmos: return "NMOS Transistor"
         case .pmos: return "PMOS Transistor"
+        case .njfet: return "N-JFET"
         case .opAmp: return "Op-Amp"
+        case .ota: return "OTA"
+        case .timer555: return "555 Timer"
+        case .schmittInverter: return "Schmitt Inverter"
+        case .analogSwitch: return "Analog Switch"
         case .memristor: return "Memristor"
         case .probe: return "Voltage Probe"
         case .ammeter: return "Ammeter"
@@ -145,9 +152,9 @@ extension ElementKind {
         case .toggleSwitch, .pushButton: return "S"
         case .diode, .zener: return "D"
         case .led: return "LED"
-        case .npn, .pnp: return "Q"
+        case .npn, .pnp, .njfet: return "Q"
         case .nmos, .pmos: return "M"
-        case .opAmp: return "U"
+        case .opAmp, .ota, .timer555, .schmittInverter, .analogSwitch: return "U"
         case .memristor: return "MR"
         case .probe: return "P"
         case .ammeter: return "A"
@@ -159,8 +166,9 @@ extension ElementKind {
         case .wire, .ground, .resistor, .potentiometer, .lamp, .capacitor, .inductor: return .basics
         case .dcVoltage, .acVoltage, .squareVoltage, .currentSource: return .sources
         case .toggleSwitch, .pushButton: return .switches
-        case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos: return .semiconductors
-        case .opAmp: return .amplifiers
+        case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
+        case .opAmp, .ota: return .amplifiers
+        case .timer555, .schmittInverter, .analogSwitch: return .timersAndLogic
         case .memristor: return .memristors
         case .probe, .ammeter: return .instruments
         }
@@ -190,6 +198,8 @@ extension ElementKind {
         case .nmos: return "n"
         case .pmos: return "p"
         case .opAmp: return "u"
+        case .timer555: return "5"
+        case .njfet, .ota, .schmittInverter, .analogSwitch: return nil
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
@@ -197,15 +207,30 @@ extension ElementKind {
     }
 
     /// Three-terminal transistors drawn with their control terminal at `a` and their channel at `b`
-    public var isTransistor: Bool { self == .nmos || self == .pmos || self == .npn || self == .pnp }
+    public var isTransistor: Bool { self == .nmos || self == .pmos || self == .npn || self == .pnp || self == .njfet }
 
     public var isBipolar: Bool { self == .npn || self == .pnp }
 
     /// Parts whose terminals depend on a direction, which stay horizontal or vertical
-    public var isAxisAligned: Bool { isTransistor || self == .opAmp || self == .potentiometer }
+    public var isAxisAligned: Bool {
+        isTransistor || self == .opAmp || self == .ota || self == .potentiometer || self == .timer555 || self == .analogSwitch
+    }
 
     /// Parts that can be mirrored across their axis
-    public var canFlip: Bool { isTransistor || self == .opAmp || self == .potentiometer }
+    public var canFlip: Bool { isAxisAligned }
+
+    /// Length in grid units of parts whose size is fixed (their terminals sit at set places around the body)
+    public var fixedLength: Int? {
+        switch self {
+        case .nmos, .pmos, .npn, .pnp, .njfet: return 2
+        case .ota: return 4
+        case .timer555: return 5
+        default: return nil
+        }
+    }
+
+    /// Parts that switch between discrete states (a 555's flip-flop, a Schmitt trigger's output)
+    public var isDigital: Bool { self == .timer555 || self == .schmittInverter }
 
     public var isVoltageSource: Bool { self == .dcVoltage || self == .acVoltage || self == .squareVoltage }
 
@@ -215,7 +240,8 @@ extension ElementKind {
     public var defaultOffset: GridPoint {
         switch self {
         case .ground: return GridPoint(0, 1)
-        case .nmos, .pmos, .npn, .pnp: return GridPoint(2, 0)
+        case .nmos, .pmos, .npn, .pnp, .njfet: return GridPoint(2, 0)
+        case .timer555: return GridPoint(0, 5)
         default: return GridPoint(4, 0)
         }
     }
@@ -237,8 +263,40 @@ extension ElementKind {
             return [ParamSpec("beta", "Current gain", unit: "", default: 100, range: 5...1000)]
         case .opAmp:
             return [
-                ParamSpec("gain", "Open-loop gain", unit: "", default: 100_000, range: 10...10_000_000),
-                ParamSpec("limit", "Output limit", unit: "V", default: 15, range: 1...50, log: false),
+                ParamSpec("gain", "Open-loop gain", unit: "", default: 1_000_000, range: 10...10_000_000),
+                ParamSpec("limit", "Output swing", unit: "V", default: 15, range: 1...50, log: false),
+                ParamSpec("slewRate", "Slew rate (0: unlimited)", unit: "V/µs", default: 0, range: 0...100, log: false),
+                ParamSpec("gbw", "Gain-bandwidth", unit: "Hz", default: 1e9, range: 1e4...1e10),
+                ParamSpec("offset", "Input offset", unit: "V", default: 1e-6, range: -0.01...0.01, log: false),
+            ]
+        case .ota:
+            return [
+                ParamSpec("supply", "Supply (±)", unit: "V", default: 15, range: 3...18, log: false),
+                ParamSpec("biasDrop", "Bias pin junctions", unit: "", default: 2, range: 1...2, log: false),
+                ParamSpec("headroom", "Output headroom", unit: "V", default: 1.5, range: 0.1...5, log: false),
+            ]
+        case .timer555:
+            return [
+                ParamSpec("highDrop", "Output high drop", unit: "V", default: 1.7, range: 0...3, log: false),
+                ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 10, range: 1...1000),
+                ParamSpec("dischargeResistance", "Discharge resistance", unit: "Ω", default: 15, range: 1...1000),
+            ]
+        case .schmittInverter:
+            return [
+                ParamSpec("supply", "Supply", unit: "V", default: 12, range: 2...18, log: false),
+                ParamSpec("upper", "Upper threshold", unit: "× supply", default: 0.6, range: 0.3...0.9, log: false),
+                ParamSpec("lower", "Lower threshold", unit: "× supply", default: 0.38, range: 0.1...0.7, log: false),
+                ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 400, range: 1...10_000),
+            ]
+        case .analogSwitch:
+            return [
+                ParamSpec("onResistance", "On resistance", unit: "Ω", default: 125, range: 1...10_000),
+                ParamSpec("supply", "Logic supply", unit: "V", default: 12, range: 2...18, log: false),
+            ]
+        case .njfet:
+            return [
+                ParamSpec("pinchOff", "Pinch-off voltage", unit: "V", default: -1.5, range: -8...(-0.2), log: false),
+                ParamSpec("idss", "Saturation current (IDSS)", unit: "A", default: 3e-3, range: 1e-5...0.1),
             ]
         case .lamp:
             return [
@@ -359,27 +417,46 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     public var transistorTerminals: (drain: GridPoint, source: GridPoint) {
         let up = b - perpendicular * 2
         let down = b + perpendicular * 2
-        return kind == .nmos || kind == .npn ? (up, down) : (down, up)
+        return kind == .nmos || kind == .npn || kind == .njfet ? (up, down) : (down, up)
     }
 
-    /// The potentiometer's wiper, two grid units to the side of its middle
+    /// The potentiometer's wiper, two grid units to the side of its middle; also an analog switch's control input
     public var wiper: GridPoint {
         GridPoint((a.x + b.x) / 2, (a.y + b.y) / 2) - perpendicular * 2
     }
 
+    /// The OTA's bias current input (I_abc), below the middle of its triangle
+    public var biasInput: GridPoint {
+        GridPoint((a.x + b.x) / 2, (a.y + b.y) / 2) + perpendicular * 2
+    }
+
+    /// A 555's pins, in pin-number order (GND, TRIG, OUT, RESET, CTRL, THR, DIS, VCC). The chip runs from `a` to `b`;
+    /// DIS, THR, TRIG and CTRL are on the side of `perpendicular`, VCC, RESET, OUT and GND on the other.
+    public var timerPins: [GridPoint] {
+        let d = axisDirection
+        func left(_ k: Int) -> GridPoint { a + d * k + perpendicular * 3 }
+        func right(_ k: Int) -> GridPoint { a + d * k - perpendicular * 3 }
+        return [right(4), left(3), right(3), right(2), left(4), left(2), left(1), right(1)]
+    }
+
     /// Terminal positions: [a, b] for two-terminal parts, [a] for ground, [gate, drain, source] for MOSFETs,
-    /// [base, collector, emitter] for bipolar transistors, [a, b, wiper] for potentiometers and [−, +, output] for op-amps
+    /// [base, collector, emitter] for bipolar transistors, [a, b, wiper] for potentiometers ([a, b, control] for analog
+    /// switches), [−, +, output] for op-amps, [−, +, output, bias] for OTAs and the eight pins of a 555 in pin order
     public var posts: [GridPoint] {
         switch kind {
         case .ground:
             return [a]
-        case .nmos, .pmos, .npn, .pnp:
+        case .nmos, .pmos, .npn, .pnp, .njfet:
             let t = transistorTerminals
             return [a, t.drain, t.source]
-        case .potentiometer:
+        case .potentiometer, .analogSwitch:
             return [a, b, wiper]
         case .opAmp:
             return [a - perpendicular, a + perpendicular, b]
+        case .ota:
+            return [a - perpendicular, a + perpendicular, b, biasInput]
+        case .timer555:
+            return timerPins
         default:
             return [a, b]
         }
@@ -393,5 +470,76 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     /// Ideal conductors: their ends are the same node
     public var isConductor: Bool {
         kind == .wire || kind == .ammeter || (kind.isSwitch && closed)
+    }
+}
+
+/// A real part whose behaviour a generic symbol can take on: its parameter values.
+public struct PartModel: Sendable, Hashable {
+    public let name: String
+    public let summary: String
+    public let values: [String: Double]
+}
+
+extension ElementKind {
+    /// Real parts this symbol can behave like, chosen in the inspector; the first one matches the parameter defaults
+    public var models: [PartModel] {
+        switch self {
+        case .opAmp:
+            return [
+                PartModel(name: "Ideal", summary: "Very high gain and bandwidth, no slew limit",
+                          values: ["gain": 1e6, "limit": 15, "slewRate": 0, "gbw": 1e9, "offset": 1e-6]),
+                PartModel(name: "TL072", summary: "JFET input, the synth workhorse: 13 V/µs, 3 MHz",
+                          values: ["gain": 2e5, "limit": 13.5, "slewRate": 13, "gbw": 3e6, "offset": 1e-3]),
+                PartModel(name: "LM358", summary: "Low power, slow: 0.3 V/µs, 1 MHz",
+                          values: ["gain": 1e5, "limit": 13.5, "slewRate": 0.3, "gbw": 1e6, "offset": 2e-3]),
+                PartModel(name: "NE5532", summary: "Low noise audio: 9 V/µs, 10 MHz",
+                          values: ["gain": 1e5, "limit": 13, "slewRate": 9, "gbw": 10e6, "offset": 0.5e-3]),
+                PartModel(name: "LM741", summary: "The classic: 0.5 V/µs, 1 MHz",
+                          values: ["gain": 2e5, "limit": 13, "slewRate": 0.5, "gbw": 1e6, "offset": 1e-3]),
+            ]
+        case .ota:
+            return [
+                PartModel(name: "LM13700", summary: "One half of the dual OTA; bias pin two junctions above V−",
+                          values: ["supply": 15, "biasDrop": 2, "headroom": 1.5]),
+                PartModel(name: "CA3080", summary: "The original OTA; bias pin one junction above V−",
+                          values: ["supply": 15, "biasDrop": 1, "headroom": 1.5]),
+            ]
+        case .timer555:
+            return [
+                PartModel(name: "NE555", summary: "Bipolar: output high about 1.7 V below VCC",
+                          values: ["highDrop": 1.7, "outputResistance": 10, "dischargeResistance": 15]),
+                PartModel(name: "TLC555", summary: "CMOS: rail-to-rail output, weaker drive",
+                          values: ["highDrop": 0.05, "outputResistance": 50, "dischargeResistance": 30]),
+            ]
+        case .schmittInverter:
+            return [
+                PartModel(name: "CD40106", summary: "One gate of the hex CMOS Schmitt inverter",
+                          values: ["supply": 12, "upper": 0.6, "lower": 0.38, "outputResistance": 400]),
+                PartModel(name: "74HC14", summary: "One gate of the fast CMOS hex Schmitt inverter",
+                          values: ["supply": 5, "upper": 0.54, "lower": 0.32, "outputResistance": 50]),
+            ]
+        case .analogSwitch:
+            return [
+                PartModel(name: "CD4066", summary: "One switch of the quad CMOS bilateral switch",
+                          values: ["onResistance": 125, "supply": 12]),
+                PartModel(name: "DG411", summary: "One switch of the low-resistance analog switch",
+                          values: ["onResistance": 25, "supply": 12]),
+            ]
+        case .njfet:
+            return [
+                PartModel(name: "2N5457", summary: "General purpose", values: ["pinchOff": -1.5, "idss": 3e-3]),
+                PartModel(name: "J201", summary: "Low pinch-off, for phasers and VCAs", values: ["pinchOff": -0.8, "idss": 0.6e-3]),
+                PartModel(name: "2N3819", summary: "Higher current", values: ["pinchOff": -3, "idss": 10e-3]),
+            ]
+        default:
+            return []
+        }
+    }
+}
+
+extension Element {
+    /// The model whose values the parameters still have, if any
+    public var model: PartModel? {
+        kind.models.first { model in model.values.allSatisfy { abs(self[param: $0.key] - $0.value) <= 1e-9 * max(1, abs($0.value)) } }
     }
 }

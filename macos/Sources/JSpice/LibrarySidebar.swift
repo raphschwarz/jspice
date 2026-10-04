@@ -29,12 +29,21 @@ enum SymbolIcons {
         case .ground:
             element = Element(kind: kind, a: .zero, b: GridPoint(0, 1))
             (a, b, unit) = (CGPoint(x: 17, y: 4), CGPoint(x: 17, y: 14), 10)
-        case .nmos, .pmos, .npn, .pnp:
+        case .nmos, .pmos, .npn, .pnp, .njfet:
             element = Element(kind: kind, a: .zero, b: GridPoint(2, 0))
             (a, b, unit) = (CGPoint(x: 7, y: 11), CGPoint(x: 16, y: 11), 4.5)
         case .opAmp:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 5, y: 11), CGPoint(x: 29, y: 11), 5.5)
+        case .ota:
+            element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
+            (a, b, unit) = (CGPoint(x: 7, y: 9), CGPoint(x: 27, y: 9), 4.6)
+        case .timer555:
+            element = Element(kind: kind, a: .zero, b: GridPoint(0, 5))
+            (a, b, unit) = (CGPoint(x: 17, y: -0.5), CGPoint(x: 17, y: 22), 4.5)
+        case .analogSwitch:
+            element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
+            (a, b, unit) = (CGPoint(x: 2, y: 16), CGPoint(x: 32, y: 16), 6.5)
         case .potentiometer:
             // lower, to leave room for the wiper above
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
@@ -43,7 +52,16 @@ enum SymbolIcons {
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0), closed: false)
             (a, b, unit) = (CGPoint(x: 2, y: 13), CGPoint(x: 32, y: 13), 6.5)
         }
-        let posts = kind == .potentiometer ? [a, b, CGPoint(x: (a.x + b.x) / 2, y: 2)] : []
+        var posts: [CGPoint] = []
+        switch kind {
+        case .potentiometer, .analogSwitch:
+            posts = [a, b, CGPoint(x: (a.x + b.x) / 2, y: 2)]
+        case .ota, .timer555:
+            // the element's own terminal layout, scaled into the icon
+            posts = element.posts.map { CGPoint(x: a.x + CGFloat($0.x) * unit, y: a.y + CGFloat($0.y) * unit) }
+        default:
+            break
+        }
         SymbolRenderer.draw(element, posts: posts, at: a, b, unit: unit, style: style, in: ctx)
         guard let cgImage = ctx.makeImage() else { return NSImage() }
         let image = NSImage(cgImage: cgImage, size: NSSize(width: width, height: height))

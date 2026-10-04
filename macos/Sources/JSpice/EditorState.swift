@@ -151,6 +151,15 @@ final class EditorState: ObservableObject {
         if next != circuit { document.circuit = next }
     }
 
+    /// Makes a generic symbol behave like a real part: sets all of the model's parameters as one undo step
+    func applyModel(_ id: UUID, _ model: PartModel) {
+        edit("Use \(model.name)") { circuit in
+            circuit.update(id) { element in
+                for (key, value) in model.values { element[param: key] = value }
+            }
+        }
+    }
+
     /// Potentiometers are turned while simulating, like a knob, so this is not an undoable edit
     func turnPotentiometer(_ id: UUID, by delta: Double) {
         var next = circuit

@@ -73,7 +73,9 @@ enum SymbolRenderer {
     /// Length of the drawn body along the element, in grid units; the rest is leads
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
-        case .wire, .ground, .nmos, .pmos, .npn, .pnp, .opAmp: return 0
+        case .wire, .ground, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555: return 0
+        case .schmittInverter: return 1.8
+        case .analogSwitch: return 1.6
         case .resistor, .potentiometer, .inductor: return 2
         case .memristor: return 2.2
         case .lamp, .probe, .ammeter: return 1.4
@@ -93,8 +95,15 @@ enum SymbolRenderer {
             drawTransistor(element, at: a, b, unit: u, style: style, in: ctx)
         case .npn, .pnp:
             drawBipolar(element, at: a, b, unit: u, style: style, in: ctx)
-        case .opAmp:
-            drawOpAmp(element, at: a, b, unit: u, style: style, in: ctx)
+        case .njfet:
+            drawJFET(element, at: a, b, unit: u, style: style, in: ctx)
+        case .opAmp, .ota:
+            drawOpAmp(element, posts: posts, at: a, b, unit: u, style: style, in: ctx)
+        case .timer555:
+            drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
+        case .analogSwitch:
+            drawTwoTerminal(element, at: a, b, unit: u, style: style, in: ctx)
+            if posts.count == 3 { drawControl(from: posts[2], at: a, b, unit: u, style: style, in: ctx) }
         case .potentiometer:
             drawTwoTerminal(element, at: a, b, unit: u, style: style, in: ctx)
             if posts.count == 3 { drawWiper(from: posts[2], toward: CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2), unit: u, style: style, in: ctx) }
@@ -256,7 +265,27 @@ enum SymbolRenderer {
             addPlus(to: path, at: CGPoint(x: c - h - 0.35 * u, y: -0.65 * u), size: 0.16 * u)
         case .ammeter:
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
-        case .wire, .ground, .nmos, .pmos, .npn, .pnp, .opAmp:
+        case .analogSwitch:
+            // closed while the control input is high
+            path.move(to: CGPoint(x: c - h, y: 0))
+            path.addLine(to: style.brightness > 0.5 ? CGPoint(x: c + h, y: -0.2 * u) : CGPoint(x: c + h * 0.85, y: -0.75 * u))
+        case .schmittInverter:
+            // triangle, output bubble, and the hysteresis glyph inside
+            let r = 0.17 * u
+            let tip = c + h - 2 * r
+            path.move(to: CGPoint(x: c - h, y: -0.8 * u))
+            path.addLine(to: CGPoint(x: c - h, y: 0.8 * u))
+            path.addLine(to: CGPoint(x: tip, y: 0))
+            path.closeSubpath()
+            path.addEllipse(in: CGRect(x: tip, y: -r, width: 2 * r, height: 2 * r))
+            let x0 = c - h + 0.22 * u
+            path.move(to: CGPoint(x: x0, y: 0.2 * u))
+            path.addLine(to: CGPoint(x: x0 + 0.4 * u, y: 0.2 * u))
+            path.addLine(to: CGPoint(x: x0 + 0.4 * u, y: -0.2 * u))
+            path.move(to: CGPoint(x: x0 + 0.2 * u, y: 0.2 * u))
+            path.addLine(to: CGPoint(x: x0 + 0.2 * u, y: -0.2 * u))
+            path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
+        case .wire, .ground, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555:
             break
         }
 
@@ -268,7 +297,7 @@ enum SymbolRenderer {
         }
 
         switch kind {
-        case .toggleSwitch, .pushButton:
+        case .toggleSwitch, .pushButton, .analogSwitch:
             for (x, color) in [(c - h, colorA), (c + h, colorB)] {
                 ctx.setFillColor(color.cgColor)
                 let r = max(2, 0.18 * u)
@@ -502,12 +531,14 @@ enum SymbolRenderer {
         ctx.restoreGState()
     }
 
-    /// Op-amp: inputs one grid unit either side of `a` (− then +), output at `b`
-    private static func drawOpAmp(_ element: Element, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
-                                  in ctx: CGContext) {
+    /// Op-amp or OTA: inputs one grid unit either side of `a` (− then +), output at `b`; an OTA's bias input enters
+    /// the triangle from below its middle, and a circle on its output marks it as a current source
+    private static func drawOpAmp(_ element: Element, posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat,
+                                  style: SymbolStyle, in ctx: CGContext) {
         let L = hypot(b.x - a.x, b.y - a.y)
         guard L > 0.5 else { return }
-        let colors = style.terminalColors.count == 3 ? style.terminalColors : [style.fill, style.fill, style.fill]
+        let isOTA = element.kind == .ota
+        let colors = style.terminalColors.count >= 3 ? style.terminalColors : [style.fill, style.fill, style.fill, style.fill]
         let left = min(0.6 * u, L * 0.2)
         let tipX = max(left + u, L - 0.6 * u)
 
@@ -540,7 +571,162 @@ enum SymbolRenderer {
         let output = CGMutablePath()
         output.move(to: CGPoint(x: tipX, y: 0))
         output.addLine(to: CGPoint(x: L, y: 0))
+        if isOTA {
+            let r = 0.28 * u
+            let centre = min(tipX + r + 0.05 * u, L - r)
+            output.move(to: CGPoint(x: centre + r, y: 0))
+            output.addEllipse(in: CGRect(x: centre - r, y: -r, width: 2 * r, height: 2 * r))
+            output.addEllipse(in: CGRect(x: centre - r * 0.45, y: -r, width: 2 * r, height: 2 * r))
+        }
         stroke(output, width: style.lineWidth, from: colors[2], to: colors[2], start: 0, end: 1, length: L, in: ctx)
+        if isOTA {
+            // bias input: from below the triangle's middle up to its edge, with an arrow into it
+            let x = L / 2
+            let edge = 1.7 * u * max(0, (tipX - x) / max(tipX - left, 0.001))
+            let bias = CGMutablePath()
+            bias.move(to: CGPoint(x: x, y: 2 * u))
+            bias.addLine(to: CGPoint(x: x, y: edge))
+            bias.move(to: CGPoint(x: x - 0.17 * u, y: edge + 0.32 * u))
+            bias.addLine(to: CGPoint(x: x, y: edge))
+            bias.addLine(to: CGPoint(x: x + 0.17 * u, y: edge + 0.32 * u))
+            let color = colors.count > 3 ? colors[3] : style.fill
+            stroke(bias, width: style.lineWidth, from: color, to: color, start: 0, end: 1, length: L, in: ctx)
+        }
+        ctx.restoreGState()
+    }
+
+    /// N-channel JFET: gate at `a` with an arrow into the channel; drain and source two grid units either side of `b`
+    private static func drawJFET(_ element: Element, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                 in ctx: CGContext) {
+        let L = hypot(b.x - a.x, b.y - a.y)
+        guard L > 0.5 else { return }
+        let colors = style.terminalColors.count == 3 ? style.terminalColors : [style.fill, style.fill, style.fill]
+        let (gateColor, drainColor, sourceColor) = (colors[0], colors[1], colors[2])
+        let barX = L - 0.55 * u
+        ctx.saveGState()
+        enterFrame(of: element, at: a, b, in: ctx)
+        let gate = CGMutablePath()
+        gate.move(to: .zero)
+        gate.addLine(to: CGPoint(x: barX, y: 0))
+        gate.move(to: CGPoint(x: barX - 0.38 * u, y: -0.17 * u))
+        gate.addLine(to: CGPoint(x: barX - 0.05 * u, y: 0))
+        gate.addLine(to: CGPoint(x: barX - 0.38 * u, y: 0.17 * u))
+        stroke(gate, width: style.lineWidth, from: gateColor, to: gateColor, start: 0, end: 1, length: L, in: ctx)
+        let bar = CGMutablePath()
+        bar.move(to: CGPoint(x: barX, y: -0.85 * u))
+        bar.addLine(to: CGPoint(x: barX, y: 0.85 * u))
+        stroke(bar, width: style.lineWidth * 1.8, from: drainColor.mixed(with: sourceColor, 0.5),
+               to: drainColor.mixed(with: sourceColor, 0.5), start: 0, end: 1, length: L, in: ctx)
+        for (y, color) in [(-1.0, drainColor), (1.0, sourceColor)] as [(CGFloat, RGBA)] {
+            let lead = CGMutablePath()
+            lead.move(to: CGPoint(x: barX, y: 0.6 * u * y))
+            lead.addLine(to: CGPoint(x: L, y: 0.6 * u * y))
+            lead.addLine(to: CGPoint(x: L, y: 2 * u * y))
+            stroke(lead, width: style.lineWidth, from: color, to: color, start: 0, end: 1, length: L, in: ctx)
+        }
+        ctx.restoreGState()
+    }
+
+    /// The analog switch's control input: a dashed line from its terminal to the lever
+    private static func drawControl(from control: CGPoint, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                    in ctx: CGContext) {
+        let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+        let dx = middle.x - control.x
+        let dy = middle.y - control.y
+        let distance = hypot(dx, dy)
+        guard distance > u else { return }
+        let end = CGPoint(x: middle.x - dx / distance * 0.5 * u, y: middle.y - dy / distance * 0.5 * u)
+        let color = style.terminalColors.count == 3 ? style.terminalColors[2] : style.fill
+        ctx.saveGState()
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(style.lineWidth)
+        ctx.setLineCap(.round)
+        ctx.move(to: control)
+        ctx.addLine(to: CGPoint(x: control.x + dx / distance * 0.6 * u, y: control.y + dy / distance * 0.6 * u))
+        ctx.strokePath()
+        ctx.setLineDash(phase: 0, lengths: [0.22 * u, 0.18 * u])
+        ctx.move(to: CGPoint(x: control.x + dx / distance * 0.6 * u, y: control.y + dy / distance * 0.6 * u))
+        ctx.addLine(to: end)
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
+    /// Box of a 555 in screen space: corners, unit vector along the chip, unit vector towards the DIS–CTRL side
+    static func timerBox(posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat) -> (corners: [CGPoint], along: CGPoint, side: CGPoint)? {
+        guard posts.count == 8 else { return nil }
+        let length = hypot(b.x - a.x, b.y - a.y)
+        guard length > 0.5 else { return nil }
+        let along = CGPoint(x: (b.x - a.x) / length, y: (b.y - a.y) / length)
+        // DIS is pin 7: one unit along the chip and three to its side
+        let dis = posts[6]
+        let side = CGPoint(x: (dis.x - a.x - along.x * u) / (3 * u), y: (dis.y - a.y - along.y * u) / (3 * u))
+        func point(_ t: CGFloat, _ s: CGFloat) -> CGPoint {
+            CGPoint(x: a.x + along.x * t * u + side.x * s * u, y: a.y + along.y * t * u + side.y * s * u)
+        }
+        return ([point(0.3, 2), point(4.7, 2), point(4.7, -2), point(0.3, -2)], along, side)
+    }
+
+    /// 555 timer: a box with its eight pins, labelled
+    private static func drawTimer(posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                  in ctx: CGContext) {
+        guard let box = timerBox(posts: posts, at: a, b, unit: u) else { return }
+        let colors = style.terminalColors.count == 8 ? style.terminalColors : Array(repeating: style.fill, count: 8)
+        let outline = CGMutablePath()
+        outline.addLines(between: box.corners)
+        outline.closeSubpath()
+        ctx.saveGState()
+        ctx.addPath(outline)
+        ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.08).cgColor)
+        ctx.fillPath()
+        ctx.addPath(outline)
+        ctx.setStrokeColor(style.fill.cgColor)
+        ctx.setLineWidth(style.lineWidth)
+        ctx.setLineJoin(.round)
+        ctx.strokePath()
+        ctx.setLineCap(.round)
+        // pin leads: DIS, THR, TRIG, CTRL (pins 7, 6, 2, 5) on the `side` side, the rest opposite
+        let names = ["GND", "TRIG", "OUT", "RST", "CTRL", "THR", "DIS", "VCC"]
+        let leftSide: Set<Int> = [1, 4, 5, 6]
+        for (k, pin) in posts.enumerated() {
+            let direction: CGFloat = leftSide.contains(k) ? -1 : 1
+            let inner = CGPoint(x: pin.x + box.side.x * direction * u, y: pin.y + box.side.y * direction * u)
+            ctx.setStrokeColor(colors[k].cgColor)
+            ctx.move(to: pin)
+            ctx.addLine(to: inner)
+            ctx.strokePath()
+            guard u >= 9 else { continue }
+            // the name just inside the box, upright
+            let label = CGPoint(x: inner.x + box.side.x * direction * 0.25 * u, y: inner.y + box.side.y * direction * 0.25 * u)
+            let outward = CGPoint(x: -box.side.x * direction, y: -box.side.y * direction)
+            let anchor: CGFloat = outward.x > 0.5 ? 1 : (outward.x < -0.5 ? 0 : 0.5)
+            let offsetY: CGFloat = abs(outward.x) > 0.5 ? 0 : (outward.y > 0 ? -0.35 * u : 0.35 * u)
+            drawText(names[k], at: CGPoint(x: label.x, y: label.y + offsetY), size: 0.5 * u, color: style.fill.withAlpha(0.75),
+                     anchor: anchor, in: ctx)
+        }
+        if u >= 9 {
+            let centre = CGPoint(x: (box.corners[0].x + box.corners[2].x) / 2, y: (box.corners[0].y + box.corners[2].y) / 2)
+            drawText("555", at: centre, size: 0.75 * u, color: style.fill, anchor: 0.5, bold: true, in: ctx)
+        }
+        ctx.restoreGState()
+    }
+
+    /// Draws upright text centred vertically on `point`; `anchor` 0 puts the text's start at the point, 1 its end
+    static func drawText(_ text: String, at point: CGPoint, size: CGFloat, color: RGBA, anchor: CGFloat, bold: Bool = false,
+                         in ctx: CGContext) {
+        let font = CTFontCreateWithName((bold ? "Helvetica-Bold" : "Helvetica") as CFString, size, nil)
+        let attributes: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color.cgColor,
+        ]
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil))
+        ctx.saveGState()
+        // the canvas has y pointing down: flip the glyphs back upright
+        ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        ctx.textPosition = CGPoint(x: point.x - width * anchor, y: point.y + (ascent - descent) / 2)
+        CTLineDraw(line, ctx)
         ctx.restoreGState()
     }
 
@@ -580,11 +766,25 @@ enum SymbolRenderer {
             let length = max(hypot(b.x - a.x, b.y - a.y), 1)
             let end = CGPoint(x: a.x + (b.x - a.x) / length * u, y: a.y + (b.y - a.y) / length * u)
             return [(a, end)]
-        case .nmos, .pmos, .npn, .pnp:
+        case .nmos, .pmos, .npn, .pnp, .njfet:
             return posts.count == 3 ? [(a, b), (posts[1], posts[2])] : [(a, b)]
         case .opAmp:
             return posts.count == 3 ? [(posts[0], posts[1]), (a, b)] : [(a, b)]
-        case .potentiometer:
+        case .ota:
+            let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+            return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
+        case .timer555:
+            guard let box = timerBox(posts: posts, at: a, b, unit: u) else { return [(a, b)] }
+            let c = box.corners
+            var result = [(c[0], c[1]), (c[1], c[2]), (c[2], c[3]), (c[3], c[0])]
+            // lines across the box, so a click anywhere inside it selects the chip
+            for k in 1...4 {
+                let t = CGFloat(k) / 5
+                result.append((CGPoint(x: c[0].x + (c[1].x - c[0].x) * t, y: c[0].y + (c[1].y - c[0].y) * t),
+                               CGPoint(x: c[3].x + (c[2].x - c[3].x) * t, y: c[3].y + (c[2].y - c[3].y) * t)))
+            }
+            return result
+        case .potentiometer, .analogSwitch:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 3 ? [(a, b), (middle, posts[2])] : [(a, b)]
         default:
@@ -600,9 +800,20 @@ enum SymbolRenderer {
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil
-        case .nmos, .pmos, .npn, .pnp:
+        case .nmos, .pmos, .npn, .pnp, .njfet:
             return posts.count == 3 ? (posts[1], posts[2], nil) : nil
-        case .opAmp:
+        case .timer555:
+            // the output lead
+            guard let box = timerBox(posts: posts, at: a, b, unit: u) else { return nil }
+            let pin = posts[2]
+            return (CGPoint(x: pin.x + box.side.x * u, y: pin.y + box.side.y * u), pin, nil)
+        case .schmittInverter:
+            // current flows from the output only
+            let length = hypot(b.x - a.x, b.y - a.y)
+            guard length > 0 else { return nil }
+            let start = min(length, (length + bodyLength(.schmittInverter) * u) / 2)
+            return (CGPoint(x: a.x + (b.x - a.x) * start / length, y: a.y + (b.y - a.y) * start / length), b, nil)
+        case .opAmp, .ota:
             // the output lead, from the triangle's tip
             let length = hypot(b.x - a.x, b.y - a.y)
             guard length > 0 else { return nil }

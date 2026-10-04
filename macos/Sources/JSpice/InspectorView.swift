@@ -28,9 +28,14 @@ struct InspectorView: View {
     }
 }
 
-/// Parameter values are shown with SI prefixes, except plain numbers like a duty cycle or an angle
+/// Parameter values are shown with SI prefixes in plain SI units, and as plain numbers otherwise (a duty cycle, an
+/// angle, a slew rate in V/µs)
 private func formatParameter(_ value: Double, _ spec: ParamSpec) -> String {
-    if spec.unit.isEmpty || spec.unit == "°" { return SI.trimmed(value, digits: 3) + spec.unit }
+    let siUnits: Set<String> = ["V", "A", "Ω", "F", "H", "Hz", "s", "W", "A/V²"]
+    guard siUnits.contains(spec.unit) else {
+        let number = SI.trimmed(value, digits: 3)
+        return spec.unit.isEmpty || spec.unit == "°" ? number + spec.unit : number + " " + spec.unit
+    }
     return SI.format(value, unit: spec.unit, digits: 4)
 }
 
@@ -60,6 +65,26 @@ struct ElementInspector: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                }
+            }
+
+            if !element.kind.models.isEmpty {
+                Section {
+                    Picker("Model", selection: Binding(
+                        get: { element.model?.name ?? "" },
+                        set: { name in
+                            if let model = element.kind.models.first(where: { $0.name == name }) { editor.applyModel(element.id, model) }
+                        }
+                    )) {
+                        ForEach(element.kind.models, id: \.name) { model in
+                            Text(model.name).tag(model.name)
+                        }
+                        if element.model == nil {
+                            Text("Custom").tag("")
+                        }
+                    }
+                } footer: {
+                    Text(element.model?.summary ?? "Values changed from the chosen model.")
                 }
             }
 
@@ -218,6 +243,23 @@ struct LiveReadings: View {
                 } else if kind == .probe {
                     reading("Voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
                 } else if kind == .ammeter {
+                    reading("Current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .ota {
+                    let v = simulator.terminalVoltages(index)
+                    if v.count == 4 {
+                        reading("Input difference", SI.format(v[1] - v[0], unit: "V"))
+                        reading("Bias pin", SI.format(v[3], unit: "V"))
+                    }
+                    reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
+                    reading("Output current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .timer555 || kind == .schmittInverter {
+                    reading("Output", simulator.isHigh(index) ? "High" : "Low")
+                    reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
+                    reading("Output current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .analogSwitch {
+                    let conduction = simulator.switchConduction(index)
+                    reading("Switch", conduction > 0.5 ? "Closed" : "Open")
+                    reading("Voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
                     reading("Current", SI.format(simulator.current(index), unit: "A"))
                 } else if kind == .opAmp {
                     let v = simulator.terminalVoltages(index)

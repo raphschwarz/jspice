@@ -40,8 +40,14 @@ struct CircuitBuilder {
 public enum Examples {
     public static let all: [Example] = [
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
-        transistorSwitch, cmosInverter, opAmpAmplifier, memristorHysteresis, memristorPulses,
+        transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
+        memristorHysteresis, memristorPulses,
     ]
+
+    /// Parameter values of one of the part's models, by name
+    static func model(_ kind: ElementKind, _ name: String) -> [String: Double] {
+        kind.models.first { $0.name == name }?.values ?? [:]
+    }
 
     public static func example(_ id: String) -> Example? {
         all.first { $0.id == id }
@@ -305,6 +311,135 @@ public enum Examples {
         b.scope(amplifier, .voltage)
         return Example(id: "opamp", title: "Op-amp amplifier", summary: "An inverting amplifier with a gain of −10. Raise the input past 1.5 V to see it clip.",
                        symbol: "triangle", circuit: b.circuit)
+    }()
+
+    static let lfo: Example = {
+        var b = CircuitBuilder()
+        let tl072 = model(.opAmp, "TL072")
+        // integrator
+        let integrator = b.add(.opAmp, (10, 4), (14, 4), tl072)
+        b.ground((10, 5))
+        b.wire((10, 3), (10, -1))
+        b.add(.capacitor, (10, -1), (14, -1), ["capacitance": 1e-6])
+        b.wire((14, -1), (14, 4))
+        // comparator with hysteresis (a Schmitt trigger): + input from a divider between the triangle and the square
+        b.wire((14, 4), (16, 4), (16, 5))
+        b.add(.resistor, (16, 5), (20, 5), ["resistance": 10_000])
+        let comparator = b.add(.opAmp, (20, 6), (24, 6), tl072, flipped: true)
+        b.ground((20, 7))
+        b.wire((20, 5), (20, 2))
+        b.add(.resistor, (20, 2), (24, 2), ["resistance": 20_000])
+        b.wire((24, 2), (26, 2), (26, 6))
+        b.wire((24, 6), (26, 6))
+        // the square drives the integrator
+        b.wire((26, 6), (26, 10), (18, 10))
+        b.add(.resistor, (18, 10), (14, 10), ["resistance": 220_000])
+        b.wire((14, 10), (8, 10), (8, 3), (10, 3))
+        b.scope(integrator, .voltage)
+        b.scope(comparator, .voltage)
+        return Example(id: "lfo", title: "Triangle and square LFO",
+                       summary: "Two TL072 op-amps: an integrator and a Schmitt trigger chase each other at about 2 Hz.",
+                       symbol: "waveform.path", circuit: b.circuit)
+    }()
+
+    static let vca: Example = {
+        var b = CircuitBuilder()
+        // audio in, attenuated to a few tens of millivolts for the OTA's inputs
+        b.add(.acVoltage, (0, 8), (0, 4), ["amplitude": 5, "frequency": 20])
+        b.ground((0, 8))
+        b.wire((0, 4), (0, 2), (2, 2))
+        b.add(.resistor, (2, 2), (6, 2), ["resistance": 100_000])
+        b.add(.resistor, (6, 2), (6, 6), ["resistance": 330])
+        b.ground((6, 6))
+        b.wire((6, 2), (8, 2))
+        b.add(.ota, (8, 3), (12, 3), model(.ota, "LM13700"))
+        b.ground((8, 4))
+        // control voltage: sets the bias current, and with it the gain
+        b.wire((10, 5), (10, 8))
+        b.add(.resistor, (10, 8), (14, 8), ["resistance": 15_000])
+        b.wire((14, 8), (16, 8))
+        let cv = b.add(.acVoltage, (16, 12), (16, 8), ["amplitude": 7, "frequency": 0.5, "offset": -6.8])
+        b.ground((16, 12))
+        // the output current into a load resistor
+        b.wire((12, 3), (18, 3))
+        let load = b.add(.resistor, (18, 3), (18, 7), ["resistance": 10_000])
+        b.ground((18, 7))
+        b.scope(cv, .voltage)
+        b.scope(load, .voltage)
+        return Example(id: "vca", title: "OTA voltage-controlled amplifier",
+                       summary: "An LM13700 OTA: a slow control voltage sets the bias current, so the 20 Hz signal swells and fades.",
+                       symbol: "dial.medium", circuit: b.circuit)
+    }()
+
+    static let timerFlasher: Example = {
+        var b = CircuitBuilder()
+        b.add(.dcVoltage, (0, 12), (0, 8), ["voltage": 9])
+        b.ground((0, 12))
+        b.wire((0, 8), (0, 0), (7, 0), (17, 0))
+        let timer = b.add(.timer555, (12, 3), (12, 8), model(.timer555, "NE555"), flipped: true)
+        // VCC and RESET to the supply, GND to ground
+        b.wire((7, 0), (7, 4), (9, 4))
+        b.wire((7, 4), (7, 5), (9, 5))
+        b.wire((9, 7), (8, 7), (8, 12))
+        b.wire((0, 12), (4, 12), (8, 12), (17, 12))
+        // timing: RA from VCC to DIS, RB from DIS to THR and TRIG, C to ground
+        b.add(.resistor, (17, 0), (17, 4), ["resistance": 1000])
+        b.wire((15, 4), (17, 4))
+        b.add(.resistor, (17, 4), (17, 8), ["resistance": 68_000])
+        b.wire((15, 5), (16, 5), (16, 6), (16, 8), (17, 8))
+        b.wire((15, 6), (16, 6))
+        let c = b.add(.capacitor, (17, 8), (17, 12), ["capacitance": 10e-6])
+        // the output lights an LED
+        b.wire((9, 6), (4, 6))
+        b.add(.resistor, (4, 6), (4, 9), ["resistance": 470])
+        b.add(.led, (4, 9), (4, 12), ["color": 0])
+        b.scope(c, .voltage)
+        b.scope(timer, .voltage)
+        return Example(id: "555", title: "555 LED flasher",
+                       summary: "The classic astable 555: the capacitor charges through RA and RB and discharges through RB, about once a second.",
+                       symbol: "timer", circuit: b.circuit)
+    }()
+
+    static let schmittOscillator: Example = {
+        var b = CircuitBuilder()
+        let inverter = b.add(.schmittInverter, (6, 4), (10, 4), model(.schmittInverter, "CD40106"))
+        b.wire((10, 4), (10, 1))
+        b.add(.resistor, (10, 1), (6, 1), ["resistance": 100_000])
+        b.wire((6, 1), (6, 4))
+        let c = b.add(.capacitor, (6, 4), (6, 8), ["capacitance": 4.7e-6])
+        b.ground((6, 8))
+        b.add(.resistor, (10, 4), (14, 4), ["resistance": 680])
+        b.add(.led, (14, 4), (14, 8), ["color": 1])
+        b.ground((14, 8))
+        b.scope(c, .voltage)
+        b.scope(inverter, .voltage)
+        return Example(id: "schmitt", title: "Schmitt trigger oscillator",
+                       summary: "One gate of a 40106 with a resistor and a capacitor: the simplest synth oscillator, here blinking an LED.",
+                       symbol: "square.on.square", circuit: b.circuit)
+    }()
+
+    static let sampleAndHold: Example = {
+        var b = CircuitBuilder()
+        let input = b.add(.acVoltage, (0, 8), (0, 4), ["amplitude": 5, "frequency": 0.5])
+        b.ground((0, 8))
+        b.wire((0, 4), (0, 2), (2, 2))
+        b.add(.resistor, (2, 2), (6, 2), ["resistance": 10_000])
+        b.add(.analogSwitch, (6, 2), (10, 2), model(.analogSwitch, "CD4066"))
+        // a short clock pulse closes the switch four times a second
+        b.add(.squareVoltage, (4, -2), (4, -6), ["high": 12, "low": 0, "frequency": 4, "duty": 0.1])
+        b.ground((4, -2))
+        b.wire((4, -6), (8, -6), (8, 0))
+        b.add(.capacitor, (10, 2), (10, 6), ["capacitance": 1e-6])
+        b.ground((10, 6))
+        // a TL072 buffer reads the held voltage without draining it
+        b.wire((10, 2), (12, 2))
+        let buffer = b.add(.opAmp, (12, 3), (16, 3), model(.opAmp, "TL072"), flipped: true)
+        b.wire((12, 4), (12, 6), (17, 6), (17, 3), (16, 3))
+        b.scope(input, .voltage)
+        b.scope(buffer, .voltage)
+        return Example(id: "sh", title: "Sample and hold",
+                       summary: "A CD4066 switch samples a slow sine into a capacitor on each clock pulse; a TL072 buffers the held steps.",
+                       symbol: "stairs", circuit: b.circuit)
     }()
 
     static let memristorPulses: Example = {
