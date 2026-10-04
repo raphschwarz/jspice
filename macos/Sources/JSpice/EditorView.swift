@@ -90,6 +90,12 @@ struct EditorToolbar: ToolbarContent {
             .help("How fast circuit time runs compared with real time")
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            Toggle(isOn: Binding(get: { simulation.soundOn }, set: { simulation.setSound($0) })) {
+                Label("Sound", systemImage: simulation.soundOn ? "speaker.wave.2.fill" : "speaker.slash")
+            }
+            .disabled(!simulation.hasSpeaker)
+            .help(simulation.hasSpeaker ? "Listen to the speaker: runs the circuit in real time at audio rate"
+                                        : "Add a speaker to the circuit to listen to it")
             Toggle(isOn: $editor.showCurrent) {
                 Label("Current", systemImage: "bolt.fill")
             }
@@ -127,8 +133,11 @@ struct StatusBar: View {
             Text("t = \(SI.format(status.time, unit: "s", digits: 4))")
                 .monospacedDigit()
                 .frame(minWidth: 90, alignment: .leading)
-            Text(Pacing.describe(speed: status.speed) + (status.automatic ? " (automatic)" : ""))
+            Text(status.audio ? "Real time, sound on" : Pacing.describe(speed: status.speed) + (status.automatic ? " (automatic)" : ""))
                 .foregroundStyle(.secondary)
+            if let problem = simulation.soundProblem {
+                Label(problem, systemImage: "speaker.slash").foregroundStyle(.orange)
+            }
             if simulation.isRunning && !status.failed && status.achieved < 0.85 {
                 Label("Running at \(Int(status.achieved * 100)) % of that speed: the circuit is too complex for it",
                       systemImage: "tortoise.fill")

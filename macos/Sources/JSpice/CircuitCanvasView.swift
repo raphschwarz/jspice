@@ -263,6 +263,7 @@ final class CircuitCanvasView: NSView {
         case .potentiometer:
             return "\(SI.format(element[param: "resistance"], unit: "Ω")) · \(Int((element[param: "position"] * 100).rounded())) %"
         case .zener: return SI.format(element[param: "breakdown"], unit: "V")
+        case .speaker: return "±" + SI.format(element[param: "fullScale"], unit: "V")
         case .lamp: return SI.format(element[param: "resistance"], unit: "Ω")
         case .capacitor: return SI.format(element[param: "capacitance"], unit: "F")
         case .inductor: return SI.format(element[param: "inductance"], unit: "H")
@@ -695,7 +696,7 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     switch kind {
     case .memristor: return [.voltage, .current, .resistance, .power]
     case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
-    case .probe, .netLabel: return [.voltage]
+    case .probe, .netLabel, .speaker: return [.voltage]
     case .ground: return []
     case .opAmp, .ota, .timer555, .schmittInverter: return [.voltage, .current]
     case .analogSwitch: return [.voltage, .current, .resistance]

@@ -78,7 +78,7 @@ enum SymbolRenderer {
         case .analogSwitch: return 1.6
         case .resistor, .potentiometer, .inductor: return 2
         case .memristor: return 2.2
-        case .lamp, .probe, .ammeter: return 1.4
+        case .lamp, .probe, .ammeter, .speaker: return 1.4
         case .capacitor, .dcVoltage: return 0.5
         case .acVoltage, .squareVoltage, .currentSource: return 1.6
         case .toggleSwitch, .pushButton: return 1.6
@@ -267,6 +267,13 @@ enum SymbolRenderer {
             addPlus(to: path, at: CGPoint(x: c - h - 0.35 * u, y: -0.65 * u), size: 0.16 * u)
         case .ammeter:
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
+        case .speaker:
+            // magnet and cone, opening to one side of the leads
+            path.addRect(CGRect(x: c - h, y: -0.3 * u, width: 0.5 * u, height: 0.6 * u))
+            path.move(to: CGPoint(x: c - h + 0.5 * u, y: -0.3 * u))
+            path.addLine(to: CGPoint(x: c + h, y: -0.75 * u))
+            path.addLine(to: CGPoint(x: c + h, y: 0.75 * u))
+            path.addLine(to: CGPoint(x: c - h + 0.5 * u, y: 0.3 * u))
         case .analogSwitch:
             // closed while the control input is high
             path.move(to: CGPoint(x: c - h, y: 0))

@@ -41,8 +41,67 @@ public enum Examples {
     public static let all: [Example] = [
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
-        memristorHysteresis, memristorPulses,
+        beeper, tone, tremolo, memristorHysteresis, memristorPulses,
     ]
+
+    /// A circuit drawn from a netlist by the tidy layout, with scopes on the named parts
+    static func drawn(_ parts: [NetlistPart], scopes: [(String, Quantity)]) -> Circuit {
+        var circuit = (try? SchematicLayout.layout(parts)) ?? Circuit()
+        for (name, quantity) in scopes {
+            if let element = circuit.elements.first(where: { $0.name == name }) {
+                circuit.scopes.append(ScopeSpec(elementID: element.id, quantity: quantity))
+            }
+        }
+        return circuit
+    }
+
+    static let beeper = Example(
+        id: "beeper", title: "555 beeper (sound)",
+        summary: "A 555 at about 460 Hz into a speaker. Turn on sound in the toolbar to hear it.",
+        symbol: "speaker.wave.2",
+        circuit: drawn([
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 9], connections: ["plus": "VCC", "minus": "GND"]),
+            NetlistPart(kind: .timer555, name: "U1", params: model(.timer555, "NE555"),
+                        connections: ["vcc": "VCC", "reset": "VCC", "gnd": "GND", "dis": "dis", "thr": "trig", "trig": "trig", "out": "out"]),
+            NetlistPart(kind: .resistor, name: "RA", params: ["resistance": 1000], connections: ["a": "VCC", "b": "dis"]),
+            NetlistPart(kind: .resistor, name: "RB", params: ["resistance": 15_000], connections: ["a": "dis", "b": "trig"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 100e-9], connections: ["a": "trig", "b": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C2", params: ["capacitance": 10e-6], connections: ["a": "out", "b": "spk"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "spk", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 6], connections: ["plus": "spk", "minus": "GND"]),
+        ], scopes: [("C1", .voltage), ("SPK1", .voltage)]))
+
+    static let tone = Example(
+        id: "tone", title: "Schmitt oscillator tone (sound)",
+        summary: "One gate of a 40106 makes a square wave in the audio range. Turn on sound and scroll over the potentiometer to change the pitch.",
+        symbol: "music.note",
+        circuit: drawn([
+            NetlistPart(kind: .schmittInverter, name: "U1", params: model(.schmittInverter, "CD40106"), connections: ["in": "cap", "out": "out"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "out", "b": "pitch"]),
+            NetlistPart(kind: .potentiometer, name: "P1", params: ["resistance": 100_000, "position": 0.5], connections: ["a": "pitch", "wiper": "cap"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 22e-9], connections: ["a": "cap", "b": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C2", params: ["capacitance": 1e-6], connections: ["a": "out", "b": "spk"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "spk", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 8], connections: ["plus": "spk", "minus": "GND"]),
+        ], scopes: [("C1", .voltage), ("SPK1", .voltage)]))
+
+    static let tremolo = Example(
+        id: "tremolo", title: "OTA tremolo (sound)",
+        summary: "An LM13700 VCA: a 4 Hz LFO sweeps the bias current, so a 220 Hz tone throbs. Turn on sound to hear it.",
+        symbol: "waveform",
+        circuit: drawn([
+            NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 5, "frequency": 220], connections: ["plus": "sig", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 100_000], connections: ["a": "sig", "b": "inm"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 330], connections: ["a": "inm", "b": "GND"]),
+            NetlistPart(kind: .ota, name: "U1", params: model(.ota, "LM13700"),
+                        connections: ["minus": "inm", "plus": "GND", "out": "out", "bias": "iabc"]),
+            NetlistPart(kind: .resistor, name: "RB", params: ["resistance": 15_000], connections: ["a": "cv", "b": "iabc"]),
+            NetlistPart(kind: .acVoltage, name: "LFO", params: ["amplitude": 6, "frequency": 4, "offset": -7.5], connections: ["plus": "cv", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 4], connections: ["plus": "out", "minus": "GND"]),
+        ], scopes: [("LFO", .voltage), ("SPK1", .voltage)]))
+
+
 
     /// Parameter values of one of the part's models, by name
     public static func model(_ kind: ElementKind, _ name: String) -> [String: Double] {

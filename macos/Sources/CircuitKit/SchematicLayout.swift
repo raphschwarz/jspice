@@ -72,7 +72,7 @@ public enum SchematicLayout {
             if length >= 2 { for k in 1..<length { result.insert(e.a + d * k) } }
             let middle = GridPoint((e.a.x + e.b.x) / 2, (e.a.y + e.b.y) / 2)
             switch e.kind {
-            case .acVoltage, .squareVoltage, .currentSource, .probe, .ammeter, .lamp, .capacitor, .dcVoltage,
+            case .acVoltage, .squareVoltage, .currentSource, .probe, .ammeter, .speaker, .lamp, .capacitor, .dcVoltage,
                  .schmittInverter, .led:
                 result.insert(middle + p)
                 result.insert(middle - p)

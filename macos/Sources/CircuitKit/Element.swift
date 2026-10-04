@@ -44,7 +44,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case opAmp, ota
     case timer555, schmittInverter, analogSwitch
     case memristor
-    case probe, ammeter
+    case probe, ammeter, speaker
 
     public var id: String { rawValue }
 }
@@ -137,6 +137,7 @@ extension ElementKind {
         case .memristor: return "Memristor"
         case .probe: return "Voltage Probe"
         case .ammeter: return "Ammeter"
+        case .speaker: return "Speaker"
         }
     }
 
@@ -160,6 +161,7 @@ extension ElementKind {
         case .memristor: return "MR"
         case .probe: return "P"
         case .ammeter: return "A"
+        case .speaker: return "SPK"
         }
     }
 
@@ -172,7 +174,7 @@ extension ElementKind {
         case .opAmp, .ota: return .amplifiers
         case .timer555, .schmittInverter, .analogSwitch: return .timersAndLogic
         case .memristor: return .memristors
-        case .probe, .ammeter: return .instruments
+        case .probe, .ammeter, .speaker: return .instruments
         }
     }
 
@@ -206,6 +208,7 @@ extension ElementKind {
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
+        case .speaker: return nil
         }
     }
 
@@ -239,7 +242,7 @@ extension ElementKind {
         case .netLabel: return ["net"]
         case .dcVoltage, .acVoltage, .squareVoltage, .currentSource: return ["minus", "plus"]
         case .diode, .zener, .led: return ["anode", "cathode"]
-        case .probe: return ["plus", "minus"]
+        case .probe, .speaker: return ["plus", "minus"]
         case .ammeter: return ["in", "out"]
         case .nmos, .pmos, .njfet: return ["gate", "drain", "source"]
         case .npn, .pnp: return ["base", "collector", "emitter"]
@@ -275,6 +278,8 @@ extension ElementKind {
         switch self {
         case .wire, .ground, .netLabel, .toggleSwitch, .pushButton, .probe, .ammeter:
             return []
+        case .speaker:
+            return [ParamSpec("fullScale", "Full-scale voltage", unit: "V", default: 5, range: 0.1...50)]
         case .resistor:
             return [ParamSpec("resistance", "Resistance", unit: "Ω", default: 1000, range: 1...10_000_000)]
         case .potentiometer:
