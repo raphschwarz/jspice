@@ -15,7 +15,7 @@ public final class Simulator {
     public private(set) var problems: [String] = []
     /// True when the equations cannot be solved; stepping stops until the circuit changes
     public private(set) var isFailed = false
-    /// Steps at which Newton-Raphson did not converge (the step is accepted anyway)
+    /// Steps at which Newton-Raphson did not converge, even split into shorter steps (the step is accepted anyway)
     public private(set) var convergenceFailures = 0
 
     var topology = Topology()
@@ -49,6 +49,9 @@ public final class Simulator {
     static let thermalVoltage = 0.025852
     static let gmin = 1e-12
     static let maxNewtonIterations = 80
+    /// A step that does not converge is retried as this many shorter steps
+    static let substeps = 10
+    static let maxSubdivisions = 2
     static let transistorSaturationCurrent = 1e-14
     /// Reverse current of a Zener diode at its breakdown voltage
     static let zenerKneeCurrent = 5e-3
@@ -184,7 +187,7 @@ public final class Simulator {
             step()
             steps += 1
             stepCarry -= 1
-            if steps & 7 == 0 && ProcessInfo.processInfo.systemUptime > deadline {
+            if ProcessInfo.processInfo.systemUptime > deadline {
                 fellBehind = stepCarry >= 1
                 stepCarry = 0
                 break
@@ -197,43 +200,71 @@ public final class Simulator {
     /// One time step
     public func step() {
         guard !isFailed else { return }
-        let m = topology.matrixSize
+        takeStep(depth: 0)
+    }
+
+    /// Solves one step; when Newton-Raphson does not converge (a sudden switching event, say), retries it as ten
+    /// shorter steps, which follow the event more closely, down to two levels
+    private func takeStep(depth: Int) {
+        let saved = (x, limitedVoltage, limitedVoltage2)
         let t = time + timeStep
-        if m > 0 {
-            if !matrixIsCurrent { buildBaseMatrix() }
-            if isFailed { return }
-            let rhs = buildRightHandSide(at: t)
-            if !hasNonlinear && !hasMemristor {
-                guard let lu = baseLU else { fail(); return }
-                x = lu.solve(rhs)
-            } else {
-                var converged = false
-                for iteration in 0..<Self.maxNewtonIterations {
-                    var matrix = baseMatrix
-                    var b = rhs
-                    stampMemristors(&matrix, m)
-                    if hasNonlinear { stampNonlinear(&matrix, &b, m) }
-                    guard let lu = LUSolver(matrix: matrix, size: m) else { fail(); return }
-                    let next = lu.solve(b)
-                    if !hasNonlinear {
-                        x = next
-                        converged = true
-                        break
-                    }
-                    var change = 0.0
-                    for k in 0..<m {
-                        change = max(change, abs(next[k] - x[k]) / (1 + abs(next[k])))
-                    }
-                    x = next
-                    if iteration > 0 && change < 1e-9 {
-                        converged = true
-                        break
-                    }
-                }
-                if !converged { convergenceFailures += 1 }
-            }
-            if x.contains(where: { !$0.isFinite }) { fail(); return }
+        let converged = solve(at: t)
+        if isFailed { return }
+        if converged || depth >= Self.maxSubdivisions {
+            if !converged { convergenceFailures += 1 }
+            finishStep(at: t)
+            return
         }
+        (x, limitedVoltage, limitedVoltage2) = saved
+        let full = timeStep
+        setTimeStep(full / Double(Self.substeps))
+        for _ in 0..<Self.substeps where !isFailed {
+            takeStep(depth: depth + 1)
+        }
+        setTimeStep(full)
+    }
+
+    /// Solves the circuit equations for time `t` into `x`; false if Newton-Raphson did not converge
+    private func solve(at t: Double) -> Bool {
+        let m = topology.matrixSize
+        guard m > 0 else { return true }
+        if !matrixIsCurrent { buildBaseMatrix() }
+        if isFailed { return false }
+        let rhs = buildRightHandSide(at: t)
+        var converged = false
+        if !hasNonlinear && !hasMemristor {
+            guard let lu = baseLU else { fail(); return false }
+            x = lu.solve(rhs)
+            converged = true
+        } else {
+            for iteration in 0..<Self.maxNewtonIterations {
+                var matrix = baseMatrix
+                var b = rhs
+                stampMemristors(&matrix, m)
+                if hasNonlinear { stampNonlinear(&matrix, &b, m) }
+                guard let lu = LUSolver(matrix: matrix, size: m) else { fail(); return false }
+                let next = lu.solve(b)
+                if !hasNonlinear {
+                    x = next
+                    converged = true
+                    break
+                }
+                var change = 0.0
+                for k in 0..<m {
+                    change = max(change, abs(next[k] - x[k]) / (1 + abs(next[k])))
+                }
+                x = next
+                if iteration > 0 && change < 1e-9 {
+                    converged = true
+                    break
+                }
+            }
+        }
+        if x.contains(where: { !$0.isFinite }) { fail(); return false }
+        return converged
+    }
+
+    private func finishStep(at t: Double) {
         time = t
         updateStates()
         computeCurrents()
@@ -464,6 +495,17 @@ public final class Simulator {
         return (limit * t, gain * (1 - t * t))
     }
 
+    /// Newton limiting for the op-amp. Where the output has levelled off at a limit, its linearisation is flat and points
+    /// the next guess far past the other limit, and the guesses would swing from limit to limit; so a guess that
+    /// crosses over is brought back to the edge of the linear range, from where Newton finds its way.
+    private func limitOpAmpInput(_ new: Double, old: Double, element: Element) -> Double {
+        let edge = max(element[param: "limit"], 0.01) / max(element[param: "gain"], 1)
+        if new * old < 0 && abs(new) > edge {
+            return new > 0 ? edge : -edge
+        }
+        return new
+    }
+
     private func stampNonlinear(_ matrix: inout [Double], _ rhs: inout [Double], _ m: Int) {
         for (i, element) in circuit.elements.enumerated() {
             let nodes = topology.elementNodes[i]
@@ -561,7 +603,8 @@ public final class Simulator {
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
                 let (minus, plus) = (nodes[0], nodes[1])
-                let vd = voltage(plus) - voltage(minus)
+                let vd = limitOpAmpInput(voltage(plus) - voltage(minus), old: limitedVoltage[i], element: element)
+                limitedVoltage[i] = vd
                 let (output, slope) = opAmpOutput(element, differential: vd)
                 // v(out) = output + slope (vd' - vd), linearised around the present inputs
                 add(&matrix, m, row, plus - 1, -slope)

@@ -226,21 +226,20 @@ final class SimulatorTests: XCTestCase {
     }
 
     func testSuddenChangesDoNotRing() {
-        // a 5 V step into 1 Ω and 1 µF, with a time step ten times the time constant: the trapezoidal rule would make
-        // the capacitor current flip sign every step; BDF2 settles without ringing
+        // a 5 V step into 1 Ω and 1 µF, with a time step ten times the time constant. The trapezoidal rule would make
+        // the capacitor voltage swing around 5 V, the error shrinking by only a third each step (still ±0.2 V after
+        // eight steps); BDF2 overshoots a little once and settles within a few steps.
         let circuit = series(voltage: 5, [(.resistor, ["resistance": 1]), (.capacitor, ["capacitance": 1e-6])])
         let simulator = Simulator(circuit: circuit, timeStep: 1e-5)
         let c = index(simulator, "C1")
-        var previous = 0.0
         for step in 0..<60 {
             simulator.step()
-            let v = simulator.voltageAcross(c)
-            XCTAssertGreaterThanOrEqual(simulator.current(c), -1e-9, "step \(step): the capacitor current reversed")
-            XCTAssertGreaterThanOrEqual(v, previous - 1e-9, "step \(step): the voltage went back down")
-            XCTAssertLessThanOrEqual(v, 5 + 1e-6, "step \(step): overshoot")
-            previous = v
+            let error = abs(simulator.voltageAcross(c) - 5)
+            if step >= 1 { XCTAssertLessThan(error, 0.15, "step \(step)") }
+            if step >= 8 { XCTAssertLessThan(error, 1e-4, "step \(step): still ringing") }
         }
-        XCTAssertEqual(previous, 5, accuracy: 1e-6)
+        XCTAssertEqual(simulator.voltageAcross(c), 5, accuracy: 1e-6)
+        XCTAssertEqual(simulator.current(c), 0, accuracy: 1e-6)
     }
 
     func testNPNCurrentGain() {
@@ -358,9 +357,16 @@ final class SimulatorTests: XCTestCase {
         var switches = 0
         var wasOn: Bool?
         var time = 0.0
+        var failureTimes: [Double] = []
         while time < 4 {
+            let failures = simulator.convergenceFailures
             simulator.step()
             time += pacing.timeStep
+            if simulator.convergenceFailures > failures && failureTimes.count < 12 {
+                failureTimes.append(time)
+                let probe = simulator.circuit.elements.indices.map { simulator.terminalVoltages($0) }
+                print("blinker: no convergence at t = \(time), dt = \(pacing.timeStep), voltages \(probe.filter { $0.count == 3 })")
+            }
             guard time > 0.5 else { continue }
             let on = simulator.brightness(led) > 0.5
             if let wasOn, wasOn != on { switches += 1 }
