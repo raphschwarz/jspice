@@ -1,0 +1,28 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: [ '11', '17', '21' ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build and test
+        run: mvn -B clean package
+      - name: Smoke test the runnable jar
+        run: |
+          # run in a scratch dir so the reference .out files in src/test/resources stay untouched
+          mkdir -p target/smoke && cp src/test/resources/{dcopi1r1.yml,DCSweepI1R1.yml,RSMem.yml,knowm_mem1_sine.cir} target/smoke/
+          cd target/smoke
+          for f in dcopi1r1.yml DCSweepI1R1.yml RSMem.yml knowm_mem1_sine.cir; do java -jar ../jspice.jar "$f"; done
+          ls -l *.out knowm_mr_test_tran.txt

@@ -181,12 +181,18 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.2.4</version>
+                <version>3.6.0</version>
                 <configuration>
                     <createDependencyReducedPom>true</createDependencyReducedPom>
                     <filters>
                         <filter>
                             <artifact>*:*</artifact>
+                            <!-- signatures of dependency jars are invalid in the merged jar -->
+                            <excludes>
+                                <exclude>META-INF/*.SF</exclude>
+                                <exclude>META-INF/*.DSA</exclude>
+                                <exclude>META-INF/*.RSA</exclude>
+                            </excludes>
                         </filter>
                     </filters>
                 </configuration>
@@ -230,6 +236,13 @@
             </plugin>
         </plugins>
         </pluginManagement>
+        <plugins>
+            <!-- builds target/jspice.jar with all dependencies, runnable via `java -jar` -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+            </plugin>
+        </plugins>
     </build>
 
     <properties>
