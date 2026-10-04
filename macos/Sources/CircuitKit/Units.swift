@@ -23,7 +23,7 @@ public enum SI {
     }
 
     /// A number with `digits` significant digits and no trailing zeros
-    static func trimmed(_ value: Double, digits: Int) -> String {
+    public static func trimmed(_ value: Double, digits: Int) -> String {
         let magnitude = abs(value)
         let integerDigits = magnitude >= 100 ? 3 : magnitude >= 10 ? 2 : 1
         let decimals = max(0, digits - integerDigits)

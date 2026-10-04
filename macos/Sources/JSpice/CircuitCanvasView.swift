@@ -1,0 +1,622 @@
+import AppKit
+import SwiftUI
+import QuartzCore
+import CircuitKit
+
+/// SwiftUI wrapper of the schematic canvas.
+struct CircuitCanvas: NSViewRepresentable {
+    @ObservedObject var editor: EditorState
+    /// Passed in so SwiftUI redraws the canvas when the circuit changes while paused
+    var circuit: Circuit
+
+    func makeNSView(context: Context) -> CircuitCanvasView {
+        CircuitCanvasView(editor: editor)
+    }
+
+    func updateNSView(_ view: CircuitCanvasView, context: Context) {
+        view.needsDisplay = true
+    }
+}
+
+/// The schematic editor: draws the circuit with live voltages and currents and turns mouse and keyboard input into edits.
+final class CircuitCanvasView: NSView {
+    let editor: EditorState
+    private var refreshLink: CADisplayLink?
+    private var drag: Drag?
+    private var lastFitRequest = 0
+    private var mouseLocation: CGPoint?
+    /// For a click on a switch: toggle it on mouse up if the mouse did not move
+    private var pendingToggle: UUID?
+
+    private enum Drag {
+        case placing(Element)
+        case moving(start: GridPoint, original: Circuit, ids: Set<UUID>, moved: Bool)
+        case endpoint(id: UUID, isA: Bool)
+        case rubberBand(start: CGPoint, current: CGPoint, initial: Set<UUID>)
+        case panning(last: CGPoint)
+        case pressing(UUID)
+    }
+
+    init(editor: EditorState) {
+        self.editor = editor
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshLink?.invalidate()
+        refreshLink = nil
+        guard window != nil else { return }
+        let link = displayLink(target: self, selector: #selector(displayRefresh(_:)))
+        link.add(to: .main, forMode: .common)
+        refreshLink = link
+        window?.makeFirstResponder(self)
+    }
+
+    override func removeFromSuperview() {
+        refreshLink?.invalidate()
+        refreshLink = nil
+        super.removeFromSuperview()
+    }
+
+    @objc private func displayRefresh(_ link: CADisplayLink) {
+        editor.simulation.tick(at: link.timestamp)
+        if editor.simulation.isRunning || drag != nil { needsDisplay = true }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    // MARK: - Coordinates
+
+    private var unit: CGFloat { editor.unit }
+
+    func screen(_ p: GridPoint) -> CGPoint {
+        CGPoint(x: editor.pan.x + CGFloat(p.x) * unit, y: editor.pan.y + CGFloat(p.y) * unit)
+    }
+
+    func grid(_ p: CGPoint) -> GridPoint {
+        GridPoint(Int(((p.x - editor.pan.x) / unit).rounded()), Int(((p.y - editor.pan.y) / unit).rounded()))
+    }
+
+    private func location(_ event: NSEvent) -> CGPoint {
+        convert(event.locationInWindow, from: nil)
+    }
+
+    /// Centres the circuit and picks a zoom that shows all of it
+    private func fitCircuit() {
+        guard bounds.width > 10, bounds.height > 10 else { return }
+        guard let box = editor.circuit.bounds else {
+            editor.zoom = 1.25
+            editor.pan = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+            return
+        }
+        let width = CGFloat(box.max.x - box.min.x + 6) * EditorState.gridSize
+        let height = CGFloat(box.max.y - box.min.y + 6) * EditorState.gridSize
+        let zoom = min(2.5, max(0.4, min(bounds.width / width, bounds.height / height)))
+        editor.zoom = zoom
+        let unit = EditorState.gridSize * zoom
+        editor.pan = CGPoint(x: bounds.width / 2 - CGFloat(box.min.x + box.max.x) / 2 * unit,
+                             y: bounds.height / 2 - CGFloat(box.min.y + box.max.y) / 2 * unit)
+    }
+
+    // MARK: - Drawing
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        editor.viewSize = bounds.size
+        if lastFitRequest != editor.fitRequest {
+            lastFitRequest = editor.fitRequest
+            fitCircuit()
+        }
+        let palette = CanvasPalette.forAppearance(effectiveAppearance)
+        let accent = NSColor.controlAccentColor.usingColorSpace(.sRGB).map { RGBA($0.redComponent, $0.greenComponent, $0.blueComponent) }
+            ?? RGBA(0, 0.48, 1)
+        ctx.setFillColor(palette.background.cgColor)
+        ctx.fill(bounds)
+        drawGrid(ctx, palette)
+
+        let circuit = editor.circuit
+        let simulator = editor.simulation.simulator
+        // the simulator may still hold the previous circuit for a moment after an edit
+        let live = simulator.circuit.elements.map(\.id) == circuit.elements.map(\.id)
+        let voltageScale = editor.simulation.voltageScale
+        let lineWidth = max(1.3, unit * 0.12)
+
+        for (index, element) in circuit.elements.enumerated() {
+            let posts = element.posts.map(screen)
+            let a = screen(element.a)
+            let b = screen(element.b)
+            let voltages = live ? simulator.terminalVoltages(index) : []
+            let colors = voltages.isEmpty
+                ? Array(repeating: palette.neutral, count: posts.count)
+                : voltages.map { palette.color(forVoltage: $0, scale: voltageScale) }
+            var style = SymbolStyle(lineWidth: lineWidth, terminalColors: colors, fill: palette.neutral, accent: accent)
+            if live {
+                style.brightness = simulator.brightness(index)
+                style.memristorState = simulator.memristorState(index)
+            }
+            if element.kind == .probe { style.fill = palette.text }
+
+            if editor.selection.contains(element.id) || editor.hovered == element.id {
+                let highlight = editor.selection.contains(element.id) ? accent.withAlpha(0.35) : accent.withAlpha(0.15)
+                var glow = style
+                glow.lineWidth = lineWidth + max(6, unit * 0.45)
+                glow.terminalColors = Array(repeating: highlight, count: posts.count)
+                glow.fill = highlight
+                glow.brightness = 0
+                glow.memristorState = 0
+                SymbolRenderer.draw(element, posts: posts, at: a, b, unit: unit, style: glow, in: ctx)
+            }
+            SymbolRenderer.draw(element, posts: posts, at: a, b, unit: unit, style: style, in: ctx)
+        }
+
+        if editor.showCurrent && live { drawCurrentDots(ctx, circuit, palette) }
+        drawTerminals(ctx, circuit, palette)
+        drawLabels(circuit, live: live, palette)
+        drawSelectionHandles(ctx, circuit, accent)
+        drawDragFeedback(ctx, palette, accent, lineWidth)
+    }
+
+    private func drawGrid(_ ctx: CGContext, _ palette: CanvasPalette) {
+        let step = unit < 9 ? 2 : 1
+        let spacing = unit * CGFloat(step)
+        guard spacing > 4 else { return }
+        let startX = editor.pan.x.truncatingRemainder(dividingBy: spacing) - spacing
+        let startY = editor.pan.y.truncatingRemainder(dividingBy: spacing) - spacing
+        let r = max(0.6, min(1.2, unit / 20))
+        ctx.setFillColor(palette.grid.cgColor)
+        var y = startY
+        while y < bounds.maxY + spacing {
+            var x = startX
+            while x < bounds.maxX + spacing {
+                ctx.fill(CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
+                x += spacing
+            }
+            y += spacing
+        }
+    }
+
+    private func drawCurrentDots(_ ctx: CGContext, _ circuit: Circuit, _ palette: CanvasPalette) {
+        let spacing = unit
+        let radius = max(1.6, unit * 0.13)
+        ctx.setFillColor(palette.dot.cgColor)
+        for element in circuit.elements {
+            guard let phase = editor.simulation.dotPhase[element.id], phase != 0 else { continue }
+            let posts = element.posts.map(screen)
+            guard let path = SymbolRenderer.dotPath(element, a: screen(element.a), b: screen(element.b), posts: posts, unit: unit) else { continue }
+            let dx = path.to.x - path.from.x
+            let dy = path.to.y - path.from.y
+            let length = hypot(dx, dy)
+            guard length > 1 else { continue }
+            var offset = (phase * spacing).truncatingRemainder(dividingBy: spacing)
+            if offset < 0 { offset += spacing }
+            var distance = offset
+            while distance < length {
+                if !(path.hidden?.contains(distance) ?? false) {
+                    let x = path.from.x + dx * distance / length
+                    let y = path.from.y + dy * distance / length
+                    ctx.fillEllipse(in: CGRect(x: x - radius, y: y - radius, width: 2 * radius, height: 2 * radius))
+                }
+                distance += spacing
+            }
+        }
+    }
+
+    /// Filled dots where three or more terminals meet, red rings on terminals that connect to nothing
+    private func drawTerminals(_ ctx: CGContext, _ circuit: Circuit, _ palette: CanvasPalette) {
+        var count: [GridPoint: Int] = [:]
+        for element in circuit.elements {
+            for post in element.posts { count[post, default: 0] += 1 }
+        }
+        let r = max(2.2, unit * 0.16)
+        for (point, n) in count {
+            let p = screen(point)
+            if n >= 3 {
+                ctx.setFillColor(palette.neutral.mixed(with: palette.text, 0.4).cgColor)
+                ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
+            } else if n == 1 {
+                ctx.setStrokeColor(palette.unconnected.withAlpha(0.8).cgColor)
+                ctx.setLineWidth(1.2)
+                ctx.strokeEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
+            }
+        }
+    }
+
+    private func valueLabel(_ element: Element, index: Int, live: Bool) -> String? {
+        let simulator = editor.simulation.simulator
+        switch element.kind {
+        case .probe:
+            return live ? SI.format(simulator.voltageAcross(index), unit: "V") : "— V"
+        case .resistor: return SI.format(element[param: "resistance"], unit: "Ω")
+        case .lamp: return SI.format(element[param: "resistance"], unit: "Ω")
+        case .capacitor: return SI.format(element[param: "capacitance"], unit: "F")
+        case .inductor: return SI.format(element[param: "inductance"], unit: "H")
+        case .dcVoltage: return SI.format(element[param: "voltage"], unit: "V")
+        case .acVoltage:
+            return "\(SI.format(element[param: "amplitude"], unit: "V")) \(SI.format(element[param: "frequency"], unit: "Hz"))"
+        case .squareVoltage:
+            return "\(SI.format(element[param: "high"], unit: "V")) \(SI.format(element[param: "frequency"], unit: "Hz"))"
+        case .currentSource: return SI.format(element[param: "current"], unit: "A")
+        case .memristor:
+            return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
+        default: return nil
+        }
+    }
+
+    private func drawLabels(_ circuit: Circuit, live: Bool, _ palette: CanvasPalette) {
+        guard unit >= 9 else { return }
+        let fontSize = max(9, min(15, unit * 0.68))
+        let valueAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .medium),
+            .foregroundColor: NSColor(cgColor: palette.text.cgColor) ?? .labelColor,
+        ]
+        let probeAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize * 1.15, weight: .semibold),
+            .foregroundColor: NSColor(cgColor: palette.text.cgColor) ?? .labelColor,
+        ]
+        let nameAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: fontSize * 0.85),
+            .foregroundColor: NSColor(cgColor: palette.secondaryText.cgColor) ?? .secondaryLabelColor,
+        ]
+        for (index, element) in circuit.elements.enumerated() {
+            guard element.kind != .wire, element.kind != .ground else { continue }
+            let isProbe = element.kind == .probe
+            guard editor.showValues || isProbe else { continue }
+            let a = screen(element.a)
+            let b = screen(element.b)
+            var lines: [NSAttributedString] = []
+            if !element.name.isEmpty && !isProbe { lines.append(NSAttributedString(string: element.name, attributes: nameAttributes)) }
+            if let value = valueLabel(element, index: index, live: live) {
+                lines.append(NSAttributedString(string: value, attributes: isProbe ? probeAttributes : valueAttributes))
+            }
+            guard !lines.isEmpty else { continue }
+
+            // place the text beside the part: above horizontal parts, to the right of vertical ones
+            var anchor = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+            var horizontal = abs(b.x - a.x) >= abs(b.y - a.y)
+            if element.kind.isTransistor {
+                anchor = CGPoint(x: b.x + (horizontal ? 0.6 * unit : 0), y: b.y)
+                horizontal = false
+            }
+            let sizes = lines.map { $0.size() }
+            let totalHeight = sizes.reduce(0) { $0 + $1.height }
+            let offset = (element.kind.isTransistor ? 0.4 : (isProbe ? 1.0 : 1.05)) * unit
+            var y = horizontal ? anchor.y - offset - totalHeight : anchor.y - totalHeight / 2
+            for (line, size) in zip(lines, sizes) {
+                let x = horizontal ? anchor.x - size.width / 2 : anchor.x + offset
+                line.draw(at: CGPoint(x: x, y: y))
+                y += size.height
+            }
+        }
+    }
+
+    private func drawSelectionHandles(_ ctx: CGContext, _ circuit: Circuit, _ accent: RGBA) {
+        guard editor.selection.count == 1, let element = circuit.elements.first(where: { editor.selection.contains($0.id) }),
+              element.kind != .ground else { return }
+        let size = max(5, unit * 0.38)
+        for point in [element.a, element.b] {
+            let p = screen(point)
+            let rect = CGRect(x: p.x - size / 2, y: p.y - size / 2, width: size, height: size)
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+            ctx.fill(rect)
+            ctx.setStrokeColor(accent.cgColor)
+            ctx.setLineWidth(1.5)
+            ctx.stroke(rect)
+        }
+    }
+
+    private func drawDragFeedback(_ ctx: CGContext, _ palette: CanvasPalette, _ accent: RGBA, _ lineWidth: CGFloat) {
+        switch drag {
+        case .placing(let element)?:
+            let posts = element.posts.map(screen)
+            let style = SymbolStyle(lineWidth: lineWidth, terminalColors: Array(repeating: accent, count: posts.count),
+                                    fill: accent, accent: accent)
+            SymbolRenderer.draw(element, posts: posts, at: screen(element.a), screen(element.b), unit: unit, style: style, in: ctx)
+        case .rubberBand(let start, let current, _)?:
+            let rect = CGRect(x: min(start.x, current.x), y: min(start.y, current.y),
+                              width: abs(current.x - start.x), height: abs(current.y - start.y))
+            ctx.setFillColor(accent.withAlpha(0.1).cgColor)
+            ctx.fill(rect)
+            ctx.setStrokeColor(accent.withAlpha(0.8).cgColor)
+            ctx.setLineWidth(1)
+            ctx.stroke(rect.insetBy(dx: 0.5, dy: 0.5))
+        default:
+            break
+        }
+        // where a click would place the next part
+        if editor.tool != nil, drag == nil, let mouse = mouseLocation {
+            let p = screen(grid(mouse))
+            ctx.setStrokeColor(accent.withAlpha(0.7).cgColor)
+            ctx.setLineWidth(1.5)
+            ctx.strokeEllipse(in: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8))
+        }
+    }
+
+    // MARK: - Hit testing
+
+    private func distance(_ p: CGPoint, toSegment a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        let lengthSquared = dx * dx + dy * dy
+        if lengthSquared == 0 { return hypot(p.x - a.x, p.y - a.y) }
+        let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared))
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+    }
+
+    /// The element nearest to `point`, within a few points. Non-wire parts win over wires at the same distance.
+    func element(at point: CGPoint) -> Element? {
+        var best: (element: Element, distance: CGFloat)?
+        let tolerance = max(6, unit * 0.45)
+        for element in editor.circuit.elements {
+            let posts = element.posts.map(screen)
+            let segments = SymbolRenderer.segments(element, a: screen(element.a), b: screen(element.b), posts: posts, unit: unit)
+            var d = segments.map { distance(point, toSegment: $0.0, $0.1) }.min() ?? .infinity
+            if element.kind == .wire { d += 1.5 }
+            if d < tolerance && d < (best?.distance ?? .infinity) { best = (element, d) }
+        }
+        return best?.element
+    }
+
+    /// An end of the selected element close to `point`
+    private func endpoint(at point: CGPoint) -> (id: UUID, isA: Bool)? {
+        guard editor.selection.count == 1, let element = editor.selectedElement, element.kind != .ground else { return nil }
+        let tolerance = max(6, unit * 0.35)
+        if hypot(point.x - screen(element.b).x, point.y - screen(element.b).y) < tolerance { return (element.id, false) }
+        if hypot(point.x - screen(element.a).x, point.y - screen(element.a).y) < tolerance { return (element.id, true) }
+        return nil
+    }
+
+    /// Transistors stay horizontal or vertical; grounds always point one grid unit away from their terminal
+    private func constrained(_ element: Element) -> Element {
+        var element = element
+        if element.kind.isTransistor || element.kind == .ground {
+            let d = element.b - element.a
+            if d == .zero { return element }
+            let direction = abs(d.x) >= abs(d.y) ? GridPoint(d.x.signum(), 0) : GridPoint(0, d.y.signum())
+            element.b = element.a + direction * (element.kind == .ground ? 1 : 2)
+        }
+        return element
+    }
+
+    // MARK: - Mouse
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        let point = location(event)
+        let gridPoint = grid(point)
+        pendingToggle = nil
+
+        if event.modifierFlags.contains(.option) && editor.tool == nil && element(at: point) == nil {
+            drag = .panning(last: point)
+            return
+        }
+        if let kind = editor.tool {
+            drag = .placing(Element(kind: kind, a: gridPoint, b: gridPoint))
+            needsDisplay = true
+            return
+        }
+        if event.clickCount == 2, element(at: point) != nil {
+            editor.showInspector = true
+            return
+        }
+        if let end = endpoint(at: point) {
+            editor.beginInteraction()
+            drag = .endpoint(id: end.id, isA: end.isA)
+            return
+        }
+        if let hit = element(at: point) {
+            if event.modifierFlags.contains(.shift) {
+                if editor.selection.contains(hit.id) { editor.selection.remove(hit.id) } else { editor.selection.insert(hit.id) }
+            } else if !editor.selection.contains(hit.id) {
+                editor.selection = [hit.id]
+            }
+            if hit.kind == .pushButton {
+                editor.setPressed(hit.id, true)
+                drag = .pressing(hit.id)
+                return
+            }
+            if hit.kind == .toggleSwitch && !event.modifierFlags.contains(.shift) { pendingToggle = hit.id }
+            drag = .moving(start: gridPoint, original: editor.circuit, ids: editor.selection, moved: false)
+            needsDisplay = true
+            return
+        }
+        let additive = event.modifierFlags.contains(.shift)
+        if !additive { editor.selection = [] }
+        drag = .rubberBand(start: point, current: point, initial: editor.selection)
+        needsDisplay = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let point = location(event)
+        mouseLocation = point
+        switch drag {
+        case .placing(var element)?:
+            element.b = grid(point)
+            drag = .placing(constrained(element))
+        case .moving(let start, let original, let ids, let moved)?:
+            let delta = grid(point) - start
+            if delta != .zero || moved {
+                if !moved { editor.beginInteraction() }
+                var next = original
+                next.move(ids, by: delta)
+                editor.setDuringInteraction(next)
+                drag = .moving(start: start, original: original, ids: ids, moved: true)
+                pendingToggle = nil
+            }
+        case .endpoint(let id, let isA)?:
+            var next = editor.circuit
+            next.update(id) { element in
+                if isA { element.a = grid(point) } else { element.b = grid(point) }
+                if element.kind.isTransistor || element.kind == .ground { element = constrained(element) }
+            }
+            if let element = next[id], element.a != element.b { editor.setDuringInteraction(next) }
+        case .rubberBand(let start, _, let initial)?:
+            drag = .rubberBand(start: start, current: point, initial: initial)
+            let rect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y), width: abs(point.x - start.x), height: abs(point.y - start.y))
+            var selected = initial
+            for element in editor.circuit.elements {
+                let points = element.extentPoints.map(screen)
+                if points.contains(where: { rect.contains($0) }) { selected.insert(element.id) }
+            }
+            if selected != editor.selection { editor.selection = selected }
+        case .panning(let last)?:
+            editor.pan = CGPoint(x: editor.pan.x + point.x - last.x, y: editor.pan.y + point.y - last.y)
+            drag = .panning(last: point)
+        case .pressing?, nil:
+            break
+        }
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        switch drag {
+        case .placing(var element)?:
+            if element.a == element.b { element.b = element.a + element.kind.defaultOffset }
+            element = constrained(element)
+            if element.a != element.b {
+                let id = editor.add(element)
+                editor.selection = [id]
+            }
+        case .moving(_, _, _, let moved)?:
+            if moved {
+                editor.endInteraction("Move")
+            } else if let id = pendingToggle {
+                editor.toggleSwitch(id)
+            }
+        case .endpoint?:
+            editor.endInteraction("Resize")
+        case .pressing(let id)?:
+            editor.setPressed(id, false)
+        default:
+            break
+        }
+        drag = nil
+        pendingToggle = nil
+        needsDisplay = true
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = location(event)
+        mouseLocation = point
+        let hovered = editor.tool == nil ? element(at: point)?.id : nil
+        if hovered != editor.hovered { editor.hovered = hovered }
+        if let id = hovered, editor.circuit[id]?.kind.isSwitch == true {
+            NSCursor.pointingHand.set()
+        } else if editor.tool != nil {
+            NSCursor.crosshair.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        mouseLocation = nil
+        if editor.hovered != nil { editor.hovered = nil }
+        needsDisplay = true
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            editor.changeZoom(by: exp(-event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 0.01 : 0.1)), around: location(event))
+        } else {
+            let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+            editor.pan = CGPoint(x: editor.pan.x + event.scrollingDeltaX * scale, y: editor.pan.y + event.scrollingDeltaY * scale)
+        }
+        needsDisplay = true
+    }
+
+    override func magnify(with event: NSEvent) {
+        editor.changeZoom(by: 1 + event.magnification, around: location(event))
+        needsDisplay = true
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = location(event)
+        guard let hit = element(at: point) else { return nil }
+        if !editor.selection.contains(hit.id) { editor.selection = [hit.id] }
+        let menu = NSMenu()
+        if hit.kind == .toggleSwitch {
+            menu.addItem(item(hit.closed ? "Open Switch" : "Close Switch") { [weak self] in self?.editor.toggleSwitch(hit.id) })
+            menu.addItem(.separator())
+        }
+        for quantity in scopeQuantities(for: hit.kind) {
+            menu.addItem(item("Add \(quantity.name) Scope") { [weak self] in self?.editor.addScope(hit.id, quantity) })
+        }
+        menu.addItem(.separator())
+        menu.addItem(item("Rotate") { [weak self] in self?.editor.rotateSelection() })
+        menu.addItem(item("Delete") { [weak self] in self?.editor.deleteSelection() })
+        return menu
+    }
+
+    private func item(_ title: String, _ action: @escaping () -> Void) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(ClosureTarget.invoke), keyEquivalent: "")
+        let target = ClosureTarget(action)
+        item.target = target
+        item.representedObject = target
+        return item
+    }
+
+    // MARK: - Keyboard
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option])
+        switch event.keyCode {
+        case 51, 117:
+            editor.deleteSelection()
+            return
+        case 53:
+            drag = nil
+            editor.tool = nil
+            editor.selection = []
+            needsDisplay = true
+            return
+        case 49:
+            editor.simulation.toggleRunning()
+            return
+        default:
+            break
+        }
+        if modifiers.isEmpty, let key = event.charactersIgnoringModifiers?.lowercased().first,
+           let kind = ElementKind.allCases.first(where: { $0.shortcut == key }) {
+            editor.tool = editor.tool == kind ? nil : kind
+            needsDisplay = true
+            return
+        }
+        super.keyDown(with: event)
+    }
+
+    @objc func delete(_ sender: Any?) { editor.deleteSelection() }
+    @objc func copy(_ sender: Any?) { editor.copySelection() }
+    @objc func cut(_ sender: Any?) { editor.cutSelection() }
+    @objc func paste(_ sender: Any?) { editor.paste() }
+    @objc func selectAll(_ sender: Any?) { editor.selectAll() }
+}
+
+func scopeQuantities(for kind: ElementKind) -> [Quantity] {
+    switch kind {
+    case .memristor: return [.voltage, .current, .resistance, .power]
+    case .wire, .toggleSwitch, .pushButton: return [.current]
+    case .probe: return [.voltage]
+    case .ground: return []
+    default: return [.voltage, .current, .power]
+    }
+}
+
+/// Lets a menu item run a closure
+final class ClosureTarget: NSObject {
+    private let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    @objc func invoke() { action() }
+}
