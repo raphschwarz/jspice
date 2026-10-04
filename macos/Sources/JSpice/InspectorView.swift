@@ -237,7 +237,7 @@ struct CircuitInspector: View {
 
     var body: some View {
         Form {
-            Section("Simulation") {
+            Section {
                 Toggle("Automatic speed", isOn: Binding(get: { settings.autoSpeed }, set: { automatic in
                     let current = simulation.status.speed
                     editor.updateSettings {
@@ -280,6 +280,8 @@ struct CircuitInspector: View {
                     }
                 }
                 LabeledContent("Circuit time", value: SI.format(simulation.status.time, unit: "s", digits: 4))
+            } header: {
+                Text("Simulation")
             } footer: {
                 Text("Automatic speed runs in real time when the circuit changes slowly enough to watch, and in slow motion when it changes faster.")
             }

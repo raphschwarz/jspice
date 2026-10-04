@@ -601,7 +601,7 @@ final class CircuitCanvasView: NSView {
     @objc func copy(_ sender: Any?) { editor.copySelection() }
     @objc func cut(_ sender: Any?) { editor.cutSelection() }
     @objc func paste(_ sender: Any?) { editor.paste() }
-    @objc func selectAll(_ sender: Any?) { editor.selectAll() }
+    @objc override func selectAll(_ sender: Any?) { editor.selectAll() }
 }
 
 func scopeQuantities(for kind: ElementKind) -> [Quantity] {
