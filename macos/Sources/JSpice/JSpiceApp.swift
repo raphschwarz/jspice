@@ -19,6 +19,7 @@ enum Launcher {
             IconRenderer.writeIconSet(to: arguments[i + 1])
             return
         }
+        AutomationBridge.shared.start()
         JSpiceApp.main()
     }
 }
@@ -54,6 +55,15 @@ struct CircuitCommands: Commands {
                 .disabled(!(editor?.canFlipSelection ?? false))
             Button("Delete") { editor?.deleteSelection() }
                 .disabled(editor?.selection.isEmpty ?? true)
+            Divider()
+            Toggle("Allow AI Control (MCP)", isOn: Binding(
+                get: { AutomationBridge.shared.isEnabled },
+                set: { AutomationBridge.shared.isEnabled = $0 }
+            ))
+            Button("Copy MCP Server Configuration") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(AutomationBridge.clientConfiguration, forType: .string)
+            }
             Divider()
             Button("Export Image…") { editor?.exportImage() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])

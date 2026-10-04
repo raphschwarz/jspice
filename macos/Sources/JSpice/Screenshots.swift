@@ -29,6 +29,12 @@ enum ScreenshotRunner {
         Shot(name: "10-opamp-light", example: "opamp", dark: false, seconds: 2, select: .opAmp),
         Shot(name: "11-dimmer-light", example: "dimmer", dark: false, seconds: 1.5, select: .potentiometer),
         Shot(name: "12-zener-dark", example: "zener", dark: true, seconds: 2),
+        Shot(name: "13-lfo-dark", example: "lfo", dark: true, seconds: 3, select: .opAmp),
+        Shot(name: "14-vca-light", example: "vca", dark: false, seconds: 3, select: .ota),
+        Shot(name: "15-555-light", example: "555", dark: false, seconds: 3, select: .timer555),
+        Shot(name: "16-sample-hold-dark", example: "sh", dark: true, seconds: 3, select: .analogSwitch),
+        Shot(name: "17-schmitt-light", example: "schmitt", dark: false, seconds: 2, select: .schmittInverter),
+        Shot(name: "18-netlist-light", example: "netlist", dark: false, seconds: 1),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {
@@ -61,12 +67,28 @@ enum ScreenshotRunner {
         }
     }
 
+    /// A Sallen-Key low-pass filter as an AI agent would describe it, laid out from its netlist
+    private static func netlistDemo() -> Circuit {
+        var circuit = Circuit()
+        let parts = [
+            NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 1, "frequency": 200], connections: ["plus": "in", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "in", "b": "mid"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "mid", "b": "plus"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 22e-9], connections: ["a": "mid", "b": "out"]),
+            NetlistPart(kind: .capacitor, name: "C2", params: ["capacitance": 10e-9], connections: ["a": "plus", "b": "GND"]),
+            NetlistPart(kind: .opAmp, name: "U1", params: Examples.model(.opAmp, "TL072"),
+                        connections: ["plus": "plus", "minus": "out", "out": "out"]),
+        ]
+        try? NetlistLayout.add(parts, to: &circuit, firstCell: 0)
+        return circuit
+    }
+
     private static func capture(to directory: URL) async {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for shot in shots {
             NSApp.appearance = NSAppearance(named: shot.dark ? .darkAqua : .aqua)
             let example = shot.example.flatMap { Examples.example($0) }
-            var circuit = example?.circuit ?? Circuit()
+            var circuit = example?.circuit ?? (shot.example == "netlist" ? netlistDemo() : Circuit())
             if shot.closeSwitches {
                 for i in circuit.elements.indices where circuit.elements[i].kind == .toggleSwitch {
                     circuit.elements[i].closed = true

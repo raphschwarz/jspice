@@ -10,6 +10,8 @@ APP=build/JSpice.app
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/JSpice"
+# the MCP server that lets AI agents drive the app (or simulate on their own)
+cp "$(dirname "$BIN")/jspice-mcp" "$APP/Contents/MacOS/jspice-mcp"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
 "$APP/Contents/MacOS/JSpice" --render-icon build/AppIcon.iconset

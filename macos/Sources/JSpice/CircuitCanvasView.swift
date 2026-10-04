@@ -61,6 +61,14 @@ final class CircuitCanvasView: NSView {
         link.add(to: .main, forMode: .common)
         refreshLink = link
         window?.makeFirstResponder(self)
+        // the window in front is the one AI agents work on
+        EditorRegistry.active = editor
+        NotificationCenter.default.addObserver(self, selector: #selector(windowBecameKey(_:)), name: NSWindow.didBecomeKeyNotification,
+                                               object: window)
+    }
+
+    @objc private func windowBecameKey(_ notification: Notification) {
+        EditorRegistry.active = editor
     }
 
     override func removeFromSuperview() {

@@ -261,17 +261,26 @@ public final class CircuitSession {
 
     func listParts() -> Any {
         ElementKind.allCases.map { kind -> [String: Any] in
-            [
+            var parameters: [[String: Any]] = []
+            for spec in kind.params {
+                var entry: [String: Any] = ["key": spec.key, "name": spec.name, "unit": spec.unit, "default": spec.defaultValue,
+                                            "min": spec.range.lowerBound, "max": spec.range.upperBound]
+                if kind == .led && spec.key == "color" { entry["name"] = "Color: 0 red, 1 green, 2 blue, 3 yellow, 4 white" }
+                parameters.append(entry)
+            }
+            var models: [[String: Any]] = []
+            for model in kind.models {
+                models.append(["name": model.name, "summary": model.summary, "values": model.values])
+            }
+            let part: [String: Any] = [
                 "kind": kind.rawValue,
                 "name": kind.displayName,
                 "category": kind.category.rawValue,
                 "terminals": kind.terminalNames,
-                "parameters": kind.params.filter { $0.key != "color" || kind != .led }.map { spec -> [String: Any] in
-                    ["key": spec.key, "name": spec.name, "unit": spec.unit, "default": spec.defaultValue,
-                     "min": spec.range.lowerBound, "max": spec.range.upperBound]
-                } + (kind == .led ? [["key": "color", "name": "Color: 0 red, 1 green, 2 blue, 3 yellow, 4 white", "unit": "", "default": 0]] : []),
-                "models": kind.models.map { ["name": $0.name, "summary": $0.summary, "values": $0.values] },
+                "parameters": parameters,
+                "models": models,
             ]
+            return part
         }
     }
 

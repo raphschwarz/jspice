@@ -29,6 +29,19 @@ jobs:
       - name: Package JSpice.app
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: ./scripts/bundle.sh
+      - name: MCP server smoke test
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"load_example","arguments":{"id":"lfo"}}}' \
+            '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"simulate","arguments":{"duration":2,"probes":["V(U2)"],"points":5}}}' \
+            | ./build/JSpice.app/Contents/MacOS/jspice-mcp --headless | tee build/mcp.txt
+          test "$(wc -l < build/mcp.txt)" -eq 4
+          grep -q '"build_circuit"' build/mcp.txt
+          grep -q 'frequency' build/mcp.txt
       - name: Interaction test (draws a circuit with synthesized mouse events)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: ./build/JSpice.app/Contents/MacOS/JSpice --self-test "$PWD/build/screenshots"

@@ -614,7 +614,7 @@ public final class Simulator {
     /// Threshold (V), threshold width (V) and conductances of an analog switch
     func analogSwitchConductance(_ element: Element, control: Double) -> (conductance: Double, slope: Double) {
         let supply = max(element[param: "supply"], 1)
-        let width = 0.04 * supply
+        let width = 0.02 * supply
         let on = 1 / max(element[param: "onResistance"], 1e-3)
         let off = 1e-10
         let s = 1 / (1 + exp(-(control - supply / 2) / width))

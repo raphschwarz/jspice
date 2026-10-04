@@ -216,6 +216,18 @@ final class EditorState: ObservableObject {
         fitRequest += 1
     }
 
+    // MARK: - AI control
+
+    /// A change made by an AI agent through the MCP bridge: one undoable step, shown running
+    func applyAutomation(_ next: Circuit, _ action: String) {
+        let wasEmpty = circuit.elements.isEmpty
+        let rebuilt = Set(next.elements.map(\.id)).isDisjoint(with: circuit.elements.map(\.id))
+        edit(action) { $0 = next }
+        selection = selection.filter { next[$0] != nil }
+        if wasEmpty || rebuilt { requestFit() }
+        simulation.setRunning(true)
+    }
+
     // MARK: - Export
 
     /// Saves the schematic as it appears now, as a PNG picture or a PDF drawing

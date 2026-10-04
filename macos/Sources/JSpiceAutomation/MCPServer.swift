@@ -24,13 +24,13 @@ public final class MCPServer {
             return encode(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Parse error"]])
         }
         if let batch = object as? [Any] {
-            let replies = batch.compactMap { $0 as? [String: Any] }.compactMap(reply)
+            let replies = batch.compactMap { $0 as? [String: Any] }.compactMap { reply(to: $0) }
             return replies.isEmpty ? nil : encode(replies)
         }
         guard let message = object as? [String: Any] else {
             return encode(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32600, "message": "Invalid request"]])
         }
-        return reply(to: message).flatMap(encode)
+        return reply(to: message).flatMap { encode($0) }
     }
 
     private func reply(to message: [String: Any]) -> [String: Any]? {
@@ -55,9 +55,10 @@ public final class MCPServer {
         case "ping":
             return result([String: Any]())
         case "tools/list":
-            return result(["tools": CircuitSession.tools.map {
-                ["name": $0.name, "description": $0.description, "inputSchema": $0.inputSchema]
-            }])
+            let tools = CircuitSession.tools.map { tool -> [String: Any] in
+                ["name": tool.name, "description": tool.description, "inputSchema": tool.inputSchema]
+            }
+            return result(["tools": tools])
         case "tools/call":
             guard let name = params["name"] as? String else { return failure(-32602, "tools/call needs a tool name") }
             guard CircuitSession.tools.contains(where: { $0.name == name }) else { return failure(-32602, "Unknown tool \(name)") }
