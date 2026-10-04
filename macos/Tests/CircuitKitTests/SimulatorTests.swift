@@ -533,11 +533,12 @@ final class SynthPartTests: XCTestCase {
             b.ground((13, 2))
             let dt = 1e-8
             let simulator = Simulator(circuit: b.circuit, timeStep: dt)
+            let index = simulator.circuit.index(of: follower)!
             var previous = 0.0
             var fastest = 0.0
             for _ in 0..<20_000 {
                 simulator.step()
-                let v = simulator.voltageAcross(follower)
+                let v = simulator.voltageAcross(index)
                 fastest = max(fastest, abs(v - previous) / dt)
                 previous = v
             }
