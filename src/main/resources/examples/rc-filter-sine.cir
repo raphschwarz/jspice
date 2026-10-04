@@ -1,0 +1,9 @@
+* RC low-pass: sine response
+* A 1 kHz sine through a low-pass filter with cutoff 1/(2*pi*R*C) = 1.6 kHz.
+* The output is smaller than the input and lags behind it.
+* SIN(offset amplitude frequency)
+V1 in 0 SIN(0 1 1k)
+R1 in out 1k
+C1 out 0 100n
+.tran 5u 5m
+.end

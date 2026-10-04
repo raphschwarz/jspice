@@ -1,0 +1,10 @@
+* Memristor: programming with pulses
+* A train of 1 V pulses gradually switches a memristor from its high
+* resistance state to its low resistance state. R(MR1) shows the
+* resistance stepping down with every pulse.
+V1 in 0 PULSE(0 1 0 1u 1u 20u 100u)
+YMEMRISTOR MR1 in out MRM5
+R1 out 0 100
+.model MRM5 memristor ( level=5 Rinit=1500 Roff=1500 Ron=500 Voff=0.27 Von=0.27 Tau=0.0001 )
+.tran 1u 1m
+.end

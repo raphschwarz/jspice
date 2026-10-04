@@ -8,6 +8,27 @@ In a nutshell, JSpice is very limited compared to mainstream SPICE versions and 
 2. DC Sweep Analysis
 3. Transient Analysis (Time response to arbitrary input waveform)
 
+## Quick start: the JSpice web UI
+
+```
+mvn clean package
+java -jar target/jspice.jar
+```
+
+This starts JSpice on your own machine and opens it in your browser at <http://localhost:7341/>. Everything runs locally; the server only accepts connections from your computer.
+
+![The JSpice web UI](documentation/jspice-ui.png)
+
+- **Example library** - a dozen ready-to-run circuits, from a voltage divider to memristor hysteresis loops. Click one to load and run it.
+- **Netlist editor** - write SPICE (`.cir`) or YAML netlists with syntax highlighting; the format is detected automatically. Open and save files, or drag one onto the editor.
+- **Interactive charts** - one panel per unit (voltage, current, resistance) on a shared time axis. Hover for exact values, drag to zoom, double-click to reset, and pick any signal for the X axis to plot I-V curves.
+- **Tables and CSV export** for every analysis, and a clear summary card for DC operating points.
+- Light and dark themes, keyboard shortcuts (`Ctrl/Cmd+Enter` runs), and a built-in syntax reference.
+
+Options: `--port <n>` to use another port, `--no-browser` to not open a browser. To simulate a netlist without the UI, pass the file: `java -jar target/jspice.jar circuit.cir`.
+
+## Background
+
 JSpice was originally written at a time before any mainstream SPICE applications supported simulation of memristors, and at that point we felt it would be easier to write a custom version of SPICE in Java rather than to try to figure out how to natively integrate memristor devices into existing SPICE versions. More recently, other, more capable simulators such as Xyce, have appeared with [native support for memristors](http://knowm.org/native-memristor-device-development-in-xyce/), and we are now leveraging those tools for CMOS + memristor circuit simulations.
 
 JSpice is however still useful for rapid prototyping and serves as the simulation engine for [memristor-discovery](https://github.com/knowm/memristor-discovery). JSpice may interest you if you are interested in learning the mechanics of modified nodal analysis and your favorite programming langauge is Java. 

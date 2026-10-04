@@ -1,0 +1,11 @@
+* RC low-pass: step response
+* After 1 ms, a 5 V square wave charges and discharges a 1 uF capacitor
+* through 1 kOhm. Time constant tau = R*C = 1 ms, so the output reaches
+* 63 % of its final value 1 ms after each edge.
+* PULSE(v1 v2 delay rise fall width period)
+V1 in 0 PULSE(0 5 1m 1u 1u 5m 10m)
+R1 in out 1k
+C1 out 0 1u
+* .tran <time step> <stop time>
+.tran 10u 20m
+.end

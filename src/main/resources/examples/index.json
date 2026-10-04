@@ -1,0 +1,14 @@
+[
+  {"id": "voltage-divider", "file": "voltage-divider.cir", "title": "Voltage divider", "category": "Basics", "analysis": "dcop", "summary": "Two resistors splitting a 10 V supply."},
+  {"id": "wheatstone-bridge", "file": "wheatstone-bridge.cir", "title": "Wheatstone bridge", "category": "Basics", "analysis": "dcop", "summary": "An unbalanced bridge of five resistors."},
+  {"id": "current-source-network", "file": "current-source-network.yml", "title": "Current source network", "category": "Basics", "analysis": "dcop", "summary": "A current source feeding three resistors (YAML)."},
+  {"id": "rc-step-response", "file": "rc-step-response.cir", "title": "RC step response", "category": "Filters & timing", "analysis": "transient", "summary": "A capacitor charging and discharging, tau = 1 ms."},
+  {"id": "rc-filter-sine", "file": "rc-filter-sine.cir", "title": "RC low-pass filter", "category": "Filters & timing", "analysis": "transient", "summary": "A 1 kHz sine attenuated and delayed by a filter."},
+  {"id": "rl-step-response", "file": "rl-step-response.cir", "title": "RL step response", "category": "Filters & timing", "analysis": "transient", "summary": "Inductor current rising and decaying, tau = 1 ms."},
+  {"id": "diode-iv-curve", "file": "diode-iv-curve.yml", "title": "Diode I–V curve", "category": "Semiconductors", "analysis": "sweep", "summary": "Sweep a diode's forward voltage from 0 to 1 V.", "view": {"show": ["I(D1)", "V(d)"]}},
+  {"id": "half-wave-rectifier", "file": "half-wave-rectifier.yml", "title": "Half-wave rectifier", "category": "Semiconductors", "analysis": "transient", "summary": "A diode and smoothing capacitor turning AC into DC."},
+  {"id": "cmos-inverter", "file": "cmos-inverter.yml", "title": "CMOS inverter", "category": "Semiconductors", "analysis": "sweep", "summary": "The transfer curve of a two-transistor inverter.", "view": {"show": ["V(out)"]}},
+  {"id": "memristor-hysteresis", "file": "memristor-hysteresis.cir", "title": "Memristor hysteresis", "category": "Memristors", "analysis": "transient", "summary": "The pinched I–V loop that defines a memristor.", "view": {"x": "V(in)", "show": ["I(MR1)"]}},
+  {"id": "memristor-pulses", "file": "memristor-pulses.cir", "title": "Memristor pulse programming", "category": "Memristors", "analysis": "transient", "summary": "Stepping a memristor's resistance down with pulses.", "view": {"show": ["V(in)", "V(out)", "R(MR1)"]}},
+  {"id": "rs-memristor", "file": "rs-memristor.yml", "title": "RS memristor model", "category": "Memristors", "analysis": "transient", "summary": "A different memristor model under a sine drive (YAML).", "view": {"x": "V(VDD)", "show": ["I(M1)"]}}
+]

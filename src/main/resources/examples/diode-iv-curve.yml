@@ -1,0 +1,23 @@
+# Diode I-V curve
+# Sweeps the supply from 0 to 1 V across a diode with a 10 Ohm series
+# resistor. Almost no current flows until about 0.6 V, then it rises steeply.
+components:
+- type: dc_voltage
+  id: V1
+  nodes: a,0
+  voltage: 0
+- type: resistor
+  id: R1
+  nodes: a,d
+  resistance: 10
+- type: diode
+  id: D1
+  nodes: d,0
+  saturation_current: 1.0E-14
+sim:
+  type: sweep
+  sweep_id: V1
+  observe_id: I(D1)
+  start_value: 0.0
+  end_value: 1.0
+  step_size: 0.005

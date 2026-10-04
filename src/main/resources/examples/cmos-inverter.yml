@@ -1,0 +1,28 @@
+# CMOS inverter transfer curve
+# A PMOS and an NMOS transistor form an inverter. Sweeping the input from
+# 0 to 5 V shows the output snapping from high to low around 2.5 V.
+# MOSFET nodes are listed as gate, drain, source.
+components:
+- type: dc_voltage
+  id: VDD
+  nodes: vdd,0
+  voltage: 5.0
+- type: dc_voltage
+  id: Vin
+  nodes: in,0
+  voltage: 0.0
+- type: pmos
+  id: P1
+  nodes: in,out,vdd
+  threshold: 2.5
+- type: nmos
+  id: N1
+  nodes: in,out,0
+  threshold: 2.5
+sim:
+  type: sweep
+  sweep_id: Vin
+  observe_id: V(out)
+  start_value: 0.0
+  end_value: 5.0
+  step_size: 0.05

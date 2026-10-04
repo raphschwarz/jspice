@@ -46,6 +46,7 @@ import org.knowm.jspice.simulate.dcsweep.DCSweep;
 import org.knowm.jspice.simulate.dcsweep.DCSweepConfig;
 import org.knowm.jspice.simulate.transientanalysis.TransientAnalysis;
 import org.knowm.jspice.simulate.transientanalysis.TransientConfig;
+import org.knowm.jspice.ui.JSpiceServer;
 import org.knowm.validation.BaseValidator;
 
 public class JSpice {
@@ -56,9 +57,16 @@ public class JSpice {
 
   public static void main(String[] args) {
 
-    if (args.length == 0 || args[0].equals("-h") || args[0].equals("--help")) {
-      System.out.println("Usage: java -jar jspice.jar <netlist.cir | netlist.yml>");
-      System.exit(args.length == 0 ? 1 : 0);
+    if (args.length == 0 || args[0].equals("--ui") || args[0].equals("--port") || args[0].equals("--no-browser")) {
+      launchUI(args);
+      return;
+    }
+    if (args[0].equals("-h") || args[0].equals("--help")) {
+      System.out.println("Usage:");
+      System.out.println("  java -jar jspice.jar                              open the JSpice web UI in your browser");
+      System.out.println("  java -jar jspice.jar --ui [--port N] [--no-browser]");
+      System.out.println("  java -jar jspice.jar <netlist.cir | netlist.yml>  simulate a netlist and write <netlist>.out");
+      System.exit(0);
     }
     if (!new File(args[0]).isFile()) {
       System.err.println("Error: netlist file not found: " + args[0]);
@@ -70,6 +78,25 @@ public class JSpice {
       simulate(args[0]);
     } catch (Exception e) {
       System.err.println("Error: simulation of " + args[0] + " failed: " + e);
+      System.exit(1);
+    }
+  }
+
+  private static void launchUI(String[] args) {
+
+    int port = JSpiceServer.DEFAULT_PORT;
+    boolean openBrowser = true;
+    for (int i = 0; i < args.length; i++) {
+      if (args[i].equals("--no-browser")) {
+        openBrowser = false;
+      } else if (args[i].equals("--port") && i + 1 < args.length) {
+        port = Integer.parseInt(args[++i]);
+      }
+    }
+    try {
+      JSpiceServer.launch(port, openBrowser);
+    } catch (Exception e) {
+      System.err.println("Error: could not start the JSpice UI: " + e);
       System.exit(1);
     }
   }

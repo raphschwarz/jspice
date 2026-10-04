@@ -60,7 +60,6 @@ public class JoglekarMemristor extends Memristor {
     recalculatek();
 //    this.k = uv * Ron / D;
     this.w = (Roff - Rinit) / (Roff - Ron) * D;
-    System.out.println("w initial = " + w);
   }
 
   public double getConductance() {

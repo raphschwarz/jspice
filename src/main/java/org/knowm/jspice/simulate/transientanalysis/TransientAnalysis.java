@@ -127,8 +127,12 @@ public class TransientAnalysis {
             timeSeriesDataMap.get(nodeLabel).getyData().add(dCOperatingPointResult.getNodeLabels2Value().get(nodeLabel));
           }
         }
-        // add all device current values
+        // add all device current values, except those already added above (capacitor and inductor currents are unknowns of the
+        // nodal analysis too), which would otherwise be recorded twice per time step
         for (String deviceID : dCOperatingPointResult.getDeviceLabels2Value().keySet()) {
+          if (dCOperatingPointResult.getNodeLabels2Value().containsKey(deviceID)) {
+            continue;
+          }
           timeSeriesDataMap.get(deviceID).getxData().add(t);
           timeSeriesDataMap.get(deviceID).getyData().add(dCOperatingPointResult.getDeviceLabels2Value().get(deviceID));
         }

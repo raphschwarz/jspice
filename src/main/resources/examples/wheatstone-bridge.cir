@@ -1,0 +1,11 @@
+* Wheatstone bridge
+* Two voltage dividers side by side. R4 is slightly larger than R2,
+* so the bridge is unbalanced and a small current flows through R5.
+V1 top 0 DC 12
+R1 top a 1k
+R2 a 0 1k
+R3 top b 1k
+R4 b 0 1.2k
+R5 a b 10k
+.op
+.end

@@ -1,0 +1,8 @@
+* RL circuit: step response
+* The inductor opposes changes in current, so the current through it
+* rises and falls exponentially with time constant L/R = 1 ms.
+V1 in 0 PULSE(0 1 1m 1u 1u 5m 10m)
+R1 in out 100
+L1 out 0 100m
+.tran 10u 20m
+.end

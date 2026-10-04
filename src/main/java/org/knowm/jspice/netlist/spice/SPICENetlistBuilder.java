@@ -156,7 +156,6 @@ public class SPICENetlistBuilder {
         // first line of the netilst is comment which is title of output raw file
         String sourceFile = line;
 
-        System.out.println("...............Source of netList.... " + sourceFile);
         netlistBuilder.setSourceFile(sourceFile);
       } else if (line.startsWith(".PRINT") || line.startsWith(".print")) {
 
@@ -235,16 +234,26 @@ public class SPICENetlistBuilder {
         String nodeA = tokens[1];
         String nodeB = tokens[2];
 
-        // DC
-        int dcStartIndex = line.indexOf("DC");
-        tokens = line.substring(dcStartIndex).split("\\s+");
-        double dc = SPICEUtils.doubleFromString(tokens[1], 0);
+        // DC value: `DC <value>`, or a bare value right after the nodes (`V1 in 0 5`)
+        String upperLine = line.toUpperCase();
+        double dc = 0;
+        boolean dcFound = false;
+        for (int k = 3; k < tokens.length - 1; k++) {
+          if (tokens[k].equalsIgnoreCase("DC")) {
+            dc = SPICEUtils.doubleFromString(tokens[k + 1], 0);
+            dcFound = true;
+            break;
+          }
+        }
+        if (!dcFound && tokens.length > 3 && tokens[3].matches("[-+]?[0-9.].*")) {
+          dc = SPICEUtils.doubleFromString(tokens[3], 0);
+        }
         netlistBuilder.addNetlistDCVoltage(id, dc, nodeA, nodeB);
 
         // Sin
-        int sinStartIndex = line.indexOf("SIN");
+        int sinStartIndex = upperLine.indexOf("SIN(");
         if (sinStartIndex >= 0) {
-          String sineDef = line.substring(sinStartIndex + 4, line.indexOf(")")).trim();
+          String sineDef = line.substring(sinStartIndex + 4, line.indexOf(")", sinStartIndex)).trim();
 
           //        SIN(V0 VA FREQ TD THETA PHASE)
           tokens = sineDef.split("\\s+");
@@ -256,9 +265,9 @@ public class SPICENetlistBuilder {
         }
 
         // Pulse
-        int pulseStartIndex = line.indexOf("PULSE");
+        int pulseStartIndex = upperLine.indexOf("PULSE(");
         if (pulseStartIndex >= 0) {
-          String pulseDef = line.substring(pulseStartIndex + 6, line.indexOf(")")).trim();
+          String pulseDef = line.substring(pulseStartIndex + 6, line.indexOf(")", pulseStartIndex)).trim();
           //          System.out.println("pulseDef = " + pulseDef);
 
           // PULSE( {v1} {v2} {tdelay} {trise} {tfall} {width} {period} )
@@ -288,6 +297,11 @@ public class SPICENetlistBuilder {
           BigDecimal dutyCycle = v2 > v1 ? width.divide(period, MathContext.DECIMAL128)
               : (period.subtract(width)).divide(period, MathContext.DECIMAL128);
           BigDecimal phase = v2 > v1 ? BigDecimal.ZERO : period.multiply(dutyCycle);
+          // a delay shifts the waveform later in time; the driver adds its phase to the time, so subtract it (mod period)
+          BigDecimal delay = SPICEUtils.bigDecimalFromString(SPICEUtils.ifExists(tokens, 2), "0");
+          if (delay.signum() > 0) {
+            phase = phase.add(period).subtract(delay.remainder(period)).remainder(period);
+          }
           //          BigDecimal phase = BigDecimal.ZERO;
 
           drivers.add(new Pulse(id, dcOffset, phase.toString(), amplitude, frequency.toString(), dutyCycle.toString()));
@@ -328,6 +342,8 @@ public class SPICENetlistBuilder {
         throw new IllegalArgumentException("Not yet Implemented!!!  >I");
       } else if (line.startsWith("M") || line.startsWith("m")) {
         throw new IllegalArgumentException("Not yet Implemented!!!  >M");
+      } else if (line.equalsIgnoreCase(".OP")) {
+        // DC operating point is the default analysis when there is no .tran
       } else if (line.startsWith(".INCLUDE") || line.startsWith(".include")) {
         // valid, but skip as it's handeled above
       } else if (line.startsWith("*")) {

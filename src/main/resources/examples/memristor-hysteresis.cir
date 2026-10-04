@@ -1,0 +1,9 @@
+* Memristor: pinched hysteresis loop
+* A slow sine drives a memristor. Its resistance switches between
+* Ron = 500 Ohm and Roff = 1500 Ohm as the voltage crosses +/-0.27 V.
+* Plot I(MR1) against V(in) to see the characteristic pinched loop.
+V1 in 0 SIN(0 0.5 10)
+YMEMRISTOR MR1 in 0 MRM5
+.model MRM5 memristor ( level=5 Rinit=1500 Roff=1500 Ron=500 Voff=0.27 Von=0.27 Tau=0.0001 )
+.tran 0.25m 0.2
+.end
