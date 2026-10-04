@@ -21,6 +21,7 @@
  */
 package org.knowm.jspice;
 
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -53,16 +54,34 @@ public class JSpice {
   private static String outFormat = "";
   private static String fileName = "";
 
-  public static void main(String[] args) throws IOException, ConfigurationException {
+  public static void main(String[] args) {
 
-    if (args.length == 0) {
-      System.out.println("Proper Usage is: java -jar jspice <filename>");
-      System.exit(0);
+    if (args.length == 0 || args[0].equals("-h") || args[0].equals("--help")) {
+      System.out.println("Usage: java -jar jspice.jar <netlist.cir | netlist.yml>");
+      System.exit(args.length == 0 ? 1 : 0);
+    }
+    if (!new File(args[0]).isFile()) {
+      System.err.println("Error: netlist file not found: " + args[0]);
+      System.exit(1);
     }
     isFromCommandline = true;
     fileName = args[0];
-    simulate(args[0]);
+    try {
+      simulate(args[0]);
+    } catch (Exception e) {
+      System.err.println("Error: simulation of " + args[0] + " failed: " + e);
+      System.exit(1);
+    }
+  }
 
+  private static void writeResults(String outFileName, String results) {
+
+    try (PrintStream out = new PrintStream(new FileOutputStream(outFileName))) {
+      out.print(results);
+      System.out.println("...............Writing simulation results to.........." + outFileName);
+    } catch (FileNotFoundException e) {
+      System.err.println("Error: could not write results to " + outFileName + ": " + e.getMessage());
+    }
   }
 
   public static SimulationResult simulate(String fileName) throws IOException, ConfigurationException {
@@ -105,10 +124,9 @@ public class JSpice {
     if (simulationConfig == null || simulationConfig instanceof DCOPConfig) {
 
       DCOperatingPointResult dcOpResult = new DCOperatingPoint(netlist).run();
+      System.out.println(dcOpResult.toString());
       if (isFromCommandline) {
-
-      } else {
-        System.out.println(dcOpResult.toString());
+        writeResults(fileName + ".out", dcOpResult.toString());
       }
       return null;
 
@@ -121,7 +139,9 @@ public class JSpice {
       dcSweep.addSweepConfig(dcSweepConfig);
       SimulationResult simulationResult = dcSweep.run(dcSweepConfig.getObserveID());
       if (isFromCommandline) {
-
+        String table = simulationResult.toTableString(simulationResult.getxDataLabel());
+        System.out.println(table);
+        writeResults(fileName + ".out", table);
       } else {
         //        System.out.println(simulationResult.toString());
         SimulationPlotter.plot(simulationResult, new String[]{dcSweepConfig.getObserveID()});
@@ -138,36 +158,25 @@ public class JSpice {
 
       if (isFromCommandline) {
 
-        String format = netlist.getResultsFormat();
+        // YAML netlists have no .PRINT line, so no format is set and the standard format is used
+        String format = netlist.getResultsFormat() == null ? "std" : netlist.getResultsFormat();
         System.out.println("Results format: " + format);
 
         // check the requested format of the results file
-        if (format.startsWith("RAW") || format.startsWith("raw")) {
+        if (format.toLowerCase().startsWith("raw")) {
 
           // Raw format found so get the results filename passed on the .PRINT line of the netlist
           String resFilename = netlist.getResultsFile();
 
           // output as SPICE Raw
-          System.out.println("...............Writing simulation results to.........." + resFilename);
           String xyceRawString = simulationResult.toXyceRawString(netlist.getSourceFile());
           System.out.println(xyceRawString);
-          try (PrintStream out = new PrintStream(new FileOutputStream(resFilename))) {
-            out.print(xyceRawString);
-          } catch (FileNotFoundException e) {
-            e.printStackTrace();
-          }
+          writeResults(resFilename, xyceRawString);
         } else {
           // output as Xyce STD
           String xyceString = simulationResult.toXyceString();
-          System.out.println(xyceString = simulationResult.toXyceString());
-          try (PrintStream out = new PrintStream(new FileOutputStream(fileName + ".out"))) {
-            System.out.println("...............Writing simulation results to.........." + fileName + ".out");
-
-            //try (PrintStream out = new PrintStream(new FileOutputStream(resFilename))) {
-            out.print(xyceString);
-          } catch (FileNotFoundException e) {
-            e.printStackTrace();
-          }
+          System.out.println(xyceString);
+          writeResults(fileName + ".out", xyceString);
         }
         //        SimulationPlotter.plotTransientInOutCurve("I/V Curve", simulationResult, "V(Vmr)", "I(MR1)");
       } else {

@@ -22,6 +22,7 @@
 package org.knowm.jspice.simulate;
 
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -87,13 +88,23 @@ public class SimulationResult {
 
   public String toXyceString() {
 
+    return toTableString("Time");
+  }
+
+  /**
+   * Tab-separated table of all observables, one row per x value
+   *
+   * @param xColumnLabel the header of the x data column (e.g. "Time" or the swept component)
+   */
+  public String toTableString(String xColumnLabel) {
+
     int count = 0;
     StringBuilder sb = new StringBuilder();
 
     String returnString = System.getProperty("line.separator");
     sb.append("Index");
     sb.append("\t");
-    sb.append("Time");
+    sb.append(xColumnLabel);
     sb.append("\t");
     for (Entry<String, SimulationPlotData> entrySet : simulationDataMap.entrySet()) {
       sb.append(entrySet.getKey());
@@ -101,8 +112,8 @@ public class SimulationResult {
     }
     sb.append(returnString);
 
-    List<Number> xData = simulationDataMap.values().iterator().next().getxData();
-    do {
+    List<Number> xData = simulationDataMap.isEmpty() ? Collections.<Number>emptyList() : simulationDataMap.values().iterator().next().getxData();
+    for (; count < xData.size(); count++) {
       sb.append(count);
       sb.append("\t");
       sb.append(xData.get(count));
@@ -112,7 +123,7 @@ public class SimulationResult {
         sb.append("\t");
       }
       sb.append(returnString);
-    } while (++count < xData.size());
+    }
     sb.append("End of JSpice Simulation");
     return sb.toString();
   }

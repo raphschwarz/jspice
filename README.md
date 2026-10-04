@@ -703,8 +703,9 @@ java -jar jspice.jar FFXX-kTSynapse-netlist.cir
 
 ## Continuous Integration
 
-[![Build Status](https://travis-ci.org/knowm/jspice.png?branch=master)](https://travis-ci.org/knowm/jspice.png)
-[Build History](https://travis-ci.org/knowm/jspice/builds)
+[![build](https://github.com/raphschwarz/jspice/actions/workflows/build.yml/badge.svg)](https://github.com/raphschwarz/jspice/actions/workflows/build.yml)
+
+Every push and pull request is built and tested with GitHub Actions on Java 11, 17 and 21 (see `.github/workflows/build.yml`).
 
 ## Building
 
@@ -715,6 +716,13 @@ JSpice is built with Maven, which also handles dependency management.
     cd path/to/project
     mvn clean package  
     mvn javadoc:javadoc
+
+`mvn clean package` runs the tests and produces `target/jspice.jar`, a self-contained jar with all dependencies. Run a netlist with it:
+
+    java -jar target/jspice.jar path/to/netlist.cir   # SPICE netlist
+    java -jar target/jspice.jar path/to/netlist.yml   # YAML netlist
+
+Results are printed and written next to the netlist as `<netlist>.out` (a `.cir` netlist with `.PRINT ... format=raw file=<name>` writes SPICE raw format to `<name>` instead). DC operating point, DC sweep and transient analyses are supported from the command line.
 
 ### maven-license-plugin
 
@@ -729,4 +737,3 @@ JSpice is built with Maven, which also handles dependency management.
 ## TODO
 
 1. Implement for new API: initial conditions, DC Sweep orthogonal config
-1. DC Op and DC Sweep file output like for transient analysis
