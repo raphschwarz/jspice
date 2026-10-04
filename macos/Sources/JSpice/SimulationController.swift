@@ -38,11 +38,9 @@ final class SimulationController: ObservableObject {
     private(set) var currentScale: Double = 1e-3
 
     private var lastTick: CFTimeInterval?
-    private var audio: AudioOutput?
+    /// While sound is on, the circuit runs on the sound thread and `simulator` follows it
+    private var renderer: AudioRenderer?
     private var speakerIndex: Int?
-    /// DC blocker state: the speaker hears changes, not a constant offset
-    private var blockerInput = 0.0
-    private var blockerOutput = 0.0
     private var lastPublish: CFTimeInterval = 0
     private var achieved = 1.0
 
@@ -62,6 +60,10 @@ final class SimulationController: ObservableObject {
         applySettings(of: circuit)
         simulator.load(circuit)
         simulator.configureScopes(window: speed * Self.scopeSpan)
+        if let renderer, let speaker = speakerIndex {
+            renderer.load(circuit, speaker: speaker, fullScale: circuit.elements[speaker][param: "fullScale"],
+                          scopeWindow: Self.scopeSpan)
+        }
         publish()
     }
 
@@ -71,23 +73,26 @@ final class SimulationController: ObservableObject {
         if !hasSpeaker && soundOn { setSound(false) }
     }
 
-    private var playing: Bool { soundOn && speakerIndex != nil && audio != nil }
+    private var playing: Bool { renderer != nil }
 
-    /// Turns sound on or off. While it is on the circuit runs in real time with one step per audio sample.
+    /// Turns sound on or off. While it is on the circuit runs in real time with one step per audio sample, on a thread
+    /// of its own.
     func setSound(_ on: Bool) {
         if on {
-            guard hasSpeaker, audio == nil else { return }
-            let output = AudioOutput()
-            guard output.start() else {
+            guard renderer == nil, let speaker = speakerIndex else { return }
+            guard let started = AudioRenderer(continuing: simulator, speaker: speaker,
+                                              fullScale: simulator.circuit.elements[speaker][param: "fullScale"],
+                                              scopeWindow: Self.scopeSpan) else {
                 soundProblem = "No sound output is available."
                 return
             }
             soundProblem = nil
-            audio = output
+            started.setPaused(!isRunning)
+            renderer = started
             soundOn = true
         } else {
-            audio?.stop()
-            audio = nil
+            renderer?.stop()
+            renderer = nil
             soundOn = false
         }
         applySettings(of: simulator.circuit)
@@ -96,10 +101,10 @@ final class SimulationController: ObservableObject {
     }
 
     private func applySettings(of circuit: Circuit) {
-        if playing, let audio {
+        if let renderer {
             automatic = false
             speed = 1
-            simulator.setTimeStep(1 / audio.sampleRate)
+            simulator.setTimeStep(1 / renderer.sampleRate)
             return
         }
         let suggestion = Pacing.suggest(for: circuit)
@@ -116,8 +121,9 @@ final class SimulationController: ObservableObject {
         let wall = min(max(now - last, 0), 0.1)
         guard isRunning, !simulator.isFailed, wall > 0 else { return }
 
-        if playing {
-            achieved = achieved * 0.9 + produceSound(wall: wall, budget: budget) * 0.1
+        if let renderer {
+            renderer.share(into: simulator)
+            achieved = renderer.achieved
         } else {
             let requested = speed * wall
             let progress = simulator.advance(by: requested, deadline: ProcessInfo.processInfo.systemUptime + budget)
@@ -130,32 +136,6 @@ final class SimulationController: ObservableObject {
             lastPublish = now
             publish()
         }
-    }
-
-    /// Steps the circuit once per audio sample until about 80 ms of sound is queued (or the frame's time is up).
-    /// Returns the fraction of real time reached.
-    private func produceSound(wall: Double, budget: TimeInterval) -> Double {
-        guard let audio, let speaker = speakerIndex, speaker < simulator.circuit.elements.count else { return 1 }
-        let rate = audio.sampleRate
-        let target = Int(0.08 * rate)
-        let needed = target - audio.buffered
-        guard needed > 0 else { return 1 }
-        let fullScale = max(simulator.circuit.elements[speaker][param: "fullScale"], 1e-3)
-        let deadline = ProcessInfo.processInfo.systemUptime + budget
-        var samples: [Float] = []
-        samples.reserveCapacity(needed)
-        while samples.count < needed && !simulator.isFailed {
-            simulator.step()
-            let x = simulator.voltageAcross(speaker) / fullScale
-            // one-pole high-pass at about 4 Hz, then a soft limit instead of hard clipping
-            let y = x - blockerInput + 0.9995 * blockerOutput
-            blockerInput = x
-            blockerOutput = y
-            samples.append(Float(tanh(y)))
-            if samples.count & 63 == 0 && ProcessInfo.processInfo.systemUptime > deadline { break }
-        }
-        audio.write(samples)
-        return min(1, Double(samples.count) / max(1, wall * rate))
     }
 
     private func moveDots(wall: Double) {
@@ -176,6 +156,7 @@ final class SimulationController: ObservableObject {
 
     func setRunning(_ running: Bool) {
         isRunning = running
+        renderer?.setPaused(!running)
         lastTick = nil
         publish()
     }
@@ -186,6 +167,7 @@ final class SimulationController: ObservableObject {
 
     func reset() {
         simulator.reset()
+        renderer?.reset()
         dotPhase = [:]
         achieved = 1
         publish()

@@ -38,6 +38,25 @@ final class AudioTests: XCTestCase {
         XCTAssertEqual(pitch(Examples.tremolo, settle: 0.1, listen: 0.5), 220, accuracy: 5)
     }
 
+    /// The window's simulator follows the sound thread's by taking on its state; from then on both must agree exactly
+    func testAdoptedStateCarriesOnIdentically() {
+        for example in [Examples.tremolo, Examples.beeper, Examples.lfo] {
+            let original = Simulator(circuit: example.circuit, timeStep: 1 / 48_000)
+            for _ in 0..<2_000 { original.step() }
+            let follower = Simulator(circuit: example.circuit, timeStep: 1e-4)
+            follower.adoptState(of: original)
+            XCTAssertEqual(follower.time, original.time, example.id)
+            for _ in 0..<500 {
+                original.step()
+                follower.step()
+            }
+            for i in example.circuit.elements.indices {
+                XCTAssertEqual(follower.voltageAcross(i), original.voltageAcross(i), accuracy: 1e-9, example.id)
+                XCTAssertEqual(follower.current(i), original.current(i), accuracy: 1e-12, example.id)
+            }
+        }
+    }
+
     func testEverySoundExampleHasASpeaker() {
         for id in ["beeper", "tone", "tremolo"] {
             XCTAssertTrue(Examples.example(id)?.circuit.elements.contains { $0.kind == .speaker } ?? false, id)

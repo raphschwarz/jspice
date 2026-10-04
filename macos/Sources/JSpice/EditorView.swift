@@ -45,6 +45,8 @@ struct EditorView: View {
         }
         .focusedSceneObject(editor)
         .onAppear { editor.undoManager = undoManager }
+        // closing the window silences it
+        .onDisappear { editor.simulation.setSound(false) }
         .onChange(of: undoManager) { _, manager in editor.undoManager = manager }
         .onChange(of: document.circuit) { _, circuit in editor.simulation.load(circuit) }
     }

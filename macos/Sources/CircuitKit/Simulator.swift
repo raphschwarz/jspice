@@ -209,6 +209,39 @@ public final class Simulator {
         }
     }
 
+    /// Takes on the state of another simulator running the same circuit: its time and time step, solution, every
+    /// element's state and its scope traces. The app's sound runs a second simulator on its own thread, and the window's
+    /// simulator follows it this way to show what it is doing.
+    public func adoptState(of other: Simulator) {
+        guard other.circuit.elements.count == circuit.elements.count, other.x.count == x.count else { return }
+        time = other.time
+        if timeStep != other.timeStep {
+            timeStep = other.timeStep
+            matrixIsCurrent = false
+        }
+        if digitalState != other.digitalState { matrixIsCurrent = false }
+        x = other.x
+        capacitorVoltage = other.capacitorVoltage
+        capacitorVoltagePrevious = other.capacitorVoltagePrevious
+        capacitorCurrent = other.capacitorCurrent
+        inductorVoltage = other.inductorVoltage
+        inductorCurrent = other.inductorCurrent
+        inductorCurrentPrevious = other.inductorCurrentPrevious
+        memristorStates = other.memristorStates
+        limitedVoltage = other.limitedVoltage
+        limitedVoltage2 = other.limitedVoltage2
+        limitedVoltage3 = other.limitedVoltage3
+        digitalState = other.digitalState
+        convergenceFailures = other.convergenceFailures
+        isFailed = other.isFailed
+        problems = other.problems
+        stepCarry = 0
+        currentsAreStale = true
+        for (id, trace) in traces {
+            if let source = other.traces[id] { trace.adopt(source) }
+        }
+    }
+
     /// Back to time zero with every element at rest
     public func reset() {
         time = 0
@@ -1315,6 +1348,19 @@ public final class ScopeTrace {
     }
 
     var interval: Double { window / Double(Self.capacity) }
+
+    /// Copies another trace's history
+    func adopt(_ other: ScopeTrace) {
+        minimums = other.minimums
+        maximums = other.maximums
+        lastValue = other.lastValue
+        voltages = other.voltages
+        currents = other.currents
+        lastVoltage = other.lastVoltage
+        bucketStart = other.bucketStart
+        bucketMin = other.bucketMin
+        bucketMax = other.bucketMax
+    }
 
     func clear() {
         minimums.removeAll()

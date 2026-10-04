@@ -1,8 +1,8 @@
 import AVFoundation
 import os
 
-/// Plays the samples the simulation produces. The simulation writes into a ring buffer on the main thread and the audio
-/// thread reads from it; when the buffer runs dry the sound fades out instead of clicking.
+/// Plays the samples the simulation produces. The sound thread writes into a ring buffer and the audio system reads
+/// from it; when the buffer runs dry the sound fades out instead of clicking.
 final class AudioOutput {
     private struct Ring {
         var samples: [Float]
@@ -72,7 +72,7 @@ final class AudioOutput {
     /// Samples waiting to be played
     var buffered: Int { ring.withLock { $0.count } }
 
-    func write(_ samples: [Float]) {
+    func write<Samples: Collection>(_ samples: Samples) where Samples.Element == Float {
         guard !samples.isEmpty else { return }
         ring.withLock { state in
             for sample in samples where state.count < state.samples.count {

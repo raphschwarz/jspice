@@ -40,6 +40,8 @@ enum ScreenshotRunner {
         Shot(name: "20-tidy-lfo-dark", example: "lfo", dark: true, seconds: 2, tidy: true),
         Shot(name: "21-tidy-555-light", example: "555", dark: false, seconds: 2, tidy: true),
         Shot(name: "22-tidy-vca-light", example: "vca", dark: false, seconds: 2, tidy: true),
+        Shot(name: "23-tremolo-dark", example: "tremolo", dark: true, seconds: 1.5, select: .speaker),
+        Shot(name: "24-beeper-light", example: "beeper", dark: false, seconds: 1, select: .timer555),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {
@@ -74,7 +76,6 @@ enum ScreenshotRunner {
 
     /// A Sallen-Key low-pass filter as an AI agent would describe it, laid out from its netlist
     private static func netlistDemo() -> Circuit {
-        var circuit = Circuit()
         let parts = [
             NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 1, "frequency": 200], connections: ["plus": "in", "minus": "GND"]),
             NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "in", "b": "mid"]),
@@ -84,7 +85,7 @@ enum ScreenshotRunner {
             NetlistPart(kind: .opAmp, name: "U1", params: Examples.model(.opAmp, "TL072"),
                         connections: ["plus": "plus", "minus": "out", "out": "out"]),
         ]
-        return (try? SchematicLayout.layout(parts)) ?? circuit
+        return (try? SchematicLayout.layout(parts)) ?? Circuit()
     }
 
     private static func capture(to directory: URL) async {
