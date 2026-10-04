@@ -179,12 +179,15 @@ enum InteractionTest {
         }.value
         undo.endUndoGrouping()
         check(reply?.contains("\"isError\":false") ?? false, "an MCP tool call over the app's socket succeeds (\(reply.map { String($0.prefix(120)) } ?? "no reply"))")
-        check(document.circuit.elements.contains { $0.name == "RA" } && document.circuit.elements.contains { $0.kind == .netLabel && $0.name == "mid" },
-              "the agent's circuit appears in the window")
+        check(document.circuit.elements.contains { $0.name == "RA" } && document.circuit.elements.contains { $0.kind == .wire },
+              "the agent's circuit appears in the window, drawn with wires")
         await pause(0.6)
-        if let divider = document.circuit.elements.first(where: { $0.kind == .netLabel && $0.name == "mid" }),
-           let index = editor.simulation.simulator.circuit.index(of: divider.id) {
+        if let lower = document.circuit.elements.first(where: { $0.name == "RB" }),
+           let index = editor.simulation.simulator.circuit.index(of: lower.id) {
+            // RB runs from the divider's middle to ground
             check(abs(editor.simulation.simulator.voltageAcross(index) - 8) < 0.01, "and simulates: the divider gives 8 V")
+        } else {
+            check(false, "the agent's divider has its lower resistor")
         }
         capture(window, to: directory.appendingPathComponent("19-built-by-agent.png"))
         await undoLast()

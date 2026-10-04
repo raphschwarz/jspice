@@ -279,7 +279,11 @@ public enum SchematicLayout {
                 queue.append(p)
                 ranked.append(p)
             }
-            var seeds = parts.filter { $0.role == .source }
+            // sources, and parts fed only from supplies (a potentiometer making a control voltage), start the flow
+            var seeds = parts.filter { p in
+                p.role == .source || (p.role == .directed && !outputNetList(p).isEmpty
+                                      && inputNets(p).allSatisfy { cls($0) != .signal })
+            }
             if seeds.isEmpty, let first = parts.first(where: { $0.role == .directed }) ?? parts.first(where: { $0.role == .series }) {
                 seeds = [first]
             }
@@ -404,7 +408,12 @@ public enum SchematicLayout {
             var x = 0
             // supplies on the far left
             for p in parts where p.role == .railSource {
-                put(p, GridPoint(x, 4), GridPoint(x, 0))
+                // ground at the bottom: a negative supply stands with its minus terminal on top
+                if cls(p.connections[1]) == .ground {
+                    put(p, GridPoint(x, 0), GridPoint(x, 4))
+                } else {
+                    put(p, GridPoint(x, 4), GridPoint(x, 0))
+                }
                 x += 4
             }
             if parts.contains(where: { $0.role == .railSource }) { x += 2 }
