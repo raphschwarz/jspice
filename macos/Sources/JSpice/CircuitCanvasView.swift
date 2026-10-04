@@ -299,19 +299,34 @@ final class CircuitCanvasView: NSView {
             }
             guard !lines.isEmpty else { continue }
 
-            // place the text beside the part: above horizontal parts, to the right of vertical ones
+            // place the text beside the part: above horizontal parts, to the right of vertical ones, except where a
+            // potentiometer's wiper is in the way
             var anchor = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             var horizontal = abs(b.x - a.x) >= abs(b.y - a.y)
+            var otherSide = false
             if element.kind.isTransistor {
                 anchor = CGPoint(x: b.x + (horizontal ? 0.6 * unit : 0), y: b.y)
                 horizontal = false
+            } else if element.kind == .potentiometer {
+                let wiper = screen(element.wiper)
+                otherSide = horizontal ? wiper.y < anchor.y : wiper.x > anchor.x
             }
             let sizes = lines.map { $0.size() }
             let totalHeight = sizes.reduce(0) { $0 + $1.height }
-            let offset = (element.kind.isTransistor ? 0.4 : (isProbe ? 1.0 : 1.05)) * unit
-            var y = horizontal ? anchor.y - offset - totalHeight : anchor.y - totalHeight / 2
+            let offset: CGFloat
+            switch element.kind {
+            case _ where element.kind.isTransistor: offset = 0.4 * unit
+            case .opAmp: offset = 1.9 * unit
+            default: offset = (isProbe ? 1.0 : 1.05) * unit
+            }
+            var y: CGFloat
+            if horizontal {
+                y = otherSide ? anchor.y + offset : anchor.y - offset - totalHeight
+            } else {
+                y = anchor.y - totalHeight / 2
+            }
             for (line, size) in zip(lines, sizes) {
-                let x = horizontal ? anchor.x - size.width / 2 : anchor.x + offset
+                let x = horizontal ? anchor.x - size.width / 2 : (otherSide ? anchor.x - offset - size.width : anchor.x + offset)
                 line.draw(at: CGPoint(x: x, y: y))
                 y += size.height
             }
