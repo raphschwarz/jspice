@@ -509,6 +509,7 @@ public final class CircuitSession {
 
         let start = simulator.time
         var traces = probes.map { _ in Trace() }
+        let wallStart = Date()
         let stride = max(1, steps / points)
         let keepEvery = max(1, steps / 200_000)
         for step in 1...steps {
@@ -523,6 +524,7 @@ public final class CircuitSession {
         }
         var result: [String: Any] = [
             "start_time": start, "end_time": simulator.time, "time_step": timeStep, "steps": steps,
+            "wall_seconds": Date().timeIntervalSince(wallStart),
             "convergence_failures": simulator.convergenceFailures,
         ]
         if simulator.isFailed || !simulator.problems.isEmpty { result["problems"] = simulator.problems }
