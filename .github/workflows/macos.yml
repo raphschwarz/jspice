@@ -1,0 +1,44 @@
+name: macos
+
+on:
+  push:
+    paths: ['macos/**', '.github/workflows/macos.yml']
+  pull_request:
+    paths: ['macos/**', '.github/workflows/macos.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Build
+        run: swift build
+      - name: Test the simulation engine
+        run: swift test
+      - name: Package JSpice.app
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        run: ./scripts/bundle.sh
+      - name: Render screenshots
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        run: ./build/JSpice.app/Contents/MacOS/JSpice --screenshots "$PWD/build/screenshots"
+      - name: Upload app
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: JSpice-macOS
+          path: macos/build/JSpice-macOS.zip
+      - name: Upload screenshots
+        if: always() && hashFiles('macos/scripts/bundle.sh') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: macos/build/screenshots
