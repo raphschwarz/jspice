@@ -33,12 +33,12 @@ public enum NetlistError: Error, CustomStringConvertible {
     }
 }
 
-/// Turns netlists into drawable schematics: each part gets its own cell on a grid, and each connected terminal a short
-/// lead ending in a net label (or a ground symbol), so parts on the same net are joined by name.
+/// Turns netlists into drawable schematics: each part gets its own cell on a grid, three to a row, and each connected
+/// terminal a short lead ending in a net label (or a ground symbol), so parts on the same net are joined by name.
 public enum NetlistLayout {
-    static let cellWidth = 18
-    static let cellHeight = 14
-    static let columns = 4
+    static let cellWidth = 13
+    static let cellHeight = 9
+    static let columns = 3
 
     /// Top-left corner of cell number `index`
     public static func cellOrigin(_ index: Int) -> GridPoint {
@@ -72,12 +72,12 @@ public enum NetlistLayout {
         func p(_ x: Int, _ y: Int) -> GridPoint { origin + GridPoint(x, y) }
         let (a, b): (GridPoint, GridPoint)
         switch part.kind {
-        case .nmos, .pmos, .npn, .pnp, .njfet: (a, b) = (p(5, 6), p(7, 6))
-        case .potentiometer, .analogSwitch: (a, b) = (p(4, 7), p(8, 7))
-        case .timer555: (a, b) = (p(8, 3), p(8, 8))
-        case .ground: (a, b) = (p(6, 6), p(6, 7))
-        case .netLabel: (a, b) = (p(6, 6), p(7, 6))
-        default: (a, b) = (p(4, 6), p(8, 6))
+        case .nmos, .pmos, .npn, .pnp, .njfet: (a, b) = (p(4, 4), p(6, 4))
+        case .potentiometer, .analogSwitch: (a, b) = (p(3, 5), p(7, 5))
+        case .timer555: (a, b) = (p(6, 2), p(6, 7))
+        case .ground: (a, b) = (p(5, 4), p(5, 5))
+        case .netLabel: (a, b) = (p(5, 4), p(6, 4))
+        default: (a, b) = (p(3, 4), p(7, 4))
         }
         var params = part.params
         for spec in part.kind.params where params[spec.key] == nil { params[spec.key] = spec.defaultValue }
@@ -111,14 +111,14 @@ public enum NetlistLayout {
             }
             circuit.elements.append(element)
             ids.append(element.id)
-            // a lead outwards from the part's middle, two units long, ending in the net's label
+            // a lead outwards from the part's middle, one unit long, ending in the net's label
             let middleX = Double(element.a.x + element.b.x) / 2
             let middleY = Double(element.a.y + element.b.y) / 2
             for (post, net) in leads {
                 let dx = Double(post.x) - middleX
                 let dy = Double(post.y) - middleY
                 let direction = abs(dx) >= abs(dy) ? GridPoint(dx >= 0 ? 1 : -1, 0) : GridPoint(0, dy >= 0 ? 1 : -1)
-                let end = post + direction * 2
+                let end = post + direction
                 circuit.elements.append(Element(kind: .wire, a: post, b: end))
                 if Topology.isGroundName(net) {
                     circuit.elements.append(Element(kind: .ground, a: end, b: end + GridPoint(0, 1)))
