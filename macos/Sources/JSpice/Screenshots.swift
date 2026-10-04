@@ -15,6 +15,8 @@ enum ScreenshotRunner {
         let seconds: Double
         var select: ElementKind?
         var closeSwitches = false
+        /// Redraw the example with Tidy Up first
+        var tidy = false
     }
 
     static let shots: [Shot] = [
@@ -35,6 +37,9 @@ enum ScreenshotRunner {
         Shot(name: "16-sample-hold-dark", example: "sh", dark: true, seconds: 3, select: .analogSwitch),
         Shot(name: "17-schmitt-light", example: "schmitt", dark: false, seconds: 2, select: .schmittInverter),
         Shot(name: "18-netlist-light", example: "netlist", dark: false, seconds: 1),
+        Shot(name: "20-tidy-lfo-dark", example: "lfo", dark: true, seconds: 2, tidy: true),
+        Shot(name: "21-tidy-555-light", example: "555", dark: false, seconds: 2, tidy: true),
+        Shot(name: "22-tidy-vca-light", example: "vca", dark: false, seconds: 2, tidy: true),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {
@@ -79,8 +84,7 @@ enum ScreenshotRunner {
             NetlistPart(kind: .opAmp, name: "U1", params: Examples.model(.opAmp, "TL072"),
                         connections: ["plus": "plus", "minus": "out", "out": "out"]),
         ]
-        try? NetlistLayout.add(parts, to: &circuit, firstCell: 0)
-        return circuit
+        return (try? SchematicLayout.layout(parts)) ?? circuit
     }
 
     private static func capture(to directory: URL) async {
@@ -89,6 +93,7 @@ enum ScreenshotRunner {
             NSApp.appearance = NSAppearance(named: shot.dark ? .darkAqua : .aqua)
             let example = shot.example.flatMap { Examples.example($0) }
             var circuit = example?.circuit ?? (shot.example == "netlist" ? netlistDemo() : Circuit())
+            if shot.tidy, let tidied = try? SchematicLayout.tidy(circuit) { circuit = tidied }
             if shot.closeSwitches {
                 for i in circuit.elements.indices where circuit.elements[i].kind == .toggleSwitch {
                     circuit.elements[i].closed = true

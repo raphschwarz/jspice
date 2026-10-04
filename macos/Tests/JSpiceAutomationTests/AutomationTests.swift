@@ -138,17 +138,28 @@ final class AutomationTests: XCTestCase {
     func testBuiltCircuitsAreDrawableAndConnected() throws {
         let session = CircuitSession()
         _ = try session.call("build_circuit", arguments: ["parts": lowPass])
-        // parts sit in separate cells and every connected terminal ends in a label or ground
+        // drawn like a person would: wires for the signal, ground symbols, no labels needed
         let circuit = session.circuit
-        XCTAssertEqual(circuit.elements.filter { $0.kind == .netLabel }.count, 4)
+        XCTAssertEqual(circuit.elements.filter { $0.kind == .netLabel }.count, 0)
         XCTAssertEqual(circuit.elements.filter { $0.kind == .ground }.count, 2)
+        XCTAssertGreaterThan(circuit.elements.filter { $0.kind == .wire }.count, 0)
         let parts = circuit.elements.filter { ![.wire, .ground, .netLabel].contains($0.kind) }
         XCTAssertEqual(Set(parts.map { $0.a }).count, parts.count)
+        // appending a part connects it to an existing net by name, though that net is wires now
+        _ = try session.call("add_part", arguments: ["kind": "resistor", "name": "RL", "params": ["resistance": "10k"],
+                                                     "connections": ["a": "out", "b": "GND"]])
+        let described = session.describe()
+        let load = (described["parts"] as? [[String: Any]])?.first { $0["name"] as? String == "RL" }
+        XCTAssertEqual((load?["connections"] as? [String: String])?["a"], "out")
+        XCTAssertEqual(session.circuit.elements.filter { $0.kind == .netLabel }.count, 0)
+        let tidied = try XCTUnwrap(session.call("tidy_up", arguments: [:]) as? [String: Any])
+        XCTAssertEqual((tidied["parts"] as? [[String: Any]])?.count, 4)
         // the file round-trips
+        let circuitBeforeSave = session.circuit
         let path = NSTemporaryDirectory() + "automation-test.jspice"
         _ = try session.call("save_circuit", arguments: ["path": path])
         let other = CircuitSession()
         _ = try other.call("open_circuit", arguments: ["path": path])
-        XCTAssertEqual(other.circuit, circuit)
+        XCTAssertEqual(other.circuit, circuitBeforeSave)
     }
 }

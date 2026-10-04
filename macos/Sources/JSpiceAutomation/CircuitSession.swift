@@ -59,7 +59,7 @@ public final class CircuitSession {
              description: "Starts an empty circuit.",
              inputSchema: schema([:]), run: { session, _ in session.replace(Circuit(), "New Circuit"); return ["ok": true] }),
         Tool(name: "build_circuit",
-             description: "Builds a circuit from a netlist and lays it out as a schematic. Each part has a kind (from list_parts), an optional name, an optional model, parameters, and connections from terminal names to net names. Parts on the same net are connected; \"GND\" is ground. Replaces the circuit unless append is true.",
+             description: "Builds a circuit from a netlist and draws it as a tidy schematic (signal flowing left to right, wires, ground symbols, supply flags). Each part has a kind (from list_parts), an optional name, an optional model, parameters, and connections from terminal names to net names. Parts on the same net are connected; \"GND\" is ground. Replaces the circuit unless append is true.",
              inputSchema: schema([
                 "parts": ["type": "array", "description": "The parts", "items": partSchema],
                 "append": ["type": "boolean", "description": "Add to the present circuit instead of replacing it"],
@@ -127,6 +127,9 @@ public final class CircuitSession {
              description: "Saves the circuit as a .jspice file the JSpice app can open.",
              inputSchema: schema(["path": string("File path")], required: ["path"]),
              run: { session, arguments in try session.save(arguments) }),
+        Tool(name: "tidy_up",
+             description: "Redraws the circuit as a tidy schematic, as a person would draw it: signal flowing left to right, parts to ground hanging below, feedback over op-amps, wires instead of labels. Connections, values and scopes are kept.",
+             inputSchema: schema([:]), run: { session, _ in try session.tidyUp() }),
         Tool(name: "open_circuit",
              description: "Opens a .jspice file.",
              inputSchema: schema(["path": string("File path")], required: ["path"]),
@@ -296,11 +299,33 @@ public final class CircuitSession {
     func buildCircuit(_ arguments: [String: Any]) throws -> Any {
         guard let parts = arguments["parts"] as? [[String: Any]] else { throw ToolError("\"parts\" should be an array of parts") }
         let append = arguments["append"] as? Bool ?? false
-        let netlist = try parts.map(Self.netlistPart)
-        try change(append ? "Add Parts" : "Build Circuit") { circuit in
-            if !append { circuit = Circuit(settings: circuit.settings) }
-            try NetlistLayout.add(netlist, to: &circuit, firstCell: NetlistLayout.firstFreeCell(in: circuit))
+        try layOut(adding: try parts.map(Self.netlistPart), keepExisting: append, action: append ? "Add Parts" : "Build Circuit")
+        return describe()
+    }
+
+    /// Redraws the circuit as a tidy schematic from its netlist, with `parts` added (and the existing parts dropped
+    /// unless `keepExisting`)
+    private func layOut(adding parts: [NetlistPart], keepExisting: Bool, action: String) throws {
+        var netlist = keepExisting ? NetlistExtractor.netlist(from: circuit) : []
+        var names = Set(netlist.map(\.name))
+        for part in parts where !part.name.isEmpty {
+            guard !names.contains(part.name) else { throw ToolError("There is already a part named \(part.name)") }
+            names.insert(part.name)
         }
+        netlist += parts
+        var next: Circuit
+        do {
+            next = try SchematicLayout.layout(netlist)
+        } catch let error as NetlistError {
+            throw ToolError(error.description)
+        }
+        next.settings = circuit.settings
+        if keepExisting { next.scopes = circuit.scopes.filter { scope in next.elements.contains { $0.id == scope.elementID } } }
+        replace(next, action)
+    }
+
+    func tidyUp() throws -> Any {
+        try layOut(adding: [], keepExisting: true, action: "Tidy Up")
         return describe()
     }
 
@@ -309,7 +334,7 @@ public final class CircuitSession {
         let a = try Self.gridPoint(arguments["a"], "a")
         let b = try Self.gridPoint(arguments["b"], "b")
         var name = ""
-        try change("Add \(part.kind.displayName)") { circuit in
+        if a != nil { try change("Add \(part.kind.displayName)") { circuit in
             if let a {
                 guard part.name.isEmpty || !circuit.elements.contains(where: { $0.name == part.name }) else {
                     throw ToolError("There is already a part named \(part.name)")
@@ -326,10 +351,14 @@ public final class CircuitSession {
                 let id = circuit.add(element)
                 circuit.connectTerminals(of: [id])
                 name = circuit[id]?.name ?? ""
-            } else {
-                let ids = try NetlistLayout.add([part], to: &circuit, firstCell: NetlistLayout.firstFreeCell(in: circuit))
-                name = ids.first.flatMap { circuit[$0]?.name } ?? ""
             }
+        } }
+        if a == nil {
+            // by its connections: redraw the whole circuit with the part in its place
+            var named = part
+            if named.name.isEmpty { named.name = circuit.uniqueName(for: part.kind) }
+            name = named.name
+            try layOut(adding: [named], keepExisting: true, action: "Add \(part.kind.displayName)")
         }
         guard let index = circuit.elements.firstIndex(where: { $0.name == name }) else { return ["ok": true] }
         let element = circuit.elements[index]
@@ -387,20 +416,14 @@ public final class CircuitSession {
 
     func describe() -> [String: Any] {
         let simulator = Simulator(circuit: circuit, timeStep: 1e-6)
-        var netsOfNode: [Int: Set<String>] = [:]
-        for (i, element) in circuit.elements.enumerated() where element.kind == .netLabel && !element.name.isEmpty {
-            if let node = simulator.nodes(of: i).first { netsOfNode[node, default: []].insert(element.name) }
-        }
-        netsOfNode[0, default: []].insert("GND")
-        func nodeName(_ node: Int) -> String {
-            if let names = netsOfNode[node], !names.isEmpty { return names.sorted().joined(separator: "/") }
-            return "node\(node)"
-        }
+        let netlist = NetlistExtractor.netlist(from: circuit)
         var parts: [[String: Any]] = []
-        for (i, element) in circuit.elements.enumerated() where ![.wire, .ground, .netLabel].contains(element.kind) {
+        var nets = Set<String>()
+        for entry in netlist {
+            guard let element = circuit.elements.first(where: { $0.id == entry.id }) else { continue }
+            nets.formUnion(entry.connections.values)
             var part: [String: Any] = [
-                "name": element.name, "kind": element.kind.rawValue,
-                "connections": Dictionary(uniqueKeysWithValues: zip(element.kind.terminalNames, simulator.nodes(of: i).map(nodeName))),
+                "name": element.name, "kind": element.kind.rawValue, "connections": entry.connections,
             ]
             if !element.kind.params.isEmpty {
                 part["params"] = Dictionary(uniqueKeysWithValues: element.kind.params.map { ($0.key, element[param: $0.key]) })
@@ -411,7 +434,7 @@ public final class CircuitSession {
         }
         return [
             "parts": parts,
-            "nets": NetlistLayout.netNames(in: circuit),
+            "nets": nets.sorted(),
             "problems": simulator.problems,
             "suggested_time_step": Pacing.suggest(for: circuit).timeStep,
         ]
@@ -444,9 +467,8 @@ public final class CircuitSession {
         // a net
         if quantity == "V" {
             if target.uppercased() == "GND" || target == "0" { return Probe(label: trimmed) { _ in 0 } }
-            if let label = circuit.elements.firstIndex(where: { $0.kind == .netLabel && $0.name == target }),
-               !circuit.elements.contains(where: { $0.kind != .netLabel && $0.name == target }) {
-                return Probe(label: trimmed) { $0.terminalVoltages(label).first ?? 0 }
+            if !circuit.elements.contains(where: { $0.kind != .netLabel && $0.name == target }), let (index, t) = terminal(onNet: target) {
+                return Probe(label: trimmed) { $0.terminalVoltages(index)[safe: t] ?? 0 }
             }
         }
         let index = try index(ofPart: target)
@@ -510,11 +532,27 @@ public final class CircuitSession {
         return result
     }
 
+    /// A part terminal on the named net: (element index, terminal index)
+    private func terminal(onNet net: String) -> (Int, Int)? {
+        for entry in NetlistExtractor.netlist(from: circuit) {
+            guard let (terminal, _) = entry.connections.first(where: { $0.value == net }),
+                  let index = circuit.elements.firstIndex(where: { $0.id == entry.id }),
+                  let t = circuit.elements[index].kind.terminalNames.firstIndex(of: terminal) else { continue }
+            return (index, t)
+        }
+        if let label = circuit.elements.firstIndex(where: { $0.kind == .netLabel && $0.name == net }) { return (label, 0) }
+        return nil
+    }
+
     func measure() -> Any {
         guard let simulator = liveSimulator else { return ["note": "Nothing simulated yet: call simulate first"] }
         var nets: [String: Double] = [:]
-        for (i, element) in circuit.elements.enumerated() where element.kind == .netLabel && !element.name.isEmpty {
-            nets[element.name] = simulator.terminalVoltages(i).first ?? 0
+        for entry in NetlistExtractor.netlist(from: circuit) {
+            guard let index = circuit.elements.firstIndex(where: { $0.id == entry.id }) else { continue }
+            let voltages = simulator.terminalVoltages(index)
+            for (terminal, net) in entry.connections where nets[net] == nil {
+                if let t = circuit.elements[index].kind.terminalNames.firstIndex(of: terminal), t < voltages.count { nets[net] = voltages[t] }
+            }
         }
         var parts: [String: Any] = [:]
         for (i, element) in circuit.elements.enumerated() where ![.wire, .ground, .netLabel].contains(element.kind) {

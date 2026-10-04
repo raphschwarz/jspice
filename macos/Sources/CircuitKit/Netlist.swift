@@ -8,14 +8,20 @@ public struct NetlistPart: Sendable {
     public var flipped: Bool
     /// Terminal name (see `ElementKind.terminalNames`) or 1-based terminal number, to net name. "GND" or "0" is ground.
     public var connections: [String: String]
+    /// Switch state
+    public var closed: Bool
+    /// Keeps the part's identity (and its scopes) when a circuit is redrawn
+    public var id: UUID?
 
     public init(kind: ElementKind, name: String = "", params: [String: Double] = [:], flipped: Bool = false,
-                connections: [String: String] = [:]) {
+                connections: [String: String] = [:], closed: Bool = false, id: UUID? = nil) {
         self.kind = kind
         self.name = name
         self.params = params
         self.flipped = flipped
         self.connections = connections
+        self.closed = closed
+        self.id = id
     }
 }
 
@@ -133,5 +139,52 @@ public enum NetlistLayout {
     /// The net names in the circuit: every net label's name
     public static func netNames(in circuit: Circuit) -> [String] {
         Array(Set(circuit.elements.filter { $0.kind == .netLabel && !$0.name.isEmpty }.map(\.name))).sorted()
+    }
+}
+
+/// Reads the netlist back out of a drawn circuit: every part with the net each terminal is on. Nets are named after
+/// their net labels, else after the names they were given when the circuit was built from a netlist (`netNames`), else
+/// numbered; the ground net is "GND". Terminals connected to nothing are left out.
+public enum NetlistExtractor {
+    public static func netlist(from circuit: Circuit) -> [NetlistPart] {
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-6)
+        let isPart: (Element) -> Bool = { ![.wire, .ground, .netLabel].contains($0.kind) }
+        var names: [Int: String] = [0: "GND"]
+        var taken: Set<String> = ["GND"]
+        func name(_ node: Int, _ candidate: String) {
+            guard names[node] == nil, !candidate.isEmpty, !taken.contains(candidate) else { return }
+            if Topology.isGroundName(candidate) { return }
+            names[node] = candidate
+            taken.insert(candidate)
+        }
+        for (i, element) in circuit.elements.enumerated() where element.kind == .netLabel {
+            if let node = simulator.nodes(of: i).first { name(node, element.name.trimmingCharacters(in: .whitespaces)) }
+        }
+        var terminalsOnNode: [Int: Int] = [:]
+        for (i, element) in circuit.elements.enumerated() where isPart(element) {
+            for (t, node) in simulator.nodes(of: i).enumerated() {
+                terminalsOnNode[node, default: 0] += 1
+                if let given = circuit.netNames["\(element.name).\(element.kind.terminalNames[t])"] { name(node, given) }
+            }
+        }
+        let labelled = Set(circuit.elements.enumerated().filter { $0.element.kind == .netLabel || $0.element.kind == .ground }
+            .compactMap { simulator.nodes(of: $0.offset).first })
+        var counter = 1
+        var parts: [NetlistPart] = []
+        for (i, element) in circuit.elements.enumerated() where isPart(element) {
+            var connections: [String: String] = [:]
+            for (t, node) in simulator.nodes(of: i).enumerated() {
+                // a terminal alone on its node is not connected to anything
+                if node != 0 && (terminalsOnNode[node] ?? 0) < 2 && names[node] == nil && !labelled.contains(node) { continue }
+                if names[node] == nil {
+                    while taken.contains("N\(counter)") { counter += 1 }
+                    name(node, "N\(counter)")
+                }
+                connections[element.kind.terminalNames[t]] = names[node]
+            }
+            parts.append(NetlistPart(kind: element.kind, name: element.name, params: element.params, flipped: element.flipped,
+                                     connections: connections, closed: element.closed, id: element.id))
+        }
+        return parts
     }
 }

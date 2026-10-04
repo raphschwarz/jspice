@@ -216,6 +216,14 @@ final class EditorState: ObservableObject {
         fitRequest += 1
     }
 
+    /// Redraws the circuit as a tidy schematic, keeping every connection
+    func tidyUp() {
+        guard let next = try? SchematicLayout.tidy(circuit) else { return }
+        edit("Tidy Up") { $0 = next }
+        selection = []
+        requestFit()
+    }
+
     // MARK: - AI control
 
     /// A change made by an AI agent through the MCP bridge: one undoable step, shown running

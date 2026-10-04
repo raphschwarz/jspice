@@ -54,6 +54,9 @@ struct CircuitCommands: Commands {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(!(editor?.canFlipSelection ?? false))
             Button("Delete") { editor?.deleteSelection() }
+            Button("Tidy Up") { editor?.tidyUp() }
+                .keyboardShortcut("t", modifiers: [.command, .option])
+                .disabled(editor?.circuit.elements.isEmpty ?? true)
                 .disabled(editor?.selection.isEmpty ?? true)
             Divider()
             Toggle("Allow AI Control (MCP)", isOn: Binding(

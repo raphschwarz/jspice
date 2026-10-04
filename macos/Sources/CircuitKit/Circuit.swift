@@ -82,11 +82,16 @@ public struct Circuit: Codable, Hashable, Sendable {
     public var elements: [Element]
     public var scopes: [ScopeSpec]
     public var settings: SimulationSettings
+    /// Net names given when the circuit was built from a netlist, by "part.terminal", so the nets can still be referred
+    /// to by name once they are drawn as wires
+    public var netNames: [String: String]
 
-    public init(elements: [Element] = [], scopes: [ScopeSpec] = [], settings: SimulationSettings = SimulationSettings()) {
+    public init(elements: [Element] = [], scopes: [ScopeSpec] = [], settings: SimulationSettings = SimulationSettings(),
+                netNames: [String: String] = [:]) {
         self.elements = elements
         self.scopes = scopes
         self.settings = settings
+        self.netNames = netNames
     }
 
     public init(from decoder: Decoder) throws {
@@ -94,6 +99,7 @@ public struct Circuit: Codable, Hashable, Sendable {
         elements = try container.decodeIfPresent([Element].self, forKey: .elements) ?? []
         scopes = try container.decodeIfPresent([ScopeSpec].self, forKey: .scopes) ?? []
         settings = try container.decodeIfPresent(SimulationSettings.self, forKey: .settings) ?? SimulationSettings()
+        netNames = try container.decodeIfPresent([String: String].self, forKey: .netNames) ?? [:]
     }
 
     public subscript(id: UUID) -> Element? {
