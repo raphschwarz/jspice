@@ -18,9 +18,6 @@ enum InteractionTest {
         NSApp.appearance = NSAppearance(named: .aqua)
         let document = CircuitDocument()
         let editor = EditorState(document: document)
-        let undo = UndoManager()
-        undo.groupsByEvent = false
-        editor.undoManager = undo
 
         let controller = NSHostingController(rootView: EditorView(document: document, editor: editor))
         controller.sceneBridgingOptions = [.toolbars, .title]
@@ -37,39 +34,50 @@ enum InteractionTest {
             check(false, "the window contains the circuit canvas")
             return false
         }
+        // the same undo manager SwiftUI gives the editor in the app; each action runs in its own event loop turn, so
+        // undo groups close as they do for a person using the app
+        guard let undo = editor.undoManager else {
+            check(false, "the window provides an undo manager")
+            return finish(window)
+        }
 
         func mouse(_ type: NSEvent.EventType, _ point: GridPoint) -> NSEvent {
             let location = canvas.convert(canvas.screen(point), to: nil)
             return NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
         }
-        func drag(_ from: GridPoint, _ to: GridPoint) {
-            undo.beginUndoGrouping()
+        func drag(_ from: GridPoint, _ to: GridPoint) async {
             canvas.mouseDown(with: mouse(.leftMouseDown, from))
+            await pause(0.02)
             canvas.mouseDragged(with: mouse(.leftMouseDragged, to))
+            await pause(0.02)
             canvas.mouseUp(with: mouse(.leftMouseUp, to))
-            undo.endUndoGrouping()
+            await pause(0.05)
         }
-        func click(_ point: GridPoint) { drag(point, point) }
+        func click(_ point: GridPoint) async { await drag(point, point) }
+        func undoLast() async {
+            undo.undo()
+            await pause(0.1)
+        }
         func elements(_ kind: ElementKind) -> [Element] { document.circuit.elements.filter { $0.kind == kind } }
         func index(of id: UUID) -> Int? { editor.simulation.simulator.circuit.index(of: id) }
 
         // draw a circuit: battery, resistor, two wires, ground
         editor.tool = .dcVoltage
-        drag(GridPoint(0, 4), GridPoint(0, 0))
+        await drag(GridPoint(0, 4), GridPoint(0, 0))
         check(elements(.dcVoltage).first.map { $0.a == GridPoint(0, 4) && $0.b == GridPoint(0, 0) } ?? false,
               "dragging places a voltage source between the two points")
         editor.tool = .resistor
-        click(GridPoint(0, 0))
+        await click(GridPoint(0, 0))
         let resistor = elements(.resistor).first
         check(resistor.map { $0.a == GridPoint(0, 0) && $0.b == GridPoint(4, 0) } ?? false,
               "clicking places a resistor of the default length")
         editor.tool = .wire
-        drag(GridPoint(4, 0), GridPoint(4, 4))
-        drag(GridPoint(4, 4), GridPoint(0, 4))
+        await drag(GridPoint(4, 0), GridPoint(4, 4))
+        await drag(GridPoint(4, 4), GridPoint(0, 4))
         check(elements(.wire).count == 2, "dragging draws wires")
         editor.tool = .ground
-        click(GridPoint(0, 4))
+        await click(GridPoint(0, 4))
         check(elements(.ground).first?.a == GridPoint(0, 4), "clicking places a ground")
         editor.tool = nil
         await pause(0.6)
@@ -82,37 +90,34 @@ enum InteractionTest {
         capture(window, to: directory.appendingPathComponent("8-drawn-by-hand.png"))
 
         // select and move; the attached wire stretches
-        click(GridPoint(2, 0))
+        await click(GridPoint(2, 0))
         check(editor.selection == [resistorID], "clicking a part selects it")
-        drag(GridPoint(2, 0), GridPoint(2, -2))
+        await drag(GridPoint(2, 0), GridPoint(2, -2))
         let moved = document.circuit[resistorID]
         check(moved?.a == GridPoint(0, -2) && moved?.b == GridPoint(4, -2), "dragging moves the selected part")
         check(elements(.wire).contains { $0.a == GridPoint(4, -2) && $0.b == GridPoint(4, 4) }, "a wire attached to a moved part stretches")
-        undo.undo()
+        await undoLast()
         check(document.circuit[resistorID]?.a == GridPoint(0, 0), "undo puts the part back")
 
         // delete with the keyboard, then undo
         editor.selection = [resistorID]
-        undo.beginUndoGrouping()
         canvas.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                                               windowNumber: window.windowNumber, context: nil, characters: "\u{7F}",
                                               charactersIgnoringModifiers: "\u{7F}", isARepeat: false, keyCode: 51)!)
-        undo.endUndoGrouping()
+        await pause(0.05)
         check(document.circuit[resistorID] == nil, "the Delete key removes the selection")
-        undo.undo()
+        await undoLast()
         check(document.circuit[resistorID] != nil, "undo restores the deleted part")
 
         // operate a switch while simulating
-        undo.beginUndoGrouping()
         editor.load(Examples.example("led")!)
-        undo.endUndoGrouping()
         await pause(0.8)
         let led = elements(.led).first!.id
         let switchElement = elements(.toggleSwitch).first!
         let brightnessBefore = index(of: led).map { editor.simulation.simulator.brightness($0) } ?? 0
         check(brightnessBefore > 0.9, "the LED example lights its LED")
         let middle = GridPoint((switchElement.a.x + switchElement.b.x) / 2, (switchElement.a.y + switchElement.b.y) / 2)
-        click(middle)
+        await click(middle)
         await pause(0.4)
         check(document.circuit[switchElement.id]?.closed == false, "clicking a switch opens it")
         let brightnessAfter = index(of: led).map { editor.simulation.simulator.brightness($0) } ?? 1
