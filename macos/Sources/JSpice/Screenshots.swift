@@ -42,6 +42,8 @@ enum ScreenshotRunner {
         Shot(name: "22-tidy-vca-light", example: "vca", dark: false, seconds: 2, tidy: true),
         Shot(name: "23-tremolo-dark", example: "tremolo", dark: true, seconds: 1.5, select: .speaker),
         Shot(name: "24-beeper-light", example: "beeper", dark: false, seconds: 1, select: .timer555),
+        Shot(name: "25-synth-light", example: "synth", dark: false, seconds: 1, select: .ota),
+        Shot(name: "26-vco-dark", example: "vco", dark: true, seconds: 1, select: .pnp),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {

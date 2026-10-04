@@ -97,6 +97,28 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual((measured["nets"] as? [String: Double])?["out"] ?? 0, 5 * (1 - exp(-10)), accuracy: 0.01)
     }
 
+    func testAnAgentCanPlayTheKeyboard() throws {
+        let session = CircuitSession()
+        _ = try session.call("load_example", arguments: ["id": "synth"])
+        // a key held from 0.1 s to 0.4 s: an A4 that sounds while held and dies away after
+        let result = try XCTUnwrap(session.call("simulate", arguments: [
+            "duration": 0.4, "time_step": 1.0 / 192_000, "probes": ["V(SPK1)"], "points": 100,
+            "keyboard": [["at": 0.1, "note": "A4"], ["at": 0.3, "off": true]],
+        ]) as? [String: Any])
+        let speaker = try XCTUnwrap((result["probes"] as? [String: Any])?["V(SPK1)"] as? [String: Any])
+        XCTAssertGreaterThan(speaker["max"] as? Double ?? 0, 0.3)
+        let held = try XCTUnwrap(session.call("simulate", arguments: [
+            "duration": 0.2, "time_step": 1.0 / 192_000, "probes": ["V(SPK1)"], "continue": true,
+            "keyboard": [["at": 0, "note": 72]],
+        ]) as? [String: Any])
+        let tone = try XCTUnwrap((held["probes"] as? [String: Any])?["V(SPK1)"] as? [String: Any])
+        XCTAssertEqual(tone["frequency"] as? Double ?? 0, 523.25, accuracy: 523.25 * 0.06, "C5")
+        XCTAssertEqual(CircuitSession.noteNumber("C4"), 60)
+        XCTAssertEqual(CircuitSession.noteNumber("F#3"), 54)
+        XCTAssertEqual(CircuitSession.noteNumber("Bb2"), 46)
+        XCTAssertThrowsError(try session.call("simulate", arguments: ["duration": 0.01, "probes": ["V(SPK1)"], "keyboard": [["at": 0, "note": "H2"]]]))
+    }
+
     func testOpAmpAmplifierFromANetlist() throws {
         let session = CircuitSession()
         _ = try session.call("build_circuit", arguments: ["parts": [

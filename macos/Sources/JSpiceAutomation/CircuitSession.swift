@@ -41,7 +41,7 @@ public final class CircuitSession {
     terminals joins; the net "GND" is ground); then simulate it and read waveforms and measurements, or call \
     frequency_response for filters and amplifiers. Adjust values with set_parameter or set_model and simulate again. \
     Values accept SI prefixes as strings ("4.7k", "100n", "2.2u", "1meg"). Probes: "V(net)" is a net's voltage, \
-    "V(R1)" the voltage across a part, "I(R1)" its current, "P(R1)" its power, "V(U1.out)" a terminal's voltage.
+    "V(R1)" the voltage across a part, "I(R1)" its current, "P(R1)" its power, "V(U1.out)" a terminal's voltage.     Synth circuits can be played: keyboardPitch parts put out 1 V per octave (0 V at C2) and keyboardGate parts a gate,     driven by the "keyboard" events of simulate (for example [{"at": 0, "note": "C4"}, {"at": 0.5, "off": true}]).
     """
 
     public static let tools: [Tool] = [
@@ -107,6 +107,8 @@ public final class CircuitSession {
                 "time_step": ["description": "Time step in seconds; default: chosen from the circuit's time constants"],
                 "points": ["type": "integer", "description": "Samples returned per probe (default 200)"],
                 "continue": ["type": "boolean", "description": "Continue from the end of the last simulation instead of starting from rest"],
+                "keyboard": ["type": "array", "items": ["type": "object"],
+                             "description": "Notes to play on the circuit's keyboard pitch and gate sources, in time order: {\"at\": seconds, \"note\": 60 or \"C4\"} presses a key (the newest key sounds), {\"at\": seconds, \"off\": true} releases all keys. The pitch stays on the last note after release."],
              ], required: ["duration", "probes"]),
              run: { session, arguments in try session.simulate(arguments) }),
         Tool(name: "measure",
@@ -507,12 +509,20 @@ public final class CircuitSession {
         liveSimulator = simulator
         if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
 
+        let events = try Self.keyboardEvents(arguments["keyboard"])
+        var nextEvent = 0
         let start = simulator.time
         var traces = probes.map { _ in Trace() }
         let wallStart = Date()
         let stride = max(1, steps / points)
         let keepEvery = max(1, steps / 200_000)
         for step in 1...steps {
+            // events take effect from the first step that ends at or after their time (relative to this run's start)
+            while nextEvent < events.count && events[nextEvent].at <= simulator.time - start + timeStep / 2 {
+                let event = events[nextEvent]
+                simulator.keyboard = Simulator.KeyboardState(note: event.note ?? simulator.keyboard.note, gate: event.note != nil)
+                nextEvent += 1
+            }
             simulator.step()
             if simulator.isFailed { break }
             let record = step % stride == 0 || step == steps
@@ -532,6 +542,40 @@ public final class CircuitSession {
         for (probe, trace) in zip(probes, traces) { outputs[probe.label] = trace.summary() }
         result["probes"] = outputs
         return result
+    }
+
+    /// Keyboard events for simulate: a time, and a note to press or nil to release
+    static func keyboardEvents(_ value: Any?) throws -> [(at: Double, note: Double?)] {
+        guard let value else { return [] }
+        guard let list = value as? [[String: Any]] else { throw ToolError("\"keyboard\" should be a list of {\"at\": seconds, \"note\": 60} or {\"at\": seconds, \"off\": true}") }
+        var events: [(at: Double, note: Double?)] = []
+        for entry in list {
+            let at = try number(entry["at"], "at") ?? 0
+            if entry["off"] as? Bool == true {
+                events.append((at, nil))
+            } else if let number = entry["note"] as? NSNumber {
+                events.append((at, number.doubleValue))
+            } else if let name = entry["note"] as? String, let note = noteNumber(name) {
+                events.append((at, note))
+            } else {
+                throw ToolError("Each keyboard event needs \"note\" (a MIDI number such as 60, or a name such as \"C4\" or \"F#3\") or \"off\": true")
+            }
+        }
+        return events.sorted { $0.at < $1.at }
+    }
+
+    /// MIDI note number of a note name such as "C4" (60), "A4" (69), "F#3" or "Bb2"
+    static func noteNumber(_ name: String) -> Double? {
+        let text = name.trimmingCharacters(in: .whitespaces)
+        if let number = Double(text) { return number }
+        let letters: [Character: Int] = ["C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11]
+        guard let first = text.first.flatMap({ Character($0.uppercased()) }), let base = letters[first] else { return nil }
+        var rest = text.dropFirst()
+        var semitone = base
+        if rest.first == "#" || rest.first == "♯" { semitone += 1; rest = rest.dropFirst() }
+        else if rest.first == "b" || rest.first == "♭" { semitone -= 1; rest = rest.dropFirst() }
+        guard let octave = Int(rest) else { return nil }
+        return Double((octave + 1) * 12 + semitone)
     }
 
     /// A part terminal on the named net: (element index, terminal index)

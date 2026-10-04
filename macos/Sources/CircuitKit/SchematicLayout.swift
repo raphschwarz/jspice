@@ -36,7 +36,7 @@ public enum SchematicLayout {
         .pnp: ["collector", "emitter"], .nmos: ["drain", "source"], .pmos: ["drain", "source"], .njfet: ["drain", "source"],
         .potentiometer: ["wiper"], .analogSwitch: ["b"],
     ]
-    static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .currentSource]
+    static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .currentSource, .keyboardPitch, .keyboardGate]
     static let amplifiers: Set<ElementKind> = [.opAmp, .ota]
 
     static func isRailName(_ name: String) -> Bool {
@@ -73,7 +73,7 @@ public enum SchematicLayout {
             let middle = GridPoint((e.a.x + e.b.x) / 2, (e.a.y + e.b.y) / 2)
             switch e.kind {
             case .acVoltage, .squareVoltage, .currentSource, .probe, .ammeter, .speaker, .lamp, .capacitor, .dcVoltage,
-                 .schmittInverter, .led:
+                 .schmittInverter, .led, .keyboardPitch, .keyboardGate:
                 result.insert(middle + p)
                 result.insert(middle - p)
             case .potentiometer, .analogSwitch:

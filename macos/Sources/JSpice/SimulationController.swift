@@ -25,6 +25,10 @@ final class SimulationController: ObservableObject {
     @Published private(set) var hasSpeaker = false
     @Published private(set) var soundOn = false
     @Published private(set) var soundProblem: String?
+    /// True when the circuit has a keyboard pitch or gate source to play
+    @Published private(set) var hasKeyboard = false
+    /// The note the computer keyboard's A key plays (Z and X move it by an octave)
+    @Published private(set) var keyboardBase = 60
 
     let simulator: Simulator
     /// Simulated seconds per real second
@@ -70,7 +74,53 @@ final class SimulationController: ObservableObject {
     private func findSpeaker(in circuit: Circuit) {
         speakerIndex = circuit.elements.firstIndex { $0.kind == .speaker }
         hasSpeaker = speakerIndex != nil
+        hasKeyboard = circuit.elements.contains { $0.kind.isKeyboard }
         if !hasSpeaker && soundOn { setSound(false) }
+    }
+
+    // MARK: - Keyboard
+
+    /// Notes held down, oldest first; the newest one sounds, and the pitch stays on the last note after release
+    private var heldNotes: [Int] = []
+    private var lastNote = 60
+    /// MIDI pitch bend, in semitones
+    private var bend = 0.0
+
+    /// The computer keyboard plays notes instead of choosing tools while sound is on and there is a keyboard to play
+    var playsComputerKeyboard: Bool { soundOn && hasKeyboard }
+
+    func noteOn(_ note: Int) {
+        heldNotes.removeAll { $0 == note }
+        heldNotes.append(note)
+        lastNote = note
+        applyKeyboard()
+    }
+
+    func noteOff(_ note: Int) {
+        heldNotes.removeAll { $0 == note }
+        if let newest = heldNotes.last { lastNote = newest }
+        applyKeyboard()
+    }
+
+    func allNotesOff() {
+        heldNotes = []
+        applyKeyboard()
+    }
+
+    func pitchBend(_ semitones: Double) {
+        bend = semitones
+        applyKeyboard()
+    }
+
+    func shiftKeyboard(octaves: Int) {
+        keyboardBase = min(96, max(24, keyboardBase + 12 * octaves))
+    }
+
+    private func applyKeyboard() {
+        let state = Simulator.KeyboardState(note: Double(lastNote) + bend, gate: !heldNotes.isEmpty)
+        guard state != simulator.keyboard else { return }
+        simulator.keyboard = state
+        renderer?.setKeyboard(state)
     }
 
     private var playing: Bool { renderer != nil }
@@ -94,6 +144,7 @@ final class SimulationController: ObservableObject {
             renderer?.stop()
             renderer = nil
             soundOn = false
+            allNotesOff()
         }
         applySettings(of: simulator.circuit)
         simulator.configureScopes(window: speed * Self.scopeSpan)

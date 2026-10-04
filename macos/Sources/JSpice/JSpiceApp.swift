@@ -20,6 +20,7 @@ enum Launcher {
             return
         }
         AutomationBridge.shared.start()
+        MIDIInput.shared.start()
         JSpiceApp.main()
     }
 }

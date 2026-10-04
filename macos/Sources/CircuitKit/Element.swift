@@ -38,7 +38,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
 
 public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case wire, ground, netLabel, resistor, potentiometer, lamp, capacitor, inductor
-    case dcVoltage, acVoltage, squareVoltage, currentSource
+    case dcVoltage, acVoltage, squareVoltage, currentSource, keyboardPitch, keyboardGate
     case toggleSwitch, pushButton
     case diode, zener, led, npn, pnp, nmos, pmos, njfet
     case opAmp, ota
@@ -119,6 +119,8 @@ extension ElementKind {
         case .acVoltage: return "AC Voltage"
         case .squareVoltage: return "Square Wave"
         case .currentSource: return "Current Source"
+        case .keyboardPitch: return "Keyboard Pitch"
+        case .keyboardGate: return "Keyboard Gate"
         case .toggleSwitch: return "Switch"
         case .pushButton: return "Push Button"
         case .diode: return "Diode"
@@ -152,6 +154,8 @@ extension ElementKind {
         case .inductor: return "L"
         case .dcVoltage, .acVoltage, .squareVoltage: return "V"
         case .currentSource: return "I"
+        case .keyboardPitch: return "CV"
+        case .keyboardGate: return "GATE"
         case .toggleSwitch, .pushButton: return "S"
         case .diode, .zener: return "D"
         case .led: return "LED"
@@ -168,7 +172,7 @@ extension ElementKind {
     public var category: ElementCategory {
         switch self {
         case .wire, .ground, .netLabel, .resistor, .potentiometer, .lamp, .capacitor, .inductor: return .basics
-        case .dcVoltage, .acVoltage, .squareVoltage, .currentSource: return .sources
+        case .dcVoltage, .acVoltage, .squareVoltage, .currentSource, .keyboardPitch, .keyboardGate: return .sources
         case .toggleSwitch, .pushButton: return .switches
         case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
         case .opAmp, .ota: return .amplifiers
@@ -193,6 +197,7 @@ extension ElementKind {
         case .acVoltage: return "a"
         case .squareVoltage: return "q"
         case .currentSource: return "i"
+        case .keyboardPitch, .keyboardGate: return nil
         case .toggleSwitch: return "s"
         case .pushButton: return "b"
         case .diode: return "d"
@@ -240,7 +245,7 @@ extension ElementKind {
         switch self {
         case .ground: return ["gnd"]
         case .netLabel: return ["net"]
-        case .dcVoltage, .acVoltage, .squareVoltage, .currentSource: return ["minus", "plus"]
+        case .dcVoltage, .acVoltage, .squareVoltage, .currentSource, .keyboardPitch, .keyboardGate: return ["minus", "plus"]
         case .diode, .zener, .led: return ["anode", "cathode"]
         case .probe, .speaker: return ["plus", "minus"]
         case .ammeter: return ["in", "out"]
@@ -259,7 +264,12 @@ extension ElementKind {
     /// Parts that switch between discrete states (a 555's flip-flop, a Schmitt trigger's output)
     public var isDigital: Bool { self == .timer555 || self == .schmittInverter }
 
-    public var isVoltageSource: Bool { self == .dcVoltage || self == .acVoltage || self == .squareVoltage }
+    public var isVoltageSource: Bool {
+        self == .dcVoltage || self == .acVoltage || self == .squareVoltage || isKeyboard
+    }
+
+    /// Sources played from the computer keyboard or a MIDI keyboard
+    public var isKeyboard: Bool { self == .keyboardPitch || self == .keyboardGate }
 
     public var isSwitch: Bool { self == .toggleSwitch || self == .pushButton }
 
@@ -358,6 +368,10 @@ extension ElementKind {
             ]
         case .currentSource:
             return [ParamSpec("current", "Current", unit: "A", default: 0.01, range: 1e-6...10)]
+        case .keyboardPitch:
+            return [ParamSpec("glide", "Glide", unit: "s", default: 0, range: 0...2, log: false)]
+        case .keyboardGate:
+            return [ParamSpec("high", "Gate voltage", unit: "V", default: 5, range: 1...15, log: false)]
         case .diode:
             return [
                 ParamSpec("saturationCurrent", "Saturation current", unit: "A", default: 1e-14, range: 1e-18...1e-6),

@@ -18,6 +18,24 @@ public final class Simulator {
     /// Steps at which Newton-Raphson did not converge, even with gmin stepping (the step is accepted anyway)
     public private(set) var convergenceFailures = 0
 
+    /// What is being played on the keyboard: the note keyboard pitch sources put out and whether a key is held, which
+    /// keyboard gate sources put out
+    public struct KeyboardState: Equatable, Sendable {
+        /// MIDI note number (60 is middle C); fractions bend the pitch
+        public var note: Double
+        public var gate: Bool
+
+        public init(note: Double = 60, gate: Bool = false) {
+            self.note = note
+            self.gate = gate
+        }
+
+        /// Pitch control voltage at one volt per octave, 0 V at C2 (MIDI note 36)
+        public var pitchVoltage: Double { (note - 36) / 12 }
+    }
+
+    public var keyboard = KeyboardState()
+
     var topology = Topology()
     /// Unknowns: node voltages 1..<nodeCount, then source and op-amp output currents
     var x: [Double] = []
@@ -139,11 +157,12 @@ public final class Simulator {
         }
         drivenIndices = indices {
             switch $0 {
-            case .dcVoltage, .acVoltage, .squareVoltage, .currentSource, .capacitor, .inductor, .timer555, .schmittInverter: return true
+            case .dcVoltage, .acVoltage, .squareVoltage, .currentSource, .capacitor, .inductor, .timer555, .schmittInverter,
+                 .keyboardPitch, .keyboardGate: return true
             default: return false
             }
         }
-        statefulIndices = indices { [.capacitor, .inductor, .opAmp, .memristor].contains($0) }
+        statefulIndices = indices { [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch].contains($0) }
         digitalIndices = indices { $0.isDigital }
         memristorIndices = indices { $0 == .memristor }
         for (i, element) in newCircuit.elements.enumerated() {
@@ -189,6 +208,8 @@ public final class Simulator {
         limitedVoltage3[i] = 0
         // a Schmitt inverter's input starts low, so its output starts high; a 555 decides from its trigger
         digitalState[i] = element.kind == .schmittInverter
+        // a keyboard's pitch starts at the present note rather than gliding up from 0 V
+        if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
     }
 
     public func setTimeStep(_ dt: Double) {
@@ -445,7 +466,7 @@ public final class Simulator {
                 stampConductance(&matrix, m, nodes[0], nodes[1], 1.5 * element[param: "capacitance"] / timeStep)
             case .inductor:
                 stampConductance(&matrix, m, nodes[0], nodes[1], 2 * timeStep / (3 * max(element[param: "inductance"], 1e-15)))
-            case .dcVoltage, .acVoltage, .squareVoltage:
+            case .dcVoltage, .acVoltage, .squareVoltage, .keyboardPitch, .keyboardGate:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
                 let minus = nodes[0] - 1
@@ -498,6 +519,14 @@ public final class Simulator {
         case .squareVoltage:
             let cycle = (t * c.frequency).truncatingRemainder(dividingBy: 1)
             return cycle < c.duty ? c.high : c.low
+        case .keyboardPitch:
+            // glide: the voltage follows the note with a time constant, starting from the last step's voltage
+            let target = keyboard.pitchVoltage
+            guard c.tau > 0 else { return target }
+            let previous = capacitorVoltage[i]
+            return previous + (target - previous) * (1 - exp(-timeStep / c.tau))
+        case .keyboardGate:
+            return keyboard.gate ? c.high : 0
         default:
             return 0
         }
@@ -509,7 +538,7 @@ public final class Simulator {
             let nodes = topology.elementNodes[i]
             let c = constants[i]
             switch kinds[i] {
-            case .dcVoltage, .acVoltage, .squareVoltage:
+            case .dcVoltage, .acVoltage, .squareVoltage, .keyboardPitch, .keyboardGate:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = sourceVoltage(i, at: t) }
             case .currentSource:
@@ -597,6 +626,10 @@ public final class Simulator {
             c.duty = p("duty")
             c.high = p("high")
             c.low = p("low")
+        case .keyboardPitch:
+            c.tau = max(p("glide"), 0)
+        case .keyboardGate:
+            c.high = p("high")
         case .diode, .led:
             (c.saturation, c.nvt) = diodeParameters(element)
             c.critical = c.nvt * log(c.nvt / (sqrt(2) * c.saturation))
@@ -1045,6 +1078,8 @@ public final class Simulator {
                 inductorCurrentPrevious[i] = inductorCurrent[i]
                 inductorCurrent[i] = next
                 inductorVoltage[i] = v
+            case .keyboardPitch:
+                capacitorVoltage[i] = sourceVoltage(i, at: time)
             case .opAmp where parameters.gbw > 0:
                 let (_, _, stage) = opAmpOutput(i, differential: voltage(nodes[1]) - voltage(nodes[0]))
                 // the internal stage cannot wind up far beyond the output swing
@@ -1086,7 +1121,7 @@ public final class Simulator {
             return twoTerminal(capacitorCurrent[i])
         case .inductor:
             return twoTerminal(inductorCurrent[i])
-        case .dcVoltage, .acVoltage, .squareVoltage:
+        case .dcVoltage, .acVoltage, .squareVoltage, .keyboardPitch, .keyboardGate:
             let row = topology.sourceRow[i]
             return twoTerminal(row >= 0 && row < x.count ? x[row] : 0)
         case .currentSource:

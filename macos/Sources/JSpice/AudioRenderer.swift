@@ -1,9 +1,12 @@
 import Foundation
 import CircuitKit
 
-/// Plays a circuit through its speaker: a copy of the window's simulator runs on its own thread in real time, one step
-/// per audio sample, so the sound does not stop while the main thread is busy drawing or handling a menu. The window's
-/// simulator takes on this one's state at each display frame (`share(into:)`) to show what it is doing.
+/// Plays a circuit through its speaker: a copy of the window's simulator runs on its own thread in real time, so the
+/// sound does not stop while the main thread is busy drawing or handling a menu. The window's simulator takes on this
+/// one's state at each display frame (`share(into:)`) to show what it is doing.
+///
+/// Each audio sample is the average of several steps (4, or fewer if the circuit is too heavy to keep up): oscillators
+/// that switch at a threshold then switch within a quarter of a sample, so their pitch is right and their edges clean.
 final class AudioRenderer: @unchecked Sendable {
     // everything below the lock is shared between the sound thread and the main thread
     private let lock = NSLock()
@@ -26,6 +29,8 @@ final class AudioRenderer: @unchecked Sendable {
     private var windowStart = ProcessInfo.processInfo.systemUptime
     private var windowSamples = 0
     private var fellBehind = false
+    /// Steps per audio sample
+    private var oversampling = 4
 
     /// Starts playing from where `display` is; nil if there is no sound output
     init?(continuing display: Simulator, speaker: Int, fullScale: Double, scopeWindow: Double) {
@@ -34,9 +39,10 @@ final class AudioRenderer: @unchecked Sendable {
         simulator = Simulator(circuit: display.circuit, timeStep: 1 / output.sampleRate)
         simulator.configureScopes(window: scopeWindow)
         simulator.adoptState(of: display)
-        simulator.setTimeStep(1 / output.sampleRate)
+        simulator.keyboard = display.keyboard
         self.speaker = speaker
         self.fullScale = max(fullScale, 1e-3)
+        simulator.setTimeStep(1 / (output.sampleRate * Double(oversampling)))
         // the thread holds the renderer only while making a chunk, so letting go of the renderer ends it
         let thread = Thread { [weak self] in
             while let renderer = self, renderer.renderChunk() {}
@@ -78,6 +84,10 @@ final class AudioRenderer: @unchecked Sendable {
         lock.withLock { simulator.reset() }
     }
 
+    func setKeyboard(_ state: Simulator.KeyboardState) {
+        lock.withLock { simulator.keyboard = state }
+    }
+
     /// Gives the window's simulator this one's present state
     func share(into display: Simulator) {
         lock.withLock { display.adoptState(of: simulator) }
@@ -103,10 +113,15 @@ final class AudioRenderer: @unchecked Sendable {
         let count = min(needed, chunk.count)
         var produced = 0
         var failed = false
+        let steps = oversampling
         lock.withLock {
             while produced < count && !simulator.isFailed {
-                simulator.step()
-                let x = simulator.voltageAcross(speaker) / fullScale
+                var sum = 0.0
+                for _ in 0..<steps {
+                    simulator.step()
+                    sum += simulator.voltageAcross(speaker)
+                }
+                let x = sum / Double(steps) / fullScale
                 // one-pole high-pass at about 4 Hz, then a soft limit instead of hard clipping
                 let y = x - blockerInput + 0.9995 * blockerOutput
                 blockerInput = x
@@ -123,7 +138,14 @@ final class AudioRenderer: @unchecked Sendable {
         windowSamples += produced
         let now = ProcessInfo.processInfo.systemUptime
         if now - windowStart > 0.25 {
-            let ratio = fellBehind ? min(1, Double(windowSamples) / ((now - windowStart) * rate)) : 1
+            var ratio = fellBehind ? min(1, Double(windowSamples) / ((now - windowStart) * rate)) : 1
+            if ratio < 0.98 && oversampling > 1 {
+                // too heavy: fewer steps per sample before running slow
+                oversampling /= 2
+                let timeStep = 1 / (rate * Double(oversampling))
+                lock.withLock { simulator.setTimeStep(timeStep) }
+                ratio = 1
+            }
             lock.withLock { achievedValue = achievedValue * 0.5 + ratio * 0.5 }
             windowStart = now
             windowSamples = 0

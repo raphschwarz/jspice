@@ -57,8 +57,96 @@ final class AudioTests: XCTestCase {
         }
     }
 
+    // MARK: Keyboard
+
+    /// Frequency and RMS (around its mean) of a part's voltage over `listen` seconds, after `settle` seconds
+    private func listen(_ simulator: Simulator, to index: Int, settle: Double, listen: Double) -> (frequency: Double, rms: Double) {
+        let end = simulator.time + settle + listen
+        let start = simulator.time + settle
+        var values: [(Double, Double)] = []
+        while simulator.time < end {
+            simulator.step()
+            if simulator.time > start { values.append((simulator.time, simulator.voltageAcross(index))) }
+        }
+        let mean = values.map(\.1).reduce(0, +) / Double(values.count)
+        let rms = (values.map { ($0.1 - mean) * ($0.1 - mean) }.reduce(0, +) / Double(values.count)).squareRoot()
+        var crossings: [Double] = []
+        for k in 1..<values.count where values[k - 1].1 < mean && values[k].1 >= mean { crossings.append(values[k].0) }
+        guard crossings.count > 2 else { return (0, rms) }
+        return (Double(crossings.count - 1) / (crossings.last! - crossings.first!), rms)
+    }
+
+    func testKeyboardSourcesFollowTheKeyboard() throws {
+        let circuit = try SchematicLayout.layout([
+            NetlistPart(kind: .keyboardPitch, name: "KB1", params: ["glide": 0], connections: ["plus": "cv", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "R1", connections: ["a": "cv", "b": "GND"]),
+            NetlistPart(kind: .keyboardGate, name: "KB2", params: ["high": 10], connections: ["plus": "gate", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "R2", connections: ["a": "gate", "b": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-4)
+        let pitch = circuit.elements.firstIndex { $0.name == "KB1" }!
+        let gate = circuit.elements.firstIndex { $0.name == "KB2" }!
+        simulator.step()
+        XCTAssertEqual(simulator.voltageAcross(pitch), 2, accuracy: 1e-9, "middle C is 2 V above C2")
+        XCTAssertEqual(simulator.voltageAcross(gate), 0, accuracy: 1e-9)
+        simulator.keyboard = Simulator.KeyboardState(note: 69, gate: true)
+        simulator.step()
+        XCTAssertEqual(simulator.voltageAcross(pitch), 33.0 / 12, accuracy: 1e-9)
+        XCTAssertEqual(simulator.voltageAcross(gate), 10, accuracy: 1e-9)
+    }
+
+    func testGlideSlidesBetweenNotes() throws {
+        let circuit = try SchematicLayout.layout([
+            NetlistPart(kind: .keyboardPitch, name: "KB1", params: ["glide": 0.1], connections: ["plus": "cv", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "R1", connections: ["a": "cv", "b": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-3)
+        let pitch = circuit.elements.firstIndex { $0.name == "KB1" }!
+        simulator.step()
+        XCTAssertEqual(simulator.voltageAcross(pitch), 2, accuracy: 1e-9)
+        simulator.keyboard.note = 72
+        for _ in 0..<100 { simulator.step() }
+        // one time constant: 63 % of the way from 2 V to 3 V
+        XCTAssertEqual(simulator.voltageAcross(pitch), 2 + (1 - exp(-1)), accuracy: 0.01)
+    }
+
+    /// The renderer runs four steps per 48 kHz sample
+    private let oversampledStep = 1 / 192_000.0
+
+    func testVCOTracksOneVoltPerOctave() {
+        let circuit = Examples.keyboardVCO.circuit
+        let speaker = circuit.elements.firstIndex { $0.kind == .speaker }!
+        let simulator = Simulator(circuit: circuit, timeStep: oversampledStep)
+        let c4 = listen(simulator, to: speaker, settle: 0.05, listen: 0.2)
+        XCTAssertFalse(simulator.isFailed)
+        XCTAssertEqual(c4.frequency, 261.63, accuracy: 261.63 * 0.04, "C4")
+        XCTAssertEqual(c4.rms, 4.5 / 3.0.squareRoot(), accuracy: 0.4, "a ±4.5 V triangle")
+        simulator.keyboard.note = 72
+        let c5 = listen(simulator, to: speaker, settle: 0.02, listen: 0.2)
+        simulator.keyboard.note = 48
+        let c3 = listen(simulator, to: speaker, settle: 0.02, listen: 0.3)
+        XCTAssertEqual(c5.frequency / c4.frequency, 2, accuracy: 0.06, "an octave up doubles the frequency")
+        XCTAssertEqual(c4.frequency / c3.frequency, 2, accuracy: 0.06, "an octave down halves it")
+    }
+
+    func testSynthSoundsOnlyWhileAKeyIsHeld() {
+        let circuit = Examples.monoSynth.circuit
+        let speaker = circuit.elements.firstIndex { $0.kind == .speaker }!
+        let simulator = Simulator(circuit: circuit, timeStep: oversampledStep)
+        let silent = listen(simulator, to: speaker, settle: 0.4, listen: 0.1)
+        XCTAssertLessThan(silent.rms, 0.02, "no key, no sound")
+        simulator.keyboard = Simulator.KeyboardState(note: 69, gate: true)
+        let playing = listen(simulator, to: speaker, settle: 0.1, listen: 0.2)
+        XCTAssertGreaterThan(playing.rms, 0.3, "a held key sounds")
+        XCTAssertEqual(playing.frequency, 440, accuracy: 440 * 0.05, "A4")
+        simulator.keyboard.gate = false
+        let released = listen(simulator, to: speaker, settle: 0.8, listen: 0.1)
+        XCTAssertLessThan(released.rms, 0.02, "the note dies away after release")
+        XCTAssertFalse(simulator.isFailed)
+    }
+
     func testEverySoundExampleHasASpeaker() {
-        for id in ["beeper", "tone", "tremolo"] {
+        for id in ["beeper", "tone", "tremolo", "vco", "synth"] {
             XCTAssertTrue(Examples.example(id)?.circuit.elements.contains { $0.kind == .speaker } ?? false, id)
         }
     }

@@ -140,6 +140,12 @@ struct StatusBar: View {
             if let problem = simulation.soundProblem {
                 Label(problem, systemImage: "speaker.slash").foregroundStyle(.orange)
             }
+            if simulation.playsComputerKeyboard {
+                // A plays C of the octave shown: MIDI note 60 is C4
+                Label("Play with A–; (A is C\(simulation.keyboardBase / 12 - 1)), Z and X change octave",
+                      systemImage: "pianokeys")
+                    .foregroundStyle(.secondary)
+            }
             if simulation.isRunning && !status.failed && status.achieved < 0.85 {
                 Label("Running at \(Int(status.achieved * 100)) % of that speed: the circuit is too complex for it",
                       systemImage: "tortoise.fill")

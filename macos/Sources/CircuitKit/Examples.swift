@@ -41,7 +41,7 @@ public enum Examples {
     public static let all: [Example] = [
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
-        beeper, tone, tremolo, memristorHysteresis, memristorPulses,
+        beeper, tone, tremolo, keyboardVCO, monoSynth, memristorHysteresis, memristorPulses,
     ]
 
     /// A circuit drawn from a netlist by the tidy layout, with scopes on the named parts
@@ -102,6 +102,65 @@ public enum Examples {
         ], scopes: [("LFO", .voltage), ("SPK1", .voltage)]))
 
 
+
+    /// The parts of a VCO that follows a keyboard at one volt per octave: an exponential converter (one PNP transistor)
+    /// sets an LM13700's bias current, the OTA charges a capacitor with that current one way or the other, and a TL072
+    /// comparator turns it round at ±4.5 V, so the capacitor ramps up and down in a triangle whose frequency is
+    /// proportional to the current. One volt more at the base divider's input is 17.9 mV more across the transistor's
+    /// base and emitter, which doubles its collector current: one octave. VREF tunes C4 (2 V) to 261.6 Hz.
+    static let vcoParts: [NetlistPart] = [
+        NetlistPart(kind: .keyboardPitch, name: "KB1", connections: ["plus": "cv", "minus": "GND"]),
+        // the converter needs the pitch upside down: an inverting amplifier
+        NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "cv", "b": "inv"]),
+        NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "inv", "b": "ncv"]),
+        NetlistPart(kind: .opAmp, name: "U1", params: model(.opAmp, "TL072"), connections: ["minus": "inv", "plus": "GND", "out": "ncv"]),
+        // divider: 17.92 mV at the base per volt of pitch (Vt ln 2), plus the reference
+        NetlistPart(kind: .resistor, name: "RA", params: ["resistance": 10_000], connections: ["a": "ncv", "b": "base"]),
+        NetlistPart(kind: .resistor, name: "RB", params: ["resistance": 182.5], connections: ["a": "base", "b": "ref"]),
+        NetlistPart(kind: .dcVoltage, name: "VREF", params: ["voltage": -0.550192], connections: ["plus": "ref", "minus": "GND"]),
+        NetlistPart(kind: .pnp, name: "Q1", connections: ["base": "base", "emitter": "GND", "collector": "iabc"]),
+        // the core: the OTA's current into CT, turned round by the comparator U2
+        NetlistPart(kind: .ota, name: "U3", params: model(.ota, "LM13700"),
+                    connections: ["minus": "GND", "plus": "sqdiv", "out": "tri", "bias": "iabc"]),
+        NetlistPart(kind: .capacitor, name: "CT", params: ["capacitance": 10e-9], connections: ["a": "tri", "b": "GND"]),
+        NetlistPart(kind: .opAmp, name: "U2", params: model(.opAmp, "TL072"), connections: ["minus": "tri", "plus": "hys", "out": "sq"]),
+        NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 20_000], connections: ["a": "sq", "b": "hys"]),
+        NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 10_000], connections: ["a": "hys", "b": "GND"]),
+        NetlistPart(kind: .resistor, name: "R5", params: ["resistance": 100_000], connections: ["a": "sq", "b": "sqdiv"]),
+        NetlistPart(kind: .resistor, name: "R6", params: ["resistance": 1000], connections: ["a": "sqdiv", "b": "GND"]),
+    ]
+
+    static let keyboardVCO = Example(
+        id: "vco", title: "Keyboard VCO (1 V/octave)",
+        summary: "An exponential converter and an LM13700 triangle core track the keyboard at one volt per octave. Turn on sound and play with A–; (or a MIDI keyboard).",
+        symbol: "pianokeys",
+        circuit: drawn(vcoParts + [
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 5], connections: ["plus": "tri", "minus": "GND"]),
+        ], scopes: [("KB1", .voltage), ("SPK1", .voltage)]))
+
+    /// The keyboard VCO through an OTA VCA whose bias current follows an envelope: the gate charges CENV through D1 and
+    /// RATT (attack), RREL pulls it back down to −15 V when the key is let go (release), and RBIAS turns its voltage into
+    /// the VCA's bias current, which is zero once the envelope is below the bias pin.
+    static let monoSynth = Example(
+        id: "synth", title: "Mono synth: VCO, envelope and VCA",
+        summary: "A playable synth voice: the keyboard VCO, an attack–release envelope from the gate, and an LM13700 VCA. Turn on sound and play with A–; (or a MIDI keyboard).",
+        symbol: "pianokeys.inverse",
+        circuit: drawn(vcoParts + [
+            NetlistPart(kind: .keyboardGate, name: "KB2", params: ["high": 10], connections: ["plus": "gate", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": 15], connections: ["plus": "GND", "minus": "-15V"]),
+            NetlistPart(kind: .diode, name: "D1", connections: ["anode": "gate", "cathode": "att"]),
+            NetlistPart(kind: .resistor, name: "RATT", params: ["resistance": 2200], connections: ["a": "att", "b": "env"]),
+            NetlistPart(kind: .capacitor, name: "CENV", params: ["capacitance": 4.7e-6, "initialVoltage": -14],
+                        connections: ["a": "env", "b": "GND"]),
+            NetlistPart(kind: .resistor, name: "RREL", params: ["resistance": 220_000], connections: ["a": "env", "b": "-15V"]),
+            NetlistPart(kind: .resistor, name: "RBIAS", params: ["resistance": 33_000], connections: ["a": "env", "b": "iabc2"]),
+            NetlistPart(kind: .resistor, name: "RIN", params: ["resistance": 100_000], connections: ["a": "tri", "b": "vin"]),
+            NetlistPart(kind: .resistor, name: "RIN2", params: ["resistance": 220], connections: ["a": "vin", "b": "GND"]),
+            NetlistPart(kind: .ota, name: "U4", params: model(.ota, "LM13700"),
+                        connections: ["minus": "GND", "plus": "vin", "out": "out", "bias": "iabc2"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 1.5], connections: ["plus": "out", "minus": "GND"]),
+        ], scopes: [("CENV", .voltage), ("SPK1", .voltage)]))
 
     /// Parameter values of one of the part's models, by name
     public static func model(_ kind: ElementKind, _ name: String) -> [String: Double] {

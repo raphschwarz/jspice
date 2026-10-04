@@ -273,6 +273,9 @@ final class CircuitCanvasView: NSView {
         case .squareVoltage:
             return "\(SI.format(element[param: "high"], unit: "V")) \(SI.format(element[param: "frequency"], unit: "Hz"))"
         case .currentSource: return SI.format(element[param: "current"], unit: "A")
+        case .keyboardPitch:
+            return live ? SI.format(simulator.voltageAcross(index), unit: "V") : "1 V/oct"
+        case .keyboardGate: return "Gate " + SI.format(element[param: "high"], unit: "V")
         case .memristor:
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
         case .opAmp, .ota, .timer555, .schmittInverter, .analogSwitch, .njfet:
@@ -654,7 +657,55 @@ final class CircuitCanvasView: NSView {
 
     // MARK: - Keyboard
 
+    /// Musical typing: key codes of the keys that play notes, as semitones above the keyboard's base note. The middle
+    /// row plays the white keys from A (C) to ; (E an octave up), the row above the black keys, as in Logic and GarageBand.
+    static let musicalKeys: [UInt16: Int] = [
+        0: 0, 13: 1, 1: 2, 14: 3, 2: 4, 3: 5, 17: 6, 5: 7, 16: 8, 4: 9, 32: 10, 38: 11, 40: 12, 31: 13, 37: 14, 35: 15, 41: 16,
+    ]
+    /// Keys held down, with the note each one started (so moving the octave does not leave notes hanging)
+    private var soundingKeys: [UInt16: Int] = [:]
+
+    /// Plays or releases a note for a musical-typing key; true if the key was one
+    private func playKey(_ event: NSEvent, down: Bool) -> Bool {
+        let simulation = editor.simulation
+        if down {
+            guard simulation.playsComputerKeyboard,
+                  event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return false }
+            if event.keyCode == 6 || event.keyCode == 7 {
+                // Z and X: an octave down or up
+                if !event.isARepeat { simulation.shiftKeyboard(octaves: event.keyCode == 6 ? -1 : 1) }
+                return true
+            }
+            guard let offset = Self.musicalKeys[event.keyCode] else { return false }
+            if !event.isARepeat && soundingKeys[event.keyCode] == nil {
+                let note = simulation.keyboardBase + offset
+                soundingKeys[event.keyCode] = note
+                simulation.noteOn(note)
+            }
+            return true
+        }
+        guard let note = soundingKeys.removeValue(forKey: event.keyCode) else { return false }
+        simulation.noteOff(note)
+        return true
+    }
+
+    private func releaseSoundingKeys() {
+        for note in soundingKeys.values { editor.simulation.noteOff(note) }
+        soundingKeys = [:]
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if playKey(event, down: false) { return }
+        super.keyUp(with: event)
+    }
+
+    override func resignFirstResponder() -> Bool {
+        releaseSoundingKeys()
+        return super.resignFirstResponder()
+    }
+
     override func keyDown(with event: NSEvent) {
+        if playKey(event, down: true) { return }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option])
         switch event.keyCode {
         case 51, 117:
