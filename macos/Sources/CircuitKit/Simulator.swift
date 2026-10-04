@@ -555,7 +555,7 @@ public final class Simulator {
     /// as in a real op-amp, and its drive current saturates, which sets the slew rate. Its voltage is the element's
     /// state from step to step. The output follows it, levelling off smoothly at the output swing. A gain-bandwidth of
     /// zero gives an op-amp without dynamics.
-    func opAmpOutput(_ element: Element, index i: Int, differential raw: Double) -> (voltage: Double, slope: Double, internal: Double) {
+    func opAmpOutput(_ element: Element, index i: Int, differential raw: Double) -> (voltage: Double, slope: Double, stage: Double) {
         let vd = raw + element[param: "offset"]
         let gain = max(element[param: "gain"], 1)
         let limit = max(element[param: "limit"], 0.01)
@@ -576,9 +576,9 @@ public final class Simulator {
             driveSlope = w * (1 - t * t)
         }
         // BDF2 for d(internal)/dt = drive - internal / tau
-        let internal = (drive + (2 * capacitorVoltage[i] - 0.5 * capacitorVoltagePrevious[i]) / timeStep) / denominator
-        let t = tanh(internal / limit)
-        return (limit * t, (1 - t * t) * driveSlope / denominator, internal)
+        let stage = (drive + (2 * capacitorVoltage[i] - 0.5 * capacitorVoltagePrevious[i]) / timeStep) / denominator
+        let t = tanh(stage / limit)
+        return (limit * t, (1 - t * t) * driveSlope / denominator, stage)
     }
 
     /// Input voltage beyond which an op-amp's output is no longer in its linear range within one step
@@ -887,11 +887,11 @@ public final class Simulator {
                 inductorCurrent[i] = next
                 inductorVoltage[i] = v
             case .opAmp where element[param: "gbw"] > 0:
-                let (_, _, internal) = opAmpOutput(element, index: i, differential: voltage(nodes[1]) - voltage(nodes[0]))
+                let (_, _, stage) = opAmpOutput(element, index: i, differential: voltage(nodes[1]) - voltage(nodes[0]))
                 // the internal stage cannot wind up far beyond the output swing
                 let bound = 3 * max(element[param: "limit"], 0.01)
                 capacitorVoltagePrevious[i] = capacitorVoltage[i]
-                capacitorVoltage[i] = min(bound, max(-bound, internal))
+                capacitorVoltage[i] = min(bound, max(-bound, stage))
             case .memristor:
                 // threshold switching: the state relaxes towards "on" above the on threshold and towards "off" below
                 // minus the off threshold, with the given switching time
@@ -1042,6 +1042,7 @@ public final class Simulator {
     /// drain minus source (collector minus emitter) for transistors; the output voltage for op-amps
     public func voltageAcross(_ index: Int) -> Double {
         let v = terminalVoltages(index)
+        if v.count == 1 { return v[0] }
         guard v.count >= 2 else { return 0 }
         let kind = circuit.elements[index].kind
         if kind.isTransistor { return v[1] - v[2] }
@@ -1106,6 +1107,16 @@ public final class Simulator {
     }
 
     public var nodeCount: Int { topology.nodeCount }
+
+    /// Node number of each terminal of the element at `index` (0 is ground)
+    public func nodes(of index: Int) -> [Int] {
+        index < topology.elementNodes.count ? topology.elementNodes[index] : []
+    }
+
+    /// The voltage of node `node` (0 is ground)
+    public func nodeVoltage(_ node: Int) -> Double {
+        node > 0 && node - 1 < x.count && x.count == topology.matrixSize ? x[node - 1] : 0
+    }
 
     /// The largest node voltage magnitude, for scaling voltage colours
     public var maxNodeVoltage: Double {

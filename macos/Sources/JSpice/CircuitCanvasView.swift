@@ -289,7 +289,7 @@ final class CircuitCanvasView: NSView {
             .foregroundColor: NSColor(cgColor: palette.secondaryText.cgColor) ?? .secondaryLabelColor,
         ]
         for (index, element) in circuit.elements.enumerated() {
-            guard element.kind != .wire, element.kind != .ground else { continue }
+            guard element.kind != .wire, element.kind != .ground, element.kind != .netLabel else { continue }
             // instruments always show their reading
             let isProbe = element.kind == .probe || element.kind == .ammeter
             guard editor.showValues || isProbe else { continue }
@@ -411,7 +411,7 @@ final class CircuitCanvasView: NSView {
 
     /// An end of the selected element close to `point`
     private func endpoint(at point: CGPoint) -> (id: UUID, isA: Bool)? {
-        guard editor.selection.count == 1, let element = editor.selectedElement, element.kind != .ground else { return nil }
+        guard editor.selection.count == 1, let element = editor.selectedElement, element.kind != .ground, element.kind != .netLabel else { return nil }
         let tolerance = max(6, unit * 0.35)
         if hypot(point.x - screen(element.b).x, point.y - screen(element.b).y) < tolerance { return (element.id, false) }
         if hypot(point.x - screen(element.a).x, point.y - screen(element.a).y) < tolerance { return (element.id, true) }
@@ -422,12 +422,12 @@ final class CircuitCanvasView: NSView {
     /// always point one grid unit away from their terminal
     private func constrained(_ element: Element) -> Element {
         var element = element
-        guard element.kind.isAxisAligned || element.kind == .ground else { return element }
+        guard element.kind.isAxisAligned || element.kind == .ground || element.kind == .netLabel else { return element }
         let d = element.b - element.a
         if d == .zero { return element }
         let horizontal = abs(d.x) >= abs(d.y)
         let direction = horizontal ? GridPoint(d.x.signum(), 0) : GridPoint(0, d.y.signum())
-        if element.kind == .ground {
+        if element.kind == .ground || element.kind == .netLabel {
             element.b = element.a + direction
         } else if let fixed = element.kind.fixedLength {
             element.b = element.a + direction * fixed
@@ -506,7 +506,7 @@ final class CircuitCanvasView: NSView {
             var next = editor.circuit
             next.update(id) { element in
                 if isA { element.a = grid(point) } else { element.b = grid(point) }
-                if element.kind.isAxisAligned || element.kind == .ground { element = constrained(element) }
+                if element.kind.isAxisAligned || element.kind == .ground || element.kind == .netLabel { element = constrained(element) }
             }
             if let element = next[id], element.a != element.b { editor.setDuringInteraction(next) }
         case .rubberBand(let start, _, let initial)?:
@@ -678,7 +678,7 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     switch kind {
     case .memristor: return [.voltage, .current, .resistance, .power]
     case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
-    case .probe: return [.voltage]
+    case .probe, .netLabel: return [.voltage]
     case .ground: return []
     case .opAmp, .ota, .timer555, .schmittInverter: return [.voltage, .current]
     case .analogSwitch: return [.voltage, .current, .resistance]

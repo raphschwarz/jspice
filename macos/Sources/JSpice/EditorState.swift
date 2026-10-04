@@ -271,7 +271,8 @@ final class EditorState: ObservableObject {
                 element.id = UUID()
                 element.a = element.a + GridPoint(2, 2)
                 element.b = element.b + GridPoint(2, 2)
-                if circuit.elements.contains(where: { $0.name == element.name }) { element.name = "" }
+                // a net label's name is its connection, so it keeps it
+                if element.kind != .netLabel && circuit.elements.contains(where: { $0.name == element.name }) { element.name = "" }
                 ids.insert(circuit.add(element))
             }
         }

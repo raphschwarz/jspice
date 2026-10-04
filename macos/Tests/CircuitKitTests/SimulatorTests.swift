@@ -695,6 +695,23 @@ final class SynthPartTests: XCTestCase {
         }
     }
 
+    func testNetLabelsWithTheSameNameConnect() {
+        var b = CircuitBuilder()
+        b.add(.dcVoltage, (0, 4), (0, 0), ["voltage": 10])
+        b.add(.netLabel, (0, 0), (1, 0), name: "top")
+        b.add(.netLabel, (0, 4), (1, 4), name: "GND")
+        // a divider elsewhere, joined only by labels
+        b.add(.netLabel, (10, 0), (9, 0), name: "top")
+        b.add(.resistor, (10, 0), (10, 4), ["resistance": 1000])
+        let middle = b.add(.netLabel, (10, 4), (11, 4), name: "mid")
+        b.add(.resistor, (10, 4), (10, 8), ["resistance": 1000])
+        b.add(.netLabel, (10, 8), (9, 8), name: "gnd")
+        let simulator = Simulator(circuit: b.circuit, timeStep: 1e-3)
+        simulator.step()
+        XCTAssertTrue(simulator.problems.isEmpty, "\(simulator.problems)")
+        XCTAssertEqual(simulator.voltageAcross(simulator.circuit.index(of: middle)!), 5, accuracy: 1e-9)
+    }
+
     func testTimerPinsSurroundTheChip() {
         let timer = Element(kind: .timer555, a: GridPoint(0, 0), b: GridPoint(0, 5))
         XCTAssertEqual(Set(timer.posts).count, 8)

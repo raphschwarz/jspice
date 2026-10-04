@@ -37,7 +37,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
 }
 
 public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
-    case wire, ground, resistor, potentiometer, lamp, capacitor, inductor
+    case wire, ground, netLabel, resistor, potentiometer, lamp, capacitor, inductor
     case dcVoltage, acVoltage, squareVoltage, currentSource
     case toggleSwitch, pushButton
     case diode, zener, led, npn, pnp, nmos, pmos, njfet
@@ -109,6 +109,7 @@ extension ElementKind {
         switch self {
         case .wire: return "Wire"
         case .ground: return "Ground"
+        case .netLabel: return "Net Label"
         case .resistor: return "Resistor"
         case .potentiometer: return "Potentiometer"
         case .lamp: return "Lamp"
@@ -143,6 +144,7 @@ extension ElementKind {
         switch self {
         case .wire: return "W"
         case .ground: return "GND"
+        case .netLabel: return "N"
         case .resistor, .potentiometer: return "R"
         case .lamp: return "LMP"
         case .capacitor: return "C"
@@ -163,7 +165,7 @@ extension ElementKind {
 
     public var category: ElementCategory {
         switch self {
-        case .wire, .ground, .resistor, .potentiometer, .lamp, .capacitor, .inductor: return .basics
+        case .wire, .ground, .netLabel, .resistor, .potentiometer, .lamp, .capacitor, .inductor: return .basics
         case .dcVoltage, .acVoltage, .squareVoltage, .currentSource: return .sources
         case .toggleSwitch, .pushButton: return .switches
         case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
@@ -179,6 +181,7 @@ extension ElementKind {
         switch self {
         case .wire: return "w"
         case .ground: return "g"
+        case .netLabel: return "h"
         case .resistor: return "r"
         case .potentiometer: return "t"
         case .lamp: return "y"
@@ -229,6 +232,27 @@ extension ElementKind {
         }
     }
 
+    /// Names of the terminals, in the order of `Element.posts`, for netlists and automation
+    public var terminalNames: [String] {
+        switch self {
+        case .ground: return ["gnd"]
+        case .netLabel: return ["net"]
+        case .dcVoltage, .acVoltage, .squareVoltage, .currentSource: return ["minus", "plus"]
+        case .diode, .zener, .led: return ["anode", "cathode"]
+        case .probe: return ["plus", "minus"]
+        case .ammeter: return ["in", "out"]
+        case .nmos, .pmos, .njfet: return ["gate", "drain", "source"]
+        case .npn, .pnp: return ["base", "collector", "emitter"]
+        case .potentiometer: return ["a", "b", "wiper"]
+        case .analogSwitch: return ["a", "b", "control"]
+        case .opAmp: return ["minus", "plus", "out"]
+        case .ota: return ["minus", "plus", "out", "bias"]
+        case .timer555: return ["gnd", "trig", "out", "reset", "ctrl", "thr", "dis", "vcc"]
+        case .schmittInverter: return ["in", "out"]
+        default: return ["a", "b"]
+        }
+    }
+
     /// Parts that switch between discrete states (a 555's flip-flop, a Schmitt trigger's output)
     public var isDigital: Bool { self == .timer555 || self == .schmittInverter }
 
@@ -240,6 +264,7 @@ extension ElementKind {
     public var defaultOffset: GridPoint {
         switch self {
         case .ground: return GridPoint(0, 1)
+        case .netLabel: return GridPoint(1, 0)
         case .nmos, .pmos, .npn, .pnp, .njfet: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         default: return GridPoint(4, 0)
@@ -248,7 +273,7 @@ extension ElementKind {
 
     public var params: [ParamSpec] {
         switch self {
-        case .wire, .ground, .toggleSwitch, .pushButton, .probe, .ammeter:
+        case .wire, .ground, .netLabel, .toggleSwitch, .pushButton, .probe, .ammeter:
             return []
         case .resistor:
             return [ParamSpec("resistance", "Resistance", unit: "Ω", default: 1000, range: 1...10_000_000)]
@@ -444,7 +469,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     /// switches), [−, +, output] for op-amps, [−, +, output, bias] for OTAs and the eight pins of a 555 in pin order
     public var posts: [GridPoint] {
         switch kind {
-        case .ground:
+        case .ground, .netLabel:
             return [a]
         case .nmos, .pmos, .npn, .pnp, .njfet:
             let t = transistorTerminals

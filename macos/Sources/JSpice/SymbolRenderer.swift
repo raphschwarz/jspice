@@ -73,7 +73,7 @@ enum SymbolRenderer {
     /// Length of the drawn body along the element, in grid units; the rest is leads
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
-        case .wire, .ground, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555: return 0
+        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555: return 0
         case .schmittInverter: return 1.8
         case .analogSwitch: return 1.6
         case .resistor, .potentiometer, .inductor: return 2
@@ -91,6 +91,8 @@ enum SymbolRenderer {
         switch element.kind {
         case .ground:
             drawGround(at: a, toward: b, unit: u, style: style, in: ctx)
+        case .netLabel:
+            drawNetLabel(element.name, at: a, toward: b, unit: u, style: style, in: ctx)
         case .nmos, .pmos:
             drawTransistor(element, at: a, b, unit: u, style: style, in: ctx)
         case .npn, .pnp:
@@ -285,7 +287,7 @@ enum SymbolRenderer {
             path.move(to: CGPoint(x: x0 + 0.2 * u, y: 0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.2 * u, y: -0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
-        case .wire, .ground, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555:
+        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555:
             break
         }
 
@@ -412,6 +414,69 @@ enum SymbolRenderer {
         let color = style.terminalColors.first ?? style.fill
         stroke(path, width: style.lineWidth, from: color, to: color, start: 0, end: 1, length: u, in: ctx)
         ctx.restoreGState()
+    }
+
+    /// Net label: a lead from its terminal and a tag with the net's name; every label with that name is connected
+    private static func drawNetLabel(_ name: String, at a: CGPoint, toward b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                     in ctx: CGContext) {
+        let length = max(hypot(b.x - a.x, b.y - a.y), 1)
+        let direction = CGPoint(x: (b.x - a.x) / length, y: (b.y - a.y) / length)
+        let color = style.terminalColors.first ?? style.fill
+        let start = CGPoint(x: a.x + direction.x * 0.6 * u, y: a.y + direction.y * 0.6 * u)
+        ctx.saveGState()
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(style.lineWidth)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        ctx.move(to: a)
+        ctx.addLine(to: start)
+        ctx.strokePath()
+        // the tag: a box with a point towards the terminal, sized to the name, always upright
+        let text = name.isEmpty ? "?" : name
+        let size = max(5, 0.62 * u)
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+        ]))
+        let textWidth = u >= 7 ? CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)) : 0.6 * u
+        let width = textWidth + 0.7 * u
+        let height = 0.95 * u
+        let horizontal = abs(direction.x) >= abs(direction.y)
+        let tag = CGMutablePath()
+        let centre: CGPoint
+        if horizontal {
+            let sign: CGFloat = direction.x >= 0 ? 1 : -1
+            let x0 = start.x
+            let x1 = start.x + sign * 0.35 * u
+            let x2 = start.x + sign * width
+            tag.move(to: CGPoint(x: x0, y: start.y))
+            tag.addLine(to: CGPoint(x: x1, y: start.y - height / 2))
+            tag.addLine(to: CGPoint(x: x2, y: start.y - height / 2))
+            tag.addLine(to: CGPoint(x: x2, y: start.y + height / 2))
+            tag.addLine(to: CGPoint(x: x1, y: start.y + height / 2))
+            tag.closeSubpath()
+            centre = CGPoint(x: (x1 + x2) / 2, y: start.y)
+        } else {
+            let sign: CGFloat = direction.y >= 0 ? 1 : -1
+            let y1 = start.y + sign * 0.3 * u
+            let y2 = start.y + sign * (0.3 * u + height)
+            tag.move(to: start)
+            tag.addLine(to: CGPoint(x: start.x - width / 2, y: y1))
+            tag.addLine(to: CGPoint(x: start.x - width / 2, y: y2))
+            tag.addLine(to: CGPoint(x: start.x + width / 2, y: y2))
+            tag.addLine(to: CGPoint(x: start.x + width / 2, y: y1))
+            tag.closeSubpath()
+            centre = CGPoint(x: start.x, y: (y1 + y2) / 2)
+        }
+        ctx.addPath(tag)
+        ctx.setFillColor(color.withAlpha(0.14).cgColor)
+        ctx.fillPath()
+        ctx.addPath(tag)
+        ctx.strokePath()
+        ctx.restoreGState()
+        if u >= 7 {
+            drawText(text, at: centre, size: size, color: style.fill, anchor: 0.5, bold: true, in: ctx)
+        }
     }
 
     // MARK: - Transistors
@@ -796,7 +861,7 @@ enum SymbolRenderer {
     static func dotPath(_ element: Element, a: CGPoint, b: CGPoint, posts: [CGPoint], unit u: CGFloat)
         -> (from: CGPoint, to: CGPoint, hidden: ClosedRange<CGFloat>?)? {
         switch element.kind {
-        case .ground, .probe:
+        case .ground, .netLabel, .probe:
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil

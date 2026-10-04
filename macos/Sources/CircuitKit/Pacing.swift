@@ -65,6 +65,11 @@ public enum Pacing {
         return scales.filter { $0 > 0 && $0.isFinite }
     }
 
+    /// The slowest of the circuit's time constants and periods, or nil if it has none
+    public static func slowestTimeScale(of circuit: Circuit) -> Double? {
+        timeScales(of: circuit).max()
+    }
+
     public static func suggest(for circuit: Circuit) -> Suggestion {
         let scales = timeScales(of: circuit)
         guard let slowest = scales.max(), let fastest = scales.min() else {

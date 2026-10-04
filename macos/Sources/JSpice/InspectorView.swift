@@ -240,7 +240,7 @@ struct LiveReadings: View {
                 if kind == .wire {
                     reading("Voltage", SI.format(simulator.terminalVoltages(index).first ?? 0, unit: "V"))
                     reading("Current", SI.format(simulator.current(index), unit: "A"))
-                } else if kind == .probe {
+                } else if kind == .probe || kind == .netLabel {
                     reading("Voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
                 } else if kind == .ammeter {
                     reading("Current", SI.format(simulator.current(index), unit: "A"))

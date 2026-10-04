@@ -73,13 +73,23 @@ struct Topology {
         let groundSentinel = points.count
         var nodes = UnionFind(count: points.count + 1)
         var hasGround = false
+        // net labels with the same name are one node; "GND" or "0" is ground
+        var labels: [String: Int] = [:]
         for (i, element) in elements.enumerated() {
             if element.isConductor {
                 nodes.union(elementPoints[i][0], elementPoints[i][1])
-            } else if element.kind == .ground {
+            } else if element.kind == .ground || (element.kind == .netLabel && Self.isGroundName(element.name)) {
                 nodes.union(groundSentinel, elementPoints[i][0])
                 isGroundPoint[elementPoints[i][0]] = true
                 hasGround = true
+            } else if element.kind == .netLabel {
+                let name = element.name.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { continue }
+                if let first = labels[name] {
+                    nodes.union(first, elementPoints[i][0])
+                } else {
+                    labels[name] = elementPoints[i][0]
+                }
             }
         }
         if !hasGround, !points.isEmpty {
@@ -123,6 +133,11 @@ struct Topology {
         matrixSize = row
 
         buildFlowOrder(elements)
+    }
+
+    static func isGroundName(_ name: String) -> Bool {
+        let name = name.trimmingCharacters(in: .whitespaces).lowercased()
+        return name == "gnd" || name == "0" || name == "ground"
     }
 
     /// Spanning forest of the conductors, rooted at a ground point where there is one. Conductors that close a loop of

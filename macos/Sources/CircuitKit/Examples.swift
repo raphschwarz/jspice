@@ -408,7 +408,7 @@ public enum Examples {
         b.wire((6, 1), (6, 4))
         let c = b.add(.capacitor, (6, 4), (6, 8), ["capacitance": 4.7e-6])
         b.ground((6, 8))
-        b.add(.resistor, (10, 4), (14, 4), ["resistance": 680])
+        b.add(.resistor, (10, 4), (14, 4), ["resistance": 3300])
         b.add(.led, (14, 4), (14, 8), ["color": 1])
         b.ground((14, 8))
         b.scope(c, .voltage)
