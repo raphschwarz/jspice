@@ -48,6 +48,9 @@ final class CircuitCanvasView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
+    /// A click on an inactive window acts at once (to flip a switch, for example) instead of only activating the window
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         refreshLink?.invalidate()

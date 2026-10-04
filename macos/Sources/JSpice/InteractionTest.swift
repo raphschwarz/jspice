@@ -46,13 +46,14 @@ enum InteractionTest {
             return NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
         }
+        // events go through AppKit's queue and dispatch, as a person's clicks do
         func drag(_ from: GridPoint, _ to: GridPoint) async {
-            canvas.mouseDown(with: mouse(.leftMouseDown, from))
-            await pause(0.02)
-            canvas.mouseDragged(with: mouse(.leftMouseDragged, to))
-            await pause(0.02)
-            canvas.mouseUp(with: mouse(.leftMouseUp, to))
-            await pause(0.05)
+            NSApp.postEvent(mouse(.leftMouseDown, from), atStart: false)
+            await pause(0.04)
+            NSApp.postEvent(mouse(.leftMouseDragged, to), atStart: false)
+            await pause(0.04)
+            NSApp.postEvent(mouse(.leftMouseUp, to), atStart: false)
+            await pause(0.1)
         }
         func click(_ point: GridPoint) async { await drag(point, point) }
         func undoLast() async {
@@ -119,10 +120,10 @@ enum InteractionTest {
 
         // delete with the keyboard, then undo
         editor.selection = [resistorID]
-        canvas.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+        NSApp.postEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                                               windowNumber: window.windowNumber, context: nil, characters: "\u{7F}",
-                                              charactersIgnoringModifiers: "\u{7F}", isARepeat: false, keyCode: 51)!)
-        await pause(0.05)
+                                              charactersIgnoringModifiers: "\u{7F}", isARepeat: false, keyCode: 51)!, atStart: false)
+        await pause(0.1)
         check(document.circuit[resistorID] == nil, "the Delete key removes the selection")
         await undoLast()
         check(document.circuit[resistorID] != nil, "undo restores the deleted part")
