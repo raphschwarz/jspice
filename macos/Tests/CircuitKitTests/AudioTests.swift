@@ -9,7 +9,7 @@ final class AudioTests: XCTestCase {
         let speaker = circuit.elements.firstIndex { $0.kind == .speaker }!
         let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
         var values: [(Double, Double)] = []
-        while simulator.time < settle + listen {
+        while simulator.time < settle + listen && !simulator.isFailed {
             simulator.step()
             if simulator.time > settle { values.append((simulator.time, simulator.voltageAcross(speaker))) }
         }
@@ -64,10 +64,19 @@ final class AudioTests: XCTestCase {
         let end = simulator.time + settle + listen
         let start = simulator.time + settle
         var values: [(Double, Double)] = []
-        while simulator.time < end {
+        let failuresBefore = simulator.convergenceFailures
+        let deadline = Date().addingTimeInterval(120)
+        while simulator.time < end && !simulator.isFailed {
             simulator.step()
             if simulator.time > start { values.append((simulator.time, simulator.voltageAcross(index))) }
+            if Date() > deadline {
+                XCTFail("too slow: reached \(simulator.time) s of \(end) s with \(simulator.convergenceFailures - failuresBefore) unconverged steps")
+                break
+            }
         }
+        XCTAssertFalse(simulator.isFailed, simulator.problems.joined(separator: " "))
+        XCTAssertLessThan(simulator.convergenceFailures - failuresBefore, values.count / 100 + 5, "unconverged steps")
+        guard values.count > 2 else { return (0, 0) }
         let mean = values.map(\.1).reduce(0, +) / Double(values.count)
         let rms = (values.map { ($0.1 - mean) * ($0.1 - mean) }.reduce(0, +) / Double(values.count)).squareRoot()
         var crossings: [Double] = []

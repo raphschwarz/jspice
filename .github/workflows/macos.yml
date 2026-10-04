@@ -10,6 +10,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 45
     permissions:
       contents: write
     defaults:
@@ -24,8 +25,6 @@ jobs:
           swift --version
       - name: Build
         run: swift build
-      - name: Test the simulation engine
-        run: swift test
       - name: Package JSpice.app
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: ./scripts/bundle.sh
@@ -44,14 +43,18 @@ jobs:
           grep -q 'frequency' build/mcp.txt
       - name: Simulation speed at audio rate (release build)
         if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 5
         run: |
-          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 1
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25
           # where the time goes, for the heaviest synth example
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 vca > /dev/null &
           sleep 1
           sample $! 3 -file build/profile.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile.txt | head -45
+      - name: Test the simulation engine
+        timeout-minutes: 15
+        run: swift test
       - name: Interaction test (draws a circuit with synthesized mouse events)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: ./build/JSpice.app/Contents/MacOS/JSpice --self-test "$PWD/build/screenshots"
