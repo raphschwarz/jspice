@@ -118,6 +118,32 @@ enum InteractionTest {
         await undoLast()
         check(document.circuit[resistorID] != nil, "undo restores the deleted part")
 
+        // a part dropped onto the middle of a wire joins it with a T-junction
+        editor.tool = .resistor
+        await drag(GridPoint(2, 4), GridPoint(2, 8))
+        editor.tool = nil
+        let wires = elements(.wire)
+        check(wires.count == 3 && wires.contains { Set([$0.a, $0.b]) == [GridPoint(4, 4), GridPoint(2, 4)] }
+                && wires.contains { Set([$0.a, $0.b]) == [GridPoint(2, 4), GridPoint(0, 4)] },
+              "a terminal placed on a wire splits it into a junction")
+        await undoLast()
+        check(elements(.wire).count == 2 && elements(.resistor).count == 1, "undo removes the part and rejoins the wire")
+
+        // turning a potentiometer is live, not an undo step
+        editor.tool = .potentiometer
+        await drag(GridPoint(8, 0), GridPoint(12, 0))
+        editor.tool = nil
+        if let pot = elements(.potentiometer).first {
+            let undoName = undo.undoActionName
+            editor.turnPotentiometer(pot.id, by: 0.3)
+            check(abs((document.circuit[pot.id]?[param: "position"] ?? 0) - 0.8) < 1e-9 && undo.undoActionName == undoName,
+                  "turning a potentiometer moves its wiper without an undo step")
+            editor.turnPotentiometer(pot.id, by: 5)
+            check(document.circuit[pot.id]?[param: "position"] == 1, "a potentiometer stops at the end of its track")
+        } else {
+            check(false, "the potentiometer tool places a potentiometer")
+        }
+
         // operate a switch while simulating
         undo.beginUndoGrouping()
         editor.load(Examples.example("led")!)

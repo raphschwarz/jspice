@@ -25,6 +25,10 @@ enum ScreenshotRunner {
         Shot(name: "5-memristor-light", example: "memristor", dark: false, seconds: 4, select: .memristor),
         Shot(name: "6-lc-dark", example: "lc", dark: true, seconds: 2, closeSwitches: true),
         Shot(name: "7-new-light", example: nil, dark: false, seconds: 0.5),
+        Shot(name: "9-blinker-dark", example: "blinker", dark: true, seconds: 3, select: .npn),
+        Shot(name: "10-opamp-light", example: "opamp", dark: false, seconds: 2, select: .opAmp),
+        Shot(name: "11-dimmer-light", example: "dimmer", dark: false, seconds: 1.5, select: .potentiometer),
+        Shot(name: "12-zener-dark", example: "zener", dark: true, seconds: 2),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {

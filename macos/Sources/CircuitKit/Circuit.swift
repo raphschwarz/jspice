@@ -24,16 +24,33 @@ public enum Quantity: String, Codable, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// A trace shown in the scope panel: one quantity of one element over time.
+public enum ScopePlot: String, Codable, Sendable {
+    /// The quantity against time
+    case time
+    /// Current against voltage: the I–V curve, e.g. a memristor's pinched hysteresis loop
+    case currentVersusVoltage
+}
+
+/// A trace shown in the scope panel: one quantity of one element over time, or its current against its voltage.
 public struct ScopeSpec: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var elementID: UUID
     public var quantity: Quantity
+    public var plot: ScopePlot
 
-    public init(id: UUID = UUID(), elementID: UUID, quantity: Quantity) {
+    public init(id: UUID = UUID(), elementID: UUID, quantity: Quantity, plot: ScopePlot = .time) {
         self.id = id
         self.elementID = elementID
         self.quantity = quantity
+        self.plot = plot
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        elementID = try container.decode(UUID.self, forKey: .elementID)
+        quantity = try container.decodeIfPresent(Quantity.self, forKey: .quantity) ?? .voltage
+        plot = try container.decodeIfPresent(ScopePlot.self, forKey: .plot) ?? .time
     }
 }
 
@@ -132,6 +149,58 @@ public struct Circuit: Codable, Hashable, Sendable {
             }
         }
         elements.removeAll { $0.kind == .wire && $0.a == $0.b }
+    }
+
+    /// Mirrors transistors, op-amps and potentiometers across their axis
+    public mutating func flip(_ ids: Set<UUID>) {
+        for i in elements.indices where ids.contains(elements[i].id) && elements[i].kind.canFlip {
+            elements[i].flipped.toggle()
+        }
+    }
+
+    /// Connects the terminals of the given elements to wires they land on: a wire that has one of those terminals in its
+    /// middle (not at an end) is split there, making a T-junction. Wires that only cross stay unconnected.
+    public mutating func connectTerminals(of ids: Set<UUID>) {
+        var points = Set<GridPoint>()
+        for element in elements where ids.contains(element.id) {
+            points.formUnion(element.posts)
+        }
+        guard !points.isEmpty else { return }
+        var result: [Element] = []
+        for element in elements {
+            guard element.kind == .wire else {
+                result.append(element)
+                continue
+            }
+            // terminals strictly inside this wire, ordered from a to b
+            let inside = points.filter { $0 != element.a && $0 != element.b && Self.lies($0, on: element.a, element.b) }
+                .sorted { Self.distanceSquared(element.a, $0) < Self.distanceSquared(element.a, $1) }
+            if inside.isEmpty {
+                result.append(element)
+                continue
+            }
+            var start = element.a
+            for (k, point) in (inside + [element.b]).enumerated() {
+                var piece = element
+                if k > 0 { piece.id = UUID() }
+                piece.a = start
+                piece.b = point
+                result.append(piece)
+                start = point
+            }
+        }
+        elements = result
+    }
+
+    static func lies(_ p: GridPoint, on a: GridPoint, _ b: GridPoint) -> Bool {
+        let cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
+        guard cross == 0 else { return false }
+        let dot = (p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)
+        return dot > 0 && dot < distanceSquared(a, b)
+    }
+
+    static func distanceSquared(_ a: GridPoint, _ b: GridPoint) -> Int {
+        (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)
     }
 
     /// Rotates the elements 90° clockwise around the centre of their bounds

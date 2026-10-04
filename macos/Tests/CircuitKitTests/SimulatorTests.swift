@@ -225,6 +225,168 @@ final class SimulatorTests: XCTestCase {
         }
     }
 
+    func testSuddenChangesDoNotRing() {
+        // a 5 V step into 1 Ω and 1 µF, with a time step ten times the time constant: the trapezoidal rule would make
+        // the capacitor current flip sign every step; BDF2 settles without ringing
+        let circuit = series(voltage: 5, [(.resistor, ["resistance": 1]), (.capacitor, ["capacitance": 1e-6])])
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-5)
+        let c = index(simulator, "C1")
+        var previous = 0.0
+        for step in 0..<60 {
+            simulator.step()
+            let v = simulator.voltageAcross(c)
+            XCTAssertGreaterThanOrEqual(simulator.current(c), -1e-9, "step \(step): the capacitor current reversed")
+            XCTAssertGreaterThanOrEqual(v, previous - 1e-9, "step \(step): the voltage went back down")
+            XCTAssertLessThanOrEqual(v, 5 + 1e-6, "step \(step): overshoot")
+            previous = v
+        }
+        XCTAssertEqual(previous, 5, accuracy: 1e-6)
+    }
+
+    func testNPNCurrentGain() {
+        var b = CircuitBuilder()
+        b.add(.dcVoltage, (0, 8), (0, 0), ["voltage": 10])
+        b.wire((0, 0), (4, 0), (8, 0))
+        b.add(.resistor, (8, 0), (8, 4), ["resistance": 500], name: "RC")
+        b.add(.resistor, (4, 0), (4, 4), ["resistance": 100_000], name: "RB")
+        b.wire((4, 4), (4, 6), (6, 6))
+        b.add(.npn, (6, 6), (8, 6), ["beta": 100], name: "Q1")
+        b.wire((8, 8), (0, 8))
+        b.ground((0, 8))
+        let simulator = run(b.circuit, timeStep: 1e-3, for: 0.01)
+        let ib = simulator.current(index(simulator, "RB"))
+        let ic = simulator.current(index(simulator, "Q1"))
+        XCTAssertEqual(ib, (10 - 0.65) / 100_000, accuracy: 5e-6)
+        XCTAssertEqual(ic / ib, 100, accuracy: 3)
+        XCTAssertEqual(simulator.current(index(simulator, "RC")), ic, accuracy: 1e-9)
+        XCTAssertGreaterThan(simulator.voltageAcross(index(simulator, "Q1")), 1, "should be in the active region")
+        XCTAssertEqual(simulator.convergenceFailures, 0)
+    }
+
+    func testPNPCurrentGain() {
+        var b = CircuitBuilder()
+        b.add(.dcVoltage, (0, 10), (0, 0), ["voltage": 10])
+        b.wire((0, 0), (8, 0))
+        b.wire((8, 0), (8, 2))
+        b.add(.pnp, (6, 4), (8, 4), ["beta": 100], name: "Q1")
+        b.add(.resistor, (8, 6), (8, 10), ["resistance": 500], name: "RC")
+        b.add(.resistor, (6, 4), (6, 8), ["resistance": 100_000], name: "RB")
+        b.wire((6, 8), (6, 10))
+        b.wire((0, 10), (6, 10), (8, 10))
+        b.ground((0, 10))
+        let simulator = run(b.circuit, timeStep: 1e-3, for: 0.01)
+        let ib = simulator.current(index(simulator, "RB"))
+        let ic = simulator.current(index(simulator, "Q1"))
+        XCTAssertGreaterThan(ib, 50e-6)
+        // current leaves a PNP's collector, so the collector current is negative
+        XCTAssertEqual(-ic / ib, 100, accuracy: 3)
+        XCTAssertEqual(simulator.current(index(simulator, "RC")), -ic, accuracy: 1e-9)
+    }
+
+    func testOpAmpInvertingGain() {
+        let circuit = Examples.opAmpAmplifier.circuit
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-4)
+        let source = circuit.elements.firstIndex { $0.kind == .acVoltage }!
+        let amplifier = circuit.elements.firstIndex { $0.kind == .opAmp }!
+        var checked = 0
+        for _ in 0..<400 {
+            simulator.step()
+            let input = simulator.voltageAcross(source)
+            if abs(input) > 0.1 {
+                XCTAssertEqual(simulator.voltageAcross(amplifier) / input, -10, accuracy: 0.01)
+                checked += 1
+            }
+        }
+        XCTAssertGreaterThan(checked, 100)
+        XCTAssertEqual(simulator.convergenceFailures, 0)
+    }
+
+    func testOpAmpClipsAtItsOutputLimit() {
+        var circuit = Examples.opAmpAmplifier.circuit
+        let source = circuit.elements.firstIndex { $0.kind == .acVoltage }!
+        circuit.elements[source][param: "amplitude"] = 3
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-4)
+        let amplifier = circuit.elements.firstIndex { $0.kind == .opAmp }!
+        var largest = 0.0
+        for _ in 0..<400 {
+            simulator.step()
+            largest = max(largest, abs(simulator.voltageAcross(amplifier)))
+        }
+        XCTAssertLessThanOrEqual(largest, 15 + 1e-9)
+        XCTAssertGreaterThan(largest, 14.9)
+        XCTAssertLessThan(simulator.convergenceFailures, 5)
+    }
+
+    func testZenerRegulates() {
+        var circuit = Examples.zenerRegulator.circuit
+        let probe = circuit.elements.firstIndex { $0.kind == .probe }!
+        let low = run(circuit, timeStep: 1e-3, for: 0.01).voltageAcross(probe)
+        XCTAssertEqual(low, 5.1, accuracy: 0.1)
+        let supply = circuit.elements.firstIndex { $0.kind == .dcVoltage }!
+        circuit.elements[supply][param: "voltage"] = 15
+        let high = run(circuit, timeStep: 1e-3, for: 0.01).voltageAcross(probe)
+        XCTAssertEqual(high, low, accuracy: 0.05, "the output should barely move when the supply goes from 12 to 15 V")
+    }
+
+    func testPotentiometerDividesByItsPosition() {
+        var b = CircuitBuilder()
+        b.add(.dcVoltage, (0, 4), (0, 0), ["voltage": 10])
+        b.wire((0, 0), (4, 0))
+        let pot = b.add(.potentiometer, (4, 0), (4, 4), ["resistance": 10_000, "position": 0.25])
+        b.wire((4, 4), (0, 4))
+        b.ground((0, 4))
+        let simulator = run(b.circuit, timeStep: 1e-3, for: 0.01)
+        let wiper = b.circuit[pot]!.wiper
+        XCTAssertEqual(wiper, GridPoint(6, 2))
+        XCTAssertEqual(simulator.voltage(at: wiper), 7.5, accuracy: 1e-6)
+        XCTAssertEqual(simulator.current(simulator.circuit.index(of: pot)!), 1e-3, accuracy: 1e-9)
+    }
+
+    func testAmmeterReadsTheLoopCurrent() {
+        let circuit = series(voltage: 5, [(.resistor, ["resistance": 1000]), (.ammeter, [:])])
+        let simulator = run(circuit, timeStep: 1e-3, for: 0.01)
+        let ammeter = simulator.circuit.elements.firstIndex { $0.kind == .ammeter }!
+        XCTAssertEqual(simulator.current(ammeter), 0.005, accuracy: 1e-9)
+    }
+
+    func testBlinkerOscillatesAboutOnceASecond() {
+        let circuit = Examples.blinker.circuit
+        let pacing = Pacing.suggest(for: circuit)
+        XCTAssertEqual(pacing.speed, 1, "a blinking circuit should run in real time")
+        let simulator = Simulator(circuit: circuit, timeStep: pacing.timeStep)
+        let led = circuit.elements.firstIndex { $0.kind == .led }!
+        var switches = 0
+        var wasOn: Bool?
+        var time = 0.0
+        while time < 4 {
+            simulator.step()
+            time += pacing.timeStep
+            guard time > 0.5 else { continue }
+            let on = simulator.brightness(led) > 0.5
+            if let wasOn, wasOn != on { switches += 1 }
+            wasOn = on
+        }
+        // about 0.7 s per cycle: some 9 to 12 changes in 3.5 s
+        XCTAssertGreaterThanOrEqual(switches, 6, "the LED should keep blinking")
+        XCTAssertLessThanOrEqual(switches, 20)
+        XCTAssertLessThan(simulator.convergenceFailures, 10)
+    }
+
+    func testIVScopeTracesAPinchedLoop() {
+        let circuit = Examples.memristorHysteresis.circuit
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-3)
+        simulator.configureScopes(window: 2)
+        for _ in 0..<2500 { simulator.step() }
+        let spec = circuit.scopes.first { $0.plot == .currentVersusVoltage }!
+        let trace = simulator.trace(spec.id)!
+        XCTAssertGreaterThan(trace.voltages.count, 300)
+        XCTAssertTrue(trace.voltages.contains { $0 > 0.8 } && trace.voltages.contains { $0 < -0.8 })
+        // pinched: the current is zero whenever the voltage is
+        for (v, i) in zip(trace.voltages, trace.currents) where abs(v) < 1e-3 {
+            XCTAssertLessThan(abs(i), 1e-5)
+        }
+    }
+
     func testAdvanceStopsAtTheDeadline() {
         let circuit = Examples.cmosInverter.circuit
         let simulator = Simulator(circuit: circuit, timeStep: 1e-6)
@@ -272,6 +434,37 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(moved.a, resistor.a + GridPoint(0, -2))
         // the wire that ended on the resistor's right terminal followed it
         XCTAssertTrue(circuit.elements.contains { $0.kind == .wire && ($0.a == moved.b || $0.b == moved.b) })
+    }
+
+    func testTerminalOnAWireMakesAJunction() {
+        var circuit = Circuit()
+        circuit.add(Element(kind: .wire, a: GridPoint(0, 0), b: GridPoint(8, 0)))
+        let resistor = circuit.add(Element(kind: .resistor, a: GridPoint(4, 0), b: GridPoint(4, 4)))
+        circuit.connectTerminals(of: [resistor])
+        let wires = circuit.elements.filter { $0.kind == .wire }
+        XCTAssertEqual(wires.count, 2)
+        XCTAssertTrue(wires.contains { $0.a == GridPoint(0, 0) && $0.b == GridPoint(4, 0) })
+        XCTAssertTrue(wires.contains { $0.a == GridPoint(4, 0) && $0.b == GridPoint(8, 0) })
+        // a part that only crosses a wire does not connect
+        var crossing = Circuit()
+        crossing.add(Element(kind: .wire, a: GridPoint(0, 2), b: GridPoint(8, 2)))
+        let across = crossing.add(Element(kind: .resistor, a: GridPoint(4, 0), b: GridPoint(4, 4)))
+        crossing.connectTerminals(of: [across])
+        XCTAssertEqual(crossing.elements.filter { $0.kind == .wire }.count, 1)
+    }
+
+    func testFlipMirrorsATransistor() {
+        var circuit = Circuit()
+        let id = circuit.add(Element(kind: .npn, a: GridPoint(0, 0), b: GridPoint(2, 0)))
+        XCTAssertEqual(circuit[id]!.transistorTerminals.drain, GridPoint(2, -2))
+        circuit.flip([id])
+        XCTAssertEqual(circuit[id]!.transistorTerminals.drain, GridPoint(2, 2))
+        XCTAssertEqual(circuit[id]!.transistorTerminals.source, GridPoint(2, -2))
+    }
+
+    func testOpAmpTerminals() {
+        let amplifier = Element(kind: .opAmp, a: GridPoint(0, 0), b: GridPoint(4, 0))
+        XCTAssertEqual(amplifier.posts, [GridPoint(0, -1), GridPoint(0, 1), GridPoint(4, 0)])
     }
 
     func testRotationKeepsLength() {

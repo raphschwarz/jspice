@@ -40,6 +40,7 @@ final class CircuitCanvasView: NSView {
     init(editor: EditorState) {
         self.editor = editor
         super.init(frame: .zero)
+        editor.canvas = self
     }
 
     @available(*, unavailable)
@@ -248,7 +249,12 @@ final class CircuitCanvasView: NSView {
         switch element.kind {
         case .probe:
             return live ? SI.format(simulator.voltageAcross(index), unit: "V") : "— V"
+        case .ammeter:
+            return live ? SI.format(simulator.current(index), unit: "A") : "— A"
         case .resistor: return SI.format(element[param: "resistance"], unit: "Ω")
+        case .potentiometer:
+            return "\(SI.format(element[param: "resistance"], unit: "Ω")) · \(Int((element[param: "position"] * 100).rounded())) %"
+        case .zener: return SI.format(element[param: "breakdown"], unit: "V")
         case .lamp: return SI.format(element[param: "resistance"], unit: "Ω")
         case .capacitor: return SI.format(element[param: "capacitance"], unit: "F")
         case .inductor: return SI.format(element[param: "inductance"], unit: "H")
@@ -281,7 +287,8 @@ final class CircuitCanvasView: NSView {
         ]
         for (index, element) in circuit.elements.enumerated() {
             guard element.kind != .wire, element.kind != .ground else { continue }
-            let isProbe = element.kind == .probe
+            // instruments always show their reading
+            let isProbe = element.kind == .probe || element.kind == .ammeter
             guard editor.showValues || isProbe else { continue }
             let a = screen(element.a)
             let b = screen(element.b)
@@ -387,14 +394,21 @@ final class CircuitCanvasView: NSView {
         return nil
     }
 
-    /// Transistors stay horizontal or vertical; grounds always point one grid unit away from their terminal
+    /// Transistors, op-amps and potentiometers stay horizontal or vertical (transistors two grid units long); grounds
+    /// always point one grid unit away from their terminal
     private func constrained(_ element: Element) -> Element {
         var element = element
-        if element.kind.isTransistor || element.kind == .ground {
-            let d = element.b - element.a
-            if d == .zero { return element }
-            let direction = abs(d.x) >= abs(d.y) ? GridPoint(d.x.signum(), 0) : GridPoint(0, d.y.signum())
-            element.b = element.a + direction * (element.kind == .ground ? 1 : 2)
+        guard element.kind.isAxisAligned || element.kind == .ground else { return element }
+        let d = element.b - element.a
+        if d == .zero { return element }
+        let horizontal = abs(d.x) >= abs(d.y)
+        let direction = horizontal ? GridPoint(d.x.signum(), 0) : GridPoint(0, d.y.signum())
+        if element.kind == .ground {
+            element.b = element.a + direction
+        } else if element.kind.isTransistor {
+            element.b = element.a + direction * 2
+        } else {
+            element.b = element.a + direction * max(2, horizontal ? abs(d.x) : abs(d.y))
         }
         return element
     }
@@ -468,7 +482,7 @@ final class CircuitCanvasView: NSView {
             var next = editor.circuit
             next.update(id) { element in
                 if isA { element.a = grid(point) } else { element.b = grid(point) }
-                if element.kind.isTransistor || element.kind == .ground { element = constrained(element) }
+                if element.kind.isAxisAligned || element.kind == .ground { element = constrained(element) }
             }
             if let element = next[id], element.a != element.b { editor.setDuringInteraction(next) }
         case .rubberBand(let start, _, let initial)?:
@@ -499,13 +513,16 @@ final class CircuitCanvasView: NSView {
                 let id = editor.add(element)
                 editor.selection = [id]
             }
-        case .moving(_, _, _, let moved)?:
+        case .moving(_, _, let ids, let moved)?:
             if moved {
+                // terminals dropped onto the middle of a wire join it
+                editor.connectDuringInteraction(ids)
                 editor.endInteraction("Move")
             } else if let id = pendingToggle {
                 editor.toggleSwitch(id)
             }
-        case .endpoint?:
+        case .endpoint(let id, _)?:
+            editor.connectDuringInteraction([id])
             editor.endInteraction("Resize")
         case .pressing(let id)?:
             editor.setPressed(id, false)
@@ -522,7 +539,7 @@ final class CircuitCanvasView: NSView {
         mouseLocation = point
         let hovered = editor.tool == nil ? element(at: point)?.id : nil
         if hovered != editor.hovered { editor.hovered = hovered }
-        if let id = hovered, editor.circuit[id]?.kind.isSwitch == true {
+        if let id = hovered, let kind = editor.circuit[id]?.kind, kind.isSwitch || kind == .potentiometer {
             NSCursor.pointingHand.set()
         } else if editor.tool != nil {
             NSCursor.crosshair.set()
@@ -539,6 +556,13 @@ final class CircuitCanvasView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        // scrolling over a potentiometer turns it, like a knob
+        if !event.modifierFlags.contains(.command), editor.tool == nil, let hit = element(at: location(event)), hit.kind == .potentiometer {
+            let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.004 : event.scrollingDeltaY * 0.04
+            editor.turnPotentiometer(hit.id, by: Double(delta))
+            needsDisplay = true
+            return
+        }
         if event.modifierFlags.contains(.command) {
             editor.changeZoom(by: exp(-event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 0.01 : 0.1)), around: location(event))
         } else {
@@ -566,8 +590,14 @@ final class CircuitCanvasView: NSView {
         for quantity in scopeQuantities(for: hit.kind) {
             menu.addItem(item("Add \(quantity.name) Scope") { [weak self] in self?.editor.addScope(hit.id, quantity) })
         }
+        if canPlotCurve(hit.kind) {
+            menu.addItem(item("Add I–V Curve Scope") { [weak self] in self?.editor.addScope(hit.id, .current, plot: .currentVersusVoltage) })
+        }
         menu.addItem(.separator())
         menu.addItem(item("Rotate") { [weak self] in self?.editor.rotateSelection() })
+        if hit.kind.canFlip {
+            menu.addItem(item("Flip") { [weak self] in self?.editor.flipSelection() })
+        }
         menu.addItem(item("Delete") { [weak self] in self?.editor.deleteSelection() })
         return menu
     }
@@ -600,6 +630,10 @@ final class CircuitCanvasView: NSView {
         default:
             break
         }
+        if modifiers.isEmpty, event.charactersIgnoringModifiers?.lowercased() == "f", !editor.selection.isEmpty {
+            editor.flipSelection()
+            return
+        }
         if modifiers.isEmpty, let key = event.charactersIgnoringModifiers?.lowercased().first,
            let kind = ElementKind.allCases.first(where: { $0.shortcut == key }) {
             editor.tool = editor.tool == kind ? nil : kind
@@ -619,10 +653,19 @@ final class CircuitCanvasView: NSView {
 func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     switch kind {
     case .memristor: return [.voltage, .current, .resistance, .power]
-    case .wire, .toggleSwitch, .pushButton: return [.current]
+    case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
     case .probe: return [.voltage]
     case .ground: return []
+    case .opAmp: return [.voltage, .current]
     default: return [.voltage, .current, .power]
+    }
+}
+
+/// Two-terminal parts with a meaningful current-voltage relation
+func canPlotCurve(_ kind: ElementKind) -> Bool {
+    switch kind {
+    case .resistor, .lamp, .capacitor, .inductor, .diode, .zener, .led, .memristor: return true
+    default: return false
     }
 }
 

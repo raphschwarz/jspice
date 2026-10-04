@@ -73,14 +73,14 @@ enum SymbolRenderer {
     /// Length of the drawn body along the element, in grid units; the rest is leads
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
-        case .wire, .ground, .nmos, .pmos: return 0
-        case .resistor, .inductor: return 2
+        case .wire, .ground, .nmos, .pmos, .npn, .pnp, .opAmp: return 0
+        case .resistor, .potentiometer, .inductor: return 2
         case .memristor: return 2.2
-        case .lamp, .probe: return 1.4
+        case .lamp, .probe, .ammeter: return 1.4
         case .capacitor, .dcVoltage: return 0.5
         case .acVoltage, .squareVoltage, .currentSource: return 1.6
         case .toggleSwitch, .pushButton: return 1.6
-        case .diode, .led: return 1
+        case .diode, .zener, .led: return 1
         }
     }
 
@@ -91,9 +91,23 @@ enum SymbolRenderer {
             drawGround(at: a, toward: b, unit: u, style: style, in: ctx)
         case .nmos, .pmos:
             drawTransistor(element, at: a, b, unit: u, style: style, in: ctx)
+        case .npn, .pnp:
+            drawBipolar(element, at: a, b, unit: u, style: style, in: ctx)
+        case .opAmp:
+            drawOpAmp(element, at: a, b, unit: u, style: style, in: ctx)
+        case .potentiometer:
+            drawTwoTerminal(element, at: a, b, unit: u, style: style, in: ctx)
+            if posts.count == 3 { drawWiper(from: posts[2], toward: CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2), unit: u, style: style, in: ctx) }
         default:
             drawTwoTerminal(element, at: a, b, unit: u, style: style, in: ctx)
         }
+    }
+
+    /// Rotates (and for flipped parts mirrors) the context so the element runs along +x from `a`
+    private static func enterFrame(of element: Element, at a: CGPoint, _ b: CGPoint, in ctx: CGContext) {
+        ctx.translateBy(x: a.x, y: a.y)
+        ctx.rotate(by: atan2(b.y - a.y, b.x - a.x))
+        if element.flipped && element.kind.canFlip { ctx.scaleBy(x: 1, y: -1) }
     }
 
     // MARK: - Two-terminal parts
@@ -140,7 +154,7 @@ enum SymbolRenderer {
             let inner = body - 0.35 * u
             ctx.setFillColor(style.accent.withAlpha(0.28).cgColor)
             ctx.fill(CGRect(x: c - h, y: -0.3 * u, width: max(0, inner * CGFloat(style.memristorState)), height: 0.6 * u))
-        case .acVoltage, .squareVoltage, .currentSource, .probe:
+        case .acVoltage, .squareVoltage, .currentSource, .probe, .ammeter:
             ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.08).cgColor)
             ctx.fillEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
         default:
@@ -149,7 +163,7 @@ enum SymbolRenderer {
 
         var thickPlate: CGPath?
         switch kind {
-        case .resistor:
+        case .resistor, .potentiometer:
             let amplitude = 0.32 * u
             for j in 0..<6 {
                 let x = c - h + body * CGFloat(2 * j + 1) / 12
@@ -208,13 +222,21 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: c, y: bar - 0.5 * u))
             path.move(to: CGPoint(x: c - 0.25 * u, y: bar - 0.5 * u))
             path.addLine(to: CGPoint(x: c + 0.25 * u, y: bar - 0.5 * u))
-        case .diode, .led:
+        case .diode, .zener, .led:
             path.move(to: CGPoint(x: c - h, y: -0.5 * u))
             path.addLine(to: CGPoint(x: c - h, y: 0.5 * u))
             path.addLine(to: CGPoint(x: c + h, y: 0))
             path.closeSubpath()
-            path.move(to: CGPoint(x: c + h, y: -0.5 * u))
-            path.addLine(to: CGPoint(x: c + h, y: 0.5 * u))
+            if kind == .zener {
+                // cathode bar with bent ends
+                path.move(to: CGPoint(x: c + h - 0.22 * u, y: -0.62 * u))
+                path.addLine(to: CGPoint(x: c + h, y: -0.5 * u))
+                path.addLine(to: CGPoint(x: c + h, y: 0.5 * u))
+                path.addLine(to: CGPoint(x: c + h + 0.22 * u, y: 0.62 * u))
+            } else {
+                path.move(to: CGPoint(x: c + h, y: -0.5 * u))
+                path.addLine(to: CGPoint(x: c + h, y: 0.5 * u))
+            }
             if kind == .led {
                 for offset in [CGFloat(0), 0.35] {
                     let start = CGPoint(x: c - 0.05 * u + offset * u, y: -0.65 * u)
@@ -232,7 +254,9 @@ enum SymbolRenderer {
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
             // "+" marks the terminal measured against the other
             addPlus(to: path, at: CGPoint(x: c - h - 0.35 * u, y: -0.65 * u), size: 0.16 * u)
-        case .wire, .ground, .nmos, .pmos:
+        case .ammeter:
+            path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
+        case .wire, .ground, .nmos, .pmos, .npn, .pnp, .opAmp:
             break
         }
 
@@ -279,12 +303,20 @@ enum SymbolRenderer {
             ctx.setLineCap(.round)
             ctx.strokePath()
         }
-        if kind == .probe {
-            // the letter stays upright whatever the probe's direction
+        if kind == .probe || kind == .ammeter {
+            // the letter stays upright whatever the instrument's direction
             let v = CGMutablePath()
-            v.move(to: CGPoint(x: mid.x - 0.25 * u, y: mid.y - 0.3 * u))
-            v.addLine(to: CGPoint(x: mid.x, y: mid.y + 0.3 * u))
-            v.addLine(to: CGPoint(x: mid.x + 0.25 * u, y: mid.y - 0.3 * u))
+            if kind == .probe {
+                v.move(to: CGPoint(x: mid.x - 0.25 * u, y: mid.y - 0.3 * u))
+                v.addLine(to: CGPoint(x: mid.x, y: mid.y + 0.3 * u))
+                v.addLine(to: CGPoint(x: mid.x + 0.25 * u, y: mid.y - 0.3 * u))
+            } else {
+                v.move(to: CGPoint(x: mid.x - 0.25 * u, y: mid.y + 0.3 * u))
+                v.addLine(to: CGPoint(x: mid.x, y: mid.y - 0.3 * u))
+                v.addLine(to: CGPoint(x: mid.x + 0.25 * u, y: mid.y + 0.3 * u))
+                v.move(to: CGPoint(x: mid.x - 0.14 * u, y: mid.y + 0.06 * u))
+                v.addLine(to: CGPoint(x: mid.x + 0.14 * u, y: mid.y + 0.06 * u))
+            }
             ctx.addPath(v)
             ctx.setStrokeColor(style.fill.cgColor)
             ctx.setLineWidth(style.lineWidth)
@@ -372,8 +404,7 @@ enum SymbolRenderer {
         let plateX = L - 0.55 * u
 
         ctx.saveGState()
-        ctx.translateBy(x: a.x, y: a.y)
-        ctx.rotate(by: atan2(b.y - a.y, b.x - a.x))
+        enterFrame(of: element, at: a, b, in: ctx)
 
         let gate = CGMutablePath()
         gate.move(to: .zero)
@@ -417,6 +448,129 @@ enum SymbolRenderer {
         ctx.restoreGState()
     }
 
+    /// Bipolar transistor: base at `a`, collector and emitter two grid units either side of `b`
+    private static func drawBipolar(_ element: Element, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                    in ctx: CGContext) {
+        let length = hypot(b.x - a.x, b.y - a.y)
+        guard length > 0.5 else { return }
+        let isN = element.kind == .npn
+        let colors = style.terminalColors.count == 3 ? style.terminalColors : [style.fill, style.fill, style.fill]
+        let (baseColor, collectorColor, emitterColor) = (colors[0], colors[1], colors[2])
+        let L = length
+        let barX = L - 0.55 * u
+        // collector above the bar for NPN, below for PNP (in the element's frame)
+        let collectorY: CGFloat = (isN ? -2 : 2) * u
+        let emitterY = -collectorY
+        let side: (CGFloat) -> CGFloat = { $0 >= 0 ? 1 : -1 }
+
+        ctx.saveGState()
+        enterFrame(of: element, at: a, b, in: ctx)
+
+        let base = CGMutablePath()
+        base.move(to: .zero)
+        base.addLine(to: CGPoint(x: barX, y: 0))
+        stroke(base, width: style.lineWidth, from: baseColor, to: baseColor, start: 0, end: 1, length: L, in: ctx)
+        let bar = CGMutablePath()
+        bar.move(to: CGPoint(x: barX, y: -0.75 * u))
+        bar.addLine(to: CGPoint(x: barX, y: 0.75 * u))
+        stroke(bar, width: style.lineWidth * 1.8, from: baseColor, to: baseColor, start: 0, end: 1, length: L, in: ctx)
+
+        let collector = CGMutablePath()
+        collector.move(to: CGPoint(x: barX, y: 0.35 * u * side(collectorY)))
+        collector.addLine(to: CGPoint(x: L, y: 0.95 * u * side(collectorY)))
+        collector.addLine(to: CGPoint(x: L, y: collectorY))
+        stroke(collector, width: style.lineWidth, from: collectorColor, to: collectorColor, start: 0, end: 1, length: L, in: ctx)
+
+        let start = CGPoint(x: barX, y: 0.35 * u * side(emitterY))
+        let end = CGPoint(x: L, y: 0.95 * u * side(emitterY))
+        let emitter = CGMutablePath()
+        emitter.move(to: start)
+        emitter.addLine(to: end)
+        emitter.addLine(to: CGPoint(x: L, y: emitterY))
+        // the arrow shows conventional current: out along the emitter for NPN, in for PNP
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let length2 = max(hypot(dx, dy), 0.001)
+        let direction = CGPoint(x: dx / length2 * (isN ? 1 : -1), y: dy / length2 * (isN ? 1 : -1))
+        let tip = CGPoint(x: start.x + dx * (isN ? 0.8 : 0.35), y: start.y + dy * (isN ? 0.8 : 0.35))
+        let back = CGPoint(x: tip.x - direction.x * 0.3 * u, y: tip.y - direction.y * 0.3 * u)
+        let normal = CGPoint(x: -direction.y * 0.16 * u, y: direction.x * 0.16 * u)
+        emitter.move(to: CGPoint(x: back.x + normal.x, y: back.y + normal.y))
+        emitter.addLine(to: tip)
+        emitter.addLine(to: CGPoint(x: back.x - normal.x, y: back.y - normal.y))
+        stroke(emitter, width: style.lineWidth, from: emitterColor, to: emitterColor, start: 0, end: 1, length: L, in: ctx)
+        ctx.restoreGState()
+    }
+
+    /// Op-amp: inputs one grid unit either side of `a` (− then +), output at `b`
+    private static func drawOpAmp(_ element: Element, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                  in ctx: CGContext) {
+        let L = hypot(b.x - a.x, b.y - a.y)
+        guard L > 0.5 else { return }
+        let colors = style.terminalColors.count == 3 ? style.terminalColors : [style.fill, style.fill, style.fill]
+        let left = min(0.6 * u, L * 0.2)
+        let tipX = max(left + u, L - 0.6 * u)
+
+        ctx.saveGState()
+        enterFrame(of: element, at: a, b, in: ctx)
+
+        let triangle = CGMutablePath()
+        triangle.move(to: CGPoint(x: left, y: -1.7 * u))
+        triangle.addLine(to: CGPoint(x: left, y: 1.7 * u))
+        triangle.addLine(to: CGPoint(x: tipX, y: 0))
+        triangle.closeSubpath()
+        ctx.addPath(triangle)
+        ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.08).cgColor)
+        ctx.fillPath()
+
+        let marks = CGMutablePath()
+        marks.addPath(triangle)
+        // − above, + below
+        marks.move(to: CGPoint(x: left + 0.25 * u, y: -u))
+        marks.addLine(to: CGPoint(x: left + 0.6 * u, y: -u))
+        addPlus(to: marks, at: CGPoint(x: left + 0.42 * u, y: u), size: 0.17 * u)
+        stroke(marks, width: style.lineWidth, from: style.fill, to: style.fill, start: 0, end: 1, length: L, in: ctx)
+
+        for (y, color) in [(-u, colors[0]), (u, colors[1])] {
+            let lead = CGMutablePath()
+            lead.move(to: CGPoint(x: 0, y: y))
+            lead.addLine(to: CGPoint(x: left, y: y))
+            stroke(lead, width: style.lineWidth, from: color, to: color, start: 0, end: 1, length: L, in: ctx)
+        }
+        let output = CGMutablePath()
+        output.move(to: CGPoint(x: tipX, y: 0))
+        output.addLine(to: CGPoint(x: L, y: 0))
+        stroke(output, width: style.lineWidth, from: colors[2], to: colors[2], start: 0, end: 1, length: L, in: ctx)
+        ctx.restoreGState()
+    }
+
+    /// The potentiometer's wiper: an arrow from its terminal to the resistor
+    private static func drawWiper(from wiper: CGPoint, toward middle: CGPoint, unit u: CGFloat, style: SymbolStyle, in ctx: CGContext) {
+        let dx = middle.x - wiper.x
+        let dy = middle.y - wiper.y
+        let distance = hypot(dx, dy)
+        guard distance > 0.6 * u else { return }
+        let direction = CGPoint(x: dx / distance, y: dy / distance)
+        let tip = CGPoint(x: middle.x - direction.x * 0.42 * u, y: middle.y - direction.y * 0.42 * u)
+        let back = CGPoint(x: tip.x - direction.x * 0.35 * u, y: tip.y - direction.y * 0.35 * u)
+        let normal = CGPoint(x: -direction.y * 0.2 * u, y: direction.x * 0.2 * u)
+        let path = CGMutablePath()
+        path.move(to: wiper)
+        path.addLine(to: tip)
+        path.move(to: CGPoint(x: back.x + normal.x, y: back.y + normal.y))
+        path.addLine(to: tip)
+        path.addLine(to: CGPoint(x: back.x - normal.x, y: back.y - normal.y))
+        let color = style.terminalColors.count == 3 ? style.terminalColors[2] : style.fill
+        ctx.saveGState()
+        ctx.addPath(path)
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(style.lineWidth)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
     // MARK: - Hit testing and dots
 
     /// Segments that represent the element for hit testing, in screen coordinates
@@ -426,8 +580,13 @@ enum SymbolRenderer {
             let length = max(hypot(b.x - a.x, b.y - a.y), 1)
             let end = CGPoint(x: a.x + (b.x - a.x) / length * u, y: a.y + (b.y - a.y) / length * u)
             return [(a, end)]
-        case .nmos, .pmos:
+        case .nmos, .pmos, .npn, .pnp:
             return posts.count == 3 ? [(a, b), (posts[1], posts[2])] : [(a, b)]
+        case .opAmp:
+            return posts.count == 3 ? [(posts[0], posts[1]), (a, b)] : [(a, b)]
+        case .potentiometer:
+            let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+            return posts.count == 3 ? [(a, b), (middle, posts[2])] : [(a, b)]
         default:
             return [(a, b)]
         }
@@ -441,8 +600,15 @@ enum SymbolRenderer {
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil
-        case .nmos, .pmos:
+        case .nmos, .pmos, .npn, .pnp:
             return posts.count == 3 ? (posts[1], posts[2], nil) : nil
+        case .opAmp:
+            // the output lead, from the triangle's tip
+            let length = hypot(b.x - a.x, b.y - a.y)
+            guard length > 0 else { return nil }
+            let tip = max(min(0.6 * u, length * 0.2) + u, length - 0.6 * u)
+            let start = CGPoint(x: a.x + (b.x - a.x) * tip / length, y: a.y + (b.y - a.y) * tip / length)
+            return (start, b, nil)
         case .wire:
             return (a, b, nil)
         default:

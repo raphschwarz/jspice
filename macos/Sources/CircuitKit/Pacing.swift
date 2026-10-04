@@ -19,19 +19,21 @@ public enum Pacing {
         public var timeStep: Double
     }
 
-    /// The circuit's time constants and periods, estimated from its parts
+    /// The circuit's time constants and periods, estimated from its parts. Each capacitor or inductor is paired with the
+    /// smallest and the largest resistance in the circuit, since either may be the one it charges through.
     static func timeScales(of circuit: Circuit) -> [Double] {
         let elements = circuit.elements
         var resistances: [Double] = []
         for element in elements {
             switch element.kind {
-            case .resistor, .lamp: resistances.append(element[param: "resistance"])
-            case .memristor: resistances.append((element[param: "ron"] * element[param: "roff"]).squareRoot())
+            case .resistor, .lamp, .potentiometer: resistances.append(element[param: "resistance"])
+            case .memristor: resistances.append(contentsOf: [element[param: "ron"], element[param: "roff"]])
             default: break
             }
         }
-        let positive = resistances.filter { $0 > 0 }
-        let referenceResistance = positive.isEmpty ? 1000 : exp(positive.map { log($0) }.reduce(0, +) / Double(positive.count))
+        let positive = resistances.filter { $0 > 0 && $0.isFinite }
+        let smallest = positive.min() ?? 1000
+        let largest = positive.max() ?? 1000
 
         var scales: [Double] = []
         var capacitances: [Double] = []
@@ -41,11 +43,11 @@ public enum Pacing {
             case .capacitor:
                 let c = element[param: "capacitance"]
                 capacitances.append(c)
-                scales.append(c * referenceResistance)
+                scales.append(contentsOf: [c * smallest, c * largest])
             case .inductor:
                 let l = element[param: "inductance"]
                 inductances.append(l)
-                scales.append(l / referenceResistance)
+                scales.append(contentsOf: [l / smallest, l / largest])
             case .acVoltage, .squareVoltage:
                 let f = element[param: "frequency"]
                 if f > 0 { scales.append(1 / f) }

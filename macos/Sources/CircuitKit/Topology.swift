@@ -101,13 +101,20 @@ struct Topology {
         nodeCount = nodeOfRoot.count
         elementNodes = elementPoints.map { $0.map { nodeOfPoint[$0] } }
 
-        // voltage sources get a current unknown, unless they are shorted out
+        // voltage sources and op-amp outputs get a current unknown, unless they are shorted out
         sourceRow = Array(repeating: -1, count: elements.count)
         var row = nodeCount - 1
-        for (i, element) in elements.enumerated() where element.kind.isVoltageSource {
-            if elementNodes[i][0] == elementNodes[i][1] {
+        for (i, element) in elements.enumerated() where element.kind.isVoltageSource || element.kind == .opAmp {
+            let name = element.name.isEmpty ? element.kind.displayName : element.name
+            if element.kind == .opAmp {
+                if elementNodes[i][2] == 0 {
+                    shorted.insert(i)
+                    problems.append("The output of \(name) is connected straight to ground.")
+                    continue
+                }
+            } else if elementNodes[i][0] == elementNodes[i][1] {
                 shorted.insert(i)
-                problems.append("\(element.name.isEmpty ? element.kind.displayName : element.name) is short-circuited.")
+                problems.append("\(name) is short-circuited.")
                 continue
             }
             sourceRow[i] = row

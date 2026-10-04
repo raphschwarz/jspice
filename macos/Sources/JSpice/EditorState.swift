@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import CircuitKit
 
 /// Everything about one open circuit window: the selected tool and parts, the view's zoom and scroll position, and
@@ -9,6 +10,8 @@ final class EditorState: ObservableObject {
     let document: CircuitDocument
     let simulation: SimulationController
     weak var undoManager: UndoManager?
+    /// The schematic view, for exporting it as an image
+    weak var canvas: NSView?
 
     /// The part being placed, or nil for selecting and moving
     @Published var tool: ElementKind?
@@ -93,8 +96,19 @@ final class EditorState: ObservableObject {
     @discardableResult
     func add(_ element: Element) -> UUID {
         var id = element.id
-        edit("Add \(element.kind.displayName)") { id = $0.add(element) }
+        edit("Add \(element.kind.displayName)") { circuit in
+            id = circuit.add(element)
+            // a terminal placed on the middle of a wire joins it
+            circuit.connectTerminals(of: [id])
+        }
         return id
+    }
+
+    /// Joins the terminals of the dragged parts to wires they were dropped on, as part of the ongoing interaction
+    func connectDuringInteraction(_ ids: Set<UUID>) {
+        var next = circuit
+        next.connectTerminals(of: ids)
+        setDuringInteraction(next)
     }
 
     func deleteSelection() {
@@ -108,6 +122,16 @@ final class EditorState: ObservableObject {
         guard !selection.isEmpty else { return }
         let ids = selection
         edit("Rotate") { $0.rotate(ids) }
+    }
+
+    var canFlipSelection: Bool {
+        selection.contains { circuit[$0]?.kind.canFlip == true }
+    }
+
+    func flipSelection() {
+        guard canFlipSelection else { return }
+        let ids = selection
+        edit("Flip") { $0.flip(ids) }
     }
 
     func selectAll() {
@@ -127,6 +151,13 @@ final class EditorState: ObservableObject {
         if next != circuit { document.circuit = next }
     }
 
+    /// Potentiometers are turned while simulating, like a knob, so this is not an undoable edit
+    func turnPotentiometer(_ id: UUID, by delta: Double) {
+        var next = circuit
+        next.update(id) { $0[param: "position"] = min(1, max(0, $0[param: "position"] + delta)) }
+        if next != circuit { document.circuit = next }
+    }
+
     func setParameter(_ id: UUID, _ spec: ParamSpec, to value: Double) {
         edit("Change \(spec.name)") { $0.update(id) { $0[param: spec.key] = value } }
     }
@@ -137,8 +168,14 @@ final class EditorState: ObservableObject {
         edit("Rename") { $0.update(id) { $0.name = trimmed } }
     }
 
-    func addScope(_ id: UUID, _ quantity: Quantity) {
-        edit("Add Scope") { $0.scopes.append(ScopeSpec(elementID: id, quantity: quantity)) }
+    func addScope(_ id: UUID, _ quantity: Quantity, plot: ScopePlot = .time) {
+        edit("Add Scope") { $0.scopes.append(ScopeSpec(elementID: id, quantity: quantity, plot: plot)) }
+    }
+
+    func setScopePlot(_ id: UUID, _ plot: ScopePlot) {
+        edit("Change Scope") { circuit in
+            if let i = circuit.scopes.firstIndex(where: { $0.id == id }) { circuit.scopes[i].plot = plot }
+        }
     }
 
     func removeScope(_ id: UUID) {
@@ -168,6 +205,37 @@ final class EditorState: ObservableObject {
     func requestFit() {
         viewAdjusted = false
         fitRequest += 1
+    }
+
+    // MARK: - Export
+
+    /// Saves the schematic as it appears now, as a PNG picture or a PDF drawing
+    func exportImage() {
+        guard let canvas, let window = canvas.window else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png, .pdf]
+        panel.nameFieldStringValue = (window.title as NSString).deletingPathExtension + ".png"
+        panel.isExtensionHidden = false
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated {
+                let data: Data?
+                if url.pathExtension.lowercased() == "pdf" {
+                    data = canvas.dataWithPDF(inside: canvas.bounds)
+                } else if let rep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds) {
+                    canvas.cacheDisplay(in: canvas.bounds, to: rep)
+                    data = rep.representation(using: .png, properties: [:])
+                } else {
+                    data = nil
+                }
+                do {
+                    guard let data else { throw CocoaError(.fileWriteUnknown) }
+                    try data.write(to: url)
+                } catch {
+                    NSAlert(error: error).beginSheetModal(for: window)
+                }
+            }
+        }
     }
 
     // MARK: - Clipboard

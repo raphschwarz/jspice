@@ -28,6 +28,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
     case sources = "Sources"
     case switches = "Switches"
     case semiconductors = "Semiconductors"
+    case amplifiers = "Amplifiers"
     case memristors = "Memristors"
     case instruments = "Instruments"
 
@@ -35,12 +36,13 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
 }
 
 public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
-    case wire, ground, resistor, lamp, capacitor, inductor
+    case wire, ground, resistor, potentiometer, lamp, capacitor, inductor
     case dcVoltage, acVoltage, squareVoltage, currentSource
     case toggleSwitch, pushButton
-    case diode, led, nmos, pmos
+    case diode, zener, led, npn, pnp, nmos, pmos
+    case opAmp
     case memristor
-    case probe
+    case probe, ammeter
 
     public var id: String { rawValue }
 }
@@ -106,6 +108,7 @@ extension ElementKind {
         case .wire: return "Wire"
         case .ground: return "Ground"
         case .resistor: return "Resistor"
+        case .potentiometer: return "Potentiometer"
         case .lamp: return "Lamp"
         case .capacitor: return "Capacitor"
         case .inductor: return "Inductor"
@@ -116,11 +119,16 @@ extension ElementKind {
         case .toggleSwitch: return "Switch"
         case .pushButton: return "Push Button"
         case .diode: return "Diode"
+        case .zener: return "Zener Diode"
         case .led: return "LED"
+        case .npn: return "NPN Transistor"
+        case .pnp: return "PNP Transistor"
         case .nmos: return "NMOS Transistor"
         case .pmos: return "PMOS Transistor"
+        case .opAmp: return "Op-Amp"
         case .memristor: return "Memristor"
         case .probe: return "Voltage Probe"
+        case .ammeter: return "Ammeter"
         }
     }
 
@@ -128,29 +136,33 @@ extension ElementKind {
         switch self {
         case .wire: return "W"
         case .ground: return "GND"
-        case .resistor: return "R"
+        case .resistor, .potentiometer: return "R"
         case .lamp: return "LMP"
         case .capacitor: return "C"
         case .inductor: return "L"
         case .dcVoltage, .acVoltage, .squareVoltage: return "V"
         case .currentSource: return "I"
         case .toggleSwitch, .pushButton: return "S"
-        case .diode: return "D"
+        case .diode, .zener: return "D"
         case .led: return "LED"
+        case .npn, .pnp: return "Q"
         case .nmos, .pmos: return "M"
+        case .opAmp: return "U"
         case .memristor: return "MR"
         case .probe: return "P"
+        case .ammeter: return "A"
         }
     }
 
     public var category: ElementCategory {
         switch self {
-        case .wire, .ground, .resistor, .lamp, .capacitor, .inductor: return .basics
+        case .wire, .ground, .resistor, .potentiometer, .lamp, .capacitor, .inductor: return .basics
         case .dcVoltage, .acVoltage, .squareVoltage, .currentSource: return .sources
         case .toggleSwitch, .pushButton: return .switches
-        case .diode, .led, .nmos, .pmos: return .semiconductors
+        case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos: return .semiconductors
+        case .opAmp: return .amplifiers
         case .memristor: return .memristors
-        case .probe: return .instruments
+        case .probe, .ammeter: return .instruments
         }
     }
 
@@ -160,6 +172,7 @@ extension ElementKind {
         case .wire: return "w"
         case .ground: return "g"
         case .resistor: return "r"
+        case .potentiometer: return "t"
         case .lamp: return "y"
         case .capacitor: return "c"
         case .inductor: return "l"
@@ -170,15 +183,29 @@ extension ElementKind {
         case .toggleSwitch: return "s"
         case .pushButton: return "b"
         case .diode: return "d"
+        case .zener: return "z"
         case .led: return "e"
+        case .npn: return "j"
+        case .pnp: return "k"
         case .nmos: return "n"
         case .pmos: return "p"
+        case .opAmp: return "u"
         case .memristor: return "m"
         case .probe: return "o"
+        case .ammeter: return "x"
         }
     }
 
-    public var isTransistor: Bool { self == .nmos || self == .pmos }
+    /// Three-terminal transistors drawn with their control terminal at `a` and their channel at `b`
+    public var isTransistor: Bool { self == .nmos || self == .pmos || self == .npn || self == .pnp }
+
+    public var isBipolar: Bool { self == .npn || self == .pnp }
+
+    /// Parts whose terminals depend on a direction, which stay horizontal or vertical
+    public var isAxisAligned: Bool { isTransistor || self == .opAmp || self == .potentiometer }
+
+    /// Parts that can be mirrored across their axis
+    public var canFlip: Bool { isTransistor || self == .opAmp || self == .potentiometer }
 
     public var isVoltageSource: Bool { self == .dcVoltage || self == .acVoltage || self == .squareVoltage }
 
@@ -188,17 +215,31 @@ extension ElementKind {
     public var defaultOffset: GridPoint {
         switch self {
         case .ground: return GridPoint(0, 1)
-        case .nmos, .pmos: return GridPoint(2, 0)
+        case .nmos, .pmos, .npn, .pnp: return GridPoint(2, 0)
         default: return GridPoint(4, 0)
         }
     }
 
     public var params: [ParamSpec] {
         switch self {
-        case .wire, .ground, .toggleSwitch, .pushButton, .probe:
+        case .wire, .ground, .toggleSwitch, .pushButton, .probe, .ammeter:
             return []
         case .resistor:
             return [ParamSpec("resistance", "Resistance", unit: "Ω", default: 1000, range: 1...10_000_000)]
+        case .potentiometer:
+            return [
+                ParamSpec("resistance", "Resistance", unit: "Ω", default: 10_000, range: 10...10_000_000),
+                ParamSpec("position", "Wiper position", unit: "", default: 0.5, range: 0...1, log: false),
+            ]
+        case .zener:
+            return [ParamSpec("breakdown", "Breakdown voltage", unit: "V", default: 5.1, range: 1...50, log: false)]
+        case .npn, .pnp:
+            return [ParamSpec("beta", "Current gain", unit: "", default: 100, range: 5...1000)]
+        case .opAmp:
+            return [
+                ParamSpec("gain", "Open-loop gain", unit: "", default: 100_000, range: 10...10_000_000),
+                ParamSpec("limit", "Output limit", unit: "V", default: 15, range: 1...50, log: false),
+            ]
         case .lamp:
             return [
                 ParamSpec("resistance", "Resistance", unit: "Ω", default: 100, range: 1...100_000),
@@ -265,9 +306,11 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     public var params: [String: Double]
     /// Switch state
     public var closed: Bool
+    /// Mirrored across its axis (transistors, op-amps, potentiometers)
+    public var flipped: Bool
 
     public init(id: UUID = UUID(), kind: ElementKind, name: String = "", a: GridPoint, b: GridPoint,
-                params: [String: Double] = [:], closed: Bool = false) {
+                params: [String: Double] = [:], closed: Bool = false, flipped: Bool = false) {
         self.id = id
         self.kind = kind
         self.name = name
@@ -275,6 +318,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         self.b = b
         self.params = params
         self.closed = closed
+        self.flipped = flipped
     }
 
     public init(from decoder: Decoder) throws {
@@ -286,6 +330,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         b = try container.decode(GridPoint.self, forKey: .b)
         params = try container.decodeIfPresent([String: Double].self, forKey: .params) ?? [:]
         closed = try container.decodeIfPresent(Bool.self, forKey: .closed) ?? false
+        flipped = try container.decodeIfPresent(Bool.self, forKey: .flipped) ?? false
     }
 
     /// A parameter value, falling back to the kind's default
@@ -302,23 +347,39 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         return abs(dx) >= abs(dy) ? GridPoint(dx.signum(), 0) : GridPoint(0, dy.signum())
     }
 
-    /// Drain and source terminals of a transistor
-    public var transistorTerminals: (drain: GridPoint, source: GridPoint) {
+    /// Unit vector at right angles to the element's axis: "below" a left-to-right part, or "above" it when flipped
+    public var perpendicular: GridPoint {
         let d = axisDirection
-        let perpendicular = GridPoint(-d.y, d.x)
-        let up = b - perpendicular * 2
-        let down = b + perpendicular * 2
-        return kind == .nmos ? (up, down) : (down, up)
+        let p = GridPoint(-d.y, d.x)
+        return flipped ? p * -1 : p
     }
 
-    /// Terminal positions: [a, b] for two-terminal parts, [a] for ground, [gate, drain, source] for transistors
+    /// Drain and source (collector and emitter) terminals of a transistor. N-type devices have their drain or collector
+    /// on the side opposite `perpendicular`, P-type devices on the same side.
+    public var transistorTerminals: (drain: GridPoint, source: GridPoint) {
+        let up = b - perpendicular * 2
+        let down = b + perpendicular * 2
+        return kind == .nmos || kind == .npn ? (up, down) : (down, up)
+    }
+
+    /// The potentiometer's wiper, two grid units to the side of its middle
+    public var wiper: GridPoint {
+        GridPoint((a.x + b.x) / 2, (a.y + b.y) / 2) - perpendicular * 2
+    }
+
+    /// Terminal positions: [a, b] for two-terminal parts, [a] for ground, [gate, drain, source] for MOSFETs,
+    /// [base, collector, emitter] for bipolar transistors, [a, b, wiper] for potentiometers and [−, +, output] for op-amps
     public var posts: [GridPoint] {
         switch kind {
         case .ground:
             return [a]
-        case .nmos, .pmos:
+        case .nmos, .pmos, .npn, .pnp:
             let t = transistorTerminals
             return [a, t.drain, t.source]
+        case .potentiometer:
+            return [a, b, wiper]
+        case .opAmp:
+            return [a - perpendicular, a + perpendicular, b]
         default:
             return [a, b]
         }
@@ -326,10 +387,11 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
 
     /// All grid points the element occupies at its ends, for moving and bounds
     public var extentPoints: [GridPoint] {
-        kind.isTransistor ? posts + [b] : [a, b]
+        posts.count > 2 ? posts + [a, b] : [a, b]
     }
 
+    /// Ideal conductors: their ends are the same node
     public var isConductor: Bool {
-        kind == .wire || (kind.isSwitch && closed)
+        kind == .wire || kind == .ammeter || (kind.isSwitch && closed)
     }
 }

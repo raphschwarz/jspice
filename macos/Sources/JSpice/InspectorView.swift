@@ -14,6 +14,9 @@ struct InspectorView: View {
                 Section {
                     Text("\(editor.selection.count) parts selected")
                     Button("Rotate", systemImage: "rotate.right") { editor.rotateSelection() }
+                    if editor.canFlipSelection {
+                        Button("Flip", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.flipSelection() }
+                    }
                     Button("Delete", systemImage: "trash", role: .destructive) { editor.deleteSelection() }
                 }
             }
@@ -104,7 +107,15 @@ struct ElementInspector: View {
                         Label("Add to Scope", systemImage: "waveform.path.ecg")
                     }
                 }
+                if canPlotCurve(element.kind) {
+                    Button("Add I–V Curve Scope", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
+                        editor.addScope(element.id, .current, plot: .currentVersusVoltage)
+                    }
+                }
                 Button("Rotate", systemImage: "rotate.right") { editor.rotateSelection() }
+                if element.kind.canFlip {
+                    Button("Flip", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.flipSelection() }
+                }
                 Button("Delete", systemImage: "trash", role: .destructive) { editor.deleteSelection() }
             }
         }
@@ -206,6 +217,23 @@ struct LiveReadings: View {
                     reading("Current", SI.format(simulator.current(index), unit: "A"))
                 } else if kind == .probe {
                     reading("Voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
+                } else if kind == .ammeter {
+                    reading("Current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .opAmp {
+                    let v = simulator.terminalVoltages(index)
+                    if v.count == 3 {
+                        reading("Input difference", SI.format(v[1] - v[0], unit: "V"))
+                    }
+                    reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
+                    reading("Output current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind.isBipolar {
+                    let v = simulator.terminalVoltages(index)
+                    reading("Collector–emitter voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
+                    if v.count == 3 {
+                        reading("Base–emitter voltage", SI.format(v[0] - v[2], unit: "V"))
+                    }
+                    reading("Collector current", SI.format(simulator.current(index), unit: "A"))
+                    reading("Power", SI.format(abs(simulator.value(.power, of: index)), unit: "W"))
                 } else {
                     reading(kind.isTransistor ? "Drain–source voltage" : "Voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
                     reading(kind.isTransistor ? "Drain current" : "Current", SI.format(simulator.current(index), unit: "A"))
@@ -213,6 +241,9 @@ struct LiveReadings: View {
                     if kind == .memristor {
                         reading("Resistance", SI.format(simulator.value(.resistance, of: index), unit: "Ω"))
                         reading("State", "\(Int((simulator.memristorState(index) * 100).rounded())) % on")
+                    }
+                    if kind == .potentiometer, let wiper = simulator.terminalVoltages(index).last {
+                        reading("Wiper voltage", SI.format(wiper, unit: "V"))
                     }
                     if kind == .led || kind == .lamp {
                         reading("Brightness", "\(Int((simulator.brightness(index) * 100).rounded())) %")

@@ -49,8 +49,15 @@ struct CircuitCommands: Commands {
             Button("Rotate") { editor?.rotateSelection() }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(editor?.selection.isEmpty ?? true)
+            Button("Flip") { editor?.flipSelection() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(!(editor?.canFlipSelection ?? false))
             Button("Delete") { editor?.deleteSelection() }
                 .disabled(editor?.selection.isEmpty ?? true)
+            Divider()
+            Button("Export Image…") { editor?.exportImage() }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(editor == nil)
             Divider()
             Menu("Examples") {
                 ForEach(Examples.all) { example in

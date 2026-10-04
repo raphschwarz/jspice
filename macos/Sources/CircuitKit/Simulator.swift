@@ -2,9 +2,11 @@ import Foundation
 
 /// Steps a circuit through time with modified nodal analysis.
 ///
-/// Capacitors and inductors use trapezoidal companion models (which keep LC circuits ringing instead of damping them),
-/// diodes, LEDs and MOSFETs are solved with Newton-Raphson at every step, and memristors update their internal state after
-/// each step. The simulation starts from rest: capacitors at their initial voltage, inductors without current.
+/// Capacitors and inductors use second-order Gear (BDF2) companion models: accurate enough to keep LC circuits
+/// oscillating, and stable on sudden changes (a switch closing straight onto a capacitor does not make its current ring
+/// from step to step, as the trapezoidal rule does). Diodes, transistors and op-amps are solved with Newton-Raphson at
+/// every step, and memristors update their internal state after each step. The simulation starts from rest: capacitors at
+/// their initial voltage, inductors without current.
 public final class Simulator {
     public private(set) var circuit: Circuit
     public private(set) var time: Double = 0
@@ -17,19 +19,23 @@ public final class Simulator {
     public private(set) var convergenceFailures = 0
 
     var topology = Topology()
-    /// Unknowns: node voltages 1..<nodeCount, then voltage source currents
+    /// Unknowns: node voltages 1..<nodeCount, then source and op-amp output currents
     var x: [Double] = []
 
     // per-element state, indexed like circuit.elements
     var capacitorVoltage: [Double] = []
+    var capacitorVoltagePrevious: [Double] = []
     var capacitorCurrent: [Double] = []
     var inductorVoltage: [Double] = []
     var inductorCurrent: [Double] = []
+    var inductorCurrentPrevious: [Double] = []
     var memristorStates: [Double] = []
-    /// Newton limiting: last junction voltage (diodes) or gate-source voltage (MOSFETs) used for linearisation
+    /// Newton limiting: the junction voltages last used for linearisation (diode; base-emitter and base-collector;
+    /// gate-source and drain-source)
     var limitedVoltage: [Double] = []
     var limitedVoltage2: [Double] = []
-    /// Current through each element from its `a` side to its `b` side (drain to source for MOSFETs)
+    /// The main current of each element: from `a` to `b` for two-terminal parts, into the drain or collector for
+    /// transistors, out of the output for op-amps, from `a` to the wiper for potentiometers
     public private(set) var currents: [Double] = []
 
     private var baseMatrix: [Double] = []
@@ -42,7 +48,10 @@ public final class Simulator {
 
     static let thermalVoltage = 0.025852
     static let gmin = 1e-12
-    static let maxNewtonIterations = 60
+    static let maxNewtonIterations = 80
+    static let transistorSaturationCurrent = 1e-14
+    /// Reverse current of a Zener diode at its breakdown voltage
+    static let zenerKneeCurrent = 5e-3
 
     public init(circuit: Circuit = Circuit(), timeStep: Double = 1e-5) {
         self.circuit = Circuit()
@@ -52,20 +61,28 @@ public final class Simulator {
 
     // MARK: - Loading and settings
 
+    private struct SavedState {
+        var cv, cvp, ci, lv, li, lip, m, l1, l2: Double
+    }
+
     /// Switches to a changed circuit, keeping the state (charge, current, memristor state) of elements that remain
     public func load(_ newCircuit: Circuit) {
-        var previous: [UUID: (cv: Double, ci: Double, lv: Double, li: Double, m: Double, l1: Double, l2: Double)] = [:]
+        var previous: [UUID: SavedState] = [:]
         for (i, element) in circuit.elements.enumerated() where i < capacitorVoltage.count {
-            previous[element.id] = (capacitorVoltage[i], capacitorCurrent[i], inductorVoltage[i], inductorCurrent[i],
-                                    memristorStates[i], limitedVoltage[i], limitedVoltage2[i])
+            previous[element.id] = SavedState(
+                cv: capacitorVoltage[i], cvp: capacitorVoltagePrevious[i], ci: capacitorCurrent[i], lv: inductorVoltage[i],
+                li: inductorCurrent[i], lip: inductorCurrentPrevious[i], m: memristorStates[i], l1: limitedVoltage[i],
+                l2: limitedVoltage2[i])
         }
         circuit = newCircuit
         topology = Topology(circuit: newCircuit)
         let count = newCircuit.elements.count
         capacitorVoltage = Array(repeating: 0, count: count)
+        capacitorVoltagePrevious = Array(repeating: 0, count: count)
         capacitorCurrent = Array(repeating: 0, count: count)
         inductorVoltage = Array(repeating: 0, count: count)
         inductorCurrent = Array(repeating: 0, count: count)
+        inductorCurrentPrevious = Array(repeating: 0, count: count)
         memristorStates = Array(repeating: 0, count: count)
         limitedVoltage = Array(repeating: 0, count: count)
         limitedVoltage2 = Array(repeating: 0, count: count)
@@ -73,9 +90,11 @@ public final class Simulator {
         for (i, element) in newCircuit.elements.enumerated() {
             if let state = previous[element.id] {
                 capacitorVoltage[i] = state.cv
+                capacitorVoltagePrevious[i] = state.cvp
                 capacitorCurrent[i] = state.ci
                 inductorVoltage[i] = state.lv
                 inductorCurrent[i] = state.li
+                inductorCurrentPrevious[i] = state.lip
                 memristorStates[i] = state.m
                 limitedVoltage[i] = state.l1
                 limitedVoltage2[i] = state.l2
@@ -84,7 +103,12 @@ public final class Simulator {
             }
         }
         x = Array(repeating: 0, count: topology.matrixSize)
-        hasNonlinear = newCircuit.elements.contains { $0.kind == .diode || $0.kind == .led || $0.kind.isTransistor }
+        hasNonlinear = newCircuit.elements.contains {
+            switch $0.kind {
+            case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .opAmp: return true
+            default: return false
+            }
+        }
         hasMemristor = newCircuit.elements.contains { $0.kind == .memristor }
         matrixIsCurrent = false
         isFailed = false
@@ -95,10 +119,13 @@ public final class Simulator {
 
     private func initialiseState(_ i: Int) {
         let element = circuit.elements[i]
-        capacitorVoltage[i] = element.kind == .capacitor ? element[param: "initialVoltage"] : 0
+        let v0 = element.kind == .capacitor ? element[param: "initialVoltage"] : 0
+        capacitorVoltage[i] = v0
+        capacitorVoltagePrevious[i] = v0
         capacitorCurrent[i] = 0
         inductorVoltage[i] = 0
         inductorCurrent[i] = 0
+        inductorCurrentPrevious[i] = 0
         memristorStates[i] = element.kind == .memristor ? min(1, max(0, element[param: "initialState"])) : 0
         limitedVoltage[i] = 0
         limitedVoltage2[i] = 0
@@ -108,6 +135,16 @@ public final class Simulator {
         guard dt > 0, dt.isFinite, dt != timeStep else { return }
         timeStep = dt
         matrixIsCurrent = false
+        // the history of the two-step method assumes equal steps: rebuild it from the present slope
+        for (i, element) in circuit.elements.enumerated() {
+            if element.kind == .capacitor {
+                let c = max(element[param: "capacitance"], 1e-30)
+                capacitorVoltagePrevious[i] = capacitorVoltage[i] - capacitorCurrent[i] * dt / c
+            } else if element.kind == .inductor {
+                let l = max(element[param: "inductance"], 1e-15)
+                inductorCurrentPrevious[i] = inductorCurrent[i] - inductorVoltage[i] * dt / l
+            }
+        }
     }
 
     /// Back to time zero with every element at rest
@@ -136,6 +173,10 @@ public final class Simulator {
     /// so the display stays responsive; time that could not be simulated is dropped rather than accumulated.
     @discardableResult
     public func advance(by simulatedTime: Double, deadline: TimeInterval) -> Progress {
+        guard !isFailed else {
+            stepCarry = 0
+            return Progress(simulatedTime: 0, steps: 0, fellBehind: false)
+        }
         stepCarry += simulatedTime / timeStep
         var steps = 0
         var fellBehind = false
@@ -149,6 +190,7 @@ public final class Simulator {
                 break
             }
         }
+        if isFailed { stepCarry = 0 }
         return Progress(simulatedTime: Double(steps) * timeStep, steps: steps, fellBehind: fellBehind)
     }
 
@@ -159,6 +201,7 @@ public final class Simulator {
         let t = time + timeStep
         if m > 0 {
             if !matrixIsCurrent { buildBaseMatrix() }
+            if isFailed { return }
             let rhs = buildRightHandSide(at: t)
             if !hasNonlinear && !hasMemristor {
                 guard let lu = baseLU else { fail(); return }
@@ -229,6 +272,14 @@ public final class Simulator {
         if row >= 0 && column >= 0 { matrix[row * m + column] += value }
     }
 
+    /// Conductances of a potentiometer's two halves: a to wiper, wiper to b
+    func potentiometerResistances(_ element: Element) -> (Double, Double) {
+        let total = max(element[param: "resistance"], 1e-3)
+        let position = min(1, max(0, element[param: "position"]))
+        let floor = total * 1e-4 + 1e-3
+        return (max(total * position, floor), max(total * (1 - position), floor))
+    }
+
     /// The part of the matrix that only changes with the circuit or the time step
     private func buildBaseMatrix() {
         let m = topology.matrixSize
@@ -241,10 +292,14 @@ public final class Simulator {
             switch element.kind {
             case .resistor, .lamp:
                 stampConductance(&matrix, m, nodes[0], nodes[1], 1 / max(element[param: "resistance"], 1e-9))
+            case .potentiometer:
+                let (upper, lower) = potentiometerResistances(element)
+                stampConductance(&matrix, m, nodes[0], nodes[2], 1 / upper)
+                stampConductance(&matrix, m, nodes[2], nodes[1], 1 / lower)
             case .capacitor:
-                stampConductance(&matrix, m, nodes[0], nodes[1], 2 * element[param: "capacitance"] / timeStep)
+                stampConductance(&matrix, m, nodes[0], nodes[1], 1.5 * element[param: "capacitance"] / timeStep)
             case .inductor:
-                stampConductance(&matrix, m, nodes[0], nodes[1], timeStep / (2 * max(element[param: "inductance"], 1e-15)))
+                stampConductance(&matrix, m, nodes[0], nodes[1], 2 * timeStep / (3 * max(element[param: "inductance"], 1e-15)))
             case .dcVoltage, .acVoltage, .squareVoltage:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
@@ -255,14 +310,24 @@ public final class Simulator {
                 add(&matrix, m, minus, row, 1)
                 add(&matrix, m, row, plus, 1)
                 add(&matrix, m, row, minus, -1)
+            case .opAmp:
+                // output: a voltage source to ground, whose voltage the nonlinear stage sets from the inputs
+                let row = topology.sourceRow[i]
+                guard row >= 0 else { continue }
+                add(&matrix, m, nodes[2] - 1, row, -1)
+                add(&matrix, m, row, nodes[2] - 1, 1)
             default:
                 break
             }
         }
         baseMatrix = matrix
-        baseLU = (hasNonlinear || hasMemristor) ? nil : LUSolver(matrix: matrix, size: m)
         matrixIsCurrent = true
-        if !hasNonlinear && !hasMemristor && baseLU == nil { fail() }
+        if !hasNonlinear && !hasMemristor {
+            baseLU = LUSolver(matrix: matrix, size: m)
+            if baseLU == nil { fail() }
+        } else {
+            baseLU = nil
+        }
     }
 
     func sourceVoltage(_ element: Element, at t: Double) -> Double {
@@ -291,14 +356,13 @@ public final class Simulator {
             case .currentSource:
                 stampCurrent(&rhs, nodes[0], nodes[1], element[param: "current"])
             case .capacitor:
-                // trapezoidal: i(n) = G v(n) - (G v(n-1) + i(n-1))
-                let g = 2 * element[param: "capacitance"] / timeStep
-                let history = g * capacitorVoltage[i] + capacitorCurrent[i]
+                // BDF2: i(n) = C/dt (3/2 v(n) - 2 v(n-1) + 1/2 v(n-2))
+                let c = element[param: "capacitance"]
+                let history = c / timeStep * (2 * capacitorVoltage[i] - 0.5 * capacitorVoltagePrevious[i])
                 stampCurrent(&rhs, nodes[0], nodes[1], -history)
             case .inductor:
-                // trapezoidal: i(n) = G v(n) + (i(n-1) + G v(n-1))
-                let g = timeStep / (2 * max(element[param: "inductance"], 1e-15))
-                let history = inductorCurrent[i] + g * inductorVoltage[i]
+                // BDF2: i(n) = 2 dt / (3 L) v(n) + (4 i(n-1) - i(n-2)) / 3
+                let history = (4 * inductorCurrent[i] - inductorCurrentPrevious[i]) / 3
                 stampCurrent(&rhs, nodes[0], nodes[1], history)
             default:
                 break
@@ -319,16 +383,20 @@ public final class Simulator {
         }
     }
 
-    // MARK: Semiconductors
+    // MARK: Semiconductors and op-amps
 
     func diodeParameters(_ element: Element) -> (saturation: Double, nvt: Double) {
-        if element.kind == .led {
+        switch element.kind {
+        case .led:
             // emission coefficient 2, saturation current chosen for the colour's forward voltage at 10 mA
             let color = LEDColor(rawValue: Int(element[param: "color"])) ?? .red
             let nvt = 2 * Self.thermalVoltage
             return (0.01 / exp(color.forwardVoltage / nvt), nvt)
+        case .zener:
+            return (1e-14, Self.thermalVoltage)
+        default:
+            return (max(element[param: "saturationCurrent"], 1e-30), max(element[param: "emission"], 0.1) * Self.thermalVoltage)
         }
-        return (max(element[param: "saturationCurrent"], 1e-30), max(element[param: "emission"], 0.1) * Self.thermalVoltage)
     }
 
     /// Junction voltage limiting (as in SPICE's pnjlim), so Newton does not overshoot into exp() overflow
@@ -346,6 +414,14 @@ public final class Simulator {
         return (saturation * (e - 1), saturation * e / nvt + Self.gmin)
     }
 
+    /// A Zener diode: an ordinary forward junction, plus a reverse current that rises steeply past the breakdown voltage
+    func zenerCurrent(_ vd: Double, breakdown: Double) -> (current: Double, conductance: Double) {
+        let forward = diodeCurrent(vd, saturation: 1e-14, nvt: Self.thermalVoltage)
+        let e = exp(min(-(vd + breakdown) / Self.thermalVoltage, 700))
+        let reverse = Self.zenerKneeCurrent * e
+        return (forward.current - reverse, forward.conductance + reverse / Self.thermalVoltage)
+    }
+
     /// Level-1 (Shichman-Hodges) MOSFET for positive vgs/vds: drain current and its derivatives
     func mosfetCurrent(vgs: Double, vds: Double, threshold: Double, beta: Double) -> (id: Double, gm: Double, gds: Double) {
         let lambda = 0.01
@@ -356,6 +432,36 @@ public final class Simulator {
         }
         let id = beta / 2 * overdrive * overdrive * (1 + lambda * vds)
         return (id, beta * overdrive * (1 + lambda * vds), beta / 2 * overdrive * overdrive * lambda + 1e-9)
+    }
+
+    struct BipolarModel {
+        /// Currents into the collector and the base
+        var ic, ib: Double
+        /// Their derivatives with respect to the base-emitter and base-collector voltages
+        var dicVbe, dicVbc, dibVbe, dibVbc: Double
+    }
+
+    /// Ebers-Moll transport model of an NPN transistor (a PNP is the same with all voltages and currents negated)
+    func bipolarCurrents(vbe: Double, vbc: Double, beta: Double) -> BipolarModel {
+        let saturation = Self.transistorSaturationCurrent
+        let vt = Self.thermalVoltage
+        let reverseBeta = 1.0
+        let f = exp(min(vbe / vt, 700))
+        let r = exp(min(vbc / vt, 700))
+        let ic = saturation * (f - r) - saturation / reverseBeta * (r - 1)
+        let ib = saturation / beta * (f - 1) + saturation / reverseBeta * (r - 1)
+        return BipolarModel(
+            ic: ic, ib: ib,
+            dicVbe: saturation * f / vt, dicVbc: -saturation * r / vt - saturation / reverseBeta * r / vt,
+            dibVbe: saturation / beta * f / vt + Self.gmin, dibVbc: saturation / reverseBeta * r / vt + Self.gmin)
+    }
+
+    /// The op-amp's output for a differential input: the gain, levelling off smoothly at the output limit
+    func opAmpOutput(_ element: Element, differential vd: Double) -> (voltage: Double, slope: Double) {
+        let gain = max(element[param: "gain"], 1)
+        let limit = max(element[param: "limit"], 0.01)
+        let t = tanh(gain * vd / limit)
+        return (limit * t, gain * (1 - t * t))
     }
 
     private func stampNonlinear(_ matrix: inout [Double], _ rhs: inout [Double], _ m: Int) {
@@ -370,6 +476,53 @@ public final class Simulator {
                 let (id, gd) = diodeCurrent(vd, saturation: saturation, nvt: nvt)
                 stampConductance(&matrix, m, nodes[0], nodes[1], gd)
                 stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
+
+            case .zener:
+                let breakdown = abs(element[param: "breakdown"])
+                let vt = Self.thermalVoltage
+                let new = voltage(nodes[0]) - voltage(nodes[1])
+                let old = limitedVoltage[i]
+                var vd = new
+                if new > -breakdown / 2 {
+                    vd = limitJunction(new, old: old, nvt: vt, critical: vt * log(vt / (sqrt(2) * 1e-14)))
+                } else {
+                    // limit the reverse (breakdown) junction the same way
+                    let reverse = limitJunction(-(new + breakdown), old: -(old + breakdown), nvt: vt,
+                                                critical: vt * log(vt / (sqrt(2) * Self.zenerKneeCurrent)))
+                    vd = -reverse - breakdown
+                }
+                limitedVoltage[i] = vd
+                let (id, gd) = zenerCurrent(vd, breakdown: breakdown)
+                stampConductance(&matrix, m, nodes[0], nodes[1], gd)
+                stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
+
+            case .npn, .pnp:
+                let p: Double = element.kind == .npn ? 1 : -1
+                let (base, collector, emitter) = (nodes[0], nodes[1], nodes[2])
+                let vt = Self.thermalVoltage
+                let critical = vt * log(vt / (sqrt(2) * Self.transistorSaturationCurrent))
+                // limit the junctions in the transistor's own polarity
+                let vbe = limitJunction(p * (voltage(base) - voltage(emitter)), old: limitedVoltage[i], nvt: vt, critical: critical)
+                let vbc = limitJunction(p * (voltage(base) - voltage(collector)), old: limitedVoltage2[i], nvt: vt, critical: critical)
+                limitedVoltage[i] = vbe
+                limitedVoltage2[i] = vbc
+                let model = bipolarCurrents(vbe: vbe, vbc: vbc, beta: max(element[param: "beta"], 1))
+                // real currents and junction voltages: currents and voltages flip sign for PNP, derivatives do not
+                let realVbe = p * vbe
+                let realVbc = p * vbc
+                let terminals: [(node: Int, current: Double, gbe: Double, gbc: Double)] = [
+                    (collector, p * model.ic, model.dicVbe, model.dicVbc),
+                    (base, p * model.ib, model.dibVbe, model.dibVbc),
+                    (emitter, -p * (model.ic + model.ib), -(model.dicVbe + model.dibVbe), -(model.dicVbc + model.dibVbc)),
+                ]
+                for terminal in terminals where terminal.node > 0 {
+                    // current into the device at this terminal, linear in vbe and vbc around the limited point
+                    let row = terminal.node - 1
+                    add(&matrix, m, row, base - 1, terminal.gbe + terminal.gbc)
+                    add(&matrix, m, row, emitter - 1, -terminal.gbe)
+                    add(&matrix, m, row, collector - 1, -terminal.gbc)
+                    rhs[row] -= terminal.current - terminal.gbe * realVbe - terminal.gbc * realVbc
+                }
 
             case .nmos, .pmos:
                 let polarity: Double = element.kind == .nmos ? 1 : -1
@@ -403,6 +556,17 @@ public final class Simulator {
                 add(&matrix, m, s, s, model.gds + model.gm)
                 add(&matrix, m, s, g, -model.gm)
                 stampCurrent(&rhs, drain, source, equivalent)
+
+            case .opAmp:
+                let row = topology.sourceRow[i]
+                guard row >= 0 else { continue }
+                let (minus, plus) = (nodes[0], nodes[1])
+                let vd = voltage(plus) - voltage(minus)
+                let (output, slope) = opAmpOutput(element, differential: vd)
+                // v(out) = output + slope (vd' - vd), linearised around the present inputs
+                add(&matrix, m, row, plus - 1, -slope)
+                add(&matrix, m, row, minus - 1, slope)
+                rhs[row] = output - slope * vd
             default:
                 break
             }
@@ -417,13 +581,16 @@ public final class Simulator {
             switch element.kind {
             case .capacitor:
                 let v = voltage(nodes[0]) - voltage(nodes[1])
-                let g = 2 * element[param: "capacitance"] / timeStep
-                capacitorCurrent[i] = g * v - (g * capacitorVoltage[i] + capacitorCurrent[i])
+                let c = element[param: "capacitance"]
+                capacitorCurrent[i] = c / timeStep * (1.5 * v - 2 * capacitorVoltage[i] + 0.5 * capacitorVoltagePrevious[i])
+                capacitorVoltagePrevious[i] = capacitorVoltage[i]
                 capacitorVoltage[i] = v
             case .inductor:
                 let v = voltage(nodes[0]) - voltage(nodes[1])
-                let g = timeStep / (2 * max(element[param: "inductance"], 1e-15))
-                inductorCurrent[i] = g * v + inductorCurrent[i] + g * inductorVoltage[i]
+                let g = 2 * timeStep / (3 * max(element[param: "inductance"], 1e-15))
+                let next = g * v + (4 * inductorCurrent[i] - inductorCurrentPrevious[i]) / 3
+                inductorCurrentPrevious[i] = inductorCurrent[i]
+                inductorCurrent[i] = next
                 inductorVoltage[i] = v
             case .memristor:
                 // threshold switching: the state relaxes towards "on" above the on threshold and towards "off" below
@@ -444,6 +611,63 @@ public final class Simulator {
         }
     }
 
+    /// The element's main current and the current flowing out of it into each of its terminals
+    private func elementCurrents(_ i: Int, _ element: Element, _ v: (Int) -> Double) -> (main: Double, out: [Double]) {
+        let nodes = topology.elementNodes[i]
+        func twoTerminal(_ current: Double) -> (Double, [Double]) { (current, [-current, current]) }
+        switch element.kind {
+        case .resistor, .lamp:
+            return twoTerminal((v(nodes[0]) - v(nodes[1])) / max(element[param: "resistance"], 1e-9))
+        case .potentiometer:
+            let (upper, lower) = potentiometerResistances(element)
+            let first = (v(nodes[0]) - v(nodes[2])) / upper
+            let second = (v(nodes[2]) - v(nodes[1])) / lower
+            return (first, [-first, second, first - second])
+        case .capacitor:
+            return twoTerminal(capacitorCurrent[i])
+        case .inductor:
+            return twoTerminal(inductorCurrent[i])
+        case .dcVoltage, .acVoltage, .squareVoltage:
+            let row = topology.sourceRow[i]
+            return twoTerminal(row >= 0 && row < x.count ? x[row] : 0)
+        case .currentSource:
+            return twoTerminal(element[param: "current"])
+        case .diode, .led:
+            let (saturation, nvt) = diodeParameters(element)
+            return twoTerminal(diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: saturation, nvt: nvt).current)
+        case .zener:
+            return twoTerminal(zenerCurrent(v(nodes[0]) - v(nodes[1]), breakdown: abs(element[param: "breakdown"])).current)
+        case .memristor:
+            return twoTerminal((v(nodes[0]) - v(nodes[1])) * memristorConductance(element, state: memristorStates[i]))
+        case .nmos, .pmos:
+            let polarity: Double = element.kind == .nmos ? 1 : -1
+            var vgs = v(nodes[0]) - v(nodes[2])
+            var vds = v(nodes[1]) - v(nodes[2])
+            var sign = 1.0
+            if polarity * vds < 0 {
+                vgs -= vds
+                vds = -vds
+                sign = -1
+            }
+            let model = mosfetCurrent(vgs: polarity * vgs, vds: polarity * vds,
+                                      threshold: element[param: "threshold"], beta: element[param: "beta"])
+            let current = sign * polarity * model.id
+            return (current, [0, -current, current])
+        case .npn, .pnp:
+            let p: Double = element.kind == .npn ? 1 : -1
+            let model = bipolarCurrents(vbe: p * (v(nodes[0]) - v(nodes[2])), vbc: p * (v(nodes[0]) - v(nodes[1])),
+                                        beta: max(element[param: "beta"], 1))
+            let (ic, ib) = (p * model.ic, p * model.ib)
+            return (ic, [-ib, -ic, ic + ib])
+        case .opAmp:
+            let row = topology.sourceRow[i]
+            let current = row >= 0 && row < x.count ? x[row] : 0
+            return (current, [0, 0, current])
+        default:
+            return (0, Array(repeating: 0, count: nodes.count))
+        }
+    }
+
     private func computeCurrents() {
         let elements = circuit.elements
         guard currents.count == elements.count else { return }
@@ -452,55 +676,17 @@ public final class Simulator {
 
         var injection = [Double](repeating: 0, count: topology.points.count)
         for (i, element) in elements.enumerated() {
-            let nodes = topology.elementNodes[i]
-            var current = 0.0
-            switch element.kind {
-            case .resistor, .lamp:
-                current = (v(nodes[0]) - v(nodes[1])) / max(element[param: "resistance"], 1e-9)
-            case .capacitor:
-                current = capacitorCurrent[i]
-            case .inductor:
-                current = inductorCurrent[i]
-            case .dcVoltage, .acVoltage, .squareVoltage:
-                let row = topology.sourceRow[i]
-                current = row >= 0 && hasSolution ? x[row] : 0
-            case .currentSource:
-                current = element[param: "current"]
-            case .diode, .led:
-                let (saturation, nvt) = diodeParameters(element)
-                current = diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: saturation, nvt: nvt).current
-            case .memristor:
-                current = (v(nodes[0]) - v(nodes[1])) * memristorConductance(element, state: memristorStates[i])
-            case .nmos, .pmos:
-                let polarity: Double = element.kind == .nmos ? 1 : -1
-                var vgs = v(nodes[0]) - v(nodes[2])
-                var vds = v(nodes[1]) - v(nodes[2])
-                var sign = 1.0
-                if polarity * vds < 0 {
-                    vgs -= vds
-                    vds = -vds
-                    sign = -1
-                }
-                let model = mosfetCurrent(vgs: polarity * vgs, vds: polarity * vds,
-                                          threshold: element[param: "threshold"], beta: element[param: "beta"])
-                current = sign * polarity * model.id
-            default:
-                current = 0
+            if element.isConductor {
+                currents[i] = 0
+                continue
             }
-            currents[i] = current
-            if element.isConductor || element.kind == .ground || element.kind == .probe { continue }
-            // current leaving the element into the terminal point
-            let points = topology.elementPoints[i]
-            if element.kind.isTransistor {
-                injection[points[1]] -= current
-                injection[points[2]] += current
-            } else if points.count == 2 {
-                injection[points[0]] -= current
-                injection[points[1]] += current
+            let (main, out) = elementCurrents(i, element, v)
+            currents[i] = main
+            for (point, current) in zip(topology.elementPoints[i], out) {
+                injection[point] += current
             }
         }
-
-        for i in elements.indices where elements[i].isConductor { currents[i] = 0 }
+        // wires and other conductors carry what flows into them from the leaves of the wire network inwards
         for step in topology.flowOrder {
             let flow = injection[step.from]
             injection[step.to] += flow
@@ -522,12 +708,13 @@ public final class Simulator {
     }
 
     /// Voltage across the element: a minus b; for voltage sources + (b) minus - (a), so a 5 V source reads 5 V;
-    /// drain minus source for transistors
+    /// drain minus source (collector minus emitter) for transistors; the output voltage for op-amps
     public func voltageAcross(_ index: Int) -> Double {
         let v = terminalVoltages(index)
         guard v.count >= 2 else { return 0 }
         let kind = circuit.elements[index].kind
         if kind.isTransistor { return v[1] - v[2] }
+        if kind == .opAmp { return v[2] }
         return kind.isVoltageSource ? v[1] - v[0] : v[0] - v[1]
     }
 
@@ -543,7 +730,9 @@ public final class Simulator {
         case .resistance:
             let element = circuit.elements[index]
             if element.kind == .memristor { return 1 / memristorConductance(element, state: memristorStates[index]) }
-            if element.kind == .resistor || element.kind == .lamp { return element[param: "resistance"] }
+            if element.kind == .resistor || element.kind == .lamp || element.kind == .potentiometer {
+                return element[param: "resistance"]
+            }
             let i = current(index)
             return abs(i) > 1e-15 ? voltageAcross(index) / i : .infinity
         }
@@ -597,11 +786,17 @@ public final class Simulator {
 
     private func record(_ trace: ScopeTrace) {
         guard let index = circuit.index(of: trace.spec.elementID) else { return }
-        trace.add(value(trace.spec.quantity, of: index), at: time)
+        switch trace.spec.plot {
+        case .time:
+            trace.add(value(trace.spec.quantity, of: index), at: time)
+        case .currentVersusVoltage:
+            trace.addPoint(voltage: voltageAcross(index), current: current(index), at: time)
+        }
     }
 }
 
-/// Recent history of one scope quantity, kept as min/max buckets so fast signals still show their envelope.
+/// Recent history of one scope: min/max buckets of a quantity over time (so fast signals still show their envelope),
+/// or voltage-current points for an I–V curve.
 public final class ScopeTrace {
     public let spec: ScopeSpec
     public let window: Double
@@ -610,6 +805,10 @@ public final class ScopeTrace {
     public private(set) var minimums: [Double] = []
     public private(set) var maximums: [Double] = []
     public private(set) var lastValue: Double = 0
+    /// I–V curve points, oldest first
+    public private(set) var voltages: [Double] = []
+    public private(set) var currents: [Double] = []
+    public private(set) var lastVoltage: Double = 0
     private var bucketStart = 0.0
     private var bucketMin = Double.infinity
     private var bucketMax = -Double.infinity
@@ -624,6 +823,10 @@ public final class ScopeTrace {
     func clear() {
         minimums.removeAll()
         maximums.removeAll()
+        voltages.removeAll()
+        currents.removeAll()
+        lastValue = 0
+        lastVoltage = 0
         bucketStart = 0
         bucketMin = .infinity
         bucketMax = -.infinity
@@ -644,6 +847,21 @@ public final class ScopeTrace {
             bucketStart = time
             bucketMin = .infinity
             bucketMax = -.infinity
+        }
+    }
+
+    func addPoint(voltage: Double, current: Double, at time: Double) {
+        guard voltage.isFinite, current.isFinite else { return }
+        lastValue = current
+        lastVoltage = voltage
+        if time - bucketStart >= interval {
+            voltages.append(voltage)
+            currents.append(current)
+            if voltages.count > Self.capacity {
+                voltages.removeFirst(voltages.count - Self.capacity)
+                currents.removeFirst(currents.count - Self.capacity)
+            }
+            bucketStart = time
         }
     }
 }
