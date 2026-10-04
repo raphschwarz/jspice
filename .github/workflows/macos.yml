@@ -45,13 +45,13 @@ jobs:
       - name: Simulation speed at audio rate (release build)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: |
-          for example in lfo vca 555 schmitt opamp blinker; do
-            printf '%s\n' \
-              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
-              "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"load_example\",\"arguments\":{\"id\":\"$example\"}}}" \
-              '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"simulate","arguments":{"duration":1,"time_step":2.0833e-5,"probes":["V(U1)"],"points":2}}}' \
-              | ./build/JSpice.app/Contents/MacOS/jspice-mcp --headless 2>/dev/null | tail -1 | grep -o 'wall_seconds[^,]*' | sed "s/^/$example 48k steps: /"
-          done
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 1
+          # where the time goes, for the heaviest synth example
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 vca > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile.txt | head -45
       - name: Interaction test (draws a circuit with synthesized mouse events)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: ./build/JSpice.app/Contents/MacOS/JSpice --self-test "$PWD/build/screenshots"

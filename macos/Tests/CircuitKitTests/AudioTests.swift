@@ -23,12 +23,14 @@ final class AudioTests: XCTestCase {
 
     func testBeeperPlaysItsDesignPitch() {
         // T = ln 2 (RA + 2 RB) C
-        XCTAssertEqual(pitch(Examples.beeper), 1 / (log(2) * (1000 + 2 * 15_000) * 100e-9), accuracy: 30)
+        let period: Double = log(2.0) * 31_000.0 * 100e-9
+        XCTAssertEqual(pitch(Examples.beeper), 1 / period, accuracy: 30)
     }
 
     func testToneFollowsThePotentiometer() {
         // R = 10k + half of the 100k pot; thresholds 0.38 and 0.6 of the supply
-        let expected = 1 / ((10_000 + 50_000) * 22e-9 * (log(0.62 / 0.4) + log(0.6 / 0.38)))
+        let swing: Double = log(0.62 / 0.4) + log(0.6 / 0.38)
+        let expected: Double = 1 / (60_000.0 * 22e-9 * swing)
         XCTAssertEqual(pitch(Examples.tone), expected, accuracy: expected * 0.1)
     }
 

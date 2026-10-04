@@ -41,7 +41,33 @@ public final class Simulator {
     private var opAmpCrossings: [Int] = []
     /// The main current of each element: from `a` to `b` for two-terminal parts, into the drain or collector for
     /// transistors, out of the output for op-amps, from `a` to the wiper for potentiometers
-    public private(set) var currents: [Double] = []
+    public var currents: [Double] {
+        refreshCurrents()
+        return storedCurrents
+    }
+    /// Currents are only for showing, so they are worked out when asked for rather than at every step
+    private var storedCurrents: [Double] = []
+    private var currentsAreStale = true
+
+    /// Each element's kind and parameter values, read once when the circuit is loaded
+    private var kinds: [ElementKind] = []
+    var constants: [Constants] = []
+    /// The elements each part of a step needs, so wires and resistors cost nothing once the base matrix is built
+    private var nonlinearIndices: [Int] = []
+    private var drivenIndices: [Int] = []
+    private var statefulIndices: [Int] = []
+    private var digitalIndices: [Int] = []
+    private var memristorIndices: [Int] = []
+    /// Scopes with the index of the element each one shows
+    private var recordedTraces: [(trace: ScopeTrace, index: Int)] = []
+
+    /// Newton-Raphson's matrix and right-hand side, reused from one iteration to the next
+    private var workMatrix: [Double] = []
+    private var workVector: [Double] = []
+    /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
+    private var savedX: [Double] = []
+    private var savedLimited: [Double] = []
+    private var savedLimited2: [Double] = []
 
     private var baseMatrix: [Double] = []
     private var baseLU: LUSolver?
@@ -101,7 +127,25 @@ public final class Simulator {
         limitedVoltage3 = Array(repeating: 0, count: count)
         digitalState = Array(repeating: false, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
-        currents = Array(repeating: 0, count: count)
+        storedCurrents = Array(repeating: 0, count: count)
+        kinds = newCircuit.elements.map(\.kind)
+        constants = newCircuit.elements.map { makeConstants($0) }
+        func indices(_ include: (ElementKind) -> Bool) -> [Int] { kinds.indices.filter { include(kinds[$0]) } }
+        nonlinearIndices = indices {
+            switch $0 {
+            case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch: return true
+            default: return false
+            }
+        }
+        drivenIndices = indices {
+            switch $0 {
+            case .dcVoltage, .acVoltage, .squareVoltage, .currentSource, .capacitor, .inductor, .timer555, .schmittInverter: return true
+            default: return false
+            }
+        }
+        statefulIndices = indices { [.capacitor, .inductor, .opAmp, .memristor].contains($0) }
+        digitalIndices = indices { $0.isDigital }
+        memristorIndices = indices { $0 == .memristor }
         for (i, element) in newCircuit.elements.enumerated() {
             if let state = previous[element.id] {
                 capacitorVoltage[i] = state.cv
@@ -120,19 +164,14 @@ public final class Simulator {
             }
         }
         x = Array(repeating: 0, count: topology.matrixSize)
-        hasNonlinear = newCircuit.elements.contains {
-            switch $0.kind {
-            case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch: return true
-            default: return false
-            }
-        }
-        hasDigital = newCircuit.elements.contains { $0.kind.isDigital }
-        hasMemristor = newCircuit.elements.contains { $0.kind == .memristor }
+        hasNonlinear = !nonlinearIndices.isEmpty
+        hasDigital = !digitalIndices.isEmpty
+        hasMemristor = !memristorIndices.isEmpty
         matrixIsCurrent = false
         isFailed = false
         problems = topology.problems
         configureScopes(window: traces.values.first?.window ?? 1)
-        computeCurrents()
+        currentsAreStale = true
     }
 
     private func initialiseState(_ i: Int) {
@@ -180,7 +219,7 @@ public final class Simulator {
         isFailed = false
         problems = topology.problems
         for trace in traces.values { trace.clear() }
-        computeCurrents()
+        currentsAreStale = true
     }
 
     // MARK: - Running
@@ -253,11 +292,13 @@ public final class Simulator {
             if x.contains(where: { !$0.isFinite }) { fail(); return false }
             return true
         }
-        let start = (x, limitedVoltage, limitedVoltage2)
+        Self.copy(x, into: &savedX)
+        Self.copy(limitedVoltage, into: &savedLimited)
+        Self.copy(limitedVoltage2, into: &savedLimited2)
         junctionConductance = 0
         if newton(rhs, iterations: Self.maxNewtonIterations) || isFailed || !hasNonlinear { return !isFailed }
         let firstTry = (x, limitedVoltage, limitedVoltage2)
-        (x, limitedVoltage, limitedVoltage2) = start
+        (x, limitedVoltage, limitedVoltage2) = (savedX, savedLimited, savedLimited2)
         var converged = false
         for conductance in Self.steppedConductances {
             junctionConductance = conductance
@@ -273,34 +314,42 @@ public final class Simulator {
     /// Newton-Raphson from the present `x`; true when it converged
     private func newton(_ rhs: [Double], iterations: Int) -> Bool {
         let m = topology.matrixSize
-        for i in opAmpCrossings.indices { opAmpCrossings[i] = 0 }
+        for i in nonlinearIndices { opAmpCrossings[i] = 0 }
+        if workMatrix.count != m * m { workMatrix = [Double](repeating: 0, count: m * m) }
+        if workVector.count != m { workVector = [Double](repeating: 0, count: m) }
         for iteration in 0..<iterations {
-            var matrix = baseMatrix
-            var b = rhs
-            stampMemristors(&matrix, m)
-            if hasNonlinear { stampNonlinear(&matrix, &b, m) }
-            guard let lu = LUSolver(matrix: matrix, size: m) else { fail(); return false }
-            let next = lu.solve(b)
-            if next.contains(where: { !$0.isFinite }) { fail(); return false }
-            if !hasNonlinear {
-                x = next
-                return true
-            }
+            Self.copy(baseMatrix, into: &workMatrix)
+            Self.copy(rhs, into: &workVector)
+            stampMemristors(&workMatrix, m)
+            if hasNonlinear { stampNonlinear(&workMatrix, &workVector, m) }
+            guard LUSolver.solveInPlace(&workMatrix, &workVector, size: m) else { fail(); return false }
             var change = 0.0
             for k in 0..<m {
-                change = max(change, abs(next[k] - x[k]) / (1 + abs(next[k])))
+                let next = workVector[k]
+                guard next.isFinite else { fail(); return false }
+                change = max(change, abs(next - x[k]) / (1 + abs(next)))
             }
-            x = next
+            Self.copy(workVector, into: &x)
+            if !hasNonlinear { return true }
             if iteration > 0 && change < 1e-9 { return true }
         }
         return false
     }
 
+    /// Copies element by element into an array of the same size, so the target keeps its storage
+    @inline(__always) private static func copy(_ source: [Double], into target: inout [Double]) {
+        guard target.count == source.count else {
+            target = source
+            return
+        }
+        for k in source.indices { target[k] = source[k] }
+    }
+
     private func finishStep(at t: Double) {
         time = t
         updateStates()
-        computeCurrents()
-        for trace in traces.values { record(trace) }
+        currentsAreStale = true
+        for (trace, index) in recordedTraces { record(trace, index) }
     }
 
     private func fail() {
@@ -406,16 +455,16 @@ public final class Simulator {
         }
     }
 
-    func sourceVoltage(_ element: Element, at t: Double) -> Double {
-        switch element.kind {
+    func sourceVoltage(_ i: Int, at t: Double) -> Double {
+        let c = constants[i]
+        switch kinds[i] {
         case .dcVoltage:
-            return element[param: "voltage"]
+            return c.value
         case .acVoltage:
-            let phase = element[param: "phase"] * .pi / 180
-            return element[param: "offset"] + element[param: "amplitude"] * sin(2 * .pi * element[param: "frequency"] * t + phase)
+            return c.offset + c.amplitude * sin(2 * .pi * c.frequency * t + c.phase)
         case .squareVoltage:
-            let cycle = (t * element[param: "frequency"]).truncatingRemainder(dividingBy: 1)
-            return cycle < element[param: "duty"] ? element[param: "high"] : element[param: "low"]
+            let cycle = (t * c.frequency).truncatingRemainder(dividingBy: 1)
+            return cycle < c.duty ? c.high : c.low
         default:
             return 0
         }
@@ -423,35 +472,34 @@ public final class Simulator {
 
     private func buildRightHandSide(at t: Double) -> [Double] {
         var rhs = [Double](repeating: 0, count: topology.matrixSize)
-        for (i, element) in circuit.elements.enumerated() {
+        for i in drivenIndices {
             let nodes = topology.elementNodes[i]
-            switch element.kind {
+            let c = constants[i]
+            switch kinds[i] {
             case .dcVoltage, .acVoltage, .squareVoltage:
                 let row = topology.sourceRow[i]
-                if row >= 0 { rhs[row] = sourceVoltage(element, at: t) }
+                if row >= 0 { rhs[row] = sourceVoltage(i, at: t) }
             case .currentSource:
-                stampCurrent(&rhs, nodes[0], nodes[1], element[param: "current"])
+                stampCurrent(&rhs, nodes[0], nodes[1], c.value)
             case .capacitor:
                 // BDF2: i(n) = C/dt (3/2 v(n) - 2 v(n-1) + 1/2 v(n-2))
-                let c = element[param: "capacitance"]
-                let history = c / timeStep * (2 * capacitorVoltage[i] - 0.5 * capacitorVoltagePrevious[i])
+                let history = c.value / timeStep * (2 * capacitorVoltage[i] - 0.5 * capacitorVoltagePrevious[i])
                 stampCurrent(&rhs, nodes[0], nodes[1], -history)
             case .inductor:
                 // BDF2: i(n) = 2 dt / (3 L) v(n) + (4 i(n-1) - i(n-2)) / 3
                 let history = (4 * inductorCurrent[i] - inductorCurrentPrevious[i]) / 3
                 stampCurrent(&rhs, nodes[0], nodes[1], history)
             case .timer555:
-                let g = 1 / max(element[param: "outputResistance"], 0.1)
                 if digitalState[i] {
                     // high: VCC minus the output stage's drop
-                    stampCurrent(&rhs, nodes[2], nodes[7], g * element[param: "highDrop"])
+                    stampCurrent(&rhs, nodes[2], nodes[7], c.outputConductance * c.highDrop)
                 } else {
                     // low: 0.1 V above GND
-                    stampCurrent(&rhs, nodes[0], nodes[2], g * 0.1)
+                    stampCurrent(&rhs, nodes[0], nodes[2], c.outputConductance * 0.1)
                 }
             case .schmittInverter:
                 if digitalState[i] {
-                    stampCurrent(&rhs, 0, nodes[1], element[param: "supply"] / max(element[param: "outputResistance"], 0.1))
+                    stampCurrent(&rhs, 0, nodes[1], c.supply * c.outputConductance)
                 }
             default:
                 break
@@ -460,16 +508,109 @@ public final class Simulator {
         return rhs
     }
 
-    func memristorConductance(_ element: Element, state: Double) -> Double {
-        state / max(element[param: "ron"], 1e-9) + (1 - state) / max(element[param: "roff"], 1e-9)
+    func memristorConductance(_ i: Int, state: Double) -> Double {
+        state * constants[i].onConductance + (1 - state) * constants[i].offConductance
     }
 
     private func stampMemristors(_ matrix: inout [Double], _ m: Int) {
-        guard hasMemristor else { return }
-        for (i, element) in circuit.elements.enumerated() where element.kind == .memristor {
+        for i in memristorIndices {
             let nodes = topology.elementNodes[i]
-            stampConductance(&matrix, m, nodes[0], nodes[1], memristorConductance(element, state: memristorStates[i]))
+            stampConductance(&matrix, m, nodes[0], nodes[1], memristorConductance(i, state: memristorStates[i]))
         }
+    }
+
+    // MARK: Parameters
+
+    /// Parameter values the equations use, read from each element's parameters when the circuit is loaded instead of
+    /// being looked up by name at every Newton iteration
+    struct Constants {
+        /// Capacitance, inductance, a current source's current, a DC source's voltage or a Zener's breakdown voltage
+        var value = 0.0
+        // AC and square-wave sources (phase in radians)
+        var amplitude = 0.0, frequency = 0.0, phase = 0.0, duty = 0.0, high = 0.0, low = 0.0
+        // op-amps, and the AC source's offset (slew rate in V/s)
+        var offset = 0.0, gain = 1.0, limit = 1.0, gbw = 0.0, slew = 0.0
+        // junctions: diodes and LEDs, an OTA's bias input
+        var saturation = 1e-14, nvt = Simulator.thermalVoltage, critical = 0.0
+        // transistors
+        var beta = 1.0, polarity = 1.0, threshold = 0.0
+        // OTAs (supply, output clamps), analog switches and Schmitt inverters (supply, thresholds in volts)
+        var supply = 0.0, clampLevel = 0.0, upper = 0.0, lower = 0.0
+        // analog switches and memristors fully on and off; gate outputs and a 555's discharge pin
+        var onConductance = 0.0, offConductance = 0.0, outputConductance = 0.0, dischargeConductance = 0.0, highDrop = 0.0
+        // memristors
+        var tau = 1.0, von = 0.0, voff = 0.0
+    }
+
+    private func makeConstants(_ element: Element) -> Constants {
+        var c = Constants()
+        func p(_ key: String) -> Double { element[param: key] }
+        switch element.kind {
+        case .capacitor:
+            c.value = p("capacitance")
+        case .inductor:
+            c.value = max(p("inductance"), 1e-15)
+        case .currentSource:
+            c.value = p("current")
+        case .dcVoltage:
+            c.value = p("voltage")
+        case .acVoltage:
+            c.offset = p("offset")
+            c.amplitude = p("amplitude")
+            c.frequency = p("frequency")
+            c.phase = p("phase") * .pi / 180
+        case .squareVoltage:
+            c.frequency = p("frequency")
+            c.duty = p("duty")
+            c.high = p("high")
+            c.low = p("low")
+        case .diode, .led:
+            (c.saturation, c.nvt) = diodeParameters(element)
+            c.critical = c.nvt * log(c.nvt / (sqrt(2) * c.saturation))
+        case .zener:
+            c.value = abs(p("breakdown"))
+        case .npn, .pnp:
+            c.beta = max(p("beta"), 1)
+        case .nmos, .pmos, .njfet:
+            (c.polarity, c.threshold, c.beta) = fetParameters(element)
+        case .opAmp:
+            c.offset = p("offset")
+            c.gain = max(p("gain"), 1)
+            c.limit = max(p("limit"), 0.01)
+            c.gbw = p("gbw")
+            c.slew = p("slewRate") * 1e6
+        case .ota:
+            // the bias input: one or two junctions down to the negative supply, 1 mA at 0.6 V per junction
+            let drops = min(max(p("biasDrop").rounded(), 1), 2)
+            c.supply = p("supply")
+            c.nvt = drops * Self.thermalVoltage
+            c.saturation = 1e-3 / exp(drops * 0.6 / c.nvt)
+            c.critical = c.nvt * log(c.nvt / (sqrt(2) * c.saturation))
+            // the output clamps below the supply less the headroom, less a junction drop
+            c.clampLevel = max(p("supply") - p("headroom") - 0.6, 0)
+        case .analogSwitch:
+            c.supply = max(p("supply"), 1)
+            c.onConductance = 1 / max(p("onResistance"), 1e-3)
+            c.offConductance = 1e-10
+        case .schmittInverter:
+            c.supply = p("supply")
+            c.upper = p("upper") * c.supply
+            c.lower = p("lower") * c.supply
+            c.outputConductance = 1 / max(p("outputResistance"), 0.1)
+        case .timer555:
+            c.outputConductance = 1 / max(p("outputResistance"), 0.1)
+            c.dischargeConductance = 1 / max(p("dischargeResistance"), 0.1)
+            c.highDrop = p("highDrop")
+        case .memristor:
+            c.onConductance = 1 / max(p("ron"), 1e-9)
+            c.offConductance = 1 / max(p("roff"), 1e-9)
+            c.tau = max(p("tau"), 1e-12)
+            c.von = p("von")
+            c.voff = p("voff")
+        default:
+            break
+        }
+        return c
     }
 
     // MARK: Semiconductors and op-amps
@@ -555,11 +696,12 @@ public final class Simulator {
     /// as in a real op-amp, and its drive current saturates, which sets the slew rate. Its voltage is the element's
     /// state from step to step. The output follows it, levelling off smoothly at the output swing. A gain-bandwidth of
     /// zero gives an op-amp without dynamics.
-    func opAmpOutput(_ element: Element, index i: Int, differential raw: Double) -> (voltage: Double, slope: Double, stage: Double) {
-        let vd = raw + element[param: "offset"]
-        let gain = max(element[param: "gain"], 1)
-        let limit = max(element[param: "limit"], 0.01)
-        let gbw = element[param: "gbw"]
+    func opAmpOutput(_ i: Int, differential raw: Double) -> (voltage: Double, slope: Double, stage: Double) {
+        let c = constants[i]
+        let vd = raw + c.offset
+        let gain = c.gain
+        let limit = c.limit
+        let gbw = c.gbw
         guard gbw > 0 else {
             let t = tanh(gain * vd / limit)
             return (limit * t, gain * (1 - t * t), limit * t)
@@ -567,7 +709,7 @@ public final class Simulator {
         let w = 2 * Double.pi * gbw
         let tau = gain / w
         let denominator = 1.5 / timeStep + 1 / tau
-        let slew = element[param: "slewRate"] * 1e6
+        let slew = c.slew
         var drive = w * vd
         var driveSlope = w
         if slew > 0 {
@@ -582,41 +724,29 @@ public final class Simulator {
     }
 
     /// Input voltage beyond which an op-amp's output is no longer in its linear range within one step
-    private func opAmpLinearRange(_ element: Element) -> Double {
-        let gain = max(element[param: "gain"], 1)
-        let limit = max(element[param: "limit"], 0.01)
-        let gbw = element[param: "gbw"]
-        guard gbw > 0 else { return limit / gain }
-        let w = 2 * Double.pi * gbw
-        let stepGain = w / (1.5 / timeStep + w / gain)
-        var range = limit / stepGain
-        let slew = element[param: "slewRate"] * 1e6
-        if slew > 0 { range = min(range, slew / w) }
+    private func opAmpLinearRange(_ i: Int) -> Double {
+        let c = constants[i]
+        guard c.gbw > 0 else { return c.limit / c.gain }
+        let w = 2 * Double.pi * c.gbw
+        let stepGain = w / (1.5 / timeStep + w / c.gain)
+        var range = c.limit / stepGain
+        if c.slew > 0 { range = min(range, c.slew / w) }
         return range
     }
 
-    /// The bias input of an OTA: one or two junctions down to the negative supply. Returns the bias current I_abc
-    /// and its conductance at junction voltage `vj` (bias pin voltage plus the supply).
-    func otaBias(_ element: Element, junction vj: Double) -> (current: Double, conductance: Double, nvt: Double, saturation: Double) {
-        let drops = min(max(element[param: "biasDrop"].rounded(), 1), 2)
-        let nvt = drops * Self.thermalVoltage
-        // 1 mA at 0.6 V per junction
-        let saturation = 1e-3 / exp(drops * 0.6 / nvt)
-        let (current, conductance) = diodeCurrent(vj, saturation: saturation, nvt: nvt)
-        return (current, conductance, nvt, saturation)
+    /// The bias input of an OTA: the bias current I_abc and its conductance at junction voltage `vj` (bias pin voltage
+    /// plus the supply)
+    func otaBias(_ i: Int, junction vj: Double) -> (current: Double, conductance: Double) {
+        diodeCurrent(vj, saturation: constants[i].saturation, nvt: constants[i].nvt)
     }
 
-    /// Voltage beyond which an OTA's output clamps: the supply minus the headroom, less a junction drop for the clamp
-    func otaClampLevel(_ element: Element) -> Double {
-        max(element[param: "supply"] - element[param: "headroom"] - 0.6, 0)
-    }
-
-    /// Threshold (V), threshold width (V) and conductances of an analog switch
-    func analogSwitchConductance(_ element: Element, control: Double) -> (conductance: Double, slope: Double) {
-        let supply = max(element[param: "supply"], 1)
+    /// Conductance of an analog switch and its slope with the control voltage: it turns on around half the supply
+    func analogSwitchConductance(_ i: Int, control: Double) -> (conductance: Double, slope: Double) {
+        let c = constants[i]
+        let supply = c.supply
         let width = 0.02 * supply
-        let on = 1 / max(element[param: "onResistance"], 1e-3)
-        let off = 1e-10
+        let on = c.onConductance
+        let off = c.offConductance
         let s = 1 / (1 + exp(-(control - supply / 2) / width))
         return (off + (on - off) * s, (on - off) * s * (1 - s) / width)
     }
@@ -636,22 +766,21 @@ public final class Simulator {
     }
 
     private func stampNonlinear(_ matrix: inout [Double], _ rhs: inout [Double], _ m: Int) {
-        for (i, element) in circuit.elements.enumerated() {
+        for i in nonlinearIndices {
             let nodes = topology.elementNodes[i]
-            switch element.kind {
+            let c = constants[i]
+            switch kinds[i] {
             case .diode, .led:
-                let (saturation, nvt) = diodeParameters(element)
-                let critical = nvt * log(nvt / (sqrt(2) * saturation))
-                let vd = limitJunction(voltage(nodes[0]) - voltage(nodes[1]), old: limitedVoltage[i], nvt: nvt, critical: critical)
+                let vd = limitJunction(voltage(nodes[0]) - voltage(nodes[1]), old: limitedVoltage[i], nvt: c.nvt, critical: c.critical)
                 limitedVoltage[i] = vd
-                var (id, gd) = diodeCurrent(vd, saturation: saturation, nvt: nvt)
+                var (id, gd) = diodeCurrent(vd, saturation: c.saturation, nvt: c.nvt)
                 id += junctionConductance * vd
                 gd += junctionConductance
                 stampConductance(&matrix, m, nodes[0], nodes[1], gd)
                 stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
 
             case .zener:
-                let breakdown = abs(element[param: "breakdown"])
+                let breakdown = c.value
                 let vt = Self.thermalVoltage
                 let new = voltage(nodes[0]) - voltage(nodes[1])
                 let old = limitedVoltage[i]
@@ -672,7 +801,7 @@ public final class Simulator {
                 stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
 
             case .npn, .pnp:
-                let p: Double = element.kind == .npn ? 1 : -1
+                let p: Double = kinds[i] == .npn ? 1 : -1
                 let (base, collector, emitter) = (nodes[0], nodes[1], nodes[2])
                 let vt = Self.thermalVoltage
                 let critical = vt * log(vt / (sqrt(2) * Self.transistorSaturationCurrent))
@@ -681,7 +810,7 @@ public final class Simulator {
                 let vbc = limitJunction(p * (voltage(base) - voltage(collector)), old: limitedVoltage2[i], nvt: vt, critical: critical)
                 limitedVoltage[i] = vbe
                 limitedVoltage2[i] = vbc
-                var model = bipolarCurrents(vbe: vbe, vbc: vbc, beta: max(element[param: "beta"], 1))
+                var model = bipolarCurrents(vbe: vbe, vbc: vbc, beta: c.beta)
                 if junctionConductance > 0 {
                     // shunts across both junctions: base to emitter and base to collector
                     let g = junctionConductance
@@ -694,22 +823,21 @@ public final class Simulator {
                 // real currents and junction voltages: currents and voltages flip sign for PNP, derivatives do not
                 let realVbe = p * vbe
                 let realVbc = p * vbc
-                let terminals: [(node: Int, current: Double, gbe: Double, gbc: Double)] = [
-                    (collector, p * model.ic, model.dicVbe, model.dicVbc),
-                    (base, p * model.ib, model.dibVbe, model.dibVbc),
-                    (emitter, -p * (model.ic + model.ib), -(model.dicVbe + model.dibVbe), -(model.dicVbc + model.dibVbc)),
-                ]
-                for terminal in terminals where terminal.node > 0 {
+                func stampTerminal(_ node: Int, _ current: Double, _ gbe: Double, _ gbc: Double) {
+                    guard node > 0 else { return }
                     // current into the device at this terminal, linear in vbe and vbc around the limited point
-                    let row = terminal.node - 1
-                    add(&matrix, m, row, base - 1, terminal.gbe + terminal.gbc)
-                    add(&matrix, m, row, emitter - 1, -terminal.gbe)
-                    add(&matrix, m, row, collector - 1, -terminal.gbc)
-                    rhs[row] -= terminal.current - terminal.gbe * realVbe - terminal.gbc * realVbc
+                    let row = node - 1
+                    add(&matrix, m, row, base - 1, gbe + gbc)
+                    add(&matrix, m, row, emitter - 1, -gbe)
+                    add(&matrix, m, row, collector - 1, -gbc)
+                    rhs[row] -= current - gbe * realVbe - gbc * realVbc
                 }
+                stampTerminal(collector, p * model.ic, model.dicVbe, model.dicVbc)
+                stampTerminal(base, p * model.ib, model.dibVbe, model.dibVbc)
+                stampTerminal(emitter, -p * (model.ic + model.ib), -(model.dicVbe + model.dibVbe), -(model.dicVbc + model.dibVbc))
 
             case .nmos, .pmos, .njfet:
-                let (polarity, threshold, beta) = fetParameters(element)
+                let (polarity, threshold, beta) = (c.polarity, c.threshold, c.beta)
                 let gate = nodes[0]
                 var drain = nodes[1]
                 var source = nodes[2]
@@ -752,13 +880,13 @@ public final class Simulator {
                 // the next guess far past the other side, so guesses could swing from limit to limit. The first few
                 // times a guess crosses over, it is brought back to the edge of the linear range; after that it may
                 // cross, as it must when positive feedback snaps the output to the other limit (a comparator).
-                let range = opAmpLinearRange(element)
+                let range = opAmpLinearRange(i)
                 if vd * limitedVoltage[i] < 0 && abs(vd) > range && opAmpCrossings[i] < 3 {
                     opAmpCrossings[i] += 1
                     vd = vd > 0 ? range : -range
                 }
                 limitedVoltage[i] = vd
-                let (output, slope, _) = opAmpOutput(element, index: i, differential: vd)
+                let (output, slope, _) = opAmpOutput(i, differential: vd)
                 // v(out) = output + slope (vd' - vd), linearised around the present inputs
                 add(&matrix, m, row, plus - 1, -slope)
                 add(&matrix, m, row, minus - 1, slope)
@@ -766,14 +894,12 @@ public final class Simulator {
 
             case .ota:
                 let (minus, plus, output, bias) = (nodes[0], nodes[1], nodes[2], nodes[3])
-                let supply = element[param: "supply"]
+                let supply = c.supply
                 let vt = Self.thermalVoltage
                 // bias input
-                let probe = otaBias(element, junction: 0.6)
-                let vj = limitJunction(voltage(bias) + supply, old: limitedVoltage[i], nvt: probe.nvt,
-                                       critical: probe.nvt * log(probe.nvt / (sqrt(2) * probe.saturation)))
+                let vj = limitJunction(voltage(bias) + supply, old: limitedVoltage[i], nvt: c.nvt, critical: c.critical)
                 limitedVoltage[i] = vj
-                var (ib, gb, _, _) = otaBias(element, junction: vj)
+                var (ib, gb) = otaBias(i, junction: vj)
                 ib += junctionConductance * vj
                 gb += junctionConductance
                 if bias > 0 {
@@ -795,7 +921,7 @@ public final class Simulator {
                     rhs[row] += iout - gd * vd - gbias * vb
                 }
                 // clamps that keep the output within the supply less the headroom
-                let level = otaClampLevel(element)
+                let level = c.clampLevel
                 let critical = vt * log(vt / (sqrt(2) * 1e-14))
                 let vu = limitJunction(voltage(output) - level, old: limitedVoltage2[i], nvt: vt, critical: critical)
                 limitedVoltage2[i] = vu
@@ -817,7 +943,7 @@ public final class Simulator {
             case .analogSwitch:
                 let (a, b, control) = (nodes[0], nodes[1], nodes[2])
                 let vc = voltage(control)
-                let (g, slope) = analogSwitchConductance(element, control: vc)
+                let (g, slope) = analogSwitchConductance(i, control: vc)
                 let k = slope * (voltage(a) - voltage(b))
                 stampConductance(&matrix, m, a, b, g)
                 add(&matrix, m, a - 1, control - 1, k)
@@ -833,10 +959,10 @@ public final class Simulator {
     /// Updates the 555s' flip-flops and the Schmitt inverters from the present solution; true if any switched
     private func updateDigitalStates() -> Bool {
         var changed = false
-        for (i, element) in circuit.elements.enumerated() where element.kind.isDigital {
+        for i in digitalIndices {
             let nodes = topology.elementNodes[i]
             var high = digitalState[i]
-            switch element.kind {
+            switch kinds[i] {
             case .timer555:
                 let ground = voltage(nodes[0])
                 let control = voltage(nodes[4]) - ground
@@ -848,11 +974,10 @@ public final class Simulator {
                     high = false
                 }
             case .schmittInverter:
-                let supply = element[param: "supply"]
                 let input = voltage(nodes[0])
-                if input > element[param: "upper"] * supply {
+                if input > constants[i].upper {
                     high = false
-                } else if input < element[param: "lower"] * supply {
+                } else if input < constants[i].lower {
                     high = true
                 }
             default:
@@ -870,26 +995,27 @@ public final class Simulator {
     // MARK: - After each step
 
     private func updateStates() {
-        for (i, element) in circuit.elements.enumerated() {
+        for i in statefulIndices {
             let nodes = topology.elementNodes[i]
-            switch element.kind {
+            let parameters = constants[i]
+            switch kinds[i] {
             case .capacitor:
                 let v = voltage(nodes[0]) - voltage(nodes[1])
-                let c = element[param: "capacitance"]
+                let c = parameters.value
                 capacitorCurrent[i] = c / timeStep * (1.5 * v - 2 * capacitorVoltage[i] + 0.5 * capacitorVoltagePrevious[i])
                 capacitorVoltagePrevious[i] = capacitorVoltage[i]
                 capacitorVoltage[i] = v
             case .inductor:
                 let v = voltage(nodes[0]) - voltage(nodes[1])
-                let g = 2 * timeStep / (3 * max(element[param: "inductance"], 1e-15))
+                let g = 2 * timeStep / (3 * parameters.value)
                 let next = g * v + (4 * inductorCurrent[i] - inductorCurrentPrevious[i]) / 3
                 inductorCurrentPrevious[i] = inductorCurrent[i]
                 inductorCurrent[i] = next
                 inductorVoltage[i] = v
-            case .opAmp where element[param: "gbw"] > 0:
-                let (_, _, stage) = opAmpOutput(element, index: i, differential: voltage(nodes[1]) - voltage(nodes[0]))
+            case .opAmp where parameters.gbw > 0:
+                let (_, _, stage) = opAmpOutput(i, differential: voltage(nodes[1]) - voltage(nodes[0]))
                 // the internal stage cannot wind up far beyond the output swing
-                let bound = 3 * max(element[param: "limit"], 0.01)
+                let bound = 3 * parameters.limit
                 capacitorVoltagePrevious[i] = capacitorVoltage[i]
                 capacitorVoltage[i] = min(bound, max(-bound, stage))
             case .memristor:
@@ -897,9 +1023,9 @@ public final class Simulator {
                 // minus the off threshold, with the given switching time
                 let v = voltage(nodes[0]) - voltage(nodes[1])
                 let sharpness = 0.02
-                let tau = max(element[param: "tau"], 1e-12)
-                let towardsOn = 1 / (1 + exp(-(v - element[param: "von"]) / sharpness)) / tau
-                let towardsOff = 1 / (1 + exp((v + element[param: "voff"]) / sharpness)) / tau
+                let tau = parameters.tau
+                let towardsOn = 1 / (1 + exp(-(v - parameters.von) / sharpness)) / tau
+                let towardsOff = 1 / (1 + exp((v + parameters.voff) / sharpness)) / tau
                 let rate = towardsOn + towardsOff
                 if rate > 1e-12 {
                     let target = towardsOn / rate
@@ -931,16 +1057,16 @@ public final class Simulator {
             let row = topology.sourceRow[i]
             return twoTerminal(row >= 0 && row < x.count ? x[row] : 0)
         case .currentSource:
-            return twoTerminal(element[param: "current"])
+            return twoTerminal(constants[i].value)
         case .diode, .led:
-            let (saturation, nvt) = diodeParameters(element)
-            return twoTerminal(diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: saturation, nvt: nvt).current)
+            let c = constants[i]
+            return twoTerminal(diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: c.saturation, nvt: c.nvt).current)
         case .zener:
-            return twoTerminal(zenerCurrent(v(nodes[0]) - v(nodes[1]), breakdown: abs(element[param: "breakdown"])).current)
+            return twoTerminal(zenerCurrent(v(nodes[0]) - v(nodes[1]), breakdown: constants[i].value).current)
         case .memristor:
-            return twoTerminal((v(nodes[0]) - v(nodes[1])) * memristorConductance(element, state: memristorStates[i]))
+            return twoTerminal((v(nodes[0]) - v(nodes[1])) * memristorConductance(i, state: memristorStates[i]))
         case .nmos, .pmos, .njfet:
-            let (polarity, threshold, beta) = fetParameters(element)
+            let (polarity, threshold, beta) = (constants[i].polarity, constants[i].threshold, constants[i].beta)
             var vgs = v(nodes[0]) - v(nodes[2])
             var vds = v(nodes[1]) - v(nodes[2])
             var sign = 1.0
@@ -955,7 +1081,7 @@ public final class Simulator {
         case .npn, .pnp:
             let p: Double = element.kind == .npn ? 1 : -1
             let model = bipolarCurrents(vbe: p * (v(nodes[0]) - v(nodes[2])), vbc: p * (v(nodes[0]) - v(nodes[1])),
-                                        beta: max(element[param: "beta"], 1))
+                                        beta: constants[i].beta)
             let (ic, ib) = (p * model.ic, p * model.ib)
             return (ic, [-ib, -ic, ic + ib])
         case .opAmp:
@@ -963,30 +1089,30 @@ public final class Simulator {
             let current = row >= 0 && row < x.count ? x[row] : 0
             return (current, [0, 0, current])
         case .ota:
-            let supply = element[param: "supply"]
-            let bias = otaBias(element, junction: v(nodes[3]) + supply).current
-            let level = otaClampLevel(element)
+            let supply = constants[i].supply
+            let bias = otaBias(i, junction: v(nodes[3]) + supply).current
+            let level = constants[i].clampLevel
             let vt = Self.thermalVoltage
             let clampUp = diodeCurrent(v(nodes[2]) - level, saturation: 1e-14, nvt: vt).current
             let clampDown = diodeCurrent(-level - v(nodes[2]), saturation: 1e-14, nvt: vt).current
             let output = bias * tanh((v(nodes[1]) - v(nodes[0])) / (2 * vt)) - clampUp + clampDown
             return (output, [0, 0, output, -bias])
         case .analogSwitch:
-            let g = analogSwitchConductance(element, control: v(nodes[2])).conductance
+            let g = analogSwitchConductance(i, control: v(nodes[2])).conductance
             let current = g * (v(nodes[0]) - v(nodes[1]))
             return (current, [-current, current, 0])
         case .schmittInverter:
-            let target = digitalState[i] ? element[param: "supply"] : 0
-            let current = (target - v(nodes[1])) / max(element[param: "outputResistance"], 0.1)
+            let target = digitalState[i] ? constants[i].supply : 0
+            let current = (target - v(nodes[1])) * constants[i].outputConductance
             return (current, [0, current])
         case .timer555:
             let (ground, output, control, discharge, supply) = (nodes[0], nodes[2], nodes[4], nodes[6], nodes[7])
             let high = digitalState[i]
             let upper = (v(supply) - v(control)) / 5000
             let lower = (v(control) - v(ground)) / 10_000
-            let target = high ? v(supply) - element[param: "highDrop"] : v(ground) + 0.1
-            let out = (target - v(output)) / max(element[param: "outputResistance"], 0.1)
-            let dischargeIn = (v(discharge) - v(ground)) * (high ? 1e-9 : 1 / max(element[param: "dischargeResistance"], 0.1))
+            let target = high ? v(supply) - constants[i].highDrop : v(ground) + 0.1
+            let out = (target - v(output)) * constants[i].outputConductance
+            let dischargeIn = (v(discharge) - v(ground)) * (high ? 1e-9 : constants[i].dischargeConductance)
             var flows = [Double](repeating: 0, count: 8)
             flows[2] = out
             flows[6] = -dischargeIn
@@ -999,20 +1125,26 @@ public final class Simulator {
         }
     }
 
+    private func refreshCurrents() {
+        guard currentsAreStale else { return }
+        currentsAreStale = false
+        computeCurrents()
+    }
+
     private func computeCurrents() {
         let elements = circuit.elements
-        guard currents.count == elements.count else { return }
+        guard storedCurrents.count == elements.count else { return }
         let hasSolution = x.count == topology.matrixSize
         func v(_ node: Int) -> Double { hasSolution ? voltage(node) : 0 }
 
         var injection = [Double](repeating: 0, count: topology.points.count)
         for (i, element) in elements.enumerated() {
             if element.isConductor {
-                currents[i] = 0
+                storedCurrents[i] = 0
                 continue
             }
             let (main, out) = elementCurrents(i, element, v)
-            currents[i] = main
+            storedCurrents[i] = main
             for (point, current) in zip(topology.elementPoints[i], out) {
                 injection[point] += current
             }
@@ -1021,7 +1153,7 @@ public final class Simulator {
         for step in topology.flowOrder {
             let flow = injection[step.from]
             injection[step.to] += flow
-            currents[step.element] = topology.elementPoints[step.element][0] == step.from ? flow : -flow
+            storedCurrents[step.element] = topology.elementPoints[step.element][0] == step.from ? flow : -flow
         }
     }
 
@@ -1041,19 +1173,22 @@ public final class Simulator {
     /// Voltage across the element: a minus b; for voltage sources + (b) minus - (a), so a 5 V source reads 5 V;
     /// drain minus source (collector minus emitter) for transistors; the output voltage for op-amps
     public func voltageAcross(_ index: Int) -> Double {
-        let v = terminalVoltages(index)
-        if v.count == 1 { return v[0] }
-        guard v.count >= 2 else { return 0 }
-        let kind = circuit.elements[index].kind
-        if kind.isTransistor { return v[1] - v[2] }
-        if kind == .opAmp || kind == .ota { return v[2] }
-        if kind == .timer555 { return v[2] - v[0] }
-        if kind == .schmittInverter { return v[1] }
-        return kind.isVoltageSource ? v[1] - v[0] : v[0] - v[1]
+        guard index < topology.elementNodes.count, index < kinds.count, x.count == topology.matrixSize else { return 0 }
+        let nodes = topology.elementNodes[index]
+        func v(_ k: Int) -> Double { voltage(nodes[k]) }
+        if nodes.count == 1 { return v(0) }
+        guard nodes.count >= 2 else { return 0 }
+        let kind = kinds[index]
+        if kind.isTransistor { return v(1) - v(2) }
+        if kind == .opAmp || kind == .ota { return v(2) }
+        if kind == .timer555 { return v(2) - v(0) }
+        if kind == .schmittInverter { return v(1) }
+        return kind.isVoltageSource ? v(1) - v(0) : v(0) - v(1)
     }
 
     public func current(_ index: Int) -> Double {
-        index < currents.count ? currents[index] : 0
+        refreshCurrents()
+        return index < storedCurrents.count ? storedCurrents[index] : 0
     }
 
     public func value(_ quantity: Quantity, of index: Int) -> Double {
@@ -1063,7 +1198,7 @@ public final class Simulator {
         case .power: return voltageAcross(index) * current(index)
         case .resistance:
             let element = circuit.elements[index]
-            if element.kind == .memristor { return 1 / memristorConductance(element, state: memristorStates[index]) }
+            if element.kind == .memristor { return 1 / memristorConductance(index, state: memristorStates[index]) }
             if element.kind == .resistor || element.kind == .lamp || element.kind == .potentiometer {
                 return element[param: "resistance"]
             }
@@ -1096,9 +1231,8 @@ public final class Simulator {
         guard index < circuit.elements.count, circuit.elements[index].kind == .analogSwitch else { return 0 }
         let v = terminalVoltages(index)
         guard v.count == 3 else { return 0 }
-        let element = circuit.elements[index]
-        let g = analogSwitchConductance(element, control: v[2]).conductance
-        return min(1, g * max(element[param: "onResistance"], 1e-3))
+        let g = analogSwitchConductance(index, control: v[2]).conductance
+        return min(1, g / constants[index].onConductance)
     }
 
     /// 0 (fully off) to 1 (fully on)
@@ -1139,12 +1273,15 @@ public final class Simulator {
             }
         }
         traces = next
+        recordedTraces = circuit.scopes.compactMap { spec in
+            guard let trace = next[spec.id], let index = circuit.index(of: spec.elementID) else { return nil }
+            return (trace, index)
+        }
     }
 
     public func trace(_ id: UUID) -> ScopeTrace? { traces[id] }
 
-    private func record(_ trace: ScopeTrace) {
-        guard let index = circuit.index(of: trace.spec.elementID) else { return }
+    private func record(_ trace: ScopeTrace, _ index: Int) {
         switch trace.spec.plot {
         case .time:
             trace.add(value(trace.spec.quantity, of: index), at: time)

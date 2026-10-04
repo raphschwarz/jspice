@@ -61,3 +61,42 @@ struct LUSolver {
         return x
     }
 }
+
+extension LUSolver {
+    /// Solves a · x = b by Gaussian elimination with partial pivoting, in place: `b` becomes x and `a` is used up.
+    /// Newton-Raphson solves a new matrix of the same size at every iteration, so it keeps both buffers and allocates
+    /// nothing. False when the matrix is singular.
+    static func solveInPlace(_ a: inout [Double], _ b: inout [Double], size n: Int) -> Bool {
+        guard n > 0, a.count >= n * n, b.count >= n else { return n == 0 }
+        return a.withUnsafeMutableBufferPointer { a -> Bool in
+            b.withUnsafeMutableBufferPointer { b -> Bool in
+                for k in 0..<n {
+                    var pivotRow = k
+                    var pivotMagnitude = abs(a[k * n + k])
+                    for r in (k + 1)..<n where abs(a[r * n + k]) > pivotMagnitude {
+                        pivotMagnitude = abs(a[r * n + k])
+                        pivotRow = r
+                    }
+                    if pivotMagnitude < 1e-14 { return false }
+                    if pivotRow != k {
+                        for c in k..<n { a.swapAt(k * n + c, pivotRow * n + c) }
+                        b.swapAt(k, pivotRow)
+                    }
+                    let pivot = a[k * n + k]
+                    for r in (k + 1)..<n {
+                        let factor = a[r * n + k] / pivot
+                        if factor == 0 { continue }
+                        for c in (k + 1)..<n { a[r * n + c] -= factor * a[k * n + c] }
+                        b[r] -= factor * b[k]
+                    }
+                }
+                for r in stride(from: n - 1, through: 0, by: -1) {
+                    var sum = b[r]
+                    for c in (r + 1)..<n { sum -= a[r * n + c] * b[c] }
+                    b[r] = sum / a[r * n + r]
+                }
+                return true
+            }
+        }
+    }
+}
