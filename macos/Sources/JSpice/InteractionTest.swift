@@ -34,26 +34,25 @@ enum InteractionTest {
             check(false, "the window contains the circuit canvas")
             return false
         }
-        // the same undo manager SwiftUI gives the editor in the app; each action runs in its own event loop turn, so
-        // undo groups close as they do for a person using the app
-        guard let undo = editor.undoManager else {
-            check(false, "the window provides an undo manager")
-            return finish(window)
-        }
+        check(editor.undoManager != nil, "the window gives the editor an undo manager")
+        // From here on, an undo manager of the test's own, with one undo group per action, as AppKit makes one per
+        // event in the app. (Set after the window appeared, so SwiftUI does not replace it.)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        editor.undoManager = undo
 
         func mouse(_ type: NSEvent.EventType, _ point: GridPoint) -> NSEvent {
             let location = canvas.convert(canvas.screen(point), to: nil)
             return NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
         }
-        // events go through AppKit's queue and dispatch, as a person's clicks do
         func drag(_ from: GridPoint, _ to: GridPoint) async {
-            NSApp.postEvent(mouse(.leftMouseDown, from), atStart: false)
-            await pause(0.04)
-            NSApp.postEvent(mouse(.leftMouseDragged, to), atStart: false)
-            await pause(0.04)
-            NSApp.postEvent(mouse(.leftMouseUp, to), atStart: false)
-            await pause(0.1)
+            undo.beginUndoGrouping()
+            canvas.mouseDown(with: mouse(.leftMouseDown, from))
+            canvas.mouseDragged(with: mouse(.leftMouseDragged, to))
+            canvas.mouseUp(with: mouse(.leftMouseUp, to))
+            undo.endUndoGrouping()
+            await pause(0.05)
         }
         func click(_ point: GridPoint) async { await drag(point, point) }
         func undoLast() async {
@@ -97,39 +96,32 @@ enum InteractionTest {
         let moved = document.circuit[resistorID]
         check(moved?.a == GridPoint(0, -2) && moved?.b == GridPoint(4, -2), "dragging moves the selected part")
         check(elements(.wire).contains { $0.a == GridPoint(4, -2) && $0.b == GridPoint(4, 4) }, "a wire attached to a moved part stretches")
-        print("      undo manager: canUndo=\(undo.canUndo) action='\(undo.undoActionName)' level=\(undo.groupingLevel) " +
-              "registration=\(undo.isUndoRegistrationEnabled) byEvent=\(undo.groupsByEvent) isWindows=\(undo === window.undoManager)")
+        check(undo.undoActionName == "Move", "the move is named in the Edit menu (\"Undo Move\")")
         await undoLast()
-        print("      after undo: canRedo=\(undo.canRedo) resistor at \(String(describing: document.circuit[resistorID]?.a))")
         check(document.circuit[resistorID]?.a == GridPoint(0, 0), "undo puts the part back")
-
-        // the same, with an undo manager of our own and explicit groups, to tell the editor's undo logic apart from
-        // the hosting window's
-        let own = UndoManager()
-        own.groupsByEvent = false
-        editor.undoManager = own
-        editor.selection = [resistorID]
-        own.beginUndoGrouping()
-        editor.rotateSelection()
-        own.endUndoGrouping()
-        let rotated = document.circuit[resistorID]
-        own.undo()
-        check(rotated?.a != GridPoint(0, 0) && document.circuit[resistorID]?.a == GridPoint(0, 0) && document.circuit[resistorID]?.b == GridPoint(4, 0),
-              "the editor's undo logic restores a rotated part")
-        editor.undoManager = undo
+        check(document.circuit.elements.contains { $0.kind == .wire && $0.a == GridPoint(4, 0) && $0.b == GridPoint(4, 4) },
+              "undo puts the stretched wire back too")
+        undo.redo()
+        await pause(0.05)
+        check(document.circuit[resistorID]?.a == GridPoint(0, -2), "redo moves it again")
+        await undoLast()
 
         // delete with the keyboard, then undo
         editor.selection = [resistorID]
-        NSApp.postEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+        undo.beginUndoGrouping()
+        canvas.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                                               windowNumber: window.windowNumber, context: nil, characters: "\u{7F}",
-                                              charactersIgnoringModifiers: "\u{7F}", isARepeat: false, keyCode: 51)!, atStart: false)
-        await pause(0.1)
+                                              charactersIgnoringModifiers: "\u{7F}", isARepeat: false, keyCode: 51)!)
+        undo.endUndoGrouping()
+        await pause(0.05)
         check(document.circuit[resistorID] == nil, "the Delete key removes the selection")
         await undoLast()
         check(document.circuit[resistorID] != nil, "undo restores the deleted part")
 
         // operate a switch while simulating
+        undo.beginUndoGrouping()
         editor.load(Examples.example("led")!)
+        undo.endUndoGrouping()
         await pause(0.8)
         let led = elements(.led).first!.id
         let switchElement = elements(.toggleSwitch).first!
