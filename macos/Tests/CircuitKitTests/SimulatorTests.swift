@@ -82,7 +82,9 @@ final class SimulatorTests: XCTestCase {
     func testReversedDiodeBlocks() {
         var circuit = series(voltage: 5, [(.resistor, ["resistance": 1000]), (.diode, [:])])
         let d = circuit.elements.firstIndex { $0.kind == .diode }!
-        swap(&circuit.elements[d].a, &circuit.elements[d].b)
+        let original = circuit.elements[d]
+        circuit.elements[d].a = original.b
+        circuit.elements[d].b = original.a
         let simulator = run(circuit, timeStep: 1e-3, for: 0.01)
         XCTAssertLessThan(abs(simulator.current(d)), 1e-9)
     }
