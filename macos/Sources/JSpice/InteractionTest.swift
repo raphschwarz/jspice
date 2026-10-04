@@ -104,7 +104,7 @@ enum InteractionTest {
 
         // operate a switch while simulating
         undo.beginUndoGrouping()
-        editor.load(Examples.ledSwitch)
+        editor.load(Examples.example("led")!)
         undo.endUndoGrouping()
         await pause(0.8)
         let led = elements(.led).first!.id
