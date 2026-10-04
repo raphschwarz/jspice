@@ -86,24 +86,13 @@ enum ScreenshotRunner {
         }
     }
 
+    /// Captures the window as the window server shows it (drawing the view hierarchy offscreen leaves out AppKit controls)
     private static func save(_ window: NSWindow, to url: URL) {
-        // the whole window, title bar and toolbar included
-        if let frameView = window.contentView?.superview {
-            write(frameView, to: url)
-        }
-        // the window server's view of it, as a cross-check
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", "-o", "-l\(window.windowNumber)", url.deletingPathExtension().path + "-server.png"]
+        process.arguments = ["-x", "-o", "-l\(window.windowNumber)", url.path]
         try? process.run()
         process.waitUntilExit()
-    }
-
-    private static func write(_ view: NSView, to url: URL) {
-        let bounds = view.bounds
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { return }
-        view.cacheDisplay(in: bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 }
 

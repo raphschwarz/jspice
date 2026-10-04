@@ -51,7 +51,7 @@ struct LibrarySidebar: View {
     var body: some View {
         List {
             Section("Tools") {
-                ToolRow(title: "Select and Move", shortcut: "Esc", isActive: editor.tool == nil) {
+                ToolRow(title: "Select", shortcut: "Esc", isActive: editor.tool == nil) {
                     Image(systemName: "cursorarrow").frame(width: 34, height: 22)
                 } action: {
                     editor.tool = nil

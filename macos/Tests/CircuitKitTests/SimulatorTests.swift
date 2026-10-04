@@ -35,6 +35,14 @@ final class SimulatorTests: XCTestCase {
         XCTAssertFalse(simulator.isFailed)
     }
 
+    func testSourcesReadTheirOwnVoltage() {
+        let simulator = run(Examples.lowPass.circuit, timeStep: 1e-5, for: 2e-3)
+        let source = simulator.circuit.elements.firstIndex { $0.kind == .squareVoltage }!
+        XCTAssertEqual(simulator.voltageAcross(source), 5, accuracy: 1e-9, "high half of the square wave")
+        let battery = run(Examples.ledSwitch.circuit, timeStep: 1e-3, for: 0.01)
+        XCTAssertEqual(battery.voltageAcross(battery.circuit.elements.firstIndex { $0.kind == .dcVoltage }!), 9, accuracy: 1e-9)
+    }
+
     func testRCChargesToSixtyThreePercentAfterOneTimeConstant() {
         // R = 1k, C = 1 µF: tau = 1 ms
         let circuit = series(voltage: 5, [(.resistor, ["resistance": 1000]), (.capacitor, ["capacitance": 1e-6])])

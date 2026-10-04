@@ -521,11 +521,14 @@ public final class Simulator {
         return topology.elementNodes[index].map { voltage($0) }
     }
 
-    /// Voltage across the element (a minus b; drain minus source for transistors)
+    /// Voltage across the element: a minus b; for voltage sources + (b) minus - (a), so a 5 V source reads 5 V;
+    /// drain minus source for transistors
     public func voltageAcross(_ index: Int) -> Double {
         let v = terminalVoltages(index)
         guard v.count >= 2 else { return 0 }
-        return circuit.elements[index].kind.isTransistor ? v[1] - v[2] : v[0] - v[1]
+        let kind = circuit.elements[index].kind
+        if kind.isTransistor { return v[1] - v[2] }
+        return kind.isVoltageSource ? v[1] - v[0] : v[0] - v[1]
     }
 
     public func current(_ index: Int) -> Double {

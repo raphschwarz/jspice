@@ -48,6 +48,7 @@ struct ElementInspector: View {
                             Text(element.kind.displayName).font(.headline)
                         } else {
                             TextField("Name", text: $name)
+                                .labelsHidden()
                                 .textFieldStyle(.plain)
                                 .font(.headline)
                                 .onSubmit { editor.rename(element.id, to: name) }

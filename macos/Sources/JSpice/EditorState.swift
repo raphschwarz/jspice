@@ -23,6 +23,8 @@ final class EditorState: ObservableObject {
     @Published private(set) var fitRequest = 1
 
     var viewSize: CGSize = .zero
+    /// True once the user has zoomed or scrolled; until then the canvas keeps the circuit fitted as it resizes
+    var viewAdjusted = false
     private var interactionStart: Circuit?
 
     static let gridSize: CGFloat = 16
@@ -164,6 +166,7 @@ final class EditorState: ObservableObject {
     }
 
     func requestFit() {
+        viewAdjusted = false
         fitRequest += 1
     }
 
@@ -201,6 +204,7 @@ final class EditorState: ObservableObject {
     // MARK: - Zoom
 
     func changeZoom(by factor: CGFloat, around point: CGPoint? = nil) {
+        viewAdjusted = true
         let anchor = point ?? CGPoint(x: viewSize.width / 2, y: viewSize.height / 2)
         let newZoom = min(4, max(0.3, zoom * factor))
         let applied = newZoom / zoom

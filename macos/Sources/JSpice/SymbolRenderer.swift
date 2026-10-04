@@ -185,18 +185,9 @@ enum SymbolRenderer {
             minus.addLine(to: CGPoint(x: c - h, y: 0.38 * u))
             thickPlate = minus
             addPlus(to: path, at: CGPoint(x: c + h + 0.4 * u, y: -0.75 * u), size: 0.16 * u)
-        case .acVoltage:
+        case .acVoltage, .squareVoltage:
+            // the waveform inside is drawn upright afterwards
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
-            for i in 0...24 {
-                let t = CGFloat(i) / 24
-                let point = CGPoint(x: c - 0.5 * u + t * u, y: -0.28 * u * sin(2 * .pi * t))
-                if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
-            }
-            addPlus(to: path, at: CGPoint(x: c + h + 0.3 * u, y: -0.8 * u), size: 0.16 * u)
-        case .squareVoltage:
-            path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
-            let wave: [(CGFloat, CGFloat)] = [(-0.45, 0.25), (-0.45, -0.25), (0, -0.25), (0, 0.25), (0.45, 0.25), (0.45, -0.25)]
-            path.addLines(between: wave.map { CGPoint(x: c + $0.0 * u, y: $0.1 * u) })
             addPlus(to: path, at: CGPoint(x: c + h + 0.3 * u, y: -0.8 * u), size: 0.16 * u)
         case .currentSource:
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
@@ -206,8 +197,9 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: c + 0.45 * u, y: 0))
             path.addLine(to: CGPoint(x: c + 0.2 * u, y: 0.22 * u))
         case .toggleSwitch:
+            // closed, the lever rests on top of the far contact, so it still reads as a switch
             path.move(to: CGPoint(x: c - h, y: 0))
-            path.addLine(to: element.closed ? CGPoint(x: c + h, y: 0) : CGPoint(x: c + h * 0.85, y: -0.75 * u))
+            path.addLine(to: element.closed ? CGPoint(x: c + h, y: -0.2 * u) : CGPoint(x: c + h * 0.85, y: -0.75 * u))
         case .pushButton:
             let bar: CGFloat = element.closed ? -0.15 * u : -0.55 * u
             path.move(to: CGPoint(x: c - h, y: bar))
@@ -255,7 +247,7 @@ enum SymbolRenderer {
         case .toggleSwitch, .pushButton:
             for (x, color) in [(c - h, colorA), (c + h, colorB)] {
                 ctx.setFillColor(color.cgColor)
-                let r = max(1.5, 0.12 * u)
+                let r = max(2, 0.18 * u)
                 ctx.fillEllipse(in: CGRect(x: x - r, y: -r, width: 2 * r, height: 2 * r))
             }
         case .memristor:
@@ -266,9 +258,29 @@ enum SymbolRenderer {
         }
         ctx.restoreGState()
 
+        let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+        if kind == .acVoltage || kind == .squareVoltage {
+            // the waveform stays upright whatever the source's direction
+            let glyph = CGMutablePath()
+            if kind == .acVoltage {
+                for i in 0...24 {
+                    let t = CGFloat(i) / 24
+                    let point = CGPoint(x: mid.x - 0.5 * u + t * u, y: mid.y - 0.28 * u * sin(2 * .pi * t))
+                    if i == 0 { glyph.move(to: point) } else { glyph.addLine(to: point) }
+                }
+            } else {
+                let wave: [(CGFloat, CGFloat)] = [(-0.45, 0.25), (-0.45, -0.25), (0, -0.25), (0, 0.25), (0.45, 0.25), (0.45, -0.25)]
+                glyph.addLines(between: wave.map { CGPoint(x: mid.x + $0.0 * u, y: mid.y + $0.1 * u) })
+            }
+            ctx.addPath(glyph)
+            ctx.setStrokeColor(colorA.mixed(with: colorB, 0.5).cgColor)
+            ctx.setLineWidth(style.lineWidth)
+            ctx.setLineJoin(.round)
+            ctx.setLineCap(.round)
+            ctx.strokePath()
+        }
         if kind == .probe {
             // the letter stays upright whatever the probe's direction
-            let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             let v = CGMutablePath()
             v.move(to: CGPoint(x: mid.x - 0.25 * u, y: mid.y - 0.3 * u))
             v.addLine(to: CGPoint(x: mid.x, y: mid.y + 0.3 * u))

@@ -70,6 +70,12 @@ final class CircuitCanvasView: NSView {
         if editor.simulation.isRunning || drag != nil { needsDisplay = true }
     }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // keep the circuit fitted (for example when scopes appear below) until the user moves the view
+        if !editor.viewAdjusted { lastFitRequest = -1 }
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         for area in trackingAreas { removeTrackingArea(area) }
@@ -101,7 +107,8 @@ final class CircuitCanvasView: NSView {
             editor.pan = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
             return
         }
-        let width = CGFloat(box.max.x - box.min.x + 6) * EditorState.gridSize
+        // room around the parts for their labels
+        let width = CGFloat(box.max.x - box.min.x + 10) * EditorState.gridSize
         let height = CGFloat(box.max.y - box.min.y + 6) * EditorState.gridSize
         let zoom = min(2.5, max(0.4, min(bounds.width / width, bounds.height / height)))
         editor.zoom = zoom
@@ -471,6 +478,7 @@ final class CircuitCanvasView: NSView {
             }
             if selected != editor.selection { editor.selection = selected }
         case .panning(let last)?:
+            editor.viewAdjusted = true
             editor.pan = CGPoint(x: editor.pan.x + point.x - last.x, y: editor.pan.y + point.y - last.y)
             drag = .panning(last: point)
         case .pressing?, nil:
@@ -532,6 +540,7 @@ final class CircuitCanvasView: NSView {
             editor.changeZoom(by: exp(-event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 0.01 : 0.1)), around: location(event))
         } else {
             let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+            editor.viewAdjusted = true
             editor.pan = CGPoint(x: editor.pan.x + event.scrollingDeltaX * scale, y: editor.pan.y + event.scrollingDeltaY * scale)
         }
         needsDisplay = true
