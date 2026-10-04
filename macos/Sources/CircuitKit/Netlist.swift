@@ -167,6 +167,18 @@ public enum NetlistExtractor {
                 if let given = circuit.netNames["\(element.name).\(element.kind.terminalNames[t])"] { name(node, given) }
             }
         }
+        // supplies without a name are named after their voltage, like "+9V"
+        for (i, element) in circuit.elements.enumerated() where element.kind == .dcVoltage {
+            let nodes = simulator.nodes(of: i)
+            guard nodes.count == 2 else { continue }
+            let volts = element[param: "voltage"]
+            let size = SI.trimmed(abs(volts), digits: 3)
+            if nodes[0] == 0 && nodes[1] != 0 {
+                name(nodes[1], (volts >= 0 ? "+" : "-") + size + "V")
+            } else if nodes[1] == 0 && nodes[0] != 0 {
+                name(nodes[0], (volts >= 0 ? "-" : "+") + size + "V")
+            }
+        }
         let labelled = Set(circuit.elements.enumerated().filter { $0.element.kind == .netLabel || $0.element.kind == .ground }
             .compactMap { simulator.nodes(of: $0.offset).first })
         var counter = 1

@@ -323,6 +323,15 @@ final class CircuitCanvasView: NSView {
                 let points = element.extentPoints.map(screen)
                 anchor = CGPoint(x: (points.map(\.x).min()! + points.map(\.x).max()!) / 2, y: points.map(\.y).min()! - 0.4 * unit)
                 horizontal = true
+            } else if element.kind == .opAmp || element.kind == .ota {
+                // below the triangle when a feedback part arches over it
+                let left = min(element.a.x, element.b.x)
+                let right = max(element.a.x, element.b.x)
+                otherSide = circuit.elements.contains { other in
+                    other.id != element.id && (other.posts + [other.a, other.b]).contains { p in
+                        p.x >= left && p.x <= right && p.y <= element.a.y - 2 && p.y >= element.a.y - 4
+                    }
+                }
             } else if element.kind == .potentiometer || element.kind == .analogSwitch {
                 let wiper = screen(element.wiper)
                 otherSide = horizontal ? wiper.y < anchor.y : wiper.x > anchor.x

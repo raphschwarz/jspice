@@ -34,9 +34,11 @@ A native macOS circuit simulator in the spirit of iCircuit and the Falstad apple
 
 ## AI control (MCP)
 
-JSpice comes with an MCP server, so an AI agent such as Claude can design, simulate and measure circuits: a physics harness for analog design. The agent describes a circuit as a netlist (parts, models and the nets their terminals join), and JSpice lays it out as a schematic, simulates it and reports waveforms, measurements and frequency responses.
+JSpice comes with an MCP server, so an AI agent such as Claude can design, simulate and measure circuits: a physics harness for analog design. The agent describes a circuit as a netlist (parts, models and the nets their terminals join), and JSpice draws it as a tidy schematic, simulates it and reports waveforms, measurements and frequency responses.
 
-Tools: `list_parts`, `list_examples`, `load_example`, `new_circuit`, `build_circuit` (from a netlist), `add_part`, `add_wire`, `remove_part`, `set_parameter`, `set_model`, `set_switch`, `describe_circuit`, `simulate` (waveforms with min, max, mean, RMS, peak-to-peak and frequency for probes like `V(out)`, `I(R1)`, `V(U1.out)`), `measure`, `frequency_response` (gain and phase from a source to a probe), `save_circuit`, `open_circuit`.
+Circuits are drawn the way a person would: the signal flows from left to right with the main path on straight lines, sources on the left, parts to ground hanging below the line with ground symbols, pull-ups standing above it, feedback arching over its op-amp, an oscillator's loop returning along the bottom, supply rails as flags (`+12V`, `VCC`), and real wires routed around the parts, with junction dots and few bends or crossings. **Circuit ▸ Tidy Up** (⌥⌘T, or the `tidy_up` tool) redraws any circuit, hand-drawn ones included, the same way, keeping every connection.
+
+Tools: `list_parts`, `list_examples`, `load_example`, `new_circuit`, `build_circuit` (from a netlist), `add_part`, `add_wire`, `remove_part`, `tidy_up`, `set_parameter`, `set_model`, `set_switch`, `describe_circuit`, `simulate` (waveforms with min, max, mean, RMS, peak-to-peak and frequency for probes like `V(out)`, `I(R1)`, `V(U1.out)`), `measure`, `frequency_response` (gain and phase from a source to a probe), `save_circuit`, `open_circuit`.
 
 To connect Claude:
 
@@ -82,6 +84,7 @@ open build/JSpice.app
 | `⌘R` | rotate the selection |
 | `F` or `⇧⌘R` | flip the selected transistors, op-amps and potentiometers |
 | `⇧⌘E` | export the schematic as an image |
+| `⌥⌘T` | tidy up: redraw the circuit as a neat schematic |
 | `Delete` | delete the selection |
 | `⌘C` `⌘X` `⌘V` `⌘A` | copy, cut, paste, select all |
 | scroll, `⌘` + scroll, pinch | pan, zoom, zoom |
