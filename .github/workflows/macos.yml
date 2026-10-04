@@ -54,7 +54,8 @@ jobs:
           sed -n '/Sort by top of stack/,$p' build/profile.txt | head -45
       - name: Test the simulation engine
         timeout-minutes: 15
-        run: swift test
+        # optimised, as the app runs it: audio-rate tests take minutes in a debug build
+        run: swift test -c release -Xswiftc -enable-testing
       - name: Interaction test (draws a circuit with synthesized mouse events)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: ./build/JSpice.app/Contents/MacOS/JSpice --self-test "$PWD/build/screenshots"

@@ -138,28 +138,31 @@ public enum Examples {
             NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 5], connections: ["plus": "tri", "minus": "GND"]),
         ], scopes: [("KB1", .voltage), ("SPK1", .voltage)]))
 
-    /// The keyboard VCO through an OTA VCA whose bias current follows an envelope: the gate charges CENV through D1 and
-    /// RATT (attack), RREL pulls it back down to −15 V when the key is let go (release), and RBIAS turns its voltage into
-    /// the VCA's bias current, which is zero once the envelope is below the bias pin.
+    /// The keyboard VCO's square wave through an OTA VCA whose bias current follows an envelope: while a key is held, the
+    /// gate closes S1 and charges CENV from the gate through RATT (attack); when the key is let go, S1 opens and RREL
+    /// pulls the envelope down to −15 V (release). RBIAS turns the envelope into the VCA's bias current, which is zero
+    /// once the envelope is below the bias pin, two junctions above −15 V.
     static let monoSynth = Example(
         id: "synth", title: "Mono synth: VCO, envelope and VCA",
-        summary: "A playable synth voice: the keyboard VCO, an attack–release envelope from the gate, and an LM13700 VCA. Turn on sound and play with A–; (or a MIDI keyboard).",
+        summary: "A playable synth voice: the keyboard VCO's square wave, an attack–release envelope from the gate, and an LM13700 VCA. Turn on sound and play with A–; (or a MIDI keyboard).",
         symbol: "pianokeys.inverse",
         circuit: drawn(vcoParts + [
             NetlistPart(kind: .keyboardGate, name: "KB2", params: ["high": 10], connections: ["plus": "gate", "minus": "GND"]),
             NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": 15], connections: ["plus": "GND", "minus": "-15V"]),
-            NetlistPart(kind: .diode, name: "D1", connections: ["anode": "gate", "cathode": "att"]),
-            NetlistPart(kind: .resistor, name: "RATT", params: ["resistance": 2200], connections: ["a": "att", "b": "env"]),
-            NetlistPart(kind: .capacitor, name: "CENV", params: ["capacitance": 4.7e-6, "initialVoltage": -14],
+            NetlistPart(kind: .resistor, name: "RATT", params: ["resistance": 2200], connections: ["a": "gate", "b": "att"]),
+            NetlistPart(kind: .analogSwitch, name: "S1", params: model(.analogSwitch, "DG411"),
+                        connections: ["a": "att", "b": "env", "control": "gate"]),
+            NetlistPart(kind: .capacitor, name: "CENV", params: ["capacitance": 4.7e-6, "initialVoltage": -15],
                         connections: ["a": "env", "b": "GND"]),
             NetlistPart(kind: .resistor, name: "RREL", params: ["resistance": 220_000], connections: ["a": "env", "b": "-15V"]),
             NetlistPart(kind: .resistor, name: "RBIAS", params: ["resistance": 33_000], connections: ["a": "env", "b": "iabc2"]),
-            NetlistPart(kind: .resistor, name: "RIN", params: ["resistance": 100_000], connections: ["a": "tri", "b": "vin"]),
-            NetlistPart(kind: .resistor, name: "RIN2", params: ["resistance": 220], connections: ["a": "vin", "b": "GND"]),
+            // the comparator's square wave, divided down to ±29 mV for the OTA's input
+            NetlistPart(kind: .resistor, name: "RIN", params: ["resistance": 470_000], connections: ["a": "sq", "b": "vin"]),
+            NetlistPart(kind: .resistor, name: "RIN2", params: ["resistance": 1000], connections: ["a": "vin", "b": "GND"]),
             NetlistPart(kind: .ota, name: "U4", params: model(.ota, "LM13700"),
                         connections: ["minus": "GND", "plus": "vin", "out": "out", "bias": "iabc2"]),
             NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
-            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 1.5], connections: ["plus": "out", "minus": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 4], connections: ["plus": "out", "minus": "GND"]),
         ], scopes: [("CENV", .voltage), ("SPK1", .voltage)]))
 
     /// Parameter values of one of the part's models, by name
