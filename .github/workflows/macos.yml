@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: macos
@@ -42,3 +44,12 @@ jobs:
         with:
           name: screenshots
           path: macos/build/screenshots
+      # artifacts need a browser login to download, so the screenshots are also kept on a branch for easy viewing
+      - name: Publish screenshots to the ci/macos-screenshots branch
+        if: always() && github.event_name == 'push' && hashFiles('macos/build/screenshots/*.png') != ''
+        working-directory: macos/build/screenshots
+        run: |
+          git init -q -b screenshots
+          git add -- *.png
+          git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" commit -q -m "Screenshots of ${GITHUB_SHA}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" screenshots:ci/macos-screenshots
