@@ -24,6 +24,10 @@ A native macOS circuit simulator in the spirit of iCircuit and the Falstad apple
 
 ![Memristor hysteresis with an I–V curve scope](docs/memristor.png)
 
+![Triangle and square LFO with two TL072 op-amps](docs/lfo.png)
+
+![Sample and hold: a CD4066 switch and a TL072 buffer](docs/sample-hold.png)
+
 ![Op-amp amplifier](docs/opamp.png)
 
 ![Light dimmer with a potentiometer and an NPN transistor](docs/dimmer.png)
