@@ -29,6 +29,9 @@ jobs:
       - name: Package JSpice.app
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: ./scripts/bundle.sh
+      - name: Interaction test (draws a circuit with synthesized mouse events)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        run: ./build/JSpice.app/Contents/MacOS/JSpice --self-test "$PWD/build/screenshots"
       - name: Render screenshots
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: ./build/JSpice.app/Contents/MacOS/JSpice --screenshots "$PWD/build/screenshots"

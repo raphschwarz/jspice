@@ -27,10 +27,10 @@ enum ScreenshotRunner {
         Shot(name: "7-new-light", example: nil, dark: false, seconds: 0.5),
     ]
 
-    static func run(outputDirectory: String) {
+    static func run(outputDirectory: String, selfTest: Bool) {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
-        let delegate = Delegate(output: URL(fileURLWithPath: outputDirectory, isDirectory: true))
+        let delegate = Delegate(output: URL(fileURLWithPath: outputDirectory, isDirectory: true), selfTest: selfTest)
         self.delegate = delegate
         app.delegate = delegate
         app.run()
@@ -38,13 +38,19 @@ enum ScreenshotRunner {
 
     private final class Delegate: NSObject, NSApplicationDelegate {
         let output: URL
+        let selfTest: Bool
 
-        init(output: URL) {
+        init(output: URL, selfTest: Bool) {
             self.output = output
+            self.selfTest = selfTest
         }
 
         func applicationDidFinishLaunching(_ notification: Notification) {
             Task { @MainActor in
+                if selfTest {
+                    let passed = await InteractionTest.run(screenshots: output)
+                    exit(passed ? 0 : 1)
+                }
                 await ScreenshotRunner.capture(to: output)
                 NSApp.terminate(nil)
             }
@@ -80,20 +86,12 @@ enum ScreenshotRunner {
 
             // let it lay out and simulate in real time
             try? await Task.sleep(nanoseconds: UInt64((shot.seconds + 1) * 1_000_000_000))
-            save(window, to: directory.appendingPathComponent("\(shot.name).png"))
+            InteractionTest.capture(window, to: directory.appendingPathComponent("\(shot.name).png"))
             window.orderOut(nil)
             window.close()
         }
     }
 
-    /// Captures the window as the window server shows it (drawing the view hierarchy offscreen leaves out AppKit controls)
-    private static func save(_ window: NSWindow, to url: URL) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", "-o", "-l\(window.windowNumber)", url.path]
-        try? process.run()
-        process.waitUntilExit()
-    }
 }
 
 /// `JSpice --render-icon <directory>` writes the app icon as an .iconset folder for `iconutil`.

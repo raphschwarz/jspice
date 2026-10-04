@@ -8,7 +8,11 @@ enum Launcher {
     static func main() {
         let arguments = CommandLine.arguments
         if let i = arguments.firstIndex(of: "--screenshots"), i + 1 < arguments.count {
-            ScreenshotRunner.run(outputDirectory: arguments[i + 1])
+            ScreenshotRunner.run(outputDirectory: arguments[i + 1], selfTest: false)
+            return
+        }
+        if let i = arguments.firstIndex(of: "--self-test"), i + 1 < arguments.count {
+            ScreenshotRunner.run(outputDirectory: arguments[i + 1], selfTest: true)
             return
         }
         if let i = arguments.firstIndex(of: "--render-icon"), i + 1 < arguments.count {
