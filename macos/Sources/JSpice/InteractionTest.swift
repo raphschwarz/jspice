@@ -96,8 +96,26 @@ enum InteractionTest {
         let moved = document.circuit[resistorID]
         check(moved?.a == GridPoint(0, -2) && moved?.b == GridPoint(4, -2), "dragging moves the selected part")
         check(elements(.wire).contains { $0.a == GridPoint(4, -2) && $0.b == GridPoint(4, 4) }, "a wire attached to a moved part stretches")
+        print("      undo manager: canUndo=\(undo.canUndo) action='\(undo.undoActionName)' level=\(undo.groupingLevel) " +
+              "registration=\(undo.isUndoRegistrationEnabled) byEvent=\(undo.groupsByEvent) isWindows=\(undo === window.undoManager)")
         await undoLast()
+        print("      after undo: canRedo=\(undo.canRedo) resistor at \(String(describing: document.circuit[resistorID]?.a))")
         check(document.circuit[resistorID]?.a == GridPoint(0, 0), "undo puts the part back")
+
+        // the same, with an undo manager of our own and explicit groups, to tell the editor's undo logic apart from
+        // the hosting window's
+        let own = UndoManager()
+        own.groupsByEvent = false
+        editor.undoManager = own
+        editor.selection = [resistorID]
+        own.beginUndoGrouping()
+        editor.rotateSelection()
+        own.endUndoGrouping()
+        let rotated = document.circuit[resistorID]
+        own.undo()
+        check(rotated?.a != GridPoint(0, 0) && document.circuit[resistorID]?.a == GridPoint(0, 0) && document.circuit[resistorID]?.b == GridPoint(4, 0),
+              "the editor's undo logic restores a rotated part")
+        editor.undoManager = undo
 
         // delete with the keyboard, then undo
         editor.selection = [resistorID]
