@@ -15,7 +15,7 @@ public final class Simulator {
     public private(set) var problems: [String] = []
     /// True when the equations cannot be solved; stepping stops until the circuit changes
     public private(set) var isFailed = false
-    /// Steps at which Newton-Raphson did not converge, even split into shorter steps (the step is accepted anyway)
+    /// Steps at which Newton-Raphson did not converge, even with gmin stepping (the step is accepted anyway)
     public private(set) var convergenceFailures = 0
 
     var topology = Topology()
@@ -44,14 +44,16 @@ public final class Simulator {
     private var hasNonlinear = false
     private var hasMemristor = false
     private var stepCarry = 0.0
+    /// Extra conductance across every junction while gmin stepping, otherwise zero
+    private var junctionConductance = 0.0
     private var traces: [UUID: ScopeTrace] = [:]
 
     static let thermalVoltage = 0.025852
     static let gmin = 1e-12
     static let maxNewtonIterations = 80
-    /// A step that does not converge is retried as this many shorter steps
-    static let substeps = 10
-    static let maxSubdivisions = 2
+    /// Junction shunts for gmin stepping, strongest first, ending without any
+    static let steppedConductances: [Double] = [1e-2, 1e-4, 1e-6, 1e-8, 1e-10, 0]
+    static let steppedIterations = 40
     static let transistorSaturationCurrent = 1e-14
     /// Reverse current of a Zener diode at its breakdown voltage
     static let zenerKneeCurrent = 5e-3
@@ -200,68 +202,68 @@ public final class Simulator {
     /// One time step
     public func step() {
         guard !isFailed else { return }
-        takeStep(depth: 0)
-    }
-
-    /// Solves one step; when Newton-Raphson does not converge (a sudden switching event, say), retries it as ten
-    /// shorter steps, which follow the event more closely, down to two levels
-    private func takeStep(depth: Int) {
-        let saved = (x, limitedVoltage, limitedVoltage2)
         let t = time + timeStep
         let converged = solve(at: t)
         if isFailed { return }
-        if converged || depth >= Self.maxSubdivisions {
-            if !converged { convergenceFailures += 1 }
-            finishStep(at: t)
-            return
-        }
-        (x, limitedVoltage, limitedVoltage2) = saved
-        let full = timeStep
-        setTimeStep(full / Double(Self.substeps))
-        for _ in 0..<Self.substeps where !isFailed {
-            takeStep(depth: depth + 1)
-        }
-        setTimeStep(full)
+        if !converged { convergenceFailures += 1 }
+        finishStep(at: t)
     }
 
-    /// Solves the circuit equations for time `t` into `x`; false if Newton-Raphson did not converge
+    /// Solves the circuit equations for time `t` into `x`; false if Newton-Raphson did not converge.
+    ///
+    /// When it does not converge, the circuit has usually snapped from one state to another, like the two transistors of
+    /// a flip-flop changing over: the solution has jumped far from the last one, out of Newton's reach. Then the
+    /// junctions are temporarily shunted with conductances strong enough to leave the circuit a single, easily found
+    /// solution, and the shunts are stepped down to nothing, each solution leading Newton to the next (gmin stepping).
     private func solve(at t: Double) -> Bool {
         let m = topology.matrixSize
         guard m > 0 else { return true }
         if !matrixIsCurrent { buildBaseMatrix() }
         if isFailed { return false }
         let rhs = buildRightHandSide(at: t)
-        var converged = false
         if !hasNonlinear && !hasMemristor {
             guard let lu = baseLU else { fail(); return false }
             x = lu.solve(rhs)
-            converged = true
-        } else {
-            for iteration in 0..<Self.maxNewtonIterations {
-                var matrix = baseMatrix
-                var b = rhs
-                stampMemristors(&matrix, m)
-                if hasNonlinear { stampNonlinear(&matrix, &b, m) }
-                guard let lu = LUSolver(matrix: matrix, size: m) else { fail(); return false }
-                let next = lu.solve(b)
-                if !hasNonlinear {
-                    x = next
-                    converged = true
-                    break
-                }
-                var change = 0.0
-                for k in 0..<m {
-                    change = max(change, abs(next[k] - x[k]) / (1 + abs(next[k])))
-                }
-                x = next
-                if iteration > 0 && change < 1e-9 {
-                    converged = true
-                    break
-                }
-            }
+            if x.contains(where: { !$0.isFinite }) { fail(); return false }
+            return true
         }
-        if x.contains(where: { !$0.isFinite }) { fail(); return false }
-        return converged
+        let start = (x, limitedVoltage, limitedVoltage2)
+        junctionConductance = 0
+        if newton(rhs, iterations: Self.maxNewtonIterations) || isFailed || !hasNonlinear { return !isFailed }
+        (x, limitedVoltage, limitedVoltage2) = start
+        var converged = false
+        for conductance in Self.steppedConductances {
+            junctionConductance = conductance
+            converged = newton(rhs, iterations: Self.steppedIterations)
+            if isFailed { break }
+        }
+        junctionConductance = 0
+        return converged && !isFailed
+    }
+
+    /// Newton-Raphson from the present `x`; true when it converged
+    private func newton(_ rhs: [Double], iterations: Int) -> Bool {
+        let m = topology.matrixSize
+        for iteration in 0..<iterations {
+            var matrix = baseMatrix
+            var b = rhs
+            stampMemristors(&matrix, m)
+            if hasNonlinear { stampNonlinear(&matrix, &b, m) }
+            guard let lu = LUSolver(matrix: matrix, size: m) else { fail(); return false }
+            let next = lu.solve(b)
+            if next.contains(where: { !$0.isFinite }) { fail(); return false }
+            if !hasNonlinear {
+                x = next
+                return true
+            }
+            var change = 0.0
+            for k in 0..<m {
+                change = max(change, abs(next[k] - x[k]) / (1 + abs(next[k])))
+            }
+            x = next
+            if iteration > 0 && change < 1e-9 { return true }
+        }
+        return false
     }
 
     private func finishStep(at t: Double) {
@@ -515,7 +517,9 @@ public final class Simulator {
                 let critical = nvt * log(nvt / (sqrt(2) * saturation))
                 let vd = limitJunction(voltage(nodes[0]) - voltage(nodes[1]), old: limitedVoltage[i], nvt: nvt, critical: critical)
                 limitedVoltage[i] = vd
-                let (id, gd) = diodeCurrent(vd, saturation: saturation, nvt: nvt)
+                var (id, gd) = diodeCurrent(vd, saturation: saturation, nvt: nvt)
+                id += junctionConductance * vd
+                gd += junctionConductance
                 stampConductance(&matrix, m, nodes[0], nodes[1], gd)
                 stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
 
@@ -534,7 +538,9 @@ public final class Simulator {
                     vd = -reverse - breakdown
                 }
                 limitedVoltage[i] = vd
-                let (id, gd) = zenerCurrent(vd, breakdown: breakdown)
+                var (id, gd) = zenerCurrent(vd, breakdown: breakdown)
+                id += junctionConductance * vd
+                gd += junctionConductance
                 stampConductance(&matrix, m, nodes[0], nodes[1], gd)
                 stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
 
@@ -548,7 +554,16 @@ public final class Simulator {
                 let vbc = limitJunction(p * (voltage(base) - voltage(collector)), old: limitedVoltage2[i], nvt: vt, critical: critical)
                 limitedVoltage[i] = vbe
                 limitedVoltage2[i] = vbc
-                let model = bipolarCurrents(vbe: vbe, vbc: vbc, beta: max(element[param: "beta"], 1))
+                var model = bipolarCurrents(vbe: vbe, vbc: vbc, beta: max(element[param: "beta"], 1))
+                if junctionConductance > 0 {
+                    // shunts across both junctions: base to emitter and base to collector
+                    let g = junctionConductance
+                    model.ib += g * (vbe + vbc)
+                    model.dibVbe += g
+                    model.dibVbc += g
+                    model.ic -= g * vbc
+                    model.dicVbc -= g
+                }
                 // real currents and junction voltages: currents and voltages flip sign for PNP, derivatives do not
                 let realVbe = p * vbe
                 let realVbc = p * vbc
@@ -584,9 +599,12 @@ public final class Simulator {
                     vgs = vgs - vds
                     vds = -vds
                 }
-                let model = mosfetCurrent(vgs: polarity * vgs, vds: polarity * vds,
-                                          threshold: element[param: "threshold"], beta: element[param: "beta"])
-                let ids = polarity * model.id
+                let mosfetModel = mosfetCurrent(vgs: polarity * vgs, vds: polarity * vds,
+                                                threshold: element[param: "threshold"], beta: element[param: "beta"])
+                var model = mosfetModel
+                // a shunt from drain to source while gmin stepping
+                model.gds += junctionConductance
+                let ids = polarity * mosfetModel.id + junctionConductance * vds
                 let equivalent = ids - model.gm * vgs - model.gds * vds
                 let d = drain - 1
                 let s = source - 1

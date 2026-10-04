@@ -357,25 +357,19 @@ final class SimulatorTests: XCTestCase {
         var switches = 0
         var wasOn: Bool?
         var time = 0.0
-        var failureTimes: [Double] = []
         while time < 4 {
-            let failures = simulator.convergenceFailures
             simulator.step()
             time += pacing.timeStep
-            if simulator.convergenceFailures > failures && failureTimes.count < 12 {
-                failureTimes.append(time)
-                let probe = simulator.circuit.elements.indices.map { simulator.terminalVoltages($0) }
-                print("blinker: no convergence at t = \(time), dt = \(pacing.timeStep), voltages \(probe.filter { $0.count == 3 })")
-            }
             guard time > 0.5 else { continue }
             let on = simulator.brightness(led) > 0.5
             if let wasOn, wasOn != on { switches += 1 }
             wasOn = on
         }
-        // about 0.7 s per cycle: some 9 to 12 changes in 3.5 s
-        XCTAssertGreaterThanOrEqual(switches, 6, "the LED should keep blinking")
-        XCTAssertLessThanOrEqual(switches, 20)
-        XCTAssertLessThan(simulator.convergenceFailures, 10)
+        // about 0.6 s per cycle (each base recharges from -6.3 V to 0.7 V through ~50 kΩ and 10 µF): some 11 changes in
+        // 3.5 s. The changeovers need gmin stepping, after which every step converges.
+        XCTAssertGreaterThanOrEqual(switches, 8, "the LED should keep blinking")
+        XCTAssertLessThanOrEqual(switches, 14)
+        XCTAssertEqual(simulator.convergenceFailures, 0)
     }
 
     func testIVScopeTracesAPinchedLoop() {
