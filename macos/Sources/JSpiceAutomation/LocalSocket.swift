@@ -99,6 +99,19 @@ public enum LocalSocket {
         }
     }
 
+    /// Reads a single line, or nil if the other side closes first
+    public static func readLine(_ fd: Int32) -> String? {
+        var bytes: [UInt8] = []
+        var byte: UInt8 = 0
+        while true {
+            let count = read(fd, &byte, 1)
+            if count < 0 && errno == EINTR { continue }
+            if count <= 0 { return nil }
+            if byte == 10 { return String(decoding: bytes, as: UTF8.self) }
+            bytes.append(byte)
+        }
+    }
+
     /// Writes one line; false if the other side has gone
     @discardableResult
     public static func write(_ fd: Int32, _ line: String) -> Bool {

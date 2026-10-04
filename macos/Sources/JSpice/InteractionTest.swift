@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import CircuitKit
+import JSpiceAutomation
 
 /// `JSpice --self-test <directory>` drives a real window with synthesized mouse and keyboard events: it draws a circuit by
 /// hand, checks that it simulates, moves, deletes and undoes, and operates a switch. It exits with status 1 on any failure.
@@ -159,6 +160,36 @@ enum InteractionTest {
         check(document.circuit[switchElement.id]?.closed == false, "clicking a switch opens it")
         let brightnessAfter = index(of: led).map { editor.simulation.simulator.brightness($0) } ?? 1
         check(brightnessAfter < 0.01, "opening the switch turns the LED off")
+
+        // AI control: an MCP tool call over the app's socket, as jspice-mcp sends it, edits the front window
+        AutomationBridge.shared.start()
+        EditorRegistry.active = editor
+        let request = #"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"build_circuit","arguments":{"parts":["#
+            + #"{"kind":"dcVoltage","name":"VS","params":{"voltage":"12"},"connections":{"plus":"top","minus":"GND"}},"#
+            + #"{"kind":"resistor","name":"RA","params":{"resistance":"10k"},"connections":{"a":"top","b":"mid"}},"#
+            + #"{"kind":"resistor","name":"RB","params":{"resistance":"20k"},"connections":{"a":"mid","b":"GND"}}]}}}"#
+        let socketPath = LocalSocket.defaultPath
+        // the edit arrives on the main thread while this waits; group it as one undo step, as the app's event loop does
+        undo.beginUndoGrouping()
+        let reply = await Task.detached { () -> String? in
+            guard let fd = LocalSocket.connect(to: socketPath) else { return nil }
+            defer { close(fd) }
+            guard LocalSocket.write(fd, request) else { return nil }
+            return LocalSocket.readLine(fd)
+        }.value
+        undo.endUndoGrouping()
+        check(reply?.contains("\"isError\":false") ?? false, "an MCP tool call over the app's socket succeeds (\(reply.map { String($0.prefix(120)) } ?? "no reply"))")
+        check(document.circuit.elements.contains { $0.name == "RA" } && document.circuit.elements.contains { $0.kind == .netLabel && $0.name == "mid" },
+              "the agent's circuit appears in the window")
+        await pause(0.6)
+        if let divider = document.circuit.elements.first(where: { $0.kind == .netLabel && $0.name == "mid" }),
+           let index = editor.simulation.simulator.circuit.index(of: divider.id) {
+            check(abs(editor.simulation.simulator.voltageAcross(index) - 8) < 0.01, "and simulates: the divider gives 8 V")
+        }
+        capture(window, to: directory.appendingPathComponent("19-built-by-agent.png"))
+        await undoLast()
+        check(!document.circuit.elements.contains { $0.name == "RA" }, "undo takes back the agent's change")
+        AutomationBridge.shared.stop()
 
         return finish(window)
     }
