@@ -1,3 +1,7 @@
+## JSpice for Mac
+
+A native macOS app with a drag-and-draw schematic editor and live, real-time simulation (like iCircuit or Falstad) is in [`macos/`](macos/README.md).
+
 ## Introduction
 
 JSpice is a SPICE-inspired analog circuit simulator made in Java with an emphasis on simulating memristors and analog circuits containing memristors. 
