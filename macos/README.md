@@ -17,7 +17,11 @@ A native macOS circuit simulator in the spirit of iCircuit and the Falstad apple
 
 ![CMOS inverter in dark mode](docs/cmos-dark.png)
 
-![Memristor hysteresis with scopes](docs/memristor.png)
+![Memristor hysteresis with an I–V curve scope](docs/memristor.png)
+
+![Op-amp amplifier](docs/opamp.png)
+
+![Light dimmer with a potentiometer and an NPN transistor](docs/dimmer.png)
 
 ## Install
 
