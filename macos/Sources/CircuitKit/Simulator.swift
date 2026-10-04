@@ -230,6 +230,7 @@ public final class Simulator {
         let start = (x, limitedVoltage, limitedVoltage2)
         junctionConductance = 0
         if newton(rhs, iterations: Self.maxNewtonIterations) || isFailed || !hasNonlinear { return !isFailed }
+        let firstTry = (x, limitedVoltage, limitedVoltage2)
         (x, limitedVoltage, limitedVoltage2) = start
         var converged = false
         for conductance in Self.steppedConductances {
@@ -238,6 +239,8 @@ public final class Simulator {
             if isFailed { break }
         }
         junctionConductance = 0
+        // if that failed too, the first try is the better guess to carry on from
+        if !converged && !isFailed { (x, limitedVoltage, limitedVoltage2) = firstTry }
         return converged && !isFailed
     }
 
@@ -442,9 +445,11 @@ public final class Simulator {
         return nvt * log(new / nvt)
     }
 
+    /// Current and conductance of a junction, with a tiny leak in parallel. The current must include the leak whenever the
+    /// conductance does: if they disagree, Newton-Raphson only creeps towards the solution.
     func diodeCurrent(_ vd: Double, saturation: Double, nvt: Double) -> (current: Double, conductance: Double) {
         let e = exp(min(vd / nvt, 700))
-        return (saturation * (e - 1), saturation * e / nvt + Self.gmin)
+        return (saturation * (e - 1) + Self.gmin * vd, saturation * e / nvt + Self.gmin)
     }
 
     /// A Zener diode: an ordinary forward junction, plus a reverse current that rises steeply past the breakdown voltage
@@ -455,16 +460,18 @@ public final class Simulator {
         return (forward.current - reverse, forward.conductance + reverse / Self.thermalVoltage)
     }
 
-    /// Level-1 (Shichman-Hodges) MOSFET for positive vgs/vds: drain current and its derivatives
+    /// Level-1 (Shichman-Hodges) MOSFET for positive vgs/vds: drain current and its derivatives. A 1 nS leak from drain
+    /// to source keeps a switched-off transistor's drain from floating; it is in the current as well as in its slope.
     func mosfetCurrent(vgs: Double, vds: Double, threshold: Double, beta: Double) -> (id: Double, gm: Double, gds: Double) {
         let lambda = 0.01
+        let leak = 1e-9
         let overdrive = vgs - threshold
-        if overdrive <= 0 { return (0, 0, 1e-9) }
+        if overdrive <= 0 { return (leak * vds, 0, leak) }
         if vds < overdrive {
-            return (beta * (overdrive * vds - vds * vds / 2), beta * vds, beta * (overdrive - vds) + 1e-9)
+            return (beta * (overdrive * vds - vds * vds / 2) + leak * vds, beta * vds, beta * (overdrive - vds) + leak)
         }
-        let id = beta / 2 * overdrive * overdrive * (1 + lambda * vds)
-        return (id, beta * overdrive * (1 + lambda * vds), beta / 2 * overdrive * overdrive * lambda + 1e-9)
+        let id = beta / 2 * overdrive * overdrive * (1 + lambda * vds) + leak * vds
+        return (id, beta * overdrive * (1 + lambda * vds), beta / 2 * overdrive * overdrive * lambda + leak)
     }
 
     struct BipolarModel {
@@ -486,7 +493,7 @@ public final class Simulator {
         return BipolarModel(
             ic: ic, ib: ib,
             dicVbe: saturation * f / vt, dicVbc: -saturation * r / vt - saturation / reverseBeta * r / vt,
-            dibVbe: saturation / beta * f / vt + Self.gmin, dibVbc: saturation / reverseBeta * r / vt + Self.gmin)
+            dibVbe: saturation / beta * f / vt, dibVbc: saturation / reverseBeta * r / vt)
     }
 
     /// The op-amp's output for a differential input: the gain, levelling off smoothly at the output limit
