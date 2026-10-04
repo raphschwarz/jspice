@@ -38,7 +38,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
 
 public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case wire, ground, netLabel, resistor, potentiometer, lamp, capacitor, inductor
-    case dcVoltage, acVoltage, squareVoltage, currentSource, keyboardPitch, keyboardGate
+    case dcVoltage, acVoltage, squareVoltage, noiseVoltage, currentSource, keyboardPitch, keyboardGate
     case toggleSwitch, pushButton
     case diode, zener, led, npn, pnp, nmos, pmos, njfet
     case opAmp, ota
@@ -118,6 +118,7 @@ extension ElementKind {
         case .dcVoltage: return "DC Voltage"
         case .acVoltage: return "AC Voltage"
         case .squareVoltage: return "Square Wave"
+        case .noiseVoltage: return "Noise"
         case .currentSource: return "Current Source"
         case .keyboardPitch: return "Keyboard Pitch"
         case .keyboardGate: return "Keyboard Gate"
@@ -152,7 +153,7 @@ extension ElementKind {
         case .lamp: return "LMP"
         case .capacitor: return "C"
         case .inductor: return "L"
-        case .dcVoltage, .acVoltage, .squareVoltage: return "V"
+        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage: return "V"
         case .currentSource: return "I"
         case .keyboardPitch: return "CV"
         case .keyboardGate: return "GATE"
@@ -172,7 +173,7 @@ extension ElementKind {
     public var category: ElementCategory {
         switch self {
         case .wire, .ground, .netLabel, .resistor, .potentiometer, .lamp, .capacitor, .inductor: return .basics
-        case .dcVoltage, .acVoltage, .squareVoltage, .currentSource, .keyboardPitch, .keyboardGate: return .sources
+        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate: return .sources
         case .toggleSwitch, .pushButton: return .switches
         case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
         case .opAmp, .ota: return .amplifiers
@@ -197,7 +198,7 @@ extension ElementKind {
         case .acVoltage: return "a"
         case .squareVoltage: return "q"
         case .currentSource: return "i"
-        case .keyboardPitch, .keyboardGate: return nil
+        case .keyboardPitch, .keyboardGate, .noiseVoltage: return nil
         case .toggleSwitch: return "s"
         case .pushButton: return "b"
         case .diode: return "d"
@@ -245,7 +246,8 @@ extension ElementKind {
         switch self {
         case .ground: return ["gnd"]
         case .netLabel: return ["net"]
-        case .dcVoltage, .acVoltage, .squareVoltage, .currentSource, .keyboardPitch, .keyboardGate: return ["minus", "plus"]
+        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate:
+            return ["minus", "plus"]
         case .diode, .zener, .led: return ["anode", "cathode"]
         case .probe, .speaker: return ["plus", "minus"]
         case .ammeter: return ["in", "out"]
@@ -265,7 +267,7 @@ extension ElementKind {
     public var isDigital: Bool { self == .timer555 || self == .schmittInverter }
 
     public var isVoltageSource: Bool {
-        self == .dcVoltage || self == .acVoltage || self == .squareVoltage || isKeyboard
+        self == .dcVoltage || self == .acVoltage || self == .squareVoltage || self == .noiseVoltage || isKeyboard
     }
 
     /// Sources played from the computer keyboard or a MIDI keyboard
@@ -368,6 +370,8 @@ extension ElementKind {
             ]
         case .currentSource:
             return [ParamSpec("current", "Current", unit: "A", default: 0.01, range: 1e-6...10)]
+        case .noiseVoltage:
+            return [ParamSpec("amplitude", "RMS amplitude", unit: "V", default: 1, range: 0.001...10)]
         case .keyboardPitch:
             return [ParamSpec("glide", "Glide", unit: "s", default: 0, range: 0...2, log: false)]
         case .keyboardGate:

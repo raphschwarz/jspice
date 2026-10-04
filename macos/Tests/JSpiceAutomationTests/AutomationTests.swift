@@ -97,6 +97,26 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual((measured["nets"] as? [String: Double])?["out"] ?? 0, 5 * (1 - exp(-10)), accuracy: 0.01)
     }
 
+    /// The LM13700 filter measured as an agent would: flat in the passband, a peak of about Q at the cutoff (2 kHz with
+    /// the pot centred, Q about 2.35), and 12 dB per octave above it
+    func testFilterResponseMatchesItsDesign() throws {
+        let session = CircuitSession()
+        session.circuit = try SchematicLayout.layout(Examples.filterParts(input: NetlistPart(
+            kind: .acVoltage, name: "VIN", params: ["amplitude": 1, "frequency": 1000], connections: ["plus": "in", "minus": "GND"])))
+        let f0 = 1993.0
+        let result = try XCTUnwrap(session.call("frequency_response", arguments: [
+            "source": "VIN", "output": "V(lp)", "frequencies": [f0 / 20, f0, 4 * f0],
+        ]) as? [String: Any])
+        let points = try XCTUnwrap(result["points"] as? [[String: Any]])
+        XCTAssertEqual(points.count, 3)
+        let gains = points.map { $0["gain"] as? Double ?? 0 }
+        let phases = points.map { $0["phase_deg"] as? Double ?? 0 }
+        XCTAssertEqual(gains[0], 1, accuracy: 0.05, "passband")
+        XCTAssertEqual(gains[1], 2.35, accuracy: 0.5, "resonant peak at the cutoff")
+        XCTAssertEqual(phases[1], -90, accuracy: 20, "a quarter cycle behind at the cutoff")
+        XCTAssertEqual(gains[2], 1 / 15.1, accuracy: 0.025, "12 dB per octave: about 1/15 two octaves up")
+    }
+
     func testAnAgentCanPlayTheKeyboard() throws {
         let session = CircuitSession()
         _ = try session.call("load_example", arguments: ["id": "synth"])

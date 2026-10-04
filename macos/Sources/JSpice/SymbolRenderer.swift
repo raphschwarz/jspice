@@ -80,7 +80,7 @@ enum SymbolRenderer {
         case .memristor: return 2.2
         case .lamp, .probe, .ammeter, .speaker: return 1.4
         case .capacitor, .dcVoltage: return 0.5
-        case .acVoltage, .squareVoltage, .currentSource, .keyboardPitch, .keyboardGate: return 1.6
+        case .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate: return 1.6
         case .toggleSwitch, .pushButton: return 1.6
         case .diode, .zener, .led: return 1
         }
@@ -165,7 +165,7 @@ enum SymbolRenderer {
             let inner = body - 0.35 * u
             ctx.setFillColor(style.accent.withAlpha(0.28).cgColor)
             ctx.fill(CGRect(x: c - h, y: -0.3 * u, width: max(0, inner * CGFloat(style.memristorState)), height: 0.6 * u))
-        case .acVoltage, .squareVoltage, .currentSource, .probe, .ammeter, .keyboardPitch, .keyboardGate:
+        case .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .probe, .ammeter, .keyboardPitch, .keyboardGate:
             ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.08).cgColor)
             ctx.fillEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
         default:
@@ -210,7 +210,7 @@ enum SymbolRenderer {
             minus.addLine(to: CGPoint(x: c - h, y: 0.38 * u))
             thickPlate = minus
             addPlus(to: path, at: CGPoint(x: c + h + 0.4 * u, y: -0.75 * u), size: 0.16 * u)
-        case .acVoltage, .squareVoltage, .keyboardPitch, .keyboardGate:
+        case .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
             // the waveform (or keys) inside is drawn upright afterwards
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
             addPlus(to: path, at: CGPoint(x: c + h + 0.3 * u, y: -0.8 * u), size: 0.16 * u)
@@ -321,7 +321,7 @@ enum SymbolRenderer {
         ctx.restoreGState()
 
         let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-        if kind == .acVoltage || kind == .squareVoltage || kind.isKeyboard {
+        if kind == .acVoltage || kind == .squareVoltage || kind == .noiseVoltage || kind.isKeyboard {
             // the waveform stays upright whatever the source's direction
             let glyph = CGMutablePath()
             if kind == .keyboardPitch {
@@ -331,6 +331,12 @@ enum SymbolRenderer {
                     glyph.move(to: CGPoint(x: mid.x + CGFloat(dx) * u, y: mid.y - 0.3 * u))
                     glyph.addLine(to: CGPoint(x: mid.x + CGFloat(dx) * u, y: mid.y + 0.3 * u))
                 }
+            } else if kind == .noiseVoltage {
+                // a jagged, random-looking trace
+                let heights: [CGFloat] = [0, 0.2, -0.25, 0.1, 0.28, -0.15, 0.05, -0.28, 0.18, -0.05, 0]
+                glyph.addLines(between: heights.enumerated().map { (k, h) in
+                    CGPoint(x: mid.x + (-0.45 + 0.09 * CGFloat(k)) * u, y: mid.y - h * u)
+                })
             } else if kind == .keyboardGate {
                 // a single gate pulse
                 let wave: [(CGFloat, CGFloat)] = [(-0.45, 0.25), (-0.25, 0.25), (-0.25, -0.25), (0.25, -0.25), (0.25, 0.25), (0.45, 0.25)]

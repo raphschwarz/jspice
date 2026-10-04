@@ -154,8 +154,46 @@ final class AudioTests: XCTestCase {
         XCTAssertFalse(simulator.isFailed)
     }
 
+    func testNoiseIsWhiteGaussianAndRepeatable() throws {
+        let circuit = try SchematicLayout.layout([
+            NetlistPart(kind: .noiseVoltage, name: "N1", params: ["amplitude": 0.5], connections: ["plus": "n", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "R1", connections: ["a": "n", "b": "GND"]),
+        ])
+        let noise = circuit.elements.firstIndex { $0.name == "N1" }!
+        func run() -> [Double] {
+            let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
+            return (0..<48_000).map { _ in
+                simulator.step()
+                return simulator.voltageAcross(noise)
+            }
+        }
+        let samples = run()
+        let mean = samples.reduce(0, +) / Double(samples.count)
+        let rms = (samples.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(samples.count)).squareRoot()
+        XCTAssertEqual(mean, 0, accuracy: 0.01)
+        XCTAssertEqual(rms, 0.5, accuracy: 0.01)
+        // white: one sample says nothing about the next
+        var correlation = 0.0
+        for k in 1..<samples.count { correlation += (samples[k] - mean) * (samples[k - 1] - mean) }
+        XCTAssertEqual(correlation / Double(samples.count - 1) / (rms * rms), 0, accuracy: 0.02)
+        // Gaussian: about 4.6 % of samples beyond two standard deviations
+        let tails = Double(samples.filter { abs($0 - mean) > 2 * rms }.count) / Double(samples.count)
+        XCTAssertEqual(tails, 0.0455, accuracy: 0.006)
+        XCTAssertEqual(run(), samples, "the same every run")
+    }
+
+    func testFilterAndWindExamplesSound() {
+        for example in [Examples.filter, Examples.wind] {
+            let speaker = example.circuit.elements.firstIndex { $0.kind == .speaker }!
+            let simulator = Simulator(circuit: example.circuit, timeStep: oversampledStep)
+            let heard = listen(simulator, to: speaker, settle: 0.05, listen: 0.2)
+            XCTAssertGreaterThan(heard.rms, 0.2, example.id)
+            XCTAssertLessThan(heard.rms, 10, example.id)
+        }
+    }
+
     func testEverySoundExampleHasASpeaker() {
-        for id in ["beeper", "tone", "tremolo", "vco", "synth"] {
+        for id in ["beeper", "tone", "tremolo", "vco", "synth", "vcf", "wind"] {
             XCTAssertTrue(Examples.example(id)?.circuit.elements.contains { $0.kind == .speaker } ?? false, id)
         }
     }

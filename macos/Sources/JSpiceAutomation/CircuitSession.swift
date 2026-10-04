@@ -669,7 +669,7 @@ public final class CircuitSession {
     /// The circuit without its sources' own periods, for estimating how long it takes to settle
     private func circuitWithoutSources() -> Circuit {
         var copy = circuit
-        copy.elements.removeAll { $0.kind == .acVoltage || $0.kind == .squareVoltage }
+        copy.elements.removeAll { $0.kind == .acVoltage || $0.kind == .squareVoltage || $0.kind == .noiseVoltage }
         return copy
     }
 

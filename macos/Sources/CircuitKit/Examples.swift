@@ -41,7 +41,7 @@ public enum Examples {
     public static let all: [Example] = [
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
-        beeper, tone, tremolo, keyboardVCO, monoSynth, memristorHysteresis, memristorPulses,
+        beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, memristorHysteresis, memristorPulses,
     ]
 
     /// A circuit drawn from a netlist by the tidy layout, with scopes on the named parts
@@ -164,6 +164,63 @@ public enum Examples {
             NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
             NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 4], connections: ["plus": "out", "minus": "GND"]),
         ], scopes: [("CENV", .voltage), ("SPK1", .voltage)]))
+
+    /// An LM13700 state-variable filter, 12 dB per octave, fed from `input` (a source whose plus terminal is the net "in").
+    ///
+    /// U1 integrates the input less the low-pass and some of the band-pass output into C1 (band-pass), U3 integrates the
+    /// band-pass into C2 (low-pass); TL072 followers buffer both capacitors. Each OTA input sits behind a 100 k / 220 Ω
+    /// divider (a = 0.0022), which keeps it within ±10 mV, where the OTA is nearly linear. The cutoff is
+    /// f0 = gm a / (2π C) with gm = I_abc / 2Vt: the CUTOFF pot sets both bias currents through the follower U5, about
+    /// 295 µA (2 kHz) at its centre. The RES pot feeds back band-pass: Q is about its resistance over 100 k.
+    public static func filterParts(input: NetlistPart, resonance: Double = 0.5) -> [NetlistPart] {
+        let tl072 = model(.opAmp, "TL072")
+        let lm13700 = model(.ota, "LM13700")
+        return [
+            input,
+            NetlistPart(kind: .dcVoltage, name: "VP", params: ["voltage": 15], connections: ["plus": "+15V", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": 15], connections: ["plus": "GND", "minus": "-15V"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 100_000], connections: ["a": "in", "b": "p1"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 220], connections: ["a": "p1", "b": "GND"]),
+            NetlistPart(kind: .ota, name: "U1", params: lm13700, connections: ["plus": "p1", "minus": "m1", "out": "c1", "bias": "b1"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 1e-9], connections: ["a": "c1", "b": "GND"]),
+            NetlistPart(kind: .opAmp, name: "U2", params: tl072, connections: ["plus": "c1", "minus": "bp", "out": "bp"]),
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 100_000], connections: ["a": "bp", "b": "p2"]),
+            NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 220], connections: ["a": "p2", "b": "GND"]),
+            NetlistPart(kind: .ota, name: "U3", params: lm13700, connections: ["plus": "p2", "minus": "GND", "out": "c2", "bias": "b2"]),
+            NetlistPart(kind: .capacitor, name: "C2", params: ["capacitance": 1e-9], connections: ["a": "c2", "b": "GND"]),
+            NetlistPart(kind: .opAmp, name: "U4", params: tl072, connections: ["plus": "c2", "minus": "lp", "out": "lp"]),
+            // feedback into U1's minus input: all of the low-pass, and some band-pass (the resonance control)
+            NetlistPart(kind: .resistor, name: "R5", params: ["resistance": 100_000], connections: ["a": "lp", "b": "m1"]),
+            NetlistPart(kind: .resistor, name: "R6", params: ["resistance": 220], connections: ["a": "m1", "b": "GND"]),
+            NetlistPart(kind: .potentiometer, name: "RES", params: ["resistance": 470_000, "position": resonance],
+                        connections: ["a": "bp", "wiper": "m1"]),
+            // cutoff: a pot across the supplies, buffered, sets both OTAs' bias currents
+            NetlistPart(kind: .potentiometer, name: "CUTOFF", params: ["resistance": 100_000, "position": 0.5],
+                        connections: ["a": "-15V", "b": "+15V", "wiper": "cut"]),
+            NetlistPart(kind: .opAmp, name: "U5", params: tl072, connections: ["plus": "cut", "minus": "cutb", "out": "cutb"]),
+            NetlistPart(kind: .resistor, name: "RB1", params: ["resistance": 47_000], connections: ["a": "cutb", "b": "b1"]),
+            NetlistPart(kind: .resistor, name: "RB2", params: ["resistance": 47_000], connections: ["a": "cutb", "b": "b2"]),
+        ]
+    }
+
+    static let filter = Example(
+        id: "vcf", title: "LM13700 filter (sound)",
+        summary: "A resonant 12 dB/octave state-variable filter on a 110 Hz square wave. Turn on sound, then scroll over CUTOFF and RES to sweep it.",
+        symbol: "waveform.path",
+        circuit: drawn(filterParts(input: NetlistPart(kind: .squareVoltage, name: "VIN",
+                                                      params: ["high": 4, "low": -4, "frequency": 110, "duty": 0.5],
+                                                      connections: ["plus": "in", "minus": "GND"])) + [
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 8], connections: ["plus": "lp", "minus": "GND"]),
+        ], scopes: [("VIN", .voltage), ("SPK1", .voltage)]))
+
+    static let wind = Example(
+        id: "wind", title: "Wind: filtered noise (sound)",
+        summary: "White noise through the resonant LM13700 filter. Turn on sound and sweep CUTOFF slowly for wind, or turn up RES to whistle.",
+        symbol: "wind",
+        circuit: drawn(filterParts(input: NetlistPart(kind: .noiseVoltage, name: "NOISE", params: ["amplitude": 1],
+                                                      connections: ["plus": "in", "minus": "GND"]), resonance: 0.85) + [
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 5], connections: ["plus": "lp", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage)]))
 
     /// Parameter values of one of the part's models, by name
     public static func model(_ kind: ElementKind, _ name: String) -> [String: Double] {

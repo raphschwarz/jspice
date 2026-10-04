@@ -53,6 +53,8 @@ public final class Simulator {
     var limitedVoltage: [Double] = []
     var limitedVoltage2: [Double] = []
     var limitedVoltage3: [Double] = []
+    /// Random number generator state of each noise source (xorshift), so a run can be repeated exactly
+    var noiseState: [UInt64] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
     var digitalState: [Bool] = []
     /// Op-amps: how often the input has been pulled back to the linear range in the present Newton solve
@@ -144,6 +146,7 @@ public final class Simulator {
         limitedVoltage2 = Array(repeating: 0, count: count)
         limitedVoltage3 = Array(repeating: 0, count: count)
         digitalState = Array(repeating: false, count: count)
+        noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
         storedCurrents = Array(repeating: 0, count: count)
         kinds = newCircuit.elements.map(\.kind)
@@ -157,12 +160,12 @@ public final class Simulator {
         }
         drivenIndices = indices {
             switch $0 {
-            case .dcVoltage, .acVoltage, .squareVoltage, .currentSource, .capacitor, .inductor, .timer555, .schmittInverter,
-                 .keyboardPitch, .keyboardGate: return true
+            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
+                 .schmittInverter, .keyboardPitch, .keyboardGate: return true
             default: return false
             }
         }
-        statefulIndices = indices { [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch].contains($0) }
+        statefulIndices = indices { [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage].contains($0) }
         digitalIndices = indices { $0.isDigital }
         memristorIndices = indices { $0 == .memristor }
         for (i, element) in newCircuit.elements.enumerated() {
@@ -210,6 +213,8 @@ public final class Simulator {
         digitalState[i] = element.kind == .schmittInverter
         // a keyboard's pitch starts at the present note rather than gliding up from 0 V
         if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
+        // each noise source has its own sequence, the same every run
+        noiseState[i] = 0x9E37_79B9_7F4A_7C15 &* UInt64(i + 1) | 1
     }
 
     public func setTimeStep(_ dt: Double) {
@@ -253,6 +258,7 @@ public final class Simulator {
         limitedVoltage2 = other.limitedVoltage2
         limitedVoltage3 = other.limitedVoltage3
         digitalState = other.digitalState
+        noiseState = other.noiseState
         convergenceFailures = other.convergenceFailures
         isFailed = other.isFailed
         problems = other.problems
@@ -466,7 +472,7 @@ public final class Simulator {
                 stampConductance(&matrix, m, nodes[0], nodes[1], 1.5 * element[param: "capacitance"] / timeStep)
             case .inductor:
                 stampConductance(&matrix, m, nodes[0], nodes[1], 2 * timeStep / (3 * max(element[param: "inductance"], 1e-15)))
-            case .dcVoltage, .acVoltage, .squareVoltage, .keyboardPitch, .keyboardGate:
+            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
                 let minus = nodes[0] - 1
@@ -527,9 +533,27 @@ public final class Simulator {
             return previous + (target - previous) * (1 - exp(-timeStep / c.tau))
         case .keyboardGate:
             return keyboard.gate ? c.high : 0
+        case .noiseVoltage:
+            // this step's sample, drawn when the last step finished
+            return c.amplitude * capacitorVoltage[i]
         default:
             return 0
         }
+    }
+
+    /// The next sample of a noise source: Gaussian with unit variance (Box-Muller from two uniform numbers)
+    private func nextNoise(_ i: Int) -> Double {
+        func uniform() -> Double {
+            var s = noiseState[i]
+            s ^= s << 13
+            s ^= s >> 7
+            s ^= s << 17
+            noiseState[i] = s
+            return (Double(s >> 11) + 0.5) / Double(1 << 53)
+        }
+        let u = uniform()
+        let v = uniform()
+        return (-2 * log(u)).squareRoot() * cos(2 * .pi * v)
     }
 
     private func buildRightHandSide(at t: Double) -> [Double] {
@@ -538,7 +562,7 @@ public final class Simulator {
             let nodes = topology.elementNodes[i]
             let c = constants[i]
             switch kinds[i] {
-            case .dcVoltage, .acVoltage, .squareVoltage, .keyboardPitch, .keyboardGate:
+            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = sourceVoltage(i, at: t) }
             case .currentSource:
@@ -630,6 +654,8 @@ public final class Simulator {
             c.tau = max(p("glide"), 0)
         case .keyboardGate:
             c.high = p("high")
+        case .noiseVoltage:
+            c.amplitude = max(p("amplitude"), 0)
         case .diode, .led:
             (c.saturation, c.nvt) = diodeParameters(element)
             c.critical = c.nvt * log(c.nvt / (sqrt(2) * c.saturation))
@@ -1080,6 +1106,8 @@ public final class Simulator {
                 inductorVoltage[i] = v
             case .keyboardPitch:
                 capacitorVoltage[i] = sourceVoltage(i, at: time)
+            case .noiseVoltage:
+                capacitorVoltage[i] = nextNoise(i)
             case .opAmp where parameters.gbw > 0:
                 let (_, _, stage) = opAmpOutput(i, differential: voltage(nodes[1]) - voltage(nodes[0]))
                 // the internal stage cannot wind up far beyond the output swing
@@ -1121,7 +1149,7 @@ public final class Simulator {
             return twoTerminal(capacitorCurrent[i])
         case .inductor:
             return twoTerminal(inductorCurrent[i])
-        case .dcVoltage, .acVoltage, .squareVoltage, .keyboardPitch, .keyboardGate:
+        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
             let row = topology.sourceRow[i]
             return twoTerminal(row >= 0 && row < x.count ? x[row] : 0)
         case .currentSource:
