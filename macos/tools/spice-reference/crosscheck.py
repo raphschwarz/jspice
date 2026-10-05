@@ -75,7 +75,9 @@ def net(name):
     return '0' if name in ('GND', '0') else 'n_' + re.sub(r'\W', '_', name)
 
 def spice_deck(parts, duration, probes, step):
-    lines = ['* JSpice cross-check', '.options reltol=1e-6 abstol=1e-13 vntol=1e-8 gmin=1e-12 method=gear maxord=2 itl4=200']
+    lines = ['* JSpice cross-check', '.options reltol=1e-6 abstol=1e-13 vntol=1e-8 gmin=1e-12 method=gear maxord=2 itl4=200',
+             # JSpice's thermal voltage, 25.852 mV, is kT/q at 300.00 K
+             '.options temp=%.4f tnom=%.4f' % (VT / 8.617333262e-5 - 273.15, VT / 8.617333262e-5 - 273.15)]
     models = []
     for p in parts:
         k, n, c = p['kind'], p['name'], p['connections']
@@ -226,7 +228,7 @@ CASES = [
         P('acVoltage', 'VIN', dict(plus='sig', minus='GND'), amplitude=0.05, frequency=1000),
         P('capacitor', 'CIN', dict(a='sig', b='base'), capacitance=1e-6)]),
     dict(id='astable', note='the blinker: a two-transistor astable multivibrator with LEDs, about 0.7 s a cycle',
-         duration=3, probes=['c1', 'b1'], periodic='c1', parts=[
+         duration=3, probes=['c1', 'b1'], periodic=['c1', 'b1'], parts=[
         P('dcVoltage', 'VCC', dict(plus='vcc', minus='GND'), voltage=9),
         P('resistor', 'RC1', dict(a='vcc', b='l1'), resistance=470),
         P('led', 'D1', dict(anode='l1', cathode='c1'), color=0),
@@ -262,7 +264,7 @@ CASES = [
         P('resistor', 'R2', dict(a='inv', b='out'), resistance=100_000),
         P('opAmp', 'U1', dict(minus='inv', plus='GND', out='out'), **TL072)]),
     dict(id='triangle-lfo', note='integrator and Schmitt comparator (two TL072s): a 5 Hz triangle LFO', duration=2.5,
-         probes=['tri', 'sq'], periodic='sq', parts=[
+         probes=['tri', 'sq'], periodic=['tri', 'sq'], parts=[
         P('opAmp', 'U1', dict(minus='int', plus='GND', out='tri'), **TL072),
         P('resistor', 'R1', dict(a='sq', b='int'), resistance=100_000),
         P('capacitor', 'C1', dict(a='int', b='tri'), capacitance=1e-6),
@@ -297,7 +299,7 @@ def main():
             part, terminal = next((p['name'], t) for p in parts for t, n in p['connections'].items() if n == name)
             entry = dict(net=name, part=part, terminal=terminal,
                          values=[round(interpolate(time, waves[name], t), 9) for t in times])
-            if case.get('periodic') == name:
+            if name in case.get('periodic', []):
                 level, crossings = rising_crossings(time, waves[name])
                 entry.update(level=level, crossings=[round(t, 9) for t in crossings])
             probes.append(entry)

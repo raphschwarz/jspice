@@ -39,10 +39,11 @@ final class SpiceCrossCheckTests: XCTestCase {
     }
 
     /// How far JSpice is from the reference: the largest difference over the run as a fraction of the reference's
-    /// range, or for an oscillator the error in its period (also a fraction)
+    /// range, or for an oscillator the error in its period (also a fraction), with what JSpice's oscillator did
     struct Deviation {
         var waveform = 0.0
         var period: Double?
+        var note = ""
     }
 
     private func reference() throws -> Reference {
@@ -67,6 +68,28 @@ final class SpiceCrossCheckTests: XCTestCase {
         }
         guard times[hi] > times[lo] else { return values[lo] }
         return values[lo] + (t - times[lo]) / (times[hi] - times[lo]) * (values[hi] - values[lo])
+    }
+
+    /// The lowest and highest the waveform comes within `window` of `t`: a step either way is as close as a
+    /// fixed-step simulation can place an edge
+    private static func band(_ times: [Double], _ values: [Double], at t: Double, window: Double) -> ClosedRange<Double> {
+        var low = interpolate(times, values, at: t - window), high = low
+        for x in [interpolate(times, values, at: t), interpolate(times, values, at: t + window)] {
+            low = min(low, x)
+            high = max(high, x)
+        }
+        var lo = 0, hi = times.count - 1
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if times[mid] < t - window { lo = mid } else { hi = mid }
+        }
+        var k = hi
+        while k < times.count && times[k] <= t + window {
+            low = min(low, values[k])
+            high = max(high, values[k])
+            k += 1
+        }
+        return low...high
     }
 
     private static func risingCrossings(_ times: [Double], _ values: [Double], level: Double) -> [Double] {
@@ -107,13 +130,18 @@ final class SpiceCrossCheckTests: XCTestCase {
             if let level = probe.level, let crossings = probe.crossings, let period = Self.meanPeriod(crossings) {
                 // an oscillator's phase drifts: compare its period, and its swing
                 let ours = Self.risingCrossings(times, waves[k], level: level)
-                deviation.period = Self.meanPeriod(Array(ours.prefix(crossings.count))).map { abs($0 - period) / period } ?? 1
+                let ourPeriod = Self.meanPeriod(Array(ours.prefix(crossings.count)))
+                deviation.period = ourPeriod.map { abs($0 - period) / period } ?? 1
                 let swing = (waves[k].max() ?? 0) - (waves[k].min() ?? 0)
                 deviation.waveform = abs(swing - range) / range
+                deviation.note = String(format: "period %.5g s (ngspice %.5g s), %.4g..%.4g V (ngspice %.4g..%.4g V)",
+                                        ourPeriod ?? 0, period, waves[k].min() ?? 0, waves[k].max() ?? 0,
+                                        probe.values.min() ?? 0, probe.values.max() ?? 0)
             } else {
                 for (t, value) in zip(test.times, probe.values) {
-                    let ours = Self.interpolate(times, waves[k], at: t)
-                    deviation.waveform = max(deviation.waveform, abs(ours - value) / range)
+                    let ours = Self.band(times, waves[k], at: t, window: timeStep)
+                    let distance = value < ours.lowerBound ? ours.lowerBound - value : max(0, value - ours.upperBound)
+                    deviation.waveform = max(deviation.waveform, distance / range)
                 }
             }
             result[probe.net] = deviation
@@ -142,7 +170,8 @@ final class SpiceCrossCheckTests: XCTestCase {
                 report.append(test.id.padding(toLength: 19, withPad: " ", startingAt: 0)
                               + probe.net.padding(toLength: 8, withPad: " ", startingAt: 0)
                               + String(format: "%9.2e", step) + "  " + percent(measure(a)) + (a.period != nil ? " T" : "  ")
-                              + String(format: "%9.2e", step / 10) + "  " + percent(measure(b)) + (b.period != nil ? " T" : ""))
+                              + String(format: "%9.2e", step / 10) + "  " + percent(measure(b)) + (b.period != nil ? " T" : "")
+                              + (a.note.isEmpty ? "" : "\n    " + a.note))
                 let limit = Self.tolerance[test.id] ?? Self.defaultTolerance
                 XCTAssertLessThanOrEqual(measure(a), limit, "\(test.id) \(probe.net) (\(test.note))")
                 XCTAssertLessThanOrEqual(measure(b), limit, "\(test.id) \(probe.net) at a tenth of the step")
