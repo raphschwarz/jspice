@@ -287,9 +287,15 @@ final class CircuitCanvasView: NSView {
         case .noiseVoltage: return "Noise " + SI.format(element[param: "amplitude"], unit: "V")
         case .memristor:
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
-        case .opAmp, .ota, .timer555, .schmittInverter, .analogSwitch, .njfet, .multiplier, .delayLine, .vactrol:
+        case .opAmp, .ota, .timer555, .schmittInverter, .analogSwitch, .njfet, .multiplier, .delayLine, .vactrol, .comparator,
+             .vcf, .envelope, .vca, .sampleHold:
             // the real part it behaves like
             return element.model?.name ?? "Custom"
+        case .vco:
+            let waveform = element.kind.params[0].choices.first { $0.value == element[param: "waveform"].rounded() }?.name ?? ""
+            return [element.model?.name ?? "VCO", waveform.lowercased()].joined(separator: " ")
+        case .divider:
+            return element.model?.name ?? "÷\(Int(element[param: "division"].rounded()))"
         default: return nil
         }
     }
@@ -347,7 +353,7 @@ final class CircuitCanvasView: NSView {
                 let points = element.extentPoints.map(screen)
                 anchor = CGPoint(x: (points.map(\.x).min()! + points.map(\.x).max()!) / 2, y: points.map(\.y).min()! - 0.4 * unit)
                 horizontal = true
-            } else if element.kind == .opAmp || element.kind == .ota || element.kind == .multiplier || element.kind == .delayLine {
+            } else if element.kind == .ota || element.kind.drivesOutput {
                 // below the triangle when a feedback part arches over it
                 let left = min(element.a.x, element.b.x)
                 let right = max(element.a.x, element.b.x)
@@ -366,7 +372,7 @@ final class CircuitCanvasView: NSView {
             switch element.kind {
             case _ where element.kind.isTransistor: offset = 0.4 * unit
             case .timer555: offset = 0
-            case .opAmp, .multiplier, .delayLine: offset = 1.9 * unit
+            case _ where element.kind.drivesOutput: offset = 1.9 * unit
             case .vactrol: offset = 1.9 * unit
             default: offset = (isProbe ? 1.0 : 1.05) * unit
             }
@@ -853,7 +859,9 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
     case .probe, .netLabel, .speaker: return [.voltage]
     case .ground: return []
-    case .opAmp, .ota, .timer555, .schmittInverter, .multiplier, .delayLine: return [.voltage, .current]
+    case .opAmp, .ota, .timer555, .schmittInverter, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold,
+         .divider:
+        return [.voltage, .current]
     case .analogSwitch: return [.voltage, .current, .resistance]
     default: return [.voltage, .current, .power]
     }

@@ -58,6 +58,9 @@ enum ScreenshotRunner {
         Shot(name: "34-ringmod-dark", example: "ringmod", dark: true, seconds: 0.3, select: .multiplier),
         Shot(name: "35-quickadd-light", example: "overdrive", dark: false, seconds: 0.5, quickAdd: true),
         Shot(name: "36-tool-dark", example: "opamp", dark: true, seconds: 0.5, tool: .resistor),
+        Shot(name: "37-chipvoice-dark", example: "chipvoice", dark: true, seconds: 1, select: .vcf),
+        Shot(name: "38-random-light", example: "random", dark: false, seconds: 1.5, select: .sampleHold),
+        Shot(name: "39-pwm-dark", example: "pwm", dark: true, seconds: 1, select: .comparator),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {

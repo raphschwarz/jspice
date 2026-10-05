@@ -282,6 +282,10 @@ public final class CircuitSession {
                 var entry: [String: Any] = ["key": spec.key, "name": spec.name, "unit": spec.unit, "default": spec.defaultValue,
                                             "min": spec.range.lowerBound, "max": spec.range.upperBound]
                 if kind == .led && spec.key == "color" { entry["name"] = "Color: 0 red, 1 green, 2 blue, 3 yellow, 4 white" }
+                if !spec.choices.isEmpty {
+                    let names = spec.choices.map { "\(SI.trimmed($0.value, digits: 3)) \($0.name)" }
+                    entry["name"] = spec.name + ": " + names.joined(separator: ", ")
+                }
                 parameters.append(entry)
             }
             var models: [[String: Any]] = []

@@ -29,6 +29,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
     case switches = "Switches"
     case semiconductors = "Semiconductors"
     case amplifiers = "Amplifiers"
+    case synth = "Synth Chips"
     case timersAndLogic = "Timers & Logic"
     case effects = "Effects"
     case memristors = "Memristors"
@@ -42,7 +43,8 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case dcVoltage, acVoltage, squareVoltage, noiseVoltage, currentSource, keyboardPitch, keyboardGate
     case toggleSwitch, pushButton
     case diode, zener, led, npn, pnp, nmos, pmos, njfet
-    case opAmp, ota, multiplier
+    case opAmp, ota, multiplier, comparator
+    case vco, vcf, envelope, vca, sampleHold, divider
     case timer555, schmittInverter, analogSwitch
     case delayLine, vactrol
     case memristor
@@ -60,14 +62,35 @@ public struct ParamSpec: Sendable, Hashable {
     /// Range offered by the inspector slider; typed values may go beyond it
     public let range: ClosedRange<Double>
     public let logarithmic: Bool
+    /// The values this parameter can take, with their names, when it picks one of a few settings (a waveform)
+    public let choices: [ParamChoice]
 
-    public init(_ key: String, _ name: String, unit: String, default defaultValue: Double, range: ClosedRange<Double>, log: Bool = true) {
+    public init(_ key: String, _ name: String, unit: String, default defaultValue: Double, range: ClosedRange<Double>, log: Bool = true,
+                choices: [ParamChoice] = []) {
         self.key = key
         self.name = name
         self.unit = unit
         self.defaultValue = defaultValue
         self.range = range
         self.logarithmic = log
+        self.choices = choices
+    }
+
+    /// A parameter that picks one of the named settings, stored as 0, 1, 2…
+    static func choice(_ key: String, _ name: String, _ names: [String], default defaultValue: Double = 0) -> ParamSpec {
+        ParamSpec(key, name, unit: "", default: defaultValue, range: 0...Double(max(names.count - 1, 1)), log: false,
+                  choices: names.enumerated().map { ParamChoice(name: $0.element, value: Double($0.offset)) })
+    }
+}
+
+/// One of the settings a parameter can pick
+public struct ParamChoice: Sendable, Hashable {
+    public let name: String
+    public let value: Double
+
+    public init(name: String, value: Double) {
+        self.name = name
+        self.value = value
     }
 }
 
@@ -137,6 +160,13 @@ extension ElementKind {
         case .opAmp: return "Op-Amp"
         case .ota: return "OTA"
         case .multiplier: return "Multiplier"
+        case .comparator: return "Comparator"
+        case .vco: return "VCO"
+        case .vcf: return "VCF (4-Pole Low-Pass)"
+        case .envelope: return "Envelope (ADSR)"
+        case .vca: return "VCA"
+        case .sampleHold: return "Sample & Hold"
+        case .divider: return "Clock Divider"
         case .delayLine: return "BBD Delay Line"
         case .vactrol: return "Vactrol"
         case .timer555: return "555 Timer"
@@ -167,7 +197,8 @@ extension ElementKind {
         case .led: return "LED"
         case .npn, .pnp, .njfet: return "Q"
         case .nmos, .pmos: return "M"
-        case .opAmp, .ota, .multiplier, .delayLine, .timer555, .schmittInverter, .analogSwitch: return "U"
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .timer555, .schmittInverter, .analogSwitch: return "U"
+        case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
         case .probe: return "P"
@@ -182,7 +213,8 @@ extension ElementKind {
         case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate: return .sources
         case .toggleSwitch, .pushButton: return .switches
         case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
-        case .opAmp, .ota, .multiplier: return .amplifiers
+        case .opAmp, .ota, .multiplier, .comparator: return .amplifiers
+        case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .vactrol: return .effects
         case .timer555, .schmittInverter, .analogSwitch: return .timersAndLogic
         case .memristor: return .memristors
@@ -218,6 +250,7 @@ extension ElementKind {
         case .opAmp: return "u"
         case .timer555: return "5"
         case .njfet, .ota, .schmittInverter, .analogSwitch, .multiplier, .delayLine, .vactrol: return nil
+        case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return nil
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
@@ -239,6 +272,13 @@ extension ElementKind {
         case .multiplier: return "x"
         case .delayLine: return "d"
         case .vactrol: return "v"
+        case .vco: return "w"
+        case .vcf: return "l"
+        case .envelope: return "e"
+        case .vca: return "a"
+        case .sampleHold: return "h"
+        case .comparator: return "c"
+        case .divider: return "f"
         default: return nil
         }
     }
@@ -263,7 +303,7 @@ extension ElementKind {
     /// Parts whose terminals depend on a direction, which stay horizontal or vertical
     public var isAxisAligned: Bool {
         isTransistor || self == .opAmp || self == .ota || self == .potentiometer || self == .timer555 || self == .analogSwitch
-            || self == .multiplier || self == .delayLine || self == .vactrol
+            || self == .multiplier || self == .delayLine || self == .vactrol || isModule || self == .comparator
     }
 
     /// Parts that can be mirrored across their axis
@@ -296,6 +336,13 @@ extension ElementKind {
         case .opAmp: return ["minus", "plus", "out"]
         case .multiplier: return ["x", "y", "out"]
         case .delayLine: return ["in", "ctrl", "out"]
+        case .comparator: return ["minus", "plus", "out"]
+        case .vco: return ["cv", "pw", "out"]
+        case .vcf: return ["in", "cv", "out"]
+        case .envelope: return ["gate", "trig", "out"]
+        case .vca: return ["in", "cv", "out"]
+        case .sampleHold: return ["in", "trig", "out"]
+        case .divider: return ["clock", "reset", "out"]
         case .vactrol: return ["anode", "cathode", "a", "b"]
         case .ota: return ["minus", "plus", "out", "bias"]
         case .timer555: return ["gnd", "trig", "out", "reset", "ctrl", "thr", "dis", "vcc"]
@@ -316,8 +363,18 @@ extension ElementKind {
 
     public var isSwitch: Bool { self == .toggleSwitch || self == .pushButton }
 
-    /// Parts whose output (the third terminal) is driven like a voltage source to ground: op-amps, multipliers, BBDs
-    public var drivesOutput: Bool { self == .opAmp || self == .multiplier || self == .delayLine }
+    /// Parts whose output (the third terminal) is driven like a voltage source to ground: op-amps, multipliers, BBDs,
+    /// comparators and the synth chips
+    public var drivesOutput: Bool { self == .opAmp || self == .multiplier || self == .delayLine || self == .comparator || isModule }
+
+    /// Synth chips and the delay line: blocks whose output is worked out from their inputs once per step (an oscillator's
+    /// phase, an envelope's stage, a held sample), with two inputs either side of `a` and the output at `b`
+    public var isModule: Bool {
+        switch self {
+        case .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return true
+        default: return false
+        }
+    }
 
     /// Offset of the second point when the element is placed with a single click
     public var defaultOffset: GridPoint {
@@ -355,6 +412,51 @@ extension ElementKind {
             return [
                 ParamSpec("scale", "Scale (out = scale · x · y)", unit: "1/V", default: 0.1, range: 0.01...1),
                 ParamSpec("limit", "Output swing", unit: "V", default: 11, range: 1...15, log: false),
+            ]
+        case .comparator:
+            return [
+                ParamSpec("high", "Output high", unit: "V", default: 5, range: -15...15, log: false),
+                ParamSpec("low", "Output low", unit: "V", default: 0.1, range: -15...15, log: false),
+                ParamSpec("hysteresis", "Hysteresis", unit: "V", default: 0.01, range: 0...1, log: false),
+            ]
+        case .vco:
+            return [
+                .choice("waveform", "Waveform", ["Saw", "Triangle", "Pulse", "Sine"]),
+                ParamSpec("frequency", "Frequency at 0 V", unit: "Hz", default: 65.406, range: 0.1...20_000),
+                ParamSpec("amplitude", "Amplitude (peak)", unit: "V", default: 5, range: 0.1...12, log: false),
+            ]
+        case .vcf:
+            return [
+                ParamSpec("cutoff", "Cutoff at 0 V", unit: "Hz", default: 200, range: 5...20_000),
+                ParamSpec("resonance", "Resonance (1: self-oscillates)", unit: "", default: 0.3, range: 0...1.1, log: false),
+                ParamSpec("drive", "Input level for soft clipping", unit: "V", default: 5, range: 0.5...20),
+            ]
+        case .envelope:
+            return [
+                ParamSpec("attack", "Attack time", unit: "s", default: 0.005, range: 1e-4...10),
+                ParamSpec("decay", "Decay time", unit: "s", default: 0.3, range: 1e-3...20),
+                ParamSpec("sustain", "Sustain level", unit: "", default: 0.5, range: 0...1, log: false),
+                ParamSpec("release", "Release time", unit: "s", default: 0.4, range: 1e-3...20),
+                ParamSpec("peak", "Peak voltage", unit: "V", default: 5, range: 0.5...12, log: false),
+            ]
+        case .vca:
+            return [
+                .choice("response", "Response", ["Exponential", "Linear"]),
+                ParamSpec("dbPerVolt", "Exponential: dB per volt", unit: "dB/V", default: -30.3, range: -100...100, log: false),
+                ParamSpec("unity", "Linear: control for unity gain", unit: "V", default: 5, range: 0.5...12, log: false),
+                ParamSpec("limit", "Output swing", unit: "V", default: 12, range: 1...15, log: false),
+            ]
+        case .sampleHold:
+            return [
+                .choice("mode", "Mode", ["Sample on each rising edge", "Track while high, hold while low"]),
+                ParamSpec("droop", "Droop", unit: "V/s", default: 0, range: 0...10, log: false),
+            ]
+        case .divider:
+            let divisions: [Double] = [2, 3, 4, 5, 6, 8, 10, 16]
+            return [
+                ParamSpec("division", "Divide by", unit: "", default: 2, range: 2...16, log: false,
+                          choices: divisions.map { ParamChoice(name: "÷\(Int($0))", value: $0) }),
+                ParamSpec("supply", "Supply (output high)", unit: "V", default: 5, range: 3...18, log: false),
             ]
         case .delayLine:
             return [
@@ -568,7 +670,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a, t.drain, t.source]
         case .potentiometer, .analogSwitch:
             return [a, b, wiper]
-        case .opAmp, .multiplier, .delayLine:
+        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             return [a - perpendicular, a + perpendicular, b]
         case .vactrol:
             return [a - perpendicular, a + perpendicular, b - perpendicular, b + perpendicular]
@@ -680,6 +782,50 @@ extension ElementKind {
                           values: ["stages": 1024, "clock": 40_000]),
                 PartModel(name: "MN3008", summary: "2048 stages: longer chorus, short echo", values: ["stages": 2048, "clock": 40_000]),
                 PartModel(name: "MN3005", summary: "4096 stages: echo (102 ms at 20 kHz)", values: ["stages": 4096, "clock": 20_000]),
+            ]
+        case .comparator:
+            return [
+                PartModel(name: "LM393", summary: "Dual comparator, its open-collector output pulled up to 5 V",
+                          values: ["high": 5, "low": 0.1]),
+                PartModel(name: "LM311", summary: "Output pulled up to +12 V, emitter at −12 V", values: ["high": 12, "low": -12]),
+            ]
+        case .vco:
+            return [
+                PartModel(name: "AS3340", summary: "The CEM3340 VCO chip: one volt per octave, exact tracking; pulse width set by PW (±5 V)",
+                          values: ["frequency": 65.406, "amplitude": 5]),
+            ]
+        case .vcf:
+            return [
+                PartModel(name: "AS3320", summary: "The CEM3320 four-pole (24 dB/octave) ladder-style low-pass: one volt per octave",
+                          values: ["cutoff": 200, "drive": 5]),
+                PartModel(name: "SSM2044", summary: "Four-pole low-pass, softer and driven harder (Korg Polysix, Mono/Poly)",
+                          values: ["cutoff": 200, "drive": 2]),
+            ]
+        case .envelope:
+            return [
+                PartModel(name: "AS3310", summary: "The CEM3310 ADSR: a gate opens it, a trigger restarts the attack; 0 to 5 V",
+                          values: ["peak": 5]),
+            ]
+        case .vca:
+            return [
+                PartModel(name: "SSM2164", summary: "One cell of the quad exponential VCA: −33 mV per dB, unity gain at 0 V",
+                          values: ["response": 0, "dbPerVolt": -30.3]),
+                PartModel(name: "Linear", summary: "Gain in proportion to the control: unity at 5 V, silent at 0 V and below",
+                          values: ["response": 1, "unity": 5]),
+            ]
+        case .sampleHold:
+            return [
+                PartModel(name: "Clocked", summary: "Samples the input on each rising edge of the trigger and holds it until the next",
+                          values: ["mode": 0, "droop": 0]),
+                PartModel(name: "LF398", summary: "Tracks the input while the logic input is high, holds it while low",
+                          values: ["mode": 1, "droop": 0.003]),
+            ]
+        case .divider:
+            return [
+                PartModel(name: "CD4013", summary: "A D flip-flop wired to toggle: half the clock's frequency (a sub-oscillator)",
+                          values: ["division": 2]),
+                PartModel(name: "CD4017", summary: "Decade counter's carry out: one cycle every ten clocks", values: ["division": 10]),
+                PartModel(name: "CD4040", summary: "Binary counter, Q4 output: one cycle every sixteen clocks", values: ["division": 16]),
             ]
         case .vactrol:
             return [

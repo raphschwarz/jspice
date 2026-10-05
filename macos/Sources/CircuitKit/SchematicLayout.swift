@@ -31,16 +31,19 @@ public enum SchematicLayout {
         .opAmp: ["minus", "plus"], .ota: ["minus", "plus", "bias"], .timer555: ["trig", "thr", "dis", "ctrl", "reset"],
         .schmittInverter: ["in"], .npn: ["base"], .pnp: ["base"], .nmos: ["gate"], .pmos: ["gate"], .njfet: ["gate"],
         .potentiometer: ["a", "b"], .analogSwitch: ["a", "control"], .multiplier: ["x", "y"], .delayLine: ["in", "ctrl"],
-        .vactrol: ["anode"],
+        .vactrol: ["anode"], .comparator: ["minus", "plus"], .vco: ["cv", "pw"], .vcf: ["in", "cv"], .envelope: ["gate", "trig"],
+        .vca: ["in", "cv"], .sampleHold: ["in", "trig"], .divider: ["clock", "reset"],
     ]
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .npn: ["collector", "emitter"],
         .pnp: ["collector", "emitter"], .nmos: ["drain", "source"], .pmos: ["drain", "source"], .njfet: ["drain", "source"],
         .potentiometer: ["wiper"], .analogSwitch: ["b"], .multiplier: ["out"], .delayLine: ["out"], .vactrol: ["b"],
+        .comparator: ["out"], .vco: ["out"], .vcf: ["out"], .envelope: ["out"], .vca: ["out"], .sampleHold: ["out"], .divider: ["out"],
     ]
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
                                             .keyboardGate]
-    static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .delayLine]
+    static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca,
+                                               .sampleHold, .divider]
 
     static func isRailName(_ name: String) -> Bool {
         let s = name.uppercased().replacingOccurrences(of: " ", with: "")
@@ -67,7 +70,8 @@ public enum SchematicLayout {
         case .ground: return [e.b]
         case .netLabel, .wire: return []
         case .nmos, .pmos, .npn, .pnp, .njfet: return frame(1...2, -1...1)
-        case .opAmp, .ota, .multiplier, .delayLine: return frame(0...3, -2...2)
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+            return frame(0...3, -2...2)
         case .vactrol: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
         default:
@@ -451,7 +455,7 @@ public enum SchematicLayout {
                     case _ where p.role == .series:
                         let first = via.flatMap { p.index(of: $0) } ?? 0
                         putTwo(p, first: first, GridPoint(x, vy), GridPoint(x + 4, vy))
-                    case .opAmp, .ota:
+                    case .opAmp, .ota, .comparator:
                         let minus = p.net("minus")
                         let plus = p.net("plus")
                         let top: String
@@ -473,6 +477,11 @@ public enum SchematicLayout {
                     case .potentiometer:
                         put(p, GridPoint(x, vy - 2), GridPoint(x, vy + 2))
                         width = 2
+                    case _ where p.kind.isModule && p.kind != .delayLine:
+                        // a synth chip: the input the signal comes in by lines up with it
+                        let second = via != nil && via == p.connections[1]
+                        let ay = via != nil ? vy + 1 : 0
+                        put(p, GridPoint(x, ay), GridPoint(x + 4, ay), flipped: second)
                     default:
                         put(p, GridPoint(x, vy), GridPoint(x + 4, vy))
                     }

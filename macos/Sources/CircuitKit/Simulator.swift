@@ -81,6 +81,22 @@ public final class Simulator {
             return at(whole) * (1 - fraction) + at(whole + 1) * fraction
         }
     }
+    /// What each synth chip and comparator puts out, and what it remembers from step to step
+    var moduleStates: [ModuleState] = []
+
+    struct ModuleState: Equatable {
+        /// The output voltage over the next step
+        var output = 0.0
+        /// An oscillator's phase (0 to 1), an envelope's level (0 to 1), a held sample
+        var level = 0.0
+        /// A filter's four stages
+        var s1 = 0.0, s2 = 0.0, s3 = 0.0, s4 = 0.0
+        /// An envelope's stage (0 release, 1 attack, 2 decay and sustain), a divider's count
+        var stage = 0
+        /// Whether the first and second logic inputs were high (with hysteresis), to find rising edges
+        var high = false
+        var high2 = false
+    }
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
     var digitalState: [Bool] = []
     /// Op-amps: how often the input has been pulled back to the linear range in the present Newton solve
@@ -151,6 +167,7 @@ public final class Simulator {
     private struct SavedState {
         var cv, cvp, ci, lv, li, lip, m, l1, l2, l3: Double
         var digital: Bool
+        var module: ModuleState
     }
 
     /// Switches to a changed circuit, keeping the state (charge, current, memristor state) of elements that remain
@@ -160,7 +177,7 @@ public final class Simulator {
             previous[element.id] = SavedState(
                 cv: capacitorVoltage[i], cvp: capacitorVoltagePrevious[i], ci: capacitorCurrent[i], lv: inductorVoltage[i],
                 li: inductorCurrent[i], lip: inductorCurrentPrevious[i], m: memristorStates[i], l1: limitedVoltage[i],
-                l2: limitedVoltage2[i], l3: limitedVoltage3[i], digital: digitalState[i])
+                l2: limitedVoltage2[i], l3: limitedVoltage3[i], digital: digitalState[i], module: moduleStates[i])
         }
         circuit = newCircuit
         topology = Topology(circuit: newCircuit)
@@ -176,6 +193,7 @@ public final class Simulator {
         limitedVoltage2 = Array(repeating: 0, count: count)
         limitedVoltage3 = Array(repeating: 0, count: count)
         digitalState = Array(repeating: false, count: count)
+        moduleStates = Array(repeating: ModuleState(), count: count)
         noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
         storedCurrents = Array(repeating: 0, count: count)
@@ -191,12 +209,14 @@ public final class Simulator {
         drivenIndices = indices {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
-                 .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine: return true
+                 .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .comparator, .vco, .vcf, .envelope, .vca,
+                 .sampleHold, .divider: return true
             default: return false
             }
         }
         statefulIndices = indices {
-            [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage, .delayLine, .vactrol].contains($0)
+            [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage, .vactrol].contains($0)
+                || $0.isModule || $0 == .comparator
         }
         delayHistory = [:]
         digitalIndices = indices { $0.isDigital }
@@ -214,6 +234,7 @@ public final class Simulator {
                 limitedVoltage2[i] = state.l2
                 limitedVoltage3[i] = state.l3
                 digitalState[i] = state.digital
+                moduleStates[i] = state.module
             } else {
                 initialiseState(i)
             }
@@ -248,6 +269,14 @@ public final class Simulator {
         if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
         // each noise source has its own sequence, the same every run
         noiseState[i] = 0x9E37_79B9_7F4A_7C15 &* UInt64(i + 1) | 1
+        // a comparator starts low, a divider at the start of its count (output high)
+        var module = ModuleState()
+        switch element.kind {
+        case .comparator: module.output = constants[i].low
+        case .divider: module.output = constants[i].supply
+        default: break
+        }
+        moduleStates[i] = module
     }
 
     public func setTimeStep(_ dt: Double) {
@@ -294,6 +323,7 @@ public final class Simulator {
         limitedVoltage2 = other.limitedVoltage2
         limitedVoltage3 = other.limitedVoltage3
         digitalState = other.digitalState
+        moduleStates = other.moduleStates
         noiseState = other.noiseState
         convergenceFailures = other.convergenceFailures
         isFailed = other.isFailed
@@ -526,8 +556,9 @@ public final class Simulator {
                 add(&matrix, m, minus, row, 1)
                 add(&matrix, m, row, plus, 1)
                 add(&matrix, m, row, minus, -1)
-            case .opAmp, .multiplier, .delayLine:
-                // output: a voltage source to ground, whose voltage the nonlinear stage (or the delay line) sets
+            case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+                // output: a voltage source to ground, whose voltage the nonlinear stage (or the delay line, or the chip's
+                // state) sets
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
                 add(&matrix, m, nodes[2] - 1, row, -1)
@@ -634,6 +665,9 @@ public final class Simulator {
             case .delayLine:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = delayedOutput(i) }
+            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+                let row = topology.sourceRow[i]
+                if row >= 0 { rhs[row] = moduleStates[i].output }
             default:
                 break
             }
@@ -739,6 +773,35 @@ public final class Simulator {
             c.frequency = max(p("clock"), 1)
             c.slew = p("clockPerVolt")
             c.gain = p("gain")
+        case .comparator:
+            c.high = p("high")
+            c.low = p("low")
+            c.threshold = max(p("hysteresis"), 0)
+        case .vco:
+            c.value = p("waveform").rounded()
+            c.frequency = max(p("frequency"), 0)
+            c.amplitude = p("amplitude")
+        case .vcf:
+            c.frequency = max(p("cutoff"), 0.01)
+            c.gain = 4 * max(p("resonance"), 0)
+            c.limit = max(p("drive"), 0.01)
+        case .envelope:
+            c.tau = max(p("attack"), 1e-6)
+            c.von = max(p("decay"), 1e-6)
+            c.duty = min(max(p("sustain"), 0), 1)
+            c.voff = max(p("release"), 1e-6)
+            c.high = p("peak")
+        case .vca:
+            c.value = p("response").rounded()
+            c.gain = p("dbPerVolt")
+            c.threshold = max(p("unity"), 1e-3)
+            c.limit = max(p("limit"), 0.1)
+        case .sampleHold:
+            c.value = p("mode").rounded()
+            c.slew = max(p("droop"), 0)
+        case .divider:
+            c.value = max(p("division").rounded(), 2)
+            c.supply = max(p("supply"), 0.1)
         case .vactrol:
             // the LED: a red LED's junction
             (c.saturation, c.nvt) = (0.01 / exp(LEDColor.red.forwardVoltage / (2 * Self.thermalVoltage)), 2 * Self.thermalVoltage)
@@ -1221,6 +1284,8 @@ public final class Simulator {
                 capacitorVoltage[i] = sourceVoltage(i, at: time)
             case .noiseVoltage:
                 capacitorVoltage[i] = nextNoise(i)
+            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+                updateModule(i, nodes, parameters)
             case .delayLine:
                 if delayHistory[i] == nil {
                     // long enough for the slowest clock the control is likely to set
@@ -1256,6 +1321,135 @@ public final class Simulator {
             default:
                 break
             }
+        }
+    }
+
+    /// A logic input with hysteresis, as the synth chips have: high above 1.5 V, low again below 1 V
+    @inline(__always) private static func logicHigh(_ v: Double, was: Bool) -> Bool {
+        was ? v >= 1 : v > 1.5
+    }
+
+    /// Works out what a synth chip or comparator puts out over the next step, from its inputs at the end of this one
+    private func updateModule(_ i: Int, _ nodes: [Int], _ c: Constants) {
+        var s = moduleStates[i]
+        let in0 = voltage(nodes[0])
+        let in1 = voltage(nodes[1])
+        let dt = timeStep
+        switch kinds[i] {
+        case .comparator:
+            // + minus −, with half the hysteresis either side of zero
+            let difference = in1 - in0
+            if s.high {
+                if difference < -c.threshold / 2 { s.high = false }
+            } else if difference > c.threshold / 2 {
+                s.high = true
+            }
+            s.output = s.high ? c.high : c.low
+        case .vco:
+            // one volt per octave from the CV; the phase runs from 0 to 1 once per cycle
+            let frequency = min(c.frequency * pow(2, min(max(in0, -16), 16)), 0.45 / dt)
+            let increment = frequency * dt
+            var phase = s.level + increment
+            phase -= phase.rounded(.down)
+            s.level = phase
+            let duty = min(max(0.5 + in1 / 10, 0.05), 0.95)
+            s.output = c.amplitude * Self.oscillator(Int(c.value), phase: phase, increment: increment, duty: duty)
+        case .vcf:
+            // four one-pole stages with soft saturation, the last fed back to the input for resonance: the cutoff
+            // doubles with each volt of CV
+            let cutoff = min(c.frequency * pow(2, min(max(in1, -16), 16)), 0.4 / dt)
+            let g = 1 - exp(-2 * .pi * cutoff * dt)
+            let input = tanh(in0 / c.limit - c.gain * s.s4)
+            let t1 = tanh(s.s1), t2 = tanh(s.s2), t3 = tanh(s.s3)
+            s.s1 += g * (input - t1)
+            s.s2 += g * (t1 - t2)
+            s.s3 += g * (t2 - t3)
+            s.s4 += g * (t3 - tanh(s.s4))
+            s.output = c.limit * s.s4
+        case .envelope:
+            let gateWas = s.high
+            let triggerWas = s.high2
+            s.high = Self.logicHigh(in0, was: gateWas)
+            s.high2 = Self.logicHigh(in1, was: triggerWas)
+            if !s.high {
+                s.stage = 0
+            } else if !gateWas || (s.high2 && !triggerWas) {
+                s.stage = 1
+            }
+            switch s.stage {
+            case 1:
+                // attack: charging towards one and a half times the peak reaches the peak in the attack time
+                s.level = 1.5 + (s.level - 1.5) * exp(-dt * log(3) / c.tau)
+                if s.level >= 1 {
+                    s.level = 1
+                    s.stage = 2
+                }
+            case 2:
+                // decay towards the sustain level, nine tenths of the way in the decay time
+                s.level = c.duty + (s.level - c.duty) * exp(-dt * log(10) / c.von)
+            default:
+                // release: down to a tenth in the release time
+                s.level *= exp(-dt * log(10) / c.voff)
+            }
+            s.output = c.high * s.level
+        case .vca:
+            let gain = c.value < 0.5 ? pow(10, min(c.gain * in1 / 20, 40.0 / 20)) : min(max(in1, 0) / c.threshold, 100)
+            s.output = c.limit * tanh(gain * in0 / c.limit)
+        case .sampleHold:
+            let was = s.high
+            s.high = Self.logicHigh(in1, was: was)
+            if c.value < 0.5 ? (s.high && !was) : s.high {
+                s.level = in0
+            } else if c.slew > 0 {
+                // the hold capacitor slowly leaks towards zero
+                s.level -= min(abs(s.level), c.slew * dt) * (s.level < 0 ? -1 : 1)
+            }
+            s.output = s.level
+        case .divider:
+            // CMOS input: switches at half the supply, with a little hysteresis; reset holds the count at zero
+            let threshold = c.supply / 2
+            let was = s.high
+            s.high = was ? in0 > threshold * 0.9 : in0 > threshold * 1.1
+            s.high2 = in1 > threshold
+            let n = Int(c.value)
+            if s.high2 {
+                s.stage = 0
+            } else if s.high && !was {
+                s.stage = (s.stage + 1) % n
+            }
+            // high for the first half of the count
+            s.output = s.stage < (n + 1) / 2 ? c.supply : 0
+        default:
+            break
+        }
+        moduleStates[i] = s
+    }
+
+    /// One sample of a VCO waveform (from −1 to 1) at `phase`, the phase advancing by `increment` per sample. The jumps
+    /// of the saw and pulse are smoothed over a sample either side (PolyBLEP), which keeps high notes from aliasing.
+    static func oscillator(_ waveform: Int, phase t: Double, increment dt: Double, duty: Double) -> Double {
+        func blep(_ t: Double) -> Double {
+            if t < dt {
+                let x = t / dt
+                return x + x - x * x - 1
+            }
+            if t > 1 - dt {
+                let x = (t - 1) / dt
+                return x * x + x + x + 1
+            }
+            return 0
+        }
+        switch waveform {
+        case 1:
+            return 1 - 4 * abs(t - 0.5)
+        case 2:
+            var fall = t - duty + 1
+            fall -= fall.rounded(.down)
+            return (t < duty ? 1 : -1) + blep(t) - blep(fall)
+        case 3:
+            return sin(2 * .pi * t)
+        default:
+            return 2 * t - 1 - blep(t)
         }
     }
 
@@ -1306,7 +1500,7 @@ public final class Simulator {
                                         beta: constants[i].beta, saturation: constants[i].saturation)
             let (ic, ib) = (p * model.ic, p * model.ib)
             return (ic, [-ib, -ic, ic + ib])
-        case .opAmp, .multiplier, .delayLine:
+        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             let row = topology.sourceRow[i]
             let current = row >= 0 && row < x.count ? x[row] : 0
             return (current, [0, 0, current])
@@ -1407,7 +1601,7 @@ public final class Simulator {
         guard nodes.count >= 2 else { return 0 }
         let kind = kinds[index]
         if kind.isTransistor { return v(1) - v(2) }
-        if kind == .opAmp || kind == .ota || kind == .multiplier || kind == .delayLine { return v(2) }
+        if kind == .ota || kind.drivesOutput { return v(2) }
         if kind == .timer555 { return v(2) - v(0) }
         if kind == .schmittInverter { return v(1) }
         return kind.isVoltageSource ? v(1) - v(0) : v(0) - v(1)

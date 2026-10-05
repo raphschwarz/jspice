@@ -41,7 +41,7 @@ public enum Examples {
     public static let all: [Example] = [
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
-        beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid,
+        beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
         ringModulator, chorus, fuzz, overdrive, lowpassGate, memristorHysteresis, memristorPulses,
     ]
 
@@ -273,6 +273,74 @@ public enum Examples {
                        summary: "The synth voice played by the step sequencer. Turn on sound; change the notes, tempo and gate in the inspector (click an empty spot first).",
                        symbol: "metronome", circuit: circuit)
     }()
+
+    // MARK: Synth chips
+
+    /// The classic chip synth: two AS3340s (a saw, and a pulse whose width an LFO sweeps) and a CD4013 sub-oscillator an
+    /// octave down, mixed into an AS3320 four-pole filter; one AS3310 envelope opens the filter and a linear VCA. A
+    /// sequencer plays an arpeggio.
+    static let chipVoice: Example = {
+        let parts: [NetlistPart] = [
+            NetlistPart(kind: .keyboardPitch, name: "KB1", connections: ["plus": "cv", "minus": "GND"]),
+            NetlistPart(kind: .keyboardGate, name: "KB2", params: ["high": 5], connections: ["plus": "gate", "minus": "GND"]),
+            NetlistPart(kind: .acVoltage, name: "LFO", params: ["amplitude": 3, "frequency": 0.4], connections: ["plus": "lfo", "minus": "GND"]),
+            NetlistPart(kind: .vco, name: "U1", params: model(.vco, "AS3340").merging(["waveform": 0]) { $1 },
+                        connections: ["cv": "cv", "pw": "GND", "out": "saw"]),
+            NetlistPart(kind: .vco, name: "U2", params: model(.vco, "AS3340").merging(["waveform": 2]) { $1 },
+                        connections: ["cv": "cv", "pw": "lfo", "out": "pulse"]),
+            NetlistPart(kind: .divider, name: "U3", params: model(.divider, "CD4013"), connections: ["clock": "pulse", "reset": "GND", "out": "sub"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 1e-6], connections: ["a": "sub", "b": "subc"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 100_000], connections: ["a": "saw", "b": "mix"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 100_000], connections: ["a": "pulse", "b": "mix"]),
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 100_000], connections: ["a": "subc", "b": "mix"]),
+            NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 47_000], connections: ["a": "mix", "b": "GND"]),
+            NetlistPart(kind: .envelope, name: "U5", params: ["attack": 0.003, "decay": 0.25, "sustain": 0.3, "release": 0.2, "peak": 5],
+                        connections: ["gate": "gate", "trig": "GND", "out": "env"]),
+            NetlistPart(kind: .vcf, name: "U4", params: model(.vcf, "AS3320").merging(["cutoff": 150, "resonance": 0.45]) { $1 },
+                        connections: ["in": "mix", "cv": "env", "out": "filt"]),
+            NetlistPart(kind: .vca, name: "U6", params: model(.vca, "Linear"), connections: ["in": "filt", "cv": "env", "out": "out"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 1], connections: ["plus": "out", "minus": "GND"]),
+        ]
+        var circuit = drawn(parts, scopes: [("U5", .voltage), ("SPK1", .voltage)])
+        circuit.sequence = StepSequence(steps: [48, 51, 55, 60, 63, 60, 55, 51, 46, 50, 53, 58, 62, 58, 53, 50],
+                                        tempo: 132, gateLength: 0.6, playing: true)
+        return Example(id: "chipvoice", title: "Chip synth: AS3340, AS3320, AS3310 (sound)",
+                       summary: "Two AS3340 VCOs and a CD4013 sub-oscillator through an AS3320 filter and a VCA, opened by an AS3310 envelope, playing an arpeggio. Turn on sound; stop the sequencer in the inspector to play it from the keys.",
+                       symbol: "cpu", circuit: circuit)
+    }()
+
+    /// Random notes: noise sampled six times a second sets a VCO's pitch, a plucky envelope on each clock
+    static let randomNotes = Example(
+        id: "random", title: "Random notes: sample and hold (sound)",
+        summary: "A clocked sample and hold picks a random voltage from noise six times a second; an AS3340 plays it as a pitch, an envelope plucks each note. The classic 'computer thinking' sound. Turn on sound.",
+        symbol: "dice",
+        circuit: drawn([
+            NetlistPart(kind: .noiseVoltage, name: "NOISE", params: ["amplitude": 1], connections: ["plus": "noise", "minus": "GND"]),
+            NetlistPart(kind: .squareVoltage, name: "CLK", params: ["high": 5, "low": 0, "frequency": 6, "duty": 0.5],
+                        connections: ["plus": "clk", "minus": "GND"]),
+            NetlistPart(kind: .sampleHold, name: "U1", params: model(.sampleHold, "Clocked"), connections: ["in": "noise", "trig": "clk", "out": "held"]),
+            NetlistPart(kind: .vco, name: "U2", params: model(.vco, "AS3340").merging(["waveform": 1, "frequency": 261.63]) { $1 },
+                        connections: ["cv": "held", "pw": "GND", "out": "tone"]),
+            NetlistPart(kind: .envelope, name: "U3", params: ["attack": 0.002, "decay": 0.12, "sustain": 0, "release": 0.05],
+                        connections: ["gate": "clk", "trig": "GND", "out": "env"]),
+            NetlistPart(kind: .vca, name: "U4", params: model(.vca, "Linear"), connections: ["in": "tone", "cv": "env", "out": "out"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 5], connections: ["plus": "out", "minus": "GND"]),
+        ], scopes: [("U1", .voltage), ("SPK1", .voltage)]))
+
+    /// Pulse-width modulation from a comparator: a triangle compared with a slow sine is high for longer the lower the
+    /// sine is
+    static let comparatorPWM = Example(
+        id: "pwm", title: "Comparator PWM (sound)",
+        summary: "An LM311 compares a 110 Hz triangle with a slow sine: the pulse it puts out widens and narrows, the hollow, chorused sound of pulse-width modulation. Turn on sound.",
+        symbol: "square.split.2x1",
+        circuit: drawn([
+            NetlistPart(kind: .vco, name: "U1", params: model(.vco, "AS3340").merging(["waveform": 1, "frequency": 110]) { $1 },
+                        connections: ["cv": "GND", "pw": "GND", "out": "tri"]),
+            NetlistPart(kind: .acVoltage, name: "LFO", params: ["amplitude": 4, "frequency": 0.3], connections: ["plus": "lfo", "minus": "GND"]),
+            NetlistPart(kind: .comparator, name: "U2", params: model(.comparator, "LM311"), connections: ["plus": "tri", "minus": "lfo", "out": "pulse"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "pulse", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 12], connections: ["plus": "pulse", "minus": "GND"]),
+        ], scopes: [("LFO", .voltage), ("SPK1", .voltage)]))
 
     // MARK: Effects
 

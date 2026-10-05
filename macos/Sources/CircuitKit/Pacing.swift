@@ -57,6 +57,13 @@ public enum Pacing {
                 scales.append(contentsOf: [element[param: "attack"], element[param: "decay"]])
             case .delayLine:
                 scales.append(element[param: "stages"] / (2 * max(element[param: "clock"], 1)))
+            case .vco:
+                let f = element[param: "frequency"]
+                if f > 0 { scales.append(1 / f) }
+            case .vcf:
+                scales.append(1 / (2 * .pi * max(element[param: "cutoff"], 0.01)))
+            case .envelope:
+                scales.append(contentsOf: [element[param: "attack"], element[param: "decay"], element[param: "release"]])
             default:
                 break
             }

@@ -102,7 +102,21 @@ struct ElementInspector: View {
             } else if !element.kind.params.isEmpty {
                 Section("Properties") {
                     ForEach(element.kind.params, id: \.key) { spec in
-                        ParameterRow(editor: editor, elementID: element.id, spec: spec, value: element[param: spec.key])
+                        if spec.choices.isEmpty {
+                            ParameterRow(editor: editor, elementID: element.id, spec: spec, value: element[param: spec.key])
+                        } else {
+                            Picker(spec.name, selection: Binding(
+                                get: { element[param: spec.key] },
+                                set: { editor.setParameter(element.id, spec, to: $0) }
+                            )) {
+                                ForEach(spec.choices, id: \.value) { choice in
+                                    Text(choice.name).tag(choice.value)
+                                }
+                                if !spec.choices.contains(where: { $0.value == element[param: spec.key] }) {
+                                    Text(formatParameter(element[param: spec.key], spec)).tag(element[param: spec.key])
+                                }
+                            }
+                        }
                     }
                 }
             }

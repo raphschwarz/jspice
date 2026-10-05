@@ -73,7 +73,8 @@ enum SymbolRenderer {
     /// Length of the drawn body along the element, in grid units; the rest is leads
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
-        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol:
+        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
+             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             return 0
         case .schmittInverter: return 1.8
         case .analogSwitch: return 1.6
@@ -100,9 +101,9 @@ enum SymbolRenderer {
             drawBipolar(element, at: a, b, unit: u, style: style, in: ctx)
         case .njfet:
             drawJFET(element, at: a, b, unit: u, style: style, in: ctx)
-        case .opAmp, .ota:
+        case .opAmp, .ota, .comparator:
             drawOpAmp(element, posts: posts, at: a, b, unit: u, style: style, in: ctx)
-        case .multiplier, .delayLine, .vactrol:
+        case .multiplier, .delayLine, .vactrol, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
@@ -297,7 +298,8 @@ enum SymbolRenderer {
             path.move(to: CGPoint(x: x0 + 0.2 * u, y: 0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.2 * u, y: -0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
-        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol:
+        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
+             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             break
         }
 
@@ -655,26 +657,21 @@ enum SymbolRenderer {
             body.addLine(to: CGPoint(x: cx + k, y: k))
             body.move(to: CGPoint(x: cx - k, y: k))
             body.addLine(to: CGPoint(x: cx + k, y: -k))
-        case .delayLine:
+        case .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             let left = min(0.6 * u, L * 0.15)
             let right = max(left + u, L - 0.6 * u)
             line([CGPoint(x: 0, y: -u), CGPoint(x: left, y: -u)], colors[0])
             line([CGPoint(x: 0, y: u), CGPoint(x: left, y: u)], colors[1])
             line([CGPoint(x: right, y: 0), CGPoint(x: L, y: 0)], colors[2])
             body.addRect(CGRect(x: left, y: -1.5 * u, width: right - left, height: 3 * u))
-            // buckets passing the signal along, and the clock input's mark
-            let buckets = 4
-            let pitch = (right - left - 0.5 * u) / CGFloat(buckets)
-            for k in 0..<buckets {
-                let x = left + 0.25 * u + pitch * CGFloat(k) + pitch * 0.2
-                body.move(to: CGPoint(x: x, y: -0.55 * u))
-                body.addLine(to: CGPoint(x: x, y: 0.15 * u))
-                body.addLine(to: CGPoint(x: x + pitch * 0.6, y: 0.15 * u))
-                body.addLine(to: CGPoint(x: x + pitch * 0.6, y: -0.55 * u))
+            addChipGlyph(element, to: body, left: left, right: right, unit: u)
+            // clock and trigger inputs: the edge-triggered mark
+            if element.kind == .delayLine || element.kind == .sampleHold || element.kind == .divider || element.kind == .envelope {
+                let y = element.kind == .divider ? -u : u
+                body.move(to: CGPoint(x: left, y: y - 0.3 * u))
+                body.addLine(to: CGPoint(x: left + 0.35 * u, y: y))
+                body.addLine(to: CGPoint(x: left, y: y + 0.3 * u))
             }
-            body.move(to: CGPoint(x: left, y: u - 0.3 * u))
-            body.addLine(to: CGPoint(x: left + 0.35 * u, y: u))
-            body.addLine(to: CGPoint(x: left, y: u + 0.3 * u))
         default:
             // vactrol: LED on the left (anode up), LDR on the right, light between them
             let ledX = min(1.2 * u, L * 0.3)
@@ -715,6 +712,77 @@ enum SymbolRenderer {
         ctx.restoreGState()
     }
 
+    /// What a chip does, drawn small inside its box: buckets for a delay line, a waveform for a VCO, a falling slope for a
+    /// low-pass filter, the ADSR shape, an amplifier for a VCA, a staircase for a sample and hold, two clocks for a divider
+    private static func addChipGlyph(_ element: Element, to body: CGMutablePath, left: CGFloat, right: CGFloat, unit u: CGFloat) {
+        let x0 = left + 0.35 * u
+        let x1 = right - 0.35 * u
+        let w = x1 - x0
+        let top = -0.6 * u
+        let bottom = 0.5 * u
+        func p(_ fx: CGFloat, _ fy: CGFloat) -> CGPoint { CGPoint(x: x0 + w * fx, y: bottom + (top - bottom) * fy) }
+        func polyline(_ points: [CGPoint]) {
+            guard let first = points.first else { return }
+            body.move(to: first)
+            for point in points.dropFirst() { body.addLine(to: point) }
+        }
+        switch element.kind {
+        case .delayLine:
+            let buckets = 4
+            let pitch = w / CGFloat(buckets)
+            for k in 0..<buckets {
+                let x = x0 + pitch * CGFloat(k) + pitch * 0.2
+                polyline([CGPoint(x: x, y: -0.55 * u), CGPoint(x: x, y: 0.15 * u), CGPoint(x: x + pitch * 0.6, y: 0.15 * u),
+                          CGPoint(x: x + pitch * 0.6, y: -0.55 * u)])
+            }
+        case .vco:
+            switch Int(element[param: "waveform"].rounded()) {
+            case 1:
+                polyline([p(0, 0.5), p(0.125, 1), p(0.375, 0), p(0.625, 1), p(0.875, 0), p(1, 0.5)])
+            case 2:
+                polyline([p(0, 0), p(0, 1), p(0.25, 1), p(0.25, 0), p(0.5, 0), p(0.5, 1), p(0.75, 1), p(0.75, 0), p(1, 0)])
+            case 3:
+                var points: [CGPoint] = []
+                for k in 0...24 {
+                    let t = CGFloat(k) / 24
+                    points.append(p(t, 0.5 + 0.5 * sin(2 * 2 * .pi * t)))
+                }
+                polyline(points)
+            default:
+                polyline([p(0, 0), p(0.5, 1), p(0.5, 0), p(1, 1), p(1, 0)])
+            }
+        case .vcf:
+            // flat, a small resonant bump, then a steep fall
+            polyline([p(0, 0.6), p(0.4, 0.6), p(0.52, 0.85), p(0.6, 0.6), p(0.85, 0), p(1, 0)])
+        case .envelope:
+            polyline([p(0, 0), p(0.15, 1), p(0.35, 0.55), p(0.75, 0.55), p(1, 0)])
+        case .vca:
+            // a small amplifier with a control arrow into it from below
+            body.move(to: p(0.2, 1))
+            body.addLine(to: p(0.2, 0))
+            body.addLine(to: p(0.8, 0.5))
+            body.closeSubpath()
+            polyline([p(0.45, -0.25), p(0.45, 0.2)])
+        case .sampleHold:
+            polyline([p(0, 0.2), p(0.25, 0.2), p(0.25, 0.8), p(0.5, 0.8), p(0.5, 0.45), p(0.75, 0.45), p(0.75, 1), p(1, 1)])
+        case .divider:
+            // a fast clock above, the slower output below
+            func square(_ y0: CGFloat, _ y1: CGFloat, cycles: Int) {
+                var points: [CGPoint] = [p(0, y0)]
+                for k in 0..<cycles {
+                    let a = CGFloat(k) / CGFloat(cycles)
+                    let h = 0.5 / CGFloat(cycles)
+                    points += [p(a, y1), p(a + h, y1), p(a + h, y0), p(a + 2 * h, y0)]
+                }
+                polyline(points)
+            }
+            square(0.62, 1.05, cycles: 4)
+            square(-0.05, 0.38, cycles: 2)
+        default:
+            break
+        }
+    }
+
     private static func drawOpAmp(_ element: Element, posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat,
                                   style: SymbolStyle, in ctx: CGContext) {
         let L = hypot(b.x - a.x, b.y - a.y)
@@ -742,6 +810,18 @@ enum SymbolRenderer {
         marks.move(to: CGPoint(x: left + 0.25 * u, y: -u))
         marks.addLine(to: CGPoint(x: left + 0.6 * u, y: -u))
         addPlus(to: marks, at: CGPoint(x: left + 0.42 * u, y: u), size: 0.17 * u)
+        if element.kind == .comparator {
+            // a hysteresis loop in the middle of the triangle marks a comparator
+            let cx = left + (tipX - left) * 0.42
+            let h = 0.32 * u
+            marks.move(to: CGPoint(x: cx - 2 * h, y: h))
+            marks.addLine(to: CGPoint(x: cx + 0.5 * h, y: h))
+            marks.addLine(to: CGPoint(x: cx + 0.5 * h, y: -h))
+            marks.addLine(to: CGPoint(x: cx + 2 * h, y: -h))
+            marks.move(to: CGPoint(x: cx + 0.5 * h, y: -h))
+            marks.addLine(to: CGPoint(x: cx - 0.5 * h, y: -h))
+            marks.addLine(to: CGPoint(x: cx - 0.5 * h, y: h))
+        }
         stroke(marks, width: style.lineWidth, from: style.fill, to: style.fill, start: 0, end: 1, length: L, in: ctx)
 
         for (y, color) in [(-u, colors[0]), (u, colors[1])] {
@@ -950,7 +1030,7 @@ enum SymbolRenderer {
             return [(a, end)]
         case .nmos, .pmos, .npn, .pnp, .njfet:
             return posts.count == 3 ? [(a, b), (posts[1], posts[2])] : [(a, b)]
-        case .opAmp, .multiplier, .delayLine:
+        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             return posts.count == 3 ? [(posts[0], posts[1]), (a, b)] : [(a, b)]
         case .vactrol:
             return posts.count == 4 ? [(posts[0], posts[1]), (posts[2], posts[3]), (a, b)] : [(a, b)]
@@ -999,7 +1079,7 @@ enum SymbolRenderer {
             return (CGPoint(x: a.x + (b.x - a.x) * start / length, y: a.y + (b.y - a.y) * start / length), b, nil)
         case .vactrol:
             return nil
-        case .opAmp, .ota, .multiplier, .delayLine:
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             // the output lead, from the triangle's tip
             let length = hypot(b.x - a.x, b.y - a.y)
             guard length > 0 else { return nil }
