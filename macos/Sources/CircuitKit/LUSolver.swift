@@ -97,9 +97,12 @@ extension LUSolver {
     /// Solves like `solveInPlace`, replaying `plan` when the matrix still fits it, and otherwise eliminating afresh and
     /// leaving a new plan. A matrix fits when it has no non-zero entry the plan has not seen and each planned pivot is
     /// still large enough for its column; patterns only grow, so after a few new plans one fits for good.
-    static func solveInPlace(_ a: inout [Double], _ b: inout [Double], size n: Int, plan: inout EliminationPlan?) -> Bool {
+    ///
+    /// `changed` lists the only entries that can have become non-zero since the plan last fitted (nil: any of them).
+    static func solveInPlace(_ a: inout [Double], _ b: inout [Double], size n: Int, plan: inout EliminationPlan?,
+                             changed: UnsafeBufferPointer<Int>?) -> Bool {
         guard n > 0, a.count >= n * n, b.count >= n else { return n == 0 }
-        if let current = plan, current.n == n, fits(a, current) {
+        if let current = plan, current.n == n, fits(a, current, changed: changed) {
             let stopped = replay(&a, &b, current)
             if stopped < 0 { return true }
             // a planned pivot became too small: pivot afresh from that step, and plan again next time
@@ -166,10 +169,14 @@ extension LUSolver {
         }
     }
 
-    /// True when every non-zero entry of `a` is one the plan expects
-    private static func fits(_ a: [Double], _ plan: EliminationPlan) -> Bool {
+    /// True when every non-zero entry of `a` (or of the `changed` ones) is one the plan expects
+    private static func fits(_ a: [Double], _ plan: EliminationPlan, changed: UnsafeBufferPointer<Int>?) -> Bool {
         a.withUnsafeBufferPointer { a -> Bool in
             plan.pattern.withUnsafeBufferPointer { pattern -> Bool in
+                if let changed {
+                    for i in changed where a[i] != 0 && !pattern[i] { return false }
+                    return true
+                }
                 for i in 0..<(plan.n * plan.n) where a[i] != 0 && !pattern[i] { return false }
                 return true
             }

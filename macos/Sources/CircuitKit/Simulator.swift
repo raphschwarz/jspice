@@ -141,6 +141,14 @@ public final class Simulator {
     private var workVector: [Double] = []
     /// The pivots and non-zero entries of the last elimination, replayed while the matrix keeps its pattern
     private var eliminationPlan: EliminationPlan?
+    /// Matrix entries written by the stamps of the present Newton iteration (the base matrix and the stamps' own
+    /// values are the only things that change the pattern), and how many: more than the log holds means it overflowed
+    private var stampLog: [Int] = []
+    private var stampCount = 0
+    private var loggingStamps = false
+    /// Counts base matrix rebuilds, and which one the elimination plan was last checked against
+    private var baseVersion = 0
+    private var planBaseVersion = -1
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
     private var savedX: [Double] = []
     private var savedLimited: [Double] = []
@@ -529,10 +537,13 @@ public final class Simulator {
         for iteration in 0..<iterations {
             Self.copy(baseMatrix, into: &workMatrix)
             Self.copy(rhs, into: &workVector)
+            stampCount = 0
+            loggingStamps = true
             stampMemristors(&workMatrix, m)
             limiting = false
             if hasNonlinear { stampNonlinear(&workMatrix, &workVector, m) }
-            guard LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan) else { fail(); return false }
+            loggingStamps = false
+            guard solveWorkMatrix(m) else { fail(); return false }
             var change = 0.0
             for k in 0..<m {
                 let next = workVector[k]
@@ -544,6 +555,29 @@ public final class Simulator {
             if iteration > 0 && change < 1e-9 && !limiting { return true }
         }
         return false
+    }
+
+    /// Solves the stamped matrix in place, replaying the elimination plan when it still fits. Only the entries stamped
+    /// this iteration can have left the plan's pattern, as long as the base matrix is the one the plan was checked
+    /// against; otherwise the whole matrix is checked.
+    private func solveWorkMatrix(_ m: Int) -> Bool {
+        let solved: Bool
+        if stampCount > stampLog.count {
+            // more stamps than the log holds: check everything this time, and keep a longer log
+            stampLog = [Int](repeating: 0, count: 2 * stampCount)
+            solved = LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan, changed: nil)
+        } else if planBaseVersion != baseVersion {
+            solved = LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan, changed: nil)
+        } else {
+            let count = stampCount
+            solved = stampLog.withUnsafeBufferPointer { log in
+                LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan,
+                                      changed: UnsafeBufferPointer(rebasing: log[0..<count]))
+            }
+        }
+        // the plan now fits this base matrix: it was made from it, or checked against all of it
+        planBaseVersion = baseVersion
+        return solved
     }
 
     /// Copies element by element into an array of the same size, so the target keeps its storage
@@ -575,11 +609,20 @@ public final class Simulator {
 
     /// Conductance g between nodes a and b
     @inline(__always) private func stampConductance(_ matrix: inout [Double], _ m: Int, _ a: Int, _ b: Int, _ g: Double) {
-        if a > 0 { matrix[(a - 1) * m + a - 1] += g }
-        if b > 0 { matrix[(b - 1) * m + b - 1] += g }
+        if a > 0 { stamp(&matrix, (a - 1) * m + a - 1, g) }
+        if b > 0 { stamp(&matrix, (b - 1) * m + b - 1, g) }
         if a > 0 && b > 0 {
-            matrix[(a - 1) * m + b - 1] -= g
-            matrix[(b - 1) * m + a - 1] -= g
+            stamp(&matrix, (a - 1) * m + b - 1, -g)
+            stamp(&matrix, (b - 1) * m + a - 1, -g)
+        }
+    }
+
+    /// Adds to one matrix entry, noting where during Newton-Raphson's stamping (see `stampLog`)
+    @inline(__always) private func stamp(_ matrix: inout [Double], _ index: Int, _ value: Double) {
+        matrix[index] += value
+        if loggingStamps {
+            if stampCount < stampLog.count { stampLog[stampCount] = index }
+            stampCount += 1
         }
     }
 
@@ -591,7 +634,7 @@ public final class Simulator {
 
     /// Adds `value` at (row, column) given as 0-based matrix indices; negative indices (ground) are skipped
     @inline(__always) private func add(_ matrix: inout [Double], _ m: Int, _ row: Int, _ column: Int, _ value: Double) {
-        if row >= 0 && column >= 0 { matrix[row * m + column] += value }
+        if row >= 0 && column >= 0 { stamp(&matrix, row * m + column, value) }
     }
 
     /// Conductances of a potentiometer's two halves: a to wiper, wiper to b
@@ -606,6 +649,7 @@ public final class Simulator {
 
     /// The part of the matrix that only changes with the circuit or the time step
     private func buildBaseMatrix() {
+        baseVersion += 1
         let m = topology.matrixSize
         var matrix = [Double](repeating: 0, count: m * m)
         for node in 1..<max(1, topology.nodeCount) {

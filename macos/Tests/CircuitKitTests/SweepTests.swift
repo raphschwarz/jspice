@@ -116,7 +116,7 @@ final class SweepTests: XCTestCase {
                 let b = (0..<n).map { _ in random() }
                 var matrix = a
                 var x = b
-                guard LUSolver.solveInPlace(&matrix, &x, size: n, plan: &plan) else { continue }
+                guard LUSolver.solveInPlace(&matrix, &x, size: n, plan: &plan, changed: nil) else { continue }
                 var worst = 0.0
                 for r in 0..<n {
                     var sum = -b[r]
