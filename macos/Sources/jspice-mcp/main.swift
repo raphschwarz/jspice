@@ -50,6 +50,8 @@ func benchmark(seconds: Double, ids: [String]) {
 /// Holds what a background task produced, for the main code waiting on it
 final class Outcome: @unchecked Sendable {
     var error: Error?
+    /// the last progress logged, in percent
+    var logged = -1
 }
 
 // --install-chip-support [avr]: installs a chip family's compiler and core, as the app's Chip Support window does
@@ -63,11 +65,10 @@ if let flag = arguments.firstIndex(of: "--install-chip-support") {
     let done = DispatchSemaphore(value: 0)
     Task {
         do {
-            var last = -1
             try await ChipSupport.install(family) { progress in
                 let percent = Int(progress.fraction * 100)
-                if percent / 10 != last / 10 || progress.fraction >= 1 {
-                    last = percent
+                if percent / 10 != outcome.logged / 10 || progress.fraction >= 1 {
+                    outcome.logged = percent
                     log("\(percent)% \(progress.message)")
                 }
             }

@@ -71,7 +71,7 @@ final class MicrocontrollerTests: XCTestCase {
         let chip = index(circuit, "U1")
         run(simulator, until: 0.1)
         let cycles = simulator.chip(chip)?.cycles ?? 0
-        XCTAssertEqual(Double(cycles), 0.1 * AVR.clock, accuracy: 100)
+        XCTAssertEqual(Double(cycles), simulator.time * AVR.clock, accuracy: 100)
         // an edit elsewhere: the same chip carries on
         var edited = circuit
         edited.add(Element(kind: .resistor, a: GridPoint(80, 80), b: GridPoint(84, 80)))

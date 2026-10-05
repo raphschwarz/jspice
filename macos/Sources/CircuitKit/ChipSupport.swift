@@ -35,6 +35,11 @@ public enum ChipSupport {
         /// 0 to 1
         public var fraction: Double
         public var message: String
+
+        public init(fraction: Double, message: String) {
+            self.fraction = fraction
+            self.message = message
+        }
     }
 
     public enum InstallError: Error, CustomStringConvertible {

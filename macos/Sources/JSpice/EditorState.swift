@@ -258,9 +258,9 @@ final class EditorState: ObservableObject {
             return
         }
         sketchStatus[id] = .building
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let result = SketchBuilder.build(code, toolchain: toolchain)
-            await MainActor.run { self?.finishUpload(id, code: code, result: result) }
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { SketchBuilder.build(code, toolchain: toolchain) }.value
+            self?.finishUpload(id, code: code, result: result)
         }
     }
 
