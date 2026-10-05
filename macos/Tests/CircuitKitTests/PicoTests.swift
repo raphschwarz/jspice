@@ -144,10 +144,11 @@ final class PicoTests: XCTestCase {
         var rising: [Double] = []
         var wasHigh = false
         let step = 1250  // 10 µs
-        for i in 0..<90_000 {
+        // timed by the chip's own count: a run can end an instruction past its budget (the simulator carries that over)
+        while pico.cycles < 112_500_000 {
             pico.run(cycles: step)
             let high = pico.pinStates[5] == .output(high: true)
-            if high && !wasHigh { rising.append(Double(i + 1) * 10e-6) }
+            if high && !wasHigh { rising.append(Double(pico.cycles) / 125e6) }
             wasHigh = high
         }
         func frequency(from start: Double, to end: Double) -> Double {

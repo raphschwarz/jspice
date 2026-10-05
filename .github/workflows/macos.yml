@@ -52,6 +52,12 @@ jobs:
           sample $! 3 -file build/profile.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile.txt | head -45
+          # and for the Pico running flat out
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-knob > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-pico.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-pico.txt | head -45
       - name: Chip support (installs Arduino's AVR toolchain as the app does, compiles a sketch)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 10
