@@ -63,7 +63,7 @@ final class PicoTests: XCTestCase {
         for pin in pins {
             lines.append("GP\(pin) \(counts[pin]!) \(PicoTests.bits(sums[pin]!)) \(last[pin]!.joined(separator: " "))")
         }
-        lines.append("registers " + chip.core.registers.map { String($0, radix: 16) }.joined(separator: " "))
+        lines.append("registers " + (0..<16).map { String(chip.core.registers[$0], radix: 16) }.joined(separator: " "))
         return (lines.joined(separator: "\n"), serial)
     }
 

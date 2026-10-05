@@ -13,7 +13,12 @@ final class CortexM0 {
 
     unowned let chip: RP2040
 
-    var registers = [UInt32](repeating: 0, count: 16)
+    /// R0-R15 (raw memory rather than an array: the instruction switch reads and writes them all the time)
+    let registers: UnsafeMutablePointer<UInt32> = {
+        let pointer = UnsafeMutablePointer<UInt32>.allocate(capacity: 16)
+        pointer.initialize(repeating: 0, count: 16)
+        return pointer
+    }()
     var bankedSP: UInt32 = 0xFFFF_FFFC
     var cycles = 0
 
@@ -45,6 +50,8 @@ final class CortexM0 {
         self.chip = chip
         registers[13] = 0xFFFF_FFFC
     }
+
+    deinit { registers.deallocate() }
 
     func reset() {
         SP = chip.readUint32(VTOR)
@@ -365,7 +372,13 @@ final class CortexM0 {
     }
 
     /// The 16-bit instruction each halfword is, in rp2040js's order of matching (32-bit ones are `wide`)
-    static let decodeTable: [Op] = (0..<65_536).map { classify($0) }
+    static let decodeTable: UnsafeMutablePointer<Op> = {
+        let table = UnsafeMutablePointer<Op>.allocate(capacity: 65_536)
+        for opcode in 0..<65_536 { (table + opcode).initialize(to: classify(opcode)) }
+        return table
+    }()
+    /// The table, kept here so each instruction does not go through the static's lazy initialization
+    private let decode = CortexM0.decodeTable
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
     private static func classify(_ o: Int) -> Op {
@@ -461,9 +474,10 @@ final class CortexM0 {
         let opcodePC = PC & ~1
         let opcode = Int(chip.readUint16(opcodePC))
         var delta = 1
-        let r = { (index: Int) -> UInt32 in self.registers[index] }
+        let file = registers
+        @inline(__always) func r(_ index: Int) -> UInt32 { file[index] }
         PC = PC &+ 2
-        switch CortexM0.decodeTable[opcode] {
+        switch decode[opcode] {
         case .adcs:
             let rm = (opcode >> 3) & 7, rdn = opcode & 7
             registers[rdn] = add(r(rm), r(rdn), carry: C ? 1 : 0)
