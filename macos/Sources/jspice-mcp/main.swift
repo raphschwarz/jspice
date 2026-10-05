@@ -16,8 +16,9 @@ func log(_ message: String) {
     FileHandle.standardError.write(("jspice-mcp: " + message + "\n").data(using: .utf8)!)
 }
 
-/// Simulates each example for `seconds` of circuit time at 48 kHz, one step per sample as with sound on, and prints the
-/// time per step and how many times faster than real time that is
+/// Simulates each example for three runs of `seconds` of circuit time at 48 kHz, one step per sample as with sound on,
+/// and prints the time per step of the fastest run (the others are slowed by whatever else the machine was doing) and
+/// how many times faster than real time that is
 func benchmark(seconds: Double, ids: [String]) {
     let rate = 48_000.0
     for id in ids {
@@ -27,16 +28,19 @@ func benchmark(seconds: Double, ids: [String]) {
         }
         let simulator = Simulator(circuit: example.circuit, timeStep: 1 / rate)
         let listened = example.circuit.elements.firstIndex { $0.kind == .speaker } ?? 0
-        let steps = Int(seconds * rate)
+        let steps = max(1, Int(seconds * rate))
         var total = 0.0
-        let start = DispatchTime.now().uptimeNanoseconds
-        for _ in 0..<steps {
-            simulator.step()
-            total += simulator.voltageAcross(listened)
+        var fastest = Double.infinity
+        for _ in 0..<3 {
+            let start = DispatchTime.now().uptimeNanoseconds
+            for _ in 0..<steps {
+                simulator.step()
+                total += simulator.voltageAcross(listened)
+            }
+            fastest = min(fastest, Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9)
         }
-        let wall = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
-        let perStep = String(format: "%7.2f", wall / Double(steps) * 1e6)
-        let speed = String(format: "%6.1f", seconds / wall)
+        let perStep = String(format: "%7.2f", fastest / Double(steps) * 1e6)
+        let speed = String(format: "%6.1f", seconds / fastest)
         let name = id.padding(toLength: 18, withPad: " ", startingAt: 0)
         let notes = (simulator.isFailed ? " FAILED" : "") + (total.isFinite ? "" : " (not finite)")
         print("\(name)\(perStep) µs/step \(speed)× real time  \(simulator.convergenceFailures) unconverged\(notes)")
