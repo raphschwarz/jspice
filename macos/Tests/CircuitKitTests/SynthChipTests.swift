@@ -53,7 +53,7 @@ final class SynthChipTests: XCTestCase {
                 load("out"),
             ], timeStep: 1 / 192_000.0, seconds: 0.5, probe: "U1")
             let expected = 65.406 * pow(2, volts)
-            XCTAssertEqual(frequency(values[values.count / 5...]), expected, accuracy: expected * 0.002, "\(volts) V")
+            XCTAssertEqual(frequency(values[(values.count / 5)...]), expected, accuracy: expected * 0.002, "\(volts) V")
             XCTAssertEqual(values.map(\.v).max() ?? 0, 5, accuracy: 0.1)
             XCTAssertEqual(values.map(\.v).min() ?? 0, -5, accuracy: 0.1)
         }
