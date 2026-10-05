@@ -3,12 +3,13 @@ import Foundation
 /// The RP2040's interrupt numbers
 enum RPIRQ {
     static let timer0 = 0, pwmWrap = 4, usbctrl = 5, pio0IRQ0 = 7, pio0IRQ1 = 8, pio1IRQ0 = 9, pio1IRQ1 = 10
-    static let dmaIRQ0 = 11, dmaIRQ1 = 12, ioBank0 = 13, sioProc0 = 15, uart0 = 20, uart1 = 21, adcFIFO = 22, rtc = 25
+    static let dmaIRQ0 = 11, dmaIRQ1 = 12, ioBank0 = 13, sioProc0 = 15, spi0 = 18, spi1 = 19, uart0 = 20, uart1 = 21, adcFIFO = 22
+    static let i2c0 = 23, i2c1 = 24, rtc = 25
 }
 
 /// DMA requests
 enum RPDREQ {
-    static let pio0TX0 = 0, pio0RX0 = 4, pio1TX0 = 8, pio1RX0 = 12, spi0TX = 16, uart0TX = 20, uart0RX = 21
+    static let pio0TX0 = 0, pio0RX0 = 4, pio1TX0 = 8, pio1RX0 = 12, spi0TX = 16, spi0RX = 17, spi1TX = 18, spi1RX = 19, uart0TX = 20, uart0RX = 21
     static let uart1TX = 22, uart1RX = 23, pwmWrap0 = 24, adc = 36, count = 40
 }
 

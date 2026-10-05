@@ -35,6 +35,8 @@ final class RP2040 {
     private(set) var dma: RPDMA!
     private(set) var pio: [RPPIO] = []
     private(set) var usbCtrl: RPUSBController!
+    private(set) var spi: [RPSPI] = []
+    private(set) var i2c: [RPI2C] = []
     /// The peripherals at 0x40000000-0x40FFFFFF (APB) and 0x50000000-0x50FFFFFF (AHB), by address bits 14-23; and the
     /// SSI at 0x18000000
     private var apb = [RPPeripheral?](repeating: nil, count: 1024)
@@ -60,7 +62,8 @@ final class RP2040 {
         sio = RPSIO(chip: self)
         uart = [RPUART(chip: self, name: "UART0", irq: RPIRQ.uart0, dreqTX: RPDREQ.uart0TX),
                 RPUART(chip: self, name: "UART1", irq: RPIRQ.uart1, dreqTX: RPDREQ.uart1TX)]
-        let i2c = [RPUnimplemented(chip: self, name: "I2C0"), RPUnimplemented(chip: self, name: "I2C1")]
+        i2c = [RPI2C(chip: self, name: "I2C0", index: 0, irq: RPIRQ.i2c0),
+               RPI2C(chip: self, name: "I2C1", index: 1, irq: RPIRQ.i2c1)]
         pwm = RPPWM(chip: self, name: "PWM_BASE")
         adc = RPADC(chip: self, name: "ADC")
         gpio = (0..<30).map { RPGPIOPin(chip: self, index: $0) }
@@ -69,7 +72,8 @@ final class RP2040 {
         pio = [RPPIO(chip: self, name: "PIO0", firstIRQ: RPIRQ.pio0IRQ0, index: 0),
                RPPIO(chip: self, name: "PIO1", firstIRQ: RPIRQ.pio1IRQ0, index: 1)]
         usbCtrl = RPUSBController(chip: self, name: "USB")
-        let spi = [RPUnimplemented(chip: self, name: "SPI0"), RPUnimplemented(chip: self, name: "SPI1")]
+        spi = [RPSPI(chip: self, name: "SPI0", index: 0, irq: RPIRQ.spi0, dreqTX: RPDREQ.spi0TX, dreqRX: RPDREQ.spi0RX),
+               RPSPI(chip: self, name: "SPI1", index: 1, irq: RPIRQ.spi1, dreqTX: RPDREQ.spi1TX, dreqRX: RPDREQ.spi1RX)]
         let table: [UInt32: RPPeripheral] = [
             0x18000: RPSSI(chip: self, name: "SSI"),
             0x40000: RPSysInfo(chip: self, name: "SYSINFO_BASE"),
@@ -259,6 +263,21 @@ final class RP2040 {
     }
 
     func setInterrupt(_ irq: Int, _ value: Bool) { core.setInterrupt(irq, value) }
+
+    /// The level on the pin given to a peripheral's input (SPI: instance (GPIO >> 3) & 1, role GPIO & 3, 0 being RX;
+    /// I²C: instance (GPIO >> 1) & 1, role GPIO & 1, 0 being SDA), high if no pin is (as a pulled-up bus would be)
+    func peripheralInput(function: UInt32, instance: Int, role: Int) -> Bool {
+        for pin in gpio where pin.functionSelect == function {
+            let signal = RPGPIOPin.peripheral(function, pin.index)
+            if signal.instance == instance && signal.role == role { return pin.inputValue }
+        }
+        return true
+    }
+
+    /// A peripheral changed what it drives: the pins given to it follow
+    func peripheralPinsChanged(function: UInt32) {
+        for pin in gpio where pin.functionSelect == function { pin.checkForUpdates() }
+    }
 
     func updateIOInterrupt() {
         setInterrupt(RPIRQ.ioBank0, gpio.contains { $0.irqValue })

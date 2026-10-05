@@ -188,4 +188,23 @@ final class BusTests: XCTestCase {
     func testAVRSPIAndI2COnTheMega() throws {
         try checkAVRBuses("avr-buses-mega", variant: .atmega2560, sda: 20, scl: 21, mosi: 51, miso: 50)
     }
+
+    /// tools/pico-reference/sketches/buses.ino: the same on the Pico, SPI0 on GP16-19 and Wire on GP4 and GP5. Its
+    /// Wire answers 4 for a byte not acknowledged, and the report repeats until USB serial is up.
+    func testRP2040SPIAndI2C() throws {
+        let pico = Pico(firmware: try image("pico-buses"))
+        let harness = BusHarness(chip: pico, sda: 4, scl: 5, mosi: 19, miso: 16,
+                                 device: BusHarness.Device(address: 0x42, replies: [0x5A, 0xA5]))
+        let report = "spi a5 3c\r\ni2c 41 4\r\ni2c 42 0\r\ni2c 43 4\r\nread 5a a5\r\n"
+        for _ in 0..<100 {
+            harness.run(cycles: 1_250_000, slice: 25)  // 10 ms
+            if String(decoding: pico.serialOutput, as: UTF8.self).contains(report) { break }
+        }
+        XCTAssertTrue(String(decoding: pico.serialOutput, as: UTF8.self).contains(report),
+                      String(decoding: pico.serialOutput, as: UTF8.self))
+        XCTAssertEqual(harness.device.written, [0x10])
+        // 100 kHz from a 125 MHz clk_sys: 1250 cycles a clock within a byte
+        let gaps = zip(harness.sclRises.dropFirst(), harness.sclRises).map { $0 - $1 }
+        XCTAssertEqual(gaps.sorted()[gaps.count / 2], 1250, accuracy: 30)
+    }
 }

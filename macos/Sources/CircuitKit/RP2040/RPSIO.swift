@@ -7,6 +7,7 @@ enum RPPinState: Int {
 
 /// A GPIO pin: its function select and overrides, its pad, its interrupt state, and the level the circuit gives it
 final class RPGPIOPin {
+    static let functionSPI: UInt32 = 1, functionI2C: UInt32 = 3
     static let functionPWM: UInt32 = 4, functionSIO: UInt32 = 5, functionPIO0: UInt32 = 6, functionPIO1: UInt32 = 7
     static let irqEdgeHigh: UInt32 = 1 << 3, irqEdgeLow: UInt32 = 1 << 2, irqLevelHigh: UInt32 = 1 << 1, irqLevelLow: UInt32 = 1
 
@@ -30,6 +31,11 @@ final class RPGPIOPin {
         self.qspi = qspi
     }
 
+    /// Which SPI or I²C instance a GPIO goes to, and as which of its signals
+    static func peripheral(_ function: UInt32, _ index: Int) -> (instance: Int, role: Int) {
+        function == functionSPI ? ((index >> 3) & 1, index & 3) : ((index >> 1) & 1, index & 1)
+    }
+
     private func applyOverride(_ value: Bool, _ type: UInt32) -> Bool {
         switch type {
         case 1: return !value
@@ -48,6 +54,13 @@ final class RPGPIOPin {
     var rawOutputEnable: Bool {
         let bit = UInt32(1) << UInt32(index)
         switch functionSelect {
+        case RPGPIOPin.functionSPI:
+            let (instance, role) = RPGPIOPin.peripheral(RPGPIOPin.functionSPI, index)
+            return chip.spi[instance].drives(role: role)
+        case RPGPIOPin.functionI2C:
+            // open drain: driven only to pull the line low
+            let (instance, role) = RPGPIOPin.peripheral(RPGPIOPin.functionI2C, index)
+            return chip.i2c[instance].pullsLow(role: role)
         case RPGPIOPin.functionPWM: return chip.pwm.gpioDirection & bit != 0
         case RPGPIOPin.functionSIO: return chip.sio.gpioOutputEnable & bit != 0
         case RPGPIOPin.functionPIO0: return chip.pio[0].pinDirections & bit != 0
@@ -59,6 +72,9 @@ final class RPGPIOPin {
     var rawOutputValue: Bool {
         let bit = UInt32(1) << UInt32(index)
         switch functionSelect {
+        case RPGPIOPin.functionSPI:
+            let (instance, role) = RPGPIOPin.peripheral(RPGPIOPin.functionSPI, index)
+            return chip.spi[instance].level(role: role)
         case RPGPIOPin.functionPWM: return chip.pwm.gpioValue & bit != 0
         case RPGPIOPin.functionSIO: return chip.sio.gpioValue & bit != 0
         case RPGPIOPin.functionPIO0: return chip.pio[0].pinValues & bit != 0
