@@ -792,14 +792,14 @@ extension ElementKind {
         case .vco:
             return [
                 PartModel(name: "AS3340", summary: "The CEM3340 VCO chip: one volt per octave, exact tracking; pulse width set by PW (±5 V)",
-                          values: ["frequency": 65.406, "amplitude": 5]),
+                          values: ["amplitude": 5]),
             ]
         case .vcf:
             return [
                 PartModel(name: "AS3320", summary: "The CEM3320 four-pole (24 dB/octave) ladder-style low-pass: one volt per octave",
-                          values: ["cutoff": 200, "drive": 5]),
+                          values: ["drive": 5]),
                 PartModel(name: "SSM2044", summary: "Four-pole low-pass, softer and driven harder (Korg Polysix, Mono/Poly)",
-                          values: ["cutoff": 200, "drive": 2]),
+                          values: ["drive": 2]),
             ]
         case .envelope:
             return [
