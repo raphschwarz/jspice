@@ -4,6 +4,8 @@ import Foundation
 public enum PinState: Equatable, Sendable {
     /// Read by the chip: high impedance, or pulled up to the supply
     case input(pullUp: Bool)
+    /// Read by the chip, pulled down to ground
+    case inputPullDown
     /// Driven high or low
     case output(high: Bool)
 }

@@ -743,13 +743,13 @@ public final class Simulator {
                 stampConductance(&matrix, m, nodes[1], 0, 1 / max(element[param: "outputResistance"], 0.1))
             case .atmega328p, .atmega2560, .attiny85:
                 // each output pin drives towards the supply or ground through its resistance; a pull-up is a resistor
-                // to the supply; other inputs draw nothing
+                // to the supply, a pull-down one to ground; other inputs draw nothing
                 guard let states = chipPinStates[i] else { continue }
                 let c = constants[i]
                 for (pin, state) in states.enumerated() where pin < nodes.count {
                     switch state {
                     case .output: stampConductance(&matrix, m, nodes[pin], 0, c.outputConductance)
-                    case .input(pullUp: true): stampConductance(&matrix, m, nodes[pin], 0, c.onConductance)
+                    case .input(pullUp: true), .inputPullDown: stampConductance(&matrix, m, nodes[pin], 0, c.onConductance)
                     case .input: break
                     }
                 }
@@ -1570,13 +1570,14 @@ public final class Simulator {
         }
     }
 
-    /// Whether two pin states need the same matrix: each pin an output, an input with pull-up, or a bare input
+    /// Whether two pin states need the same matrix: each pin an output, an input with pull-up or pull-down, or a bare input
     private static func samePinSetup(_ a: [PinState], _ b: [PinState]?) -> Bool {
         guard let b, a.count == b.count else { return false }
         for (x, y) in zip(a, b) {
             switch (x, y) {
             case (.output, .output): continue
             case let (.input(p), .input(q)) where p == q: continue
+            case (.inputPullDown, .inputPullDown): continue
             default: return false
             }
         }
@@ -1789,6 +1790,7 @@ public final class Simulator {
                     switch state {
                     case .output(let high): flows[pin] = ((high ? c.supply : 0) - v(nodes[pin])) * c.outputConductance
                     case .input(pullUp: true): flows[pin] = (c.supply - v(nodes[pin])) * c.onConductance
+                    case .inputPullDown: flows[pin] = -v(nodes[pin]) * c.onConductance
                     case .input: break
                     }
                     total += max(flows[pin], 0)

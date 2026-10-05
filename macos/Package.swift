@@ -23,7 +23,7 @@ let package = Package(
         .executableTarget(name: "jspice-mcp", dependencies: ["JSpiceAutomation", "CircuitKit"]),
         // The macOS app.
         .executableTarget(name: "JSpice", dependencies: ["CircuitKit", "JSpiceAutomation"]),
-        .testTarget(name: "CircuitKitTests", dependencies: ["CircuitKit"]),
+        .testTarget(name: "CircuitKitTests", dependencies: ["CircuitKit"], resources: [.copy("Fixtures")]),
         .testTarget(name: "JSpiceAutomationTests", dependencies: ["JSpiceAutomation", "CircuitKit"]),
     ]
 )
