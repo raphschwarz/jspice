@@ -46,16 +46,23 @@ final class CortexM0 {
     /// A BKPT or UDF stopped the program (a crash, or the end of a test)
     var breakpoint: UInt32?
 
+    // the chip's flash and SRAM, which most fetches, loads and stores go to: reached here without going through the
+    // chip object (each call through it costs a retain and a release)
+    private let flash: UnsafeMutableRawPointer
+    private let sram: UnsafeMutableRawPointer
+
     init(chip: RP2040) {
         self.chip = chip
+        flash = chip.flash
+        sram = chip.sram
         registers[13] = 0xFFFF_FFFC
     }
 
     deinit { registers.deallocate() }
 
     func reset() {
-        SP = chip.readUint32(VTOR)
-        PC = chip.readUint32(VTOR + 4) & 0xFFFF_FFFE
+        SP = read32(VTOR)
+        PC = read32(VTOR + 4) & 0xFFFF_FFFE
         cycles = 0
     }
 
@@ -140,14 +147,14 @@ final class CortexM0 {
             SPmain = (SPmain &- 0x20) & ~0b100
             frame = SPmain
         }
-        chip.writeUint32(frame, registers[0])
-        chip.writeUint32(frame &+ 0x4, registers[1])
-        chip.writeUint32(frame &+ 0x8, registers[2])
-        chip.writeUint32(frame &+ 0xC, registers[3])
-        chip.writeUint32(frame &+ 0x10, registers[12])
-        chip.writeUint32(frame &+ 0x14, LR)
-        chip.writeUint32(frame &+ 0x18, PC & ~1)
-        chip.writeUint32(frame &+ 0x1C, (xPSR & ~(1 << 9)) | (align << 9))
+        write32(frame, registers[0])
+        write32(frame &+ 0x4, registers[1])
+        write32(frame &+ 0x8, registers[2])
+        write32(frame &+ 0xC, registers[3])
+        write32(frame &+ 0x10, registers[12])
+        write32(frame &+ 0x14, LR)
+        write32(frame &+ 0x18, PC & ~1)
+        write32(frame &+ 0x1C, (xPSR & ~(1 << 9)) | (align << 9))
         frame = 0
         if handlerMode {
             LR = 0xFFFF_FFF1
@@ -158,7 +165,7 @@ final class CortexM0 {
         IPSR = UInt32(number)
         switchStack(toProcess: false)
         eventRegistered = true
-        PC = chip.readUint32(VTOR &+ 4 * UInt32(number))
+        PC = read32(VTOR &+ 4 * UInt32(number))
     }
 
     func exceptionReturn(_ excReturn: UInt32) {
@@ -177,14 +184,14 @@ final class CortexM0 {
         default:
             break
         }
-        registers[0] = chip.readUint32(frame)
-        registers[1] = chip.readUint32(frame &+ 0x4)
-        registers[2] = chip.readUint32(frame &+ 0x8)
-        registers[3] = chip.readUint32(frame &+ 0xC)
-        registers[12] = chip.readUint32(frame &+ 0x10)
-        LR = chip.readUint32(frame &+ 0x14)
-        PC = chip.readUint32(frame &+ 0x18)
-        let psr = chip.readUint32(frame &+ 0x1C)
+        registers[0] = read32(frame)
+        registers[1] = read32(frame &+ 0x4)
+        registers[2] = read32(frame &+ 0x8)
+        registers[3] = read32(frame &+ 0xC)
+        registers[12] = read32(frame &+ 0x10)
+        LR = read32(frame &+ 0x14)
+        PC = read32(frame &+ 0x18)
+        let psr = read32(frame &+ 0x1C)
         let align: UInt32 = psr & (1 << 9) != 0 ? 0b100 : 0
         switch excReturn & 0xF {
         case 0b0001, 0b1001: SPmain = (SPmain &+ 0x20) | align
@@ -320,6 +327,58 @@ final class CortexM0 {
             exceptionReturn(address & 0x0FFF_FFFF)
         } else {
             PC = address & ~1
+        }
+    }
+
+    // MARK: - Memory
+
+    private static let flashSize = UInt32(RP2040.flashSize), sramSize = UInt32(RP2040.sramSize)
+
+    @inline(__always) private func read32(_ address: UInt32) -> UInt32 {
+        let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
+        if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt32.self) }
+        if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt32.self) }
+        return chip.readUint32(address)
+    }
+
+    @inline(__always) private func read16(_ address: UInt32) -> UInt16 {
+        let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
+        if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt16.self) }
+        if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt16.self) }
+        return chip.readUint16(address)
+    }
+
+    @inline(__always) private func read8(_ address: UInt32) -> UInt8 {
+        let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
+        if inFlash < CortexM0.flashSize { return flash.load(fromByteOffset: Int(inFlash), as: UInt8.self) }
+        if inRAM < CortexM0.sramSize { return sram.load(fromByteOffset: Int(inRAM), as: UInt8.self) }
+        return chip.readUint8(address)
+    }
+
+    @inline(__always) private func write32(_ address: UInt32, _ value: UInt32) {
+        let inRAM = address &- RP2040.ramStart
+        if inRAM < CortexM0.sramSize {
+            sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt32.self)
+        } else {
+            chip.writeUint32(address, value)
+        }
+    }
+
+    @inline(__always) private func write16(_ address: UInt32, _ value: UInt16) {
+        let inRAM = address &- RP2040.ramStart
+        if inRAM < CortexM0.sramSize {
+            sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt16.self)
+        } else {
+            chip.writeUint16(address, value)
+        }
+    }
+
+    @inline(__always) private func write8(_ address: UInt32, _ value: UInt8) {
+        let inRAM = address &- RP2040.ramStart
+        if inRAM < CortexM0.sramSize {
+            sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt8.self)
+        } else {
+            chip.writeUint8(address, value)
         }
     }
 
@@ -472,7 +531,7 @@ final class CortexM0 {
     func executeInstruction() -> Int {
         if interruptsUpdated && checkForInterrupts() { waiting = false }
         let opcodePC = PC & ~1
-        let opcode = Int(chip.readUint16(opcodePC))
+        let opcode = Int(read16(opcodePC))
         var delta = 1
         let file = registers
         @inline(__always) func r(_ index: Int) -> UInt32 { file[index] }
@@ -589,7 +648,7 @@ final class CortexM0 {
             let list = opcode & 0xFF
             var address = r(rn)
             for i in 0..<8 where list & (1 << i) != 0 {
-                registers[i] = chip.readUint32(address)
+                registers[i] = read32(address)
                 address = address &+ 4
                 delta += 1
             }
@@ -597,43 +656,43 @@ final class CortexM0 {
         case .ldrImm:
             let address = r((opcode >> 3) & 7) &+ UInt32(((opcode >> 6) & 0x1F) << 2)
             delta += cyclesIO(address)
-            registers[opcode & 7] = chip.readUint32(address)
+            registers[opcode & 7] = read32(address)
         case .ldrSP:
             let address = SP &+ UInt32((opcode & 0xFF) << 2)
             delta += cyclesIO(address)
-            registers[(opcode >> 8) & 7] = chip.readUint32(address)
+            registers[(opcode >> 8) & 7] = read32(address)
         case .ldrLiteral:
             let address = ((PC &+ 2) & 0xFFFF_FFFC) &+ UInt32((opcode & 0xFF) << 2)
             delta += cyclesIO(address)
-            registers[(opcode >> 8) & 7] = chip.readUint32(address)
+            registers[(opcode >> 8) & 7] = read32(address)
         case .ldrReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
             delta += cyclesIO(address)
-            registers[opcode & 7] = chip.readUint32(address)
+            registers[opcode & 7] = read32(address)
         case .ldrbImm:
             let address = r((opcode >> 3) & 7) &+ UInt32((opcode >> 6) & 0x1F)
             delta += cyclesIO(address)
-            registers[opcode & 7] = UInt32(chip.readUint8(address))
+            registers[opcode & 7] = UInt32(read8(address))
         case .ldrbReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
             delta += cyclesIO(address)
-            registers[opcode & 7] = UInt32(chip.readUint8(address))
+            registers[opcode & 7] = UInt32(read8(address))
         case .ldrhImm:
             let address = r((opcode >> 3) & 7) &+ UInt32(((opcode >> 6) & 0x1F) << 1)
             delta += cyclesIO(address)
-            registers[opcode & 7] = UInt32(chip.readUint16(address))
+            registers[opcode & 7] = UInt32(read16(address))
         case .ldrhReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
             delta += cyclesIO(address)
-            registers[opcode & 7] = UInt32(chip.readUint16(address))
+            registers[opcode & 7] = UInt32(read16(address))
         case .ldrsb:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
             delta += cyclesIO(address)
-            registers[opcode & 7] = signExtend8(UInt32(chip.readUint8(address)))
+            registers[opcode & 7] = signExtend8(UInt32(read8(address)))
         case .ldrsh:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
             delta += cyclesIO(address)
-            registers[opcode & 7] = signExtend16(UInt32(chip.readUint16(address)))
+            registers[opcode & 7] = signExtend16(UInt32(read16(address)))
         case .lslsImm:
             let imm5 = (opcode >> 6) & 0x1F
             let input = r((opcode >> 3) & 7)
@@ -696,13 +755,13 @@ final class CortexM0 {
         case .pop:
             var address = SP
             for i in 0...7 where opcode & (1 << i) != 0 {
-                registers[i] = chip.readUint32(address)
+                registers[i] = read32(address)
                 address = address &+ 4
                 delta += 1
             }
             if (opcode >> 8) & 1 != 0 {
                 SP = address &+ 4
-                bxWritePC(chip.readUint32(address))
+                bxWritePC(read32(address))
                 delta += 2
             } else {
                 SP = address
@@ -712,11 +771,11 @@ final class CortexM0 {
             for i in 0...8 where opcode & (1 << i) != 0 { count += 1 }
             var address = SP &- 4 * count
             for i in 0...7 where opcode & (1 << i) != 0 {
-                chip.writeUint32(address, registers[i])
+                write32(address, registers[i])
                 delta += 1
                 address = address &+ 4
             }
-            if opcode & (1 << 8) != 0 { chip.writeUint32(address, registers[14]) }
+            if opcode & (1 << 8) != 0 { write32(address, registers[14]) }
             SP = SP &- 4 * count
         case .rev:
             registers[opcode & 7] = r((opcode >> 3) & 7).byteSwapped
@@ -749,7 +808,7 @@ final class CortexM0 {
             let list = opcode & 0xFF
             var address = r(rn)
             for i in 0..<8 where list & (1 << i) != 0 {
-                chip.writeUint32(address, registers[i])
+                write32(address, registers[i])
                 address = address &+ 4
                 delta += 1
             }
@@ -757,31 +816,31 @@ final class CortexM0 {
         case .strImm:
             let address = r((opcode >> 3) & 7) &+ UInt32(((opcode >> 6) & 0x1F) << 2)
             delta += cyclesIO(address, write: true)
-            chip.writeUint32(address, r(opcode & 7))
+            write32(address, r(opcode & 7))
         case .strSP:
             let address = SP &+ UInt32((opcode & 0xFF) << 2)
             delta += cyclesIO(address, write: true)
-            chip.writeUint32(address, r((opcode >> 8) & 7))
+            write32(address, r((opcode >> 8) & 7))
         case .strReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
             delta += cyclesIO(address, write: true)
-            chip.writeUint32(address, r(opcode & 7))
+            write32(address, r(opcode & 7))
         case .strbImm:
             let address = r((opcode >> 3) & 7) &+ UInt32((opcode >> 6) & 0x1F)
             delta += cyclesIO(address, write: true)
-            chip.writeUint8(address, UInt8(truncatingIfNeeded: r(opcode & 7)))
+            write8(address, UInt8(truncatingIfNeeded: r(opcode & 7)))
         case .strbReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
             delta += cyclesIO(address, write: true)
-            chip.writeUint8(address, UInt8(truncatingIfNeeded: r(opcode & 7)))
+            write8(address, UInt8(truncatingIfNeeded: r(opcode & 7)))
         case .strhImm:
             let address = r((opcode >> 3) & 7) &+ UInt32(((opcode >> 6) & 0x1F) << 1)
             delta += cyclesIO(address, write: true)
-            chip.writeUint16(address, UInt16(truncatingIfNeeded: r(opcode & 7)))
+            write16(address, UInt16(truncatingIfNeeded: r(opcode & 7)))
         case .strhReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
             delta += cyclesIO(address, write: true)
-            chip.writeUint16(address, UInt16(truncatingIfNeeded: r(opcode & 7)))
+            write16(address, UInt16(truncatingIfNeeded: r(opcode & 7)))
         case .subSPImm:
             SP = SP &- UInt32((opcode & 0x7F) << 2)
         case .subsImm3:
@@ -813,7 +872,7 @@ final class CortexM0 {
             delta += 1
             waiting = true
         case .wide:
-            delta = executeWide(opcode, Int(chip.readUint16(opcodePC &+ 2)))
+            delta = executeWide(opcode, Int(read16(opcodePC &+ 2)))
         case .unknown:
             break
         }
