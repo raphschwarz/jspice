@@ -139,6 +139,8 @@ public final class Simulator {
     /// Newton-Raphson's matrix and right-hand side, reused from one iteration to the next
     private var workMatrix: [Double] = []
     private var workVector: [Double] = []
+    /// The pivots and non-zero entries of the last elimination, replayed while the matrix keeps its pattern
+    private var eliminationPlan: EliminationPlan?
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
     private var savedX: [Double] = []
     private var savedLimited: [Double] = []
@@ -530,7 +532,7 @@ public final class Simulator {
             stampMemristors(&workMatrix, m)
             limiting = false
             if hasNonlinear { stampNonlinear(&workMatrix, &workVector, m) }
-            guard LUSolver.solveInPlace(&workMatrix, &workVector, size: m) else { fail(); return false }
+            guard LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan) else { fail(); return false }
             var change = 0.0
             for k in 0..<m {
                 let next = workVector[k]
