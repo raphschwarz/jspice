@@ -24,6 +24,10 @@ final class EditorState: ObservableObject {
     @Published var showInspector = true
     /// The front panel of knobs and switches below the schematic
     @Published var showPanel = true
+    /// The quick-add palette (⌘K or /): type a part's name to place it
+    @Published var showQuickAdd = false
+    /// The keyboard shortcuts sheet (⌘/ or ?)
+    @Published var showShortcuts = false
     /// Incremented to ask the canvas to fit the circuit in view
     @Published private(set) var fitRequest = 1
 
@@ -138,6 +142,54 @@ final class EditorState: ObservableObject {
 
     func selectAll() {
         selection = Set(circuit.elements.map(\.id))
+    }
+
+    /// Picks a tool from the keyboard or the palette, and gives the schematic the keyboard back
+    func choose(_ kind: ElementKind?) {
+        tool = kind
+        showQuickAdd = false
+        if let canvas { canvas.window?.makeFirstResponder(canvas) }
+    }
+
+    /// Moves the selection by whole grid units (arrow keys)
+    func nudgeSelection(by delta: GridPoint) {
+        guard !selection.isEmpty else { return }
+        let ids = selection
+        edit("Move") { $0.move(ids, by: delta) }
+    }
+
+    /// Copies the selection a little down and to the right, and selects the copies
+    func duplicateSelection() {
+        let elements = circuit.elements.filter { selection.contains($0.id) }
+        guard !elements.isEmpty else { return }
+        var ids = Set<UUID>()
+        edit(elements.count == 1 ? "Duplicate" : "Duplicate \(elements.count) Parts") { circuit in
+            for var element in elements {
+                element.id = UUID()
+                element.a = element.a + GridPoint(2, 2)
+                element.b = element.b + GridPoint(2, 2)
+                // a net label's name is its connection, so it keeps it; parts get a new name
+                if element.kind != .netLabel { element.name = "" }
+                ids.insert(circuit.add(element))
+            }
+        }
+        selection = ids
+    }
+
+    /// Selects the next part (or the previous one) in reading order: Tab and ⇧Tab
+    func selectNext(backward: Bool) {
+        let parts = circuit.elements
+            .filter { $0.kind != .wire }
+            .sorted { (min($0.a.y, $0.b.y), min($0.a.x, $0.b.x)) < (min($1.a.y, $1.b.y), min($1.a.x, $1.b.x)) }
+        guard !parts.isEmpty else { return }
+        let current = selection.count == 1 ? parts.firstIndex { selection.contains($0.id) } : nil
+        let next: Int
+        if let current {
+            next = (current + (backward ? -1 : 1) + parts.count) % parts.count
+        } else {
+            next = backward ? parts.count - 1 : 0
+        }
+        selection = [parts[next].id]
     }
 
     /// Switches are operated while simulating, like the real thing, so this is not an undoable edit

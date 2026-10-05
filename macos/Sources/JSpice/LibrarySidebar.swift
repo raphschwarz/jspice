@@ -73,6 +73,15 @@ enum SymbolIcons {
 
 struct LibrarySidebar: View {
     @ObservedObject var editor: EditorState
+    @State private var search = ""
+
+    /// The parts of a category that match the search (by name, category or the real parts they model)
+    private func kinds(in category: ElementCategory) -> [ElementKind] {
+        let text = search.trimmingCharacters(in: .whitespaces).lowercased()
+        return ElementKind.allCases.filter { kind in
+            kind.category == category && (text.isEmpty || kind.searchTerms.contains { $0.lowercased().contains(text) })
+        }
+    }
 
     var body: some View {
         List {
@@ -83,11 +92,10 @@ struct LibrarySidebar: View {
                     editor.tool = nil
                 }
             }
-            ForEach(ElementCategory.allCases) { category in
+            ForEach(ElementCategory.allCases.filter { !kinds(in: $0).isEmpty }) { category in
                 Section(category.rawValue) {
-                    ForEach(ElementKind.allCases.filter { $0.category == category }) { kind in
-                        ToolRow(title: kind.displayName, shortcut: kind.shortcut.map { String($0).uppercased() },
-                                isActive: editor.tool == kind) {
+                    ForEach(kinds(in: category)) { kind in
+                        ToolRow(title: kind.displayName, shortcut: kind.shortcutLabel, isActive: editor.tool == kind) {
                             Image(nsImage: SymbolIcons.image(kind))
                                 .renderingMode(.template)
                                 .frame(width: 34, height: 22)
@@ -98,7 +106,7 @@ struct LibrarySidebar: View {
                 }
             }
             Section("Examples") {
-                ForEach(Examples.all) { example in
+                ForEach(Examples.all.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }) { example in
                     Button {
                         editor.load(example)
                     } label: {
@@ -121,6 +129,7 @@ struct LibrarySidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .searchable(text: $search, placement: .sidebar, prompt: "Parts and examples")
     }
 }
 
@@ -138,9 +147,7 @@ private struct ToolRow<Icon: View>: View {
                 Text(title)
                 Spacer(minLength: 4)
                 if let shortcut {
-                    Text(shortcut)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.tertiary)
+                    KeyCap(shortcut)
                 }
             }
             .padding(.vertical, 2)

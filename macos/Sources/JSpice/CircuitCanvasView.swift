@@ -193,13 +193,21 @@ final class CircuitCanvasView: NSView {
         guard spacing > 4 else { return }
         let startX = editor.pan.x.truncatingRemainder(dividingBy: spacing) - spacing
         let startY = editor.pan.y.truncatingRemainder(dividingBy: spacing) - spacing
-        let r = max(0.6, min(1.2, unit / 20))
-        ctx.setFillColor(palette.grid.cgColor)
+        let r = max(0.6, min(1.1, unit / 22))
+        let major = max(1.1, min(1.7, unit / 14))
+        // every fourth point (a standard part's length) is a little stronger, to help line things up
+        let every = 4 / step
+        func index(_ v: CGFloat, _ origin: CGFloat) -> Int { Int(((v - origin) / spacing).rounded()) }
         var y = startY
         while y < bounds.maxY + spacing {
+            let row = index(y, editor.pan.y)
             var x = startX
             while x < bounds.maxX + spacing {
-                ctx.fill(CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
+                let column = index(x, editor.pan.x)
+                let isMajor = row % every == 0 && column % every == 0
+                let size = isMajor ? major : r
+                ctx.setFillColor(isMajor ? palette.grid.withAlpha(min(1, palette.grid.a * 1.8)).cgColor : palette.grid.cgColor)
+                ctx.fillEllipse(in: CGRect(x: x - size, y: y - size, width: 2 * size, height: 2 * size))
                 x += spacing
             }
             y += spacing
@@ -366,17 +374,40 @@ final class CircuitCanvasView: NSView {
     }
 
     private func drawSelectionHandles(_ ctx: CGContext, _ circuit: Circuit, _ accent: RGBA) {
-        guard editor.selection.count == 1, let element = circuit.elements.first(where: { editor.selection.contains($0.id) }),
-              element.kind != .ground else { return }
-        let size = max(5, unit * 0.38)
+        let selected = circuit.elements.filter { editor.selection.contains($0.id) }
+        if selected.count > 1 {
+            // a dashed, rounded box around everything selected
+            let points = selected.flatMap(\.extentPoints).map(screen)
+            guard let minX = points.map(\.x).min(), let maxX = points.map(\.x).max(),
+                  let minY = points.map(\.y).min(), let maxY = points.map(\.y).max() else { return }
+            let pad = max(8, unit * 0.7)
+            let box = CGRect(x: minX - pad, y: minY - pad, width: maxX - minX + 2 * pad, height: maxY - minY + 2 * pad)
+            ctx.saveGState()
+            ctx.addPath(CGPath(roundedRect: box, cornerWidth: 8, cornerHeight: 8, transform: nil))
+            ctx.setFillColor(accent.withAlpha(0.05).cgColor)
+            ctx.fillPath()
+            ctx.addPath(CGPath(roundedRect: box, cornerWidth: 8, cornerHeight: 8, transform: nil))
+            ctx.setStrokeColor(accent.withAlpha(0.7).cgColor)
+            ctx.setLineWidth(1)
+            ctx.setLineDash(phase: 0, lengths: [5, 4])
+            ctx.strokePath()
+            ctx.restoreGState()
+            return
+        }
+        guard let element = selected.first, element.kind != .ground else { return }
+        // round handles on the two ends that set the part's length and direction
+        let r = max(3.5, unit * 0.22)
         for point in [element.a, element.b] {
             let p = screen(point)
-            let rect = CGRect(x: p.x - size / 2, y: p.y - size / 2, width: size, height: size)
+            let rect = CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: 0, height: 1), blur: 3, color: CGColor(gray: 0, alpha: 0.35))
             ctx.setFillColor(CGColor(gray: 1, alpha: 1))
-            ctx.fill(rect)
+            ctx.fillEllipse(in: rect)
+            ctx.restoreGState()
             ctx.setStrokeColor(accent.cgColor)
             ctx.setLineWidth(1.5)
-            ctx.stroke(rect)
+            ctx.strokeEllipse(in: rect)
         }
     }
 
@@ -398,12 +429,18 @@ final class CircuitCanvasView: NSView {
         default:
             break
         }
-        // where a click would place the next part
-        if editor.tool != nil, drag == nil, let mouse = mouseLocation {
-            let p = screen(grid(mouse))
-            ctx.setStrokeColor(accent.withAlpha(0.7).cgColor)
-            ctx.setLineWidth(1.5)
-            ctx.strokeEllipse(in: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8))
+        // a ghost of the part a click would place, and the grid point it starts from
+        if let kind = editor.tool, drag == nil, let mouse = mouseLocation {
+            let start = grid(mouse)
+            let ghost = constrained(Element(kind: kind, a: start, b: start + kind.defaultOffset))
+            let posts = ghost.posts.map(screen)
+            let faint = accent.withAlpha(0.45)
+            let style = SymbolStyle(lineWidth: lineWidth, terminalColors: Array(repeating: faint, count: posts.count),
+                                    fill: faint, accent: accent)
+            SymbolRenderer.draw(ghost, posts: posts, at: screen(ghost.a), screen(ghost.b), unit: unit, style: style, in: ctx)
+            let p = screen(start)
+            ctx.setFillColor(accent.withAlpha(0.9).cgColor)
+            ctx.fillEllipse(in: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6))
         }
     }
 
@@ -725,12 +762,45 @@ final class CircuitCanvasView: NSView {
         default:
             break
         }
-        if modifiers.isEmpty, event.charactersIgnoringModifiers?.lowercased() == "f", !editor.selection.isEmpty {
+        let shift = event.modifierFlags.contains(.shift)
+        if modifiers.isEmpty {
+            switch event.keyCode {
+            case 123, 124, 125, 126:
+                // arrows nudge the selection a grid unit, five with ⇧
+                guard !editor.selection.isEmpty else { break }
+                let step = shift ? 5 : 1
+                let delta: GridPoint
+                switch event.keyCode {
+                case 123: delta = GridPoint(-step, 0)
+                case 124: delta = GridPoint(step, 0)
+                case 125: delta = GridPoint(0, step)
+                default: delta = GridPoint(0, -step)
+                }
+                editor.nudgeSelection(by: delta)
+                return
+            case 48:
+                // Tab and ⇧Tab step through the parts
+                editor.selectNext(backward: shift)
+                needsDisplay = true
+                return
+            default:
+                break
+            }
+            if event.characters == "?" {
+                editor.showShortcuts = true
+                return
+            }
+            if event.characters == "/" {
+                editor.showQuickAdd = true
+                return
+            }
+        }
+        if modifiers.isEmpty, !shift, event.charactersIgnoringModifiers?.lowercased() == "f", !editor.selection.isEmpty {
             editor.flipSelection()
             return
         }
         if modifiers.isEmpty, let key = event.charactersIgnoringModifiers?.lowercased().first,
-           let kind = ElementKind.allCases.first(where: { $0.shortcut == key }) {
+           let kind = ElementKind.allCases.first(where: { (shift ? $0.shiftShortcut : $0.shortcut) == key }) {
             editor.tool = editor.tool == kind ? nil : kind
             needsDisplay = true
             return

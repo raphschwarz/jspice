@@ -55,10 +55,14 @@ struct CircuitCommands: Commands {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(!(editor?.canFlipSelection ?? false))
             Button("Delete") { editor?.deleteSelection() }
+                .disabled(editor?.selection.isEmpty ?? true)
             Button("Tidy Up") { editor?.tidyUp() }
                 .keyboardShortcut("t", modifiers: [.command, .option])
                 .disabled(editor?.circuit.elements.isEmpty ?? true)
-                .disabled(editor?.selection.isEmpty ?? true)
+            Divider()
+            Button("Add Part…") { editor?.showQuickAdd = true }
+                .keyboardShortcut("k", modifiers: .command)
+                .disabled(editor == nil)
             Divider()
             Toggle("Allow AI Control (MCP)", isOn: Binding(
                 get: { AutomationBridge.shared.isEnabled },
@@ -79,6 +83,16 @@ struct CircuitCommands: Commands {
                 }
             }
             .disabled(editor == nil)
+        }
+        CommandGroup(after: .pasteboard) {
+            Button("Duplicate") { editor?.duplicateSelection() }
+                .keyboardShortcut("d", modifiers: .command)
+                .disabled(editor?.selection.isEmpty ?? true)
+        }
+        CommandGroup(replacing: .help) {
+            Button("Keyboard Shortcuts") { editor?.showShortcuts = true }
+                .keyboardShortcut("/", modifiers: .command)
+                .disabled(editor == nil)
         }
         CommandGroup(after: .toolbar) {
             Button("Zoom In") { editor?.changeZoom(by: 1.25) }

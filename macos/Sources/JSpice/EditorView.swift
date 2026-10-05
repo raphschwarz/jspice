@@ -28,8 +28,30 @@ struct EditorView: View {
                         if document.circuit.elements.isEmpty { WelcomeView(editor: editor) }
                     }
                     .overlay(alignment: .top) {
-                        ProblemBanner(simulation: editor.simulation).padding(.top, 12)
+                        VStack(spacing: 8) {
+                            ToolHUD(editor: editor)
+                            ProblemBanner(simulation: editor.simulation)
+                        }
+                        .padding(.top, 12)
+                        .animation(.snappy(duration: 0.2), value: editor.tool)
                     }
+                    .overlay(alignment: .bottomTrailing) {
+                        if !document.circuit.elements.isEmpty {
+                            ZoomControl(editor: editor).padding(12)
+                        }
+                    }
+                    .overlay(alignment: .top) {
+                        if editor.showQuickAdd {
+                            ZStack(alignment: .top) {
+                                Color.black.opacity(0.06)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { editor.choose(editor.tool) }
+                                QuickAddPalette(editor: editor).padding(.top, 56)
+                            }
+                            .transition(.opacity)
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.12), value: editor.showQuickAdd)
                 if editor.showPanel && FrontPanel.hasControls(document.circuit) {
                     FrontPanel(editor: editor, circuit: document.circuit)
                 }
@@ -46,6 +68,7 @@ struct EditorView: View {
                     .inspectorColumnWidth(min: 250, ideal: 290, max: 400)
             }
         }
+        .sheet(isPresented: $editor.showShortcuts) { ShortcutsSheet(editor: editor) }
         .focusedSceneObject(editor)
         .onAppear { editor.undoManager = undoManager }
         // closing the window silences it

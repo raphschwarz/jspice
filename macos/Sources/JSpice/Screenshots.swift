@@ -17,6 +17,10 @@ enum ScreenshotRunner {
         var closeSwitches = false
         /// Redraw the example with Tidy Up first
         var tidy = false
+        /// A part being placed (shows the tool HUD)
+        var tool: ElementKind?
+        /// The quick-add palette open
+        var quickAdd = false
     }
 
     static let shots: [Shot] = [
@@ -52,6 +56,8 @@ enum ScreenshotRunner {
         Shot(name: "32-fuzz-dark", example: "fuzz", dark: true, seconds: 0.5, select: .npn),
         Shot(name: "33-lpg-light", example: "lpg", dark: false, seconds: 0.6, select: .vactrol),
         Shot(name: "34-ringmod-dark", example: "ringmod", dark: true, seconds: 0.3, select: .multiplier),
+        Shot(name: "35-quickadd-light", example: "overdrive", dark: false, seconds: 0.5, quickAdd: true),
+        Shot(name: "36-tool-dark", example: "opamp", dark: true, seconds: 0.5, tool: .resistor),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {
@@ -115,6 +121,7 @@ enum ScreenshotRunner {
             if let kind = shot.select, let element = circuit.elements.first(where: { $0.kind == kind }) {
                 editor.selection = [element.id]
             }
+            editor.tool = shot.tool
 
             let controller = NSHostingController(rootView: EditorView(document: document, editor: editor))
             controller.sceneBridgingOptions = [.toolbars, .title]
@@ -125,6 +132,10 @@ enum ScreenshotRunner {
             window.center()
             window.makeKeyAndOrderFront(nil)
             NSApp.activate()
+            if shot.quickAdd {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                editor.showQuickAdd = true
+            }
 
             // let it lay out and simulate in real time
             try? await Task.sleep(nanoseconds: UInt64((shot.seconds + 1) * 1_000_000_000))

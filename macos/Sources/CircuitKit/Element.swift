@@ -225,6 +225,36 @@ extension ElementKind {
         }
     }
 
+    /// Shortcut with ⇧ for the parts without a single-key one, so every part can be picked from the keyboard
+    public var shiftShortcut: Character? {
+        switch self {
+        case .njfet: return "j"
+        case .ota: return "u"
+        case .schmittInverter: return "i"
+        case .analogSwitch: return "s"
+        case .speaker: return "o"
+        case .keyboardPitch: return "k"
+        case .keyboardGate: return "g"
+        case .noiseVoltage: return "n"
+        case .multiplier: return "x"
+        case .delayLine: return "d"
+        case .vactrol: return "v"
+        default: return nil
+        }
+    }
+
+    /// The shortcut as shown in menus and the library: "R", or "⇧U"
+    public var shortcutLabel: String? {
+        if let key = shortcut { return String(key).uppercased() }
+        if let key = shiftShortcut { return "⇧" + String(key).uppercased() }
+        return nil
+    }
+
+    /// Words a search for this part should find: its name, category and the real parts it models
+    public var searchTerms: [String] {
+        [displayName, category.rawValue] + models.map(\.name)
+    }
+
     /// Three-terminal transistors drawn with their control terminal at `a` and their channel at `b`
     public var isTransistor: Bool { self == .nmos || self == .pmos || self == .npn || self == .pnp || self == .njfet }
 
