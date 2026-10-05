@@ -6,8 +6,8 @@ import Foundation
 final class RPPIOMachine {
     enum WaitType { case none, pin, rxFIFO, txFIFO, irq, out }
 
-    unowned let chip: RP2040
-    unowned let pio: RPPIO
+    unowned(unsafe) let chip: RP2040
+    unowned(unsafe) let pio: RPPIO
     let index: Int
     var enabled = false
     var x: UInt32 = 0

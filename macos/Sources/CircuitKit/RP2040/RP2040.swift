@@ -272,4 +272,24 @@ final class RP2040 {
     }
 
     private var pioRunning: Bool { pio[0].running || pio[1].running }
+
+    /// Steps until `end` (nanoseconds): `step(limit:)` in a loop, with what it looks up each time looked up once
+    func run(until end: Double) {
+        let core: CortexM0 = self.core
+        let clock = self.clock
+        let pio0 = pio[0], pio1 = pio[1]
+        while clock.nanos < end {
+            if core.waiting {
+                step(limit: end)
+                continue
+            }
+            let cycles = core.executeInstruction()
+            clock.tick(Double(cycles) * RP2040.cycleNanos)
+            if pio0.running || pio1.running {
+                let now = clock.nanos
+                if pio0.running { pio0.run(until: now) }
+                if pio1.running { pio1.run(until: now) }
+            }
+        }
+    }
 }

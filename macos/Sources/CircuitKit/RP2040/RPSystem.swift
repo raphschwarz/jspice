@@ -3,7 +3,7 @@ import Foundation
 /// A memory-mapped block of registers (rp2040js's BasePeripheral): offsets within its 4 KB, and the atomic aliases
 /// (XOR, set, clear) at +0x1000, +0x2000, +0x3000 handled by reading and writing back
 class RPPeripheral {
-    unowned let chip: RP2040
+    unowned(unsafe) let chip: RP2040
     let name: String
     var rawWriteValue: UInt32 = 0
 

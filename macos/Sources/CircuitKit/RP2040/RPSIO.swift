@@ -10,7 +10,7 @@ final class RPGPIOPin {
     static let functionPWM: UInt32 = 4, functionSIO: UInt32 = 5, functionPIO0: UInt32 = 6, functionPIO1: UInt32 = 7
     static let irqEdgeHigh: UInt32 = 1 << 3, irqEdgeLow: UInt32 = 1 << 2, irqLevelHigh: UInt32 = 1 << 1, irqLevelLow: UInt32 = 1
 
-    unowned let chip: RP2040
+    unowned(unsafe) let chip: RP2040
     let index: Int
     let qspi: Bool
     private var rawInputValue = false
@@ -258,7 +258,7 @@ final class RPInterpolator {
 
 /// The single-cycle IO block: GPIO output and output enable, the hardware divider, the spinlocks and the interpolators
 final class RPSIO {
-    unowned let chip: RP2040
+    unowned(unsafe) let chip: RP2040
     var gpioValue: UInt32 = 0
     var gpioOutputEnable: UInt32 = 0
     var qspiGpioValue: UInt32 = 0

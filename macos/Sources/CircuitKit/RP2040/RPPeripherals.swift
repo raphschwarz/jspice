@@ -495,7 +495,7 @@ final class RPADC: RPPeripheral {
 /// The PWM block: eight slices, each driving two pins (A and B) from a counter that runs from clk_sys
 final class RPPWM: RPPeripheral {
     final class Channel {
-        unowned let pwm: RPPWM
+        unowned(unsafe) let pwm: RPPWM
         let index: Int
         let timer: RPTimer32
         var alarmA: RPTimer32PeriodicAlarm!
@@ -742,7 +742,7 @@ final class RPPWM: RPPeripheral {
 /// The DMA controller: twelve channels, each moving data paced by a request (a peripheral, a timer, or none)
 final class RPDMA: RPPeripheral {
     final class Channel {
-        unowned let dma: RPDMA
+        unowned(unsafe) let dma: RPDMA
         let index: Int
         private(set) var ctrl: UInt32 = 0
         private var readAddress: UInt32 = 0

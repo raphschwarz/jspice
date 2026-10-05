@@ -86,7 +86,7 @@ public final class Pico: Microcontroller {
     public func run(cycles count: Int) {
         let chip = system.chip
         let end = chip.clock.nanos + Double(count) * RP2040.cycleNanos
-        while chip.clock.nanos < end { chip.step(limit: end) }
+        chip.run(until: end)
         publish()
     }
 

@@ -17,7 +17,7 @@ import Foundation
 
 /// A one-shot alarm on the simulation clock
 final class RPAlarm {
-    unowned let clock: RPClock
+    unowned(unsafe) let clock: RPClock
     let callback: () -> Void
     var next: RPAlarm?
     var nanos: Double = 0
@@ -41,7 +41,11 @@ final class RPAlarm {
 
 /// Simulated time, and the alarms that go off as it passes
 final class RPClock {
-    private var nextAlarm: RPAlarm?
+    private var nextAlarm: RPAlarm? {
+        didSet { nextAlarmNanos = nextAlarm?.nanos ?? .infinity }
+    }
+    /// When the next alarm goes off (infinity if none): ticking short of it is a single addition
+    private var nextAlarmNanos = Double.infinity
     private(set) var nanos: Double = 0
 
     func createAlarm(_ callback: @escaping () -> Void) -> RPAlarm { RPAlarm(clock: self, callback: callback) }
@@ -54,12 +58,12 @@ final class RPClock {
             last = current
             item = current.next
         }
+        alarm.next = item
         if let last {
             last.next = alarm
         } else {
             nextAlarm = alarm
         }
-        alarm.next = item
         alarm.scheduled = true
     }
 
@@ -76,8 +80,16 @@ final class RPClock {
         }
     }
 
-    func tick(_ deltaNanos: Double) {
+    @inline(__always) func tick(_ deltaNanos: Double) {
         let target = nanos + deltaNanos
+        if target < nextAlarmNanos {
+            nanos = target
+            return
+        }
+        fire(until: target)
+    }
+
+    private func fire(until target: Double) {
         while let alarm = nextAlarm, alarm.nanos <= target {
             nextAlarm = alarm.next
             nanos = alarm.nanos

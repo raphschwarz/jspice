@@ -11,7 +11,7 @@ final class CortexM0 {
     static let lowestPriority = 4
     static let maxHardwareIRQ = 25
 
-    unowned let chip: RP2040
+    unowned(unsafe) let chip: RP2040
 
     /// R0-R15 (raw memory rather than an array: the instruction switch reads and writes them all the time)
     let registers: UnsafeMutablePointer<UInt32> = {
