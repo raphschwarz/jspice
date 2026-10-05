@@ -703,6 +703,9 @@ extension ElementKind {
 extension Element {
     /// The model whose values the parameters still have, if any
     public var model: PartModel? {
-        kind.models.first { model in model.values.allSatisfy { abs(self[param: $0.key] - $0.value) <= 1e-9 * max(1, abs($0.value)) } }
+        // relative tolerance: saturation currents of 1e-14 A must not match 6.7e-15 A
+        kind.models.first { model in
+            model.values.allSatisfy { abs(self[param: $0.key] - $0.value) <= 1e-9 * abs($0.value) + 1e-300 }
+        }
     }
 }

@@ -235,11 +235,23 @@ private struct ScopeRow: View {
         for i in 1..<count { envelope.addLine(to: CGPoint(x: x(i), y: y(maximums[i]))) }
         for i in stride(from: count - 1, through: 0, by: -1) { envelope.addLine(to: CGPoint(x: x(i), y: y(minimums[i]))) }
         envelope.closeSubpath()
-        context.fill(envelope, with: .color(color.opacity(0.25)))
+        // where the signal swings widely within a column (an audio-rate signal in a long window), the band is the
+        // signal, so it is drawn stronger and no line runs through its middle, which would mean nothing
+        let wide: (Int) -> Bool = { maximums[$0] - minimums[$0] > (high - low) * 0.08 }
+        let fast = (0..<count).filter(wide).count * 2 > count
+        context.fill(envelope, with: .color(color.opacity(fast ? 0.55 : 0.25)))
 
         var line = Path()
-        line.move(to: CGPoint(x: x(0), y: y((minimums[0] + maximums[0]) / 2)))
-        for i in 1..<count { line.addLine(to: CGPoint(x: x(i), y: y((minimums[i] + maximums[i]) / 2))) }
+        var drawing = false
+        for i in 0..<count {
+            guard !wide(i) else {
+                drawing = false
+                continue
+            }
+            let point = CGPoint(x: x(i), y: y((minimums[i] + maximums[i]) / 2))
+            if drawing { line.addLine(to: point) } else { line.move(to: point) }
+            drawing = true
+        }
         context.stroke(line, with: .color(color), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
     }
 }

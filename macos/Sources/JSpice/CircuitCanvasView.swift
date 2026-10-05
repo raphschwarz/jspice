@@ -380,15 +380,21 @@ final class CircuitCanvasView: NSView {
                 let x = side ? anchor.x - offset - extra - width : anchor.x + offset + extra
                 return CGRect(x: x, y: anchor.y - totalHeight / 2, width: width, height: totalHeight)
             }
-            func clear(_ rect: CGRect) -> Bool {
+            /// How much of the block other labels and parts cover
+            func overlap(_ rect: CGRect) -> CGFloat {
                 let inner = rect.insetBy(dx: 1, dy: 1)
-                return !placed.contains { $0.intersects(inner) }
-                    && !bodies.contains { $0.id != element.id && $0.rect.intersects(inner) }
+                func area(_ other: CGRect) -> CGFloat {
+                    let common = other.intersection(inner)
+                    return common.isNull ? 0 : common.width * common.height
+                }
+                return placed.reduce(0) { $0 + area($1) }
+                    + bodies.reduce(0) { $0 + ($1.id == element.id ? 0 : area($1.rect)) }
             }
-            // the usual side, else the other side, else a little further out; if nothing is clear, the usual place
+            // the usual side, else the other side, else a little further out; if nothing is clear, the least covered
             let step = fontSize * 1.1
             let candidates = [(otherSide, 0.0), (!otherSide, 0.0), (otherSide, step), (!otherSide, step), (otherSide, 2 * step)]
-            let chosen = candidates.lazy.map { block($0.0, CGFloat($0.1)) }.first(where: clear) ?? block(otherSide, 0)
+                .map { block($0.0, CGFloat($0.1)) }
+            let chosen = candidates.first { overlap($0) == 0 } ?? candidates.min { overlap($0) < overlap($1) } ?? block(otherSide, 0)
             placed.append(chosen)
             var y = chosen.minY
             for (line, size) in zip(lines, sizes) {
