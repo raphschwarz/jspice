@@ -46,6 +46,7 @@ enum ScreenshotRunner {
         Shot(name: "26-vco-dark", example: "vco", dark: true, seconds: 1, select: .pnp),
         Shot(name: "27-filter-light", example: "vcf", dark: false, seconds: 1, select: .potentiometer),
         Shot(name: "28-voice-dark", example: "voice", dark: true, seconds: 1, select: .keyboardGate),
+        Shot(name: "29-acid-light", example: "acid", dark: false, seconds: 1, select: .keyboardPitch),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {

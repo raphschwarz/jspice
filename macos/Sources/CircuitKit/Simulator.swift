@@ -320,6 +320,10 @@ public final class Simulator {
     public func step() {
         guard !isFailed else { return }
         let t = time + timeStep
+        // a playing sequence plays the keyboard
+        if let sequence = circuit.sequence, sequence.playing, let state = sequence.state(at: t) {
+            keyboard = KeyboardState(note: state.note, gate: state.gate)
+        }
         var converged = solve(at: t)
         if isFailed { return }
         // a 555 or Schmitt trigger that switches during the step changes the circuit: solve the step again

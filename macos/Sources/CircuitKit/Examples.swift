@@ -41,7 +41,7 @@ public enum Examples {
     public static let all: [Example] = [
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
-        beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, memristorHysteresis, memristorPulses,
+        beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, memristorHysteresis, memristorPulses,
     ]
 
     /// A circuit drawn from a netlist by the tidy layout, with scopes on the named parts
@@ -173,16 +173,19 @@ public enum Examples {
     /// f0 = gm a / (2π C) with gm = I_abc / 2Vt: the CUTOFF pot sets both bias currents through the follower U5, about
     /// 295 µA (2 kHz) at its centre. The RES pot feeds back band-pass: Q is about its resistance over 100 k.
     public static func filterParts(input: NetlistPart, resonance: Double = 0.5) -> [NetlistPart] {
-        [
+        var parts: [NetlistPart] = [
             input,
             NetlistPart(kind: .dcVoltage, name: "VP", params: ["voltage": 15], connections: ["plus": "+15V", "minus": "GND"]),
             NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": 15], connections: ["plus": "GND", "minus": "-15V"]),
-        ] + filterCore(input: "in", output: "lp", control: "cutb", resonance: resonance) + [
+        ]
+        parts += filterCore(input: "in", output: "lp", control: "cutb", resonance: resonance)
+        parts += [
             // cutoff: a pot across the supplies, buffered, sets both OTAs' bias currents
             NetlistPart(kind: .potentiometer, name: "CUTOFF", params: ["resistance": 100_000, "position": 0.5],
                         connections: ["a": "-15V", "b": "+15V", "wiper": "cut"]),
             NetlistPart(kind: .opAmp, name: "U5", params: model(.opAmp, "TL072"), connections: ["plus": "cut", "minus": "cutb", "out": "cutb"]),
         ]
+        return parts
     }
 
     /// The filter itself, from net `input` to net `output` (low-pass), its bias currents set from net `control` through
@@ -222,11 +225,9 @@ public enum Examples {
     /// opening both, so each note starts bright and closes as it dies away. The envelope (the gate through S1 and
     /// RATT into CENV, RREL down to −15 V) sets the filter's and the VCA's bias currents directly: an op-amp buffer
     /// could not follow it down to −15 V, where both currents stop.
-    static let voice = Example(
-        id: "voice", title: "Synth voice: VCO, VCF, VCA",
-        summary: "A playable subtractive synth voice: the keyboard VCO through the resonant LM13700 filter and a VCA, with one envelope opening both. Turn on sound and play with A–; (or a MIDI keyboard); turn RES for more squelch.",
-        symbol: "pianokeys.inverse",
-        circuit: drawn(vcoParts + [
+    static func voiceParts(resonance: Double) -> [NetlistPart] {
+        var parts = vcoParts
+        parts += [
             NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": 15], connections: ["plus": "GND", "minus": "-15V"]),
             // the square wave, divided to ±3.4 V for the filter
             NetlistPart(kind: .resistor, name: "R7", params: ["resistance": 100_000], connections: ["a": "sq", "b": "fin"]),
@@ -239,7 +240,9 @@ public enum Examples {
             NetlistPart(kind: .capacitor, name: "CENV", params: ["capacitance": 4.7e-6, "initialVoltage": -15],
                         connections: ["a": "env", "b": "GND"]),
             NetlistPart(kind: .resistor, name: "RREL", params: ["resistance": 47_000], connections: ["a": "env", "b": "-15V"]),
-        ] + filterCore(input: "fin", output: "flp", control: "env", resonance: 0.6, prefix: "F") + [
+        ]
+        parts += filterCore(input: "fin", output: "flp", control: "env", resonance: resonance, prefix: "F")
+        parts += [
             // VCA
             NetlistPart(kind: .resistor, name: "RIN", params: ["resistance": 220_000], connections: ["a": "flp", "b": "vin"]),
             NetlistPart(kind: .resistor, name: "RIN2", params: ["resistance": 1000], connections: ["a": "vin", "b": "GND"]),
@@ -248,7 +251,27 @@ public enum Examples {
                         connections: ["minus": "GND", "plus": "vin", "out": "out", "bias": "iabc2"]),
             NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
             NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 4], connections: ["plus": "out", "minus": "GND"]),
-        ], scopes: [("CENV", .voltage), ("SPK1", .voltage)]))
+        ]
+        return parts
+    }
+
+    static let voice = Example(
+        id: "voice", title: "Synth voice: VCO, VCF, VCA",
+        summary: "A playable subtractive synth voice: the keyboard VCO through the resonant LM13700 filter and a VCA, with one envelope opening both. Turn on sound and play with A–; (or a MIDI keyboard); turn RES for more squelch.",
+        symbol: "pianokeys.inverse",
+        circuit: drawn(voiceParts(resonance: 0.6), scopes: [("CENV", .voltage), ("SPK1", .voltage)]))
+
+    /// The synth voice played by the step sequencer: a sixteen-step bassline, with the filter's resonance turned up
+    static let acid: Example = {
+        var circuit = drawn(voiceParts(resonance: 0.85), scopes: [("CENV", .voltage), ("SPK1", .voltage)])
+        let c2 = 36.0
+        circuit.sequence = StepSequence(
+            steps: [c2, c2, c2 + 12, c2, nil, c2 + 7, c2 + 10, c2, c2, c2 + 12, nil, c2 + 5, c2 + 7, c2, c2 + 15, c2 + 12],
+            tempo: 125, gateLength: 0.5, playing: true)
+        return Example(id: "acid", title: "Sequenced bassline (sound)",
+                       summary: "The synth voice played by the step sequencer. Turn on sound; change the notes, tempo and gate in the inspector (click an empty spot first).",
+                       symbol: "metronome", circuit: circuit)
+    }()
 
     static let filter = Example(
         id: "vcf", title: "LM13700 filter (sound)",

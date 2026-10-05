@@ -41,7 +41,8 @@ public final class CircuitSession {
     terminals joins; the net "GND" is ground); then simulate it and read waveforms and measurements, or call \
     frequency_response for filters and amplifiers. Adjust values with set_parameter or set_model and simulate again. \
     Values accept SI prefixes as strings ("4.7k", "100n", "2.2u", "1meg"). Probes: "V(net)" is a net's voltage, \
-    "V(R1)" the voltage across a part, "I(R1)" its current, "P(R1)" its power, "V(U1.out)" a terminal's voltage.     Synth circuits can be played: keyboardPitch parts put out 1 V per octave (0 V at C2) and keyboardGate parts a gate,     driven by the "keyboard" events of simulate (for example [{"at": 0, "note": "C4"}, {"at": 0.5, "off": true}]).
+    "V(R1)" the voltage across a part, "I(R1)" its current, "P(R1)" its power, "V(U1.out)" a terminal's voltage.     Synth circuits can be played: keyboardPitch parts put out 1 V per octave (0 V at C2) and keyboardGate parts a gate,     driven by the "keyboard" events of simulate (for example [{"at": 0, "note": "C4"}, {"at": 0.5, "off": true}]) \
+    or by a step sequence (set_sequence).
     """
 
     public static let tools: [Tool] = [
@@ -95,6 +96,16 @@ public final class CircuitSession {
              description: "Opens or closes a switch or push button.",
              inputSchema: schema(["part": string("Part name"), "closed": ["type": "boolean"]], required: ["part", "closed"]),
              run: { session, arguments in try session.setSwitch(arguments) }),
+        Tool(name: "set_sequence",
+             description: "Sets the step sequencer that plays the circuit's keyboard pitch and gate sources by itself: one step per sixteenth note, each a note or a rest, repeating. It runs on circuit time, in simulate and with sound on in the app. Pass playing false to stop it.",
+             inputSchema: schema([
+                "steps": ["type": "array", "items": [String: Any](),
+                          "description": "Notes, one per step: MIDI numbers (60) or names (\"C4\", \"F#2\"); null or \"-\" is a rest"],
+                "tempo": ["type": "number", "description": "Quarter notes per minute (default 120)"],
+                "gate": ["type": "number", "description": "Fraction of each step the gate is open (default 0.5)"],
+                "playing": ["type": "boolean", "description": "Default true"],
+             ], required: ["steps"]),
+             run: { session, arguments in try session.setSequence(arguments) }),
         Tool(name: "describe_circuit",
              description: "Describes the circuit: every part with its kind, model, parameters and the node (and net names) of each terminal, plus any problems that keep it from being simulated.",
              inputSchema: schema([:]), run: { session, _ in session.describe() }),
@@ -322,6 +333,7 @@ public final class CircuitSession {
             throw ToolError(error.description)
         }
         next.settings = circuit.settings
+        next.sequence = circuit.sequence
         if keepExisting { next.scopes = circuit.scopes.filter { scope in next.elements.contains { $0.id == scope.elementID } } }
         replace(next, action)
     }
@@ -416,6 +428,47 @@ public final class CircuitSession {
         return ["part": circuit.elements[index].name, "closed": closed]
     }
 
+    func setSequence(_ arguments: [String: Any]) throws -> Any {
+        guard let list = arguments["steps"] as? [Any] else { throw ToolError("\"steps\" should be a list of notes and rests") }
+        var steps: [Double?] = []
+        for step in list {
+            if step is NSNull { steps.append(nil); continue }
+            if let number = step as? NSNumber { steps.append(number.doubleValue); continue }
+            if let text = step as? String {
+                let trimmed = text.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty || trimmed == "-" || trimmed.lowercased() == "rest" { steps.append(nil); continue }
+                if let note = Self.noteNumber(trimmed) { steps.append(note); continue }
+            }
+            throw ToolError("Can't read the step \(step) as a note: use a MIDI number such as 60, a name such as \"C4\", or null for a rest")
+        }
+        guard steps.count <= 64 else { throw ToolError("At most 64 steps") }
+        var sequence = circuit.sequence ?? StepSequence(steps: [])
+        sequence.steps = steps
+        if let tempo = try Self.number(arguments["tempo"], "tempo") {
+            guard tempo >= 20, tempo <= 400 else { throw ToolError("\"tempo\" should be between 20 and 400") }
+            sequence.tempo = tempo
+        }
+        if let gate = try Self.number(arguments["gate"], "gate") {
+            guard gate > 0, gate <= 1 else { throw ToolError("\"gate\" should be above 0 and at most 1") }
+            sequence.gateLength = gate
+        }
+        sequence.playing = arguments["playing"] as? Bool ?? true
+        if !circuit.elements.contains(where: { $0.kind.isKeyboard }) {
+            throw ToolError("The circuit has no keyboardPitch or keyboardGate source for the sequence to play")
+        }
+        change(sequence.playing ? "Set Sequence" : "Stop Sequence") { $0.sequence = sequence }
+        return Self.describe(sequence)
+    }
+
+    static func describe(_ sequence: StepSequence) -> [String: Any] {
+        let steps = sequence.steps.map { step -> Any in
+            if let step { return step }
+            return NSNull()
+        }
+        return ["steps": steps, "tempo": sequence.tempo,
+         "gate": sequence.gateLength, "playing": sequence.playing, "step_seconds": sequence.stepDuration]
+    }
+
     func describe() -> [String: Any] {
         let simulator = Simulator(circuit: circuit, timeStep: 1e-6)
         let netlist = NetlistExtractor.netlist(from: circuit)
@@ -434,12 +487,14 @@ public final class CircuitSession {
             if element.kind.isSwitch { part["closed"] = element.closed }
             parts.append(part)
         }
-        return [
+        var result: [String: Any] = [
             "parts": parts,
             "nets": nets.sorted(),
             "problems": simulator.problems,
             "suggested_time_step": Pacing.suggest(for: circuit).timeStep,
         ]
+        if let sequence = circuit.sequence { result["sequence"] = Self.describe(sequence) }
+        return result
     }
 
     // MARK: - Simulation
@@ -566,16 +621,7 @@ public final class CircuitSession {
 
     /// MIDI note number of a note name such as "C4" (60), "A4" (69), "F#3" or "Bb2"
     static func noteNumber(_ name: String) -> Double? {
-        let text = name.trimmingCharacters(in: .whitespaces)
-        if let number = Double(text) { return number }
-        let letters: [Character: Int] = ["C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11]
-        guard let first = text.first.flatMap({ Character($0.uppercased()) }), let base = letters[first] else { return nil }
-        var rest = text.dropFirst()
-        var semitone = base
-        if rest.first == "#" || rest.first == "♯" { semitone += 1; rest = rest.dropFirst() }
-        else if rest.first == "b" || rest.first == "♭" { semitone -= 1; rest = rest.dropFirst() }
-        guard let octave = Int(rest) else { return nil }
-        return Double((octave + 1) * 12 + semitone)
+        NoteName.number(name)
     }
 
     /// A part terminal on the named net: (element index, terminal index)

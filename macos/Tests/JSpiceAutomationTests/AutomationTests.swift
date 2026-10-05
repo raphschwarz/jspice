@@ -117,6 +117,26 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(gains[2], 1 / 15.1, accuracy: 0.025, "12 dB per octave: about 1/15 two octaves up")
     }
 
+    func testAnAgentCanSequenceTheSynth() throws {
+        let session = CircuitSession()
+        _ = try session.call("load_example", arguments: ["id": "synth"])
+        let set = try XCTUnwrap(session.call("set_sequence", arguments: [
+            "steps": ["A3", NSNull(), "A4", "-"], "tempo": 150, "gate": 0.75,
+        ]) as? [String: Any])
+        XCTAssertEqual(set["step_seconds"] as? Double ?? 0, 0.1, accuracy: 1e-9)
+        let described = try XCTUnwrap(session.call("describe_circuit", arguments: [:]) as? [String: Any])
+        XCTAssertNotNil(described["sequence"])
+        // the second bar, after the envelope has settled: A3 then A4 each sound for 75 ms of every 400
+        let result = try XCTUnwrap(session.call("simulate", arguments: [
+            "duration": 0.8, "time_step": 1.0 / 96_000, "probes": ["V(SPK1)"], "points": 400,
+        ]) as? [String: Any])
+        let speaker = try XCTUnwrap((result["probes"] as? [String: Any])?["V(SPK1)"] as? [String: Any])
+        XCTAssertGreaterThan(speaker["max"] as? Double ?? 0, 0.5)
+        XCTAssertThrowsError(try session.call("set_sequence", arguments: ["steps": ["H9"]]))
+        _ = try session.call("set_sequence", arguments: ["steps": ["A3"], "playing": false])
+        XCTAssertEqual(session.circuit.sequence?.playing, false)
+    }
+
     func testAnAgentCanPlayTheKeyboard() throws {
         let session = CircuitSession()
         _ = try session.call("load_example", arguments: ["id": "synth"])

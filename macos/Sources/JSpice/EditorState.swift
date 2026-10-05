@@ -197,6 +197,27 @@ final class EditorState: ObservableObject {
         }
     }
 
+    /// The step sequence as it is, or an empty eight-step one, stopped
+    var sequence: StepSequence {
+        circuit.sequence ?? StepSequence(steps: Array(repeating: nil, count: 8), playing: false)
+    }
+
+    func updateSequence(_ actionName: String, _ change: (inout StepSequence) -> Void) {
+        var next = sequence
+        change(&next)
+        edit(actionName) { $0.sequence = next }
+    }
+
+    /// A change made while dragging a slider: one undo step when the drag ends
+    func updateSequenceDuringInteraction(_ change: (inout StepSequence) -> Void) {
+        beginInteraction()
+        var next = circuit
+        var sequence = self.sequence
+        change(&sequence)
+        next.sequence = sequence
+        setDuringInteraction(next)
+    }
+
     func updateSettings(_ change: (inout SimulationSettings) -> Void) {
         edit("Change Simulation Settings") { change(&$0.settings) }
     }

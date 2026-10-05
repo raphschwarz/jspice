@@ -174,6 +174,41 @@ final class AudioTests: XCTestCase {
         XCTAssertLessThan(abs(simulator.current(filterBias)), 1e-6, "and the filter closes")
     }
 
+    func testStepSequenceKeepsTime() {
+        let sequence = StepSequence(steps: [48, nil, 55, 60], tempo: 120, gateLength: 0.5)
+        XCTAssertEqual(sequence.stepDuration, 0.125, "a sixteenth note at 120 BPM")
+        XCTAssertEqual(sequence.state(at: 0.01)?.note, 48)
+        XCTAssertEqual(sequence.state(at: 0.01)?.gate, true)
+        XCTAssertEqual(sequence.state(at: 0.07)?.gate, false, "the gate closes halfway through the step")
+        XCTAssertEqual(sequence.state(at: 0.13)?.note, 48, "a rest keeps the last note's pitch")
+        XCTAssertEqual(sequence.state(at: 0.13)?.gate, false)
+        XCTAssertEqual(sequence.state(at: 0.26)?.note, 55)
+        XCTAssertEqual(sequence.state(at: 0.51)?.note, 48, "and repeats")
+        XCTAssertEqual(NoteName.name(60), "C4")
+        XCTAssertEqual(NoteName.name(46), "A#2")
+        XCTAssertEqual(NoteName.number("Bb2"), 46)
+    }
+
+    func testSequencedBasslinePlaysItsPattern() {
+        let circuit = Examples.acid.circuit
+        let sequence = circuit.sequence!
+        let speaker = circuit.elements.firstIndex { $0.kind == .speaker }!
+        let simulator = Simulator(circuit: circuit, timeStep: oversampledStep)
+        var notes: [Double] = []
+        var loudest = 0.0
+        while simulator.time < 15.5 * sequence.stepDuration && !simulator.isFailed {
+            simulator.step()
+            if notes.last != simulator.keyboard.note { notes.append(simulator.keyboard.note) }
+            loudest = max(loudest, abs(simulator.voltageAcross(speaker)))
+        }
+        XCTAssertFalse(simulator.isFailed)
+        XCTAssertGreaterThan(loudest, 0.5, "it sounds")
+        // every distinct note of the pattern, in order (repeated notes and rests merge)
+        var expected: [Double] = []
+        for case let note? in sequence.steps where expected.last != note { expected.append(note) }
+        XCTAssertEqual(notes, expected)
+    }
+
     func testNoiseIsWhiteGaussianAndRepeatable() throws {
         let circuit = try SchematicLayout.layout([
             NetlistPart(kind: .noiseVoltage, name: "N1", params: ["amplitude": 0.5], connections: ["plus": "n", "minus": "GND"]),
@@ -213,7 +248,7 @@ final class AudioTests: XCTestCase {
     }
 
     func testEverySoundExampleHasASpeaker() {
-        for id in ["beeper", "tone", "tremolo", "vco", "synth", "vcf", "wind", "voice"] {
+        for id in ["beeper", "tone", "tremolo", "vco", "synth", "vcf", "wind", "voice", "acid"] {
             XCTAssertTrue(Examples.example(id)?.circuit.elements.contains { $0.kind == .speaker } ?? false, id)
         }
     }

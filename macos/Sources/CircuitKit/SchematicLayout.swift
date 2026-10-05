@@ -21,6 +21,7 @@ public enum SchematicLayout {
         var result = try layout(NetlistExtractor.netlist(from: circuit))
         result.scopes = circuit.scopes.filter { scope in result.elements.contains { $0.id == scope.elementID } }
         result.settings = circuit.settings
+        result.sequence = circuit.sequence
         return result
     }
 

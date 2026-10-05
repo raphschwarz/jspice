@@ -107,6 +107,10 @@ struct ElementInspector: View {
                 }
             }
 
+            if element.kind.isKeyboard {
+                SequencerSection(editor: editor, sequence: editor.sequence)
+            }
+
             if element.kind.isSwitch {
                 Section {
                     Toggle("Closed", isOn: Binding(get: { element.closed }, set: { _ in editor.toggleSwitch(element.id) }))
@@ -151,6 +155,99 @@ struct ElementInspector: View {
 }
 
 /// A typed value plus a slider; dragging the slider changes the circuit live and becomes one undo step.
+/// The step sequencer that plays the keyboard sources: one note or rest per sixteenth note, repeating
+struct SequencerSection: View {
+    @ObservedObject var editor: EditorState
+    let sequence: StepSequence
+
+    var body: some View {
+        Section {
+            Toggle("Play", isOn: Binding(get: { sequence.playing }, set: { playing in
+                editor.updateSequence(playing ? "Play Sequence" : "Stop Sequence") { $0.playing = playing }
+            }))
+            LabeledContent("Tempo") {
+                HStack {
+                    Slider(value: Binding(get: { sequence.tempo }, set: { tempo in
+                        editor.updateSequenceDuringInteraction { $0.tempo = tempo.rounded() }
+                    }), in: 40...240, onEditingChanged: { editing in
+                        if !editing { editor.endInteraction("Change Tempo") }
+                    })
+                    .controlSize(.small)
+                    Text("\(Int(sequence.tempo)) BPM").monospacedDigit().frame(width: 64, alignment: .trailing)
+                }
+            }
+            LabeledContent("Gate length") {
+                HStack {
+                    Slider(value: Binding(get: { sequence.gateLength }, set: { gate in
+                        editor.updateSequenceDuringInteraction { $0.gateLength = (gate * 20).rounded() / 20 }
+                    }), in: 0.05...1, onEditingChanged: { editing in
+                        if !editing { editor.endInteraction("Change Gate Length") }
+                    })
+                    .controlSize(.small)
+                    Text("\(Int((sequence.gateLength * 100).rounded())) %").monospacedDigit().frame(width: 64, alignment: .trailing)
+                }
+            }
+            Stepper("\(sequence.steps.count) steps", value: Binding(get: { sequence.steps.count }, set: { count in
+                editor.updateSequence("Change Steps") { sequence in
+                    if count > sequence.steps.count {
+                        sequence.steps += Array(repeating: nil, count: count - sequence.steps.count)
+                    } else {
+                        sequence.steps = Array(sequence.steps.prefix(count))
+                    }
+                }
+            }), in: 1...32)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 4), spacing: 4) {
+                ForEach(sequence.steps.indices, id: \.self) { index in
+                    StepField(note: sequence.steps[index]) { note in
+                        editor.updateSequence("Change Step") { sequence in
+                            if index < sequence.steps.count { sequence.steps[index] = note }
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Sequencer")
+        } footer: {
+            Text("Plays the keyboard sources by itself, one step per sixteenth note: type a note such as C3 or A#2, or leave a step blank for a rest. It keeps time with the circuit, so turn on sound to hear it in real time.")
+        }
+    }
+}
+
+/// One step of the sequencer: a note name, or blank for a rest
+private struct StepField: View {
+    let note: Double?
+    let commit: (Double?) -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("–", text: $text)
+            .multilineTextAlignment(.center)
+            .textFieldStyle(.roundedBorder)
+            .font(.callout.monospacedDigit())
+            .focused($focused)
+            .onSubmit(save)
+            .onChange(of: focused) { _, isFocused in
+                if !isFocused { save() }
+            }
+            .onAppear { text = note.map(NoteName.name) ?? "" }
+            .onChange(of: note) { _, newValue in
+                if !focused { text = newValue.map(NoteName.name) ?? "" }
+            }
+    }
+
+    private func save() {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        let parsed = trimmed.isEmpty || trimmed == "-" || trimmed == "–" ? nil : NoteName.number(trimmed)
+        if trimmed.isEmpty || parsed != nil {
+            if parsed != note { commit(parsed) }
+            text = parsed.map(NoteName.name) ?? ""
+        } else {
+            text = note.map(NoteName.name) ?? ""
+        }
+    }
+}
+
 struct ParameterRow: View {
     @ObservedObject var editor: EditorState
     let elementID: UUID
@@ -358,6 +455,9 @@ struct CircuitInspector: View {
                 Text("Simulation")
             } footer: {
                 Text("Automatic speed runs in real time when the circuit changes slowly enough to watch, and in slow motion when it changes faster.")
+            }
+            if simulation.hasKeyboard {
+                SequencerSection(editor: editor, sequence: editor.sequence)
             }
             Section("Circuit") {
                 LabeledContent("Parts", value: "\(partCount)")

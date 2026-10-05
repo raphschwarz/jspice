@@ -78,6 +78,50 @@ public struct SimulationSettings: Codable, Hashable, Sendable {
     }
 }
 
+/// A step sequencer that plays the circuit's keyboard sources by itself, one step per sixteenth note: each step a note
+/// or a rest, the gate open for part of the step, the pattern repeating. It runs on simulated time, so it keeps exact
+/// time at any speed, with sound on, and in automated simulations.
+public struct StepSequence: Codable, Hashable, Sendable {
+    /// MIDI note of each step (60 is middle C); nil is a rest
+    public var steps: [Double?]
+    /// Quarter notes per minute
+    public var tempo: Double
+    /// Fraction of each step the gate stays open
+    public var gateLength: Double
+    public var playing: Bool
+
+    public init(steps: [Double?], tempo: Double = 120, gateLength: Double = 0.5, playing: Bool = true) {
+        self.steps = steps
+        self.tempo = tempo
+        self.gateLength = gateLength
+        self.playing = playing
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        steps = try container.decodeIfPresent([Double?].self, forKey: .steps) ?? []
+        tempo = try container.decodeIfPresent(Double.self, forKey: .tempo) ?? 120
+        gateLength = try container.decodeIfPresent(Double.self, forKey: .gateLength) ?? 0.5
+        playing = try container.decodeIfPresent(Bool.self, forKey: .playing) ?? true
+    }
+
+    /// Seconds per step: a sixteenth note
+    public var stepDuration: Double { 15 / min(max(tempo, 1), 1000) }
+
+    /// The note and gate at time `t`; during a rest the pitch stays on the last note played. Nil without steps.
+    public func state(at t: Double) -> (note: Double, gate: Bool)? {
+        guard !steps.isEmpty else { return nil }
+        let position = max(t, 0) / stepDuration
+        let index = Int(position.rounded(.down)) % steps.count
+        let phase = position - position.rounded(.down)
+        if let note = steps[index] { return (note, phase < min(max(gateLength, 0.01), 1)) }
+        for back in 1..<max(steps.count, 2) {
+            if let note = steps[(index - back + steps.count * 2) % steps.count] { return (note, false) }
+        }
+        return (60, false)
+    }
+}
+
 public struct Circuit: Codable, Hashable, Sendable {
     public var elements: [Element]
     public var scopes: [ScopeSpec]
@@ -85,13 +129,16 @@ public struct Circuit: Codable, Hashable, Sendable {
     /// Net names given when the circuit was built from a netlist, by "part.terminal", so the nets can still be referred
     /// to by name once they are drawn as wires
     public var netNames: [String: String]
+    /// A pattern that plays the keyboard sources, if any
+    public var sequence: StepSequence?
 
     public init(elements: [Element] = [], scopes: [ScopeSpec] = [], settings: SimulationSettings = SimulationSettings(),
-                netNames: [String: String] = [:]) {
+                netNames: [String: String] = [:], sequence: StepSequence? = nil) {
         self.elements = elements
         self.scopes = scopes
         self.settings = settings
         self.netNames = netNames
+        self.sequence = sequence
     }
 
     public init(from decoder: Decoder) throws {
@@ -100,6 +147,7 @@ public struct Circuit: Codable, Hashable, Sendable {
         scopes = try container.decodeIfPresent([ScopeSpec].self, forKey: .scopes) ?? []
         settings = try container.decodeIfPresent(SimulationSettings.self, forKey: .settings) ?? SimulationSettings()
         netNames = try container.decodeIfPresent([String: String].self, forKey: .netNames) ?? [:]
+        sequence = try container.decodeIfPresent(StepSequence.self, forKey: .sequence)
     }
 
     public subscript(id: UUID) -> Element? {
