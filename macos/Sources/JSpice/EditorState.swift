@@ -253,15 +253,15 @@ final class EditorState: ObservableObject {
 
     /// Compiles the sketch off the main thread and, if it builds, loads it into the chip, which restarts
     func uploadSketch(_ id: UUID, code: String) {
-        guard let toolchain = AVRToolchain.find() else {
+        let board = circuit[id]?.kind.board ?? .uno
+        guard ChipSupport.isAvailable(board.family) else {
             showChipSupport = true
             return
         }
-        let board = circuit[id]?.kind.board ?? .uno
         sketchStatus[id] = .building
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                SketchBuilder.build(code, board: board, toolchain: toolchain)
+                SketchBuilder.build(code, board: board)
             }.value
             self?.finishUpload(id, code: code, result: result)
         }

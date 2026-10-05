@@ -6,6 +6,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
     case uno
     case mega
     case attiny85
+    case pico
 
     public var id: String { rawValue }
 
@@ -14,6 +15,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .atmega328p: self = .uno
         case .atmega2560: self = .mega
         case .attiny85: self = .attiny85
+        case .rp2040: self = .pico
         default: return nil
         }
     }
@@ -23,6 +25,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return .atmega328p
         case .mega: return .atmega2560
         case .attiny85: return .attiny85
+        case .pico: return .rp2040
         }
     }
 
@@ -32,6 +35,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return "Arduino Uno"
         case .mega: return "Arduino Mega 2560"
         case .attiny85: return "ATtiny85"
+        case .pico: return "Raspberry Pi Pico"
         }
     }
 
@@ -41,11 +45,12 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return "ATmega328P"
         case .mega: return "ATmega2560"
         case .attiny85: return "ATtiny85"
+        case .pico: return "RP2040"
         }
     }
 
     /// What compiling for it takes
-    public var family: ChipFamily { .avr }
+    public var family: ChipFamily { self == .pico ? .rp2040 : .avr }
 
     /// The AVR layout, for AVR boards
     public var avrVariant: AVRVariant? {
@@ -53,13 +58,14 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return .atmega328p
         case .mega: return .atmega2560
         case .attiny85: return .attiny85
+        case .pico: return nil
         }
     }
 
-    public var clock: Double { avrVariant?.clock ?? 0 }
+    public var clock: Double { self == .pico ? 125e6 : avrVariant?.clock ?? 0 }
 
     /// The supply the chip runs from (and its logic high)
-    public var supply: Double { 5 }
+    public var supply: Double { self == .pico ? 3.3 : 5 }
 
     /// Bytes of flash a sketch can use (the rest holds the bootloader)
     public var flashSize: Int {
@@ -67,6 +73,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return 32_256
         case .mega: return 253_952
         case .attiny85: return 8192
+        case .pico: return 2_093_056  // 2 MB, less the last 4 KB (EEPROM emulation)
         }
     }
 
@@ -79,6 +86,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return (0...13).map { "d\($0)" } + (0...5).map { "a\($0)" }
         case .mega: return (0...53).map { "d\($0)" } + (0...15).map { "a\($0)" }
         case .attiny85: return (0...5).map { "pb\($0)" }
+        case .pico: return Pico.gpioOfPin.map { "gp\($0)" }
         }
     }
 
@@ -88,6 +96,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return (0...13).map { "D\($0)" } + (0...5).map { "A\($0)" }
         case .mega: return (0...53).map { "D\($0)" } + (0...15).map { "A\($0)" }
         case .attiny85: return (0...5).map { "PB\($0)" }
+        case .pico: return Pico.gpioOfPin.map { "GP\($0)" }
         }
     }
 
@@ -110,6 +119,10 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
             return side(false, 0...35) + side(true, 0...17) + side(true, 0...15, from: 19)
         case .attiny85:
             return side(false, 0...2) + side(true, 0...2)
+        case .pico:
+            // GP0-GP15 down one side; the other, from the top, as on the board: GP28-GP26, then GP22 down to GP16
+            return side(false, 0...15) + (16...22).map { PinPlace(second: true, offset: 26 - $0) }
+                + (26...28).map { PinPlace(second: true, offset: 28 - $0) }
         }
     }
 
@@ -119,6 +132,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return 13
         case .mega: return 35
         case .attiny85: return 3
+        case .pico: return 15
         }
     }
 
@@ -128,12 +142,14 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return Array(14...19)
         case .mega: return Array(54...69)
         case .attiny85: return [5, 2, 4, 3]
+        case .pico: return [23, 24, 25]
         }
     }
 
     /// A chip running `firmware`
     public func makeChip(firmware: [UInt8]) -> Microcontroller {
-        AVR(firmware: firmware, variant: avrVariant ?? .atmega328p)
+        if self == .pico { return Pico(firmware: firmware) }
+        return AVR(firmware: firmware, variant: avrVariant ?? .atmega328p)
     }
 
     /// The sketch a new part starts with
@@ -163,6 +179,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return "atmega328p"
         case .mega: return "atmega2560"
         case .attiny85: return "attiny85"
+        case .pico: return ""
         }
     }
 
@@ -172,6 +189,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return "-DARDUINO_AVR_UNO"
         case .mega: return "-DARDUINO_AVR_MEGA2560"
         case .attiny85: return "-DARDUINO_AVR_ATTINYX5"
+        case .pico: return "-DARDUINO_RASPBERRY_PI_PICO"
         }
     }
 
@@ -180,7 +198,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .uno: return "standard"
         case .mega: return "mega"
-        case .attiny85: return nil
+        case .attiny85, .pico: return nil
         }
     }
 

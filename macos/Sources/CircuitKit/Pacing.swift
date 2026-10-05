@@ -70,6 +70,9 @@ public enum Pacing {
             case .attiny85:
                 // timer 1's PWM (D4) runs at 7.8 kHz
                 scales.append(contentsOf: [1, 1.28e-4])
+            case .rp2040:
+                // arduino-pico's PWM runs at 1 kHz
+                scales.append(contentsOf: [1, 1e-3])
             default:
                 break
             }

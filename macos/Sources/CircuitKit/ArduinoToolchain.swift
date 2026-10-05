@@ -322,12 +322,16 @@ public enum SketchBuilder {
     /// The core's bundled libraries (EEPROM, SPI, Wire, SoftwareSerial…) whose headers the sketch includes: their
     /// source folders
     static func libraries(usedBy source: String, toolchain: AVRToolchain) -> [URL] {
+        libraries(usedBy: source, in: toolchain.core.appendingPathComponent("libraries"))
+    }
+
+    /// The libraries in `folder` (each one's sources in <name>/src) whose headers the sketch includes
+    static func libraries(usedBy source: String, in folder: URL) -> [URL] {
         let pattern = try? NSRegularExpression(pattern: #"#\s*include\s*[<"]([^>"]+)\.h[>"]"#)
         let range = NSRange(source.startIndex..., in: source)
         let headers = Set((pattern?.matches(in: source, range: range) ?? []).compactMap { match -> String? in
             Range(match.range(at: 1), in: source).map { String(source[$0]) }
         })
-        let folder = toolchain.core.appendingPathComponent("libraries")
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
         var result: [URL] = []
         for name in names.sorted() {

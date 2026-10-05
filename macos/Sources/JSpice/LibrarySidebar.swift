@@ -41,7 +41,7 @@ enum SymbolIcons {
         case .timer555:
             element = Element(kind: kind, a: .zero, b: GridPoint(0, 5))
             (a, b, unit) = (CGPoint(x: 17, y: -0.5), CGPoint(x: 17, y: 22), 4.5)
-        case .atmega328p, .atmega2560, .attiny85:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040:
             let length = CGFloat(kind.board?.length ?? 13)
             element = Element(kind: kind, a: .zero, b: GridPoint(0, Int(length)))
             unit = min(19.6 / length, 4.4)
@@ -61,7 +61,7 @@ enum SymbolIcons {
         switch kind {
         case .potentiometer, .analogSwitch:
             posts = [a, b, CGPoint(x: (a.x + b.x) / 2, y: 2)]
-        case .ota, .timer555, .atmega328p, .atmega2560, .attiny85:
+        case .ota, .timer555, .atmega328p, .atmega2560, .attiny85, .rp2040:
             // the element's own terminal layout, scaled into the icon
             posts = element.posts.map { CGPoint(x: a.x + CGFloat($0.x) * unit, y: a.y + CGFloat($0.y) * unit) }
         default:

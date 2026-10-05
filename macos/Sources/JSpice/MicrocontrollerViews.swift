@@ -55,8 +55,8 @@ struct MicrocontrollerSection: View {
                 Button("Restart") { editor.simulation.reset() }
                     .help("Start the circuit, and the chip, from the beginning")
             }
-            if !ChipSupport.isAvailable(.avr) {
-                Text("Compiling sketches needs AVR chip support: avr-gcc and the Arduino core, about 40 MB from Arduino.")
+            if let family = element.kind.board?.family, !ChipSupport.isAvailable(family) {
+                Text("Compiling sketches needs chip support: \(family.summary).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Install Chip Support…") { editor.showChipSupport = true }
@@ -187,11 +187,11 @@ struct SketchEditorSheet: View {
                             .foregroundStyle(error.isError ? .red : .orange)
                     }
                 case nil:
-                    if ChipSupport.isAvailable(.avr) {
+                    if ChipSupport.isAvailable(board?.family ?? .avr) {
                         Text("Write a sketch as in the Arduino IDE, then Upload (⌘U).").foregroundStyle(.secondary)
                     } else {
                         HStack {
-                            Text("Compiling needs AVR chip support (about 40 MB from Arduino).").foregroundStyle(.secondary)
+                            Text("Compiling needs chip support for the \(board?.chip ?? "chip").").foregroundStyle(.secondary)
                             Button("Install…") { editor.showChipSupport = true }
                         }
                     }
@@ -232,7 +232,7 @@ struct ChipSupportSheet: View {
             .padding(20)
             Divider()
             VStack(alignment: .leading, spacing: 16) {
-                Text("Microcontrollers run real firmware compiled from your sketch. The compiler and the Arduino core come from Arduino's own package index; JSpice downloads them once and keeps them in its Application Support folder.")
+                Text("Microcontrollers run real firmware compiled from your sketch. The compiler and the Arduino core come from their makers' package indexes (Arduino's, and arduino-pico's for the Pico); JSpice downloads them once and keeps them in its Application Support folder.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -244,7 +244,7 @@ struct ChipSupportSheet: View {
             .id(refresh)
             Spacer(minLength: 0)
         }
-        .frame(width: 560, height: 340)
+        .frame(width: 560, height: 420)
     }
 
     @ViewBuilder
@@ -260,7 +260,7 @@ struct ChipSupportSheet: View {
                 } else if let message = failure[family] {
                     Text(message).font(.caption).foregroundStyle(.red)
                 } else if let versions = ChipSupport.installedVersions(family) {
-                    Text("Installed: avr-gcc \(versions.compiler), Arduino AVR core \(versions.core)").font(.caption)
+                    Text("Installed: \(family.compilerFolder) \(versions.compiler), \(family.coreName) \(versions.core)").font(.caption)
                 } else if ChipSupport.isAvailable(family) {
                     Text("Using the toolchain of an Arduino IDE installed on this Mac").font(.caption)
                 }

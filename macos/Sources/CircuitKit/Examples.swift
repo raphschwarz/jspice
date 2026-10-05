@@ -42,7 +42,7 @@ public enum Examples {
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
-        ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, megaBarGraph, tinyDimmer,
+        ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
     ]
 
@@ -354,6 +354,13 @@ public enum Examples {
         return part
     }
 
+    static func pico(_ name: String = "U1", code: String, firmware: String, connections: [String: String]) -> NetlistPart {
+        var part = NetlistPart(kind: .rp2040, name: name, connections: connections)
+        part.code = code
+        part.firmware = PicoSketches.firmware(firmware)
+        return part
+    }
+
     static let arduinoBlink = Example(
         id: "arduino-blink", title: "Arduino: Blink",
         summary: "An ATmega328P runs the Blink sketch: the LED on pin 13 flashes once a second. Select the chip to read and change its code.",
@@ -426,6 +433,29 @@ public enum Examples {
             NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 220], connections: ["a": "breath", "b": "a2"]),
             NetlistPart(kind: .led, name: "D2", params: ["color": 2], connections: ["anode": "a2", "cathode": "GND"]),
         ], scopes: [("D1", .current), ("D2", .current)]))
+
+    static let picoKnob = Example(
+        id: "pico-knob", title: "Raspberry Pi Pico: knob and LED",
+        summary: "A Pico reads the pot on GP26 (A0) and sets the LED on GP15 with 12-bit PWM; its own LED blinks, and the readings go to the serial monitor over USB. Turn the pot.",
+        symbol: "dial.low",
+        circuit: drawn([
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 3.3], connections: ["plus": "+3V3", "minus": "GND"]),
+            NetlistPart(kind: .potentiometer, name: "POT", params: ["resistance": 10_000, "position": 0.6],
+                        connections: ["a": "GND", "b": "+3V3", "wiper": "knob"]),
+            pico(code: PicoSketches.knobCode, firmware: PicoSketches.knobFirmware, connections: ["gp26": "knob", "gp15": "pwm"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 100], connections: ["a": "pwm", "b": "anode"]),
+            NetlistPart(kind: .led, name: "D1", params: ["color": 4], connections: ["anode": "anode", "cathode": "GND"]),
+        ], scopes: [("POT", .voltage), ("D1", .current)]))
+
+    static let picoMelody = Example(
+        id: "pico-melody", title: "Raspberry Pi Pico: melody (sound)",
+        summary: "tone() on GP5 plays a scale and a phrase through the speaker; on the Pico it runs on a PIO state machine. Turn on sound.",
+        symbol: "music.quarternote.3",
+        circuit: drawn([
+            pico(code: PicoSketches.melodyCode, firmware: PicoSketches.melodyFirmware, connections: ["gp5": "gp5"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 470], connections: ["a": "gp5", "b": "spk"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 3.3], connections: ["plus": "spk", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage)]))
 
     static let arduinoMelody = Example(
         id: "arduino-melody", title: "Arduino: melody (sound)",

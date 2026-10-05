@@ -256,7 +256,7 @@ public final class Simulator {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .comparator, .vco, .vcf, .envelope, .vca,
-                 .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85: return true
+                 .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return true
             default: return false
             }
         }
@@ -741,7 +741,7 @@ public final class Simulator {
             case .schmittInverter:
                 // output drives towards the hidden supply or ground through its output resistance
                 stampConductance(&matrix, m, nodes[1], 0, 1 / max(element[param: "outputResistance"], 0.1))
-            case .atmega328p, .atmega2560, .attiny85:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040:
                 // each output pin drives towards the supply or ground through its resistance; a pull-up is a resistor
                 // to the supply, a pull-down one to ground; other inputs draw nothing
                 guard let states = chipPinStates[i] else { continue }
@@ -847,7 +847,7 @@ public final class Simulator {
                 if digitalState[i] {
                     stampCurrent(&rhs, 0, nodes[1], c.supply * c.outputConductance)
                 }
-            case .atmega328p, .atmega2560, .attiny85:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040:
                 guard let states = chipPinStates[i] else { continue }
                 for (pin, state) in states.enumerated() where pin < nodes.count {
                     switch state {
@@ -1036,7 +1036,7 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
-        case .atmega328p, .atmega2560, .attiny85:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040:
             c.supply = min(max(p("supply"), 0.5), 6)
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
             c.onConductance = 1 / max(p("pullUp"), 1)
@@ -1781,7 +1781,7 @@ public final class Simulator {
             let target = digitalState[i] ? constants[i].supply : 0
             let current = (target - v(nodes[1])) * constants[i].outputConductance
             return (current, [0, current])
-        case .atmega328p, .atmega2560, .attiny85:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040:
             let c = constants[i]
             var flows = [Double](repeating: 0, count: nodes.count)
             var total = 0.0

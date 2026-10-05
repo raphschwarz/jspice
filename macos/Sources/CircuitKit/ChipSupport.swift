@@ -9,28 +9,47 @@ import CryptoKit
 /// The microcontroller families JSpice can compile for
 public enum ChipFamily: String, CaseIterable, Identifiable, Sendable {
     case avr
+    case rp2040
 
     public var id: String { rawValue }
 
     public var title: String {
         switch self {
         case .avr: return "AVR: Arduino Uno, Mega 2560 and ATtiny85"
+        case .rp2040: return "RP2040: Raspberry Pi Pico"
         }
     }
 
     public var summary: String {
         switch self {
         case .avr: return "avr-gcc with avr-libc and the Arduino AVR core, from Arduino's package index (about 40 MB)"
+        case .rp2040:
+            return "arm-none-eabi-gcc and Earle Philhower's arduino-pico core, from its package index (about 240 MB to download)"
         }
     }
+
+    /// The package index the compiler and core come from
+    var indexURL: URL {
+        switch self {
+        case .avr: return URL(string: "https://downloads.arduino.cc/packages/package_index.json")!
+        case .rp2040:
+            return URL(string: "https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json")!
+        }
+    }
+
+    /// The compiler's folder name in the install folder, and a file inside it
+    public var compilerFolder: String { self == .avr ? "avr-gcc" : "arm-none-eabi-gcc" }
+    var compilerMarker: String { self == .avr ? "bin/avr-gcc" : "bin/arm-none-eabi-gcc" }
+    /// A file inside the core's folder
+    var coreMarker: String { self == .avr ? "cores/arduino/Arduino.h" : "cores/rp2040/Arduino.h" }
+    /// What the progress messages call the core
+    public var coreName: String { self == .avr ? "the Arduino AVR core" : "arduino-pico" }
 }
 
 /// Installs what compiling for a chip family takes (the compiler and the Arduino core), like the Arduino IDE's boards
-/// manager: from Arduino's package index, each archive checked against its SHA-256 checksum, into JSpice's Application
-/// Support folder.
+/// manager: from Arduino's package index (arduino-pico's for the RP2040), each archive checked against its SHA-256
+/// checksum, into JSpice's Application Support folder.
 public enum ChipSupport {
-    public static let indexURL = URL(string: "https://downloads.arduino.cc/packages/package_index.json")!
-
     public struct Progress: Sendable {
         /// 0 to 1
         public var fraction: Double
@@ -50,7 +69,7 @@ public enum ChipSupport {
 
         public var description: String {
             switch self {
-            case .index(let text): return "Arduino's package index: \(text)"
+            case .index(let text): return "The package index: \(text)"
             case .download(let text): return "Download failed: \(text)"
             case .checksum(let text): return "\(text) did not arrive intact (its checksum differs); try again"
             case .unpack(let text): return "Could not unpack \(text)"
@@ -83,6 +102,7 @@ public enum ChipSupport {
     public static func isAvailable(_ family: ChipFamily) -> Bool {
         switch family {
         case .avr: return AVRToolchain.find() != nil
+        case .rp2040: return PicoToolchain.find() != nil
         }
     }
 
@@ -103,10 +123,10 @@ public enum ChipSupport {
 
     /// Downloads and unpacks the family's compiler and core; `progress` is called along the way (on any thread)
     public static func install(_ family: ChipFamily, progress: @escaping @Sendable (Progress) -> Void) async throws {
-        progress(Progress(fraction: 0, message: "Reading Arduino's package index…"))
-        let (indexData, response) = try await URLSession.shared.data(from: indexURL)
+        progress(Progress(fraction: 0, message: "Reading the package index…"))
+        let (indexData, response) = try await URLSession.shared.data(from: family.indexURL)
         guard (response as? HTTPURLResponse)?.statusCode ?? 200 < 400 else { throw InstallError.index("the server refused") }
-        let (core, compiler) = try archives(in: indexData)
+        let (core, compiler) = family == .avr ? try archives(in: indexData) : try picoArchives(in: indexData)
         let total = Double(max(core.size + compiler.size, 1))
 
         let fileManager = FileManager.default
@@ -129,16 +149,17 @@ public enum ChipSupport {
 
         progress(Progress(fraction: 0.92, message: "Unpacking…"))
         let destination = installFolder(for: family)
-        let compilerFolder = try unpack(files[0], in: staging.appendingPathComponent("compiler"), containing: "bin/avr-gcc")
-        let coreFolder = try unpack(files[1], in: staging.appendingPathComponent("core"), containing: "cores/arduino/Arduino.h")
+        let compilerFolder = try unpack(files[0], in: staging.appendingPathComponent("compiler"), containing: family.compilerMarker)
+        let coreFolder = try unpack(files[1], in: staging.appendingPathComponent("core"), containing: family.coreMarker)
         try? fileManager.removeItem(at: destination)
-        try fileManager.createDirectory(at: destination.appendingPathComponent("avr-gcc"), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination.appendingPathComponent(family.compilerFolder), withIntermediateDirectories: true)
         try fileManager.createDirectory(at: destination.appendingPathComponent("core"), withIntermediateDirectories: true)
-        try fileManager.moveItem(at: compilerFolder, to: destination.appendingPathComponent("avr-gcc/\(compiler.version)"))
+        try fileManager.moveItem(at: compilerFolder,
+                                 to: destination.appendingPathComponent("\(family.compilerFolder)/\(compiler.version)"))
         try fileManager.moveItem(at: coreFolder, to: destination.appendingPathComponent("core/\(core.version)"))
         let manifest = try JSONSerialization.data(withJSONObject: ["compiler": compiler.version, "core": core.version])
         try manifest.write(to: destination.appendingPathComponent("installed.json"))
-        progress(Progress(fraction: 1, message: "Installed avr-gcc \(compiler.version) and the Arduino AVR core \(core.version)"))
+        progress(Progress(fraction: 1, message: "Installed \(compiler.name) \(compiler.version) and \(family.coreName) \(core.version)"))
     }
 
     /// The newest Arduino AVR core in the index, and the avr-gcc it was made with, for this computer
@@ -159,6 +180,27 @@ public enum ChipSupport {
               let systems = tool["systems"] as? [[String: Any]] else { throw InstallError.index("no avr-gcc for the AVR core") }
         guard let system = bestSystem(systems), let compiler = archive(system, name: "avr-gcc", version: version) else {
             throw InstallError.index("no avr-gcc \(version) for this computer")
+        }
+        return (core, compiler)
+    }
+
+    /// arduino-pico (the release JSpice's build follows, else the newest) and the arm-none-eabi gcc it was made with
+    static func picoArchives(in indexData: Data) throws -> (core: Archive, compiler: Archive) {
+        guard let index = try JSONSerialization.jsonObject(with: indexData) as? [String: Any],
+              let packages = index["packages"] as? [[String: Any]],
+              let package = packages.first(where: { $0["name"] as? String == "rp2040" }),
+              let platforms = package["platforms"] as? [[String: Any]],
+              let tools = package["tools"] as? [[String: Any]] else { throw InstallError.index("not in the expected form") }
+        let releases = platforms.filter { $0["architecture"] as? String == "rp2040" }
+            .sorted { AVRToolchain.newerFirst($0["version"] as? String ?? "", $1["version"] as? String ?? "") }
+        guard let platform = releases.first(where: { $0["version"] as? String == PicoToolchain.coreVersion }) ?? releases.first,
+              let core = archive(platform, name: "arduino-pico") else { throw InstallError.index("no arduino-pico") }
+        let dependency = (platform["toolsDependencies"] as? [[String: Any]])?.first { $0["name"] as? String == "pqt-gcc" }
+        guard let version = dependency?["version"] as? String,
+              let tool = tools.first(where: { $0["name"] as? String == "pqt-gcc" && $0["version"] as? String == version }),
+              let systems = tool["systems"] as? [[String: Any]] else { throw InstallError.index("no gcc for arduino-pico") }
+        guard let system = bestSystem(systems), let compiler = archive(system, name: "arm-none-eabi-gcc", version: version) else {
+            throw InstallError.index("no arm-none-eabi-gcc \(version) for this computer")
         }
         return (core, compiler)
     }

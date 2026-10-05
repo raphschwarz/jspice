@@ -110,7 +110,7 @@ public final class CircuitSession {
              ], required: ["steps"]),
              run: { session, arguments in try session.setSequence(arguments) }),
         Tool(name: "upload_sketch",
-             description: "Compiles an Arduino sketch (C++, as in the Arduino IDE: setup() and loop(), pinMode, digitalWrite, analogRead, analogWrite, delay, millis, Serial, tone…) for a microcontroller part (atmega328p: Arduino Uno, pins d0-d13 and a0-a5; atmega2560: Arduino Mega, d0-d53 and a0-a15; attiny85: pins pb0-pb5, numbered 0-5 in the sketch, no Serial) and loads the firmware into it; the chip runs it from reset in simulate. Returns the firmware size, or the compiler's errors with sketch line numbers.",
+             description: "Compiles an Arduino sketch (C++, as in the Arduino IDE: setup() and loop(), pinMode, digitalWrite, analogRead, analogWrite, delay, millis, Serial, tone…) for a microcontroller part (atmega328p: Arduino Uno, pins d0-d13 and a0-a5; atmega2560: Arduino Mega, d0-d53 and a0-a15; attiny85: pins pb0-pb5, numbered 0-5 in the sketch, no Serial; rp2040: Raspberry Pi Pico at 3.3 V, pins gp0-gp22 and gp26-gp28 (analog A0-A2), numbered as GPIOs in the sketch, LED_BUILTIN on GP25, Serial over USB) and loads the firmware into it; the chip runs it from reset in simulate. Returns the firmware size, or the compiler's errors with sketch line numbers.",
              inputSchema: schema(["part": string("Name of a microcontroller part"), "code": string("The sketch's source")],
                                  required: ["part", "code"]),
              run: { session, arguments in try session.uploadSketch(arguments) }),
@@ -120,9 +120,9 @@ public final class CircuitSession {
                                  required: ["part"]),
              run: { session, arguments in try session.readSerial(arguments) }),
         Tool(name: "install_chip_support",
-             description: "Downloads and installs what compiling sketches takes (avr-gcc and the Arduino AVR core, about 40 MB, from Arduino's package index), if it is not installed yet.",
-             inputSchema: schema([:]),
-             run: { session, _ in try session.installChipSupport() }),
+             description: "Downloads and installs what compiling sketches takes, if it is not installed yet: for avr (the Uno, Mega and ATtiny85) avr-gcc and the Arduino AVR core, about 40 MB from Arduino's package index; for rp2040 (the Pico) arm-none-eabi-gcc and arduino-pico, about 240 MB from arduino-pico's index.",
+             inputSchema: schema(["family": string("avr (the default) or rp2040")]),
+             run: { session, arguments in try session.installChipSupport(arguments) }),
         Tool(name: "describe_circuit",
              description: "Describes the circuit: every part with its kind, model, parameters and the node (and net names) of each terminal, plus any problems that keep it from being simulated.",
              inputSchema: schema([:]), run: { session, _ in session.describe() }),
@@ -455,11 +455,12 @@ public final class CircuitSession {
     func uploadSketch(_ arguments: [String: Any]) throws -> Any {
         let index = try microcontroller(arguments)
         let code = try Self.text(arguments, "code")
-        guard let toolchain = AVRToolchain.find() else {
-            throw ToolError("No AVR compiler is installed: call install_chip_support first (or install it from JSpice's Chip Support window)")
-        }
         let board = circuit.elements[index].kind.board ?? .uno
-        let result = SketchBuilder.build(code, board: board, toolchain: toolchain)
+        guard ChipSupport.isAvailable(board.family) else {
+            throw ToolError("No compiler for the \(board.chip) is installed: call install_chip_support with family "
+                            + "\(board.family.rawValue) first (or install it from JSpice's Chip Support window)")
+        }
+        let result = SketchBuilder.build(code, board: board)
         guard let firmware = result.firmware else {
             let errors = result.errors.map { ["line": $0.line, "column": $0.column, "message": $0.message] as [String: Any] }
             return ["uploaded": false, "errors": errors, "log": String(result.log.suffix(4000))]
@@ -480,14 +481,18 @@ public final class CircuitSession {
         return ["output": String(decoding: chip.serialOutput.suffix(16_384), as: UTF8.self), "time": liveSimulator?.time ?? 0]
     }
 
-    func installChipSupport() throws -> Any {
-        if ChipSupport.isAvailable(.avr) { return ["installed": true, "note": "already available"] }
+    func installChipSupport(_ arguments: [String: Any]) throws -> Any {
+        let name = arguments["family"] as? String ?? ChipFamily.avr.rawValue
+        guard let family = ChipFamily(rawValue: name) else {
+            throw ToolError("unknown family \(name): \(ChipFamily.allCases.map(\.rawValue).joined(separator: " or "))")
+        }
+        if ChipSupport.isAvailable(family) { return ["installed": true, "note": "already available"] }
         final class Outcome: @unchecked Sendable { var error: Error? }
         let outcome = Outcome()
         let done = DispatchSemaphore(value: 0)
         Task.detached {
             do {
-                try await ChipSupport.install(.avr) { _ in }
+                try await ChipSupport.install(family) { _ in }
             } catch {
                 outcome.error = error
             }
@@ -495,7 +500,7 @@ public final class CircuitSession {
         }
         done.wait()
         if let error = outcome.error { throw ToolError("\(error)") }
-        return ["installed": true, "versions": ChipSupport.installedVersions(.avr).map { ["compiler": $0.compiler, "core": $0.core] } ?? [:]]
+        return ["installed": true, "versions": ChipSupport.installedVersions(family).map { ["compiler": $0.compiler, "core": $0.core] } ?? [:]]
     }
 
     func setSwitch(_ arguments: [String: Any]) throws -> Any {

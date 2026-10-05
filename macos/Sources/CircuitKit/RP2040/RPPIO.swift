@@ -561,7 +561,7 @@ final class RPPIO: RPPeripheral {
     }
 
     /// Whether any state machine runs
-    var running: Bool { machines.contains { $0.enabled } }
+    private(set) var running = false
 
     var intRaw: UInt32 {
         var result = (irq & 0xF) << 8
@@ -627,6 +627,7 @@ final class RPPIO: RPPeripheral {
                 machine.enabled = enable
                 if value & (1 << UInt32(4 + i)) != 0 { machine.restart() }
             }
+            running = value & 0xF != 0
         case 0x008:
             fdebug &= ~rawWriteValue
             fdebug |= txStall | rxStall

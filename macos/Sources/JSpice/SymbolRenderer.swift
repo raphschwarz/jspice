@@ -77,7 +77,7 @@ enum SymbolRenderer {
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
-             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85:
+             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040:
             return 0
         case .schmittInverter: return 1.8
         case .analogSwitch: return 1.6
@@ -110,7 +110,7 @@ enum SymbolRenderer {
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
-        case .atmega328p, .atmega2560, .attiny85:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040:
             if let board = element.kind.board {
                 drawMicrocontroller(board, posts: posts, at: a, b, unit: u, style: style, in: ctx)
             }
@@ -306,7 +306,7 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: x0 + 0.2 * u, y: -0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
-             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85:
+             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040:
             break
         }
 
@@ -1110,7 +1110,7 @@ enum SymbolRenderer {
         case .ota:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
-        case .atmega328p, .atmega2560, .attiny85:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040:
             guard let board = element.kind.board, let box = chipBox(board, posts: posts, at: a, b, unit: u) else { return [(a, b)] }
             let c = box.corners
             var result = [(c[0], c[1]), (c[1], c[2]), (c[2], c[3]), (c[3], c[0])]
@@ -1145,7 +1145,7 @@ enum SymbolRenderer {
     static func dotPath(_ element: Element, a: CGPoint, b: CGPoint, posts: [CGPoint], unit u: CGFloat)
         -> (from: CGPoint, to: CGPoint, hidden: ClosedRange<CGFloat>?)? {
         switch element.kind {
-        case .ground, .netLabel, .probe, .atmega328p, .atmega2560, .attiny85:
+        case .ground, .netLabel, .probe, .atmega328p, .atmega2560, .attiny85, .rp2040:
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil

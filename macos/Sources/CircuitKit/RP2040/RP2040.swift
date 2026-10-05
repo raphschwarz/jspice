@@ -163,24 +163,24 @@ final class RP2040 {
         return 0xFFFF_FFFF
     }
 
-    func readUint16(_ address: UInt32) -> UInt32 {
+    func readUint16(_ address: UInt32) -> UInt16 {
         if address >= RP2040.flashStart && address < RP2040.flashStart + UInt32(RP2040.flashSize) {
-            return UInt32(flash.loadUnaligned(fromByteOffset: Int(address - RP2040.flashStart), as: UInt16.self))
+            return flash.loadUnaligned(fromByteOffset: Int(address - RP2040.flashStart), as: UInt16.self)
         } else if address >= RP2040.ramStart && address < RP2040.ramStart + UInt32(RP2040.sramSize) {
-            return UInt32(sram.loadUnaligned(fromByteOffset: Int(address - RP2040.ramStart), as: UInt16.self))
+            return sram.loadUnaligned(fromByteOffset: Int(address - RP2040.ramStart), as: UInt16.self)
         }
         let value = readUint32(address & 0xFFFF_FFFC)
-        return address & 0x2 != 0 ? value >> 16 : value & 0xFFFF
+        return UInt16(truncatingIfNeeded: address & 0x2 != 0 ? value >> 16 : value)
     }
 
-    func readUint8(_ address: UInt32) -> UInt32 {
+    func readUint8(_ address: UInt32) -> UInt8 {
         if address >= RP2040.flashStart && address < RP2040.flashStart + UInt32(RP2040.flashSize) {
-            return UInt32(flash.load(fromByteOffset: Int(address - RP2040.flashStart), as: UInt8.self))
+            return flash.load(fromByteOffset: Int(address - RP2040.flashStart), as: UInt8.self)
         } else if address >= RP2040.ramStart && address < RP2040.ramStart + UInt32(RP2040.sramSize) {
-            return UInt32(sram.load(fromByteOffset: Int(address - RP2040.ramStart), as: UInt8.self))
+            return sram.load(fromByteOffset: Int(address - RP2040.ramStart), as: UInt8.self)
         }
         let value = readUint16(address & 0xFFFF_FFFE)
-        return address & 0x1 != 0 ? (value & 0xFF00) >> 8 : value & 0xFF
+        return UInt8(truncatingIfNeeded: address & 0x1 != 0 ? value >> 8 : value)
     }
 
     func writeUint32(_ address: UInt32, _ value: UInt32) {
@@ -203,36 +203,35 @@ final class RP2040 {
         }
     }
 
-    func writeUint8(_ address: UInt32, _ value: UInt32) {
+    func writeUint8(_ address: UInt32, _ value: UInt8) {
         if address >= RP2040.ramStart && address < RP2040.ramStart + UInt32(RP2040.sramSize) {
-            sram.storeBytes(of: UInt8(truncatingIfNeeded: value), toByteOffset: Int(address - RP2040.ramStart), as: UInt8.self)
+            sram.storeBytes(of: value, toByteOffset: Int(address - RP2040.ramStart), as: UInt8.self)
             return
         }
         let aligned = address & 0xFFFF_FFFC
+        let byte = UInt32(value)
         if let peripheral = findPeripheral(address) {
-            let byte = value & 0xFF
             peripheral.writeUint32Atomic(aligned & 0xFFF, byte | byte << 8 | byte << 16 | byte << 24, (aligned & 0x3000) >> 12)
             return
         }
         let shift = (address & 0x3) * 8
         let original = readUint32(aligned)
-        writeUint32(aligned, (original & ~(0xFF << shift)) | ((value & 0xFF) << shift))
+        writeUint32(aligned, (original & ~(0xFF << shift)) | (byte << shift))
     }
 
-    func writeUint16(_ address: UInt32, _ value: UInt32) {
+    func writeUint16(_ address: UInt32, _ value: UInt16) {
         if address >= RP2040.ramStart && address < RP2040.ramStart + UInt32(RP2040.sramSize) {
-            sram.storeBytes(of: UInt16(truncatingIfNeeded: value), toByteOffset: Int(address - RP2040.ramStart), as: UInt16.self)
+            sram.storeBytes(of: value, toByteOffset: Int(address - RP2040.ramStart), as: UInt16.self)
             return
         }
         let aligned = address & 0xFFFF_FFFC
+        let half = UInt32(value)
         if let peripheral = findPeripheral(address) {
-            let half = value & 0xFFFF
             peripheral.writeUint32Atomic(aligned & 0xFFF, half | half << 16, (aligned & 0x3000) >> 12)
             return
         }
         let original = readUint32(aligned)
-        let merged = address & 0x2 != 0 ? (original & 0xFFFF) | (value & 0xFFFF) << 16 : (original & 0xFFFF_0000) | (value & 0xFFFF)
-        writeUint32(aligned, merged)
+        writeUint32(aligned, address & 0x2 != 0 ? (original & 0xFFFF) | half << 16 : (original & 0xFFFF_0000) | half)
     }
 
     // MARK: - GPIO and interrupts
@@ -261,12 +260,16 @@ final class RP2040 {
             var target = limit
             if clock.hasAlarm { target = min(target, clock.nanos + clock.nanosToNextAlarm) }
             // running state machines can wake the core: let them run in small steps
-            if pio[0].running || pio[1].running { target = min(target, clock.nanos + 1000) }
+            if pioRunning { target = min(target, clock.nanos + 1000) }
             clock.tick(max(target - clock.nanos, 0))
         } else {
             let cycles = core.executeInstruction()
             clock.tick(Double(cycles) * RP2040.cycleNanos)
         }
-        for block in pio where block.running { block.run(until: clock.nanos) }
+        if pioRunning {
+            for block in pio where block.running { block.run(until: clock.nanos) }
+        }
     }
+
+    private var pioRunning: Bool { pio[0].running || pio[1].running }
 }

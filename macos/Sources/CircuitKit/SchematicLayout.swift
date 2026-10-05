@@ -40,7 +40,7 @@ public enum SchematicLayout {
         .vactrol: ["anode"], .comparator: ["minus", "plus"], .vco: ["cv", "pw"], .vcf: ["in", "cv"], .envelope: ["gate", "trig"],
         .vca: ["in", "cv"], .sampleHold: ["in", "trig"], .divider: ["clock", "reset"],
         .atmega328p: microcontrollerSide(.uno, second: true), .atmega2560: microcontrollerSide(.mega, second: true),
-        .attiny85: microcontrollerSide(.attiny85, second: true),
+        .attiny85: microcontrollerSide(.attiny85, second: true), .rp2040: microcontrollerSide(.pico, second: true),
     ]
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .npn: ["collector", "emitter"],
@@ -48,7 +48,7 @@ public enum SchematicLayout {
         .potentiometer: ["wiper"], .analogSwitch: ["b"], .multiplier: ["out"], .delayLine: ["out"], .vactrol: ["b"],
         .comparator: ["out"], .vco: ["out"], .vcf: ["out"], .envelope: ["out"], .vca: ["out"], .sampleHold: ["out"], .divider: ["out"],
         .atmega328p: microcontrollerSide(.uno, second: false), .atmega2560: microcontrollerSide(.mega, second: false),
-        .attiny85: microcontrollerSide(.attiny85, second: false),
+        .attiny85: microcontrollerSide(.attiny85, second: false), .rp2040: microcontrollerSide(.pico, second: false),
     ]
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
                                             .keyboardGate]
@@ -85,7 +85,7 @@ public enum SchematicLayout {
             return frame(0...3, -2...2)
         case .vactrol: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
-        case .atmega328p, .atmega2560, .attiny85: return frame(0...(e.kind.board?.length ?? 13), -2...2)
+        case .atmega328p, .atmega2560, .attiny85, .rp2040: return frame(0...(e.kind.board?.length ?? 13), -2...2)
         default:
             let length = abs(e.b.x - e.a.x) + abs(e.b.y - e.a.y)
             var result = Set<GridPoint>()
@@ -496,7 +496,7 @@ public enum SchematicLayout {
                     case .timer555:
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
-                    case .atmega328p, .atmega2560, .attiny85:
+                    case .atmega328p, .atmega2560, .attiny85, .rp2040:
                         // analog inputs down the left, digital pins down the right
                         put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.kind.board?.length ?? 13)))
                         width = 6

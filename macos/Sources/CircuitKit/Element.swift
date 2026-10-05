@@ -47,7 +47,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case opAmp, ota, multiplier, comparator
     case vco, vcf, envelope, vca, sampleHold, divider
     case timer555, schmittInverter, analogSwitch
-    case atmega328p, atmega2560, attiny85
+    case atmega328p, atmega2560, attiny85, rp2040
     case delayLine, vactrol
     case memristor
     case probe, ammeter, speaker
@@ -175,6 +175,7 @@ extension ElementKind {
         case .atmega328p: return "ATmega328P (Arduino Uno)"
         case .atmega2560: return "ATmega2560 (Arduino Mega)"
         case .attiny85: return "ATtiny85"
+        case .rp2040: return "RP2040 (Raspberry Pi Pico)"
         case .schmittInverter: return "Schmitt Inverter"
         case .analogSwitch: return "Analog Switch"
         case .memristor: return "Memristor"
@@ -203,7 +204,7 @@ extension ElementKind {
         case .npn, .pnp, .njfet: return "Q"
         case .nmos, .pmos: return "M"
         case .opAmp, .ota, .multiplier, .comparator, .delayLine, .timer555, .schmittInverter, .analogSwitch, .atmega328p, .atmega2560,
-             .attiny85: return "U"
+             .attiny85, .rp2040: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
@@ -223,7 +224,7 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .vactrol: return .effects
         case .timer555, .schmittInverter, .analogSwitch: return .timersAndLogic
-        case .atmega328p, .atmega2560, .attiny85: return .microcontrollers
+        case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
         case .memristor: return .memristors
         case .probe, .ammeter, .speaker: return .instruments
         }
@@ -257,7 +258,7 @@ extension ElementKind {
         case .opAmp: return "u"
         case .timer555: return "5"
         case .njfet, .ota, .schmittInverter, .analogSwitch, .multiplier, .delayLine, .vactrol: return nil
-        case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85: return nil
+        case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return nil
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
@@ -323,7 +324,7 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet: return 2
         case .ota, .vactrol: return 4
         case .timer555: return 5
-        case .atmega328p, .atmega2560, .attiny85: return board?.length
+        case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.length
         default: return nil
         }
     }
@@ -355,7 +356,7 @@ extension ElementKind {
         case .vactrol: return ["anode", "cathode", "a", "b"]
         case .ota: return ["minus", "plus", "out", "bias"]
         case .timer555: return ["gnd", "trig", "out", "reset", "ctrl", "thr", "dis", "vcc"]
-        case .atmega328p, .atmega2560, .attiny85: return board?.terminalNames ?? []
+        case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.terminalNames ?? []
         case .schmittInverter: return ["in", "out"]
         default: return ["a", "b"]
         }
@@ -393,7 +394,7 @@ extension ElementKind {
         case .netLabel: return GridPoint(1, 0)
         case .nmos, .pmos, .npn, .pnp, .njfet: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
-        case .atmega328p, .atmega2560, .attiny85: return GridPoint(0, board?.length ?? 13)
+        case .atmega328p, .atmega2560, .attiny85, .rp2040: return GridPoint(0, board?.length ?? 13)
         default: return GridPoint(4, 0)
         }
     }
@@ -504,6 +505,13 @@ extension ElementKind {
                 ParamSpec("supply", "Supply", unit: "V", default: 5, range: 1.8...5.5, log: false),
                 ParamSpec("outputResistance", "Pin output resistance", unit: "Ω", default: 25, range: 1...1000),
                 ParamSpec("pullUp", "Pull-up resistance", unit: "Ω", default: 35_000, range: 20_000...50_000),
+            ]
+        case .rp2040:
+            // 4 mA drive (the pads' default); pull-ups and pull-downs of about 50 kΩ
+            return [
+                ParamSpec("supply", "Supply", unit: "V", default: 3.3, range: 1.8...3.6, log: false),
+                ParamSpec("outputResistance", "Pin output resistance", unit: "Ω", default: 50, range: 1...1000),
+                ParamSpec("pullUp", "Pull-up and pull-down resistance", unit: "Ω", default: 50_000, range: 30_000...80_000),
             ]
         case .timer555:
             return [
@@ -707,7 +715,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
-        case .atmega328p, .atmega2560, .attiny85:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040:
             return microcontrollerPins
         default:
             return [a, b]
@@ -770,6 +778,11 @@ extension ElementKind {
             return [
                 PartModel(name: "ATtiny85", summary: "Eight pins and 8 KB at 8 MHz: six I/O pins, four analog inputs",
                           values: ["supply": 5]),
+            ]
+        case .rp2040:
+            return [
+                PartModel(name: "Raspberry Pi Pico", summary: "The RP2040 at 125 MHz with 2 MB of flash: 26 pins, three analog inputs, USB serial",
+                          values: ["supply": 3.3]),
             ]
         case .timer555:
             return [

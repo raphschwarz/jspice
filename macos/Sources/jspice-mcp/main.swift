@@ -54,7 +54,7 @@ final class Outcome: @unchecked Sendable {
     var logged = -1
 }
 
-// --install-chip-support [avr]: installs a chip family's compiler and core, as the app's Chip Support window does
+// --install-chip-support [avr|rp2040]: installs a chip family's compiler and core, as the app's Chip Support window does
 if let flag = arguments.firstIndex(of: "--install-chip-support") {
     let name = flag + 1 < arguments.count ? arguments[flag + 1] : ChipFamily.avr.rawValue
     guard let family = ChipFamily(rawValue: name) else {
@@ -85,7 +85,7 @@ if let flag = arguments.firstIndex(of: "--install-chip-support") {
     exit(0)
 }
 
-// --compile-sketch file.ino [out.bin] [--board uno|mega|attiny85]: compiles an Arduino sketch
+// --compile-sketch file.ino [out.bin] [--board uno|mega|attiny85|pico]: compiles an Arduino sketch
 if let flag = arguments.firstIndex(of: "--compile-sketch"), flag + 1 < arguments.count {
     var board = Board.uno
     if let option = arguments.firstIndex(of: "--board"), option + 1 < arguments.count {
@@ -95,15 +95,15 @@ if let flag = arguments.firstIndex(of: "--compile-sketch"), flag + 1 < arguments
         }
         board = named
     }
-    guard let toolchain = AVRToolchain.find() else {
-        log("no AVR toolchain: run jspice-mcp --install-chip-support avr")
+    guard ChipSupport.isAvailable(board.family) else {
+        log("no compiler for the \(board.chip): run jspice-mcp --install-chip-support \(board.family.rawValue)")
         exit(1)
     }
     guard let source = try? String(contentsOfFile: arguments[flag + 1], encoding: .utf8) else {
         log("cannot read \(arguments[flag + 1])")
         exit(1)
     }
-    let result = SketchBuilder.build(source, board: board, toolchain: toolchain)
+    let result = SketchBuilder.build(source, board: board)
     guard let firmware = result.firmware else {
         log(result.log)
         exit(1)
