@@ -43,6 +43,7 @@ struct ElementInspector: View {
     @ObservedObject var editor: EditorState
     let element: Element
     @State private var name = ""
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
         Form {
@@ -59,7 +60,12 @@ struct ElementInspector: View {
                                 .labelsHidden()
                                 .textFieldStyle(.plain)
                                 .font(.headline)
+                                .focused($nameFocused)
                                 .onSubmit { editor.rename(element.id, to: name) }
+                                // a name typed and left (clicking elsewhere, Tab) is kept too
+                                .onChange(of: nameFocused) { _, focused in
+                                    if !focused && name != element.name { editor.rename(element.id, to: name) }
+                                }
                             Text(element.kind.displayName)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -462,8 +468,10 @@ struct CircuitInspector: View {
                             .onSubmit {
                                 if let value = SI.parse(timeStepText), value > 0 {
                                     editor.updateSettings { $0.timeStep = value }
+                                    timeStepText = SI.format(value, unit: "s")
+                                } else {
+                                    timeStepText = SI.format(settings.timeStep, unit: "s")
                                 }
-                                timeStepText = SI.format(settings.timeStep, unit: "s")
                             }
                     }
                 }
@@ -487,5 +495,6 @@ struct CircuitInspector: View {
         }
         .formStyle(.grouped)
         .onAppear { timeStepText = SI.format(settings.timeStep, unit: "s") }
+        .onChange(of: settings.timeStep) { _, value in timeStepText = SI.format(value, unit: "s") }
     }
 }

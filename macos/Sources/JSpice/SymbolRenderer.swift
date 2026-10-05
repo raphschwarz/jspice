@@ -70,6 +70,9 @@ struct SymbolStyle {
 /// Draws schematic symbols with CoreGraphics. Two-terminal parts are drawn in a local frame where the part runs along the
 /// x axis from 0 to its length, so every symbol is written once and works at any angle.
 enum SymbolRenderer {
+    /// Made once: every gradient stroke and glow used to make its own
+    private static let srgb = CGColorSpace(name: CGColorSpace.sRGB)
+
     /// Length of the drawn body along the element, in grid units; the rest is leads
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
@@ -408,7 +411,7 @@ enum SymbolRenderer {
             ctx.replacePathWithStrokedPath()
             ctx.clip()
             let locations: [CGFloat] = [0, max(0, min(1, start)), max(0, min(1, end)), 1]
-            if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+            if let gradient = CGGradient(colorsSpace: srgb,
                                          colors: [colorA.cgColor, colorA.cgColor, colorB.cgColor, colorB.cgColor] as CFArray,
                                          locations: locations) {
                 ctx.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: length, y: 0),
@@ -421,7 +424,7 @@ enum SymbolRenderer {
     private static func glow(at center: CGPoint, radius: CGFloat, color: RGBA, amount: Double, in ctx: CGContext) {
         guard amount > 0.01 else { return }
         let strength = CGFloat(min(1, amount))
-        guard let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
+        guard let gradient = CGGradient(colorsSpace: srgb,
                                         colors: [color.withAlpha(0.75 * strength).cgColor, color.withAlpha(0).cgColor] as CFArray,
                                         locations: [0, 1]) else { return }
         ctx.drawRadialGradient(gradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: radius, options: [])

@@ -80,6 +80,13 @@ final class EditorState: ObservableObject {
         if start != document.circuit { registerUndo(restoring: start, actionName: actionName) }
     }
 
+    /// Abandons a change in progress (Esc during a drag), going back to where it started
+    func cancelInteraction() {
+        guard let start = interactionStart else { return }
+        interactionStart = nil
+        if start != document.circuit { document.circuit = start }
+    }
+
     private func registerUndo(restoring previous: Circuit, actionName: String) {
         guard let undoManager else { return }
         undoManager.registerUndo(withTarget: self) { target in
@@ -92,6 +99,18 @@ final class EditorState: ObservableObject {
 
     private func restore(_ circuit: Circuit, actionName: String) {
         let current = document.circuit
+        // switches and knobs are played, not edited: undo leaves them as they are now (except when undoing a value
+        // typed into the inspector)
+        var restored = circuit
+        let typedWiper = actionName.hasSuffix("Wiper position")
+        for i in restored.elements.indices {
+            guard let live = current[restored.elements[i].id] else { continue }
+            if restored.elements[i].kind.isSwitch { restored.elements[i].closed = live.closed }
+            if restored.elements[i].kind == .potentiometer && !typedWiper {
+                restored.elements[i][param: "position"] = live[param: "position"]
+            }
+        }
+        let circuit = restored
         document.circuit = circuit
         selection = selection.filter { circuit[$0] != nil }
         registerUndo(restoring: current, actionName: actionName)

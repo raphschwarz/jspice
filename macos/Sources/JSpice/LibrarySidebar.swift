@@ -100,7 +100,8 @@ struct LibrarySidebar: View {
                                 .renderingMode(.template)
                                 .frame(width: 34, height: 22)
                         } action: {
-                            editor.tool = editor.tool == kind ? nil : kind
+                            // back to the canvas, so Esc and the shortcuts work at once
+                            editor.choose(editor.tool == kind ? nil : kind)
                         }
                     }
                 }

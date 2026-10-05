@@ -63,12 +63,22 @@ final class CircuitCanvasView: NSView {
         window?.makeFirstResponder(self)
         // the window in front is the one AI agents work on
         EditorRegistry.active = editor
+        // moved between windows: watch only the new one
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(windowBecameKey(_:)), name: NSWindow.didBecomeKeyNotification,
+                                               object: window)
+        NotificationCenter.default.addObserver(self, selector: #selector(windowResignedKey(_:)), name: NSWindow.didResignKeyNotification,
                                                object: window)
     }
 
     @objc private func windowBecameKey(_ notification: Notification) {
         EditorRegistry.active = editor
+    }
+
+    /// Another window or app takes the keyboard: the keys held now will never be seen coming up
+    @objc private func windowResignedKey(_ notification: Notification) {
+        releaseSoundingKeys()
     }
 
     override func removeFromSuperview() {
@@ -198,20 +208,31 @@ final class CircuitCanvasView: NSView {
         // every fourth point (a standard part's length) is a little stronger, to help line things up
         let every = 4 / step
         func index(_ v: CGFloat, _ origin: CGFloat) -> Int { Int(((v - origin) / spacing).rounded()) }
+        // all the dots of each kind in one path, filled once: thousands of separate fills were the canvas's largest
+        // cost at low zoom
+        let minor = CGMutablePath()
+        let strong = CGMutablePath()
         var y = startY
         while y < bounds.maxY + spacing {
             let row = index(y, editor.pan.y)
             var x = startX
             while x < bounds.maxX + spacing {
                 let column = index(x, editor.pan.x)
-                let isMajor = row % every == 0 && column % every == 0
-                let size = isMajor ? major : r
-                ctx.setFillColor(isMajor ? palette.grid.withAlpha(min(1, palette.grid.a * 1.8)).cgColor : palette.grid.cgColor)
-                ctx.fillEllipse(in: CGRect(x: x - size, y: y - size, width: 2 * size, height: 2 * size))
+                if row % every == 0 && column % every == 0 {
+                    strong.addEllipse(in: CGRect(x: x - major, y: y - major, width: 2 * major, height: 2 * major))
+                } else {
+                    minor.addEllipse(in: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
+                }
                 x += spacing
             }
             y += spacing
         }
+        ctx.addPath(minor)
+        ctx.setFillColor(palette.grid.cgColor)
+        ctx.fillPath()
+        ctx.addPath(strong)
+        ctx.setFillColor(palette.grid.withAlpha(min(1, palette.grid.a * 1.8)).cgColor)
+        ctx.fillPath()
     }
 
     private func drawCurrentDots(_ ctx: CGContext, _ circuit: Circuit, _ palette: CanvasPalette) {
@@ -317,13 +338,27 @@ final class CircuitCanvasView: NSView {
         ]
         // where labels must not go: the bodies of the parts, and the labels already placed
         var bodies: [(id: UUID, rect: CGRect)] = []
+        // grid points taken by each part's terminals and ends, to see what arches over an amplifier
+        var taken: [GridPoint: Int] = [:]
         for element in circuit.elements where element.kind != .wire && element.kind != .netLabel {
-            let points = (element.extentPoints).map(screen)
-            guard let minX = points.map(\.x).min(), let maxX = points.map(\.x).max(),
-                  let minY = points.map(\.y).min(), let maxY = points.map(\.y).max() else { continue }
-            let rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            let extent = element.extentPoints
+            guard let first = extent.first else { continue }
+            var (minX, maxX, minY, maxY) = (first.x, first.x, first.y, first.y)
+            for p in extent.dropFirst() {
+                minX = min(minX, p.x)
+                maxX = max(maxX, p.x)
+                minY = min(minY, p.y)
+                maxY = max(maxY, p.y)
+            }
+            let corner1 = screen(GridPoint(minX, minY))
+            let corner2 = screen(GridPoint(maxX, maxY))
+            let rect = CGRect(x: min(corner1.x, corner2.x), y: min(corner1.y, corner2.y),
+                              width: abs(corner2.x - corner1.x), height: abs(corner2.y - corner1.y))
             // two-terminal parts are thin lines: give them their symbol's width
             bodies.append((element.id, rect.insetBy(dx: rect.width < unit ? -0.45 * unit : 0, dy: rect.height < unit ? -0.45 * unit : 0)))
+        }
+        for element in circuit.elements where element.kind != .wire && element.kind != .ground {
+            for p in Set(element.posts + [element.a, element.b]) { taken[p, default: 0] += 1 }
         }
         var placed: [CGRect] = []
         for (index, element) in circuit.elements.enumerated() {
@@ -343,10 +378,14 @@ final class CircuitCanvasView: NSView {
             // place the text beside the part: above horizontal parts, to the right of vertical ones, except where a
             // potentiometer's wiper is in the way
             var anchor = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-            var horizontal = abs(b.x - a.x) >= abs(b.y - a.y)
+            let alongX = abs(b.x - a.x) >= abs(b.y - a.y)
+            var horizontal = alongX
             var otherSide = false
             if element.kind.isTransistor {
-                anchor = CGPoint(x: b.x + (horizontal ? 0.6 * unit : 0), y: b.y)
+                // beside the channel, on the side away from the gate
+                let away: CGFloat = b.x >= a.x ? 1 : -1
+                anchor = CGPoint(x: b.x + (horizontal ? 0.6 * away * unit : 0), y: b.y)
+                otherSide = horizontal && away < 0
                 horizontal = false
             } else if element.kind == .timer555 {
                 // centred above the chip
@@ -357,9 +396,11 @@ final class CircuitCanvasView: NSView {
                 // below the triangle when a feedback part arches over it
                 let left = min(element.a.x, element.b.x)
                 let right = max(element.a.x, element.b.x)
-                otherSide = circuit.elements.contains { other in
-                    other.id != element.id && (other.posts + [other.a, other.b]).contains { p in
-                        p.x >= left && p.x <= right && p.y <= element.a.y - 2 && p.y >= element.a.y - 4
+                let own = Set(element.posts + [element.a, element.b])
+                otherSide = (left...right).contains { x in
+                    ((element.a.y - 4)...(element.a.y - 2)).contains { y in
+                        let p = GridPoint(x, y)
+                        return (taken[p] ?? 0) > (own.contains(p) ? 1 : 0)
                     }
                 }
             } else if element.kind == .potentiometer || element.kind == .analogSwitch {
@@ -370,9 +411,10 @@ final class CircuitCanvasView: NSView {
             let totalHeight = sizes.reduce(0) { $0 + $1.height }
             let offset: CGFloat
             switch element.kind {
-            case _ where element.kind.isTransistor: offset = 0.4 * unit
+            // a vertical transistor's collector and emitter leads reach two units to the side
+            case _ where element.kind.isTransistor: offset = alongX ? 0.4 * unit : 2.3 * unit
             case .timer555: offset = 0
-            case _ where element.kind.drivesOutput: offset = 1.9 * unit
+            case _ where element.kind.drivesOutput || element.kind == .ota: offset = 1.9 * unit
             case .vactrol: offset = 1.9 * unit
             default: offset = (isProbe ? 1.0 : 1.05) * unit
             }
@@ -400,7 +442,8 @@ final class CircuitCanvasView: NSView {
             let step = fontSize * 1.1
             let candidates = [(otherSide, 0.0), (!otherSide, 0.0), (otherSide, step), (!otherSide, step), (otherSide, 2 * step)]
                 .map { block($0.0, CGFloat($0.1)) }
-            let chosen = candidates.first { overlap($0) == 0 } ?? candidates.min { overlap($0) < overlap($1) } ?? block(otherSide, 0)
+            let scored = candidates.map { ($0, overlap($0)) }
+            let chosen = scored.first { $0.1 == 0 }?.0 ?? scored.min { $0.1 < $1.1 }?.0 ?? block(otherSide, 0)
             placed.append(chosen)
             var y = chosen.minY
             for (line, size) in zip(lines, sizes) {
@@ -679,7 +722,9 @@ final class CircuitCanvasView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         // scrolling over a potentiometer turns it, like a knob
-        if !event.modifierFlags.contains(.command), editor.tool == nil, let hit = element(at: location(event)), hit.kind == .potentiometer {
+        // (not the momentum after a flick to pan, which would turn whatever pot slides under the pointer)
+        if !event.modifierFlags.contains(.command), editor.tool == nil, event.momentumPhase.isEmpty,
+           let hit = element(at: location(event)), hit.kind == .potentiometer {
             let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.004 : event.scrollingDeltaY * 0.04
             editor.turnPotentiometer(hit.id, by: Double(delta))
             needsDisplay = true
@@ -783,6 +828,23 @@ final class CircuitCanvasView: NSView {
 
     override func keyDown(with event: NSEvent) {
         if playKey(event, down: true) { return }
+        // during a drag only Esc counts: it abandons the drag, putting things back where they were
+        if let current = drag {
+            guard event.keyCode == 53 else { return }
+            switch current {
+            case .pressing(let id):
+                editor.setPressed(id, false)
+            case .moving, .endpoint:
+                editor.cancelInteraction()
+            case .rubberBand(_, _, let initial):
+                editor.selection = initial
+            case .placing, .panning:
+                break
+            }
+            drag = nil
+            needsDisplay = true
+            return
+        }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option])
         switch event.keyCode {
         case 51, 117:
@@ -795,7 +857,8 @@ final class CircuitCanvasView: NSView {
             needsDisplay = true
             return
         case 49:
-            editor.simulation.toggleRunning()
+            // held down, Space would run and pause at the key-repeat rate
+            if !event.isARepeat { editor.simulation.toggleRunning() }
             return
         default:
             break
@@ -839,6 +902,7 @@ final class CircuitCanvasView: NSView {
         }
         if modifiers.isEmpty, let key = event.charactersIgnoringModifiers?.lowercased().first,
            let kind = ElementKind.allCases.first(where: { (shift ? $0.shiftShortcut : $0.shortcut) == key }) {
+            guard !event.isARepeat else { return }
             editor.tool = editor.tool == kind ? nil : kind
             needsDisplay = true
             return
