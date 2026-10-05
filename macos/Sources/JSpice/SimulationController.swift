@@ -234,6 +234,29 @@ final class SimulationController: ObservableObject {
         }
     }
 
+    // MARK: - Microcontrollers
+
+    /// The last of what the chip of the microcontroller at `index` has sent over its serial port
+    func serialOutput(_ index: Int) -> String {
+        guard let chip = simulator.chip(index) else { return "" }
+        return String(decoding: chip.serialOutput.suffix(8192), as: UTF8.self)
+    }
+
+    /// Sends text to the chip's serial port, as the Arduino IDE's serial monitor does
+    func sendSerial(_ index: Int, _ text: String) {
+        let bytes = Array(text.utf8)
+        if let renderer {
+            renderer.sendSerial(index, bytes)
+        } else {
+            simulator.chip(index)?.serialInput += bytes
+        }
+    }
+
+    func resetChip(_ index: Int) {
+        simulator.resetChip(index)
+        renderer?.resetChip(index)
+    }
+
     func setRunning(_ running: Bool) {
         isRunning = running
         renderer?.setPaused(!running)

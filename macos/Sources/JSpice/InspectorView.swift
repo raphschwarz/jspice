@@ -131,6 +131,10 @@ struct ElementInspector: View {
                 SequencerSection(editor: editor, sequence: editor.sequence)
             }
 
+            if element.kind == .atmega328p {
+                MicrocontrollerSection(editor: editor, element: element)
+            }
+
             if element.kind.isSwitch {
                 Section {
                     Toggle("Closed", isOn: Binding(get: { element.closed }, set: { _ in editor.toggleSwitch(element.id) }))

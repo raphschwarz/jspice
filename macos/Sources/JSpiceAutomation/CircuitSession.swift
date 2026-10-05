@@ -109,6 +109,20 @@ public final class CircuitSession {
                 "playing": ["type": "boolean", "description": "Default true"],
              ], required: ["steps"]),
              run: { session, arguments in try session.setSequence(arguments) }),
+        Tool(name: "upload_sketch",
+             description: "Compiles an Arduino sketch (C++, as in the Arduino IDE: setup() and loop(), pinMode, digitalWrite, analogRead, analogWrite, delay, millis, Serial, tone…) for an atmega328p part and loads the firmware into it; the chip runs it from reset in simulate. Pins are named d0-d13 and a0-a5 as on an Arduino Uno. Returns the firmware size, or the compiler's errors with sketch line numbers.",
+             inputSchema: schema(["part": string("Name of an atmega328p part"), "code": string("The sketch's source")],
+                                 required: ["part", "code"]),
+             run: { session, arguments in try session.uploadSketch(arguments) }),
+        Tool(name: "read_serial",
+             description: "What a microcontroller has printed on its serial port (Serial.print) in the simulation so far; optionally sends it text, which it receives in the next simulate with continue true.",
+             inputSchema: schema(["part": string("Name of an atmega328p part"), "send": string("Text to send to the chip")],
+                                 required: ["part"]),
+             run: { session, arguments in try session.readSerial(arguments) }),
+        Tool(name: "install_chip_support",
+             description: "Downloads and installs what compiling sketches takes (avr-gcc and the Arduino AVR core, about 40 MB, from Arduino's package index), if it is not installed yet.",
+             inputSchema: schema([:]),
+             run: { session, _ in try session.installChipSupport() }),
         Tool(name: "describe_circuit",
              description: "Describes the circuit: every part with its kind, model, parameters and the node (and net names) of each terminal, plus any problems that keep it from being simulated.",
              inputSchema: schema([:]), run: { session, _ in session.describe() }),
@@ -426,6 +440,61 @@ public final class CircuitSession {
             for (key, value) in values { circuit.elements[index][param: key] = value }
         }
         return ["part": circuit.elements[index].name, "model": circuit.elements[index].model?.name ?? "custom", "values": values]
+    }
+
+    // MARK: - Microcontrollers
+
+    private func microcontroller(_ arguments: [String: Any]) throws -> Int {
+        let index = try index(ofPart: try Self.text(arguments, "part"))
+        guard circuit.elements[index].kind == .atmega328p else {
+            throw ToolError("\(circuit.elements[index].name) is not a microcontroller (atmega328p)")
+        }
+        return index
+    }
+
+    func uploadSketch(_ arguments: [String: Any]) throws -> Any {
+        let index = try microcontroller(arguments)
+        let code = try Self.text(arguments, "code")
+        guard let toolchain = AVRToolchain.find() else {
+            throw ToolError("No AVR compiler is installed: call install_chip_support first (or install it from JSpice's Chip Support window)")
+        }
+        let result = SketchBuilder.build(code, toolchain: toolchain)
+        guard let firmware = result.firmware else {
+            let errors = result.errors.map { ["line": $0.line, "column": $0.column, "message": $0.message] as [String: Any] }
+            return ["uploaded": false, "errors": errors, "log": String(result.log.suffix(4000))]
+        }
+        change("Upload Sketch") { circuit in
+            circuit.elements[index].code = code
+            circuit.elements[index].firmware = firmware
+        }
+        return ["uploaded": true, "part": circuit.elements[index].name, "bytes": firmware.count, "flash": 32_256]
+    }
+
+    func readSerial(_ arguments: [String: Any]) throws -> Any {
+        let index = try microcontroller(arguments)
+        guard let chip = liveSimulator?.chip(index) else {
+            return ["output": "", "note": "Nothing simulated yet (or the part has no sketch): call simulate first"]
+        }
+        if let text = arguments["send"] as? String { chip.serialInput += Array(text.utf8) }
+        return ["output": String(decoding: chip.serialOutput.suffix(16_384), as: UTF8.self), "time": liveSimulator?.time ?? 0]
+    }
+
+    func installChipSupport() throws -> Any {
+        if ChipSupport.isAvailable(.avr) { return ["installed": true, "note": "already available"] }
+        final class Outcome: @unchecked Sendable { var error: Error? }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                try await ChipSupport.install(.avr) { _ in }
+            } catch {
+                outcome.error = error
+            }
+            done.signal()
+        }
+        done.wait()
+        if let error = outcome.error { throw ToolError("\(error)") }
+        return ["installed": true, "versions": ChipSupport.installedVersions(.avr).map { ["compiler": $0.compiler, "core": $0.core] } ?? [:]]
     }
 
     func setSwitch(_ arguments: [String: Any]) throws -> Any {

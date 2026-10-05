@@ -28,6 +28,11 @@ final class EditorState: ObservableObject {
     @Published var showQuickAdd = false
     /// The keyboard shortcuts sheet (⌘/ or ?)
     @Published var showShortcuts = false
+    @Published var showChipSupport = false
+    /// The microcontroller whose sketch is open in the sketch editor
+    @Published var editingSketch: UUID?
+    /// How each microcontroller's last upload went
+    @Published var sketchStatus: [UUID: SketchStatus] = [:]
     /// Incremented to ask the canvas to fit the circuit in view
     @Published private(set) var fitRequest = 1
 
@@ -238,6 +243,46 @@ final class EditorState: ObservableObject {
         var next = circuit
         next.update(id) { $0[param: "position"] = min(1, max(0, $0[param: "position"] + delta)) }
         if next != circuit { document.circuit = next }
+    }
+
+    // MARK: - Microcontrollers
+
+    func setSketchCode(_ id: UUID, _ code: String) {
+        edit("Edit Sketch") { $0.update(id) { $0.code = code } }
+    }
+
+    /// Compiles the sketch off the main thread and, if it builds, loads it into the chip, which restarts
+    func uploadSketch(_ id: UUID, code: String) {
+        guard let toolchain = AVRToolchain.find() else {
+            showChipSupport = true
+            return
+        }
+        sketchStatus[id] = .building
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = SketchBuilder.build(code, toolchain: toolchain)
+            await MainActor.run { self?.finishUpload(id, code: code, result: result) }
+        }
+    }
+
+    private func finishUpload(_ id: UUID, code: String, result: SketchBuilder.Result) {
+        guard let firmware = result.firmware else {
+            sketchStatus[id] = .failed(errors: result.errors, log: result.log)
+            if circuit[id]?.code != code { setSketchCode(id, code) }
+            return
+        }
+        let unchanged = circuit[id]?.firmware == firmware
+        edit("Upload Sketch") { $0.update(id) { element in
+            element.code = code
+            element.firmware = firmware
+        } }
+        // the same firmware again: restart the chip, as uploading to a board does
+        if unchanged, let index = circuit.index(of: id) { simulation.resetChip(index) }
+        sketchStatus[id] = .uploaded(bytes: firmware.count)
+    }
+
+    /// The selected part, if it is a microcontroller
+    var selectedMicrocontroller: Element? {
+        selectedElement.flatMap { $0.kind == .atmega328p ? $0 : nil }
     }
 
     func setParameter(_ id: UUID, _ spec: ParamSpec, to value: Double) {

@@ -1538,6 +1538,16 @@ public final class Simulator {
     /// The chip of the microcontroller at `index`, if it has firmware
     public func chip(_ index: Int) -> AVR? { chips[index] }
 
+    /// Restarts one chip from its reset vector, the rest of the circuit carrying on
+    public func resetChip(_ index: Int) {
+        guard let chip = chips[index] else { return }
+        chip.reset()
+        chipCycleCarry[index] = 0
+        chipPinStates[index] = chip.pinStates
+        matrixIsCurrent = false
+        currentsAreStale = true
+    }
+
     /// Runs each chip for the coming step's clock cycles, its inputs at the voltages of the last step, and notes
     /// whether its pins changed between input and output (which changes the matrix; levels only change currents)
     private func runChips() {

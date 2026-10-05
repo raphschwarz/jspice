@@ -65,6 +65,15 @@ final class AutomationTests: XCTestCase {
         XCTAssertNotNil(server.handle("[]"), "an empty batch is an invalid request")
     }
 
+    func testReadsAMicrocontrollersSerialOutput() throws {
+        let session = CircuitSession()
+        _ = try session.call("load_example", arguments: ["id": "arduino-knob"])
+        _ = try session.call("simulate", arguments: ["duration": 0.2, "probes": ["I(D1)"]])
+        let serial = try XCTUnwrap(try session.call("read_serial", arguments: ["part": "U1", "send": "hi"]) as? [String: Any])
+        XCTAssertTrue((serial["output"] as? String ?? "").hasPrefix("A0 = 614"), "\(serial)")
+        XCTAssertThrowsError(try session.call("read_serial", arguments: ["part": "R1"]), "not a microcontroller")
+    }
+
     func testSimulateRefusesStepCountsItCannotCount() throws {
         let session = CircuitSession()
         _ = try session.call("load_example", arguments: ["id": "rc"])

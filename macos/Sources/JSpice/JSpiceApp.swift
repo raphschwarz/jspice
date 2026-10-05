@@ -64,6 +64,20 @@ struct CircuitCommands: Commands {
                 .keyboardShortcut("k", modifiers: .command)
                 .disabled(editor == nil)
             Divider()
+            Button("Edit Sketch…") {
+                if let chip = editor?.selectedMicrocontroller { editor?.editingSketch = chip.id }
+            }
+            .disabled(editor?.selectedMicrocontroller == nil)
+            Button("Upload Sketch") {
+                if let chip = editor?.selectedMicrocontroller {
+                    editor?.uploadSketch(chip.id, code: chip.code ?? blinkTemplate)
+                }
+            }
+            .keyboardShortcut("u", modifiers: .command)
+            .disabled(editor?.selectedMicrocontroller == nil)
+            Button("Chip Support…") { editor?.showChipSupport = true }
+                .disabled(editor == nil)
+            Divider()
             Toggle("Allow AI Control (MCP)", isOn: Binding(
                 get: { AutomationBridge.shared.isEnabled },
                 set: { AutomationBridge.shared.isEnabled = $0 }

@@ -122,6 +122,14 @@ final class AudioRenderer: @unchecked Sendable {
         lock.withLock { simulator.reset() }
     }
 
+    func sendSerial(_ index: Int, _ bytes: [UInt8]) {
+        lock.withLock { simulator.chip(index)?.serialInput += bytes }
+    }
+
+    func resetChip(_ index: Int) {
+        lock.withLock { simulator.resetChip(index) }
+    }
+
     func setKeyboard(_ state: Simulator.KeyboardState) {
         shared.withLock { $0.keyboard = state }
     }

@@ -61,6 +61,11 @@ struct EditorView: View {
                 }
                 Divider()
                 StatusBar(editor: editor, simulation: editor.simulation)
+                    .sheet(isPresented: $editor.showChipSupport) { ChipSupportSheet(editor: editor) }
+                    .sheet(isPresented: Binding(get: { editor.editingSketch != nil },
+                                                set: { if !$0 { editor.editingSketch = nil } })) {
+                        if let id = editor.editingSketch { SketchEditorSheet(editor: editor, elementID: id) }
+                    }
             }
             .toolbar { EditorToolbar(editor: editor, simulation: editor.simulation) }
             .inspector(isPresented: $editor.showInspector) {
