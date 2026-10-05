@@ -65,7 +65,8 @@ final class SimulationController: ObservableObject {
     func load(_ circuit: Circuit) {
         findSpeaker(in: circuit)
         applySettings(of: circuit)
-        simulator.load(circuit)
+        // a turned knob or a typed value only needs the new values; anything else, a new circuit
+        if !simulator.updateParameters(circuit) { simulator.load(circuit) }
         simulator.configureScopes(window: speed * Self.scopeSpan)
         if let renderer, let speaker = speakerIndex {
             renderer.load(circuit, speaker: speaker, fullScale: circuit.elements[speaker][param: "fullScale"],
@@ -135,12 +136,15 @@ final class SimulationController: ObservableObject {
             guard renderer == nil, let speaker = speakerIndex else { return }
             guard let started = AudioRenderer(continuing: simulator, speaker: speaker,
                                               fullScale: simulator.circuit.elements[speaker][param: "fullScale"],
-                                              scopeWindow: Self.scopeSpan) else {
+                                              scopeWindow: Self.scopeSpan, paused: !isRunning) else {
                 soundProblem = "No sound output is available."
                 return
             }
             soundProblem = nil
-            started.setPaused(!isRunning)
+            // a new output device may run at another sample rate: start again on it
+            started.onOutputChange = { [weak self] in
+                MainActor.assumeIsolated { self?.restartSound() }
+            }
             renderer = started
             soundOn = true
         } else {
@@ -152,6 +156,15 @@ final class SimulationController: ObservableObject {
         applySettings(of: simulator.circuit)
         simulator.configureScopes(window: speed * Self.scopeSpan)
         publish()
+    }
+
+    private func restartSound() {
+        guard soundOn else { return }
+        let held = heldNotes
+        setSound(false)
+        setSound(true)
+        heldNotes = held
+        applyKeyboard()
     }
 
     private func applySettings(of circuit: Circuit) {

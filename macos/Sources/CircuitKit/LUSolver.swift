@@ -44,6 +44,13 @@ struct LUSolver {
 
     func solve(_ b: [Double]) -> [Double] {
         var x = [Double](repeating: 0, count: n)
+        solve(b, into: &x)
+        return x
+    }
+
+    /// Solves into `x`, reusing its storage when it already has the right size
+    func solve(_ b: [Double], into x: inout [Double]) {
+        if x.count != n { x = [Double](repeating: 0, count: n) }
         lu.withUnsafeBufferPointer { a in
             // forward substitution with the permuted right-hand side
             for r in 0..<n {
@@ -58,7 +65,6 @@ struct LUSolver {
                 x[r] = sum / a[r * n + r]
             }
         }
-        return x
     }
 }
 

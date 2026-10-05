@@ -17,6 +17,9 @@ final class AudioOutput {
     private var source: AVAudioSourceNode?
     private let ring: OSAllocatedUnfairLock<Ring>
     private(set) var sampleRate: Double = 48_000
+    /// Called on the main thread when the output device or its format changes, which stops the engine
+    var onConfigurationChange: (() -> Void)?
+    private var observer: NSObjectProtocol?
 
     init(seconds: Double = 1) {
         ring = OSAllocatedUnfairLock(initialState: Ring(samples: Array(repeating: 0, count: Int(48_000 * seconds) * 2)))
@@ -59,10 +62,16 @@ final class AudioOutput {
             return false
         }
         source = node
+        observer = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine,
+                                                          queue: .main) { [weak self] _ in
+            self?.onConfigurationChange?()
+        }
         return true
     }
 
     func stop() {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
         engine.stop()
         if let source { engine.detach(source) }
         source = nil

@@ -9,9 +9,13 @@ final class MIDIInput: @unchecked Sendable {
     private var client = MIDIClientRef()
     private var port = MIDIPortRef()
     private var connected: Set<MIDIEndpointRef> = []
-    /// Running status: the last status byte, which later messages may leave out
-    private var status: UInt8 = 0
-    private var data: [UInt8] = []
+    /// Running status (the last status byte, which later messages may leave out) and the data bytes so far, kept for
+    /// each source, so two keyboards playing at once do not mix up each other's messages
+    private struct Parser {
+        var status: UInt8 = 0
+        var data: [UInt8] = []
+    }
+    private var parsers: [UInt: Parser] = [:]
 
     func start() {
         guard client == 0 else { return }
@@ -20,8 +24,8 @@ final class MIDIInput: @unchecked Sendable {
             DispatchQueue.main.async { self?.connectSources() }
         }
         guard created == noErr else { return }
-        let opened = MIDIInputPortCreateWithBlock(client, "JSpice keyboard" as CFString, &port) { [weak self] list, _ in
-            self?.receive(list)
+        let opened = MIDIInputPortCreateWithBlock(client, "JSpice keyboard" as CFString, &port) { [weak self] list, source in
+            self?.receive(list, from: UInt(bitPattern: source))
         }
         guard opened == noErr else { return }
         connectSources()
@@ -32,13 +36,18 @@ final class MIDIInput: @unchecked Sendable {
         for index in 0..<MIDIGetNumberOfSources() {
             let source = MIDIGetSource(index)
             guard source != 0, !connected.contains(source) else { continue }
-            if MIDIPortConnectSource(port, source, nil) == noErr { connected.insert(source) }
+            // the source's reference comes back with each of its packets
+            if MIDIPortConnectSource(port, source, UnsafeMutableRawPointer(bitPattern: UInt(source))) == noErr {
+                connected.insert(source)
+            }
         }
     }
 
     /// Runs on CoreMIDI's thread: decodes the bytes and hands the notes to the main thread
-    private func receive(_ list: UnsafePointer<MIDIPacketList>) {
+    private func receive(_ list: UnsafePointer<MIDIPacketList>, from source: UInt) {
         var events: [(kind: UInt8, a: UInt8, b: UInt8)] = []
+        var parser = parsers[source] ?? Parser()
+        defer { parsers[source] = parser }
         // walk the packets in place: each may be shorter than MIDIPacket's 256 data bytes
         let lengthOffset = MemoryLayout<MIDIPacket>.offset(of: \MIDIPacket.length) ?? 8
         let dataOffset = MemoryLayout<MIDIPacket>.offset(of: \MIDIPacket.data) ?? 10
@@ -51,17 +60,17 @@ final class MIDIInput: @unchecked Sendable {
             for byte in UnsafeRawBufferPointer(start: raw + dataOffset, count: length) {
                 if byte >= 0xF8 { continue }                    // real-time messages (clock…) can come anywhere
                 if byte >= 0x80 {
-                    status = byte < 0xF0 ? byte : 0             // system messages carry no channel data
-                    data = []
+                    parser.status = byte < 0xF0 ? byte : 0      // system messages carry no channel data
+                    parser.data = []
                     continue
                 }
-                guard status != 0 else { continue }
-                data.append(byte)
-                let kind = status & 0xF0
+                guard parser.status != 0 else { continue }
+                parser.data.append(byte)
+                let kind = parser.status & 0xF0
                 let needed = (kind == 0xC0 || kind == 0xD0) ? 1 : 2
-                if data.count == needed {
-                    events.append((kind, data[0], needed == 2 ? data[1] : 0))
-                    data = []
+                if parser.data.count == needed {
+                    events.append((kind, parser.data[0], needed == 2 ? parser.data[1] : 0))
+                    parser.data = []
                 }
             }
             packet = UnsafePointer(MIDIPacketNext(packet))

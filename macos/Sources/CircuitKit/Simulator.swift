@@ -35,6 +35,8 @@ public final class Simulator {
     }
 
     public var keyboard = KeyboardState()
+    /// True while a playing sequence sets the keyboard
+    private var sequenceOwnsKeyboard = false
 
     var topology = Topology()
     /// Unknowns: node voltages 1..<nodeCount, then source and op-amp output currents
@@ -79,6 +81,17 @@ public final class Simulator {
                 return index < 0 ? 0 : values[index % values.count]
             }
             return at(whole) * (1 - fraction) + at(whole + 1) * fraction
+        }
+
+        /// The same history kept at another time step (each new step `stepRatio` old steps long) or with another length
+        func resampled(stepRatio: Double, capacity: Int) -> DelayHistory {
+            var next = DelayHistory(capacity: capacity)
+            guard stepRatio > 0, stepRatio.isFinite else { return next }
+            let available = Double(min(written, values.count - 2)) / stepRatio
+            let count = min(Int(available), next.values.count - 2)
+            guard count > 0 else { return next }
+            for k in stride(from: count - 1, through: 0, by: -1) { next.append(value(stepsAgo: Double(k) * stepRatio)) }
+            return next
         }
     }
     /// What each synth chip and comparator puts out, and what it remembers from step to step
@@ -130,6 +143,7 @@ public final class Simulator {
     private var savedX: [Double] = []
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
+    private var savedLimited3: [Double] = []
 
     private var baseMatrix: [Double] = []
     private var baseLU: LUSolver?
@@ -155,6 +169,8 @@ public final class Simulator {
     static let transistorSaturationCurrent = 1e-14
     /// Reverse current of a Zener diode at its breakdown voltage
     static let zenerKneeCurrent = 5e-3
+    /// How long a noise source holds each sample, at least
+    static let noiseSampleTime = 1 / 48_000.0
 
     public init(circuit: Circuit = Circuit(), timeStep: Double = 1e-5) {
         self.circuit = Circuit()
@@ -168,6 +184,8 @@ public final class Simulator {
         var cv, cvp, ci, lv, li, lip, m, l1, l2, l3: Double
         var digital: Bool
         var module: ModuleState
+        var noise: UInt64
+        var delay: DelayHistory?
     }
 
     /// Switches to a changed circuit, keeping the state (charge, current, memristor state) of elements that remain
@@ -177,7 +195,14 @@ public final class Simulator {
             previous[element.id] = SavedState(
                 cv: capacitorVoltage[i], cvp: capacitorVoltagePrevious[i], ci: capacitorCurrent[i], lv: inductorVoltage[i],
                 li: inductorCurrent[i], lip: inductorCurrentPrevious[i], m: memristorStates[i], l1: limitedVoltage[i],
-                l2: limitedVoltage2[i], l3: limitedVoltage3[i], digital: digitalState[i], module: moduleStates[i])
+                l2: limitedVoltage2[i], l3: limitedVoltage3[i], digital: digitalState[i], module: moduleStates[i],
+                noise: noiseState[i], delay: delayHistory[i])
+        }
+        // node voltages by place, so an edit does not throw away the solution (a latch keeps its state, and a paused
+        // circuit still shows its voltages)
+        var previousVoltages: [GridPoint: Double] = [:]
+        if x.count == topology.matrixSize {
+            for (p, point) in topology.points.enumerated() { previousVoltages[point] = voltage(topology.nodeOfPoint[p]) }
         }
         circuit = newCircuit
         topology = Topology(circuit: newCircuit)
@@ -235,11 +260,21 @@ public final class Simulator {
                 limitedVoltage3[i] = state.l3
                 digitalState[i] = state.digital
                 moduleStates[i] = state.module
+                noiseState[i] = state.noise
+                if let delay = state.delay, element.kind == .delayLine {
+                    // a delay line keeps what it holds, in a history long enough for its new settings
+                    let capacity = delayCapacity(i, timeStep: timeStep)
+                    delayHistory[i] = delay.values.count == capacity ? delay : delay.resampled(stepRatio: 1, capacity: capacity)
+                }
             } else {
                 initialiseState(i)
             }
         }
         x = Array(repeating: 0, count: topology.matrixSize)
+        for (p, point) in topology.points.enumerated() {
+            let node = topology.nodeOfPoint[p]
+            if node > 0, let v = previousVoltages[point] { x[node - 1] = v }
+        }
         hasNonlinear = !nonlinearIndices.isEmpty
         hasDigital = !digitalIndices.isEmpty
         hasMemristor = !memristorIndices.isEmpty
@@ -269,6 +304,7 @@ public final class Simulator {
         if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
         // each noise source has its own sequence, the same every run
         noiseState[i] = 0x9E37_79B9_7F4A_7C15 &* UInt64(i + 1) | 1
+        delayHistory[i] = nil
         // a comparator starts low, a divider at the start of its count (output high)
         var module = ModuleState()
         switch element.kind {
@@ -281,10 +317,13 @@ public final class Simulator {
 
     public func setTimeStep(_ dt: Double) {
         guard dt > 0, dt.isFinite, dt != timeStep else { return }
+        let previous = timeStep
         timeStep = dt
         matrixIsCurrent = false
-        // a delay line's history is kept one value per step
-        delayHistory = [:]
+        // a delay line's history is kept one value per step: resample it to the new step
+        for (i, history) in delayHistory {
+            delayHistory[i] = history.resampled(stepRatio: dt / previous, capacity: delayCapacity(i, timeStep: dt))
+        }
         // the history of the two-step method assumes equal steps: rebuild it from the present slope
         for (i, element) in circuit.elements.enumerated() {
             if element.kind == .capacitor {
@@ -346,7 +385,38 @@ public final class Simulator {
         problems = topology.problems
         for trace in traces.values { trace.clear() }
         delayHistory = [:]
+        // 555s start low again, and their state is part of the base matrix
+        matrixIsCurrent = false
+        sequenceOwnsKeyboard = false
         currentsAreStale = true
+    }
+
+    /// Takes on new parameter values when nothing else about the circuit has changed (a knob turned, a value typed):
+    /// the topology, every element's state and the solution all stay. False when the circuit changed in another way,
+    /// which needs `load`.
+    public func updateParameters(_ newCircuit: Circuit) -> Bool {
+        guard newCircuit.elements.count == circuit.elements.count, newCircuit.scopes == circuit.scopes else { return false }
+        for (old, new) in zip(circuit.elements, newCircuit.elements) {
+            var same = new
+            same.params = old.params
+            if same != old { return false }
+        }
+        circuit = newCircuit
+        constants = newCircuit.elements.map { makeConstants($0) }
+        for (i, history) in delayHistory {
+            let capacity = delayCapacity(i, timeStep: timeStep)
+            if history.values.count != capacity { delayHistory[i] = history.resampled(stepRatio: 1, capacity: capacity) }
+        }
+        matrixIsCurrent = false
+        currentsAreStale = true
+        return true
+    }
+
+    /// Steps of history a delay line keeps: enough for the slowest clock its control is likely to set
+    private func delayCapacity(_ i: Int, timeStep dt: Double) -> Int {
+        let c = constants[i]
+        let longest = min(c.value / (2 * max(c.frequency * 0.05, 100)), 2)
+        return min(Int(longest / dt) + 4, 4_000_000)
     }
 
     // MARK: - Running
@@ -387,9 +457,13 @@ public final class Simulator {
     public func step() {
         guard !isFailed else { return }
         let t = time + timeStep
-        // a playing sequence plays the keyboard
+        // a playing sequence plays the keyboard; when it stops, it lets go of the key it was holding
         if let sequence = circuit.sequence, sequence.playing, let state = sequence.state(at: t) {
             keyboard = KeyboardState(note: state.note, gate: state.gate)
+            sequenceOwnsKeyboard = true
+        } else if sequenceOwnsKeyboard {
+            keyboard.gate = false
+            sequenceOwnsKeyboard = false
         }
         var converged = solve(at: t)
         if isFailed { return }
@@ -416,20 +490,22 @@ public final class Simulator {
         guard m > 0 else { return true }
         if !matrixIsCurrent { buildBaseMatrix() }
         if isFailed { return false }
-        let rhs = buildRightHandSide(at: t)
+        buildRightHandSide(at: t)
+        let rhs = self.rhs
         if !hasNonlinear && !hasMemristor {
             guard let lu = baseLU else { fail(); return false }
-            x = lu.solve(rhs)
+            lu.solve(rhs, into: &x)
             if x.contains(where: { !$0.isFinite }) { fail(); return false }
             return true
         }
         Self.copy(x, into: &savedX)
         Self.copy(limitedVoltage, into: &savedLimited)
         Self.copy(limitedVoltage2, into: &savedLimited2)
+        Self.copy(limitedVoltage3, into: &savedLimited3)
         junctionConductance = 0
         if newton(rhs, iterations: Self.maxNewtonIterations) || isFailed || !hasNonlinear { return !isFailed }
-        let firstTry = (x, limitedVoltage, limitedVoltage2)
-        (x, limitedVoltage, limitedVoltage2) = (savedX, savedLimited, savedLimited2)
+        let firstTry = (x, limitedVoltage, limitedVoltage2, limitedVoltage3)
+        (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedX, savedLimited, savedLimited2, savedLimited3)
         var converged = false
         for conductance in Self.steppedConductances {
             junctionConductance = conductance
@@ -438,7 +514,7 @@ public final class Simulator {
         }
         junctionConductance = 0
         // if that failed too, the first try is the better guess to carry on from
-        if !converged && !isFailed { (x, limitedVoltage, limitedVoltage2) = firstTry }
+        if !converged && !isFailed { (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = firstTry }
         return converged && !isFailed
     }
 
@@ -631,8 +707,16 @@ public final class Simulator {
         return (-2 * log(u)).squareRoot() * cos(2 * .pi * v)
     }
 
-    private func buildRightHandSide(at t: Double) -> [Double] {
-        var rhs = [Double](repeating: 0, count: topology.matrixSize)
+    /// The right-hand side of the equations, rebuilt in place at each step
+    private var rhs: [Double] = []
+
+    private func buildRightHandSide(at t: Double) {
+        let m = topology.matrixSize
+        if rhs.count != m {
+            rhs = [Double](repeating: 0, count: m)
+        } else {
+            for k in 0..<m { rhs[k] = 0 }
+        }
         for i in drivenIndices {
             let nodes = topology.elementNodes[i]
             let c = constants[i]
@@ -672,7 +756,6 @@ public final class Simulator {
                 break
             }
         }
-        return rhs
     }
 
     /// A bucket-brigade delay line's output: its input as it was one delay ago, the delay being the stages over twice
@@ -728,6 +811,11 @@ public final class Simulator {
         var tau = 1.0, von = 0.0, voff = 0.0
     }
 
+    /// A parameter that picks a setting, as a whole number within `range` (typed or scripted values can be anything)
+    static func choice(_ value: Double, _ range: ClosedRange<Double>) -> Double {
+        value.isFinite ? min(max(value.rounded(), range.lowerBound), range.upperBound) : range.lowerBound
+    }
+
     private func makeConstants(_ element: Element) -> Constants {
         var c = Constants()
         func p(_ key: String) -> Double { element[param: key] }
@@ -778,7 +866,7 @@ public final class Simulator {
             c.low = p("low")
             c.threshold = max(p("hysteresis"), 0)
         case .vco:
-            c.value = p("waveform").rounded()
+            c.value = Self.choice(p("waveform"), 0...3)
             c.frequency = max(p("frequency"), 0)
             c.amplitude = p("amplitude")
         case .vcf:
@@ -792,15 +880,15 @@ public final class Simulator {
             c.voff = max(p("release"), 1e-6)
             c.high = p("peak")
         case .vca:
-            c.value = p("response").rounded()
+            c.value = Self.choice(p("response"), 0...1)
             c.gain = p("dbPerVolt")
             c.threshold = max(p("unity"), 1e-3)
             c.limit = max(p("limit"), 0.1)
         case .sampleHold:
-            c.value = p("mode").rounded()
+            c.value = Self.choice(p("mode"), 0...1)
             c.slew = max(p("droop"), 0)
         case .divider:
-            c.value = max(p("division").rounded(), 2)
+            c.value = Self.choice(p("division"), 2...1024)
             c.supply = max(p("supply"), 0.1)
         case .vactrol:
             // the LED: a red LED's junction
@@ -860,7 +948,7 @@ public final class Simulator {
         switch element.kind {
         case .led:
             // emission coefficient 2, saturation current chosen for the colour's forward voltage at 10 mA
-            let color = LEDColor(rawValue: Int(element[param: "color"])) ?? .red
+            let color = LEDColor(rawValue: Int(Self.choice(element[param: "color"], 0...4))) ?? .red
             let nvt = 2 * Self.thermalVoltage
             return (0.01 / exp(color.forwardVoltage / nvt), nvt)
         case .zener:
@@ -1254,9 +1342,11 @@ public final class Simulator {
             if high != digitalState[i] {
                 digitalState[i] = high
                 changed = true
+                // a 555's output and discharge stages are in the base matrix; a Schmitt inverter's state only moves
+                // its output source on the right-hand side
+                if kinds[i] == .timer555 { matrixIsCurrent = false }
             }
         }
-        if changed { matrixIsCurrent = false }
         return changed
     }
 
@@ -1283,15 +1373,16 @@ public final class Simulator {
             case .keyboardPitch:
                 capacitorVoltage[i] = sourceVoltage(i, at: time)
             case .noiseVoltage:
-                capacitorVoltage[i] = nextNoise(i)
+                // a new sample every 1/48000 s (or every step, if steps are longer): with sound on, the steps of an
+                // oversampled audio sample share one, so the noise sounds the same however many steps there are
+                if time >= memristorStates[i] {
+                    capacitorVoltage[i] = nextNoise(i)
+                    memristorStates[i] = time + Self.noiseSampleTime - timeStep / 2
+                }
             case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
                 updateModule(i, nodes, parameters)
             case .delayLine:
-                if delayHistory[i] == nil {
-                    // long enough for the slowest clock the control is likely to set
-                    let longest = min(parameters.value / (2 * max(parameters.frequency * 0.05, 100)), 2)
-                    delayHistory[i] = DelayHistory(capacity: min(Int(longest / timeStep) + 4, 4_000_000))
-                }
+                if delayHistory[i] == nil { delayHistory[i] = DelayHistory(capacity: delayCapacity(i, timeStep: timeStep)) }
                 delayHistory[i]?.append(voltage(nodes[0]))
             case .vactrol:
                 // the light follows the LED current, faster as it rises (attack) than as it falls (decay)
@@ -1705,10 +1796,22 @@ public final class Simulator {
     private func record(_ trace: ScopeTrace, _ index: Int) {
         switch trace.spec.plot {
         case .time:
-            trace.add(value(trace.spec.quantity, of: index), at: time)
+            switch trace.spec.quantity {
+            case .current: trace.add(scopedCurrent(index), at: time)
+            case .power: trace.add(voltageAcross(index) * scopedCurrent(index), at: time)
+            default: trace.add(value(trace.spec.quantity, of: index), at: time)
+            }
         case .currentVersusVoltage:
-            trace.addPoint(voltage: voltageAcross(index), current: current(index), at: time)
+            trace.addPoint(voltage: voltageAcross(index), current: scopedCurrent(index), at: time)
         }
+    }
+
+    /// One element's current for a scope at every step, without working out the whole circuit's: only wires and
+    /// other conductors need the walk through the wire network
+    private func scopedCurrent(_ index: Int) -> Double {
+        let element = circuit.elements[index]
+        if element.isConductor { return current(index) }
+        return elementCurrents(index, element) { self.voltage($0) }.main
     }
 }
 
