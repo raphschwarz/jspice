@@ -193,7 +193,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    static let tiny85Header = """
+    static let tiny85Header = #"""
 // JSpice's pin map for the ATtiny85 with the Arduino AVR core (the same numbering as the common ATtiny cores):
 // D0-D5 are PB0-PB5, and A0-A3 (also 6-9) are the analog inputs ADC0-ADC3 on PB5, PB2, PB4 and PB3.
 //
@@ -259,7 +259,7 @@ const uint8_t PROGMEM digital_pin_to_timer_PGM[] = {
 #endif
 
 #endif
-"""
+"""#
 }
 
 extension ElementKind {
