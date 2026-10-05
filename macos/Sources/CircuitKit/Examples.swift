@@ -41,7 +41,7 @@ public enum Examples {
     public static let all: [Example] = [
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
-        beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, memristorHysteresis, memristorPulses,
+        beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, memristorHysteresis, memristorPulses,
     ]
 
     /// A circuit drawn from a netlist by the tidy layout, with scopes on the named parts
@@ -173,35 +173,82 @@ public enum Examples {
     /// f0 = gm a / (2π C) with gm = I_abc / 2Vt: the CUTOFF pot sets both bias currents through the follower U5, about
     /// 295 µA (2 kHz) at its centre. The RES pot feeds back band-pass: Q is about its resistance over 100 k.
     public static func filterParts(input: NetlistPart, resonance: Double = 0.5) -> [NetlistPart] {
-        let tl072 = model(.opAmp, "TL072")
-        let lm13700 = model(.ota, "LM13700")
-        return [
+        [
             input,
             NetlistPart(kind: .dcVoltage, name: "VP", params: ["voltage": 15], connections: ["plus": "+15V", "minus": "GND"]),
             NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": 15], connections: ["plus": "GND", "minus": "-15V"]),
-            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 100_000], connections: ["a": "in", "b": "p1"]),
-            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 220], connections: ["a": "p1", "b": "GND"]),
-            NetlistPart(kind: .ota, name: "U1", params: lm13700, connections: ["plus": "p1", "minus": "m1", "out": "c1", "bias": "b1"]),
-            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 1e-9], connections: ["a": "c1", "b": "GND"]),
-            NetlistPart(kind: .opAmp, name: "U2", params: tl072, connections: ["plus": "c1", "minus": "bp", "out": "bp"]),
-            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 100_000], connections: ["a": "bp", "b": "p2"]),
-            NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 220], connections: ["a": "p2", "b": "GND"]),
-            NetlistPart(kind: .ota, name: "U3", params: lm13700, connections: ["plus": "p2", "minus": "GND", "out": "c2", "bias": "b2"]),
-            NetlistPart(kind: .capacitor, name: "C2", params: ["capacitance": 1e-9], connections: ["a": "c2", "b": "GND"]),
-            NetlistPart(kind: .opAmp, name: "U4", params: tl072, connections: ["plus": "c2", "minus": "lp", "out": "lp"]),
-            // feedback into U1's minus input: all of the low-pass, and some band-pass (the resonance control)
-            NetlistPart(kind: .resistor, name: "R5", params: ["resistance": 100_000], connections: ["a": "lp", "b": "m1"]),
-            NetlistPart(kind: .resistor, name: "R6", params: ["resistance": 220], connections: ["a": "m1", "b": "GND"]),
-            NetlistPart(kind: .potentiometer, name: "RES", params: ["resistance": 470_000, "position": resonance],
-                        connections: ["a": "bp", "wiper": "m1"]),
+        ] + filterCore(input: "in", output: "lp", control: "cutb", resonance: resonance) + [
             // cutoff: a pot across the supplies, buffered, sets both OTAs' bias currents
             NetlistPart(kind: .potentiometer, name: "CUTOFF", params: ["resistance": 100_000, "position": 0.5],
                         connections: ["a": "-15V", "b": "+15V", "wiper": "cut"]),
-            NetlistPart(kind: .opAmp, name: "U5", params: tl072, connections: ["plus": "cut", "minus": "cutb", "out": "cutb"]),
-            NetlistPart(kind: .resistor, name: "RB1", params: ["resistance": 47_000], connections: ["a": "cutb", "b": "b1"]),
-            NetlistPart(kind: .resistor, name: "RB2", params: ["resistance": 47_000], connections: ["a": "cutb", "b": "b2"]),
+            NetlistPart(kind: .opAmp, name: "U5", params: model(.opAmp, "TL072"), connections: ["plus": "cut", "minus": "cutb", "out": "cutb"]),
         ]
     }
+
+    /// The filter itself, from net `input` to net `output` (low-pass), its bias currents set from net `control` through
+    /// 47 k each (so the cutoff is zero with the control at −13.9 V and rises in proportion above it). Part and inner net
+    /// names start with `prefix`, so the filter can share a circuit with other parts.
+    static func filterCore(input: String, output: String, control: String, resonance: Double, prefix: String = "") -> [NetlistPart] {
+        let tl072 = model(.opAmp, "TL072")
+        let lm13700 = model(.ota, "LM13700")
+        func n(_ name: String) -> String { prefix.isEmpty ? name : prefix.lowercased() + name }
+        func r(_ name: String, _ ohms: Double, _ a: String, _ b: String) -> NetlistPart {
+            NetlistPart(kind: .resistor, name: prefix + name, params: ["resistance": ohms], connections: ["a": a, "b": b])
+        }
+        return [
+            r("R1", 100_000, input, n("p1")),
+            r("R2", 220, n("p1"), "GND"),
+            NetlistPart(kind: .ota, name: prefix + "U1", params: lm13700,
+                        connections: ["plus": n("p1"), "minus": n("m1"), "out": n("c1"), "bias": n("b1")]),
+            NetlistPart(kind: .capacitor, name: prefix + "C1", params: ["capacitance": 1e-9], connections: ["a": n("c1"), "b": "GND"]),
+            NetlistPart(kind: .opAmp, name: prefix + "U2", params: tl072, connections: ["plus": n("c1"), "minus": n("bp"), "out": n("bp")]),
+            r("R3", 100_000, n("bp"), n("p2")),
+            r("R4", 220, n("p2"), "GND"),
+            NetlistPart(kind: .ota, name: prefix + "U3", params: lm13700,
+                        connections: ["plus": n("p2"), "minus": "GND", "out": n("c2"), "bias": n("b2")]),
+            NetlistPart(kind: .capacitor, name: prefix + "C2", params: ["capacitance": 1e-9], connections: ["a": n("c2"), "b": "GND"]),
+            NetlistPart(kind: .opAmp, name: prefix + "U4", params: tl072, connections: ["plus": n("c2"), "minus": output, "out": output]),
+            // feedback into U1's minus input: all of the low-pass, and some band-pass (the resonance control)
+            r("R5", 100_000, output, n("m1")),
+            r("R6", 220, n("m1"), "GND"),
+            NetlistPart(kind: .potentiometer, name: prefix + "RES", params: ["resistance": 470_000, "position": resonance],
+                        connections: ["a": n("bp"), "wiper": n("m1")]),
+            r("RB1", 47_000, control, n("b1")),
+            r("RB2", 47_000, control, n("b2")),
+        ]
+    }
+
+    /// A whole synth voice: the keyboard VCO's square wave through the resonant filter and a VCA, with one envelope
+    /// opening both, so each note starts bright and closes as it dies away. The envelope (the gate through S1 and
+    /// RATT into CENV, RREL down to −15 V) sets the filter's and the VCA's bias currents directly: an op-amp buffer
+    /// could not follow it down to −15 V, where both currents stop.
+    static let voice = Example(
+        id: "voice", title: "Synth voice: VCO, VCF, VCA",
+        summary: "A playable subtractive synth voice: the keyboard VCO through the resonant LM13700 filter and a VCA, with one envelope opening both. Turn on sound and play with A–; (or a MIDI keyboard); turn RES for more squelch.",
+        symbol: "pianokeys.inverse",
+        circuit: drawn(vcoParts + [
+            NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": 15], connections: ["plus": "GND", "minus": "-15V"]),
+            // the square wave, divided to ±3.4 V for the filter
+            NetlistPart(kind: .resistor, name: "R7", params: ["resistance": 100_000], connections: ["a": "sq", "b": "fin"]),
+            NetlistPart(kind: .resistor, name: "R8", params: ["resistance": 33_000], connections: ["a": "fin", "b": "GND"]),
+            // envelope
+            NetlistPart(kind: .keyboardGate, name: "KB2", params: ["high": 10], connections: ["plus": "gate", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "RATT", params: ["resistance": 2200], connections: ["a": "gate", "b": "att"]),
+            NetlistPart(kind: .analogSwitch, name: "S1", params: model(.analogSwitch, "DG411"),
+                        connections: ["a": "att", "b": "env", "control": "gate"]),
+            NetlistPart(kind: .capacitor, name: "CENV", params: ["capacitance": 4.7e-6, "initialVoltage": -15],
+                        connections: ["a": "env", "b": "GND"]),
+            NetlistPart(kind: .resistor, name: "RREL", params: ["resistance": 47_000], connections: ["a": "env", "b": "-15V"]),
+        ] + filterCore(input: "fin", output: "flp", control: "env", resonance: 0.6, prefix: "F") + [
+            // VCA
+            NetlistPart(kind: .resistor, name: "RIN", params: ["resistance": 220_000], connections: ["a": "flp", "b": "vin"]),
+            NetlistPart(kind: .resistor, name: "RIN2", params: ["resistance": 1000], connections: ["a": "vin", "b": "GND"]),
+            NetlistPart(kind: .resistor, name: "RBIAS", params: ["resistance": 33_000], connections: ["a": "env", "b": "iabc2"]),
+            NetlistPart(kind: .ota, name: "U6", params: model(.ota, "LM13700"),
+                        connections: ["minus": "GND", "plus": "vin", "out": "out", "bias": "iabc2"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 4], connections: ["plus": "out", "minus": "GND"]),
+        ], scopes: [("CENV", .voltage), ("SPK1", .voltage)]))
 
     static let filter = Example(
         id: "vcf", title: "LM13700 filter (sound)",

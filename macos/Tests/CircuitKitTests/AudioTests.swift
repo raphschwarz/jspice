@@ -154,6 +154,26 @@ final class AudioTests: XCTestCase {
         XCTAssertFalse(simulator.isFailed)
     }
 
+    func testSynthVoiceOpensItsFilterWithTheEnvelope() {
+        let circuit = Examples.voice.circuit
+        let speaker = circuit.elements.firstIndex { $0.kind == .speaker }!
+        let filterBias = circuit.elements.firstIndex { $0.name == "FRB1" }!
+        let simulator = Simulator(circuit: circuit, timeStep: oversampledStep)
+        let silent = listen(simulator, to: speaker, settle: 0.1, listen: 0.1)
+        XCTAssertLessThan(silent.rms, 0.02, "no key, no sound")
+        XCTAssertLessThan(abs(simulator.current(filterBias)), 1e-6, "filter closed")
+        simulator.keyboard = Simulator.KeyboardState(note: 69, gate: true)
+        let playing = listen(simulator, to: speaker, settle: 0.1, listen: 0.2)
+        XCTAssertGreaterThan(playing.rms, 0.3, "a held key sounds")
+        XCTAssertEqual(playing.frequency, 440, accuracy: 440 * 0.05, "A4")
+        // about 420 µA: a cutoff near 2.8 kHz
+        XCTAssertEqual(simulator.current(filterBias), 420e-6, accuracy: 80e-6, "filter open")
+        simulator.keyboard.gate = false
+        let released = listen(simulator, to: speaker, settle: 0.5, listen: 0.1)
+        XCTAssertLessThan(released.rms, 0.02, "the note dies away after release")
+        XCTAssertLessThan(abs(simulator.current(filterBias)), 1e-6, "and the filter closes")
+    }
+
     func testNoiseIsWhiteGaussianAndRepeatable() throws {
         let circuit = try SchematicLayout.layout([
             NetlistPart(kind: .noiseVoltage, name: "N1", params: ["amplitude": 0.5], connections: ["plus": "n", "minus": "GND"]),
@@ -193,7 +213,7 @@ final class AudioTests: XCTestCase {
     }
 
     func testEverySoundExampleHasASpeaker() {
-        for id in ["beeper", "tone", "tremolo", "vco", "synth", "vcf", "wind"] {
+        for id in ["beeper", "tone", "tremolo", "vco", "synth", "vcf", "wind", "voice"] {
             XCTAssertTrue(Examples.example(id)?.circuit.elements.contains { $0.kind == .speaker } ?? false, id)
         }
     }
