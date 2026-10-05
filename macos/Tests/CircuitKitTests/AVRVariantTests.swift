@@ -106,8 +106,8 @@ final class AVRVariantTests: XCTestCase {
             XCTAssertEqual(element.posts.count, board.terminalNames.count, board.title)
             XCTAssertEqual(Set(element.posts).count, element.posts.count, "\(board.title): no two pins in one place")
             XCTAssertEqual(board.pinLabels.count, board.terminalNames.count)
-            let variant = board.avrVariant
-            XCTAssertEqual(variant?.pinCount, board.terminalNames.count, board.title)
+            XCTAssertEqual(board.makeChip(firmware: []).pinCount, board.terminalNames.count, board.title)
+            if let variant = board.avrVariant { XCTAssertEqual(variant.pinCount, board.terminalNames.count, board.title) }
         }
     }
 
