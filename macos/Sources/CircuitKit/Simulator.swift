@@ -1908,7 +1908,7 @@ public final class Simulator {
         }
     }
 
-    /// 0 (dark) to 1 (full brightness) for LEDs and lamps
+    /// 0 (dark) to 1 (full brightness) for LEDs and lamps (and the Pico's LED)
     public func brightness(_ index: Int) -> Double {
         let element = circuit.elements[index]
         switch element.kind {
@@ -1917,6 +1917,9 @@ public final class Simulator {
         case .lamp:
             let power = abs(voltageAcross(index) * current(index))
             return min(1, power / max(element[param: "ratedPower"], 1e-9))
+        case .rp2040:
+            // the Pico's own LED
+            return (chips[index] as? Pico)?.ledOn == true ? 1 : 0
         default:
             return 0
         }

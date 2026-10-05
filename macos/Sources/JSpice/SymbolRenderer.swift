@@ -998,6 +998,18 @@ enum SymbolRenderer {
             drawText(String(name[split...]), at: CGPoint(x: centre.x, y: centre.y + 0.45 * u), size: 0.62 * u, color: style.fill,
                      anchor: 0.5, bold: true, in: ctx)
         }
+        if board == .pico {
+            // the board's own LED (GP25), near the USB end, lit when the sketch turns it on
+            let led = CGPoint(x: a.x + box.along.x * 0.6 * u, y: a.y + box.along.y * 0.6 * u)
+            let green = RGBA(0.25, 0.95, 0.35)
+            glow(at: led, radius: 1.4 * u, color: green, amount: style.brightness, in: ctx)
+            let square = CGRect(x: led.x - 0.22 * u, y: led.y - 0.22 * u, width: 0.44 * u, height: 0.44 * u)
+            ctx.setFillColor(green.withAlpha(0.15 + 0.85 * CGFloat(style.brightness)).cgColor)
+            ctx.fill(square)
+            ctx.setStrokeColor(style.fill.withAlpha(0.6).cgColor)
+            ctx.setLineWidth(style.lineWidth * 0.6)
+            ctx.stroke(square)
+        }
         ctx.restoreGState()
     }
 
