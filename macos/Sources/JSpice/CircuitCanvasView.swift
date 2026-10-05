@@ -309,6 +309,17 @@ final class CircuitCanvasView: NSView {
             .font: NSFont.systemFont(ofSize: fontSize * 0.85),
             .foregroundColor: NSColor(cgColor: palette.secondaryText.cgColor) ?? .secondaryLabelColor,
         ]
+        // where labels must not go: the bodies of the parts, and the labels already placed
+        var bodies: [(id: UUID, rect: CGRect)] = []
+        for element in circuit.elements where element.kind != .wire && element.kind != .netLabel {
+            let points = (element.extentPoints).map(screen)
+            guard let minX = points.map(\.x).min(), let maxX = points.map(\.x).max(),
+                  let minY = points.map(\.y).min(), let maxY = points.map(\.y).max() else { continue }
+            let rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            // two-terminal parts are thin lines: give them their symbol's width
+            bodies.append((element.id, rect.insetBy(dx: rect.width < unit ? -0.45 * unit : 0, dy: rect.height < unit ? -0.45 * unit : 0)))
+        }
+        var placed: [CGRect] = []
         for (index, element) in circuit.elements.enumerated() {
             guard element.kind != .wire, element.kind != .ground, element.kind != .netLabel else { continue }
             // instruments always show their reading
@@ -359,14 +370,29 @@ final class CircuitCanvasView: NSView {
             case .vactrol: offset = 1.9 * unit
             default: offset = (isProbe ? 1.0 : 1.05) * unit
             }
-            var y: CGFloat
-            if horizontal {
-                y = otherSide ? anchor.y + offset : anchor.y - offset - totalHeight
-            } else {
-                y = anchor.y - totalHeight / 2
+            let width = sizes.map(\.width).max() ?? 0
+            /// The block of lines on one side of the part, `extra` further out
+            func block(_ side: Bool, _ extra: CGFloat) -> CGRect {
+                if horizontal {
+                    let y = side ? anchor.y + offset + extra : anchor.y - offset - totalHeight - extra
+                    return CGRect(x: anchor.x - width / 2, y: y, width: width, height: totalHeight)
+                }
+                let x = side ? anchor.x - offset - extra - width : anchor.x + offset + extra
+                return CGRect(x: x, y: anchor.y - totalHeight / 2, width: width, height: totalHeight)
             }
+            func clear(_ rect: CGRect) -> Bool {
+                let inner = rect.insetBy(dx: 1, dy: 1)
+                return !placed.contains { $0.intersects(inner) }
+                    && !bodies.contains { $0.id != element.id && $0.rect.intersects(inner) }
+            }
+            // the usual side, else the other side, else a little further out; if nothing is clear, the usual place
+            let step = fontSize * 1.1
+            let candidates = [(otherSide, 0.0), (!otherSide, 0.0), (otherSide, step), (!otherSide, step), (otherSide, 2 * step)]
+            let chosen = candidates.lazy.map { block($0.0, CGFloat($0.1)) }.first(where: clear) ?? block(otherSide, 0)
+            placed.append(chosen)
+            var y = chosen.minY
             for (line, size) in zip(lines, sizes) {
-                let x = horizontal ? anchor.x - size.width / 2 : (otherSide ? anchor.x - offset - size.width : anchor.x + offset)
+                let x = horizontal ? chosen.midX - size.width / 2 : (chosen.maxX <= anchor.x ? chosen.maxX - size.width : chosen.minX)
                 line.draw(at: CGPoint(x: x, y: y))
                 y += size.height
             }
