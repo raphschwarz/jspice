@@ -83,6 +83,8 @@ struct EliminationPlan {
     let rows: [Int]
     let columnStart: [Int]
     let columns: [Int]
+    /// Set when a pivot became too small: the next elimination plans afresh, keeping the pattern
+    var stale = false
 }
 
 extension LUSolver {
@@ -102,11 +104,11 @@ extension LUSolver {
     static func solveInPlace(_ a: inout [Double], _ b: inout [Double], size n: Int, plan: inout EliminationPlan?,
                              changed: UnsafeBufferPointer<Int>?) -> Bool {
         guard n > 0, a.count >= n * n, b.count >= n else { return n == 0 }
-        if let current = plan, current.n == n, fits(a, current, changed: changed) {
+        if let current = plan, !current.stale, current.n == n, fits(a, current, changed: changed) {
             let stopped = replay(&a, &b, current)
             if stopped < 0 { return true }
             // a planned pivot became too small: pivot afresh from that step, and plan again next time
-            plan = nil
+            plan?.stale = true
             return finish(&a, &b, size: n, from: stopped)
         }
         let prior = plan.flatMap { $0.n == n ? $0.pattern : nil }
