@@ -47,6 +47,10 @@ if let flag = arguments.firstIndex(of: "--benchmark") {
     var rest = Array(arguments[(flag + 1)...])
     var seconds = 1.0
     if let first = rest.first, let value = Double(first) {
+        guard value > 0, value < 1e4 else {
+            log("--benchmark takes a number of seconds between 0 and 10000")
+            exit(2)
+        }
         seconds = value
         rest.removeFirst()
     }
@@ -70,7 +74,10 @@ if !arguments.contains("--headless"), let fd = LocalSocket.connect(to: path) {
             exit(1)
         }
     }
-    exit(0)
+    // the client is done sending: tell the app, and wait for the replies still coming (the reader exits when the
+    // app closes the connection after answering)
+    shutdown(fd, Int32(SHUT_WR))
+    DispatchSemaphore(value: 0).wait()
 } else if arguments.contains("--app") {
     log("the JSpice app is not running, or Allow AI Control is off")
     exit(1)

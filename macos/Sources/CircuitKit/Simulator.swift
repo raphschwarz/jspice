@@ -1677,6 +1677,13 @@ public final class Simulator {
     }
 
     /// Voltage of each terminal of the element at `index`
+    /// Voltage of one terminal of the element at `index`, without building the list of all of them
+    public func terminalVoltage(_ index: Int, _ terminal: Int) -> Double {
+        guard index < topology.elementNodes.count, x.count == topology.matrixSize else { return 0 }
+        let nodes = topology.elementNodes[index]
+        return terminal >= 0 && terminal < nodes.count ? voltage(nodes[terminal]) : 0
+    }
+
     public func terminalVoltages(_ index: Int) -> [Double] {
         guard index < topology.elementNodes.count, x.count == topology.matrixSize else { return [] }
         return topology.elementNodes[index].map { voltage($0) }

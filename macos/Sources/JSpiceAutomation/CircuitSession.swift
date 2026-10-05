@@ -202,10 +202,11 @@ public final class CircuitSession {
     private static func gridPoint(_ value: Any?, _ what: String) throws -> GridPoint? {
         guard let value else { return nil }
         guard let array = value as? [Any], array.count == 2,
-              let x = (array[0] as? NSNumber)?.intValue, let y = (array[1] as? NSNumber)?.intValue else {
-            throw ToolError("\(what) should be [x, y] with whole numbers")
+              let x = (array[0] as? NSNumber)?.doubleValue, let y = (array[1] as? NSNumber)?.doubleValue,
+              abs(x) <= 100_000, abs(y) <= 100_000 else {
+            throw ToolError("\(what) should be [x, y] with whole numbers within ±100000")
         }
-        return GridPoint(x, y)
+        return GridPoint(Int(x.rounded()), Int(y.rounded()))
     }
 
     private func index(ofPart name: String) throws -> Int {
@@ -440,7 +441,10 @@ public final class CircuitSession {
         var steps: [Double?] = []
         for step in list {
             if step is NSNull { steps.append(nil); continue }
-            if let number = step as? NSNumber { steps.append(number.doubleValue); continue }
+            if let number = step as? NSNumber, number.doubleValue.isFinite, abs(number.doubleValue) < 1000 {
+                steps.append(number.doubleValue)
+                continue
+            }
             if let text = step as? String {
                 let trimmed = text.trimmingCharacters(in: .whitespaces)
                 if trimmed.isEmpty || trimmed == "-" || trimmed.lowercased() == "rest" { steps.append(nil); continue }
@@ -526,13 +530,13 @@ public final class CircuitSession {
             guard let t = NetlistLayout.terminalIndex(terminal, of: circuit.elements[index].kind) else {
                 throw ToolError("\(target[..<dot]) has no terminal \(terminal); terminals: \(circuit.elements[index].kind.terminalNames.joined(separator: ", "))")
             }
-            return Probe(label: trimmed) { $0.terminalVoltages(index)[safe: t] ?? 0 }
+            return Probe(label: trimmed) { $0.terminalVoltage(index, t) }
         }
         // a net
         if quantity == "V" {
             if target.uppercased() == "GND" || target == "0" { return Probe(label: trimmed) { _ in 0 } }
             if !circuit.elements.contains(where: { $0.kind != .netLabel && $0.name == target }), let (index, t) = terminal(onNet: target) {
-                return Probe(label: trimmed) { $0.terminalVoltages(index)[safe: t] ?? 0 }
+                return Probe(label: trimmed) { $0.terminalVoltage(index, t) }
             }
         }
         let index = try index(ofPart: target)
@@ -546,6 +550,8 @@ public final class CircuitSession {
     }
 
     private static let maxSteps = 4_000_000
+    /// A run stops after this long, so a heavy circuit cannot hold the app (or the agent) indefinitely
+    private static let maxWallSeconds = 300.0
 
     func simulate(_ arguments: [String: Any]) throws -> Any {
         guard let duration = try Self.number(arguments["duration"], "duration"), duration > 0 else {
@@ -556,10 +562,11 @@ public final class CircuitSession {
         let points = max(2, min(5000, (arguments["points"] as? NSNumber)?.intValue ?? 200))
         let timeStep = try Self.number(arguments["time_step"], "time_step") ?? min(Pacing.suggest(for: circuit).timeStep, duration / 400)
         guard timeStep > 0 else { throw ToolError("\"time_step\" should be positive") }
-        let steps = Int((duration / timeStep).rounded(.up))
-        guard steps <= Self.maxSteps else {
-            throw ToolError("That is \(steps) steps; at most \(Self.maxSteps). Use a shorter duration or a longer time step.")
+        let stepCount = (duration / timeStep).rounded(.up)
+        guard stepCount.isFinite, stepCount <= Double(Self.maxSteps) else {
+            throw ToolError("That is \(stepCount) steps; at most \(Self.maxSteps). Use a shorter duration or a longer time step.")
         }
+        let steps = max(1, Int(stepCount))
 
         let simulator: Simulator
         if arguments["continue"] as? Bool == true, let live = liveSimulator {
@@ -576,8 +583,9 @@ public final class CircuitSession {
         let start = simulator.time
         var traces = probes.map { _ in Trace() }
         let wallStart = Date()
-        let stride = max(1, steps / points)
+        let stride = max(1, (steps + points - 1) / points)
         let keepEvery = max(1, steps / 200_000)
+        var truncated = false
         for step in 1...steps {
             // events take effect from the first step that ends at or after their time (relative to this run's start)
             while nextEvent < events.count && events[nextEvent].at <= simulator.time - start + timeStep / 2 {
@@ -587,6 +595,10 @@ public final class CircuitSession {
             }
             simulator.step()
             if simulator.isFailed { break }
+            if step % 4096 == 0 && Date().timeIntervalSince(wallStart) > Self.maxWallSeconds {
+                truncated = true
+                break
+            }
             let record = step % stride == 0 || step == steps
             let keep = step % keepEvery == 0
             for k in probes.indices {
@@ -598,6 +610,7 @@ public final class CircuitSession {
             "start_time": start, "end_time": simulator.time, "time_step": timeStep, "steps": steps,
             "wall_seconds": Date().timeIntervalSince(wallStart),
             "convergence_failures": simulator.convergenceFailures,
+            "truncated": truncated,
         ]
         if simulator.isFailed || !simulator.problems.isEmpty { result["problems"] = simulator.problems }
         var outputs: [String: Any] = [:]
@@ -615,7 +628,7 @@ public final class CircuitSession {
             let at = try number(entry["at"], "at") ?? 0
             if entry["off"] as? Bool == true {
                 events.append((at, nil))
-            } else if let number = entry["note"] as? NSNumber {
+            } else if let number = entry["note"] as? NSNumber, number.doubleValue.isFinite, abs(number.doubleValue) < 1000 {
                 events.append((at, number.doubleValue))
             } else if let name = entry["note"] as? String, let note = noteNumber(name) {
                 events.append((at, note))
@@ -669,16 +682,22 @@ public final class CircuitSession {
         let sourceIndex = try index(ofPart: sourceName)
         guard circuit.elements[sourceIndex].kind == .acVoltage else { throw ToolError("\(sourceName) should be an AC voltage source") }
         let output = try probe(try Self.text(arguments, "output"))
-        var frequencies = (arguments["frequencies"] as? [Any])?.compactMap { ($0 as? NSNumber)?.doubleValue } ?? []
+        var frequencies = try (arguments["frequencies"] as? [Any])?.map { try Self.number($0, "frequencies") ?? 0 } ?? []
         if frequencies.isEmpty {
             let start = try Self.number(arguments["start"], "start") ?? 10
             let stop = try Self.number(arguments["stop"], "stop") ?? 100_000
-            let perDecade = max(1, (arguments["points_per_decade"] as? NSNumber)?.intValue ?? 5)
+            let perDecade = max(1, min(200, (arguments["points_per_decade"] as? NSNumber)?.intValue ?? 5))
             guard start > 0, stop > start else { throw ToolError("Need 0 < start < stop") }
-            let count = Int((log10(stop / start) * Double(perDecade)).rounded()) + 1
-            frequencies = (0..<count).map { start * pow(10, Double($0) / Double(perDecade)) }
+            let count = (log10(stop / start) * Double(perDecade)).rounded() + 1
+            guard count.isFinite, count <= 200 else { throw ToolError("At most 200 frequencies") }
+            frequencies = (0..<Int(count)).map { start * pow(10, Double($0) / Double(perDecade)) }
         }
         guard frequencies.count <= 200 else { throw ToolError("At most 200 frequencies") }
+        guard frequencies.allSatisfy({ $0.isFinite && $0 > 0 && $0 < 1e10 }) else {
+            throw ToolError("Frequencies should be positive and below 10 GHz")
+        }
+        let wallStart = Date()
+        var previousPhase: Double?
         // long enough for the slowest part of the circuit to settle, and at least 10 cycles
         let settle = 5 * (Pacing.slowestTimeScale(of: circuitWithoutSources()) ?? 0)
         let input = Probe(label: sourceName) { $0.voltageAcross(sourceIndex) }
@@ -688,11 +707,16 @@ public final class CircuitSession {
             test.elements[sourceIndex][param: "frequency"] = frequency
             let samplesPerCycle = 64
             let timeStep = 1 / (frequency * Double(samplesPerCycle))
-            let settleCycles = max(10, Int((settle * frequency).rounded(.up)))
             let measureCycles = 4
+            // settle for the slowest part of the circuit, within the step limit (high frequencies take the most steps)
+            let wanted = max(10, (settle * frequency).rounded(.up))
+            let affordable = Double(Self.maxSteps / samplesPerCycle - measureCycles)
+            let settled = wanted.isFinite && wanted <= affordable
+            let settleCycles = Int(settled ? wanted : max(10, affordable))
             let total = (settleCycles + measureCycles) * samplesPerCycle
-            guard total <= Self.maxSteps else {
-                throw ToolError("Settling at \(frequency) Hz would take \(total) steps; raise the start frequency")
+            guard Date().timeIntervalSince(wallStart) < 300 else {
+                rows.append(["frequency": frequency, "error": "skipped: the sweep ran out of time (5 minutes)"])
+                continue
             }
             let simulator = Simulator(circuit: test, timeStep: timeStep)
             var inPhase = (0.0, 0.0)
@@ -703,6 +727,7 @@ public final class CircuitSession {
                 let angle = 2 * Double.pi * frequency * simulator.time
                 let x = input.read(simulator)
                 let y = output.read(simulator)
+                if simulator.isFailed { break }
                 inPhase.0 += x * cos(angle)
                 inPhase.1 -= x * sin(angle)
                 outPhase.0 += y * cos(angle)
@@ -711,10 +736,22 @@ public final class CircuitSession {
             let inputAmplitude = hypot(inPhase.0, inPhase.1)
             let outputAmplitude = hypot(outPhase.0, outPhase.1)
             let gain = inputAmplitude > 0 ? outputAmplitude / inputAmplitude : 0
+            if simulator.isFailed {
+                rows.append(["frequency": frequency, "error": simulator.problems.joined(separator: " ")])
+                continue
+            }
             var phase = (atan2(outPhase.1, outPhase.0) - atan2(inPhase.1, inPhase.0)) * 180 / .pi
             while phase > 180 { phase -= 360 }
             while phase <= -180 { phase += 360 }
-            rows.append(["frequency": frequency, "gain": gain, "gain_db": 20 * log10(max(gain, 1e-12)), "phase_deg": phase])
+            // continuous from one frequency to the next, so a third-order roll-off reads −270°, not +90°
+            if let previous = previousPhase {
+                while phase - previous > 180 { phase -= 360 }
+                while phase - previous < -180 { phase += 360 }
+            }
+            previousPhase = phase
+            var row: [String: Any] = ["frequency": frequency, "gain": gain, "gain_db": 20 * log10(max(gain, 1e-12)), "phase_deg": phase]
+            if !settled { row["settled"] = false }
+            rows.append(row)
         }
         return ["source": sourceName, "output": output.label, "points": rows]
     }

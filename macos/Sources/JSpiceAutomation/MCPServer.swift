@@ -24,7 +24,11 @@ public final class MCPServer {
             return encode(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Parse error"]])
         }
         if let batch = object as? [Any] {
-            let replies = batch.compactMap { $0 as? [String: Any] }.compactMap { reply(to: $0) }
+            guard !batch.isEmpty else { return encode(Self.invalidRequest(id: NSNull())) }
+            let replies = batch.compactMap { entry -> [String: Any]? in
+                guard let message = entry as? [String: Any] else { return Self.invalidRequest(id: NSNull()) }
+                return reply(to: message)
+            }
             return replies.isEmpty ? nil : encode(replies)
         }
         guard let message = object as? [String: Any] else {
@@ -33,10 +37,14 @@ public final class MCPServer {
         return reply(to: message).flatMap { encode($0) }
     }
 
+    private static func invalidRequest(id: Any) -> [String: Any] {
+        ["jsonrpc": "2.0", "id": id, "error": ["code": -32600, "message": "Invalid request"]]
+    }
+
     private func reply(to message: [String: Any]) -> [String: Any]? {
-        guard let method = message["method"] as? String else { return nil }
-        // notifications have no id and get no reply
+        // notifications have no id and get no reply; a request without a method is answered with an error
         guard let id = message["id"] else { return nil }
+        guard let method = message["method"] as? String else { return Self.invalidRequest(id: id) }
         let params = message["params"] as? [String: Any] ?? [:]
         func result(_ value: Any) -> [String: Any] { ["jsonrpc": "2.0", "id": id, "result": value] }
         func failure(_ code: Int, _ text: String) -> [String: Any] {

@@ -58,6 +58,21 @@ final class AutomationTests: XCTestCase {
         XCTAssertTrue((ota["models"] as? [[String: Any]])?.contains { $0["name"] as? String == "LM13700" } ?? false)
     }
 
+    func testRequestsWithoutAMethodGetAnError() throws {
+        let server = MCPServer(session: CircuitSession())
+        let reply = json(try XCTUnwrap(server.handle(#"{"jsonrpc":"2.0","id":7}"#)))
+        XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? Int, -32600)
+        XCTAssertNotNil(server.handle("[]"), "an empty batch is an invalid request")
+    }
+
+    func testSimulateRefusesStepCountsItCannotCount() throws {
+        let session = CircuitSession()
+        _ = try session.call("load_example", arguments: ["id": "rc"])
+        XCTAssertThrowsError(try session.call("simulate", arguments: ["duration": 1e30, "probes": ["V(GND)"]]))
+        XCTAssertThrowsError(try session.call("simulate", arguments: ["duration": 1e4, "time_step": "1f", "probes": ["V(GND)"]]))
+        XCTAssertThrowsError(try session.call("set_sequence", arguments: ["steps": ["inf"]]))
+    }
+
     func testFrequencyResponseOfAnRCLowPass() throws {
         let server = MCPServer(session: CircuitSession())
         let (_, buildError) = try call(server, "build_circuit", ["parts": lowPass])

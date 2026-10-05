@@ -47,7 +47,8 @@ public enum SchematicLayout {
 
     static func isRailName(_ name: String) -> Bool {
         let s = name.uppercased().replacingOccurrences(of: " ", with: "")
-        if s.range(of: #"^[+-]?\d+(\.\d+)?V?$"#, options: .regularExpression) != nil { return true }
+        // "+15", "-15V", "9V" are supplies; plain numbers are SPICE node names
+        if s.range(of: #"^[+-]\d+(\.\d+)?V?$|^\d+(\.\d+)?V$"#, options: .regularExpression) != nil { return true }
         if s.range(of: #"^V(CC|DD|EE|SS)\d*$"#, options: .regularExpression) != nil { return true }
         return ["V+", "V-", "+V", "-V", "VBAT", "VPOS", "VNEG", "VS"].contains(s)
     }
@@ -381,10 +382,13 @@ public enum SchematicLayout {
         private func put(_ p: Part, _ a: GridPoint, _ b: GridPoint, flipped: Bool = false, step: GridPoint = GridPoint(0, 1)) {
             var a = a
             var b = b
-            for _ in 0..<40 {
-                if fits(p, a, b, flipped) { break }
+            // the parts placed so far take a finite space, so a free place always comes; never settle on a taken one,
+            // which would join the nets of two parts' terminals
+            var tries = 0
+            while !fits(p, a, b, flipped) && tries < 100_000 {
                 a = a + step
                 b = b + step
+                tries += 1
             }
             p.a = a
             p.b = b
@@ -762,7 +766,8 @@ public enum SchematicLayout {
                 var paths: [[GridPoint]] = []
                 var ok = true
                 while !remaining.isEmpty {
-                    remaining.sort { distance($0, to: tree) < distance($1, to: tree) }
+                    let distances = Dictionary(remaining.map { ($0, distance($0, to: tree)) }, uniquingKeysWith: min)
+                    remaining.sort { distances[$0, default: 0] < distances[$1, default: 0] }
                     let source = remaining.removeFirst()
                     guard let path = search(from: source, to: tree, net: net, box: box) else {
                         ok = false
@@ -811,7 +816,19 @@ public enum SchematicLayout {
         /// A* from `source` to any point of `targets`, on the grid, with costs for bends, crossings and closeness
         private func search(from source: GridPoint, to targets: Set<GridPoint>, net: String,
                             box: (minX: Int, minY: Int, maxX: Int, maxY: Int)) -> [GridPoint]? {
-            func estimate(_ p: GridPoint) -> Double { Double(distance(p, to: targets)) }
+            // distance to the targets' bounding box: never more than the distance to the nearest target, so the search
+            // still finds the best path, and it costs nothing to work out at each of the many points it looks at
+            var (lowX, highX, lowY, highY) = (Int.max, Int.min, Int.max, Int.min)
+            for t in targets {
+                lowX = min(lowX, t.x)
+                highX = max(highX, t.x)
+                lowY = min(lowY, t.y)
+                highY = max(highY, t.y)
+            }
+            func estimate(_ p: GridPoint) -> Double {
+                guard lowX <= highX else { return 0 }
+                return Double(max(lowX - p.x, 0, p.x - highX) + max(lowY - p.y, 0, p.y - highY))
+            }
             let start = RouteState(point: source, direction: 4)
             var best: [RouteState: Double] = [start: 0]
             var previous: [RouteState: RouteState] = [:]
