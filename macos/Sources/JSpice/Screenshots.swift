@@ -61,6 +61,8 @@ enum ScreenshotRunner {
         Shot(name: "37-chipvoice-dark", example: "chipvoice", dark: true, seconds: 1, select: .vcf),
         Shot(name: "38-random-light", example: "random", dark: false, seconds: 1.5, select: .sampleHold),
         Shot(name: "39-pwm-dark", example: "pwm", dark: true, seconds: 1, select: .comparator),
+        Shot(name: "40-arduino-knob-light", example: "arduino-knob", dark: false, seconds: 1, select: .atmega328p),
+        Shot(name: "41-arduino-melody-dark", example: "arduino-melody", dark: true, seconds: 1, select: .atmega328p),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {
