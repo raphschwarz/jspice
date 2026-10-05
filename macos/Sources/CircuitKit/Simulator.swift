@@ -124,6 +124,10 @@ public final class Simulator {
     private var stepCarry = 0.0
     /// Extra conductance across every junction while gmin stepping, otherwise zero
     private var junctionConductance = 0.0
+    /// Set when this Newton iteration held a junction, gate or op-amp input back from the solution: the iteration is then
+    /// not a converged one, however little the node voltages changed (a junction with a tiny saturation current barely
+    /// conducts while it is held back, so the voltages can look settled while the junction is still catching up)
+    private var limiting = false
     private var traces: [UUID: ScopeTrace] = [:]
 
     static let thermalVoltage = 0.025852
@@ -418,6 +422,7 @@ public final class Simulator {
             Self.copy(baseMatrix, into: &workMatrix)
             Self.copy(rhs, into: &workVector)
             stampMemristors(&workMatrix, m)
+            limiting = false
             if hasNonlinear { stampNonlinear(&workMatrix, &workVector, m) }
             guard LUSolver.solveInPlace(&workMatrix, &workVector, size: m) else { fail(); return false }
             var change = 0.0
@@ -428,7 +433,7 @@ public final class Simulator {
             }
             Self.copy(workVector, into: &x)
             if !hasNonlinear { return true }
-            if iteration > 0 && change < 1e-9 { return true }
+            if iteration > 0 && change < 1e-9 && !limiting { return true }
         }
         return false
     }
@@ -805,6 +810,7 @@ public final class Simulator {
     /// Junction voltage limiting (as in SPICE's pnjlim), so Newton does not overshoot into exp() overflow
     private func limitJunction(_ new: Double, old: Double, nvt: Double, critical: Double) -> Double {
         guard new > critical && abs(new - old) > 2 * nvt else { return new }
+        limiting = true
         if old > 0 {
             let argument = 1 + (new - old) / nvt
             return argument > 0 ? old + nvt * log(argument) : critical
@@ -1016,6 +1022,7 @@ public final class Simulator {
                 var vgs = voltage(gate) - voltage(source)
                 var vds = voltage(drain) - voltage(source)
                 // limit the gate voltage change per iteration
+                if abs(vgs - limitedVoltage[i]) > 0.5 || abs(vds - limitedVoltage2[i]) > 2 { limiting = true }
                 vgs = limitedVoltage[i] + max(-0.5, min(0.5, vgs - limitedVoltage[i]))
                 vds = limitedVoltage2[i] + max(-2, min(2, vds - limitedVoltage2[i]))
                 limitedVoltage[i] = vgs
@@ -1055,6 +1062,7 @@ public final class Simulator {
                 let range = opAmpLinearRange(i)
                 if vd * limitedVoltage[i] < 0 && abs(vd) > range && opAmpCrossings[i] < 3 {
                     opAmpCrossings[i] += 1
+                    limiting = true
                     vd = vd > 0 ? range : -range
                 }
                 limitedVoltage[i] = vd

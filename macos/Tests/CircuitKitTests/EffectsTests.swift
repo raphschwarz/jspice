@@ -100,24 +100,36 @@ final class EffectsTests: XCTestCase {
         let circuit = Examples.fuzz.circuit
         let simulator = Simulator(circuit: circuit, timeStep: 1e-5)
         let (q2, speaker) = (index(circuit, "Q2"), index(circuit, "SPK1"))
-        var output: [Double] = []
-        while simulator.time < 0.4 {
+        // twenty cycles of the 196 Hz input, once the coupling capacitors have charged
+        let start = 0.3
+        let end = start + 20 / 196.0
+        var output: [(t: Double, v: Double)] = []
+        var collector = 0.0
+        while simulator.time < end {
             simulator.step()
-            if simulator.time > 0.3 { output.append(simulator.voltageAcross(speaker)) }
+            if simulator.time > start {
+                output.append((simulator.time, simulator.voltageAcross(speaker)))
+                collector += simulator.terminalVoltages(q2)[1]
+            }
         }
-        let mean = output.reduce(0, +) / Double(output.count)
-        let centred = output.map { $0 - mean }
-        let (top, bottom) = (centred.max() ?? 0, centred.min() ?? 0)
-        let peak = max(top, -bottom)
-        // near either of its own peaks: a sine spends 29 % of its time above 90 % of its peak, a fuzzed one much more
-        let high = centred.filter { $0 > 0.9 * top || $0 < 0.9 * bottom }.count
         XCTAssertFalse(simulator.isFailed)
-        let collector = simulator.terminalVoltages(q2)[1]
-        XCTAssertGreaterThan(collector, 1, "Q2 conducts but is not saturated")
-        XCTAssertLessThan(collector, 8.9)
-        XCTAssertGreaterThan(peak, 0.05, "it is loud")
-        // a sine spends a third of its time above 70 % of its peak; a fuzzed one, most of it
-        XCTAssertGreaterThan(Double(high) / Double(output.count), 0.5, "squared off")
+        collector /= Double(output.count)
+        XCTAssertGreaterThan(collector, 1, "on average Q2 conducts but is not saturated")
+        XCTAssertLessThan(collector, 8.5)
+        // distortion: what is left after taking out the best-fitting 196 Hz sine
+        let mean = output.map(\.v).reduce(0, +) / Double(output.count)
+        let w = 2 * Double.pi * 196
+        var (a, b, power) = (0.0, 0.0, 0.0)
+        for (t, v) in output {
+            a += (v - mean) * sin(w * t)
+            b += (v - mean) * cos(w * t)
+            power += (v - mean) * (v - mean)
+        }
+        let n = Double(output.count)
+        let fundamental = 2 * (a * a + b * b) / (n * n)
+        power /= n
+        XCTAssertGreaterThan(power.squareRoot(), 0.02, "it is loud")
+        XCTAssertGreaterThan(((power - fundamental) / fundamental).squareRoot(), 0.3, "strongly distorted: rich in harmonics")
     }
 
     func testAudioTaperPotentiometer() throws {
