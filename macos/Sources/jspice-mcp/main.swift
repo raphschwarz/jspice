@@ -47,6 +47,63 @@ func benchmark(seconds: Double, ids: [String]) {
     }
 }
 
+/// Holds what a background task produced, for the main code waiting on it
+final class Outcome: @unchecked Sendable {
+    var error: Error?
+}
+
+// --install-chip-support [avr]: installs a chip family's compiler and core, as the app's Chip Support window does
+if let flag = arguments.firstIndex(of: "--install-chip-support") {
+    let name = flag + 1 < arguments.count ? arguments[flag + 1] : ChipFamily.avr.rawValue
+    guard let family = ChipFamily(rawValue: name) else {
+        log("unknown chip family \(name); known: \(ChipFamily.allCases.map(\.rawValue).joined(separator: ", "))")
+        exit(2)
+    }
+    let outcome = Outcome()
+    let done = DispatchSemaphore(value: 0)
+    Task {
+        do {
+            var last = -1
+            try await ChipSupport.install(family) { progress in
+                let percent = Int(progress.fraction * 100)
+                if percent / 10 != last / 10 || progress.fraction >= 1 {
+                    last = percent
+                    log("\(percent)% \(progress.message)")
+                }
+            }
+        } catch {
+            outcome.error = error
+        }
+        done.signal()
+    }
+    done.wait()
+    if let error = outcome.error {
+        log("\(error)")
+        exit(1)
+    }
+    exit(0)
+}
+
+// --compile-sketch file.ino [out.bin]: compiles an Arduino sketch for the ATmega328P
+if let flag = arguments.firstIndex(of: "--compile-sketch"), flag + 1 < arguments.count {
+    guard let toolchain = AVRToolchain.find() else {
+        log("no AVR toolchain: run jspice-mcp --install-chip-support avr")
+        exit(1)
+    }
+    guard let source = try? String(contentsOfFile: arguments[flag + 1], encoding: .utf8) else {
+        log("cannot read \(arguments[flag + 1])")
+        exit(1)
+    }
+    let result = SketchBuilder.build(source, toolchain: toolchain)
+    guard let firmware = result.firmware else {
+        log(result.log)
+        exit(1)
+    }
+    if flag + 2 < arguments.count { try? firmware.write(to: URL(fileURLWithPath: arguments[flag + 2])) }
+    print("\(firmware.count) bytes")
+    exit(0)
+}
+
 if let flag = arguments.firstIndex(of: "--benchmark") {
     var rest = Array(arguments[(flag + 1)...])
     var seconds = 1.0

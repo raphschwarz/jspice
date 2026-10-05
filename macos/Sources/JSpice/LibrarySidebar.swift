@@ -41,6 +41,9 @@ enum SymbolIcons {
         case .timer555:
             element = Element(kind: kind, a: .zero, b: GridPoint(0, 5))
             (a, b, unit) = (CGPoint(x: 17, y: -0.5), CGPoint(x: 17, y: 22), 4.5)
+        case .atmega328p:
+            element = Element(kind: kind, a: .zero, b: GridPoint(0, 13))
+            (a, b, unit) = (CGPoint(x: 17, y: 1.2), CGPoint(x: 17, y: 20.8), 1.5)
         case .analogSwitch:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 2, y: 16), CGPoint(x: 32, y: 16), 6.5)
@@ -56,7 +59,7 @@ enum SymbolIcons {
         switch kind {
         case .potentiometer, .analogSwitch:
             posts = [a, b, CGPoint(x: (a.x + b.x) / 2, y: 2)]
-        case .ota, .timer555:
+        case .ota, .timer555, .atmega328p:
             // the element's own terminal layout, scaled into the icon
             posts = element.posts.map { CGPoint(x: a.x + CGFloat($0.x) * unit, y: a.y + CGFloat($0.y) * unit) }
         default:

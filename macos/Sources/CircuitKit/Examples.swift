@@ -42,7 +42,8 @@ public enum Examples {
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
-        ringModulator, chorus, fuzz, overdrive, lowpassGate, memristorHysteresis, memristorPulses,
+        ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody,
+        memristorHysteresis, memristorPulses,
     ]
 
     /// A circuit drawn from a netlist by the tidy layout, with scopes on the named parts
@@ -341,6 +342,61 @@ public enum Examples {
             NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "pulse", "b": "GND"]),
             NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 12], connections: ["plus": "pulse", "minus": "GND"]),
         ], scopes: [("LFO", .voltage), ("SPK1", .voltage)]))
+
+    // MARK: Microcontrollers
+
+    /// An ATmega328P with a sketch and its firmware
+    static func arduino(_ name: String = "U1", code: String, firmware: String, connections: [String: String]) -> NetlistPart {
+        var part = NetlistPart(kind: .atmega328p, name: name, connections: connections)
+        part.code = code
+        part.firmware = ArduinoSketches.firmware(firmware)
+        return part
+    }
+
+    static let arduinoBlink = Example(
+        id: "arduino-blink", title: "Arduino: Blink",
+        summary: "An ATmega328P runs the Blink sketch: the LED on pin 13 flashes once a second. Select the chip to read and change its code.",
+        symbol: "cpu",
+        circuit: drawn([
+            arduino(code: ArduinoSketches.blinkCode, firmware: ArduinoSketches.blinkFirmware, connections: ["d13": "pin13"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 220], connections: ["a": "pin13", "b": "anode"]),
+            NetlistPart(kind: .led, name: "D1", connections: ["anode": "anode", "cathode": "GND"]),
+        ], scopes: [("D1", .current)]))
+
+    static let arduinoFade = Example(
+        id: "arduino-fade", title: "Arduino: PWM fade",
+        summary: "analogWrite() on pin 9 fades an LED with 490 Hz PWM; an RC filter averages the pulses into a smooth voltage.",
+        symbol: "light.max",
+        circuit: drawn([
+            arduino(code: ArduinoSketches.fadeCode, firmware: ArduinoSketches.fadeFirmware, connections: ["d9": "pwm"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 220], connections: ["a": "pwm", "b": "anode"]),
+            NetlistPart(kind: .led, name: "D1", params: ["color": 1], connections: ["anode": "anode", "cathode": "GND"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "pwm", "b": "average"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 2.2e-6], connections: ["a": "average", "b": "GND"]),
+        ], scopes: [("D1", .current), ("C1", .voltage)]))
+
+    static let arduinoKnob = Example(
+        id: "arduino-knob", title: "Arduino: knob and LED",
+        summary: "analogRead() measures the pot on A0 and analogWrite() sets the LED's brightness to match; the readings go to the serial monitor. Turn the pot.",
+        symbol: "dial.medium",
+        circuit: drawn([
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 5], connections: ["plus": "+5V", "minus": "GND"]),
+            NetlistPart(kind: .potentiometer, name: "POT", params: ["resistance": 10_000, "position": 0.6],
+                        connections: ["a": "GND", "b": "+5V", "wiper": "knob"]),
+            arduino(code: ArduinoSketches.knobCode, firmware: ArduinoSketches.knobFirmware, connections: ["a0": "knob", "d9": "pwm"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 220], connections: ["a": "pwm", "b": "anode"]),
+            NetlistPart(kind: .led, name: "D1", params: ["color": 4], connections: ["anode": "anode", "cathode": "GND"]),
+        ], scopes: [("POT", .voltage), ("D1", .current)]))
+
+    static let arduinoMelody = Example(
+        id: "arduino-melody", title: "Arduino: melody (sound)",
+        summary: "tone() plays a tune on pin 8 through the speaker. Turn on sound.",
+        symbol: "music.note",
+        circuit: drawn([
+            arduino(code: ArduinoSketches.melodyCode, firmware: ArduinoSketches.melodyFirmware, connections: ["d8": "pin8"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 1000], connections: ["a": "pin8", "b": "spk"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 5], connections: ["plus": "spk", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage)]))
 
     // MARK: Effects
 

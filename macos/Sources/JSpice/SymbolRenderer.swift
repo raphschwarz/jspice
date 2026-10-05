@@ -77,7 +77,7 @@ enum SymbolRenderer {
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
-             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p:
             return 0
         case .schmittInverter: return 1.8
         case .analogSwitch: return 1.6
@@ -110,6 +110,8 @@ enum SymbolRenderer {
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
+        case .atmega328p:
+            drawMicrocontroller(posts: posts, at: a, b, unit: u, style: style, in: ctx)
         case .analogSwitch:
             drawTwoTerminal(element, at: a, b, unit: u, style: style, in: ctx)
             if posts.count == 3 { drawControl(from: posts[2], at: a, b, unit: u, style: style, in: ctx) }
@@ -302,7 +304,7 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: x0 + 0.2 * u, y: -0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
-             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p:
             break
         }
 
@@ -931,6 +933,66 @@ enum SymbolRenderer {
         return ([point(0.3, 2), point(4.7, 2), point(4.7, -2), point(0.3, -2)], along, side)
     }
 
+    /// Box of a microcontroller in screen space: corners, unit vector along the chip, unit vector towards its digital pins
+    static func chipBox(posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat) -> (corners: [CGPoint], along: CGPoint, side: CGPoint)? {
+        guard posts.count == 20 else { return nil }
+        let length = hypot(b.x - a.x, b.y - a.y)
+        guard length > 0.5 else { return nil }
+        let along = CGPoint(x: (b.x - a.x) / length, y: (b.y - a.y) / length)
+        // D0 is three units to the side of `a`
+        let side = CGPoint(x: (posts[0].x - a.x) / (3 * u), y: (posts[0].y - a.y) / (3 * u))
+        func point(_ t: CGFloat, _ s: CGFloat) -> CGPoint {
+            CGPoint(x: a.x + along.x * t * u + side.x * s * u, y: a.y + along.y * t * u + side.y * s * u)
+        }
+        return ([point(-0.7, 2), point(13.7, 2), point(13.7, -2), point(-0.7, -2)], along, side)
+    }
+
+    /// A microcontroller: a box with a notch, its digital pins down one side and its analog inputs down the other
+    private static func drawMicrocontroller(posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                            in ctx: CGContext) {
+        guard let box = chipBox(posts: posts, at: a, b, unit: u) else { return }
+        let colors = style.terminalColors.count == 20 ? style.terminalColors : Array(repeating: style.fill, count: 20)
+        let outline = CGMutablePath()
+        outline.addLines(between: box.corners)
+        outline.closeSubpath()
+        ctx.saveGState()
+        ctx.addPath(outline)
+        ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.08).cgColor)
+        ctx.fillPath()
+        // the notch that marks pin 1's end
+        let top = CGPoint(x: (box.corners[0].x + box.corners[3].x) / 2, y: (box.corners[0].y + box.corners[3].y) / 2)
+        outline.addArc(center: top, radius: 0.45 * u, startAngle: atan2(box.side.y, box.side.x),
+                       endAngle: atan2(box.side.y, box.side.x) + .pi, clockwise: box.along.x * box.side.y - box.along.y * box.side.x > 0)
+        ctx.addPath(outline)
+        ctx.setStrokeColor(style.fill.cgColor)
+        ctx.setLineWidth(style.lineWidth)
+        ctx.setLineJoin(.round)
+        ctx.setLineCap(.round)
+        ctx.strokePath()
+        for (k, pin) in posts.enumerated() {
+            let direction: CGFloat = k < 14 ? 1 : -1
+            let inner = CGPoint(x: pin.x - box.side.x * direction * u, y: pin.y - box.side.y * direction * u)
+            ctx.setStrokeColor(colors[k].cgColor)
+            ctx.move(to: pin)
+            ctx.addLine(to: inner)
+            ctx.strokePath()
+            guard u >= 8 else { continue }
+            let label = CGPoint(x: inner.x - box.side.x * direction * 0.2 * u, y: inner.y - box.side.y * direction * 0.2 * u)
+            let inward = CGPoint(x: -box.side.x * direction, y: -box.side.y * direction)
+            let anchor: CGFloat = inward.x > 0.5 ? 0 : (inward.x < -0.5 ? 1 : 0.5)
+            let name = k < 14 ? "D\(k)" : "A\(k - 14)"
+            drawText(name, at: label, size: 0.5 * u, color: style.fill.withAlpha(0.75), anchor: anchor, in: ctx)
+        }
+        if u >= 8 {
+            let centre = CGPoint(x: (box.corners[0].x + box.corners[2].x) / 2, y: (box.corners[0].y + box.corners[2].y) / 2)
+            drawText("ATmega", at: CGPoint(x: centre.x, y: centre.y - 0.45 * u), size: 0.62 * u, color: style.fill, anchor: 0.5,
+                     bold: true, in: ctx)
+            drawText("328P", at: CGPoint(x: centre.x, y: centre.y + 0.45 * u), size: 0.62 * u, color: style.fill, anchor: 0.5,
+                     bold: true, in: ctx)
+        }
+        ctx.restoreGState()
+    }
+
     /// 555 timer: a box with its eight pins, labelled
     private static func drawTimer(posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
                                   in ctx: CGContext) {
@@ -1040,6 +1102,16 @@ enum SymbolRenderer {
         case .ota:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
+        case .atmega328p:
+            guard let box = chipBox(posts: posts, at: a, b, unit: u) else { return [(a, b)] }
+            let c = box.corners
+            var result = [(c[0], c[1]), (c[1], c[2]), (c[2], c[3]), (c[3], c[0])]
+            for k in 1...9 {
+                let t = CGFloat(k) / 10
+                result.append((CGPoint(x: c[0].x + (c[1].x - c[0].x) * t, y: c[0].y + (c[1].y - c[0].y) * t),
+                               CGPoint(x: c[3].x + (c[2].x - c[3].x) * t, y: c[3].y + (c[2].y - c[3].y) * t)))
+            }
+            return result
         case .timer555:
             guard let box = timerBox(posts: posts, at: a, b, unit: u) else { return [(a, b)] }
             let c = box.corners
@@ -1063,7 +1135,7 @@ enum SymbolRenderer {
     static func dotPath(_ element: Element, a: CGPoint, b: CGPoint, posts: [CGPoint], unit u: CGFloat)
         -> (from: CGPoint, to: CGPoint, hidden: ClosedRange<CGFloat>?)? {
         switch element.kind {
-        case .ground, .netLabel, .probe:
+        case .ground, .netLabel, .probe, .atmega328p:
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil

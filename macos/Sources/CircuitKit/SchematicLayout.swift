@@ -33,12 +33,14 @@ public enum SchematicLayout {
         .potentiometer: ["a", "b"], .analogSwitch: ["a", "control"], .multiplier: ["x", "y"], .delayLine: ["in", "ctrl"],
         .vactrol: ["anode"], .comparator: ["minus", "plus"], .vco: ["cv", "pw"], .vcf: ["in", "cv"], .envelope: ["gate", "trig"],
         .vca: ["in", "cv"], .sampleHold: ["in", "trig"], .divider: ["clock", "reset"],
+        .atmega328p: ["a0", "a1", "a2", "a3", "a4", "a5"],
     ]
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .npn: ["collector", "emitter"],
         .pnp: ["collector", "emitter"], .nmos: ["drain", "source"], .pmos: ["drain", "source"], .njfet: ["drain", "source"],
         .potentiometer: ["wiper"], .analogSwitch: ["b"], .multiplier: ["out"], .delayLine: ["out"], .vactrol: ["b"],
         .comparator: ["out"], .vco: ["out"], .vcf: ["out"], .envelope: ["out"], .vca: ["out"], .sampleHold: ["out"], .divider: ["out"],
+        .atmega328p: (0...13).map { "d\($0)" },
     ]
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
                                             .keyboardGate]
@@ -75,6 +77,7 @@ public enum SchematicLayout {
             return frame(0...3, -2...2)
         case .vactrol: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
+        case .atmega328p: return frame(0...13, -2...2)
         default:
             let length = abs(e.b.x - e.a.x) + abs(e.b.y - e.a.y)
             var result = Set<GridPoint>()
@@ -118,6 +121,8 @@ public enum SchematicLayout {
         var name: String
         let params: [String: Double]
         let closed: Bool
+        let code: String?
+        let firmware: Data?
         var connections: [Int: String]
         var role = Role.orphan
         var a: GridPoint?
@@ -135,6 +140,8 @@ public enum SchematicLayout {
             for spec in part.kind.params where params[spec.key] == nil { params[spec.key] = spec.defaultValue }
             self.params = params
             closed = part.closed
+            code = part.code
+            firmware = part.firmware
             self.connections = connections
         }
 
@@ -146,7 +153,10 @@ public enum SchematicLayout {
         var nets: [String] { connections.keys.sorted().compactMap { connections[$0] } }
 
         var element: Element {
-            Element(id: id, kind: kind, name: name, a: a ?? .zero, b: b, params: params, closed: closed, flipped: flipped)
+            var element = Element(id: id, kind: kind, name: name, a: a ?? .zero, b: b, params: params, closed: closed, flipped: flipped)
+            element.code = code
+            element.firmware = firmware
+            return element
         }
 
         var posts: [GridPoint] { element.posts }
@@ -478,6 +488,10 @@ public enum SchematicLayout {
                     case .timer555:
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
+                    case .atmega328p:
+                        // analog inputs down the left, digital pins down the right
+                        put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + 13))
+                        width = 6
                     case .potentiometer:
                         put(p, GridPoint(x, vy - 2), GridPoint(x, vy + 2))
                         width = 2
@@ -656,7 +670,7 @@ public enum SchematicLayout {
             if amplifiers.contains(p.kind), posts.prefix(2).contains(point) {
                 return element.axisDirection * -1
             }
-            if p.kind == .timer555 {
+            if p.kind == .timer555 || p.kind == .atmega328p {
                 let perpendicular = element.perpendicular
                 let relative = point - element.a
                 let side = relative.x * perpendicular.x + relative.y * perpendicular.y

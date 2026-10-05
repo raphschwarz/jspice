@@ -312,6 +312,8 @@ final class CircuitCanvasView: NSView {
              .vcf, .envelope, .vca, .sampleHold:
             // the real part it behaves like
             return element.model?.name ?? "Custom"
+        case .atmega328p:
+            return element.firmware == nil ? "ATmega328P · no sketch" : "ATmega328P"
         case .vco:
             let waveform = element.kind.params[0].choices.first { $0.value == element[param: "waveform"].rounded() }?.name ?? ""
             return [element.model?.name ?? "VCO", waveform.lowercased()].joined(separator: " ")
@@ -387,7 +389,7 @@ final class CircuitCanvasView: NSView {
                 anchor = CGPoint(x: b.x + (horizontal ? 0.6 * away * unit : 0), y: b.y)
                 otherSide = horizontal && away < 0
                 horizontal = false
-            } else if element.kind == .timer555 {
+            } else if element.kind == .timer555 || element.kind == .atmega328p {
                 // centred above the chip
                 let points = element.extentPoints.map(screen)
                 anchor = CGPoint(x: (points.map(\.x).min()! + points.map(\.x).max()!) / 2, y: points.map(\.y).min()! - 0.4 * unit)
@@ -413,7 +415,7 @@ final class CircuitCanvasView: NSView {
             switch element.kind {
             // a vertical transistor's collector and emitter leads reach two units to the side
             case _ where element.kind.isTransistor: offset = alongX ? 0.4 * unit : 2.3 * unit
-            case .timer555: offset = 0
+            case .timer555, .atmega328p: offset = 0
             case _ where element.kind.drivesOutput || element.kind == .ota: offset = 1.9 * unit
             case .vactrol: offset = 1.9 * unit
             default: offset = (isProbe ? 1.0 : 1.05) * unit
@@ -922,7 +924,7 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     case .memristor: return [.voltage, .current, .resistance, .power]
     case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
     case .probe, .netLabel, .speaker: return [.voltage]
-    case .ground: return []
+    case .ground, .atmega328p: return []
     case .opAmp, .ota, .timer555, .schmittInverter, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold,
          .divider:
         return [.voltage, .current]

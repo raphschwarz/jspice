@@ -59,7 +59,7 @@ final class AVRTests: XCTestCase {
         avr.pinVoltages = [Double](repeating: 2.5, count: AVR.pinCount)
         avr.run(cycles: 16_000 * 60)
         let text = String(decoding: avr.serialOutput, as: UTF8.self)
-        XCTAssertEqual(text, "flash string\n123458023\n2021822266\n100046\n610\n0.86603\n1.414214\n18.9087\n3141590.00\n-1763.668\n9939\n2306FB5D\n-4294\n101101\n512\n512\n13\n14332\n17636\n20908\n24180\n27456\n30744\n34016\n37288\n40560\n43832\n47120\n50392\n53664\n56936\n")
+        XCTAssertEqual(text, "flash string\r\n123458023\r\n2021822266\r\n100046\r\n610\r\n0.86603\r\n1.414214\r\n18.9087\r\n3141590.00\r\n-1763.668\r\n9939\r\n2306FB5D\r\n-4294\r\n101101\r\n512\r\n512\r\n13\r\n14332\r\n17636\r\n20908\r\n24180\r\n27456\r\n30744\r\n34016\r\n37288\r\n40560\r\n43832\r\n47120\r\n50392\r\n53664\r\n56936\r\n")
     }
 
     func testBlinkTogglesPin13() {

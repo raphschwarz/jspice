@@ -12,6 +12,9 @@ public struct NetlistPart: Sendable {
     public var closed: Bool
     /// Keeps the part's identity (and its scopes) when a circuit is redrawn
     public var id: UUID?
+    /// A microcontroller's sketch and firmware
+    public var code: String?
+    public var firmware: Data?
 
     public init(kind: ElementKind, name: String = "", params: [String: Double] = [:], flipped: Bool = false,
                 connections: [String: String] = [:], closed: Bool = false, id: UUID? = nil) {
@@ -194,8 +197,11 @@ public enum NetlistExtractor {
                 }
                 connections[element.kind.terminalNames[t]] = names[node]
             }
-            parts.append(NetlistPart(kind: element.kind, name: element.name, params: element.params, flipped: element.flipped,
-                                     connections: connections, closed: element.closed, id: element.id))
+            var part = NetlistPart(kind: element.kind, name: element.name, params: element.params, flipped: element.flipped,
+                                   connections: connections, closed: element.closed, id: element.id)
+            part.code = element.code
+            part.firmware = element.firmware
+            parts.append(part)
         }
         return parts
     }

@@ -52,9 +52,17 @@ jobs:
           sample $! 3 -file build/profile.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile.txt | head -45
+      - name: Chip support (installs Arduino's AVR toolchain as the app does, compiles a sketch)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 10
+        run: |
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --install-chip-support avr
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/kitchen.ino build/kitchen.bin
       - name: Test the simulation engine
         timeout-minutes: 15
         # optimised, as the app runs it: audio-rate tests take minutes in a debug build
+        env:
+          JSPICE_REQUIRE_TOOLCHAIN: '1'
         run: swift test -c release -Xswiftc -enable-testing
       - name: Interaction test (draws a circuit with synthesized mouse events)
         if: hashFiles('macos/scripts/bundle.sh') != ''

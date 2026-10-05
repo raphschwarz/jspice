@@ -110,6 +110,12 @@ public final class Simulator {
         var high = false
         var high2 = false
     }
+    /// Microcontrollers' chips by element index (none until a part has firmware), the pin setup the matrix was built
+    /// for, and the fraction of a clock cycle carried to the next step
+    private var chips: [Int: AVR] = [:]
+    private var chipPinStates: [Int: [AVR.PinState]] = [:]
+    private var chipCycleCarry: [Int: Double] = [:]
+    private var chipIndices: [Int] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
     var digitalState: [Bool] = []
     /// Op-amps: how often the input has been pulled back to the linear range in the present Newton solve
@@ -208,6 +214,11 @@ public final class Simulator {
                 l2: limitedVoltage2[i], l3: limitedVoltage3[i], digital: digitalState[i], module: moduleStates[i],
                 noise: noiseState[i], delay: delayHistory[i])
         }
+        // chips keep running through edits that leave their firmware alone
+        var previousChips: [UUID: (firmware: Data?, chip: AVR, carry: Double)] = [:]
+        for (i, chip) in chips where i < circuit.elements.count {
+            previousChips[circuit.elements[i].id] = (circuit.elements[i].firmware, chip, chipCycleCarry[i] ?? 0)
+        }
         // node voltages by place, so an edit does not throw away the solution (a latch keeps its state, and a paused
         // circuit still shows its voltages)
         var previousVoltages: [GridPoint: Double] = [:]
@@ -245,7 +256,7 @@ public final class Simulator {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .comparator, .vco, .vcf, .envelope, .vca,
-                 .sampleHold, .divider: return true
+                 .sampleHold, .divider, .atmega328p: return true
             default: return false
             }
         }
@@ -255,6 +266,21 @@ public final class Simulator {
         }
         delayHistory = [:]
         digitalIndices = indices { $0.isDigital }
+        chipIndices = indices { $0 == .atmega328p }
+        chips = [:]
+        chipPinStates = [:]
+        chipCycleCarry = [:]
+        for i in chipIndices {
+            let element = newCircuit.elements[i]
+            if let previous = previousChips[element.id], previous.firmware == element.firmware {
+                chips[i] = previous.chip
+                chipCycleCarry[i] = previous.carry
+            } else if let firmware = element.firmware {
+                chips[i] = AVR(firmware: [UInt8](firmware))
+            }
+            chips[i]?.supply = constants[i].supply
+            chipPinStates[i] = chips[i]?.pinStates
+        }
         memristorIndices = indices { $0 == .memristor }
         for (i, element) in newCircuit.elements.enumerated() {
             if let state = previous[element.id] {
@@ -373,6 +399,15 @@ public final class Simulator {
         limitedVoltage3 = other.limitedVoltage3
         digitalState = other.digitalState
         moduleStates = other.moduleStates
+        for (i, chip) in chips {
+            guard let source = other.chips[i] else { continue }
+            chip.adopt(source)
+            if let states = other.chipPinStates[i] {
+                if !Self.samePinSetup(states, chipPinStates[i]) { matrixIsCurrent = false }
+                chipPinStates[i] = states
+            }
+            chipCycleCarry[i] = other.chipCycleCarry[i]
+        }
         noiseState = other.noiseState
         convergenceFailures = other.convergenceFailures
         isFailed = other.isFailed
@@ -395,7 +430,12 @@ public final class Simulator {
         problems = topology.problems
         for trace in traces.values { trace.clear() }
         delayHistory = [:]
-        // 555s start low again, and their state is part of the base matrix
+        // 555s start low again, and their state is part of the base matrix; so do the chips' pins
+        for (i, chip) in chips {
+            chip.reset()
+            chipPinStates[i] = chip.pinStates
+            chipCycleCarry[i] = 0
+        }
         matrixIsCurrent = false
         sequenceOwnsKeyboard = false
         currentsAreStale = true
@@ -413,6 +453,7 @@ public final class Simulator {
         }
         circuit = newCircuit
         constants = newCircuit.elements.map { makeConstants($0) }
+        for (i, chip) in chips { chip.supply = constants[i].supply }
         for (i, history) in delayHistory {
             let capacity = delayCapacity(i, timeStep: timeStep)
             if history.values.count != capacity { delayHistory[i] = history.resampled(stepRatio: 1, capacity: capacity) }
@@ -475,6 +516,7 @@ public final class Simulator {
             keyboard.gate = false
             sequenceOwnsKeyboard = false
         }
+        if !chips.isEmpty { runChips() }
         var converged = solve(at: t)
         if isFailed { return }
         // a 555 or Schmitt trigger that switches during the step changes the circuit: solve the step again
@@ -698,6 +740,18 @@ public final class Simulator {
             case .schmittInverter:
                 // output drives towards the hidden supply or ground through its output resistance
                 stampConductance(&matrix, m, nodes[1], 0, 1 / max(element[param: "outputResistance"], 0.1))
+            case .atmega328p:
+                // each output pin drives towards the supply or ground through its resistance; a pull-up is a resistor
+                // to the supply; other inputs draw nothing
+                guard let states = chipPinStates[i] else { continue }
+                let c = constants[i]
+                for (pin, state) in states.enumerated() where pin < nodes.count {
+                    switch state {
+                    case .output: stampConductance(&matrix, m, nodes[pin], 0, c.outputConductance)
+                    case .input(pullUp: true): stampConductance(&matrix, m, nodes[pin], 0, c.onConductance)
+                    case .input: break
+                    }
+                }
             default:
                 break
             }
@@ -791,6 +845,15 @@ public final class Simulator {
             case .schmittInverter:
                 if digitalState[i] {
                     stampCurrent(&rhs, 0, nodes[1], c.supply * c.outputConductance)
+                }
+            case .atmega328p:
+                guard let states = chipPinStates[i] else { continue }
+                for (pin, state) in states.enumerated() where pin < nodes.count {
+                    switch state {
+                    case .output(high: true): stampCurrent(&rhs, 0, nodes[pin], c.supply * c.outputConductance)
+                    case .input(pullUp: true): stampCurrent(&rhs, 0, nodes[pin], c.supply * c.onConductance)
+                    default: break
+                    }
                 }
             case .delayLine:
                 let row = topology.sourceRow[i]
@@ -972,6 +1035,10 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
+        case .atmega328p:
+            c.supply = min(max(p("supply"), 0.5), 6)
+            c.outputConductance = 1 / max(p("outputResistance"), 0.1)
+            c.onConductance = 1 / max(p("pullUp"), 1)
         case .timer555:
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
             c.dischargeConductance = 1 / max(p("dischargeResistance"), 0.1)
@@ -1466,6 +1533,45 @@ public final class Simulator {
         was ? v >= 1 : v > 1.5
     }
 
+    // MARK: Microcontrollers
+
+    /// The chip of the microcontroller at `index`, if it has firmware
+    public func chip(_ index: Int) -> AVR? { chips[index] }
+
+    /// Runs each chip for the coming step's clock cycles, its inputs at the voltages of the last step, and notes
+    /// whether its pins changed between input and output (which changes the matrix; levels only change currents)
+    private func runChips() {
+        for i in chipIndices {
+            guard let chip = chips[i] else { continue }
+            let nodes = topology.elementNodes[i]
+            var volts = [Double](repeating: 0, count: AVR.pinCount)
+            for pin in 0..<min(AVR.pinCount, nodes.count) { volts[pin] = voltage(nodes[pin]) }
+            chip.pinVoltages = volts
+            let budget = timeStep * AVR.clock + (chipCycleCarry[i] ?? 0)
+            let whole = max(Int(budget), 0)
+            let start = chip.cycles
+            if whole > 0 { chip.run(cycles: whole) }
+            // the last instruction may run past the budget: the next step has that much less
+            chipCycleCarry[i] = budget - Double(chip.cycles - start)
+            let states = chip.pinStates
+            if !Self.samePinSetup(states, chipPinStates[i]) { matrixIsCurrent = false }
+            chipPinStates[i] = states
+        }
+    }
+
+    /// Whether two pin states need the same matrix: each pin an output, an input with pull-up, or a bare input
+    private static func samePinSetup(_ a: [AVR.PinState], _ b: [AVR.PinState]?) -> Bool {
+        guard let b, a.count == b.count else { return false }
+        for (x, y) in zip(a, b) {
+            switch (x, y) {
+            case (.output, .output): continue
+            case let (.input(p), .input(q)) where p == q: continue
+            default: return false
+            }
+        }
+        return true
+    }
+
     /// Works out what a synth chip or comparator puts out over the next step, from its inputs at the end of this one
     private func updateModule(_ i: Int, _ nodes: [Int], _ c: Constants) {
         var s = moduleStates[i]
@@ -1663,6 +1769,22 @@ public final class Simulator {
             let target = digitalState[i] ? constants[i].supply : 0
             let current = (target - v(nodes[1])) * constants[i].outputConductance
             return (current, [0, current])
+        case .atmega328p:
+            let c = constants[i]
+            var flows = [Double](repeating: 0, count: nodes.count)
+            var total = 0.0
+            if let states = chipPinStates[i] {
+                for (pin, state) in states.enumerated() where pin < nodes.count {
+                    switch state {
+                    case .output(let high): flows[pin] = ((high ? c.supply : 0) - v(nodes[pin])) * c.outputConductance
+                    case .input(pullUp: true): flows[pin] = (c.supply - v(nodes[pin])) * c.onConductance
+                    case .input: break
+                    }
+                    total += max(flows[pin], 0)
+                }
+            }
+            // the main current: what the chip supplies through its pins
+            return (total, flows)
         case .timer555:
             let (ground, output, control, discharge, supply) = (nodes[0], nodes[2], nodes[4], nodes[6], nodes[7])
             let high = digitalState[i]
@@ -1747,6 +1869,7 @@ public final class Simulator {
         if kind.isTransistor { return v(1) - v(2) }
         if kind == .ota || kind.drivesOutput { return v(2) }
         if kind == .timer555 { return v(2) - v(0) }
+        if kind == .atmega328p { return constants[index].supply }
         if kind == .schmittInverter { return v(1) }
         return kind.isVoltageSource ? v(1) - v(0) : v(0) - v(1)
     }

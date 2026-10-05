@@ -30,6 +30,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
     case semiconductors = "Semiconductors"
     case amplifiers = "Amplifiers"
     case synth = "Synth Chips"
+    case microcontrollers = "Microcontrollers"
     case timersAndLogic = "Timers & Logic"
     case effects = "Effects"
     case memristors = "Memristors"
@@ -46,6 +47,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case opAmp, ota, multiplier, comparator
     case vco, vcf, envelope, vca, sampleHold, divider
     case timer555, schmittInverter, analogSwitch
+    case atmega328p
     case delayLine, vactrol
     case memristor
     case probe, ammeter, speaker
@@ -170,6 +172,7 @@ extension ElementKind {
         case .delayLine: return "BBD Delay Line"
         case .vactrol: return "Vactrol"
         case .timer555: return "555 Timer"
+        case .atmega328p: return "ATmega328P (Arduino Uno)"
         case .schmittInverter: return "Schmitt Inverter"
         case .analogSwitch: return "Analog Switch"
         case .memristor: return "Memristor"
@@ -197,7 +200,7 @@ extension ElementKind {
         case .led: return "LED"
         case .npn, .pnp, .njfet: return "Q"
         case .nmos, .pmos: return "M"
-        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .timer555, .schmittInverter, .analogSwitch: return "U"
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .timer555, .schmittInverter, .analogSwitch, .atmega328p: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
@@ -217,6 +220,7 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .vactrol: return .effects
         case .timer555, .schmittInverter, .analogSwitch: return .timersAndLogic
+        case .atmega328p: return .microcontrollers
         case .memristor: return .memristors
         case .probe, .ammeter, .speaker: return .instruments
         }
@@ -250,7 +254,7 @@ extension ElementKind {
         case .opAmp: return "u"
         case .timer555: return "5"
         case .njfet, .ota, .schmittInverter, .analogSwitch, .multiplier, .delayLine, .vactrol: return nil
-        case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return nil
+        case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p: return nil
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
@@ -279,6 +283,7 @@ extension ElementKind {
         case .sampleHold: return "h"
         case .comparator: return "c"
         case .divider: return "f"
+        case .atmega328p: return "m"
         default: return nil
         }
     }
@@ -303,7 +308,7 @@ extension ElementKind {
     /// Parts whose terminals depend on a direction, which stay horizontal or vertical
     public var isAxisAligned: Bool {
         isTransistor || self == .opAmp || self == .ota || self == .potentiometer || self == .timer555 || self == .analogSwitch
-            || self == .multiplier || self == .delayLine || self == .vactrol || isModule || self == .comparator
+            || self == .multiplier || self == .delayLine || self == .vactrol || isModule || self == .comparator || self == .atmega328p
     }
 
     /// Parts that can be mirrored across their axis
@@ -315,6 +320,7 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet: return 2
         case .ota, .vactrol: return 4
         case .timer555: return 5
+        case .atmega328p: return 13
         default: return nil
         }
     }
@@ -346,6 +352,7 @@ extension ElementKind {
         case .vactrol: return ["anode", "cathode", "a", "b"]
         case .ota: return ["minus", "plus", "out", "bias"]
         case .timer555: return ["gnd", "trig", "out", "reset", "ctrl", "thr", "dis", "vcc"]
+        case .atmega328p: return (0...13).map { "d\($0)" } + (0...5).map { "a\($0)" }
         case .schmittInverter: return ["in", "out"]
         default: return ["a", "b"]
         }
@@ -383,6 +390,7 @@ extension ElementKind {
         case .netLabel: return GridPoint(1, 0)
         case .nmos, .pmos, .npn, .pnp, .njfet: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
+        case .atmega328p: return GridPoint(0, 13)
         default: return GridPoint(4, 0)
         }
     }
@@ -488,6 +496,12 @@ extension ElementKind {
                 ParamSpec("biasDrop", "Bias pin junctions", unit: "", default: 2, range: 1...2, log: false),
                 ParamSpec("headroom", "Output headroom", unit: "V", default: 1.5, range: 0.1...5, log: false),
             ]
+        case .atmega328p:
+            return [
+                ParamSpec("supply", "Supply", unit: "V", default: 5, range: 1.8...5.5, log: false),
+                ParamSpec("outputResistance", "Pin output resistance", unit: "Ω", default: 25, range: 1...1000),
+                ParamSpec("pullUp", "Pull-up resistance", unit: "Ω", default: 35_000, range: 20_000...50_000),
+            ]
         case .timer555:
             return [
                 ParamSpec("highDrop", "Output high drop", unit: "V", default: 1.7, range: 0...3, log: false),
@@ -585,6 +599,9 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     public var closed: Bool
     /// Mirrored across its axis (transistors, op-amps, potentiometers)
     public var flipped: Bool
+    /// A microcontroller's program: its source (an Arduino sketch) and the firmware compiled from it
+    public var code: String?
+    public var firmware: Data?
 
     public init(id: UUID = UUID(), kind: ElementKind, name: String = "", a: GridPoint, b: GridPoint,
                 params: [String: Double] = [:], closed: Bool = false, flipped: Bool = false) {
@@ -608,6 +625,8 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         params = try container.decodeIfPresent([String: Double].self, forKey: .params) ?? [:]
         closed = try container.decodeIfPresent(Bool.self, forKey: .closed) ?? false
         flipped = try container.decodeIfPresent(Bool.self, forKey: .flipped) ?? false
+        code = try container.decodeIfPresent(String.self, forKey: .code)
+        firmware = try container.decodeIfPresent(Data.self, forKey: .firmware)
     }
 
     /// A parameter value, falling back to the kind's default
@@ -658,6 +677,12 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         return [right(4), left(3), right(3), right(2), left(4), left(2), left(1), right(1)]
     }
 
+    /// A microcontroller's pins: D0-D13 down the side opposite `perpendicular`, A0-A5 down the other, from `a`
+    public var microcontrollerPins: [GridPoint] {
+        let d = axisDirection
+        return (0...13).map { a + d * $0 - perpendicular * 3 } + (0...5).map { a + d * $0 + perpendicular * 3 }
+    }
+
     /// Terminal positions: [a, b] for two-terminal parts, [a] for ground, [gate, drain, source] for MOSFETs,
     /// [base, collector, emitter] for bipolar transistors, [a, b, wiper] for potentiometers ([a, b, control] for analog
     /// switches), [−, +, output] for op-amps, [−, +, output, bias] for OTAs and the eight pins of a 555 in pin order
@@ -678,6 +703,8 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
+        case .atmega328p:
+            return microcontrollerPins
         default:
             return [a, b]
         }
@@ -724,6 +751,11 @@ extension ElementKind {
                           values: ["supply": 15, "biasDrop": 2, "headroom": 1.5]),
                 PartModel(name: "CA3080", summary: "The original OTA; bias pin one junction above V−",
                           values: ["supply": 15, "biasDrop": 1, "headroom": 1.5]),
+            ]
+        case .atmega328p:
+            return [
+                PartModel(name: "ATmega328P", summary: "The Arduino Uno's chip at 16 MHz: write a sketch, upload it, and it runs",
+                          values: ["supply": 5]),
             ]
         case .timer555:
             return [
