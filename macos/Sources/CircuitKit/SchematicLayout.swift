@@ -27,20 +27,28 @@ public enum SchematicLayout {
 
     // MARK: - Tables
 
+    /// A microcontroller's terminals on one side: the second side counts as its inputs (the Uno's analog inputs), the
+    /// first as its outputs
+    private static func microcontrollerSide(_ board: Board, second: Bool) -> [String] {
+        zip(board.terminalNames, board.pinPlaces).filter { $0.1.second == second }.map(\.0)
+    }
+
     static let inputs: [ElementKind: [String]] = [
         .opAmp: ["minus", "plus"], .ota: ["minus", "plus", "bias"], .timer555: ["trig", "thr", "dis", "ctrl", "reset"],
         .schmittInverter: ["in"], .npn: ["base"], .pnp: ["base"], .nmos: ["gate"], .pmos: ["gate"], .njfet: ["gate"],
         .potentiometer: ["a", "b"], .analogSwitch: ["a", "control"], .multiplier: ["x", "y"], .delayLine: ["in", "ctrl"],
         .vactrol: ["anode"], .comparator: ["minus", "plus"], .vco: ["cv", "pw"], .vcf: ["in", "cv"], .envelope: ["gate", "trig"],
         .vca: ["in", "cv"], .sampleHold: ["in", "trig"], .divider: ["clock", "reset"],
-        .atmega328p: ["a0", "a1", "a2", "a3", "a4", "a5"],
+        .atmega328p: microcontrollerSide(.uno, second: true), .atmega2560: microcontrollerSide(.mega, second: true),
+        .attiny85: microcontrollerSide(.attiny85, second: true),
     ]
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .npn: ["collector", "emitter"],
         .pnp: ["collector", "emitter"], .nmos: ["drain", "source"], .pmos: ["drain", "source"], .njfet: ["drain", "source"],
         .potentiometer: ["wiper"], .analogSwitch: ["b"], .multiplier: ["out"], .delayLine: ["out"], .vactrol: ["b"],
         .comparator: ["out"], .vco: ["out"], .vcf: ["out"], .envelope: ["out"], .vca: ["out"], .sampleHold: ["out"], .divider: ["out"],
-        .atmega328p: (0...13).map { "d\($0)" },
+        .atmega328p: microcontrollerSide(.uno, second: false), .atmega2560: microcontrollerSide(.mega, second: false),
+        .attiny85: microcontrollerSide(.attiny85, second: false),
     ]
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
                                             .keyboardGate]
@@ -77,7 +85,7 @@ public enum SchematicLayout {
             return frame(0...3, -2...2)
         case .vactrol: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
-        case .atmega328p: return frame(0...13, -2...2)
+        case .atmega328p, .atmega2560, .attiny85: return frame(0...(e.kind.board?.length ?? 13), -2...2)
         default:
             let length = abs(e.b.x - e.a.x) + abs(e.b.y - e.a.y)
             var result = Set<GridPoint>()
@@ -488,9 +496,9 @@ public enum SchematicLayout {
                     case .timer555:
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
-                    case .atmega328p:
+                    case .atmega328p, .atmega2560, .attiny85:
                         // analog inputs down the left, digital pins down the right
-                        put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + 13))
+                        put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.kind.board?.length ?? 13)))
                         width = 6
                     case .potentiometer:
                         put(p, GridPoint(x, vy - 2), GridPoint(x, vy + 2))
@@ -670,7 +678,7 @@ public enum SchematicLayout {
             if amplifiers.contains(p.kind), posts.prefix(2).contains(point) {
                 return element.axisDirection * -1
             }
-            if p.kind == .timer555 || p.kind == .atmega328p {
+            if p.kind == .timer555 || p.kind.isMicrocontroller {
                 let perpendicular = element.perpendicular
                 let relative = point - element.a
                 let side = relative.x * perpendicular.x + relative.y * perpendicular.y

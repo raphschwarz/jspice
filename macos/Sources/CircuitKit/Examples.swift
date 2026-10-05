@@ -42,7 +42,7 @@ public enum Examples {
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
-        ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody,
+        ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, megaBarGraph, tinyDimmer,
         memristorHysteresis, memristorPulses,
     ]
 
@@ -346,8 +346,9 @@ public enum Examples {
     // MARK: Microcontrollers
 
     /// An ATmega328P with a sketch and its firmware
-    static func arduino(_ name: String = "U1", code: String, firmware: String, connections: [String: String]) -> NetlistPart {
-        var part = NetlistPart(kind: .atmega328p, name: name, connections: connections)
+    static func arduino(_ name: String = "U1", kind: ElementKind = .atmega328p, code: String, firmware: String,
+                        connections: [String: String]) -> NetlistPart {
+        var part = NetlistPart(kind: kind, name: name, connections: connections)
         part.code = code
         part.firmware = ArduinoSketches.firmware(firmware)
         return part
@@ -387,6 +388,44 @@ public enum Examples {
             NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 220], connections: ["a": "pwm", "b": "anode"]),
             NetlistPart(kind: .led, name: "D1", params: ["color": 4], connections: ["anode": "anode", "cathode": "GND"]),
         ], scopes: [("POT", .voltage), ("D1", .current)]))
+
+    static let megaBarGraph = Example(
+        id: "arduino-mega-bargraph", title: "Arduino Mega: bar graph",
+        summary: "An ATmega2560 reads the pot on A8 and lights up to five LEDs on pins 22 to 26; the readings go to the serial monitor. Turn the pot.",
+        symbol: "chart.bar",
+        circuit: drawn([
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 5], connections: ["plus": "+5V", "minus": "GND"]),
+            NetlistPart(kind: .potentiometer, name: "POT", params: ["resistance": 10_000, "position": 0.65],
+                        connections: ["a": "GND", "b": "+5V", "wiper": "knob"]),
+            arduino(kind: .atmega2560, code: ArduinoSketches.megaBarGraphCode, firmware: ArduinoSketches.megaBarGraphFirmware,
+                    connections: ["a8": "knob", "d22": "led0", "d23": "led1", "d24": "led2", "d25": "led3", "d26": "led4"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 330], connections: ["a": "led0", "b": "k0"]),
+            NetlistPart(kind: .led, name: "D1", params: ["color": 2], connections: ["anode": "k0", "cathode": "GND"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 330], connections: ["a": "led1", "b": "k1"]),
+            NetlistPart(kind: .led, name: "D2", params: ["color": 2], connections: ["anode": "k1", "cathode": "GND"]),
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 330], connections: ["a": "led2", "b": "k2"]),
+            NetlistPart(kind: .led, name: "D3", params: ["color": 3], connections: ["anode": "k2", "cathode": "GND"]),
+            NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 330], connections: ["a": "led3", "b": "k3"]),
+            NetlistPart(kind: .led, name: "D4", params: ["color": 3], connections: ["anode": "k3", "cathode": "GND"]),
+            NetlistPart(kind: .resistor, name: "R5", params: ["resistance": 330], connections: ["a": "led4", "b": "k4"]),
+            NetlistPart(kind: .led, name: "D5", params: ["color": 1], connections: ["anode": "k4", "cathode": "GND"]),
+        ], scopes: [("POT", .voltage), ("D1", .current)]))
+
+    static let tinyDimmer = Example(
+        id: "attiny85-dimmer", title: "ATtiny85: dimmer",
+        summary: "An ATtiny85 reads the pot on A1 (PB2) and sets an LED's brightness on PB0 with PWM; a second LED on PB4 breathes, from timer 1.",
+        symbol: "light.min",
+        circuit: drawn([
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 5], connections: ["plus": "+5V", "minus": "GND"]),
+            NetlistPart(kind: .potentiometer, name: "POT", params: ["resistance": 10_000, "position": 0.5],
+                        connections: ["a": "GND", "b": "+5V", "wiper": "knob"]),
+            arduino(kind: .attiny85, code: ArduinoSketches.tinyDimmerCode, firmware: ArduinoSketches.tinyDimmerFirmware,
+                    connections: ["pb2": "knob", "pb0": "pwm", "pb4": "breath"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 220], connections: ["a": "pwm", "b": "a1"]),
+            NetlistPart(kind: .led, name: "D1", params: ["color": 4], connections: ["anode": "a1", "cathode": "GND"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 220], connections: ["a": "breath", "b": "a2"]),
+            NetlistPart(kind: .led, name: "D2", params: ["color": 2], connections: ["anode": "a2", "cathode": "GND"]),
+        ], scopes: [("D1", .current), ("D2", .current)]))
 
     static let arduinoMelody = Example(
         id: "arduino-melody", title: "Arduino: melody (sound)",

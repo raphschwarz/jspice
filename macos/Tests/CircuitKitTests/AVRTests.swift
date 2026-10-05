@@ -19,7 +19,7 @@ final class AVRTests: XCTestCase {
     }
 
     /// Runs in simavr mode, counting an interrupt entry with the instruction before it as simavr does
-    private func compareWithSimavr(_ avr: AVR, _ checkpoints: [Checkpoint], file: StaticString = #filePath, line: UInt = #line) {
+    static func compareWithSimavr(_ avr: AVR, _ checkpoints: [Checkpoint], file: StaticString = #filePath, line: UInt = #line) {
         avr.simavrMode()
         var instructions = 0
         for checkpoint in checkpoints {
@@ -39,8 +39,8 @@ final class AVRTests: XCTestCase {
     func testMatchesSimavrInstructionByInstruction() {
         let kitchen = AVR(firmware: firmware(Self.kitchen))
         kitchen.supply = 3.3  // simavr's AVCC
-        kitchen.pinVoltages = [Double](repeating: 2.5, count: AVR.pinCount)
-        compareWithSimavr(kitchen, [
+        kitchen.pinVoltages = [Double](repeating: 2.5, count: 20)
+        Self.compareWithSimavr(kitchen, [
             Checkpoint(instructions: 1000, cycle: 1572, pc: 1592, sreg: 2, sp: 2301,
                    registers: [47, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 232, 3, 0, 0, 104, 0, 61, 1]),
             Checkpoint(instructions: 100000, cycle: 139274, pc: 2594, sreg: 130, sp: 2240,
@@ -49,14 +49,14 @@ final class AVRTests: XCTestCase {
                    registers: [30, 0, 0, 0, 0, 0, 0, 0, 172, 77, 1, 0, 1, 0, 0, 0, 0, 0, 123, 128, 0, 0, 123, 83, 0, 0, 0, 0, 206, 4, 193, 0]),
         ])
         let blink = AVR(firmware: firmware(Self.blink))
-        compareWithSimavr(blink, [Checkpoint(instructions: 500000, cycle: 687060, pc: 342, sreg: 130, sp: 2287,
+        Self.compareWithSimavr(blink, [Checkpoint(instructions: 500000, cycle: 687060, pc: 342, sreg: 130, sp: 2287,
                    registers: [162, 0, 0, 0, 0, 0, 0, 0, 32, 164, 0, 0, 58, 0, 0, 0, 0, 0, 217, 128, 0, 0, 217, 41, 0, 0, 0, 0, 163, 2, 0, 0])])
     }
 
     func testSketchPrintsWhatItComputes() {
         // integer, long, float and PROGMEM work, Serial, analogRead and micros(), on the chip's own timing
         let avr = AVR(firmware: firmware(Self.kitchen))
-        avr.pinVoltages = [Double](repeating: 2.5, count: AVR.pinCount)
+        avr.pinVoltages = [Double](repeating: 2.5, count: 20)
         avr.run(cycles: 16_000 * 60)
         let text = String(decoding: avr.serialOutput, as: UTF8.self)
         XCTAssertEqual(text, "flash string\r\n123458023\r\n2021822266\r\n100046\r\n610\r\n0.86603\r\n1.414214\r\n18.9087\r\n3141590.00\r\n-1763.668\r\n9939\r\n2306FB5D\r\n-4294\r\n101101\r\n512\r\n512\r\n13\r\n14332\r\n17636\r\n20908\r\n24180\r\n27456\r\n30744\r\n34016\r\n37288\r\n40560\r\n43832\r\n47120\r\n50392\r\n53664\r\n56936\r\n")
@@ -66,11 +66,11 @@ final class AVRTests: XCTestCase {
         let avr = AVR(firmware: firmware(Self.blink))
         XCTAssertEqual(avr.pinStates[13], .input(pullUp: false), "inputs at reset")
         var changes: [Double] = []
-        var last: AVR.PinState?
-        while Double(avr.cycles) < AVR.clock * 0.55 {
+        var last: PinState?
+        while Double(avr.cycles) < 16e6 * 0.55 {
             avr.run(cycles: 160)
             let state = avr.pinStates[13]
-            if case .output = state, state != last { changes.append(Double(avr.cycles) / AVR.clock) }
+            if case .output = state, state != last { changes.append(Double(avr.cycles) / 16e6) }
             last = state
         }
         // low (pinMode), high, then every 100 ms low and high again
@@ -111,7 +111,7 @@ final class AVRTests: XCTestCase {
 
     func testExternalInterruptCountsPresses() {
         let avr = AVR(firmware: firmware(Self.interrupt))
-        var volts = [Double](repeating: 5, count: AVR.pinCount)
+        var volts = [Double](repeating: 5, count: 20)
         avr.pinVoltages = volts
         avr.run(cycles: 16_000 * 5)
         XCTAssertEqual(avr.pinStates[2], .input(pullUp: true))

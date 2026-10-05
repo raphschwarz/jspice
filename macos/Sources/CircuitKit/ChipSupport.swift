@@ -14,7 +14,7 @@ public enum ChipFamily: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .avr: return "AVR: ATmega328P (Arduino Uno)"
+        case .avr: return "AVR: Arduino Uno, Mega 2560 and ATtiny85"
         }
     }
 

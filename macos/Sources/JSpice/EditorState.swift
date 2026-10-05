@@ -257,9 +257,12 @@ final class EditorState: ObservableObject {
             showChipSupport = true
             return
         }
+        let board = circuit[id]?.kind.board ?? .uno
         sketchStatus[id] = .building
         Task { [weak self] in
-            let result = await Task.detached(priority: .userInitiated) { SketchBuilder.build(code, toolchain: toolchain) }.value
+            let result = await Task.detached(priority: .userInitiated) {
+                SketchBuilder.build(code, board: board, toolchain: toolchain)
+            }.value
             self?.finishUpload(id, code: code, result: result)
         }
     }
@@ -282,7 +285,7 @@ final class EditorState: ObservableObject {
 
     /// The selected part, if it is a microcontroller
     var selectedMicrocontroller: Element? {
-        selectedElement.flatMap { $0.kind == .atmega328p ? $0 : nil }
+        selectedElement.flatMap { $0.kind.isMicrocontroller ? $0 : nil }
     }
 
     func setParameter(_ id: UUID, _ spec: ParamSpec, to value: Double) {

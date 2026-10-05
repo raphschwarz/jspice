@@ -47,7 +47,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case opAmp, ota, multiplier, comparator
     case vco, vcf, envelope, vca, sampleHold, divider
     case timer555, schmittInverter, analogSwitch
-    case atmega328p
+    case atmega328p, atmega2560, attiny85
     case delayLine, vactrol
     case memristor
     case probe, ammeter, speaker
@@ -173,6 +173,8 @@ extension ElementKind {
         case .vactrol: return "Vactrol"
         case .timer555: return "555 Timer"
         case .atmega328p: return "ATmega328P (Arduino Uno)"
+        case .atmega2560: return "ATmega2560 (Arduino Mega)"
+        case .attiny85: return "ATtiny85"
         case .schmittInverter: return "Schmitt Inverter"
         case .analogSwitch: return "Analog Switch"
         case .memristor: return "Memristor"
@@ -200,7 +202,8 @@ extension ElementKind {
         case .led: return "LED"
         case .npn, .pnp, .njfet: return "Q"
         case .nmos, .pmos: return "M"
-        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .timer555, .schmittInverter, .analogSwitch, .atmega328p: return "U"
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .timer555, .schmittInverter, .analogSwitch, .atmega328p, .atmega2560,
+             .attiny85: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
@@ -220,7 +223,7 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .vactrol: return .effects
         case .timer555, .schmittInverter, .analogSwitch: return .timersAndLogic
-        case .atmega328p: return .microcontrollers
+        case .atmega328p, .atmega2560, .attiny85: return .microcontrollers
         case .memristor: return .memristors
         case .probe, .ammeter, .speaker: return .instruments
         }
@@ -254,7 +257,7 @@ extension ElementKind {
         case .opAmp: return "u"
         case .timer555: return "5"
         case .njfet, .ota, .schmittInverter, .analogSwitch, .multiplier, .delayLine, .vactrol: return nil
-        case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p: return nil
+        case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85: return nil
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
@@ -308,7 +311,7 @@ extension ElementKind {
     /// Parts whose terminals depend on a direction, which stay horizontal or vertical
     public var isAxisAligned: Bool {
         isTransistor || self == .opAmp || self == .ota || self == .potentiometer || self == .timer555 || self == .analogSwitch
-            || self == .multiplier || self == .delayLine || self == .vactrol || isModule || self == .comparator || self == .atmega328p
+            || self == .multiplier || self == .delayLine || self == .vactrol || isModule || self == .comparator || isMicrocontroller
     }
 
     /// Parts that can be mirrored across their axis
@@ -320,7 +323,7 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet: return 2
         case .ota, .vactrol: return 4
         case .timer555: return 5
-        case .atmega328p: return 13
+        case .atmega328p, .atmega2560, .attiny85: return board?.length
         default: return nil
         }
     }
@@ -352,7 +355,7 @@ extension ElementKind {
         case .vactrol: return ["anode", "cathode", "a", "b"]
         case .ota: return ["minus", "plus", "out", "bias"]
         case .timer555: return ["gnd", "trig", "out", "reset", "ctrl", "thr", "dis", "vcc"]
-        case .atmega328p: return (0...13).map { "d\($0)" } + (0...5).map { "a\($0)" }
+        case .atmega328p, .atmega2560, .attiny85: return board?.terminalNames ?? []
         case .schmittInverter: return ["in", "out"]
         default: return ["a", "b"]
         }
@@ -390,7 +393,7 @@ extension ElementKind {
         case .netLabel: return GridPoint(1, 0)
         case .nmos, .pmos, .npn, .pnp, .njfet: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
-        case .atmega328p: return GridPoint(0, 13)
+        case .atmega328p, .atmega2560, .attiny85: return GridPoint(0, board?.length ?? 13)
         default: return GridPoint(4, 0)
         }
     }
@@ -496,7 +499,7 @@ extension ElementKind {
                 ParamSpec("biasDrop", "Bias pin junctions", unit: "", default: 2, range: 1...2, log: false),
                 ParamSpec("headroom", "Output headroom", unit: "V", default: 1.5, range: 0.1...5, log: false),
             ]
-        case .atmega328p:
+        case .atmega328p, .atmega2560, .attiny85:
             return [
                 ParamSpec("supply", "Supply", unit: "V", default: 5, range: 1.8...5.5, log: false),
                 ParamSpec("outputResistance", "Pin output resistance", unit: "Ω", default: 25, range: 1...1000),
@@ -677,10 +680,11 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         return [right(4), left(3), right(3), right(2), left(4), left(2), left(1), right(1)]
     }
 
-    /// A microcontroller's pins: D0-D13 down the side opposite `perpendicular`, A0-A5 down the other, from `a`
+    /// A microcontroller's pins, down its two sides from `a` (the Uno's D0-D13 on the side opposite `perpendicular`,
+    /// A0-A5 on the other)
     public var microcontrollerPins: [GridPoint] {
         let d = axisDirection
-        return (0...13).map { a + d * $0 - perpendicular * 3 } + (0...5).map { a + d * $0 + perpendicular * 3 }
+        return (kind.board?.pinPlaces ?? []).map { a + d * $0.offset + perpendicular * ($0.second ? 3 : -3) }
     }
 
     /// Terminal positions: [a, b] for two-terminal parts, [a] for ground, [gate, drain, source] for MOSFETs,
@@ -703,7 +707,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
-        case .atmega328p:
+        case .atmega328p, .atmega2560, .attiny85:
             return microcontrollerPins
         default:
             return [a, b]
@@ -755,6 +759,16 @@ extension ElementKind {
         case .atmega328p:
             return [
                 PartModel(name: "ATmega328P", summary: "The Arduino Uno's chip at 16 MHz: write a sketch, upload it, and it runs",
+                          values: ["supply": 5]),
+            ]
+        case .atmega2560:
+            return [
+                PartModel(name: "ATmega2560", summary: "The Arduino Mega's chip at 16 MHz: 70 pins, four serial ports, six timers",
+                          values: ["supply": 5]),
+            ]
+        case .attiny85:
+            return [
+                PartModel(name: "ATtiny85", summary: "Eight pins and 8 KB at 8 MHz: six I/O pins, four analog inputs",
                           values: ["supply": 5]),
             ]
         case .timer555:

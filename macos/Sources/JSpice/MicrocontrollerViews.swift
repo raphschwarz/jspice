@@ -49,7 +49,7 @@ struct MicrocontrollerSection: View {
             }
             HStack {
                 Button("Edit Sketch…") { editor.editingSketch = element.id }
-                Button("Upload") { editor.uploadSketch(element.id, code: element.code ?? blinkTemplate) }
+                Button("Upload") { editor.uploadSketch(element.id, code: element.code ?? element.kind.board?.blinkSketch ?? blinkTemplate) }
                     .disabled(editor.sketchStatus[element.id] == .building)
                     .help("Compile the sketch and load it into the chip (⌘U)")
                 Button("Restart") { editor.simulation.reset() }
@@ -64,7 +64,7 @@ struct MicrocontrollerSection: View {
         } header: {
             Text("Program")
         }
-        if let index = editor.circuit.index(of: element.id) {
+        if element.kind.board?.hasSerial ?? true, let index = editor.circuit.index(of: element.id) {
             SerialMonitor(simulation: editor.simulation, index: index)
         }
     }
@@ -72,7 +72,7 @@ struct MicrocontrollerSection: View {
     private var statusText: String {
         switch editor.sketchStatus[element.id] {
         case .building?: return "Compiling…"
-        case .uploaded(let bytes)?: return "Uploaded: \(bytes.formatted()) of 32,256 bytes"
+        case .uploaded(let bytes)?: return "Uploaded: \(bytes.formatted()) of \((element.kind.board?.flashSize ?? 32_256).formatted()) bytes"
         case .failed(let errors, _)?: return errors.isEmpty ? "The sketch did not build" : "\(errors.count) error\(errors.count == 1 ? "" : "s")"
         case nil:
             if let firmware = element.firmware { return "Running its sketch (\(firmware.count.formatted()) bytes)" }
@@ -130,11 +130,13 @@ struct SketchEditorSheet: View {
     @State private var code = ""
     @State private var loaded = false
 
+    private var board: Board? { editor.circuit[elementID]?.kind.board }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text(editor.circuit[elementID]?.name ?? "Sketch").font(.headline)
-                Text("ATmega328P · Arduino Uno").foregroundStyle(.secondary)
+                Text(board.map { $0.title == $0.chip ? $0.chip : "\($0.chip) · \($0.title)" } ?? "").foregroundStyle(.secondary)
                 Spacer()
                 if editor.sketchStatus[elementID] == .building { ProgressView().controlSize(.small) }
                 Button("Upload") { upload() }
@@ -160,7 +162,7 @@ struct SketchEditorSheet: View {
         .onAppear {
             guard !loaded else { return }
             loaded = true
-            code = editor.circuit[elementID]?.code ?? blinkTemplate
+            code = editor.circuit[elementID]?.code ?? board?.blinkSketch ?? blinkTemplate
         }
     }
 
@@ -172,7 +174,7 @@ struct SketchEditorSheet: View {
                 case .building?:
                     Text("Compiling…").foregroundStyle(.secondary)
                 case .uploaded(let bytes)?:
-                    Label("Uploaded: \(bytes.formatted()) of 32,256 bytes. The chip restarted with the new sketch.",
+                    Label("Uploaded: \(bytes.formatted()) of \((board?.flashSize ?? 32_256).formatted()) bytes. The chip restarted with the new sketch.",
                           systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 case .failed(let errors, let log)?:

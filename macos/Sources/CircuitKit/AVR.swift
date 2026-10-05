@@ -1,97 +1,173 @@
 import Foundation
 
-/// An ATmega328P (the chip of the Arduino Uno) running its firmware: the AVR CPU with its full instruction set and
-/// cycle counts, the three timers with PWM, the ADC, the I/O ports with pull-ups, the external interrupts, the USART
-/// and the EEPROM.
+/// An AVR microcontroller running its firmware: the CPU with its full instruction set and cycle counts, the timers
+/// with PWM, the ADC, the I/O ports with pull-ups, external and pin change interrupts, the USARTs and the EEPROM. The
+/// chip's layout comes from an `AVRVariant`: the ATmega328P (Arduino Uno), the ATmega2560 (Arduino Mega) or the
+/// ATtiny85.
 ///
-/// It was written against a reference model checked instruction by instruction against simavr; where simavr differs
-/// from the datasheet (interrupt entry cycles, how long interrupts wait after SEI, the single-buffered transmitter,
-/// the ADC flag) the datasheet is followed, and `simavrMode()` switches to simavr's behaviour for comparing with it.
+/// It was ported from a reference model (tools/avr-reference/avr.py) checked instruction by instruction against simavr
+/// on all three chips; where simavr differs from the datasheet (interrupt entry cycles, how long interrupts wait after
+/// SEI, the single-buffered transmitter, the ADC flag, OCR double buffering) the datasheet is followed, and
+/// `simavrMode()` switches to simavr's behaviour for comparing with it.
 ///
-/// Pins are numbered as on the Uno: 0-7 are D0-D7 (port D), 8-13 are D8-D13 (port B), 14-19 are A0-A5 (port C).
-public final class AVR {
-    public static let pinCount = 20
-    public static let clock = 16_000_000.0
+/// Pins are numbered as on the board: on the Uno 0-7 are D0-D7 (port D), 8-13 are D8-D13 (port B), 14-19 are A0-A5
+/// (port C); on the Mega 0-69 are D0-D69 (A0-A15 are 54-69); on the ATtiny85 0-5 are PB0-PB5.
+public final class AVR: Microcontroller {
+    public typealias PinState = CircuitKit.PinState
 
-    // data space addresses
-    static let PINB = 0x23, DDRB = 0x24, PORTB = 0x25, PINC = 0x26, DDRC = 0x27, PORTC = 0x28
-    static let PIND = 0x29, DDRD = 0x2A, PORTD = 0x2B
-    static let TIFR0 = 0x35, TIFR1 = 0x36, TIFR2 = 0x37, PCIFR = 0x3B, EIFR = 0x3C, EIMSK = 0x3D
-    static let EECR = 0x3F, EEDR = 0x40, EEARL = 0x41, EEARH = 0x42
-    static let TCCR0A = 0x44, TCCR0B = 0x45, TCNT0 = 0x46, OCR0A = 0x47, OCR0B = 0x48
-    static let SPL = 0x5D, SPH = 0x5E, SREG = 0x5F
-    static let PCICR = 0x68, EICRA = 0x69, TIMSK0 = 0x6E, TIMSK1 = 0x6F, TIMSK2 = 0x70
-    static let ADCL = 0x78, ADCH = 0x79, ADCSRA = 0x7A, ADCSRB = 0x7B, ADMUX = 0x7C
-    static let TCCR1A = 0x80, TCCR1B = 0x81, TCNT1L = 0x84, TCNT1H = 0x85, ICR1L = 0x86, ICR1H = 0x87
-    static let OCR1AL = 0x88, OCR1AH = 0x89, OCR1BL = 0x8A, OCR1BH = 0x8B
-    static let TCCR2A = 0xB0, TCCR2B = 0xB1, TCNT2 = 0xB2, OCR2A = 0xB3, OCR2B = 0xB4
-    static let UCSR0A = 0xC0, UCSR0B = 0xC1, UCSR0C = 0xC2, UBRR0L = 0xC4, UBRR0H = 0xC5, UDR0 = 0xC6
+    static let SPL = 0x5D, SPH = 0x5E, SREG = 0x5F, RAMPZ = 0x5B, EIND = 0x5C
 
     // status register bits
     static let flagC: UInt8 = 1, flagZ: UInt8 = 2, flagN: UInt8 = 4, flagV: UInt8 = 8
     static let flagS: UInt8 = 16, flagH: UInt8 = 32, flagT: UInt8 = 64, flagI: UInt8 = 128
 
-    /// Program memory, 16K words
+    public let variant: AVRVariant
+    public var pinCount: Int { variant.pinCount }
+    public var clock: Double { variant.clock }
+
+    /// Program memory, in words
     private let flash: UnsafeMutablePointer<UInt16>
     /// Registers, I/O and SRAM
     let data: UnsafeMutablePointer<UInt8>
-    static let dataSize = 0x900
-    public private(set) var eeprom = [UInt8](repeating: 0xFF, count: 1024)
+    private let dataSize: Int
+    private let ioEnd: Int
+    private let pcMask: Int
+    private let threeBytePC: Bool
+    public private(set) var eeprom: [UInt8]
 
     public private(set) var pc = 0
     public private(set) var cycles: Int = 0
     var timers: [AVRTimer] = []
-    /// The 16-bit timer's shared high byte (TEMP)
-    private var temp16: UInt8 = 0
+    var usarts: [AVRUSART] = []
 
     /// Pin voltages the chip sees, set by the circuit before it runs; the digital levels follow them with hysteresis
-    public var pinVoltages = [Double](repeating: 0, count: AVR.pinCount) {
+    public var pinVoltages: [Double] {
         didSet { updateInputLevels() }
     }
-    public private(set) var pinHigh = [Bool](repeating: false, count: AVR.pinCount)
+    public private(set) var pinHigh: [Bool]
     /// Supply and ADC reference voltage
     public var supply = 5.0
 
-    /// Bytes the USART has sent, oldest first, and bytes waiting to be received
-    public var serialOutput: [UInt8] = []
-    public var serialInput: [UInt8] = []
-    private var transmitBusyUntil = 0
-    private var transmitPending: UInt8?
-    private var receiveNext = 0
+    /// Bytes the first USART (the board's serial port) has sent, oldest first, and bytes waiting to be received
+    public var serialOutput: [UInt8] { usarts.first?.output ?? [] }
+    public var serialInput: [UInt8] {
+        get { usarts.first?.input ?? [] }
+        set { usarts.first?.input = newValue }
+    }
+
     private var adcDoneAt: Int?
     private var adcFirst = false
     private var interruptDelay = 0
-    private var externalPrevious = [false, false]
+    private var externalPrevious: [Bool]
+    private var externalWatch = false
+    private var pinChangePrevious: [Int]
+    private var pinChangeWatch = false
+    /// The interrupt to take next, worked out again when a flag or an enable bit changes
+    var interruptsChanged = true
+    private var nextInterrupt: Int?
+
+    /// Interrupt sources by priority
+    private struct Source {
+        let vector: Int
+        let mask: Int
+        let maskBit: UInt8
+        let flag: Int
+        let flagBit: UInt8
+        let clears: Bool
+    }
+    private let sources: [Source]
+
+    private enum Handler {
+        case plain
+        case pin(Int)
+        case levels
+        case clear
+        case mask
+        case statusRegister
+        case count8(AVRTimer)
+        case compare8(AVRTimer, Int)
+        case top(AVRTimer)
+        case count16Low(AVRTimer), count16High(AVRTimer)
+        case compare16Low(AVRTimer, Int), compare16High(AVRTimer, Int)
+        case capture16Low(AVRTimer), capture16High(AVRTimer)
+        case clockSelect(AVRTimer)
+        case usartData(AVRUSART), usartStatus(AVRUSART), usartControl(AVRUSART), usartRate(AVRUSART)
+        case adcControl
+        case externalControl
+        case pinChangeMask
+        case eepromControl
+    }
+    private var handlers: [Handler] = []
+    /// The pin each port bit is bonded to (-1: none), by port
+    private let portPins: [[Int]]
 
     // behaviour that differs between the chip and simavr
-    var interruptCycles = 4
+    var interruptCycles: Int
     var enableDelay = 1
     var transmitDoubleBuffered = true
     var flagsClearOnWrite = true
-    private var simTransmitCount = 0
-    private var simPumpAt: Int?
-    private var simCyclesPerByte = 1600
+    var pwmDoubleBuffered = true
 
-    public init(firmware: [UInt8]) {
-        flash = UnsafeMutablePointer<UInt16>.allocate(capacity: 16_384)
-        flash.initialize(repeating: 0, count: 16_384)
-        data = UnsafeMutablePointer<UInt8>.allocate(capacity: AVR.dataSize)
-        data.initialize(repeating: 0, count: AVR.dataSize)
+    public init(firmware: [UInt8], variant: AVRVariant = .atmega328p) {
+        self.variant = variant
+        dataSize = variant.dataSize
+        ioEnd = variant.ioEnd
+        pcMask = variant.flashWords - 1
+        threeBytePC = variant.pcBytes == 3
+        interruptCycles = variant.pcBytes == 3 ? 5 : 4
+        eeprom = [UInt8](repeating: 0xFF, count: variant.eepromSize)
+        pinVoltages = [Double](repeating: 0, count: variant.pinCount)
+        pinHigh = [Bool](repeating: false, count: variant.pinCount)
+        externalPrevious = [Bool](repeating: false, count: variant.externalInterrupts.count)
+        pinChangePrevious = [Int](repeating: 0, count: variant.pinChanges.count)
+        flash = UnsafeMutablePointer<UInt16>.allocate(capacity: variant.flashWords)
+        flash.initialize(repeating: 0, count: variant.flashWords)
+        data = UnsafeMutablePointer<UInt8>.allocate(capacity: variant.dataSize)
+        data.initialize(repeating: 0, count: variant.dataSize)
         var i = 0
-        while i < min(firmware.count, 32_768) {
+        while i < min(firmware.count, variant.flashBytes) {
             let low = UInt16(firmware[i])
             let high = i + 1 < firmware.count ? UInt16(firmware[i + 1]) : 0
             flash[i / 2] = low | high << 8
             i += 2
         }
-        timers = [
-            AVRTimer(index: 0, bits: 8, tccra: AVR.TCCR0A, tccrb: AVR.TCCR0B, timsk: AVR.TIMSK0, tifr: AVR.TIFR0,
-                     prescalers: [0, 1, 8, 64, 256, 1024, 0, 0], pins: (6, 5)),
-            AVRTimer(index: 1, bits: 16, tccra: AVR.TCCR1A, tccrb: AVR.TCCR1B, timsk: AVR.TIMSK1, tifr: AVR.TIFR1,
-                     prescalers: [0, 1, 8, 64, 256, 1024, 0, 0], pins: (9, 10)),
-            AVRTimer(index: 2, bits: 8, tccra: AVR.TCCR2A, tccrb: AVR.TCCR2B, timsk: AVR.TIMSK2, tifr: AVR.TIFR2,
-                     prescalers: [0, 1, 8, 32, 64, 128, 256, 1024], pins: (11, 3)),
-        ]
+        var ports = [[Int]](repeating: [Int](repeating: -1, count: 8), count: variant.ports.count)
+        for (index, pin) in variant.pins.enumerated() { ports[pin.port][pin.bit] = index }
+        portPins = ports
+
+        var sources: [Source] = []
+        for spec in variant.timers {
+            for (unit, vector) in spec.compareVectors.enumerated() {
+                sources.append(Source(vector: vector, mask: spec.maskRegister, maskBit: spec.compareBits[unit],
+                                      flag: spec.flagRegister, flagBit: spec.compareBits[unit], clears: true))
+            }
+            sources.append(Source(vector: spec.overflowVector, mask: spec.maskRegister, maskBit: spec.overflowBit,
+                                  flag: spec.flagRegister, flagBit: spec.overflowBit, clears: true))
+            if spec.captureVector >= 0 {
+                sources.append(Source(vector: spec.captureVector, mask: spec.maskRegister, maskBit: spec.captureBit,
+                                      flag: spec.flagRegister, flagBit: spec.captureBit, clears: true))
+            }
+        }
+        for spec in variant.usarts {
+            sources.append(Source(vector: spec.rxVector, mask: spec.controlB, maskBit: 0x80, flag: spec.statusA, flagBit: 0x80, clears: false))
+            sources.append(Source(vector: spec.udreVector, mask: spec.controlB, maskBit: 0x20, flag: spec.statusA, flagBit: 0x20, clears: false))
+            sources.append(Source(vector: spec.txVector, mask: spec.controlB, maskBit: 0x40, flag: spec.statusA, flagBit: 0x40, clears: true))
+        }
+        sources.append(Source(vector: variant.adc.vector, mask: variant.adc.control, maskBit: 0x08,
+                              flag: variant.adc.control, flagBit: 0x10, clears: true))
+        for spec in variant.externalInterrupts {
+            sources.append(Source(vector: spec.vector, mask: spec.mask, maskBit: spec.maskBit, flag: spec.flag,
+                                  flagBit: spec.flagBit, clears: true))
+        }
+        for spec in variant.pinChanges {
+            sources.append(Source(vector: spec.vector, mask: spec.control, maskBit: spec.controlBit, flag: spec.flag,
+                                  flagBit: spec.flagBit, clears: true))
+        }
+        self.sources = sources.sorted { $0.vector < $1.vector }
+
+        timers = variant.timers.map { AVRTimer(spec: $0, avr: self) }
+        usarts = variant.usarts.map { AVRUSART(spec: $0, avr: self) }
+        handlers = buildHandlers()
         reset()
     }
 
@@ -100,29 +176,76 @@ public final class AVR {
         data.deallocate()
     }
 
+    private func buildHandlers() -> [Handler] {
+        var h = [Handler](repeating: .plain, count: ioEnd)
+        for (port, address) in variant.ports.enumerated() {
+            h[address] = .pin(port)
+            h[address + 1] = .levels
+            h[address + 2] = .levels
+        }
+        for address in variant.clearOnWrite { h[address] = .clear }
+        for address in variant.maskRegisters { h[address] = .mask }
+        h[AVR.SREG] = .statusRegister
+        for timer in timers {
+            let spec = timer.spec
+            switch spec.kind {
+            case .standard16:
+                h[spec.count] = .count16Low(timer)
+                h[spec.count + 1] = .count16High(timer)
+                for (unit, address) in spec.compare.enumerated() {
+                    h[address] = .compare16Low(timer, unit)
+                    h[address + 1] = .compare16High(timer, unit)
+                }
+                h[spec.capture] = .capture16Low(timer)
+                h[spec.capture + 1] = .capture16High(timer)
+                h[spec.controlB] = .clockSelect(timer)
+            case .standard8:
+                h[spec.count] = .count8(timer)
+                for (unit, address) in spec.compare.enumerated() { h[address] = .compare8(timer, unit) }
+                h[spec.controlB] = .clockSelect(timer)
+            case .tiny1:
+                h[spec.count] = .count8(timer)
+                for (unit, address) in spec.compare.enumerated() { h[address] = .compare8(timer, unit) }
+                h[spec.controlA] = .clockSelect(timer)  // TCCR1 holds the clock select
+                h[spec.top] = .top(timer)
+            }
+        }
+        for usart in usarts {
+            let spec = usart.spec
+            h[spec.dataRegister] = .usartData(usart)
+            h[spec.statusA] = .usartStatus(usart)
+            h[spec.controlB] = .usartControl(usart)
+            h[spec.rateLow] = .usartRate(usart)
+        }
+        h[variant.adc.control] = .adcControl
+        for spec in variant.externalInterrupts { h[spec.control] = .externalControl }
+        for spec in variant.pinChanges { h[spec.mask] = .pinChangeMask }
+        h[variant.eepromRegisters.control] = .eepromControl
+        return h
+    }
+
     /// Power-on reset: registers cleared, the program from the start (flash and EEPROM kept)
     public func reset() {
-        data.update(repeating: 0, count: AVR.dataSize)
+        data.update(repeating: 0, count: dataSize)
         pc = 0
         cycles = 0
-        data[AVR.SPL] = 0xFF
-        data[AVR.SPH] = 0x08
-        data[AVR.UCSR0A] = 0x20
-        data[AVR.UCSR0C] = 0x06
+        let sp = dataSize - 1
+        data[AVR.SPL] = UInt8(truncatingIfNeeded: sp)
+        data[AVR.SPH] = UInt8(truncatingIfNeeded: sp >> 8)
         for timer in timers { timer.reset() }
-        temp16 = 0
-        serialOutput = []
-        transmitBusyUntil = 0
-        transmitPending = nil
-        receiveNext = 0
+        for usart in usarts {
+            usart.reset()
+            if !transmitDoubleBuffered { data[usart.spec.controlB] = 0x08 }
+        }
         adcDoneAt = nil
         adcFirst = false
         interruptDelay = 0
-        externalPrevious = [false, false]
-        simTransmitCount = 0
-        simPumpAt = nil
-        simCyclesPerByte = 1600
-        if !transmitDoubleBuffered { data[AVR.UCSR0B] = 0x08 }
+        externalPrevious = [Bool](repeating: false, count: externalPrevious.count)
+        externalWatch = false
+        pinChangePrevious = [Int](repeating: 0, count: pinChangePrevious.count)
+        pinChangeWatch = false
+        interruptsChanged = true
+        nextInterrupt = nil
     }
 
     /// Behaves as simavr does where it differs from the chip, to compare with it instruction by instruction
@@ -131,27 +254,29 @@ public final class AVR {
         enableDelay = 2
         transmitDoubleBuffered = false
         flagsClearOnWrite = false
-        data[AVR.UCSR0B] = 0x08
+        pwmDoubleBuffered = false
+        for usart in usarts { data[usart.spec.controlB] = 0x08 }
     }
 
     /// Takes on another chip's whole state (the sound thread's chip, for the window's simulator to show)
-    public func adopt(_ other: AVR) {
-        data.update(from: other.data, count: AVR.dataSize)
+    public func adopt(_ other: Microcontroller) {
+        guard let other = other as? AVR, other.dataSize == dataSize else { return }
+        data.update(from: other.data, count: dataSize)
         eeprom = other.eeprom
         pc = other.pc
         cycles = other.cycles
         for (timer, source) in zip(timers, other.timers) { timer.adopt(source) }
-        temp16 = other.temp16
-        pinVoltages = other.pinVoltages
-        pinHigh = other.pinHigh
-        serialOutput = other.serialOutput
-        transmitBusyUntil = other.transmitBusyUntil
-        transmitPending = other.transmitPending
-        receiveNext = other.receiveNext
+        for (usart, source) in zip(usarts, other.usarts) { usart.adopt(source) }
         adcDoneAt = other.adcDoneAt
         adcFirst = other.adcFirst
         interruptDelay = other.interruptDelay
         externalPrevious = other.externalPrevious
+        externalWatch = other.externalWatch
+        pinChangePrevious = other.pinChangePrevious
+        pinChangeWatch = other.pinChangeWatch
+        pinHigh = other.pinHigh
+        pinVoltages = other.pinVoltages
+        interruptsChanged = true
     }
 
     // MARK: - Running
@@ -165,12 +290,13 @@ public final class AVR {
     /// Runs one instruction, or enters an interrupt
     @discardableResult
     func step() -> Int {
-        if interruptDelay == 0 && data[AVR.SREG] & AVR.flagI != 0, let pending = pendingInterrupt() {
-            let (vector, flagRegister, flagBit) = pending
-            if flagRegister >= 0 { data[flagRegister] &= ~flagBit }
+        if interruptDelay == 0 && data[AVR.SREG] & AVR.flagI != 0, let index = pendingInterrupt() {
+            let source = sources[index]
+            if source.clears { data[source.flag] &= ~source.flagBit }
+            interruptsChanged = true
             pushPC(pc)
             data[AVR.SREG] &= ~AVR.flagI
-            pc = vector * 2
+            pc = source.vector * variant.vectorWords
             tick(interruptCycles)
             return interruptCycles
         }
@@ -188,25 +314,15 @@ public final class AVR {
 
     private func tick(_ count: Int) {
         cycles += count
-        for timer in timers { timer.advance(count, self) }
-        if transmitBusyUntil != 0 || simPumpAt != nil || (!serialInput.isEmpty && data[AVR.UCSR0B] & 0x10 != 0) { serialUpdate() }
+        for timer in timers where timer.prescale != 0 { timer.advance(count) }
+        for usart in usarts where usart.needsUpdate { usart.update() }
         if let done = adcDoneAt, cycles >= done { adcFinish() }
-        if data[AVR.EICRA] != 0 { externalInterrupts() }
     }
 
     // MARK: - Pins
 
-    /// The PINx register and bit of each pin
-    private static let pinPorts: [(pin: Int, bit: Int)] = {
-        var ports: [(pin: Int, bit: Int)] = []
-        for bit in 0..<8 { ports.append((pin: AVR.PIND, bit: bit)) }
-        for bit in 0..<6 { ports.append((pin: AVR.PINB, bit: bit)) }
-        for bit in 0..<6 { ports.append((pin: AVR.PINC, bit: bit)) }
-        return ports
-    }()
-
     private func updateInputLevels() {
-        for i in 0..<AVR.pinCount {
+        for i in 0..<min(pinVoltages.count, pinHigh.count) {
             let v = pinVoltages[i]
             // CMOS input: high above 0.6 of the supply, low below 0.3, otherwise as it was
             if v > 0.6 * supply {
@@ -215,40 +331,51 @@ public final class AVR {
                 pinHigh[i] = false
             }
         }
+        levelsChanged()
     }
 
-    public enum PinState: Equatable {
-        case input(pullUp: Bool)
-        case output(high: Bool)
-    }
-
-    /// What each pin does: driven high or low (by its port, or by a timer's PWM output), or an input
+    /// What each pin does: driven high or low (by its port, a timer's PWM output or a USART), or an input
     public var pinStates: [PinState] {
-        var result: [PinState] = []
-        result.reserveCapacity(AVR.pinCount)
-        for (index, port) in AVR.pinPorts.enumerated() {
-            let mask = UInt8(1) << port.bit
-            let driven = data[port.pin + 1] & mask != 0
-            let level = data[port.pin + 2] & mask != 0
-            if driven {
-                var high = level
-                for timer in timers {
-                    if timer.pins.0 == index && timer.compareOutputMode(0, self) != 0 { high = timer.output.0 }
-                    if timer.pins.1 == index && timer.compareOutputMode(1, self) != 0 { high = timer.output.1 }
+        var overrides = [Bool?](repeating: nil, count: pinCount)
+        for timer in timers {
+            for unit in 0..<timer.units {
+                let com = timer.compareOutputMode(unit)
+                let pin = timer.spec.pins[unit]
+                guard com != 0, pin >= 0 else { continue }
+                overrides[pin] = timer.output[unit]
+                if timer.spec.kind == .tiny1 && com == 1 && timer.pwmUnit(unit) {
+                    overrides[timer.spec.complements[unit]] = !timer.output[unit]
                 }
-                result.append(.output(high: high))
+            }
+        }
+        var result: [PinState] = []
+        result.reserveCapacity(pinCount)
+        for (index, pin) in variant.pins.enumerated() {
+            let address = variant.ports[pin.port]
+            let mask = UInt8(1) << pin.bit
+            let level = data[address + 2] & mask != 0
+            if data[address + 1] & mask != 0 {
+                result.append(.output(high: overrides[index] ?? level))
             } else {
                 result.append(.input(pullUp: level))
+            }
+        }
+        for usart in usarts {
+            let control = data[usart.spec.controlB]
+            if control & 0x08 != 0 { result[usart.spec.txPin] = .output(high: true) }  // the transmitter idles high
+            if control & 0x10 != 0 {
+                let pin = variant.pins[usart.spec.rxPin]
+                result[usart.spec.rxPin] = .input(pullUp: data[variant.ports[pin.port] + 2] & (1 << pin.bit) != 0)
             }
         }
         return result
     }
 
-    private func pinRegister(_ address: Int) -> UInt8 {
-        let first = address == AVR.PIND ? 0 : (address == AVR.PINB ? 8 : 14)
-        let count = address == AVR.PIND ? 8 : 6
+    private func pinRegister(_ port: Int) -> UInt8 {
+        let address = variant.ports[port]
         var value: UInt8 = 0
-        for bit in 0..<count where pinHigh[first + bit] { value |= 1 << bit }
+        for (bit, pin) in portPins[port].enumerated() where pin >= 0 && pinHigh[pin] { value |= 1 << bit }
+        // driven pins read back what they drive
         let ddr = data[address + 1]
         let out = data[address + 2]
         return value & ~ddr | out & ddr
@@ -257,94 +384,97 @@ public final class AVR {
     // MARK: - Data space
 
     func read(_ address: Int) -> UInt8 {
-        if address < 0x20 || address >= 0x100 { return address < AVR.dataSize ? data[address] : 0 }
-        switch address {
-        case AVR.PINB, AVR.PINC, AVR.PIND: return pinRegister(address)
-        case AVR.TCNT0: return UInt8(truncatingIfNeeded: timers[0].count)
-        case AVR.TCNT2: return UInt8(truncatingIfNeeded: timers[2].count)
-        case AVR.TCNT1L:
-            let count = timers[1].count
-            temp16 = UInt8(truncatingIfNeeded: count >> 8)
-            return UInt8(truncatingIfNeeded: count)
-        case AVR.TCNT1H: return temp16
-        case AVR.OCR0A: return UInt8(truncatingIfNeeded: timers[0].ocrBuffer.0)
-        case AVR.OCR0B: return UInt8(truncatingIfNeeded: timers[0].ocrBuffer.1)
-        case AVR.OCR2A: return UInt8(truncatingIfNeeded: timers[2].ocrBuffer.0)
-        case AVR.OCR2B: return UInt8(truncatingIfNeeded: timers[2].ocrBuffer.1)
-        case AVR.UDR0:
-            let value = data[AVR.UDR0]
-            data[AVR.UCSR0A] &= ~0x80
-            return value
+        if address < 0x20 || address >= ioEnd { return address < dataSize ? data[address] : 0 }
+        switch handlers[address] {
+        case .pin(let port): return pinRegister(port)
+        case .count8(let timer): return UInt8(truncatingIfNeeded: timer.count)
+        case .compare8(let timer, let unit): return UInt8(truncatingIfNeeded: timer.ocrBuffer[unit])
+        case .top(let timer): return UInt8(truncatingIfNeeded: timer.topC)
+        case .count16Low(let timer):
+            timer.temp = UInt8(truncatingIfNeeded: timer.count >> 8)
+            return UInt8(truncatingIfNeeded: timer.count)
+        case .capture16Low(let timer):
+            timer.temp = UInt8(truncatingIfNeeded: timer.icr >> 8)
+            return UInt8(truncatingIfNeeded: timer.icr)
+        case .count16High(let timer), .capture16High(let timer): return timer.temp
+        case .compare16Low(let timer, let unit): return UInt8(truncatingIfNeeded: timer.ocrBuffer[unit])
+        case .compare16High(let timer, let unit): return UInt8(truncatingIfNeeded: timer.ocrBuffer[unit] >> 8)
+        case .usartData(let usart): return usart.readData()
         default: return data[address]
         }
     }
 
     func write(_ address: Int, _ value: UInt8) {
         let d = data
-        if address < 0x20 || address >= 0x100 {
-            if address < AVR.dataSize { d[address] = value }
+        if address < 0x20 || address >= ioEnd {
+            if address < dataSize { d[address] = value }
             return
         }
-        switch address {
-        case AVR.PINB, AVR.PINC, AVR.PIND:
+        switch handlers[address] {
+        case .plain:
+            d[address] = value
+        case .pin:
             d[address + 2] ^= value  // writing 1 to PINx toggles PORTx
-        case AVR.TIFR0, AVR.TIFR1, AVR.TIFR2, AVR.EIFR, AVR.PCIFR:
+            levelsChanged()
+        case .levels:
+            d[address] = value
+            levelsChanged()
+        case .clear:
             d[address] &= ~value  // writing 1 clears a flag
-        case AVR.SREG:
+            interruptsChanged = true
+        case .mask:
+            d[address] = value
+            interruptsChanged = true
+        case .statusRegister:
             if value & AVR.flagI != 0 && d[AVR.SREG] & AVR.flagI == 0 { interruptDelay = enableDelay }
             d[AVR.SREG] = value
-        case AVR.TCNT0: timers[0].count = Int(value)
-        case AVR.TCNT2: timers[2].count = Int(value)
-        case AVR.OCR0A: timers[0].writeCompare(0, Int(value), self)
-        case AVR.OCR0B: timers[0].writeCompare(1, Int(value), self)
-        case AVR.OCR2A: timers[2].writeCompare(0, Int(value), self)
-        case AVR.OCR2B: timers[2].writeCompare(1, Int(value), self)
-        case AVR.TCNT1H, AVR.OCR1AH, AVR.OCR1BH, AVR.ICR1H:
-            temp16 = value
-        case AVR.TCNT1L, AVR.OCR1AL, AVR.OCR1BL, AVR.ICR1L:
-            let full = Int(temp16) << 8 | Int(value)
-            if address == AVR.TCNT1L {
-                timers[1].count = full
-            } else if address == AVR.OCR1AL {
-                timers[1].writeCompare(0, full, self)
-            } else if address == AVR.OCR1BL {
-                timers[1].writeCompare(1, full, self)
-            } else {
-                timers[1].icr = full
-            }
-        case AVR.TCCR0B, AVR.TCCR1B, AVR.TCCR2B:
-            let timer = timers[address == AVR.TCCR0B ? 0 : (address == AVR.TCCR1B ? 1 : 2)]
+        case .count8(let timer):
+            timer.count = Int(value)
+        case .compare8(let timer, let unit):
+            timer.writeCompare(unit, Int(value))
+        case .top(let timer):
+            timer.topC = Int(value)
+        case .count16High(let timer), .compare16High(let timer, _), .capture16High(let timer):
+            timer.temp = value
+        case .count16Low(let timer):
+            timer.count = Int(timer.temp) << 8 | Int(value)
+        case .compare16Low(let timer, let unit):
+            timer.writeCompare(unit, Int(timer.temp) << 8 | Int(value))
+        case .capture16Low(let timer):
+            timer.icr = Int(timer.temp) << 8 | Int(value)
+        case .clockSelect(let timer):
+            let mask: UInt8 = timer.spec.kind == .tiny1 ? 0x0F : 7
             // the prescaler starts over when the clock changes
-            if (d[address] ^ value) & 7 != 0 { timer.accumulator = 0 }
+            if (d[address] ^ value) & mask != 0 { timer.accumulator = 0 }
             d[address] = value
-        case AVR.UDR0:
-            serialWrite(value)
-        case AVR.UCSR0A:
-            // only U2X and MPCM are written; writing 1 to TXC clears it
-            d[AVR.UCSR0A] = (d[AVR.UCSR0A] & ~0x03 | value & 0x03) & ~(value & 0x40)
-        case AVR.UCSR0B where !transmitDoubleBuffered:
-            simavrControlWrite(value)
-        case AVR.UBRR0L where !transmitDoubleBuffered:
-            d[address] = value
-            let rate = Int(d[AVR.UBRR0H]) << 8 | Int(value)
-            simCyclesPerByte = ((rate & 0xFFF) + 1) * (d[AVR.UCSR0A] & 0x02 != 0 ? 8 : 16) * 11
-        case AVR.ADCSRA:
+            timer.updatePrescale()
+        case .usartData(let usart):
+            usart.writeData(value)
+        case .usartStatus(let usart):
+            usart.writeStatus(value)
+        case .usartControl(let usart):
+            usart.writeControl(value)
+        case .usartRate(let usart):
+            if transmitDoubleBuffered { d[address] = value } else { usart.writeRateLow(value) }
+        case .adcControl:
             adcControlWrite(value)
-        case AVR.EICRA:
-            // edges are watched from now on: start from the present levels
-            d[AVR.EICRA] = value
-            for k in 0..<2 { externalPrevious[k] = externalLevel(k) }
-        case AVR.EECR:
-            d[AVR.EECR] = value
-            let cell = (Int(d[AVR.EEARH]) << 8 | Int(d[AVR.EEARL])) & 0x3FF
-            if value & 0x01 != 0 {
-                d[AVR.EEDR] = eeprom[cell]
-                d[AVR.EECR] &= ~0x01
+        case .externalControl:
+            d[address] = value
+            externalWatch = false
+            for (k, spec) in variant.externalInterrupts.enumerated() {
+                // edges are watched from now on: start from the present levels
+                externalPrevious[k] = externalLevel(spec.pin)
+                if Int(d[spec.control]) >> spec.shift & 3 != 0 { externalWatch = true }
             }
-            if value & 0x02 != 0 {
-                eeprom[cell] = d[AVR.EEDR]
-                d[AVR.EECR] &= ~0x06
+        case .pinChangeMask:
+            d[address] = value
+            pinChangeWatch = false
+            for (k, spec) in variant.pinChanges.enumerated() {
+                pinChangePrevious[k] = pinChangeLevels(spec.pins)
+                if d[spec.mask] != 0 { pinChangeWatch = true }
             }
+        case .eepromControl:
+            eepromControlWrite(value)
         default:
             d[address] = value
         }
@@ -352,105 +482,46 @@ public final class AVR {
 
     private func writeBit(_ address: Int, _ bit: Int, _ value: Bool) {
         let mask = UInt8(1) << bit
-        switch address {
-        case AVR.PINB, AVR.PINC, AVR.PIND:
-            if value { data[address + 2] ^= mask }
-        case AVR.TIFR0, AVR.TIFR1, AVR.TIFR2, AVR.EIFR, AVR.PCIFR:
-            if value { data[address] &= ~mask }
+        switch handlers[address] {
+        case .pin:
+            if value {
+                data[address + 2] ^= mask
+                levelsChanged()
+            }
+        case .clear:
+            if value {
+                data[address] &= ~mask
+                interruptsChanged = true
+            }
         default:
             let current = read(address)
             write(address, value ? current | mask : current & ~mask)
         }
     }
 
-    // MARK: - USART
+    // MARK: - EEPROM
 
-    private func frameCycles() -> Int {
-        let rate = (Int(data[AVR.UBRR0H]) << 8 | Int(data[AVR.UBRR0L])) & 0xFFF
-        return (data[AVR.UCSR0A] & 0x02 != 0 ? 8 : 16) * (rate + 1) * 10
-    }
-
-    private func serialWrite(_ value: UInt8) {
+    private func eepromControlWrite(_ value: UInt8) {
         let d = data
-        if !transmitDoubleBuffered {
-            d[AVR.UCSR0A] &= ~0x20
-            if d[AVR.UCSR0B] & 0x08 != 0 {
-                appendOutput(value)
-                simTransmitCount += 1
-                if simPumpAt == nil { simPumpAt = cycles + simCyclesPerByte }
-            }
-            return
+        let registers = variant.eepromRegisters
+        d[registers.control] = value
+        let cell = (Int(d[registers.high]) << 8 | Int(d[registers.low])) & (eeprom.count - 1)
+        if value & 0x01 != 0 {
+            d[registers.data] = eeprom[cell]
+            d[registers.control] &= ~0x01
         }
-        if transmitBusyUntil > cycles {
-            transmitPending = value
-            d[AVR.UCSR0A] &= ~0x20
-        } else {
-            appendOutput(value)
-            transmitBusyUntil = cycles + frameCycles()
-            d[AVR.UCSR0A] |= 0x20
+        if value & 0x02 != 0 {
+            eeprom[cell] = d[registers.data]
+            d[registers.control] &= ~0x06
         }
-        d[AVR.UCSR0A] &= ~0x40
-    }
-
-    private func appendOutput(_ value: UInt8) {
-        serialOutput.append(value)
-        // keep the last 16 KB
-        if serialOutput.count > 32_768 { serialOutput.removeFirst(serialOutput.count - 16_384) }
-    }
-
-    private func serialUpdate() {
-        let d = data
-        if !transmitDoubleBuffered {
-            while let at = simPumpAt, cycles >= at { simavrPump() }
-        } else if transmitBusyUntil != 0 && cycles >= transmitBusyUntil {
-            if let pending = transmitPending {
-                appendOutput(pending)
-                transmitPending = nil
-                transmitBusyUntil += frameCycles()
-                d[AVR.UCSR0A] |= 0x20
-            } else {
-                transmitBusyUntil = 0
-                d[AVR.UCSR0A] |= 0x40
-            }
-        }
-        if !serialInput.isEmpty && d[AVR.UCSR0B] & 0x10 != 0 && cycles >= receiveNext && d[AVR.UCSR0A] & 0x80 == 0 {
-            d[AVR.UDR0] = serialInput.removeFirst()
-            d[AVR.UCSR0A] |= 0x80
-            receiveNext = cycles + frameCycles()
-        }
-    }
-
-    // simavr's transmitter: UDRE raised once per byte time (11 bits) while bytes are queued or UDRIE is on
-    private func simavrPump() {
-        let d = data
-        guard let when = simPumpAt else { return }
-        simPumpAt = nil
-        if simTransmitCount > 0 {
-            if simTransmitCount == 1 { d[AVR.UCSR0A] |= 0x40 }
-            simTransmitCount -= 1
-        }
-        if simTransmitCount > 0 {
-            d[AVR.UCSR0A] &= ~0x20
-            simPumpAt = when + simCyclesPerByte
-        } else if d[AVR.UCSR0B] & 0x08 != 0 {
-            d[AVR.UCSR0A] |= 0x20
-            if d[AVR.UCSR0B] & 0x20 != 0 { simPumpAt = when + simCyclesPerByte }
-        }
-    }
-
-    private func simavrControlWrite(_ value: UInt8) {
-        let d = data
-        let old = d[AVR.UCSR0B]
-        d[AVR.UCSR0B] = value
-        if old & 0x20 == 0 && value & 0x20 != 0 && value & 0x08 != 0 && simPumpAt == nil { d[AVR.UCSR0A] |= 0x20 }
-        if old & 0x08 != 0 && value & 0x08 == 0 { d[AVR.UCSR0A] &= ~0x20 }
     }
 
     // MARK: - ADC
 
     private func adcControlWrite(_ value: UInt8) {
         let d = data
-        let old = d[AVR.ADCSRA]
+        let control = variant.adc.control
+        let old = d[control]
         var new = value & ~0x10 | old & 0x10
         if value & 0x10 != 0 && flagsClearOnWrite { new &= ~0x10 }  // writing 1 clears ADIF
         if old & 0x40 != 0 { new |= 0x40 }  // a conversion in progress cannot be stopped by writing 0 to ADSC
@@ -460,7 +531,8 @@ public final class AVR {
             adcDoneAt = nil
             new &= ~0x40
         }
-        d[AVR.ADCSRA] = new
+        d[control] = new
+        interruptsChanged = true
         if old & 0x40 == 0 && new & 0x40 != 0 && new & 0x80 != 0 {
             let prescale = [2, 2, 4, 8, 16, 32, 64, 128][Int(new & 7)]
             adcDoneAt = cycles + (adcFirst ? 25 : 13) * prescale
@@ -469,66 +541,97 @@ public final class AVR {
 
     private func adcFinish() {
         let d = data
-        let channel = Int(d[AVR.ADMUX] & 0x0F)
-        let volts = channel < 6 ? pinVoltages[14 + channel] : (channel == 14 ? 1.1 : 0)
-        var value = max(0, min(1023, Int((volts / max(supply, 0.1) * 1024).rounded(.down))))
-        if d[AVR.ADMUX] & 0x20 != 0 { value <<= 6 }  // left adjusted
-        d[AVR.ADCL] = UInt8(truncatingIfNeeded: value)
-        d[AVR.ADCH] = UInt8(truncatingIfNeeded: value >> 8)
-        d[AVR.ADCSRA] = d[AVR.ADCSRA] & ~0x40 | 0x10
+        let adc = variant.adc
+        let admux = Int(d[adc.multiplexer])
+        var mux = admux & adc.muxMask
+        let refs: Int
+        if adc.tiny {
+            refs = (admux >> 6) & 3 | ((admux >> 4) & 1) << 2
+        } else {
+            if adc.mux5 && d[adc.controlB] & 0x08 != 0 { mux |= 0x20 }
+            refs = (admux >> 6) & 3
+        }
+        let source = adc.channels[mux]
+        let volts = source == AVRVariant.adcGround ? 0 : (source == AVRVariant.adcBandgap ? 1.1 : pinVoltages[source])
+        let reference = adc.references[refs] == 0 ? supply : adc.references[refs]
+        var value = max(0, min(1023, Int((volts / max(reference, 0.1) * 1024).rounded(.down))))
+        if admux & 0x20 != 0 { value <<= 6 }  // left adjusted
+        d[adc.low] = UInt8(truncatingIfNeeded: value)
+        d[adc.high] = UInt8(truncatingIfNeeded: value >> 8)
+        d[adc.control] = d[adc.control] & ~0x40 | 0x10
         adcDoneAt = nil
         adcFirst = false
+        interruptsChanged = true
     }
 
     // MARK: - Interrupts
 
-    /// The level of INT0 (pin 2) or INT1 (pin 3): what drives it, or what the pin is driven to
-    private func externalLevel(_ k: Int) -> Bool {
-        let pin = 2 + k
-        return data[AVR.DDRD] >> pin & 1 == 0 ? pinHigh[pin] : data[AVR.PORTD] >> pin & 1 != 0
+    /// Pin levels may have changed (an input voltage, PORT or DDR): look for edges
+    private func levelsChanged() {
+        if externalWatch { externalInterrupts() }
+        if pinChangeWatch { pinChangeInterrupts() }
+    }
+
+    /// What an interrupt pin sees: the circuit's level, or what the pin drives
+    private func externalLevel(_ pin: Int) -> Bool {
+        let place = variant.pins[pin]
+        let address = variant.ports[place.port]
+        if data[address + 1] >> place.bit & 1 != 0 { return data[address + 2] >> place.bit & 1 != 0 }
+        return pinHigh[pin]
     }
 
     private func externalInterrupts() {
         let d = data
-        for k in 0..<2 {
-            let level = externalLevel(k)
-            let sense = Int(d[AVR.EICRA]) >> (2 * k) & 3
+        for (k, spec) in variant.externalInterrupts.enumerated() {
+            let level = externalLevel(spec.pin)
+            let sense = Int(d[spec.control]) >> spec.shift & 3
             let previous = externalPrevious[k]
             if (sense == 1 && level != previous) || (sense == 2 && previous && !level) || (sense == 3 && level && !previous) {
-                d[AVR.EIFR] |= UInt8(1) << k
+                d[spec.flag] |= spec.flagBit
+                interruptsChanged = true
             }
             externalPrevious[k] = level
         }
     }
 
-    /// The highest-priority interrupt that is enabled and flagged: its vector and the flag entering it clears (-1:
-    /// none, the flag goes when its cause does)
-    private func pendingInterrupt() -> (Int, Int, UInt8)? {
+    private func pinChangeLevels(_ pins: [Int]) -> Int {
+        var value = 0
+        for (bit, pin) in pins.enumerated() where pin >= 0 && externalLevel(pin) { value |= 1 << bit }
+        return value
+    }
+
+    private func pinChangeInterrupts() {
         let d = data
-        if d[AVR.EIMSK] & 1 != 0 && d[AVR.EIFR] & 1 != 0 { return (1, AVR.EIFR, 1) }
-        if d[AVR.EIMSK] & 2 != 0 && d[AVR.EIFR] & 2 != 0 { return (2, AVR.EIFR, 2) }
-        let timerChecks: [(Int, Int, UInt8, Int)] = [
-            (AVR.TIMSK2, AVR.TIFR2, 2, 7), (AVR.TIMSK2, AVR.TIFR2, 4, 8), (AVR.TIMSK2, AVR.TIFR2, 1, 9),
-            (AVR.TIMSK1, AVR.TIFR1, 2, 11), (AVR.TIMSK1, AVR.TIFR1, 4, 12), (AVR.TIMSK1, AVR.TIFR1, 1, 13),
-            (AVR.TIMSK0, AVR.TIFR0, 2, 14), (AVR.TIMSK0, AVR.TIFR0, 4, 15), (AVR.TIMSK0, AVR.TIFR0, 1, 16),
-        ]
-        for (mask, flags, bit, vector) in timerChecks where d[mask] & bit != 0 && d[flags] & bit != 0 {
-            return (vector, flags, bit)
+        for (k, spec) in variant.pinChanges.enumerated() {
+            let levels = pinChangeLevels(spec.pins)
+            if (levels ^ pinChangePrevious[k]) & Int(d[spec.mask]) != 0 {
+                d[spec.flag] |= spec.flagBit
+                interruptsChanged = true
+            }
+            pinChangePrevious[k] = levels
         }
-        let b = d[AVR.UCSR0B]
-        let a = d[AVR.UCSR0A]
-        if b & 0x80 != 0 && a & 0x80 != 0 { return (18, -1, 0) }
-        if b & 0x20 != 0 && a & 0x20 != 0 { return (19, -1, 0) }
-        if b & 0x40 != 0 && a & 0x40 != 0 { return (20, AVR.UCSR0A, 0x40) }
-        if d[AVR.ADCSRA] & 0x18 == 0x18 { return (21, AVR.ADCSRA, 0x10) }
-        return nil
+    }
+
+    /// The highest-priority interrupt that is enabled and flagged (an index into the sources)
+    private func pendingInterrupt() -> Int? {
+        if interruptsChanged {
+            let d = data
+            nextInterrupt = nil
+            for (index, source) in sources.enumerated()
+            where d[source.mask] & source.maskBit != 0 && d[source.flag] & source.flagBit != 0 {
+                nextInterrupt = index
+                break
+            }
+            interruptsChanged = false
+        }
+        return nextInterrupt
     }
 
     // MARK: - Stack
 
     private func push(_ value: UInt8) {
         let sp = Int(data[AVR.SPL]) | Int(data[AVR.SPH]) << 8
-        if sp < AVR.dataSize { data[sp] = value }
+        if sp < dataSize { data[sp] = value }
         let next = (sp - 1) & 0xFFFF
         data[AVR.SPL] = UInt8(truncatingIfNeeded: next)
         data[AVR.SPH] = UInt8(truncatingIfNeeded: next >> 8)
@@ -538,18 +641,20 @@ public final class AVR {
         let sp = ((Int(data[AVR.SPL]) | Int(data[AVR.SPH]) << 8) + 1) & 0xFFFF
         data[AVR.SPL] = UInt8(truncatingIfNeeded: sp)
         data[AVR.SPH] = UInt8(truncatingIfNeeded: sp >> 8)
-        return sp < AVR.dataSize ? data[sp] : 0
+        return sp < dataSize ? data[sp] : 0
     }
 
     private func pushPC(_ value: Int) {
         push(UInt8(truncatingIfNeeded: value))
         push(UInt8(truncatingIfNeeded: value >> 8))
+        if threeBytePC { push(UInt8(truncatingIfNeeded: value >> 16)) }
     }
 
     private func popPC() -> Int {
-        let high = Int(pop())
-        let low = Int(pop())
-        return (high << 8 | low) & 0x3FFF
+        var value = Int(pop())
+        value = value << 8 | Int(pop())
+        if threeBytePC { value = value << 8 | Int(pop()) }
+        return value & pcMask
     }
 
     // MARK: - Flags
@@ -630,7 +735,7 @@ public final class AVR {
 
     private func skip() -> Int {
         let words = AVR.instructionWords(Int(flash[pc]))
-        pc = (pc + words) & 0x3FFF
+        pc = (pc + words) & pcMask
         return 1 + words
     }
 
@@ -642,8 +747,13 @@ public final class AVR {
     }
 
     private func programByte(_ z: Int) -> UInt8 {
-        let word = flash[(z >> 1) & 0x3FFF]
+        let word = flash[(z >> 1) & pcMask]
         return UInt8(truncatingIfNeeded: z & 1 != 0 ? word >> 8 : word)
+    }
+
+    /// RAMPZ:Z for ELPM (Z alone on chips without RAMPZ)
+    private func extendedZ() -> Int {
+        threeBytePC ? pointer(30) | Int(data[AVR.RAMPZ]) << 16 : pointer(30)
     }
 
     // MARK: - Instructions
@@ -652,7 +762,7 @@ public final class AVR {
     private func execute() -> Int {
         let d = data
         let op = Int(flash[pc])
-        pc = (pc + 1) & 0x3FFF
+        pc = (pc + 1) & pcMask
         let rd = (op >> 4) & 0x1F
         let rr = (op & 0x0F) | ((op >> 5) & 0x10)
         let rdHigh = 16 + ((op >> 4) & 0x0F)
@@ -760,14 +870,14 @@ public final class AVR {
         case 0xC:  // RJMP
             var k = op & 0x0FFF
             if k & 0x800 != 0 { k -= 0x1000 }
-            pc = (pc + k) & 0x3FFF
+            pc = (pc + k) & pcMask
             return 2
         case 0xD:  // RCALL
             var k = op & 0x0FFF
             if k & 0x800 != 0 { k -= 0x1000 }
             pushPC(pc)
-            pc = (pc + k) & 0x3FFF
-            return 3
+            pc = (pc + k) & pcMask
+            return threeBytePC ? 4 : 3
         case 0xE:  // LDI
             d[rdHigh] = UInt8(k8)
             return 1
@@ -777,7 +887,7 @@ public final class AVR {
                 var k = (op >> 3) & 0x7F
                 if k & 0x40 != 0 { k -= 0x80 }
                 if (flags & bit != 0) == (op & 0x0400 == 0) {
-                    pc = (pc + k) & 0x3FFF
+                    pc = (pc + k) & pcMask
                     return 2
                 }
                 return 1
@@ -812,14 +922,23 @@ public final class AVR {
             switch mode {
             case 0x0:  // LDS / STS
                 let address = Int(flash[pc])
-                pc = (pc + 1) & 0x3FFF
+                pc = (pc + 1) & pcMask
                 if store { write(address, d[rd]) } else { d[rd] = read(address) }
                 return 2
-            case 0x4, 0x5, 0x6, 0x7:  // LPM Rd, Z(+) (and ELPM: there is no RAMPZ on this chip)
-                if store { return 1 }  // XCH, LAS, LAC, LAT are not on this chip
+            case 0x4, 0x5:  // LPM Rd, Z(+)
+                if store { return 1 }  // XCH, LAS are not on these chips
                 let z = pointer(30)
                 d[rd] = programByte(z)
-                if mode & 1 != 0 { setPointer(30, (z + 1) & 0xFFFF) }
+                if mode == 0x5 { setPointer(30, (z + 1) & 0xFFFF) }
+                return 3
+            case 0x6, 0x7:  // ELPM Rd, Z(+)
+                if store { return 1 }  // LAC, LAT are not on these chips
+                let z = extendedZ()
+                d[rd] = programByte(z)
+                if mode == 0x7 {
+                    setPointer(30, (z + 1) & 0xFFFF)
+                    if threeBytePC { d[AVR.RAMPZ] = UInt8(truncatingIfNeeded: (z + 1) >> 16) }
+                }
                 return 3
             case 0xF:  // PUSH / POP
                 if store { push(d[rd]) } else { d[rd] = pop() }
@@ -834,7 +953,7 @@ public final class AVR {
                 setPointer(base, p)
                 return 2
             default:
-                return 1  // XCH, LAS, LAC, LAT are not on this chip
+                return 1
             }
         }
         if op & 0xFE00 == 0x9400 {
@@ -893,13 +1012,13 @@ public final class AVR {
                 return 1
             case 0xC, 0xD:  // JMP
                 let k = Int(flash[pc]) | ((op & 0x01F0) << 13) | ((op & 1) << 16)
-                pc = k & 0x3FFF
+                pc = k & pcMask
                 return 3
             case 0xE, 0xF:  // CALL
                 let k = Int(flash[pc]) | ((op & 0x01F0) << 13) | ((op & 1) << 16)
-                pushPC((pc + 1) & 0x3FFF)
-                pc = k & 0x3FFF
-                return 4
+                pushPC((pc + 1) & pcMask)
+                pc = k & pcMask
+                return threeBytePC ? 5 : 4
             default:
                 break
             }
@@ -916,22 +1035,32 @@ public final class AVR {
             switch op {
             case 0x9508:  // RET
                 pc = popPC()
-                return 4
+                return threeBytePC ? 5 : 4
             case 0x9518:  // RETI
                 pc = popPC()
                 d[AVR.SREG] |= AVR.flagI
                 interruptDelay = enableDelay
-                return 4
+                return threeBytePC ? 5 : 4
             case 0x95C8:  // LPM (R0)
                 d[0] = programByte(pointer(30))
                 return 3
+            case 0x95D8:  // ELPM (R0)
+                d[0] = programByte(extendedZ())
+                return 3
             case 0x9409:  // IJMP
-                pc = pointer(30) & 0x3FFF
+                pc = pointer(30) & pcMask
+                return 2
+            case 0x9419:  // EIJMP
+                pc = (pointer(30) | (threeBytePC ? Int(d[AVR.EIND]) << 16 : 0)) & pcMask
                 return 2
             case 0x9509:  // ICALL
                 pushPC(pc)
-                pc = pointer(30) & 0x3FFF
-                return 3
+                pc = pointer(30) & pcMask
+                return threeBytePC ? 4 : 3
+            case 0x9519:  // EICALL
+                pushPC(pc)
+                pc = (pointer(30) | (threeBytePC ? Int(d[AVR.EIND]) << 16 : 0)) & pcMask
+                return threeBytePC ? 4 : 3
             default:
                 return 1  // SLEEP, WDR, BREAK, SPM
             }
@@ -986,71 +1115,86 @@ public final class AVR {
     public var stackPointer: Int { Int(data[AVR.SPL]) | Int(data[AVR.SPH]) << 8 }
 }
 
-/// One of the ATmega328P's timer/counters (two 8-bit, one 16-bit), each with two compare units that can drive a pin
+/// One of the chip's timer/counters (8 or 16 bits), each with two or three compare units that can drive a pin; or the
+/// ATtiny85's timer 1, which counts to OCR1C
 final class AVRTimer {
     enum Kind { case normal, ctc, fast, phase }
-    enum TopSource { case fixed, ocra, icr }
+    enum TopSource { case fixed, ocra, icr, ocrc }
 
-    let index: Int
-    let bits: Int
-    let tccra: Int
-    let tccrb: Int
-    let timsk: Int
-    let tifr: Int
-    let prescalers: [Int]
-    /// The pins of the A and B compare outputs
-    let pins: (Int, Int)
+    let spec: AVRVariant.Timer
+    let units: Int
+    unowned(unsafe) let avr: AVR
 
     var count = 0
     var down = false
     var accumulator = 0
+    /// The clock division in use (0: stopped), from the clock select bits
+    private(set) var prescale = 0
     /// Compare values in use, and as written (copied over at TOP or BOTTOM in PWM modes)
-    var ocr = (0, 0)
-    var ocrBuffer = (0, 0)
+    var ocr: [Int]
+    var ocrBuffer: [Int]
     var icr = 0
-    /// Compare output pin states, A and B
-    var output = (false, false)
+    /// tiny1: OCR1C
+    var topC = 0xFF
+    /// Compare output pin states
+    var output: [Bool]
+    /// The 16-bit registers' shared high byte (TEMP)
+    var temp: UInt8 = 0
 
-    init(index: Int, bits: Int, tccra: Int, tccrb: Int, timsk: Int, tifr: Int, prescalers: [Int], pins: (Int, Int)) {
-        self.index = index
-        self.bits = bits
-        self.tccra = tccra
-        self.tccrb = tccrb
-        self.timsk = timsk
-        self.tifr = tifr
-        self.prescalers = prescalers
-        self.pins = pins
+    init(spec: AVRVariant.Timer, avr: AVR) {
+        self.spec = spec
+        self.avr = avr
+        units = spec.compare.count
+        ocr = [Int](repeating: 0, count: units)
+        ocrBuffer = ocr
+        output = [Bool](repeating: false, count: units)
     }
 
     func reset() {
         count = 0
         down = false
         accumulator = 0
-        ocr = (0, 0)
-        ocrBuffer = (0, 0)
+        prescale = 0
+        ocr = [Int](repeating: 0, count: units)
+        ocrBuffer = ocr
         icr = 0
-        output = (false, false)
+        topC = 0xFF
+        output = [Bool](repeating: false, count: units)
+        temp = 0
     }
 
     func adopt(_ other: AVRTimer) {
         count = other.count
         down = other.down
         accumulator = other.accumulator
+        prescale = other.prescale
         ocr = other.ocr
         ocrBuffer = other.ocrBuffer
         icr = other.icr
+        topC = other.topC
         output = other.output
+        temp = other.temp
     }
 
-    private var maximum: Int { bits == 8 ? 0xFF : 0xFFFF }
+    func updatePrescale() {
+        let select = spec.kind == .tiny1 ? Int(avr.data[spec.controlA] & 0x0F) : Int(avr.data[spec.controlB] & 7)
+        prescale = spec.prescalers[select]
+    }
+
+    private var maximum: Int { spec.kind == .standard16 ? 0xFFFF : 0xFF }
 
     /// The waveform mode: its TOP, its kind and where TOP comes from
-    func mode(_ avr: AVR) -> (top: Int, kind: Kind, source: TopSource) {
-        let a = Int(avr.data[tccra])
-        let b = Int(avr.data[tccrb])
-        let wgm = (a & 3) | ((b >> 1) & (bits == 16 ? 0xC : 0x4))
+    func mode() -> (top: Int, kind: Kind, source: TopSource) {
+        let a = Int(avr.data[spec.controlA])
+        let b = Int(avr.data[spec.controlB])
+        if spec.kind == .tiny1 {
+            if a & 0x40 != 0 || b & 0x40 != 0 { return (topC, .fast, .ocrc) }  // PWM1A or PWM1B
+            if a & 0x80 != 0 { return (topC, .ctc, .ocrc) }  // CTC1
+            return (0xFF, .normal, .fixed)
+        }
+        let wgm = (a & 3) | ((b >> 1) & (spec.kind == .standard16 ? 0xC : 0x4))
         let found: (Int, Kind, TopSource)
-        if bits == 8 {
+        if spec.kind == .standard8 {
             switch wgm {
             case 1: found = (0xFF, .phase, .fixed)
             case 2: found = (0, .ctc, .ocra)
@@ -1077,60 +1221,99 @@ final class AVRTimer {
             }
         }
         let (fixedTop, kind, source) = found
-        let top = source == .ocra ? ocr.0 : (source == .icr ? icr : fixedTop)
+        let top = source == .ocra ? ocr[0] : (source == .icr ? icr : fixedTop)
         return (top, kind, source)
     }
 
-    func writeCompare(_ unit: Int, _ value: Int, _ avr: AVR) {
-        if unit == 0 { ocrBuffer.0 = value } else { ocrBuffer.1 = value }
-        let kind = mode(avr).kind
-        if kind == .normal || kind == .ctc { ocr = ocrBuffer }
+    func writeCompare(_ unit: Int, _ value: Int) {
+        ocrBuffer[unit] = value
+        let kind = mode().kind
+        if kind == .normal || kind == .ctc || spec.kind == .tiny1 || !avr.pwmDoubleBuffered { ocr[unit] = value }
     }
 
-    /// COMxA1:COMxA0 (bits 7:6) or COMxB1:COMxB0 (bits 5:4)
-    func compareOutputMode(_ unit: Int, _ avr: AVR) -> Int {
-        (Int(avr.data[tccra]) >> (6 - 2 * unit)) & 3
+    /// COMnx1:COMnx0: A in bits 7:6, B in 5:4, C in 3:2 of TCCRnA (tiny1: A in TCCR1 5:4, B in GTCCR 5:4)
+    func compareOutputMode(_ unit: Int) -> Int {
+        if spec.kind == .tiny1 { return Int(avr.data[unit == 0 ? spec.controlA : spec.controlB]) >> 4 & 3 }
+        return Int(avr.data[spec.controlA]) >> (6 - 2 * unit) & 3
     }
 
-    private func setOutput(_ unit: Int, _ value: Bool) {
-        if unit == 0 { output.0 = value } else { output.1 = value }
+    /// tiny1: whether the unit is in PWM mode (PWM1A, PWM1B)
+    func pwmUnit(_ unit: Int) -> Bool {
+        avr.data[unit == 0 ? spec.controlA : spec.controlB] & 0x40 != 0
     }
 
-    private func outputValue(_ unit: Int) -> Bool { unit == 0 ? output.0 : output.1 }
-
-    private func compareValue(_ unit: Int) -> Int { unit == 0 ? ocr.0 : ocr.1 }
+    private func flag(_ bit: UInt8) {
+        avr.data[spec.flagRegister] |= bit
+        avr.interruptsChanged = true
+    }
 
     /// What a compare match does to the pin
-    private func match(_ unit: Int, _ kind: Kind, _ source: TopSource, _ avr: AVR) {
-        let com = compareOutputMode(unit, avr)
+    private func match(_ unit: Int, _ kind: Kind, _ source: TopSource) {
+        let com = compareOutputMode(unit)
         guard com != 0 else { return }
+        if spec.kind == .tiny1 {
+            if pwmUnit(unit) {
+                output[unit] = com == 3  // cleared on match (set at BOTTOM); COM 3 inverted
+            } else if com == 1 {
+                output[unit].toggle()
+            } else {
+                output[unit] = com == 3
+            }
+            return
+        }
         switch kind {
         case .normal, .ctc:
-            setOutput(unit, com == 1 ? !outputValue(unit) : com == 3)
+            if com == 1 { output[unit].toggle() } else { output[unit] = com == 3 }
         case .fast:
             if com == 2 {
-                setOutput(unit, false)
+                output[unit] = false
             } else if com == 3 {
-                setOutput(unit, true)
+                output[unit] = true
             } else if unit == 0 && source == .ocra {
-                setOutput(0, !output.0)
+                output[0].toggle()
             }
         case .phase:
             // non-inverting: cleared counting up, set counting down
             if com == 2 {
-                setOutput(unit, down)
+                output[unit] = down
             } else if com == 3 {
-                setOutput(unit, !down)
+                output[unit] = !down
             } else if unit == 0 && source == .ocra {
-                setOutput(0, !output.0)
+                output[0].toggle()
             }
         }
     }
 
-    private func flag(_ bit: UInt8, _ avr: AVR) { avr.data[tifr] |= bit }
+    private func tickTiny1() {
+        let (top, kind, _) = mode()
+        let old = count
+        if count == top && kind != .normal {
+            count = 0
+            if kind == .fast {
+                flag(spec.overflowBit)
+                for unit in 0..<units {
+                    let com = compareOutputMode(unit)
+                    if com != 0 && pwmUnit(unit) { output[unit] = com != 3 }
+                }
+            }
+        } else if count == 0xFF {
+            count = 0
+            flag(spec.overflowBit)
+        } else {
+            count += 1
+        }
+        for unit in 0..<units where old == ocr[unit] {
+            flag(spec.compareBits[unit])
+            match(unit, kind, .ocrc)
+        }
+    }
 
-    private func tick(_ avr: AVR) {
-        let (top, kind, source) = mode(avr)
+    private func tick() {
+        if spec.kind == .tiny1 {
+            tickTiny1()
+            return
+        }
+        let (top, kind, source) = mode()
         if kind == .phase {
             if !down {
                 count += 1
@@ -1145,12 +1328,12 @@ final class AVRTimer {
                 if count <= 0 {
                     count = 0
                     down = false
-                    flag(1, avr)  // overflow at BOTTOM
+                    flag(spec.overflowBit)  // overflow at BOTTOM
                 }
             }
-            for unit in 0..<2 where count == compareValue(unit) {
-                flag(2 << unit, avr)
-                match(unit, kind, source, avr)
+            for unit in 0..<units where count == ocr[unit] {
+                flag(spec.compareBits[unit])
+                match(unit, kind, source)
             }
             return
         }
@@ -1159,41 +1342,191 @@ final class AVRTimer {
         if count == top && (kind == .ctc || kind == .fast) {
             count = 0
             wrapped = true
-            if kind == .fast { flag(1, avr) }
+            if kind == .fast { flag(spec.overflowBit) }
         } else if count == maximum {
             count = 0
             wrapped = true
-            flag(1, avr)
+            flag(spec.overflowBit)
         } else {
             count += 1
         }
-        if kind == .fast {
-            // the pin changes a timer clock after the counter equals OCR (duty (OCR + 1) / (TOP + 1)), and the change
-            // at BOTTOM comes after it: OCR = TOP stays high, OCR = 0 gives a one-clock spike
-            for unit in 0..<2 where old == compareValue(unit) { match(unit, kind, source, avr) }
-            if wrapped {
-                ocr = ocrBuffer
-                for unit in 0..<2 {
-                    let com = compareOutputMode(unit, avr)
-                    if com == 2 { setOutput(unit, true) } else if com == 3 { setOutput(unit, false) }
-                }
-            }
-            for unit in 0..<2 where count == compareValue(unit) { flag(2 << unit, avr) }
-            return
+        // the flag (and the pin) change on the timer clock after the counter equals OCR: in fast PWM the duty is
+        // (OCR + 1) / (TOP + 1), and the change at BOTTOM comes after it (OCR = TOP stays high, OCR = 0 gives a
+        // one-clock spike)
+        for unit in 0..<units where old == ocr[unit] {
+            flag(spec.compareBits[unit])
+            match(unit, kind, source)
         }
-        for unit in 0..<2 where count == compareValue(unit) {
-            flag(2 << unit, avr)
-            match(unit, kind, source, avr)
+        if kind == .fast && wrapped {
+            ocr = ocrBuffer
+            for unit in 0..<units {
+                let com = compareOutputMode(unit)
+                if com == 2 { output[unit] = true } else if com == 3 { output[unit] = false }
+            }
         }
     }
 
-    @inline(__always) func advance(_ cycles: Int, _ avr: AVR) {
-        let prescale = prescalers[Int(avr.data[tccrb] & 7)]
-        guard prescale != 0 else { return }
+    @inline(__always) func advance(_ cycles: Int) {
         accumulator += cycles
         while accumulator >= prescale {
             accumulator -= prescale
-            tick(avr)
+            tick()
         }
+    }
+}
+
+/// A USART: the transmitter (double-buffered, as on the chip) and the receiver, at the rate UBRR sets
+final class AVRUSART {
+    let spec: AVRVariant.USART
+    unowned(unsafe) let avr: AVR
+
+    var output: [UInt8] = []
+    var input: [UInt8] = []
+    private var busyUntil = 0
+    private var pending: UInt8?
+    private var receiveNext = 0
+    // simavr's transmitter (see AVR.simavrMode)
+    private var simCount = 0
+    private var simPumpAt: Int?
+    private var simCyclesPerByte = 1600
+
+    init(spec: AVRVariant.USART, avr: AVR) {
+        self.spec = spec
+        self.avr = avr
+    }
+
+    func reset() {
+        avr.data[spec.statusA] = 0x20  // the transmit buffer starts empty
+        avr.data[spec.controlC] = 0x06
+        output = []
+        busyUntil = 0
+        pending = nil
+        receiveNext = 0
+        simCount = 0
+        simPumpAt = nil
+        simCyclesPerByte = 1600
+    }
+
+    func adopt(_ other: AVRUSART) {
+        output = other.output
+        input = other.input
+        busyUntil = other.busyUntil
+        pending = other.pending
+        receiveNext = other.receiveNext
+    }
+
+    private func frameCycles() -> Int {
+        let d = avr.data
+        let rate = (Int(d[spec.rateHigh]) << 8 | Int(d[spec.rateLow])) & 0xFFF
+        return (d[spec.statusA] & 0x02 != 0 ? 8 : 16) * (rate + 1) * 10
+    }
+
+    private func append(_ value: UInt8) {
+        output.append(value)
+        // keep the last 16 KB
+        if output.count > 32_768 { output.removeFirst(output.count - 16_384) }
+    }
+
+    func writeData(_ value: UInt8) {
+        let d = avr.data
+        avr.interruptsChanged = true
+        if !avr.transmitDoubleBuffered {
+            d[spec.statusA] &= ~0x20
+            if d[spec.controlB] & 0x08 != 0 {
+                append(value)
+                simCount += 1
+                if simPumpAt == nil { simPumpAt = avr.cycles + simCyclesPerByte }
+            }
+            return
+        }
+        if busyUntil > avr.cycles {
+            pending = value
+            d[spec.statusA] &= ~0x20  // UDRE: the buffer is full
+        } else {
+            append(value)
+            busyUntil = avr.cycles + frameCycles()
+            d[spec.statusA] |= 0x20
+        }
+        d[spec.statusA] &= ~0x40
+    }
+
+    func readData() -> UInt8 {
+        let d = avr.data
+        let value = d[spec.dataRegister]
+        d[spec.statusA] &= ~0x80
+        avr.interruptsChanged = true
+        return value
+    }
+
+    func writeStatus(_ value: UInt8) {
+        let d = avr.data
+        // only U2X and MPCM are written; writing 1 to TXC clears it
+        d[spec.statusA] = (d[spec.statusA] & ~0x03 | value & 0x03) & ~(value & 0x40)
+        avr.interruptsChanged = true
+    }
+
+    func writeControl(_ value: UInt8) {
+        let d = avr.data
+        let old = d[spec.controlB]
+        d[spec.controlB] = value
+        avr.interruptsChanged = true
+        guard !avr.transmitDoubleBuffered else { return }
+        if old & 0x20 == 0 && value & 0x20 != 0 && value & 0x08 != 0 && simPumpAt == nil { d[spec.statusA] |= 0x20 }
+        if old & 0x08 != 0 && value & 0x08 == 0 { d[spec.statusA] &= ~0x20 }
+    }
+
+    func writeRateLow(_ value: UInt8) {
+        let d = avr.data
+        d[spec.rateLow] = value
+        let rate = (Int(d[spec.rateHigh]) << 8 | Int(value)) & 0xFFF
+        simCyclesPerByte = (rate + 1) * (d[spec.statusA] & 0x02 != 0 ? 8 : 16) * 11
+    }
+
+    var needsUpdate: Bool {
+        busyUntil != 0 || simPumpAt != nil || (!input.isEmpty && avr.data[spec.controlB] & 0x10 != 0)
+    }
+
+    func update() {
+        let d = avr.data
+        let cycles = avr.cycles
+        if !avr.transmitDoubleBuffered {
+            while let at = simPumpAt, cycles >= at { simavrPump() }
+        } else if busyUntil != 0 && cycles >= busyUntil {
+            if let next = pending {
+                append(next)
+                pending = nil
+                busyUntil += frameCycles()
+                d[spec.statusA] |= 0x20
+            } else {
+                busyUntil = 0
+                d[spec.statusA] |= 0x40  // TXC
+            }
+            avr.interruptsChanged = true
+        }
+        if !input.isEmpty && d[spec.controlB] & 0x10 != 0 && cycles >= receiveNext && d[spec.statusA] & 0x80 == 0 {
+            d[spec.dataRegister] = input.removeFirst()
+            d[spec.statusA] |= 0x80
+            receiveNext = cycles + frameCycles()
+            avr.interruptsChanged = true
+        }
+    }
+
+    // simavr's transmitter: UDRE raised once per byte time (11 bits) while bytes are queued or UDRIE is on
+    private func simavrPump() {
+        let d = avr.data
+        guard let when = simPumpAt else { return }
+        simPumpAt = nil
+        if simCount > 0 {
+            if simCount == 1 { d[spec.statusA] |= 0x40 }
+            simCount -= 1
+        }
+        if simCount > 0 {
+            d[spec.statusA] &= ~0x20
+            simPumpAt = when + simCyclesPerByte
+        } else if d[spec.controlB] & 0x08 != 0 {
+            d[spec.statusA] |= 0x20
+            if d[spec.controlB] & 0x20 != 0 { simPumpAt = when + simCyclesPerByte }
+        }
+        avr.interruptsChanged = true
     }
 }

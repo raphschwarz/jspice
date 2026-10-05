@@ -85,8 +85,16 @@ if let flag = arguments.firstIndex(of: "--install-chip-support") {
     exit(0)
 }
 
-// --compile-sketch file.ino [out.bin]: compiles an Arduino sketch for the ATmega328P
+// --compile-sketch file.ino [out.bin] [--board uno|mega|attiny85]: compiles an Arduino sketch
 if let flag = arguments.firstIndex(of: "--compile-sketch"), flag + 1 < arguments.count {
+    var board = Board.uno
+    if let option = arguments.firstIndex(of: "--board"), option + 1 < arguments.count {
+        guard let named = Board(rawValue: arguments[option + 1]) else {
+            log("unknown board \(arguments[option + 1]); known: \(Board.allCases.map(\.rawValue).joined(separator: ", "))")
+            exit(2)
+        }
+        board = named
+    }
     guard let toolchain = AVRToolchain.find() else {
         log("no AVR toolchain: run jspice-mcp --install-chip-support avr")
         exit(1)
@@ -95,12 +103,12 @@ if let flag = arguments.firstIndex(of: "--compile-sketch"), flag + 1 < arguments
         log("cannot read \(arguments[flag + 1])")
         exit(1)
     }
-    let result = SketchBuilder.build(source, toolchain: toolchain)
+    let result = SketchBuilder.build(source, board: board, toolchain: toolchain)
     guard let firmware = result.firmware else {
         log(result.log)
         exit(1)
     }
-    if flag + 2 < arguments.count { try? firmware.write(to: URL(fileURLWithPath: arguments[flag + 2])) }
+    if flag + 2 < arguments.count, !arguments[flag + 2].hasPrefix("--") { try? firmware.write(to: URL(fileURLWithPath: arguments[flag + 2])) }
     print("\(firmware.count) bytes")
     exit(0)
 }

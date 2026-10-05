@@ -1,8 +1,18 @@
-"""Builds an Arduino sketch for the ATmega328P the way the app will: prototypes, core, link, flash image"""
+"""Builds an Arduino sketch the way the app does (prototypes, the Arduino AVR core, avr-gcc, a flash image) for the
+Uno (ATmega328P), the Mega 2560 or an ATtiny85 (with JSpice's own pin map in variants/tiny85)"""
 import re, subprocess, sys, os, glob
 CORE = os.path.abspath(os.environ.get('ARDUINO_CORE', '../ArduinoCore-avr'))
-FLAGS = ['-mmcu=atmega328p', '-DF_CPU=16000000L', '-DARDUINO=10607', '-DARDUINO_AVR_UNO', '-DARDUINO_ARCH_AVR',
-         '-I' + CORE + '/cores/arduino', '-I' + CORE + '/variants/standard', '-Os', '-w', '-ffunction-sections', '-fdata-sections']
+HERE = os.path.dirname(os.path.abspath(__file__))
+BOARDS = {
+    'uno': ('atmega328p', 16000000, '-DARDUINO_AVR_UNO', CORE + '/variants/standard'),
+    'mega': ('atmega2560', 16000000, '-DARDUINO_AVR_MEGA2560', CORE + '/variants/mega'),
+    'tiny85': ('attiny85', 8000000, '-DARDUINO_AVR_ATTINYX5', HERE + '/variants/tiny85'),
+}
+
+def flags(board):
+    mcu, clock, define, variant = BOARDS[board]
+    return ['-mmcu=' + mcu, '-DF_CPU=%dL' % clock, '-DARDUINO=10607', define, '-DARDUINO_ARCH_AVR',
+            '-I' + CORE + '/cores/arduino', '-I' + variant, '-Os', '-w', '-ffunction-sections', '-fdata-sections']
 CPP = ['-std=gnu++11', '-fpermissive', '-fno-exceptions', '-fno-threadsafe-statics']
 
 KEYWORDS = {'if', 'for', 'while', 'switch', 'return', 'else', 'do', 'sizeof'}
@@ -59,7 +69,9 @@ def prototypes(source):
             start = i + 1
     return found, first
 
-def build(sketch_path, out):
+def build(sketch_path, out, board='uno'):
+    FLAGS = flags(board)
+    libraries = []
     source = open(sketch_path).read()
     protos, first = prototypes(source)
     os.makedirs(out, exist_ok=True)
@@ -70,7 +82,12 @@ def build(sketch_path, out):
         f.write('#include <Arduino.h>\n#line 1 "sketch.ino"\n' + source[:first] + '\n'.join(protos) +
                 f'\n#line {line} "sketch.ino"\n' + source[first:])
     objs = []
-    sources = [cpp] + sorted(glob.glob(CORE + '/cores/arduino/*.c')) + sorted(glob.glob(CORE + '/cores/arduino/*.cpp')) + sorted(glob.glob(CORE + '/cores/arduino/*.S'))
+    for name in re.findall(r'#include\s*<(\w+)\.h>', source):
+        folder = os.path.join(CORE, 'libraries', name, 'src')
+        if os.path.isdir(folder):
+            FLAGS.append('-I' + folder)
+            libraries += sorted(glob.glob(folder + '/*.cpp'))
+    sources = [cpp] + libraries + sorted(glob.glob(CORE + '/cores/arduino/*.c')) + sorted(glob.glob(CORE + '/cores/arduino/*.cpp')) + sorted(glob.glob(CORE + '/cores/arduino/*.S'))
     for s in sources:
         o = os.path.join(out, os.path.basename(s) + '.o')
         if s.endswith('.c'): cmd = ['avr-gcc', '-c', '-std=gnu11'] + FLAGS + [s, '-o', o]
@@ -80,11 +97,11 @@ def build(sketch_path, out):
         if r.returncode: print(r.stderr); sys.exit(1)
         objs.append(o)
     elf = os.path.join(out, 'sketch.elf')
-    r = subprocess.run(['avr-gcc', '-mmcu=atmega328p', '-Os', '-Wl,--gc-sections', '-o', elf] + objs + ['-lm'], capture_output=True, text=True)
+    r = subprocess.run(['avr-gcc', '-mmcu=' + BOARDS[board][0], '-Os', '-Wl,--gc-sections', '-o', elf] + objs + ['-lm'], capture_output=True, text=True)
     if r.returncode: print(r.stderr); sys.exit(1)
     subprocess.run(['avr-objcopy', '-O', 'binary', '-R', '.eeprom', elf, os.path.join(out, 'sketch.bin')], check=True)
     subprocess.run(['avr-objcopy', '-O', 'ihex', '-R', '.eeprom', elf, os.path.join(out, 'sketch.hex')], check=True)
     print(sketch_path, os.path.getsize(os.path.join(out, 'sketch.bin')), 'bytes')
 
 if __name__ == '__main__':
-    build(sys.argv[1], sys.argv[2])
+    build(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else 'uno')

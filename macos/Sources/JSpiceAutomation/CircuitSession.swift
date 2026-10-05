@@ -110,13 +110,13 @@ public final class CircuitSession {
              ], required: ["steps"]),
              run: { session, arguments in try session.setSequence(arguments) }),
         Tool(name: "upload_sketch",
-             description: "Compiles an Arduino sketch (C++, as in the Arduino IDE: setup() and loop(), pinMode, digitalWrite, analogRead, analogWrite, delay, millis, Serial, tone…) for an atmega328p part and loads the firmware into it; the chip runs it from reset in simulate. Pins are named d0-d13 and a0-a5 as on an Arduino Uno. Returns the firmware size, or the compiler's errors with sketch line numbers.",
-             inputSchema: schema(["part": string("Name of an atmega328p part"), "code": string("The sketch's source")],
+             description: "Compiles an Arduino sketch (C++, as in the Arduino IDE: setup() and loop(), pinMode, digitalWrite, analogRead, analogWrite, delay, millis, Serial, tone…) for a microcontroller part (atmega328p: Arduino Uno, pins d0-d13 and a0-a5; atmega2560: Arduino Mega, d0-d53 and a0-a15; attiny85: pins pb0-pb5, numbered 0-5 in the sketch, no Serial) and loads the firmware into it; the chip runs it from reset in simulate. Returns the firmware size, or the compiler's errors with sketch line numbers.",
+             inputSchema: schema(["part": string("Name of a microcontroller part"), "code": string("The sketch's source")],
                                  required: ["part", "code"]),
              run: { session, arguments in try session.uploadSketch(arguments) }),
         Tool(name: "read_serial",
              description: "What a microcontroller has printed on its serial port (Serial.print) in the simulation so far; optionally sends it text, which it receives in the next simulate with continue true.",
-             inputSchema: schema(["part": string("Name of an atmega328p part"), "send": string("Text to send to the chip")],
+             inputSchema: schema(["part": string("Name of a microcontroller part"), "send": string("Text to send to the chip")],
                                  required: ["part"]),
              run: { session, arguments in try session.readSerial(arguments) }),
         Tool(name: "install_chip_support",
@@ -446,8 +446,8 @@ public final class CircuitSession {
 
     private func microcontroller(_ arguments: [String: Any]) throws -> Int {
         let index = try index(ofPart: try Self.text(arguments, "part"))
-        guard circuit.elements[index].kind == .atmega328p else {
-            throw ToolError("\(circuit.elements[index].name) is not a microcontroller (atmega328p)")
+        guard circuit.elements[index].kind.isMicrocontroller else {
+            throw ToolError("\(circuit.elements[index].name) is not a microcontroller")
         }
         return index
     }
@@ -458,7 +458,8 @@ public final class CircuitSession {
         guard let toolchain = AVRToolchain.find() else {
             throw ToolError("No AVR compiler is installed: call install_chip_support first (or install it from JSpice's Chip Support window)")
         }
-        let result = SketchBuilder.build(code, toolchain: toolchain)
+        let board = circuit.elements[index].kind.board ?? .uno
+        let result = SketchBuilder.build(code, board: board, toolchain: toolchain)
         guard let firmware = result.firmware else {
             let errors = result.errors.map { ["line": $0.line, "column": $0.column, "message": $0.message] as [String: Any] }
             return ["uploaded": false, "errors": errors, "log": String(result.log.suffix(4000))]
@@ -467,7 +468,7 @@ public final class CircuitSession {
             circuit.elements[index].code = code
             circuit.elements[index].firmware = firmware
         }
-        return ["uploaded": true, "part": circuit.elements[index].name, "bytes": firmware.count, "flash": 32_256]
+        return ["uploaded": true, "part": circuit.elements[index].name, "bytes": firmware.count, "flash": board.flashSize]
     }
 
     func readSerial(_ arguments: [String: Any]) throws -> Any {

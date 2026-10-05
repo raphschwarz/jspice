@@ -64,7 +64,7 @@ public struct AVRToolchain: Sendable, Equatable {
     }
 }
 
-/// Compiles Arduino sketches into ATmega328P firmware, the way the Arduino IDE does for an Uno
+/// Compiles Arduino sketches into firmware for an AVR board (Uno, Mega 2560, ATtiny85), the way the Arduino IDE does
 public enum SketchBuilder {
     public struct Diagnostic: Sendable, Equatable, CustomStringConvertible {
         public let line: Int
@@ -95,33 +95,51 @@ public enum SketchBuilder {
         }
     }
 
-    static let flashSize = 32_256  // 32 KB less the Uno's bootloader
-
-    static func definitions(_ toolchain: AVRToolchain) -> [String] {
-        ["-mmcu=atmega328p", "-DF_CPU=16000000L", "-DARDUINO=10819", "-DARDUINO_AVR_UNO", "-DARDUINO_ARCH_AVR",
+    static func definitions(_ toolchain: AVRToolchain, _ board: Board) throws -> [String] {
+        ["-mmcu=" + board.mcu, "-DF_CPU=\(Int(board.clock))L", "-DARDUINO=10819", board.boardDefine, "-DARDUINO_ARCH_AVR",
          "-I" + toolchain.core.appendingPathComponent("cores/arduino").path,
-         "-I" + toolchain.core.appendingPathComponent("variants/standard").path,
+         "-I" + (try variantFolder(toolchain, board)).path,
          "-Os", "-w", "-ffunction-sections", "-fdata-sections"]
+    }
+
+    /// The board's pin map: the core's own (variants/standard, variants/mega), or JSpice's for the ATtiny85, written to
+    /// the caches folder
+    static func variantFolder(_ toolchain: AVRToolchain, _ board: Board) throws -> URL {
+        if let name = board.coreVariant { return toolchain.core.appendingPathComponent("variants").appendingPathComponent(name) }
+        let folder = cachesFolder().appendingPathComponent("variants/\(board.rawValue)")
+        let header = folder.appendingPathComponent("pins_arduino.h")
+        if (try? String(contentsOf: header, encoding: .utf8)) != board.variantHeader {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try board.variantHeader.write(to: header, atomically: true, encoding: .utf8)
+        }
+        return folder
+    }
+
+    static func cachesFolder() -> URL {
+        let fileManager = FileManager.default
+        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first ?? fileManager.temporaryDirectory
+        return caches.appendingPathComponent("JSpice")
     }
 
     static let cppFlags = ["-std=gnu++11", "-fpermissive", "-fno-exceptions", "-fno-threadsafe-statics"]
 
     /// Builds `source` (an Arduino sketch); the result says what went wrong if it did not compile
-    public static func build(_ source: String, toolchain: AVRToolchain) -> Result {
+    public static func build(_ source: String, board: Board = .uno, toolchain: AVRToolchain) -> Result {
         do {
-            return try buildOrThrow(source, toolchain: toolchain)
+            return try buildOrThrow(source, board: board, toolchain: toolchain)
         } catch {
             return Result(firmware: nil, diagnostics: [], log: "\(error)")
         }
     }
 
-    private static func buildOrThrow(_ source: String, toolchain: AVRToolchain) throws -> Result {
+    private static func buildOrThrow(_ source: String, board: Board, toolchain: AVRToolchain) throws -> Result {
         let fileManager = FileManager.default
         let work = fileManager.temporaryDirectory.appendingPathComponent("jspice-sketch-\(UUID().uuidString)")
         try fileManager.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: work) }
 
-        let core = try coreArchive(toolchain)
+        let core = try coreArchive(toolchain, board)
+        let definitions = try self.definitions(toolchain, board)
         var includes: [String] = []
         var librarySources: [URL] = []
         for library in libraries(usedBy: source, toolchain: toolchain) {
@@ -136,7 +154,7 @@ public enum SketchBuilder {
         let sketchObject = work.appendingPathComponent("sketch.o")
         var sketchArguments = ["-c"]
         sketchArguments += cppFlags
-        sketchArguments += definitions(toolchain)
+        sketchArguments += definitions
         sketchArguments += includes
         sketchArguments += [cpp.path, "-o", sketchObject.path]
         let compile = try run(toolchain.tool("avr-g++"), sketchArguments, in: work)
@@ -149,7 +167,7 @@ public enum SketchBuilder {
             let isC = file.pathExtension == "c"
             var arguments = ["-c"]
             arguments += isC ? ["-std=gnu11"] : cppFlags
-            arguments += definitions(toolchain)
+            arguments += definitions
             arguments += includes
             arguments += [file.path, "-o", object.path]
             let result = try run(toolchain.tool(isC ? "avr-gcc" : "avr-g++"), arguments, in: work)
@@ -158,7 +176,7 @@ public enum SketchBuilder {
             objects.append(object.path)
         }
         let elf = work.appendingPathComponent("sketch.elf")
-        var linkArguments = ["-mmcu=atmega328p", "-Os", "-Wl,--gc-sections", "-o", elf.path]
+        var linkArguments = ["-mmcu=" + board.mcu, "-Os", "-Wl,--gc-sections", "-o", elf.path]
         linkArguments += objects
         linkArguments += [core.path, "-lm"]
         let link = try run(toolchain.tool("avr-gcc"), linkArguments, in: work)
@@ -172,10 +190,10 @@ public enum SketchBuilder {
         guard copy.status == 0, let firmware = fileManager.contents(atPath: image.path) else {
             return Result(firmware: nil, diagnostics: diagnostics, log: log + copy.output)
         }
-        guard firmware.count <= flashSize else {
+        guard firmware.count <= board.flashSize else {
             return Result(firmware: nil, diagnostics: diagnostics + [Diagnostic(
                 line: 0, column: 0, isError: true,
-                message: "the sketch takes \(firmware.count) bytes; the ATmega328P has room for \(flashSize)")], log: log)
+                message: "the sketch takes \(firmware.count) bytes; the \(board.chip) has room for \(board.flashSize)")], log: log)
         }
         return Result(firmware: firmware, diagnostics: diagnostics, log: log)
     }
@@ -329,11 +347,12 @@ public enum SketchBuilder {
     }
 
     /// The Arduino core compiled once into an archive, kept in the caches folder for later builds
-    static func coreArchive(_ toolchain: AVRToolchain) throws -> URL {
+    static func coreArchive(_ toolchain: AVRToolchain, _ board: Board) throws -> URL {
         let fileManager = FileManager.default
-        let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first ?? fileManager.temporaryDirectory
-        let key = String((toolchain.compiler.path + "|" + toolchain.core.path).hashValueStable, radix: 16)
-        let folder = caches.appendingPathComponent("JSpice/arduino-core-\(key)")
+        let definitions = try self.definitions(toolchain, board)
+        let key = String((toolchain.compiler.path + "|" + toolchain.core.path + "|" + definitions.joined(separator: " ")
+                          + "|" + board.variantHeader).hashValueStable, radix: 16)
+        let folder = cachesFolder().appendingPathComponent("arduino-core-\(board.rawValue)-\(key)")
         let archive = folder.appendingPathComponent("core.a")
         if fileManager.fileExists(atPath: archive.path) { return archive }
         try? fileManager.removeItem(at: folder)
@@ -354,7 +373,7 @@ public enum SketchBuilder {
                 tool = "avr-g++"
                 arguments += cppFlags
             }
-            arguments += definitions(toolchain)
+            arguments += definitions
             arguments += [file.path, "-o", object.path]
             let result = try run(toolchain.tool(tool), arguments, in: folder)
             guard result.status == 0 else { throw BuildError.toolFailed("compiling the Arduino core failed:\n" + result.output) }

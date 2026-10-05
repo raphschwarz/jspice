@@ -131,7 +131,7 @@ struct ElementInspector: View {
                 SequencerSection(editor: editor, sequence: editor.sequence)
             }
 
-            if element.kind == .atmega328p {
+            if element.kind.isMicrocontroller {
                 MicrocontrollerSection(editor: editor, element: element)
             }
 

@@ -64,9 +64,12 @@ public enum Pacing {
                 scales.append(1 / (2 * .pi * max(element[param: "cutoff"], 0.01)))
             case .envelope:
                 scales.append(contentsOf: [element[param: "attack"], element[param: "decay"], element[param: "release"]])
-            case .atmega328p:
+            case .atmega328p, .atmega2560:
                 // sketches blink and fade in real time; PWM runs at 490 and 980 Hz
                 scales.append(contentsOf: [1, 2e-3])
+            case .attiny85:
+                // timer 1's PWM (D4) runs at 7.8 kHz
+                scales.append(contentsOf: [1, 1.28e-4])
             default:
                 break
             }
