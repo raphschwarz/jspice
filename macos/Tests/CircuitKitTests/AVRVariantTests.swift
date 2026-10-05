@@ -47,7 +47,7 @@ final class AVRVariantTests: XCTestCase {
     }
 
     func testMegaPWMPinsFollowTheirTimers() {
-        // analogWrite(pin, 10 + i * 17) on 2, 3, 5-13, 44, 45, 46: Timer0 (4, 13) fast PWM, the others phase correct
+        // analogWrite(pin, 10 + i * 17) on 2, 3, 5-13, 44, 45, 46: all phase correct but Timer0's (4, 13)
         let avr = AVR(firmware: firmware(Self.megaFirmware), variant: .atmega2560)
         avr.run(cycles: 16_000 * 20)
         let pins: [Int] = [2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 44, 45, 46]
@@ -55,7 +55,8 @@ final class AVRVariantTests: XCTestCase {
         var high = [Int: Int]()
         var samples = 0
         let start = avr.cycles
-        while avr.cycles - start < 16_000 * 40 {
+        // twenty whole periods of the phase correct PWM (510 timer clocks of 64 cycles)
+        while avr.cycles - start < 510 * 64 * 20 {
             avr.run(cycles: 32)
             samples += 1
             let states = avr.pinStates
@@ -63,7 +64,7 @@ final class AVRVariantTests: XCTestCase {
         }
         for pin in pins {
             let value = Double(10 + all.firstIndex(of: pin)! * 17)
-            let expected = pin == 4 ? (value + 1) / 256 : value / 255
+            let expected = value / 255
             XCTAssertEqual(Double(high[pin] ?? 0) / Double(samples), expected, accuracy: 0.01, "duty of pin \(pin)")
         }
     }
