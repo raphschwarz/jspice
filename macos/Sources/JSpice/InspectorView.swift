@@ -221,10 +221,13 @@ private struct StepField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField("–", text: $text)
+        TextField("Step", text: $text, prompt: Text("–"))
+            .labelsHidden()
+            .lineLimit(1)
             .multilineTextAlignment(.center)
             .textFieldStyle(.roundedBorder)
             .font(.callout.monospacedDigit())
+            .frame(minWidth: 44)
             .focused($focused)
             .onSubmit(save)
             .onChange(of: focused) { _, isFocused in
