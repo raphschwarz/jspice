@@ -30,6 +30,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
     case semiconductors = "Semiconductors"
     case amplifiers = "Amplifiers"
     case timersAndLogic = "Timers & Logic"
+    case effects = "Effects"
     case memristors = "Memristors"
     case instruments = "Instruments"
 
@@ -41,8 +42,9 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case dcVoltage, acVoltage, squareVoltage, noiseVoltage, currentSource, keyboardPitch, keyboardGate
     case toggleSwitch, pushButton
     case diode, zener, led, npn, pnp, nmos, pmos, njfet
-    case opAmp, ota
+    case opAmp, ota, multiplier
     case timer555, schmittInverter, analogSwitch
+    case delayLine, vactrol
     case memristor
     case probe, ammeter, speaker
 
@@ -134,6 +136,9 @@ extension ElementKind {
         case .njfet: return "N-JFET"
         case .opAmp: return "Op-Amp"
         case .ota: return "OTA"
+        case .multiplier: return "Multiplier"
+        case .delayLine: return "BBD Delay Line"
+        case .vactrol: return "Vactrol"
         case .timer555: return "555 Timer"
         case .schmittInverter: return "Schmitt Inverter"
         case .analogSwitch: return "Analog Switch"
@@ -162,7 +167,8 @@ extension ElementKind {
         case .led: return "LED"
         case .npn, .pnp, .njfet: return "Q"
         case .nmos, .pmos: return "M"
-        case .opAmp, .ota, .timer555, .schmittInverter, .analogSwitch: return "U"
+        case .opAmp, .ota, .multiplier, .delayLine, .timer555, .schmittInverter, .analogSwitch: return "U"
+        case .vactrol: return "VTL"
         case .memristor: return "MR"
         case .probe: return "P"
         case .ammeter: return "A"
@@ -176,7 +182,8 @@ extension ElementKind {
         case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate: return .sources
         case .toggleSwitch, .pushButton: return .switches
         case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
-        case .opAmp, .ota: return .amplifiers
+        case .opAmp, .ota, .multiplier: return .amplifiers
+        case .delayLine, .vactrol: return .effects
         case .timer555, .schmittInverter, .analogSwitch: return .timersAndLogic
         case .memristor: return .memristors
         case .probe, .ammeter, .speaker: return .instruments
@@ -210,7 +217,7 @@ extension ElementKind {
         case .pmos: return "p"
         case .opAmp: return "u"
         case .timer555: return "5"
-        case .njfet, .ota, .schmittInverter, .analogSwitch: return nil
+        case .njfet, .ota, .schmittInverter, .analogSwitch, .multiplier, .delayLine, .vactrol: return nil
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
@@ -226,6 +233,7 @@ extension ElementKind {
     /// Parts whose terminals depend on a direction, which stay horizontal or vertical
     public var isAxisAligned: Bool {
         isTransistor || self == .opAmp || self == .ota || self == .potentiometer || self == .timer555 || self == .analogSwitch
+            || self == .multiplier || self == .delayLine || self == .vactrol
     }
 
     /// Parts that can be mirrored across their axis
@@ -235,7 +243,7 @@ extension ElementKind {
     public var fixedLength: Int? {
         switch self {
         case .nmos, .pmos, .npn, .pnp, .njfet: return 2
-        case .ota: return 4
+        case .ota, .vactrol: return 4
         case .timer555: return 5
         default: return nil
         }
@@ -256,6 +264,9 @@ extension ElementKind {
         case .potentiometer: return ["a", "b", "wiper"]
         case .analogSwitch: return ["a", "b", "control"]
         case .opAmp: return ["minus", "plus", "out"]
+        case .multiplier: return ["x", "y", "out"]
+        case .delayLine: return ["in", "ctrl", "out"]
+        case .vactrol: return ["anode", "cathode", "a", "b"]
         case .ota: return ["minus", "plus", "out", "bias"]
         case .timer555: return ["gnd", "trig", "out", "reset", "ctrl", "thr", "dis", "vcc"]
         case .schmittInverter: return ["in", "out"]
@@ -274,6 +285,9 @@ extension ElementKind {
     public var isKeyboard: Bool { self == .keyboardPitch || self == .keyboardGate }
 
     public var isSwitch: Bool { self == .toggleSwitch || self == .pushButton }
+
+    /// Parts whose output (the third terminal) is driven like a voltage source to ground: op-amps, multipliers, BBDs
+    public var drivesOutput: Bool { self == .opAmp || self == .multiplier || self == .delayLine }
 
     /// Offset of the second point when the element is placed with a single click
     public var defaultOffset: GridPoint {
@@ -298,11 +312,36 @@ extension ElementKind {
             return [
                 ParamSpec("resistance", "Resistance", unit: "Ω", default: 10_000, range: 10...10_000_000),
                 ParamSpec("position", "Wiper position", unit: "", default: 0.5, range: 0...1, log: false),
+                ParamSpec("taper", "Taper (0 linear, 1 audio)", unit: "", default: 0, range: 0...1, log: false),
             ]
         case .zener:
             return [ParamSpec("breakdown", "Breakdown voltage", unit: "V", default: 5.1, range: 1...50, log: false)]
         case .npn, .pnp:
-            return [ParamSpec("beta", "Current gain", unit: "", default: 100, range: 5...1000)]
+            return [
+                ParamSpec("beta", "Current gain", unit: "", default: 100, range: 5...1000),
+                ParamSpec("saturationCurrent", "Saturation current", unit: "A", default: 1e-14, range: 1e-17...1e-5),
+            ]
+        case .multiplier:
+            return [
+                ParamSpec("scale", "Scale (out = scale · x · y)", unit: "1/V", default: 0.1, range: 0.01...1),
+                ParamSpec("limit", "Output swing", unit: "V", default: 11, range: 1...15, log: false),
+            ]
+        case .delayLine:
+            return [
+                ParamSpec("stages", "Stages", unit: "", default: 1024, range: 64...8192),
+                ParamSpec("clock", "Clock at 0 V", unit: "Hz", default: 40_000, range: 1000...200_000),
+                ParamSpec("clockPerVolt", "Clock per volt of control", unit: "Hz", default: 10_000, range: 0...100_000, log: false),
+                ParamSpec("gain", "Gain", unit: "", default: 1, range: 0...2, log: false),
+            ]
+        case .vactrol:
+            return [
+                ParamSpec("ron", "Resistance at the reference current", unit: "Ω", default: 1500, range: 10...1e6),
+                ParamSpec("iref", "Reference LED current", unit: "A", default: 0.01, range: 1e-4...0.05),
+                ParamSpec("roff", "Dark resistance", unit: "Ω", default: 1e7, range: 1e4...1e9),
+                ParamSpec("gamma", "Slope (resistance vs. current)", unit: "", default: 0.75, range: 0.3...1.5, log: false),
+                ParamSpec("attack", "Attack time", unit: "s", default: 0.0025, range: 1e-4...1),
+                ParamSpec("decay", "Decay time", unit: "s", default: 0.035, range: 1e-3...10),
+            ]
         case .opAmp:
             return [
                 ParamSpec("gain", "Open-loop gain", unit: "", default: 1_000_000, range: 10...10_000_000),
@@ -499,8 +538,10 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a, t.drain, t.source]
         case .potentiometer, .analogSwitch:
             return [a, b, wiper]
-        case .opAmp:
+        case .opAmp, .multiplier, .delayLine:
             return [a - perpendicular, a + perpendicular, b]
+        case .vactrol:
+            return [a - perpendicular, a + perpendicular, b - perpendicular, b + perpendicular]
         case .ota:
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
@@ -572,6 +613,50 @@ extension ElementKind {
                           values: ["onResistance": 125, "supply": 12]),
                 PartModel(name: "DG411", summary: "One switch of the low-resistance analog switch",
                           values: ["onResistance": 25, "supply": 12]),
+            ]
+        case .diode:
+            return [
+                PartModel(name: "Generic silicon", summary: "An ideal silicon junction",
+                          values: ["saturationCurrent": 1e-14, "emission": 1]),
+                PartModel(name: "1N4148", summary: "Small-signal switching diode: the usual clipping diode",
+                          values: ["saturationCurrent": 2.52e-9, "emission": 1.752]),
+                PartModel(name: "1N4001", summary: "Rectifier", values: ["saturationCurrent": 14.1e-9, "emission": 1.984]),
+                PartModel(name: "1N34A", summary: "Germanium: soft, low-voltage clipping for vintage fuzz",
+                          values: ["saturationCurrent": 2.6e-6, "emission": 1.6]),
+                PartModel(name: "BAT41", summary: "Schottky: low forward voltage", values: ["saturationCurrent": 2.8e-8, "emission": 1.06]),
+            ]
+        case .npn:
+            return [
+                PartModel(name: "Generic", summary: "A plain silicon NPN", values: ["beta": 100, "saturationCurrent": 1e-14]),
+                PartModel(name: "2N3904", summary: "General purpose", values: ["beta": 300, "saturationCurrent": 6.7e-15]),
+                PartModel(name: "BC547C", summary: "High gain, low noise", values: ["beta": 500, "saturationCurrent": 1.8e-14]),
+                PartModel(name: "2N5088", summary: "Very high gain: fuzz and distortion pedals", values: ["beta": 800, "saturationCurrent": 2e-14]),
+                PartModel(name: "BC108", summary: "Silicon Fuzz Face", values: ["beta": 300, "saturationCurrent": 1.8e-14]),
+            ]
+        case .pnp:
+            return [
+                PartModel(name: "Generic", summary: "A plain silicon PNP", values: ["beta": 100, "saturationCurrent": 1e-14]),
+                PartModel(name: "2N3906", summary: "General purpose", values: ["beta": 200, "saturationCurrent": 1.4e-15]),
+                PartModel(name: "AC128", summary: "Germanium: the original Fuzz Face", values: ["beta": 90, "saturationCurrent": 5e-8]),
+            ]
+        case .multiplier:
+            return [
+                PartModel(name: "AD633", summary: "Four-quadrant multiplier: out = x · y / 10 V, for ring modulators and VCAs",
+                          values: ["scale": 0.1, "limit": 11]),
+            ]
+        case .delayLine:
+            return [
+                PartModel(name: "MN3207", summary: "1024-stage bucket brigade: chorus and flanger (12.8 ms at 40 kHz)",
+                          values: ["stages": 1024, "clock": 40_000]),
+                PartModel(name: "MN3008", summary: "2048 stages: longer chorus, short echo", values: ["stages": 2048, "clock": 40_000]),
+                PartModel(name: "MN3005", summary: "4096 stages: echo (102 ms at 20 kHz)", values: ["stages": 4096, "clock": 20_000]),
+            ]
+        case .vactrol:
+            return [
+                PartModel(name: "VTL5C3", summary: "Fast, low-glow: lowpass gates, filters (about 2.5 ms on, 35 ms off)",
+                          values: ["ron": 1500, "iref": 0.01, "roff": 1e7, "gamma": 0.75, "attack": 0.0025, "decay": 0.035]),
+                PartModel(name: "NSL-32", summary: "Slow release: compressors and opto tremolo",
+                          values: ["ron": 500, "iref": 0.02, "roff": 5e5, "gamma": 0.8, "attack": 0.005, "decay": 0.25]),
             ]
         case .njfet:
             return [

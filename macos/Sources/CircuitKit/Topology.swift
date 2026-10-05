@@ -114,9 +114,9 @@ struct Topology {
         // voltage sources and op-amp outputs get a current unknown, unless they are shorted out
         sourceRow = Array(repeating: -1, count: elements.count)
         var row = nodeCount - 1
-        for (i, element) in elements.enumerated() where element.kind.isVoltageSource || element.kind == .opAmp {
+        for (i, element) in elements.enumerated() where element.kind.isVoltageSource || element.kind.drivesOutput {
             let name = element.name.isEmpty ? element.kind.displayName : element.name
-            if element.kind == .opAmp {
+            if element.kind.drivesOutput {
                 if elementNodes[i][2] == 0 {
                     shorted.insert(i)
                     problems.append("The output of \(name) is connected straight to ground.")

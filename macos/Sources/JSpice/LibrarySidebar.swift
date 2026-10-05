@@ -32,10 +32,10 @@ enum SymbolIcons {
         case .nmos, .pmos, .npn, .pnp, .njfet:
             element = Element(kind: kind, a: .zero, b: GridPoint(2, 0))
             (a, b, unit) = (CGPoint(x: 7, y: 11), CGPoint(x: 16, y: 11), 4.5)
-        case .opAmp:
+        case .opAmp, .multiplier, .delayLine:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 5, y: 11), CGPoint(x: 29, y: 11), 5.5)
-        case .ota:
+        case .ota, .vactrol:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 7, y: 9), CGPoint(x: 27, y: 9), 4.6)
         case .timer555:

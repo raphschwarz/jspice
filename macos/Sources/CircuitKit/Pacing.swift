@@ -53,6 +53,10 @@ public enum Pacing {
                 if f > 0 { scales.append(1 / f) }
             case .memristor:
                 scales.append(element[param: "tau"])
+            case .vactrol:
+                scales.append(contentsOf: [element[param: "attack"], element[param: "decay"]])
+            case .delayLine:
+                scales.append(element[param: "stages"] / (2 * max(element[param: "clock"], 1)))
             default:
                 break
             }

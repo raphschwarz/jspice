@@ -30,16 +30,17 @@ public enum SchematicLayout {
     static let inputs: [ElementKind: [String]] = [
         .opAmp: ["minus", "plus"], .ota: ["minus", "plus", "bias"], .timer555: ["trig", "thr", "dis", "ctrl", "reset"],
         .schmittInverter: ["in"], .npn: ["base"], .pnp: ["base"], .nmos: ["gate"], .pmos: ["gate"], .njfet: ["gate"],
-        .potentiometer: ["a", "b"], .analogSwitch: ["a", "control"],
+        .potentiometer: ["a", "b"], .analogSwitch: ["a", "control"], .multiplier: ["x", "y"], .delayLine: ["in", "ctrl"],
+        .vactrol: ["anode"],
     ]
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .npn: ["collector", "emitter"],
         .pnp: ["collector", "emitter"], .nmos: ["drain", "source"], .pmos: ["drain", "source"], .njfet: ["drain", "source"],
-        .potentiometer: ["wiper"], .analogSwitch: ["b"],
+        .potentiometer: ["wiper"], .analogSwitch: ["b"], .multiplier: ["out"], .delayLine: ["out"], .vactrol: ["b"],
     ]
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
                                             .keyboardGate]
-    static let amplifiers: Set<ElementKind> = [.opAmp, .ota]
+    static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .delayLine]
 
     static func isRailName(_ name: String) -> Bool {
         let s = name.uppercased().replacingOccurrences(of: " ", with: "")
@@ -66,7 +67,8 @@ public enum SchematicLayout {
         case .ground: return [e.b]
         case .netLabel, .wire: return []
         case .nmos, .pmos, .npn, .pnp, .njfet: return frame(1...2, -1...1)
-        case .opAmp, .ota: return frame(0...3, -2...2)
+        case .opAmp, .ota, .multiplier, .delayLine: return frame(0...3, -2...2)
+        case .vactrol: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
         default:
             let length = abs(e.b.x - e.a.x) + abs(e.b.y - e.a.y)

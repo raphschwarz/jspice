@@ -55,6 +55,32 @@ public final class Simulator {
     var limitedVoltage3: [Double] = []
     /// Random number generator state of each noise source (xorshift), so a run can be repeated exactly
     var noiseState: [UInt64] = []
+    /// What went into each delay line, one value per step, oldest overwritten first
+    private var delayHistory: [Int: DelayHistory] = [:]
+
+    struct DelayHistory {
+        var values: [Double]
+        var written = 0
+
+        init(capacity: Int) { values = Array(repeating: 0, count: max(capacity, 4)) }
+
+        mutating func append(_ value: Double) {
+            values[written % values.count] = value
+            written += 1
+        }
+
+        /// The value `steps` steps ago (fractions interpolate); before the line filled up, silence
+        func value(stepsAgo steps: Double) -> Double {
+            let back = min(max(steps, 0), Double(values.count - 2))
+            let whole = Int(back.rounded(.down))
+            let fraction = back - Double(whole)
+            func at(_ k: Int) -> Double {
+                let index = written - 1 - k
+                return index < 0 ? 0 : values[index % values.count]
+            }
+            return at(whole) * (1 - fraction) + at(whole + 1) * fraction
+        }
+    }
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
     var digitalState: [Bool] = []
     /// Op-amps: how often the input has been pulled back to the linear range in the present Newton solve
@@ -154,18 +180,21 @@ public final class Simulator {
         func indices(_ include: (ElementKind) -> Bool) -> [Int] { kinds.indices.filter { include(kinds[$0]) } }
         nonlinearIndices = indices {
             switch $0 {
-            case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch: return true
+            case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch, .multiplier, .vactrol: return true
             default: return false
             }
         }
         drivenIndices = indices {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
-                 .schmittInverter, .keyboardPitch, .keyboardGate: return true
+                 .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine: return true
             default: return false
             }
         }
-        statefulIndices = indices { [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage].contains($0) }
+        statefulIndices = indices {
+            [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage, .delayLine, .vactrol].contains($0)
+        }
+        delayHistory = [:]
         digitalIndices = indices { $0.isDigital }
         memristorIndices = indices { $0 == .memristor }
         for (i, element) in newCircuit.elements.enumerated() {
@@ -221,6 +250,8 @@ public final class Simulator {
         guard dt > 0, dt.isFinite, dt != timeStep else { return }
         timeStep = dt
         matrixIsCurrent = false
+        // a delay line's history is kept one value per step
+        delayHistory = [:]
         // the history of the two-step method assumes equal steps: rebuild it from the present slope
         for (i, element) in circuit.elements.enumerated() {
             if element.kind == .capacitor {
@@ -244,6 +275,7 @@ public final class Simulator {
         if timeStep != other.timeStep {
             timeStep = other.timeStep
             matrixIsCurrent = false
+            delayHistory = [:]
         }
         if digitalState != other.digitalState { matrixIsCurrent = false }
         x = other.x
@@ -279,6 +311,7 @@ public final class Simulator {
         isFailed = false
         problems = topology.problems
         for trace in traces.values { trace.clear() }
+        delayHistory = [:]
         currentsAreStale = true
     }
 
@@ -451,7 +484,9 @@ public final class Simulator {
     /// Conductances of a potentiometer's two halves: a to wiper, wiper to b
     func potentiometerResistances(_ element: Element) -> (Double, Double) {
         let total = max(element[param: "resistance"], 1e-3)
-        let position = min(1, max(0, element[param: "position"]))
+        var position = min(1, max(0, element[param: "position"]))
+        // audio (logarithmic) taper: a tenth of the resistance at half way, as an A-type pot
+        if element[param: "taper"] >= 0.5 { position = (pow(10, 2 * position) - 1) / 99 }
         let floor = total * 1e-4 + 1e-3
         return (max(total * position, floor), max(total * (1 - position), floor))
     }
@@ -486,8 +521,8 @@ public final class Simulator {
                 add(&matrix, m, minus, row, 1)
                 add(&matrix, m, row, plus, 1)
                 add(&matrix, m, row, minus, -1)
-            case .opAmp:
-                // output: a voltage source to ground, whose voltage the nonlinear stage sets from the inputs
+            case .opAmp, .multiplier, .delayLine:
+                // output: a voltage source to ground, whose voltage the nonlinear stage (or the delay line) sets
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
                 add(&matrix, m, nodes[2] - 1, row, -1)
@@ -591,11 +626,33 @@ public final class Simulator {
                 if digitalState[i] {
                     stampCurrent(&rhs, 0, nodes[1], c.supply * c.outputConductance)
                 }
+            case .delayLine:
+                let row = topology.sourceRow[i]
+                if row >= 0 { rhs[row] = delayedOutput(i) }
             default:
                 break
             }
         }
         return rhs
+    }
+
+    /// A bucket-brigade delay line's output: its input as it was one delay ago, the delay being the stages over twice
+    /// the clock, which the control voltage raises or lowers
+    private func delayedOutput(_ i: Int) -> Double {
+        let c = constants[i]
+        guard let history = delayHistory[i] else { return 0 }
+        let clock = max(c.frequency + c.slew * voltage(topology.elementNodes[i][1]), c.frequency * 0.05, 100)
+        let delay = c.value / (2 * clock)
+        return c.gain * history.value(stepsAgo: delay / timeStep - 1)
+    }
+
+    /// A vactrol's LDR: its resistance falls as a power of the light, which follows the LED current with the attack
+    /// and decay times (the state)
+    func vactrolConductance(_ i: Int) -> Double {
+        let c = constants[i]
+        let light = max(memristorStates[i], 0)
+        let g = pow(light / c.high, c.threshold) / c.value
+        return min(max(g, c.offConductance), 10)
     }
 
     func memristorConductance(_ i: Int, state: Double) -> Double {
@@ -667,6 +724,26 @@ public final class Simulator {
             c.value = abs(p("breakdown"))
         case .npn, .pnp:
             c.beta = max(p("beta"), 1)
+            c.saturation = max(p("saturationCurrent"), 1e-20)
+            c.critical = Self.thermalVoltage * log(Self.thermalVoltage / (sqrt(2) * c.saturation))
+        case .multiplier:
+            c.gain = p("scale")
+            c.limit = max(p("limit"), 0.1)
+        case .delayLine:
+            c.value = max(p("stages"), 1)
+            c.frequency = max(p("clock"), 1)
+            c.slew = p("clockPerVolt")
+            c.gain = p("gain")
+        case .vactrol:
+            // the LED: a red LED's junction
+            (c.saturation, c.nvt) = (0.01 / exp(LEDColor.red.forwardVoltage / (2 * Self.thermalVoltage)), 2 * Self.thermalVoltage)
+            c.critical = c.nvt * log(c.nvt / (sqrt(2) * c.saturation))
+            c.value = max(p("ron"), 1e-3)
+            c.high = max(p("iref"), 1e-9)
+            c.offConductance = 1 / max(p("roff"), 1)
+            c.threshold = max(p("gamma"), 0.01)
+            c.tau = max(p("attack"), 1e-6)
+            c.highDrop = max(p("decay"), 1e-6)
         case .nmos, .pmos, .njfet:
             (c.polarity, c.threshold, c.beta) = fetParameters(element)
         case .opAmp:
@@ -772,8 +849,7 @@ public final class Simulator {
     }
 
     /// Ebers-Moll transport model of an NPN transistor (a PNP is the same with all voltages and currents negated)
-    func bipolarCurrents(vbe: Double, vbc: Double, beta: Double) -> BipolarModel {
-        let saturation = Self.transistorSaturationCurrent
+    func bipolarCurrents(vbe: Double, vbc: Double, beta: Double, saturation: Double = Simulator.transistorSaturationCurrent) -> BipolarModel {
         let vt = Self.thermalVoltage
         let reverseBeta = 1.0
         let f = exp(min(vbe / vt, 700))
@@ -900,13 +976,13 @@ public final class Simulator {
                 let p: Double = kinds[i] == .npn ? 1 : -1
                 let (base, collector, emitter) = (nodes[0], nodes[1], nodes[2])
                 let vt = Self.thermalVoltage
-                let critical = vt * log(vt / (sqrt(2) * Self.transistorSaturationCurrent))
+                let critical = c.critical
                 // limit the junctions in the transistor's own polarity
                 let vbe = limitJunction(p * (voltage(base) - voltage(emitter)), old: limitedVoltage[i], nvt: vt, critical: critical)
                 let vbc = limitJunction(p * (voltage(base) - voltage(collector)), old: limitedVoltage2[i], nvt: vt, critical: critical)
                 limitedVoltage[i] = vbe
                 limitedVoltage2[i] = vbc
-                var model = bipolarCurrents(vbe: vbe, vbc: vbc, beta: c.beta)
+                var model = bipolarCurrents(vbe: vbe, vbc: vbc, beta: c.beta, saturation: c.saturation)
                 if junctionConductance > 0 {
                     // shunts across both junctions: base to emitter and base to collector
                     let g = junctionConductance
@@ -1036,6 +1112,31 @@ public final class Simulator {
                     rhs[row] -= -il - gl * (-level) + gl * vl
                 }
 
+            case .multiplier:
+                // out = limit tanh(scale x y / limit), linearised in x and y
+                let row = topology.sourceRow[i]
+                guard row >= 0 else { continue }
+                let vx = voltage(nodes[0])
+                let vy = voltage(nodes[1])
+                let t = tanh(c.gain * vx * vy / c.limit)
+                let slope = 1 - t * t
+                let fx = c.gain * vy * slope
+                let fy = c.gain * vx * slope
+                add(&matrix, m, row, nodes[0] - 1, -fx)
+                add(&matrix, m, row, nodes[1] - 1, -fy)
+                rhs[row] = c.limit * t - fx * vx - fy * vy
+
+            case .vactrol:
+                // the LED, like a diode, and the LDR, a resistance set by the light so far
+                let vd = limitJunction(voltage(nodes[0]) - voltage(nodes[1]), old: limitedVoltage[i], nvt: c.nvt, critical: c.critical)
+                limitedVoltage[i] = vd
+                var (id, gd) = diodeCurrent(vd, saturation: c.saturation, nvt: c.nvt)
+                id += junctionConductance * vd
+                gd += junctionConductance
+                stampConductance(&matrix, m, nodes[0], nodes[1], gd)
+                stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
+                stampConductance(&matrix, m, nodes[2], nodes[3], vactrolConductance(i))
+
             case .analogSwitch:
                 let (a, b, control) = (nodes[0], nodes[1], nodes[2])
                 let vc = voltage(control)
@@ -1112,6 +1213,19 @@ public final class Simulator {
                 capacitorVoltage[i] = sourceVoltage(i, at: time)
             case .noiseVoltage:
                 capacitorVoltage[i] = nextNoise(i)
+            case .delayLine:
+                if delayHistory[i] == nil {
+                    // long enough for the slowest clock the control is likely to set
+                    let longest = min(parameters.value / (2 * max(parameters.frequency * 0.05, 100)), 2)
+                    delayHistory[i] = DelayHistory(capacity: min(Int(longest / timeStep) + 4, 4_000_000))
+                }
+                delayHistory[i]?.append(voltage(nodes[0]))
+            case .vactrol:
+                // the light follows the LED current, faster as it rises (attack) than as it falls (decay)
+                let led = diodeCurrent(voltage(nodes[0]) - voltage(nodes[1]), saturation: parameters.saturation, nvt: parameters.nvt).current
+                let light = memristorStates[i]
+                let tau = led > light ? parameters.tau : parameters.highDrop
+                memristorStates[i] = max(0, led + (light - led) * exp(-timeStep / tau))
             case .opAmp where parameters.gbw > 0:
                 let (_, _, stage) = opAmpOutput(i, differential: voltage(nodes[1]) - voltage(nodes[0]))
                 // the internal stage cannot wind up far beyond the output swing
@@ -1181,13 +1295,18 @@ public final class Simulator {
         case .npn, .pnp:
             let p: Double = element.kind == .npn ? 1 : -1
             let model = bipolarCurrents(vbe: p * (v(nodes[0]) - v(nodes[2])), vbc: p * (v(nodes[0]) - v(nodes[1])),
-                                        beta: constants[i].beta)
+                                        beta: constants[i].beta, saturation: constants[i].saturation)
             let (ic, ib) = (p * model.ic, p * model.ib)
             return (ic, [-ib, -ic, ic + ib])
-        case .opAmp:
+        case .opAmp, .multiplier, .delayLine:
             let row = topology.sourceRow[i]
             let current = row >= 0 && row < x.count ? x[row] : 0
             return (current, [0, 0, current])
+        case .vactrol:
+            let c = constants[i]
+            let led = diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: c.saturation, nvt: c.nvt).current
+            let ldr = (v(nodes[2]) - v(nodes[3])) * vactrolConductance(i)
+            return (led, [-led, led, -ldr, ldr])
         case .ota:
             let supply = constants[i].supply
             let bias = otaBias(i, junction: v(nodes[3]) + supply).current
@@ -1280,7 +1399,7 @@ public final class Simulator {
         guard nodes.count >= 2 else { return 0 }
         let kind = kinds[index]
         if kind.isTransistor { return v(1) - v(2) }
-        if kind == .opAmp || kind == .ota { return v(2) }
+        if kind == .opAmp || kind == .ota || kind == .multiplier || kind == .delayLine { return v(2) }
         if kind == .timer555 { return v(2) - v(0) }
         if kind == .schmittInverter { return v(1) }
         return kind.isVoltageSource ? v(1) - v(0) : v(0) - v(1)

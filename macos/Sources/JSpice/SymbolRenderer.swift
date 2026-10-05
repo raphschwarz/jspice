@@ -73,7 +73,8 @@ enum SymbolRenderer {
     /// Length of the drawn body along the element, in grid units; the rest is leads
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
-        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555: return 0
+        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol:
+            return 0
         case .schmittInverter: return 1.8
         case .analogSwitch: return 1.6
         case .resistor, .potentiometer, .inductor: return 2
@@ -101,6 +102,8 @@ enum SymbolRenderer {
             drawJFET(element, at: a, b, unit: u, style: style, in: ctx)
         case .opAmp, .ota:
             drawOpAmp(element, posts: posts, at: a, b, unit: u, style: style, in: ctx)
+        case .multiplier, .delayLine, .vactrol:
+            drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
         case .analogSwitch:
@@ -294,7 +297,7 @@ enum SymbolRenderer {
             path.move(to: CGPoint(x: x0 + 0.2 * u, y: 0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.2 * u, y: -0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
-        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555:
+        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol:
             break
         }
 
@@ -622,6 +625,96 @@ enum SymbolRenderer {
 
     /// Op-amp or OTA: inputs one grid unit either side of `a` (− then +), output at `b`; an OTA's bias input enters
     /// the triangle from below its middle, and a circle on its output marks it as a current source
+    /// The multiplier (a circle with ×), the bucket-brigade delay line (a row of buckets) and the vactrol (an LED
+    /// shining on an LDR in one box), drawn along a to b with their input pins either side of a
+    private static func drawBlock(_ element: Element, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                  in ctx: CGContext) {
+        let L = hypot(b.x - a.x, b.y - a.y)
+        guard L > 0.5 else { return }
+        let count = element.kind == .vactrol ? 4 : 3
+        let colors = style.terminalColors.count >= count ? style.terminalColors : Array(repeating: style.fill, count: 4)
+        func line(_ points: [CGPoint], _ color: RGBA) {
+            let path = CGMutablePath()
+            path.addLines(between: points)
+            stroke(path, width: style.lineWidth, from: color, to: color, start: 0, end: 1, length: L, in: ctx)
+        }
+        ctx.saveGState()
+        enterFrame(of: element, at: a, b, in: ctx)
+        let body = CGMutablePath()
+        switch element.kind {
+        case .multiplier:
+            let r = max(0.6 * u, min(1.25 * u, L / 2 - 0.4 * u))
+            let cx = L / 2
+            let reach = cx - (r * r - min(u * u, r * r * 0.8)).squareRoot()
+            line([CGPoint(x: 0, y: -u), CGPoint(x: reach, y: -u)], colors[0])
+            line([CGPoint(x: 0, y: u), CGPoint(x: reach, y: u)], colors[1])
+            line([CGPoint(x: cx + r, y: 0), CGPoint(x: L, y: 0)], colors[2])
+            body.addEllipse(in: CGRect(x: cx - r, y: -r, width: 2 * r, height: 2 * r))
+            let k = 0.45 * r
+            body.move(to: CGPoint(x: cx - k, y: -k))
+            body.addLine(to: CGPoint(x: cx + k, y: k))
+            body.move(to: CGPoint(x: cx - k, y: k))
+            body.addLine(to: CGPoint(x: cx + k, y: -k))
+        case .delayLine:
+            let left = min(0.6 * u, L * 0.15)
+            let right = max(left + u, L - 0.6 * u)
+            line([CGPoint(x: 0, y: -u), CGPoint(x: left, y: -u)], colors[0])
+            line([CGPoint(x: 0, y: u), CGPoint(x: left, y: u)], colors[1])
+            line([CGPoint(x: right, y: 0), CGPoint(x: L, y: 0)], colors[2])
+            body.addRect(CGRect(x: left, y: -1.5 * u, width: right - left, height: 3 * u))
+            // buckets passing the signal along, and the clock input's mark
+            let buckets = 4
+            let pitch = (right - left - 0.5 * u) / CGFloat(buckets)
+            for k in 0..<buckets {
+                let x = left + 0.25 * u + pitch * CGFloat(k) + pitch * 0.2
+                body.move(to: CGPoint(x: x, y: -0.55 * u))
+                body.addLine(to: CGPoint(x: x, y: 0.15 * u))
+                body.addLine(to: CGPoint(x: x + pitch * 0.6, y: 0.15 * u))
+                body.addLine(to: CGPoint(x: x + pitch * 0.6, y: -0.55 * u))
+            }
+            body.move(to: CGPoint(x: left, y: u - 0.3 * u))
+            body.addLine(to: CGPoint(x: left + 0.35 * u, y: u))
+            body.addLine(to: CGPoint(x: left, y: u + 0.3 * u))
+        default:
+            // vactrol: LED on the left (anode up), LDR on the right, light between them
+            let ledX = min(1.2 * u, L * 0.3)
+            let ldrX = max(L - 1.2 * u, L * 0.7)
+            line([CGPoint(x: 0, y: -u), CGPoint(x: ledX, y: -u), CGPoint(x: ledX, y: -0.35 * u)], colors[0])
+            line([CGPoint(x: 0, y: u), CGPoint(x: ledX, y: u), CGPoint(x: ledX, y: 0.3 * u)], colors[1])
+            line([CGPoint(x: L, y: -u), CGPoint(x: ldrX, y: -u), CGPoint(x: ldrX, y: -0.6 * u)], colors[2])
+            line([CGPoint(x: L, y: u), CGPoint(x: ldrX, y: u), CGPoint(x: ldrX, y: 0.6 * u)], colors[3])
+            body.addRect(CGRect(x: 0.45 * u, y: -1.6 * u, width: L - 0.9 * u, height: 3.2 * u))
+            // the LED: a triangle pointing down onto its bar
+            body.move(to: CGPoint(x: ledX - 0.3 * u, y: -0.35 * u))
+            body.addLine(to: CGPoint(x: ledX + 0.3 * u, y: -0.35 * u))
+            body.addLine(to: CGPoint(x: ledX, y: 0.25 * u))
+            body.closeSubpath()
+            body.move(to: CGPoint(x: ledX - 0.3 * u, y: 0.3 * u))
+            body.addLine(to: CGPoint(x: ledX + 0.3 * u, y: 0.3 * u))
+            // the LDR: a short zigzag
+            for k in 0...6 {
+                let y = -0.6 * u + 1.2 * u * CGFloat(k) / 6
+                let point = CGPoint(x: ldrX + (k == 0 || k == 6 ? 0 : (k % 2 == 0 ? -0.18 : 0.18) * u), y: y)
+                if k == 0 { body.move(to: point) } else { body.addLine(to: point) }
+            }
+            // light
+            for y in [-0.2 * u, 0.2 * u] {
+                let from = CGPoint(x: ledX + 0.45 * u, y: y)
+                let to = CGPoint(x: ldrX - 0.4 * u, y: y)
+                body.move(to: from)
+                body.addLine(to: to)
+                body.move(to: CGPoint(x: to.x - 0.18 * u, y: y - 0.12 * u))
+                body.addLine(to: to)
+                body.addLine(to: CGPoint(x: to.x - 0.18 * u, y: y + 0.12 * u))
+            }
+        }
+        ctx.addPath(body)
+        ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.06).cgColor)
+        ctx.fillPath()
+        stroke(body, width: style.lineWidth, from: style.fill, to: style.fill, start: 0, end: 1, length: L, in: ctx)
+        ctx.restoreGState()
+    }
+
     private static func drawOpAmp(_ element: Element, posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat,
                                   style: SymbolStyle, in ctx: CGContext) {
         let L = hypot(b.x - a.x, b.y - a.y)
@@ -857,8 +950,10 @@ enum SymbolRenderer {
             return [(a, end)]
         case .nmos, .pmos, .npn, .pnp, .njfet:
             return posts.count == 3 ? [(a, b), (posts[1], posts[2])] : [(a, b)]
-        case .opAmp:
+        case .opAmp, .multiplier, .delayLine:
             return posts.count == 3 ? [(posts[0], posts[1]), (a, b)] : [(a, b)]
+        case .vactrol:
+            return posts.count == 4 ? [(posts[0], posts[1]), (posts[2], posts[3]), (a, b)] : [(a, b)]
         case .ota:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
@@ -902,7 +997,9 @@ enum SymbolRenderer {
             guard length > 0 else { return nil }
             let start = min(length, (length + bodyLength(.schmittInverter) * u) / 2)
             return (CGPoint(x: a.x + (b.x - a.x) * start / length, y: a.y + (b.y - a.y) * start / length), b, nil)
-        case .opAmp, .ota:
+        case .vactrol:
+            return nil
+        case .opAmp, .ota, .multiplier, .delayLine:
             // the output lead, from the triangle's tip
             let length = hypot(b.x - a.x, b.y - a.y)
             guard length > 0 else { return nil }

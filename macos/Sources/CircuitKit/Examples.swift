@@ -41,7 +41,8 @@ public enum Examples {
     public static let all: [Example] = [
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
-        beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, memristorHysteresis, memristorPulses,
+        beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid,
+        ringModulator, chorus, fuzz, overdrive, lowpassGate, memristorHysteresis, memristorPulses,
     ]
 
     /// A circuit drawn from a netlist by the tidy layout, with scopes on the named parts
@@ -272,6 +273,96 @@ public enum Examples {
                        summary: "The synth voice played by the step sequencer. Turn on sound; change the notes, tempo and gate in the inspector (click an empty spot first).",
                        symbol: "metronome", circuit: circuit)
     }()
+
+    // MARK: Effects
+
+    static let ringModulator = Example(
+        id: "ringmod", title: "Ring modulator (sound)",
+        summary: "An AD633 multiplies two tones: you hear their sum and difference (740 Hz and 140 Hz), not the tones themselves. Turn on sound.",
+        symbol: "circle.circle",
+        circuit: drawn([
+            NetlistPart(kind: .acVoltage, name: "VX", params: ["amplitude": 5, "frequency": 440], connections: ["plus": "x", "minus": "GND"]),
+            NetlistPart(kind: .acVoltage, name: "VY", params: ["amplitude": 5, "frequency": 300], connections: ["plus": "y", "minus": "GND"]),
+            NetlistPart(kind: .multiplier, name: "U1", params: model(.multiplier, "AD633"), connections: ["x": "x", "y": "y", "out": "ring"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "ring", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 3], connections: ["plus": "ring", "minus": "GND"]),
+        ], scopes: [("VX", .voltage), ("SPK1", .voltage)]))
+
+    /// A chorus: the signal delayed 10 to 17 ms by an MN3207 whose clock a slow LFO sweeps, mixed with the dry signal
+    static let chorus = Example(
+        id: "chorus", title: "BBD chorus (sound)",
+        summary: "An MN3207 bucket brigade delays a 220 Hz square by about 13 ms, a 0.7 Hz LFO sweeping its clock; mixed with the dry signal it shimmers. Turn on sound.",
+        symbol: "water.waves",
+        circuit: drawn([
+            NetlistPart(kind: .squareVoltage, name: "VIN", params: ["high": 2, "low": -2, "frequency": 220, "duty": 0.5],
+                        connections: ["plus": "in", "minus": "GND"]),
+            NetlistPart(kind: .acVoltage, name: "LFO", params: ["amplitude": 1, "frequency": 0.7], connections: ["plus": "lfo", "minus": "GND"]),
+            NetlistPart(kind: .delayLine, name: "U1", params: model(.delayLine, "MN3207"), connections: ["in": "in", "ctrl": "lfo", "out": "wet"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "in", "b": "sum"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "wet", "b": "sum"]),
+            NetlistPart(kind: .opAmp, name: "U2", params: model(.opAmp, "TL072"), connections: ["minus": "sum", "plus": "GND", "out": "mix"]),
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 10_000], connections: ["a": "sum", "b": "mix"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 5], connections: ["plus": "mix", "minus": "GND"]),
+        ], scopes: [("LFO", .voltage), ("SPK1", .voltage)]))
+
+    /// The silicon Fuzz Face: two high-gain NPNs in a feedback pair, the 100 k from Q2's emitter biasing Q1
+    static let fuzz = Example(
+        id: "fuzz", title: "Fuzz Face (sound)",
+        summary: "The classic two-transistor fuzz (silicon, BC108) on a guitar's G string. Turn on sound and turn FUZZ up.",
+        symbol: "bolt.horizontal",
+        circuit: drawn([
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 9], connections: ["plus": "+9V", "minus": "GND"]),
+            NetlistPart(kind: .acVoltage, name: "GTR", params: ["amplitude": 0.1, "frequency": 196], connections: ["plus": "gtr", "minus": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 2.2e-6], connections: ["a": "gtr", "b": "b1"]),
+            NetlistPart(kind: .npn, name: "Q1", params: model(.npn, "BC108"), connections: ["base": "b1", "collector": "c1", "emitter": "GND"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 33_000], connections: ["a": "+9V", "b": "c1"]),
+            NetlistPart(kind: .npn, name: "Q2", params: model(.npn, "BC108"), connections: ["base": "c1", "collector": "c2", "emitter": "e2"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 8200], connections: ["a": "+9V", "b": "c2a"]),
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 470], connections: ["a": "c2a", "b": "c2"]),
+            NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 100_000], connections: ["a": "e2", "b": "b1"]),
+            NetlistPart(kind: .potentiometer, name: "FUZZ", params: ["resistance": 1000, "position": 0.8],
+                        connections: ["a": "GND", "b": "e2", "wiper": "fz"]),
+            NetlistPart(kind: .capacitor, name: "C2", params: ["capacitance": 20e-6], connections: ["a": "fz", "b": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C3", params: ["capacitance": 10e-9], connections: ["a": "c2", "b": "outc"]),
+            NetlistPart(kind: .potentiometer, name: "VOLUME", params: ["resistance": 500_000, "position": 0.6, "taper": 1],
+                        connections: ["a": "GND", "b": "outc", "wiper": "out"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 2], connections: ["plus": "out", "minus": "GND"]),
+        ], scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
+
+    /// Overdrive: a TL072 with a gain of 22 into a pair of 1N4148 diodes that clip at about ±0.6 V
+    static let overdrive = Example(
+        id: "overdrive", title: "Diode-clipper overdrive (sound)",
+        summary: "A TL072 gain stage drives two 1N4148s to ground, which round off everything above about 0.6 V. Turn on sound.",
+        symbol: "flame",
+        circuit: drawn([
+            NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 0.3, "frequency": 220], connections: ["plus": "in", "minus": "GND"]),
+            NetlistPart(kind: .opAmp, name: "U1", params: model(.opAmp, "TL072"), connections: ["plus": "in", "minus": "fb", "out": "amp"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 4700], connections: ["a": "fb", "b": "GND"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 100_000], connections: ["a": "amp", "b": "fb"]),
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 1000], connections: ["a": "amp", "b": "clip"]),
+            NetlistPart(kind: .diode, name: "D1", params: model(.diode, "1N4148"), connections: ["anode": "clip", "cathode": "GND"]),
+            NetlistPart(kind: .diode, name: "D2", params: model(.diode, "1N4148"), connections: ["anode": "GND", "cathode": "clip"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 10e-9], connections: ["a": "clip", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 1], connections: ["plus": "clip", "minus": "GND"]),
+        ], scopes: [("VIN", .voltage), ("SPK1", .voltage)]))
+
+    /// A lowpass gate: a VTL5C3's LDR in series with the signal and a capacitor to ground, its LED pulsed by a gate, so
+    /// each pulse opens the sound quickly and lets it die away with the LDR's slow decay
+    static let lowpassGate = Example(
+        id: "lpg", title: "Vactrol lowpass gate (sound)",
+        summary: "A VTL5C3 vactrol opens a 330 Hz tone on each gate pulse and lets it fade with the LDR's natural decay, a soft 'bongo' pluck. Turn on sound.",
+        symbol: "lightbulb",
+        circuit: drawn([
+            NetlistPart(kind: .squareVoltage, name: "GATE", params: ["high": 5, "low": 0, "frequency": 2, "duty": 0.1],
+                        connections: ["plus": "g", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 220], connections: ["a": "g", "b": "led"]),
+            NetlistPart(kind: .vactrol, name: "VTL1", params: model(.vactrol, "VTL5C3"),
+                        connections: ["anode": "led", "cathode": "GND", "a": "in", "b": "out"]),
+            NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 2, "frequency": 330], connections: ["plus": "in", "minus": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 10e-9], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 2], connections: ["plus": "out", "minus": "GND"]),
+        ], scopes: [("GATE", .voltage), ("SPK1", .voltage)]))
 
     static let filter = Example(
         id: "vcf", title: "LM13700 filter (sound)",

@@ -48,6 +48,10 @@ enum ScreenshotRunner {
         Shot(name: "28-voice-dark", example: "voice", dark: true, seconds: 1, select: .keyboardGate),
         Shot(name: "29-acid-light", example: "acid", dark: false, seconds: 1, select: .keyboardPitch),
         Shot(name: "30-panel-dark", example: "tone", dark: true, seconds: 1.5),
+        Shot(name: "31-chorus-light", example: "chorus", dark: false, seconds: 0.5, select: .delayLine),
+        Shot(name: "32-fuzz-dark", example: "fuzz", dark: true, seconds: 0.5, select: .npn),
+        Shot(name: "33-lpg-light", example: "lpg", dark: false, seconds: 0.6, select: .vactrol),
+        Shot(name: "34-ringmod-dark", example: "ringmod", dark: true, seconds: 0.3, select: .multiplier),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {

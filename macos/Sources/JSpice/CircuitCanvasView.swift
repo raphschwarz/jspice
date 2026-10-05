@@ -279,7 +279,7 @@ final class CircuitCanvasView: NSView {
         case .noiseVoltage: return "Noise " + SI.format(element[param: "amplitude"], unit: "V")
         case .memristor:
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
-        case .opAmp, .ota, .timer555, .schmittInverter, .analogSwitch, .njfet:
+        case .opAmp, .ota, .timer555, .schmittInverter, .analogSwitch, .njfet, .multiplier, .delayLine, .vactrol:
             // the real part it behaves like
             return element.model?.name ?? "Custom"
         default: return nil
@@ -328,7 +328,7 @@ final class CircuitCanvasView: NSView {
                 let points = element.extentPoints.map(screen)
                 anchor = CGPoint(x: (points.map(\.x).min()! + points.map(\.x).max()!) / 2, y: points.map(\.y).min()! - 0.4 * unit)
                 horizontal = true
-            } else if element.kind == .opAmp || element.kind == .ota {
+            } else if element.kind == .opAmp || element.kind == .ota || element.kind == .multiplier || element.kind == .delayLine {
                 // below the triangle when a feedback part arches over it
                 let left = min(element.a.x, element.b.x)
                 let right = max(element.a.x, element.b.x)
@@ -347,7 +347,8 @@ final class CircuitCanvasView: NSView {
             switch element.kind {
             case _ where element.kind.isTransistor: offset = 0.4 * unit
             case .timer555: offset = 0
-            case .opAmp: offset = 1.9 * unit
+            case .opAmp, .multiplier, .delayLine: offset = 1.9 * unit
+            case .vactrol: offset = 1.9 * unit
             default: offset = (isProbe ? 1.0 : 1.05) * unit
             }
             var y: CGFloat
@@ -750,7 +751,7 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
     case .probe, .netLabel, .speaker: return [.voltage]
     case .ground: return []
-    case .opAmp, .ota, .timer555, .schmittInverter: return [.voltage, .current]
+    case .opAmp, .ota, .timer555, .schmittInverter, .multiplier, .delayLine: return [.voltage, .current]
     case .analogSwitch: return [.voltage, .current, .resistance]
     default: return [.voltage, .current, .power]
     }
