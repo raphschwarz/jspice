@@ -58,6 +58,14 @@ jobs:
         run: |
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --install-chip-support avr
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/kitchen.ino build/kitchen.bin
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/mega.ino build/mega.bin --board mega
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/tiny.ino build/tiny.bin --board attiny85
+      - name: Chip support for the Pico (installs arduino-pico and its gcc as the app does, compiles a sketch)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 25
+        run: |
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --install-chip-support rp2040
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/pico-reference/sketches/kitchen.ino build/pico-kitchen.bin --board pico
       - name: Test the simulation engine
         timeout-minutes: 15
         # optimised, as the app runs it: audio-rate tests take minutes in a debug build

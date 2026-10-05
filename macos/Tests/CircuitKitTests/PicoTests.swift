@@ -158,4 +158,24 @@ final class PicoTests: XCTestCase {
         XCTAssertEqual(frequency(from: 0.05, to: 0.45), 125e6 / (2 * Double((125_000_000 + 440) / 880)), accuracy: 0.05)
         XCTAssertEqual(frequency(from: 0.55, to: 0.9), 125e6 / (2 * Double((125_000_000 + 1000) / 2000)), accuracy: 0.2)
     }
+
+    /// Compiles a sketch end to end when arduino-pico is installed (CI installs it through Chip Support)
+    func testCompilesAndRunsAPicoSketchWhenAToolchainIsInstalled() throws {
+        guard let toolchain = PicoToolchain.find() else {
+            if ProcessInfo.processInfo.environment["JSPICE_REQUIRE_TOOLCHAIN"] != nil { XCTFail("no Pico toolchain found") }
+            throw XCTSkip("no Pico toolchain installed")
+        }
+        let failed = SketchBuilder.build("void setup() { undefinedThing(); }\nvoid loop() {}\n", toolchain: toolchain)
+        XCTAssertFalse(failed.succeeded)
+        XCTAssertEqual(failed.errors.first?.line, 1, failed.log)
+        let result = SketchBuilder.build(PicoSketches.knobCode, toolchain: toolchain)
+        let firmware = try XCTUnwrap(result.firmware, result.log)
+        let pico = Pico(firmware: [UInt8](firmware))
+        var volts = [Double](repeating: 0, count: pico.pinCount)
+        volts[23] = 1.65  // GP26
+        pico.pinVoltages = volts
+        pico.run(cycles: 125_000 * 450)
+        XCTAssertTrue(String(decoding: pico.serialOutput, as: UTF8.self).hasPrefix("A0: 2048  (1.65 V)\r\n"),
+                      String(decoding: pico.serialOutput, as: UTF8.self))
+    }
 }
