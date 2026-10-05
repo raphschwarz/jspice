@@ -47,7 +47,7 @@ jobs:
         run: |
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25
           # where the time goes, for the heaviest synth example
-          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 vca > /dev/null &
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 voice > /dev/null &
           sleep 1
           sample $! 3 -file build/profile.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
