@@ -16,6 +16,8 @@ final class AudioRenderer: @unchecked Sendable {
     private var paused = false
     private var stopped = false
     private var achievedValue = 1.0
+    /// Largest output since the window last asked, as a fraction of the speaker's full scale (above 1 clips)
+    private var peak = 0.0
 
     private let output: AudioOutput
     /// Sound queued ahead of the speaker: enough to ride out a busy moment, short enough to answer a knob quickly
@@ -53,6 +55,15 @@ final class AudioRenderer: @unchecked Sendable {
     }
 
     var sampleRate: Double { output.sampleRate }
+
+    /// The output's peak level since the last call, for the level meter
+    func takePeak() -> Double {
+        lock.withLock {
+            let value = peak
+            peak = 0
+            return value
+        }
+    }
 
     /// Fraction of real time the circuit recently ran at (below 1 when it is too heavy to keep up)
     var achieved: Double { lock.withLock { achievedValue } }
@@ -122,6 +133,7 @@ final class AudioRenderer: @unchecked Sendable {
                     sum += simulator.voltageAcross(speaker)
                 }
                 let x = sum / Double(steps) / fullScale
+                peak = max(peak, abs(x))
                 // one-pole high-pass at about 4 Hz, then a soft limit instead of hard clipping
                 let y = x - blockerInput + 0.9995 * blockerOutput
                 blockerInput = x

@@ -22,6 +22,8 @@ final class EditorState: ObservableObject {
     @Published var showValues = true
     @Published var showCurrent = true
     @Published var showInspector = true
+    /// The front panel of knobs and switches below the schematic
+    @Published var showPanel = true
     /// Incremented to ask the canvas to fit the circuit in view
     @Published private(set) var fitRequest = 1
 

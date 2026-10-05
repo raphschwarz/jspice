@@ -30,6 +30,9 @@ struct EditorView: View {
                     .overlay(alignment: .top) {
                         ProblemBanner(simulation: editor.simulation).padding(.top, 12)
                     }
+                if editor.showPanel && FrontPanel.hasControls(document.circuit) {
+                    FrontPanel(editor: editor, circuit: document.circuit)
+                }
                 if !document.circuit.scopes.isEmpty {
                     Divider()
                     ScopePanel(editor: editor, circuit: document.circuit)
@@ -98,6 +101,10 @@ struct EditorToolbar: ToolbarContent {
             .disabled(!simulation.hasSpeaker)
             .help(simulation.hasSpeaker ? "Listen to the speaker: runs the circuit in real time at audio rate"
                                         : "Add a speaker to the circuit to listen to it")
+            Toggle(isOn: $editor.showPanel) {
+                Label("Panel", systemImage: "slider.horizontal.3")
+            }
+            .help("Show the front panel: knobs and switches for the circuit's potentiometers and switches")
             Toggle(isOn: $editor.showCurrent) {
                 Label("Current", systemImage: "bolt.fill")
             }

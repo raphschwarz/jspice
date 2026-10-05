@@ -48,6 +48,9 @@ final class SimulationController: ObservableObject {
     private var lastPublish: CFTimeInterval = 0
     private var achieved = 1.0
 
+    /// The speaker's recent peak level as a fraction of its full scale (above 1 clips), for the front panel's meter
+    private(set) var outputLevel = 0.0
+
     /// Seconds of wall-clock time a scope shows
     static let scopeSpan = 4.0
 
@@ -182,11 +185,24 @@ final class SimulationController: ObservableObject {
             achieved = achieved * 0.9 + ratio * 0.1
         }
         moveDots(wall: wall)
+        measureOutput(wall: wall)
         voltageScale = max(1, simulator.maxNodeVoltage, voltageScale * pow(0.7, wall))
         if now - lastPublish > 0.2 || simulator.isFailed {
             lastPublish = now
             publish()
         }
+    }
+
+    private func measureOutput(wall: Double) {
+        guard let speaker = speakerIndex, speaker < simulator.circuit.elements.count else {
+            outputLevel = 0
+            return
+        }
+        // with sound on, the sound thread's true peak; otherwise the level now (the circuit runs slowly enough to see it)
+        let fullScale = max(simulator.circuit.elements[speaker][param: "fullScale"], 1e-3)
+        let level = renderer?.takePeak() ?? abs(simulator.voltageAcross(speaker)) / fullScale
+        // falls back over about a third of a second, like a peak meter
+        outputLevel = max(level, outputLevel * pow(0.001, wall))
     }
 
     private func moveDots(wall: Double) {
