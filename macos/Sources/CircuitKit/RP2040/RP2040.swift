@@ -35,7 +35,11 @@ final class RP2040 {
     private(set) var dma: RPDMA!
     private(set) var pio: [RPPIO] = []
     private(set) var usbCtrl: RPUSBController!
-    private var peripherals: [UInt32: RPPeripheral] = [:]
+    /// The peripherals at 0x40000000-0x40FFFFFF (APB) and 0x50000000-0x50FFFFFF (AHB), by address bits 14-23; and the
+    /// SSI at 0x18000000
+    private var apb = [RPPeripheral?](repeating: nil, count: 1024)
+    private var ahb = [RPPeripheral?](repeating: nil, count: 1024)
+    private var ssi: RPPeripheral?
 
     init() {
         bootrom = .allocate(byteCount: RP2040.bootromSize, alignment: 4)
@@ -100,7 +104,15 @@ final class RP2040 {
             0x50200: pio[0],
             0x50300: pio[1],
         ]
-        peripherals = table
+        // rp2040.ts looks them up by (address >>> 14) << 2, the keys of this table
+        for (key, peripheral) in table {
+            let block = Int((key >> 2) & 0x3FF)
+            switch key >> 12 {
+            case 0x40: apb[block] = peripheral
+            case 0x50: ahb[block] = peripheral
+            default: ssi = peripheral
+            }
+        }
         reset()
     }
 
@@ -142,7 +154,11 @@ final class RP2040 {
     // MARK: - The bus
 
     @inline(__always) private func findPeripheral(_ address: UInt32) -> RPPeripheral? {
-        peripherals[(address >> 14) << 2]
+        switch address >> 24 {
+        case 0x40: return apb[Int((address >> 14) & 0x3FF)]
+        case 0x50: return ahb[Int((address >> 14) & 0x3FF)]
+        default: return address >> 14 == 0x6000 ? ssi : nil
+        }
     }
 
     func readUint32(_ address: UInt32) -> UInt32 {
