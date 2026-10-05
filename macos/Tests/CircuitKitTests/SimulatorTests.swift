@@ -54,6 +54,30 @@ final class SimulatorTests: XCTestCase {
         XCTAssertEqual(simulator.current(index(simulator, "V1")), simulator.current(c), accuracy: 1e-9)
     }
 
+    func testErrorControlFollowsTheChargingCurve() {
+        // 1 kΩ and 1 µF charging to 5 V at a tenth of the time constant a step: fixed steps fall a fifth of a volt
+        // behind the curve where it bends most, at the start; substeps there keep within a few millivolts, for a few
+        // more solves in all
+        let circuit = series(voltage: 5, [(.resistor, ["resistance": 1000]), (.capacitor, ["capacitance": 1e-6])])
+        for errorControl in [false, true] {
+            let simulator = Simulator(circuit: circuit, timeStep: 1e-4)
+            simulator.errorControl = errorControl
+            let c = index(simulator, "C1")
+            var worst = 0.0
+            for _ in 0..<50 {
+                simulator.step()
+                worst = max(worst, abs(simulator.voltageAcross(c) - 5 * (1 - exp(-simulator.time / 1e-3))))
+            }
+            if errorControl {
+                XCTAssertLessThan(worst, 0.01)
+                XCTAssertLessThan(simulator.substeps + simulator.rejectedSubsteps, 75)
+            } else {
+                XCTAssertGreaterThan(worst, 0.1)
+                XCTAssertEqual(simulator.substeps, 50)
+            }
+        }
+    }
+
     func testLCOscillatesAtResonanceWithoutLosingAmplitude() {
         var circuit = Examples.lcOscillator.circuit
         let switchIndex = circuit.elements.firstIndex { $0.kind == .toggleSwitch }!

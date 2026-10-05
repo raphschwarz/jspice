@@ -4,7 +4,9 @@ import Foundation
 ///
 /// Capacitors and inductors use second-order Gear (BDF2) companion models: accurate enough to keep LC circuits
 /// oscillating, and stable on sudden changes (a switch closing straight onto a capacitor does not make its current ring
-/// from step to step, as the trapezoidal rule does). Diodes, transistors and op-amps are solved with Newton-Raphson at
+/// from step to step, as the trapezoidal rule does). Each step is taken in substeps where it needs to be: where the
+/// integration's estimated error would be too large (an edge, a diode turning on) or Newton-Raphson does not converge,
+/// the step is solved again in halves, quarters, down to a 64th. Diodes, transistors and op-amps are solved with Newton-Raphson at
 /// every step, and memristors update their internal state after each step. The simulation starts from rest: capacitors at
 /// their initial voltage, inductors without current.
 public final class Simulator {
@@ -15,8 +17,15 @@ public final class Simulator {
     public private(set) var problems: [String] = []
     /// True when the equations cannot be solved; stepping stops until the circuit changes
     public private(set) var isFailed = false
-    /// Steps at which Newton-Raphson did not converge, even with gmin stepping (the step is accepted anyway)
+    /// Steps at which Newton-Raphson did not converge, even with gmin stepping and the finest substeps (the step is
+    /// accepted anyway)
     public private(set) var convergenceFailures = 0
+    /// Whether substeps also follow the integration's estimated error (they always follow Newton-Raphson's failures).
+    /// The sound turns it off: it sets its own step by how fast the computer keeps up.
+    public var errorControl = true
+    /// Substeps solved and kept, and solved and thrown away for a finer one, since the start
+    public private(set) var substeps = 0
+    public private(set) var rejectedSubsteps = 0
 
     /// What is being played on the keyboard: the note keyboard pitch sources put out and whether a key is held, which
     /// keyboard gate sources put out
@@ -49,6 +58,9 @@ public final class Simulator {
     var inductorVoltage: [Double] = []
     var inductorCurrent: [Double] = []
     var inductorCurrentPrevious: [Double] = []
+    /// The values before those, for the error estimate
+    var capacitorVoltageOlder: [Double] = []
+    var inductorCurrentOlder: [Double] = []
     var memristorStates: [Double] = []
     /// Newton limiting: the junction voltages last used for linearisation (diode; base-emitter and base-collector;
     /// gate-source and drain-source)
@@ -139,6 +151,10 @@ public final class Simulator {
     private var statefulIndices: [Int] = []
     private var digitalIndices: [Int] = []
     private var memristorIndices: [Int] = []
+    /// Elements whose state moves with each substep, those whose error is estimated, and those that move once a step
+    private var dynamicIndices: [Int] = []
+    private var reactiveIndices: [Int] = []
+    private var stepIndices: [Int] = []
     /// Scopes with the index of the element each one shows
     private var recordedTraces: [(trace: ScopeTrace, index: Int)] = []
 
@@ -168,6 +184,29 @@ public final class Simulator {
     private var hasMemristor = false
     private var hasDigital = false
     private var stepCarry = 0.0
+    /// Substeps are timeStep / 2^level long: the level of the next one, of the last one kept and of the one before
+    private var substepLevel = 0
+    private var lastLevel = 0
+    private var olderLevel = 0
+    static let finestLevel = 6
+    /// Allowed local error of a substep: relative, and absolute in volts (capacitors) and amps (inductors)
+    static let relativeTolerance = 1e-3
+    static let voltageTolerance = 1e-4
+    static let currentTolerance = 1e-7
+    /// The substep being solved, and BDF2's coefficients for it after a substep `h / ratio` long:
+    /// dx/dt ≈ (a0 x(n+1) + a1 x(n) + a2 x(n-1)) / h
+    private var h = 1e-5
+    private var a0 = 1.5, a1 = -2.0, a2 = 0.5
+    /// Base matrices by substep level and the last one's, while the circuit stays the same
+    private var baseCache: [Int: (matrix: [Double], lu: LUSolver?, version: Int)] = [:]
+    private var baseKey = -1
+    private var baseVersionCount = 0
+    /// What a substep changes, kept to go back to if it is thrown away
+    private var rejectX: [Double] = []
+    private var rejectLimited: [Double] = []
+    private var rejectLimited2: [Double] = []
+    private var rejectLimited3: [Double] = []
+    private var rejectDigital: [Bool] = []
     /// Extra conductance across every junction while gmin stepping, otherwise zero
     private var junctionConductance = 0.0
     /// Set when this Newton iteration held a junction, gate or op-amp input back from the solution: the iteration is then
@@ -191,13 +230,14 @@ public final class Simulator {
     public init(circuit: Circuit = Circuit(), timeStep: Double = 1e-5) {
         self.circuit = Circuit()
         self.timeStep = timeStep
+        h = timeStep
         load(circuit)
     }
 
     // MARK: - Loading and settings
 
     private struct SavedState {
-        var cv, cvp, ci, lv, li, lip, m, l1, l2, l3: Double
+        var cv, cvp, cvo, ci, lv, li, lip, lio, m, l1, l2, l3: Double
         var digital: Bool
         var module: ModuleState
         var noise: UInt64
@@ -209,8 +249,9 @@ public final class Simulator {
         var previous: [UUID: SavedState] = [:]
         for (i, element) in circuit.elements.enumerated() where i < capacitorVoltage.count {
             previous[element.id] = SavedState(
-                cv: capacitorVoltage[i], cvp: capacitorVoltagePrevious[i], ci: capacitorCurrent[i], lv: inductorVoltage[i],
-                li: inductorCurrent[i], lip: inductorCurrentPrevious[i], m: memristorStates[i], l1: limitedVoltage[i],
+                cv: capacitorVoltage[i], cvp: capacitorVoltagePrevious[i], cvo: capacitorVoltageOlder[i],
+                ci: capacitorCurrent[i], lv: inductorVoltage[i], li: inductorCurrent[i], lip: inductorCurrentPrevious[i],
+                lio: inductorCurrentOlder[i], m: memristorStates[i], l1: limitedVoltage[i],
                 l2: limitedVoltage2[i], l3: limitedVoltage3[i], digital: digitalState[i], module: moduleStates[i],
                 noise: noiseState[i], delay: delayHistory[i])
         }
@@ -234,6 +275,8 @@ public final class Simulator {
         inductorVoltage = Array(repeating: 0, count: count)
         inductorCurrent = Array(repeating: 0, count: count)
         inductorCurrentPrevious = Array(repeating: 0, count: count)
+        capacitorVoltageOlder = Array(repeating: 0, count: count)
+        inductorCurrentOlder = Array(repeating: 0, count: count)
         memristorStates = Array(repeating: 0, count: count)
         limitedVoltage = Array(repeating: 0, count: count)
         limitedVoltage2 = Array(repeating: 0, count: count)
@@ -264,6 +307,9 @@ public final class Simulator {
             [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage, .vactrol].contains($0)
                 || $0.isModule || $0 == .comparator
         }
+        dynamicIndices = statefulIndices.filter { [.capacitor, .inductor, .opAmp, .memristor, .vactrol].contains(kinds[$0]) }
+        reactiveIndices = indices { $0 == .capacitor || $0 == .inductor }
+        stepIndices = statefulIndices.filter { !dynamicIndices.contains($0) }
         delayHistory = [:]
         digitalIndices = indices { $0.isDigital }
         chipIndices = indices { $0.isMicrocontroller }
@@ -287,10 +333,12 @@ public final class Simulator {
             if let state = previous[element.id] {
                 capacitorVoltage[i] = state.cv
                 capacitorVoltagePrevious[i] = state.cvp
+                capacitorVoltageOlder[i] = state.cvo
                 capacitorCurrent[i] = state.ci
                 inductorVoltage[i] = state.lv
                 inductorCurrent[i] = state.li
                 inductorCurrentPrevious[i] = state.lip
+                inductorCurrentOlder[i] = state.lio
                 memristorStates[i] = state.m
                 limitedVoltage[i] = state.l1
                 limitedVoltage2[i] = state.l2
@@ -327,10 +375,12 @@ public final class Simulator {
         let v0 = element.kind == .capacitor ? element[param: "initialVoltage"] : 0
         capacitorVoltage[i] = v0
         capacitorVoltagePrevious[i] = v0
+        capacitorVoltageOlder[i] = v0
         capacitorCurrent[i] = 0
         inductorVoltage[i] = 0
         inductorCurrent[i] = 0
         inductorCurrentPrevious[i] = 0
+        inductorCurrentOlder[i] = 0
         memristorStates[i] = element.kind == .memristor ? min(1, max(0, element[param: "initialState"])) : 0
         limitedVoltage[i] = 0
         limitedVoltage2[i] = 0
@@ -361,14 +411,19 @@ public final class Simulator {
         for (i, history) in delayHistory {
             delayHistory[i] = history.resampled(stepRatio: dt / previous, capacity: delayCapacity(i, timeStep: dt))
         }
-        // the history of the two-step method assumes equal steps: rebuild it from the present slope
+        // rebuild the history at the new step from the present slope
+        substepLevel = 0
+        lastLevel = 0
+        olderLevel = 0
         for (i, element) in circuit.elements.enumerated() {
             if element.kind == .capacitor {
                 let c = max(element[param: "capacitance"], 1e-30)
                 capacitorVoltagePrevious[i] = capacitorVoltage[i] - capacitorCurrent[i] * dt / c
+                capacitorVoltageOlder[i] = 2 * capacitorVoltagePrevious[i] - capacitorVoltage[i]
             } else if element.kind == .inductor {
                 let l = max(element[param: "inductance"], 1e-15)
                 inductorCurrentPrevious[i] = inductorCurrent[i] - inductorVoltage[i] * dt / l
+                inductorCurrentOlder[i] = 2 * inductorCurrentPrevious[i] - inductorCurrent[i]
             } else if element.kind == .opAmp {
                 capacitorVoltagePrevious[i] = capacitorVoltage[i]
             }
@@ -390,10 +445,13 @@ public final class Simulator {
         x = other.x
         capacitorVoltage = other.capacitorVoltage
         capacitorVoltagePrevious = other.capacitorVoltagePrevious
+        capacitorVoltageOlder = other.capacitorVoltageOlder
         capacitorCurrent = other.capacitorCurrent
         inductorVoltage = other.inductorVoltage
         inductorCurrent = other.inductorCurrent
         inductorCurrentPrevious = other.inductorCurrentPrevious
+        inductorCurrentOlder = other.inductorCurrentOlder
+        (substepLevel, lastLevel, olderLevel) = (other.substepLevel, other.lastLevel, other.olderLevel)
         memristorStates = other.memristorStates
         limitedVoltage = other.limitedVoltage
         limitedVoltage2 = other.limitedVoltage2
@@ -425,6 +483,7 @@ public final class Simulator {
         time = 0
         stepCarry = 0
         convergenceFailures = 0
+        (substepLevel, lastLevel, olderLevel) = (0, 0, 0)
         for i in circuit.elements.indices { initialiseState(i) }
         x = Array(repeating: 0, count: topology.matrixSize)
         isFailed = false
@@ -505,12 +564,12 @@ public final class Simulator {
         return Progress(simulatedTime: Double(steps) * timeStep, steps: steps, fellBehind: fellBehind)
     }
 
-    /// One time step
+    /// One time step, in substeps where it needs them
     public func step() {
         guard !isFailed else { return }
-        let t = time + timeStep
+        let end = time + timeStep
         // a playing sequence plays the keyboard; when it stops, it lets go of the key it was holding
-        if let sequence = circuit.sequence, sequence.playing, let state = sequence.state(at: t) {
+        if let sequence = circuit.sequence, sequence.playing, let state = sequence.state(at: end) {
             keyboard = KeyboardState(note: state.note, gate: state.gate)
             sequenceOwnsKeyboard = true
         } else if sequenceOwnsKeyboard {
@@ -518,18 +577,97 @@ public final class Simulator {
             sequenceOwnsKeyboard = false
         }
         if !chips.isEmpty { runChips() }
-        var converged = solve(at: t)
-        if isFailed { return }
-        // a 555 or Schmitt trigger that switches during the step changes the circuit: solve the step again
-        if hasDigital {
-            for _ in 0..<4 {
-                guard updateDigitalStates() else { break }
-                converged = solve(at: t)
-                if isFailed { return }
+        // without capacitors, inductors or op-amp dynamics, smaller steps would only give the same answer again
+        let canSubdivide = !dynamicIndices.isEmpty
+        if !canSubdivide { substepLevel = 0 }
+        let whole = 1 << Self.finestLevel
+        var position = 0
+        while position < whole {
+            let level = substepLevel
+            let units = whole >> level
+            h = timeStep / Double(1 << level)
+            let ratio = Double(1 << lastLevel) / Double(1 << level)
+            a0 = (1 + 2 * ratio) / (1 + ratio)
+            a1 = -(1 + ratio)
+            a2 = ratio * ratio / (1 + ratio)
+            let t = position + units == whole ? end : time + timeStep * Double(position + units) / Double(whole)
+            let mayReject = canSubdivide && level < Self.finestLevel
+            if mayReject {
+                Self.copy(x, into: &rejectX)
+                Self.copy(limitedVoltage, into: &rejectLimited)
+                Self.copy(limitedVoltage2, into: &rejectLimited2)
+                Self.copy(limitedVoltage3, into: &rejectLimited3)
+                rejectDigital = digitalState
             }
+            var converged = solve(at: t)
+            if isFailed { return }
+            // a 555 or Schmitt trigger that switches during the substep changes the circuit: solve it again
+            if hasDigital {
+                for _ in 0..<4 {
+                    guard updateDigitalStates() else { break }
+                    converged = solve(at: t)
+                    if isFailed { return }
+                }
+            }
+            let error = canSubdivide && errorControl && converged ? errorRatio() : 0
+            if mayReject && (!converged || error > 1) {
+                Self.copy(rejectX, into: &x)
+                Self.copy(rejectLimited, into: &limitedVoltage)
+                Self.copy(rejectLimited2, into: &limitedVoltage2)
+                Self.copy(rejectLimited3, into: &limitedVoltage3)
+                if digitalState != rejectDigital {
+                    digitalState = rejectDigital
+                    matrixIsCurrent = false
+                }
+                rejectedSubsteps += 1
+                // each halving cuts the error about eightfold
+                let halvings = converged && error.isFinite ? max(1, Int(min(log2(cbrt(error) / 0.9), 6).rounded(.up))) : 1
+                substepLevel = min(Self.finestLevel, level + halvings)
+                continue
+            }
+            if !converged { convergenceFailures += 1 }
+            updateDynamicStates()
+            (olderLevel, lastLevel) = (lastLevel, level)
+            substeps += 1
+            position += units
+            // twice as long again where the error leaves room, and where a substep twice as long ends on the grid
+            if level > 0 && error < 0.09 && position % (2 * units) == 0 { substepLevel = level - 1 }
         }
-        if !converged { convergenceFailures += 1 }
-        finishStep(at: t)
+        finishStep(at: end)
+    }
+
+    /// The largest local error of the substep just solved, over its tolerance: estimated for each capacitor's voltage
+    /// and inductor's current from the third divided difference through it and the three values before it
+    private func errorRatio() -> Double {
+        let h1 = timeStep / Double(1 << lastLevel)
+        let h2 = timeStep / Double(1 << olderLevel)
+        // BDF2's local error is h² (h + h1)² / (6 (2h + h1)) times the third derivative, which is about 6 times the
+        // third divided difference
+        let scale = h * h * (h + h1) * (h + h1) / (2 * h + h1)
+        var worst = 0.0
+        for i in reactiveIndices {
+            let nodes = topology.elementNodes[i]
+            let v = voltage(nodes[0]) - voltage(nodes[1])
+            let x0, x1, x2, x3, absolute: Double
+            if kinds[i] == .capacitor {
+                x0 = v
+                x1 = capacitorVoltage[i]
+                x2 = capacitorVoltagePrevious[i]
+                x3 = capacitorVoltageOlder[i]
+                absolute = Self.voltageTolerance
+            } else {
+                x1 = inductorCurrent[i]
+                x2 = inductorCurrentPrevious[i]
+                x0 = h / (a0 * constants[i].value) * v - (a1 * x1 + a2 * x2) / a0
+                x3 = inductorCurrentOlder[i]
+                absolute = Self.currentTolerance
+            }
+            let d01 = (x0 - x1) / h, d12 = (x1 - x2) / h1, d23 = (x2 - x3) / h2
+            let d3 = ((d01 - d12) / (h + h1) - (d12 - d23) / (h1 + h2)) / (h + h1 + h2)
+            let tolerance = Self.relativeTolerance * max(abs(x0), abs(x1)) + absolute
+            worst = max(worst, scale * abs(d3) / tolerance)
+        }
+        return worst
     }
 
     /// Solves the circuit equations for time `t` into `x`; false if Newton-Raphson did not converge.
@@ -541,7 +679,7 @@ public final class Simulator {
     private func solve(at t: Double) -> Bool {
         let m = topology.matrixSize
         guard m > 0 else { return true }
-        if !matrixIsCurrent { buildBaseMatrix() }
+        prepareBaseMatrix()
         if isFailed { return false }
         buildRightHandSide(at: t)
         let rhs = self.rhs
@@ -634,7 +772,7 @@ public final class Simulator {
 
     private func finishStep(at t: Double) {
         time = t
-        updateStates()
+        updateStepStates()
         currentsAreStale = true
         for (trace, index) in recordedTraces { record(trace, index) }
     }
@@ -690,9 +828,28 @@ public final class Simulator {
         return (max(total * position, floor), max(total * (1 - position), floor))
     }
 
-    /// The part of the matrix that only changes with the circuit or the time step
+    /// Makes the base matrix the one for this substep's length: kept from the last time it had this length, or built
+    private func prepareBaseMatrix() {
+        let key = substepLevel << 4 | lastLevel
+        if matrixIsCurrent {
+            if key == baseKey { return }
+            if let entry = baseCache[key] {
+                (baseMatrix, baseLU, baseVersion) = (entry.matrix, entry.lu, entry.version)
+                baseKey = key
+                return
+            }
+        } else {
+            baseCache.removeAll(keepingCapacity: true)
+        }
+        buildBaseMatrix()
+        baseKey = key
+        if !isFailed { baseCache[key] = (baseMatrix, baseLU, baseVersion) }
+    }
+
+    /// The part of the matrix that only changes with the circuit or the substep
     private func buildBaseMatrix() {
-        baseVersion += 1
+        baseVersionCount += 1
+        baseVersion = baseVersionCount
         let m = topology.matrixSize
         var matrix = [Double](repeating: 0, count: m * m)
         for node in 1..<max(1, topology.nodeCount) {
@@ -708,9 +865,9 @@ public final class Simulator {
                 stampConductance(&matrix, m, nodes[0], nodes[2], 1 / upper)
                 stampConductance(&matrix, m, nodes[2], nodes[1], 1 / lower)
             case .capacitor:
-                stampConductance(&matrix, m, nodes[0], nodes[1], 1.5 * element[param: "capacitance"] / timeStep)
+                stampConductance(&matrix, m, nodes[0], nodes[1], a0 * element[param: "capacitance"] / h)
             case .inductor:
-                stampConductance(&matrix, m, nodes[0], nodes[1], 2 * timeStep / (3 * max(element[param: "inductance"], 1e-15)))
+                stampConductance(&matrix, m, nodes[0], nodes[1], h / (a0 * max(element[param: "inductance"], 1e-15)))
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
@@ -828,12 +985,12 @@ public final class Simulator {
             case .currentSource:
                 stampCurrent(&rhs, nodes[0], nodes[1], c.value)
             case .capacitor:
-                // BDF2: i(n) = C/dt (3/2 v(n) - 2 v(n-1) + 1/2 v(n-2))
-                let history = c.value / timeStep * (2 * capacitorVoltage[i] - 0.5 * capacitorVoltagePrevious[i])
+                // BDF2: i(n+1) = C/h (a0 v(n+1) + a1 v(n) + a2 v(n-1))
+                let history = -c.value / h * (a1 * capacitorVoltage[i] + a2 * capacitorVoltagePrevious[i])
                 stampCurrent(&rhs, nodes[0], nodes[1], -history)
             case .inductor:
-                // BDF2: i(n) = 2 dt / (3 L) v(n) + (4 i(n-1) - i(n-2)) / 3
-                let history = (4 * inductorCurrent[i] - inductorCurrentPrevious[i]) / 3
+                // BDF2: i(n+1) = h / (a0 L) v(n+1) - (a1 i(n) + a2 i(n-1)) / a0
+                let history = -(a1 * inductorCurrent[i] + a2 * inductorCurrentPrevious[i]) / a0
                 stampCurrent(&rhs, nodes[0], nodes[1], history)
             case .timer555:
                 if digitalState[i] {
@@ -1151,7 +1308,7 @@ public final class Simulator {
         }
         let w = 2 * Double.pi * gbw
         let tau = gain / w
-        let denominator = 1.5 / timeStep + 1 / tau
+        let denominator = a0 / h + 1 / tau
         let slew = c.slew
         var drive = w * vd
         var driveSlope = w
@@ -1161,7 +1318,7 @@ public final class Simulator {
             driveSlope = w * (1 - t * t)
         }
         // BDF2 for d(internal)/dt = drive - internal / tau
-        let stage = (drive + (2 * capacitorVoltage[i] - 0.5 * capacitorVoltagePrevious[i]) / timeStep) / denominator
+        let stage = (drive - (a1 * capacitorVoltage[i] + a2 * capacitorVoltagePrevious[i]) / h) / denominator
         let t = tanh(stage / limit)
         return (limit * t, (1 - t * t) * driveSlope / denominator, stage)
     }
@@ -1171,7 +1328,7 @@ public final class Simulator {
         let c = constants[i]
         guard c.gbw > 0 else { return c.limit / c.gain }
         let w = 2 * Double.pi * c.gbw
-        let stepGain = w / (1.5 / timeStep + w / c.gain)
+        let stepGain = w / (a0 / h + w / c.gain)
         var range = c.limit / stepGain
         if c.slew > 0 { range = min(range, c.slew / w) }
         return range
@@ -1466,44 +1623,33 @@ public final class Simulator {
 
     // MARK: - After each step
 
-    private func updateStates() {
-        for i in statefulIndices {
+    /// After each substep: the state of capacitors, inductors, op-amps' internal stages, vactrols and memristors
+    private func updateDynamicStates() {
+        for i in dynamicIndices {
             let nodes = topology.elementNodes[i]
             let parameters = constants[i]
             switch kinds[i] {
             case .capacitor:
                 let v = voltage(nodes[0]) - voltage(nodes[1])
                 let c = parameters.value
-                capacitorCurrent[i] = c / timeStep * (1.5 * v - 2 * capacitorVoltage[i] + 0.5 * capacitorVoltagePrevious[i])
+                capacitorCurrent[i] = c / h * (a0 * v + a1 * capacitorVoltage[i] + a2 * capacitorVoltagePrevious[i])
+                capacitorVoltageOlder[i] = capacitorVoltagePrevious[i]
                 capacitorVoltagePrevious[i] = capacitorVoltage[i]
                 capacitorVoltage[i] = v
             case .inductor:
                 let v = voltage(nodes[0]) - voltage(nodes[1])
-                let g = 2 * timeStep / (3 * parameters.value)
-                let next = g * v + (4 * inductorCurrent[i] - inductorCurrentPrevious[i]) / 3
+                let g = h / (a0 * parameters.value)
+                let next = g * v - (a1 * inductorCurrent[i] + a2 * inductorCurrentPrevious[i]) / a0
+                inductorCurrentOlder[i] = inductorCurrentPrevious[i]
                 inductorCurrentPrevious[i] = inductorCurrent[i]
                 inductorCurrent[i] = next
                 inductorVoltage[i] = v
-            case .keyboardPitch:
-                capacitorVoltage[i] = sourceVoltage(i, at: time)
-            case .noiseVoltage:
-                // a new sample every 1/48000 s (or every step, if steps are longer): with sound on, the steps of an
-                // oversampled audio sample share one, so the noise sounds the same however many steps there are
-                if time >= memristorStates[i] {
-                    capacitorVoltage[i] = nextNoise(i)
-                    memristorStates[i] = time + Self.noiseSampleTime - timeStep / 2
-                }
-            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
-                updateModule(i, nodes, parameters)
-            case .delayLine:
-                if delayHistory[i] == nil { delayHistory[i] = DelayHistory(capacity: delayCapacity(i, timeStep: timeStep)) }
-                delayHistory[i]?.append(voltage(nodes[0]))
             case .vactrol:
                 // the light follows the LED current, faster as it rises (attack) than as it falls (decay)
                 let led = diodeCurrent(voltage(nodes[0]) - voltage(nodes[1]), saturation: parameters.saturation, nvt: parameters.nvt).current
                 let light = memristorStates[i]
                 let tau = led > light ? parameters.tau : parameters.highDrop
-                memristorStates[i] = max(0, led + (light - led) * exp(-timeStep / tau))
+                memristorStates[i] = max(0, led + (light - led) * exp(-h / tau))
             case .opAmp where parameters.gbw > 0:
                 let (_, _, stage) = opAmpOutput(i, differential: voltage(nodes[1]) - voltage(nodes[0]))
                 // the internal stage cannot wind up far beyond the output swing
@@ -1521,8 +1667,34 @@ public final class Simulator {
                 let rate = towardsOn + towardsOff
                 if rate > 1e-12 {
                     let target = towardsOn / rate
-                    memristorStates[i] = target + (memristorStates[i] - target) * exp(-rate * timeStep)
+                    memristorStates[i] = target + (memristorStates[i] - target) * exp(-rate * h)
                 }
+            default:
+                break
+            }
+        }
+    }
+
+    /// After each whole step: keyboard glide, noise, delay lines and synth chips, which move in steps of their own
+    private func updateStepStates() {
+        for i in stepIndices {
+            let nodes = topology.elementNodes[i]
+            let parameters = constants[i]
+            switch kinds[i] {
+            case .keyboardPitch:
+                capacitorVoltage[i] = sourceVoltage(i, at: time)
+            case .noiseVoltage:
+                // a new sample every 1/48000 s (or every step, if steps are longer): with sound on, the steps of an
+                // oversampled audio sample share one, so the noise sounds the same however many steps there are
+                if time >= memristorStates[i] {
+                    capacitorVoltage[i] = nextNoise(i)
+                    memristorStates[i] = time + Self.noiseSampleTime - timeStep / 2
+                }
+            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+                updateModule(i, nodes, parameters)
+            case .delayLine:
+                if delayHistory[i] == nil { delayHistory[i] = DelayHistory(capacity: delayCapacity(i, timeStep: timeStep)) }
+                delayHistory[i]?.append(voltage(nodes[0]))
             default:
                 break
             }

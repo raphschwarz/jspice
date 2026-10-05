@@ -4,7 +4,8 @@ import XCTest
 /// JSpice's analog engine against ngspice. tools/spice-reference/crosscheck.py runs each circuit in ngspice with
 /// JSpice's own device equations and tight tolerances (the reference is converged to better than 0.02 % of each
 /// waveform's range) and records the waveforms; here JSpice simulates the same circuits at the time step it would choose
-/// itself, and at a tenth of it, and the waveforms are compared: so the differences are JSpice's numerical error alone.
+/// itself (with fixed steps, and with the substeps its error control takes) and at a tenth of it, and the waveforms are
+/// compared: so the differences are JSpice's numerical error alone.
 final class SpiceCrossCheckTests: XCTestCase {
     struct Reference: Decodable {
         let ngspice: String
@@ -92,11 +93,17 @@ final class SpiceCrossCheckTests: XCTestCase {
         return low...high
     }
 
-    private static func risingCrossings(_ times: [Double], _ values: [Double], level: Double) -> [Double] {
+    /// When the waveform rises through `level`, having been below `level - hysteresis` since it last did
+    private static func risingCrossings(_ times: [Double], _ values: [Double], level: Double, hysteresis: Double) -> [Double] {
         var result: [Double] = []
-        for i in 1..<values.count where values[i - 1] < level && values[i] >= level {
-            let f = (level - values[i - 1]) / (values[i] - values[i - 1])
-            result.append(times[i - 1] + f * (times[i] - times[i - 1]))
+        var armed = false
+        for i in 1..<values.count {
+            if values[i - 1] < level - hysteresis { armed = true }
+            if armed && values[i - 1] < level && values[i] >= level {
+                let f = (level - values[i - 1]) / (values[i] - values[i - 1])
+                result.append(times[i - 1] + f * (times[i] - times[i - 1]))
+                armed = false
+            }
         }
         return result
     }
@@ -106,19 +113,23 @@ final class SpiceCrossCheckTests: XCTestCase {
         return (crossings.last! - crossings.first!) / Double(crossings.count - 1)
     }
 
-    /// Simulates a case at `timeStep` and measures each probe against the reference
-    private func deviations(_ test: Case, _ circuit: Circuit, timeStep: Double) throws -> [String: Deviation] {
+    /// Simulates a case at `timeStep` and measures each probe against the reference; and how many substeps a step took
+    private func deviations(_ test: Case, _ circuit: Circuit, timeStep: Double,
+                            errorControl: Bool) throws -> (deviations: [String: Deviation], substeps: Double) {
         let simulator = Simulator(circuit: circuit, timeStep: timeStep)
+        simulator.errorControl = errorControl
         let probes = try test.probes.map { probe -> (Int, Int) in
             let index = try XCTUnwrap(circuit.elements.firstIndex { $0.name == probe.part }, probe.part)
             let terminal = try XCTUnwrap(circuit.elements[index].kind.terminalNames.firstIndex(of: probe.terminal), probe.terminal)
             return (index, terminal)
         }
         var times: [Double] = [0]
+        var steps = 0
         var waves = probes.map { simulator.terminalVoltage($0.0, $0.1) * 0 }.map { [$0] }
         while simulator.time < test.duration {
             simulator.step()
             XCTAssertFalse(simulator.isFailed, "\(test.id) failed at \(simulator.time) s")
+            steps += 1
             if simulator.isFailed { break }
             times.append(simulator.time)
             for (k, probe) in probes.enumerated() { waves[k].append(simulator.terminalVoltage(probe.0, probe.1)) }
@@ -129,14 +140,20 @@ final class SpiceCrossCheckTests: XCTestCase {
             let range = max((probe.values.max() ?? 0) - (probe.values.min() ?? 0), 1e-9)
             if let level = probe.level, let crossings = probe.crossings, let period = Self.meanPeriod(crossings) {
                 // an oscillator's phase drifts: compare its period, and its swing
-                let ours = Self.risingCrossings(times, waves[k], level: level)
+                // from about when the reference first crosses (a start from rest may cross once more on its way)
+                let ours = Self.risingCrossings(times, waves[k], level: level, hysteresis: 0.1 * range)
+                    .filter { $0 > crossings[0] - period / 2 }
                 let ourPeriod = Self.meanPeriod(Array(ours.prefix(crossings.count)))
                 deviation.period = ourPeriod.map { abs($0 - period) / period } ?? 1
-                let swing = (waves[k].max() ?? 0) - (waves[k].min() ?? 0)
-                deviation.waveform = abs(swing - range) / range
+                // and the swing, once it has settled into its cycle
+                let settled = waves[k].indices.filter { times[$0] >= crossings[0] }.map { waves[k][$0] }
+                let reference = probe.values.indices.filter { test.times[$0] >= crossings[0] }.map { probe.values[$0] }
+                let swing = (settled.max() ?? 0) - (settled.min() ?? 0)
+                let referenceSwing = max((reference.max() ?? 0) - (reference.min() ?? 0), 1e-9)
+                deviation.waveform = abs(swing - referenceSwing) / referenceSwing
                 deviation.note = String(format: "period %.5g s (ngspice %.5g s), %.4g..%.4g V (ngspice %.4g..%.4g V)",
-                                        ourPeriod ?? 0, period, waves[k].min() ?? 0, waves[k].max() ?? 0,
-                                        probe.values.min() ?? 0, probe.values.max() ?? 0)
+                                        ourPeriod ?? 0, period, settled.min() ?? 0, settled.max() ?? 0,
+                                        reference.min() ?? 0, reference.max() ?? 0)
             } else {
                 for (t, value) in zip(test.times, probe.values) {
                     let ours = Self.band(times, waves[k], at: t, window: timeStep)
@@ -146,7 +163,7 @@ final class SpiceCrossCheckTests: XCTestCase {
             }
             result[probe.net] = deviation
         }
-        return result
+        return (result, Double(simulator.substeps + simulator.rejectedSubsteps) / Double(max(steps, 1)))
     }
 
     /// The most each case may differ from ngspice at the time step JSpice chooses (fractions of the waveform's range, and
@@ -156,22 +173,27 @@ final class SpiceCrossCheckTests: XCTestCase {
 
     func testAnalogEngineMatchesNgspice() throws {
         let reference = try reference()
-        var report = ["JSpice against \(reference.ngspice): largest difference, % of range (period error for oscillators)",
-                      "case               probe      step         error   step/10   error"]
+        var report = ["JSpice against \(reference.ngspice): largest difference, % of range (for oscillators T: the larger",
+                      "of the period's and the swing's error), at JSpice's step with fixed steps and with error control",
+                      "(and the solves a step took), and at a tenth of the step with error control",
+                      "case               probe      step      fixed    adaptive  solves   step/10  adaptive"]
         for test in reference.cases {
             let circuit = try circuit(test)
             let step = Pacing.suggest(for: circuit).timeStep
-            let coarse = try deviations(test, circuit, timeStep: step)
-            let fine = try deviations(test, circuit, timeStep: step / 10)
+            let fixed = try deviations(test, circuit, timeStep: step, errorControl: false)
+            let coarse = try deviations(test, circuit, timeStep: step, errorControl: true)
+            let fine = try deviations(test, circuit, timeStep: step / 10, errorControl: true)
             for probe in test.probes {
-                let a = coarse[probe.net] ?? Deviation(), b = fine[probe.net] ?? Deviation()
-                let measure = { (d: Deviation) in d.period ?? d.waveform }
+                let f = fixed.deviations[probe.net] ?? Deviation()
+                let a = coarse.deviations[probe.net] ?? Deviation(), b = fine.deviations[probe.net] ?? Deviation()
+                let measure = { (d: Deviation) in d.period.map { max($0, d.waveform) } ?? d.waveform }
                 func percent(_ x: Double) -> String { String(format: "%7.3f%%", 100 * x) }
                 report.append(test.id.padding(toLength: 19, withPad: " ", startingAt: 0)
                               + probe.net.padding(toLength: 8, withPad: " ", startingAt: 0)
-                              + String(format: "%9.2e", step) + "  " + percent(measure(a)) + (a.period != nil ? " T" : "  ")
-                              + String(format: "%9.2e", step / 10) + "  " + percent(measure(b)) + (b.period != nil ? " T" : "")
-                              + (a.note.isEmpty ? "" : "\n    " + a.note))
+                              + String(format: "%9.2e", step) + "  " + percent(measure(f)) + "  " + percent(measure(a))
+                              + String(format: "%7.2f", coarse.substeps) + (a.period != nil ? " T" : "  ")
+                              + String(format: "%9.2e", step / 10) + "  " + percent(measure(b))
+                              + (a.note.isEmpty ? "" : "\n    " + a.note) + (f.note.isEmpty ? "" : "\n    fixed: " + f.note))
                 let limit = Self.tolerance[test.id] ?? Self.defaultTolerance
                 XCTAssertLessThanOrEqual(measure(a), limit, "\(test.id) \(probe.net) (\(test.note))")
                 XCTAssertLessThanOrEqual(measure(b), limit, "\(test.id) \(probe.net) at a tenth of the step")

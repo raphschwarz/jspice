@@ -65,6 +65,8 @@ final class AudioRenderer: @unchecked Sendable {
         guard output.start() else { return nil }
         simulator = Simulator(circuit: display.circuit, timeStep: 1 / output.sampleRate)
         simulator.configureScopes(window: scopeWindow)
+        // the sound sets its own step by how fast the computer keeps up: substeps only where Newton-Raphson needs them
+        simulator.errorControl = false
         simulator.adoptState(of: display)
         simulator.keyboard = display.keyboard
         self.speaker = speaker
