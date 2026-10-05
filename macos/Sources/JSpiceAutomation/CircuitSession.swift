@@ -41,8 +41,11 @@ public final class CircuitSession {
     terminals joins; the net "GND" is ground); then simulate it and read waveforms and measurements, or call \
     frequency_response for filters and amplifiers. Adjust values with set_parameter or set_model and simulate again. \
     Values accept SI prefixes as strings ("4.7k", "100n", "2.2u", "1meg"). Probes: "V(net)" is a net's voltage, \
-    "V(R1)" the voltage across a part, "I(R1)" its current, "P(R1)" its power, "V(U1.out)" a terminal's voltage.     Synth circuits can be played: keyboardPitch parts put out 1 V per octave (0 V at C2) and keyboardGate parts a gate,     driven by the "keyboard" events of simulate (for example [{"at": 0, "note": "C4"}, {"at": 0.5, "off": true}]) \
-    or by a step sequence (set_sequence).
+    "V(R1)" the voltage across a part, "I(R1)" its current, "P(R1)" its power, "V(U1.out)" a terminal's voltage. \
+    Synth circuits can be played: keyboardPitch parts put out 1 V per octave (0 V at C2) and keyboardGate parts a gate, \
+    driven by the "keyboard" events of simulate (for example [{"at": 0, "note": "C4"}, {"at": 0.5, "off": true}]) \
+    or by a step sequence (set_sequence). Synth chips (vco, vcf, envelope, vca, sampleHold, comparator, divider) model \
+    the AS3340, AS3320, AS3310, SSM2164, LF398, LM393 and CD4013 and patch together like modules.
     """
 
     public static let tools: [Tool] = [
