@@ -2,17 +2,20 @@ import SwiftUI
 import CircuitKit
 
 /// A hardware-style front panel for the circuit's controls, like a plugin's interface: a knob for each potentiometer,
-/// a toggle for each switch, a button for each push button, a lamp for each LED and a level meter for each speaker, in
-/// the order they appear on the schematic from left to right. Double-click a label to rename the part.
+/// a toggle for each switch, a button for each push button and a lamp for each LED, in the order they appear on the
+/// schematic from left to right, then a level meter for each speaker. Double-click a label to rename the part.
 struct FrontPanel: View {
     @ObservedObject var editor: EditorState
     let circuit: Circuit
 
-    /// The parts that appear on the panel, left to right as on the schematic
+    /// The parts that appear on the panel: controls and lamps left to right as on the schematic, then the output meters
     static func controls(of circuit: Circuit) -> [Element] {
-        circuit.elements
+        func key(_ e: Element) -> (Int, Int, Int) {
+            (e.kind == .speaker ? 1 : 0, min(e.a.x, e.b.x), min(e.a.y, e.b.y))
+        }
+        return circuit.elements
             .filter { [.potentiometer, .toggleSwitch, .pushButton, .led, .speaker].contains($0.kind) }
-            .sorted { (min($0.a.x, $0.b.x), min($0.a.y, $0.b.y)) < (min($1.a.x, $1.b.x), min($1.a.y, $1.b.y)) }
+            .sorted { key($0) < key($1) }
     }
 
     static func hasControls(_ circuit: Circuit) -> Bool {
