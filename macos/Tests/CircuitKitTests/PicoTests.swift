@@ -136,4 +136,26 @@ final class PicoTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(pico.cycles, 125_000_000)
         XCTAssertLessThan(pico.cycles, 125_010_000)
     }
+
+    func testToneRunsOnPIOInSimulatedTime() throws {
+        // arduino-pico's tone() loops on a PIO state machine (rp2040js runs PIO apart from simulated time, so there is
+        // nothing to compare with): 440 Hz, then 1 kHz, to a few parts per million
+        let pico = Pico(firmware: try image("pico-tone"))
+        var rising: [Double] = []
+        var wasHigh = false
+        let step = 1250  // 10 µs
+        for i in 0..<90_000 {
+            pico.run(cycles: step)
+            let high = pico.pinStates[5] == .output(high: true)
+            if high && !wasHigh { rising.append(Double(i + 1) * 10e-6) }
+            wasHigh = high
+        }
+        func frequency(from start: Double, to end: Double) -> Double {
+            let edges = rising.filter { $0 > start && $0 < end }
+            return Double(edges.count - 1) / (edges.last! - edges.first!)
+        }
+        // the delay loop of tone2.pio: a period of 2 * ((125 MHz + f) / 2f) cycles
+        XCTAssertEqual(frequency(from: 0.05, to: 0.45), 125e6 / (2 * Double((125_000_000 + 440) / 880)), accuracy: 0.05)
+        XCTAssertEqual(frequency(from: 0.55, to: 0.9), 125e6 / (2 * Double((125_000_000 + 1000) / 2000)), accuracy: 0.2)
+    }
 }

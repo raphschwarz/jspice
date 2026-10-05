@@ -42,7 +42,7 @@ final class RPPPB: RPPeripheral {
     }
 
     override func readUint32(_ offset: UInt32) -> UInt32 {
-        let core = chip.core
+        let core: CortexM0 = chip.core
         switch offset {
         case RPPPB.cpuid:
             return 0x410C_C601
@@ -88,7 +88,7 @@ final class RPPPB: RPPeripheral {
     }
 
     override func writeUint32(_ offset: UInt32, _ value: UInt32) {
-        let core = chip.core
+        let core: CortexM0 = chip.core
         let hardwareInterruptMask = (UInt32(1) << UInt32(CortexM0.maxHardwareIRQ)) - 1
         switch offset {
         case RPPPB.icsr:
