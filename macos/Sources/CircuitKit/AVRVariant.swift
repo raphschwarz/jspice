@@ -124,6 +124,9 @@ public struct AVRVariant: Sendable {
     let clearOnWrite: [Int]
     /// Interrupt enable registers
     let maskRegisters: [Int]
+    /// The SPI and the two-wire interface, on chips that have them
+    var spi: SPI? = nil
+    var twi: TWI? = nil
 
     public var pinCount: Int { pins.count }
     public var flashBytes: Int { flashWords * 2 }
@@ -184,7 +187,9 @@ public struct AVRVariant: Sendable {
             ],
             eepromRegisters: (0x3F, 0x40, 0x41, 0x42),
             clearOnWrite: [0x35, 0x36, 0x37, 0x3B, 0x3C],
-            maskRegisters: [0x6E, 0x6F, 0x70, 0x3D, 0x68])
+            maskRegisters: [0x6E, 0x6F, 0x70, 0x3D, 0x68],
+            spi: SPI(control: 0x4C, vector: 17, sck: 13, mosi: 11, miso: 12, ss: 10),
+            twi: TWI(rate: 0xB8, vector: 24, sda: 18, scl: 19))
     }()
 
     /// The Arduino Mega 2560's pins D0-D69 (A0-A15 are D54-D69), as port and bit
@@ -256,7 +261,9 @@ public struct AVRVariant: Sendable {
             ],
             eepromRegisters: (0x3F, 0x40, 0x41, 0x42),
             clearOnWrite: [0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C],
-            maskRegisters: [0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x3D, 0x68])
+            maskRegisters: [0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x3D, 0x68],
+            spi: SPI(control: 0x4C, vector: 24, sck: pin("B1"), mosi: pin("B2"), miso: pin("B3"), ss: pin("B0")),
+            twi: TWI(rate: 0xB8, vector: 39, sda: pin("D1"), scl: pin("D0")))
     }()
 
     /// The ATtiny85 at 8 MHz (its internal oscillator): D0-D5 are PB0-PB5; no USART

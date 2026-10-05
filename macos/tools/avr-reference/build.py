@@ -86,7 +86,7 @@ def build(sketch_path, out, board='uno'):
         folder = os.path.join(CORE, 'libraries', name, 'src')
         if os.path.isdir(folder):
             FLAGS.append('-I' + folder)
-            libraries += sorted(glob.glob(folder + '/*.cpp'))
+            libraries += sorted(glob.glob(folder + '/**/*.cpp', recursive=True) + glob.glob(folder + '/**/*.c', recursive=True))
     sources = [cpp] + libraries + sorted(glob.glob(CORE + '/cores/arduino/*.c')) + sorted(glob.glob(CORE + '/cores/arduino/*.cpp')) + sorted(glob.glob(CORE + '/cores/arduino/*.S'))
     for s in sources:
         o = os.path.join(out, os.path.basename(s) + '.o')

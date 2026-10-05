@@ -39,6 +39,8 @@ public final class AVR: Microcontroller {
     public private(set) var cycles: Int = 0
     var timers: [AVRTimer] = []
     var usarts: [AVRUSART] = []
+    var spi: AVRSPI?
+    var twi: AVRTWI?
 
     /// Pin voltages the chip sees, set by the circuit before it runs; the digital levels follow them with hysteresis
     public var pinVoltages: [Double] {
@@ -96,6 +98,8 @@ public final class AVR: Microcontroller {
         case externalControl
         case pinChangeMask
         case eepromControl
+        case spiControl, spiStatus, spiData
+        case twiControl, twiStatus, twiData
     }
     private var handlers: [Handler] = []
     /// The pin each port bit is bonded to (-1: none), by port
@@ -163,10 +167,19 @@ public final class AVR: Microcontroller {
             sources.append(Source(vector: spec.vector, mask: spec.control, maskBit: spec.controlBit, flag: spec.flag,
                                   flagBit: spec.flagBit, clears: true))
         }
+        if let spec = variant.spi {
+            sources.append(Source(vector: spec.vector, mask: spec.control, maskBit: 0x80, flag: spec.status, flagBit: 0x80, clears: true))
+        }
+        if let spec = variant.twi {
+            // TWINT stays set until the program clears it
+            sources.append(Source(vector: spec.vector, mask: spec.control, maskBit: 0x01, flag: spec.control, flagBit: 0x80, clears: false))
+        }
         self.sources = sources.sorted { $0.vector < $1.vector }
 
         timers = variant.timers.map { AVRTimer(spec: $0, avr: self) }
         usarts = variant.usarts.map { AVRUSART(spec: $0, avr: self) }
+        spi = variant.spi.map { AVRSPI(spec: $0, avr: self) }
+        twi = variant.twi.map { AVRTWI(spec: $0, avr: self) }
         handlers = buildHandlers()
         reset()
     }
@@ -221,6 +234,16 @@ public final class AVR: Microcontroller {
         for spec in variant.externalInterrupts { h[spec.control] = .externalControl }
         for spec in variant.pinChanges { h[spec.mask] = .pinChangeMask }
         h[variant.eepromRegisters.control] = .eepromControl
+        if let spec = variant.spi {
+            h[spec.control] = .spiControl
+            h[spec.status] = .spiStatus
+            h[spec.dataRegister] = .spiData
+        }
+        if let spec = variant.twi {
+            h[spec.control] = .twiControl
+            h[spec.status] = .twiStatus
+            h[spec.dataRegister] = .twiData
+        }
         return h
     }
 
@@ -237,6 +260,8 @@ public final class AVR: Microcontroller {
             usart.reset()
             if !transmitDoubleBuffered { data[usart.spec.controlB] = 0x08 }
         }
+        spi?.reset()
+        twi?.reset()
         adcDoneAt = nil
         adcFirst = false
         interruptDelay = 0
@@ -267,6 +292,8 @@ public final class AVR: Microcontroller {
         cycles = other.cycles
         for (timer, source) in zip(timers, other.timers) { timer.adopt(source) }
         for (usart, source) in zip(usarts, other.usarts) { usart.adopt(source) }
+        if let spi, let source = other.spi { spi.adopt(source) }
+        if let twi, let source = other.twi { twi.adopt(source) }
         adcDoneAt = other.adcDoneAt
         adcFirst = other.adcFirst
         interruptDelay = other.interruptDelay
@@ -317,7 +344,12 @@ public final class AVR: Microcontroller {
         for timer in timers where timer.prescale != 0 { timer.advance(count) }
         for usart in usarts where usart.needsUpdate { usart.update() }
         if let done = adcDoneAt, cycles >= done { adcFinish() }
+        if let spi { while cycles >= spi.nextEvent { spi.advance() } }
+        if let twi { while cycles >= twi.nextEvent { twi.advance() } }
     }
+
+    /// A pin's digital level as the circuit gives it
+    func pinLevel(_ pin: Int) -> Bool { pin >= 0 && pin < pinHigh.count && pinHigh[pin] }
 
     // MARK: - Pins
 
@@ -368,7 +400,26 @@ public final class AVR: Microcontroller {
                 result[usart.spec.rxPin] = .input(pullUp: data[variant.ports[pin.port] + 2] & (1 << pin.bit) != 0)
             }
         }
+        if let spi, spi.master {
+            // the SPI drives SCK and MOSI (where they are outputs) and reads MISO
+            let spec = spi.spec
+            if case .output = result[spec.sck] { result[spec.sck] = .output(high: spi.sck) }
+            if case .output = result[spec.mosi] { result[spec.mosi] = .output(high: spi.mosi) }
+            result[spec.miso] = .input(pullUp: portBit(spec.miso))
+        }
+        if let twi, twi.enabled {
+            // open drain: pulled low, or let go (to the pull-up, if the port has it on)
+            for (pin, low) in [(twi.spec.sda, twi.sdaLow), (twi.spec.scl, twi.sclLow)] {
+                result[pin] = low ? .output(high: false) : .input(pullUp: portBit(pin))
+            }
+        }
         return result
+    }
+
+    /// The PORTx bit of a pin (its output level, or its pull-up)
+    private func portBit(_ pin: Int) -> Bool {
+        let bit = variant.pins[pin]
+        return data[variant.ports[bit.port] + 2] & (1 << bit.bit) != 0
     }
 
     private func pinRegister(_ port: Int) -> UInt8 {
@@ -400,6 +451,9 @@ public final class AVR: Microcontroller {
         case .compare16Low(let timer, let unit): return UInt8(truncatingIfNeeded: timer.ocrBuffer[unit])
         case .compare16High(let timer, let unit): return UInt8(truncatingIfNeeded: timer.ocrBuffer[unit] >> 8)
         case .usartData(let usart): return usart.readData()
+        case .spiStatus: return spi?.readStatus() ?? data[address]
+        case .spiData: return spi?.readData() ?? data[address]
+        case .twiStatus: return twi?.readStatus() ?? data[address]
         default: return data[address]
         }
     }
@@ -475,6 +529,18 @@ public final class AVR: Microcontroller {
             }
         case .eepromControl:
             eepromControlWrite(value)
+        case .spiControl:
+            spi?.writeControl(value)
+        case .spiStatus:
+            spi?.writeStatus(value)
+        case .spiData:
+            spi?.writeData(value)
+        case .twiControl:
+            twi?.writeControl(value)
+        case .twiStatus:
+            twi?.writeStatus(value)
+        case .twiData:
+            twi?.writeData(value)
         default:
             d[address] = value
         }
