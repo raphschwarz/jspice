@@ -838,7 +838,7 @@ extension ElementKind {
         case .logicGate:
             func gate(_ name: String, _ summary: String, _ function: Double, schmitt: Bool = false, hc: Bool = false) -> PartModel {
                 PartModel(name: name, summary: summary, values: [
-                    "function": function, "supply": hc ? 5 : 12, "upper": schmitt ? (hc ? 0.53 : 0.59) : 0.52,
+                    "function": function, "upper": schmitt ? (hc ? 0.53 : 0.59) : 0.52,
                     "lower": schmitt ? (hc ? 0.31 : 0.39) : 0.48, "outputResistance": hc ? 50 : 400,
                 ])
             }
@@ -850,42 +850,42 @@ extension ElementKind {
                 gate("CD4071", "One gate of the quad OR", 3),
                 gate("CD4070", "One gate of the quad XOR: octave-up and ring-modulator-like effects", 4),
                 gate("CD4077", "One gate of the quad XNOR", 5),
-                gate("74HC132", "One gate of the fast quad Schmitt NAND, at 5 V", 0, schmitt: true, hc: true),
-                gate("74HC00", "One gate of the fast quad NAND, at 5 V", 0, hc: true),
-                gate("74HC86", "One gate of the fast quad XOR, at 5 V", 4, hc: true),
+                gate("74HC132", "One gate of the fast quad Schmitt NAND, for 2 to 6 V supplies", 0, schmitt: true, hc: true),
+                gate("74HC00", "One gate of the fast quad NAND, for 2 to 6 V supplies", 0, hc: true),
+                gate("74HC86", "One gate of the fast quad XOR, for 2 to 6 V supplies", 4, hc: true),
             ]
         case .flipFlop:
             return [
                 PartModel(name: "CD4013", summary: "One half of the dual D flip-flop, with set and reset; Q̄ to D makes it divide by two",
-                          values: ["supply": 12, "upper": 0.52, "lower": 0.48, "outputResistance": 400]),
+                          values: ["upper": 0.52, "lower": 0.48, "outputResistance": 400]),
             ]
         case .decadeCounter:
             return [
                 PartModel(name: "CD4017", summary: "Decade counter with ten decoded outputs: step sequencers (the Baby 10), dividers",
-                          values: ["supply": 12, "upper": 0.52, "lower": 0.48, "outputResistance": 400]),
-                PartModel(name: "74HC4017", summary: "The fast decade counter, at 5 V",
-                          values: ["supply": 5, "upper": 0.52, "lower": 0.48, "outputResistance": 50]),
+                          values: ["upper": 0.52, "lower": 0.48, "outputResistance": 400]),
+                PartModel(name: "74HC4017", summary: "The fast decade counter, for 2 to 6 V supplies",
+                          values: ["upper": 0.52, "lower": 0.48, "outputResistance": 50]),
             ]
         case .binaryCounter:
             return [
                 PartModel(name: "CD4040", summary: "Twelve-stage binary counter, counting on the falling edge: octave dividers",
-                          values: ["supply": 12, "upper": 0.52, "lower": 0.48, "outputResistance": 400]),
-                PartModel(name: "74HC4040", summary: "The fast twelve-stage binary counter, at 5 V",
-                          values: ["supply": 5, "upper": 0.52, "lower": 0.48, "outputResistance": 50]),
+                          values: ["upper": 0.52, "lower": 0.48, "outputResistance": 400]),
+                PartModel(name: "74HC4040", summary: "The fast twelve-stage binary counter, for 2 to 6 V supplies",
+                          values: ["upper": 0.52, "lower": 0.48, "outputResistance": 50]),
             ]
         case .analogMux:
             return [
                 PartModel(name: "CD4051", summary: "Eight-channel analog multiplexer: A, B and C pick the channel X connects to",
-                          values: ["onResistance": 125, "supply": 12, "upper": 0.52, "lower": 0.48]),
-                PartModel(name: "74HC4051", summary: "The fast eight-channel multiplexer, at 5 V",
-                          values: ["onResistance": 70, "supply": 5, "upper": 0.52, "lower": 0.48]),
+                          values: ["onResistance": 125, "upper": 0.52, "lower": 0.48]),
+                PartModel(name: "74HC4051", summary: "The fast eight-channel multiplexer, for 2 to 6 V supplies",
+                          values: ["onResistance": 70, "upper": 0.52, "lower": 0.48]),
             ]
         case .analogSelector:
             return [
                 PartModel(name: "CD4053", summary: "One switch of the triple two-channel multiplexer: SEL picks X0 or X1",
-                          values: ["onResistance": 125, "supply": 12, "upper": 0.52, "lower": 0.48]),
-                PartModel(name: "74HC4053", summary: "One switch of the fast triple two-channel multiplexer, at 5 V",
-                          values: ["onResistance": 70, "supply": 5, "upper": 0.52, "lower": 0.48]),
+                          values: ["onResistance": 125, "upper": 0.52, "lower": 0.48]),
+                PartModel(name: "74HC4053", summary: "One switch of the fast triple two-channel multiplexer, for 2 to 6 V supplies",
+                          values: ["onResistance": 70, "upper": 0.52, "lower": 0.48]),
             ]
         case .analogSwitch:
             return [
