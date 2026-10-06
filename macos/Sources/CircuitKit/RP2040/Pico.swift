@@ -15,6 +15,10 @@ public final class Pico: Microcontroller {
         var outbox: [UInt8] = []
         var levels = [Bool](repeating: false, count: 30)
         var pinsChanged = true
+        /// The watched pins by GPIO, the changes to their driven levels, and when the present run started
+        var watched: [Int: Int] = [:]
+        var events: [PinEvent] = []
+        var runStart = 0.0
 
         init(firmware: [UInt8]) {
             cdc = RPUSBCDC(usb: chip.usbCtrl)
@@ -22,7 +26,21 @@ public final class Pico: Microcontroller {
             // as rp2040js's demos do: straight into the flash image's boot stage 2, which sets up XIP and jumps on
             chip.core.PC = RP2040.flashStart
             cdc.onSerialData = { [unowned self] bytes in self.outbox += bytes }
-            for pin in chip.gpio { pin.onChange = { [unowned self] _ in self.pinsChanged = true } }
+            for pin in chip.gpio {
+                let gpio = pin.index
+                pin.onChange = { [unowned self] state in
+                    self.pinsChanged = true
+                    guard let watchedPin = self.watched[gpio] else { return }
+                    let high: Bool
+                    switch state {
+                    case .high: high = true
+                    case .low: high = false
+                    default: return
+                    }
+                    let cycle = Int((self.chip.clock.nanos - self.runStart) / RP2040.cycleNanos)
+                    self.events.append(PinEvent(cycle: cycle, pin: watchedPin, high: high))
+                }
+            }
             // VBUS present (GP24), and the ADC's own inputs: VSYS/3 (5 V from USB) and the temperature sensor at 27 °C
             chip.gpio[24].setInputValue(true)
             levels[24] = true
@@ -83,8 +101,22 @@ public final class Pico: Microcontroller {
         }
     }
 
+    public var watchedPins: [Int] {
+        get { system.watched.sorted { $0.key < $1.key }.map(\.value) }
+        set {
+            system.watched = [:]
+            for pin in newValue where pin >= 0 && pin < Pico.gpioOfPin.count { system.watched[Pico.gpioOfPin[pin]] = pin }
+        }
+    }
+
+    public func takePinEvents() -> [PinEvent] {
+        defer { system.events.removeAll(keepingCapacity: true) }
+        return system.events
+    }
+
     public func run(cycles count: Int) {
         let chip = system.chip
+        system.runStart = chip.clock.nanos
         let end = chip.clock.nanos + Double(count) * RP2040.cycleNanos
         chip.run(until: end)
         publish()

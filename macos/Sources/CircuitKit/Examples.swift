@@ -43,7 +43,7 @@ public enum Examples {
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
         cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz, echo,
-        ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
+        ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, arduinoDAC, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
     ]
 
@@ -599,6 +599,26 @@ public enum Examples {
             NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 220], connections: ["a": "pwm", "b": "anode"]),
             NetlistPart(kind: .led, name: "D1", params: ["color": 4], connections: ["anode": "anode", "cathode": "GND"]),
         ], scopes: [("POT", .voltage), ("D1", .current)]))
+
+    static let arduinoDAC = Example(
+        id: "arduino-dac", title: "Arduino: SPI DAC through a filter (sound)",
+        summary: "The Arduino computes a sawtooth 8000 times a second and sends each sample to an MCP4921 DAC over SPI, playing an arpeggio; an AS3320 filter swept by a slow LFO shapes it. Every SPI clock edge reaches the DAC, even many within one step of the circuit. Turn on sound.",
+        symbol: "waveform.path.ecg",
+        circuit: drawn([
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 5], connections: ["plus": "+5V", "minus": "GND"]),
+            arduino(code: ArduinoSketches.dacSynthCode, firmware: ArduinoSketches.dacSynthFirmware,
+                    connections: ["d10": "cs", "d13": "sck", "d11": "sdi"]),
+            NetlistPart(kind: .dac, name: "U2", params: model(.dac, "MCP4921"),
+                        connections: ["cs": "cs", "sck": "sck", "sdi": "sdi", "ldac": "GND", "vref": "+5V", "out": "dac"]),
+            NetlistPart(kind: .probe, name: "DAC", connections: ["plus": "dac", "minus": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 1e-6], connections: ["a": "dac", "b": "ac"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "ac", "b": "GND"]),
+            NetlistPart(kind: .acVoltage, name: "LFO", params: ["amplitude": 1.5, "frequency": 0.25, "offset": 1.5],
+                        connections: ["plus": "lfo", "minus": "GND"]),
+            NetlistPart(kind: .vcf, name: "U3", params: model(.vcf, "AS3320").merging(["cutoff": 200, "resonance": 0.6]) { $1 },
+                        connections: ["in": "ac", "cv": "lfo", "out": "filt"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 3], connections: ["plus": "filt", "minus": "GND"]),
+        ], scopes: [("DAC", .voltage), ("SPK1", .voltage)]))
 
     static let megaBarGraph = Example(
         id: "arduino-mega-bargraph", title: "Arduino Mega: bar graph",

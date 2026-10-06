@@ -391,6 +391,10 @@ struct LiveReadings: View {
                     reading("Input voltage", SI.format(simulator.terminalVoltages(index).first ?? 0, unit: "V"))
                     reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
                     reading("Output current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .dac {
+                    let word = simulator.logicCount(index)
+                    reading("Code", word & 0x1000 == 0 ? "Shut down" : "\(word & 0xFFF) of 4095")
+                    reading("Output voltage", SI.format(simulator.terminalVoltages(index).last ?? 0, unit: "V"))
                 } else if kind == .pll {
                     let outputs = simulator.logicOutputs(index)
                     reading("VCO", outputs.first == true ? "High" : "Low")

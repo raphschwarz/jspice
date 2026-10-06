@@ -310,8 +310,76 @@ public final class AVR: Microcontroller {
 
     /// Runs whole instructions until at least `count` more cycles have passed
     public func run(cycles count: Int) {
+        runStart = cycles
         let end = cycles + count
-        while cycles < end { step() }
+        guard !watchedPins.isEmpty else {
+            while cycles < end { step() }
+            return
+        }
+        // the watched pins' levels after each instruction (and at each SPI and TWI event within one), logged where
+        // they change
+        while cycles < end {
+            step()
+            logWatchedPins(at: cycles)
+        }
+    }
+
+    /// Where the present run started, for the pin events' times
+    private var runStart = 0
+
+    private func logWatchedPins(at cycle: Int) {
+        for k in watchedPins.indices {
+            let level = drivenLevel(watchedPins[k])
+            guard level != watchedLevels[k] else { continue }
+            watchedLevels[k] = level
+            if let level { pinEvents.append(PinEvent(cycle: cycle - runStart, pin: watchedPins[k], high: level)) }
+        }
+    }
+
+    public var watchedPins: [Int] = [] {
+        didSet { watchedLevels = watchedPins.map { drivenLevel($0) } }
+    }
+    private var watchedLevels: [Bool?] = []
+    private var pinEvents: [PinEvent] = []
+
+    public func takePinEvents() -> [PinEvent] {
+        defer { pinEvents.removeAll(keepingCapacity: true) }
+        return pinEvents
+    }
+
+    /// The level a pin is driven to, or nil while it is an input: what `pinStates` gives it, worked out for one pin
+    func drivenLevel(_ index: Int) -> Bool? {
+        guard index >= 0 && index < variant.pins.count else { return nil }
+        if let twi, twi.enabled {
+            if index == twi.spec.sda { return twi.sdaLow ? false : nil }
+            if index == twi.spec.scl { return twi.sclLow ? false : nil }
+        }
+        let pin = variant.pins[index]
+        let address = variant.ports[pin.port]
+        let mask = UInt8(1) << pin.bit
+        let isOutput = data[address + 1] & mask != 0
+        if let spi, spi.master {
+            if index == spi.spec.miso { return nil }
+            if index == spi.spec.sck { return isOutput ? spi.sck : nil }
+            if index == spi.spec.mosi { return isOutput ? spi.mosi : nil }
+        }
+        for usart in usarts {
+            let control = data[usart.spec.controlB]
+            if control & 0x10 != 0 && index == usart.spec.rxPin { return nil }
+            if control & 0x08 != 0 && index == usart.spec.txPin { return true }
+        }
+        guard isOutput else { return nil }
+        for timer in timers {
+            for unit in 0..<timer.units {
+                let com = timer.compareOutputMode(unit)
+                guard com != 0 else { continue }
+                if timer.spec.pins[unit] == index { return timer.output[unit] }
+                if timer.spec.kind == .tiny1 && com == 1 && timer.pwmUnit(unit) && timer.spec.complements[unit] == index {
+                    return !timer.output[unit]
+                }
+            }
+        }
+        return data[address + 2] & mask != 0
     }
 
     /// Runs one instruction, or enters an interrupt
@@ -344,8 +412,22 @@ public final class AVR: Microcontroller {
         for timer in timers where timer.prescale != 0 { timer.advance(count) }
         for usart in usarts where usart.needsUpdate { usart.update() }
         if let done = adcDoneAt, cycles >= done { adcFinish() }
-        if let spi { while cycles >= spi.nextEvent { spi.advance() } }
-        if let twi { while cycles >= twi.nextEvent { twi.advance() } }
+        // at 8 MHz the SPI clock changes every cycle, more than once within an instruction: watched pins are logged at
+        // each of its events
+        if let spi {
+            while cycles >= spi.nextEvent {
+                let at = spi.nextEvent
+                spi.advance()
+                if !watchedPins.isEmpty { logWatchedPins(at: at) }
+            }
+        }
+        if let twi {
+            while cycles >= twi.nextEvent {
+                let at = twi.nextEvent
+                twi.advance()
+                if !watchedPins.isEmpty { logWatchedPins(at: at) }
+            }
+        }
     }
 
     /// A pin's digital level as the circuit gives it

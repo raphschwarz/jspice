@@ -207,4 +207,44 @@ final class BusTests: XCTestCase {
         let gaps = zip(harness.sclRises.dropFirst(), harness.sclRises).map { $0 - $1 }
         XCTAssertEqual(gaps.sorted()[gaps.count / 2], 1250, accuracy: 30)
     }
+
+    /// tools/avr-reference/sketches/dac.ino: SPI.transfer16 at 8 MHz to an MCP4921, five codes held 5 ms each. A word
+    /// takes 2 µs, so at either step every bit of it comes within one step: the chip's pin changes are replayed into
+    /// the DAC
+    func testArduinoWritesAnMCP4921OverSPI() throws {
+        var arduino = NetlistPart(kind: .atmega328p, name: "U1", connections: ["d10": "cs", "d13": "sck", "d11": "sdi"])
+        arduino.firmware = Data(try image("avr-dac-uno"))
+        let circuit = try SchematicLayout.layout([
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 5], connections: ["plus": "ref", "minus": "GND"]),
+            arduino,
+            NetlistPart(kind: .dac, name: "U2", params: Examples.model(.dac, "MCP4921"),
+                        connections: ["cs": "cs", "sck": "sck", "sdi": "sdi", "ldac": "GND", "vref": "ref", "out": "out"]),
+            NetlistPart(kind: .probe, name: "OUT", connections: ["plus": "out", "minus": "GND"]),
+        ])
+        for timeStep in [1e-4, 1e-3] {
+            let simulator = Simulator(circuit: circuit, timeStep: timeStep)
+            let probe = try XCTUnwrap(simulator.circuit.elements.firstIndex { $0.name == "OUT" })
+            // the levels the output holds, in turn
+            var levels: [Double] = []
+            var current = -1.0
+            var held = 0
+            while simulator.time < 0.06 {
+                simulator.step()
+                let v = simulator.voltageAcross(probe)
+                if abs(v - current) > 0.01 {
+                    current = v
+                    held = 0
+                } else {
+                    held += 1
+                    if held == 2 { levels.append(v) }
+                }
+            }
+            let expected = [0, 1024, 2048, 3072, 4095].map { 5 * Double($0) / 4096 }
+            XCTAssertGreaterThanOrEqual(levels.count, 6, "\(levels)")
+            for (k, level) in levels.prefix(10).enumerated() {
+                XCTAssertEqual(level, expected[k % 5], accuracy: 0.005, "step \(timeStep): \(levels)")
+            }
+            XCTAssertFalse(simulator.isFailed)
+        }
+    }
 }

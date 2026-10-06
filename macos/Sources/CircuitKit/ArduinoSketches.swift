@@ -368,4 +368,80 @@ enum ArduinoSketches {
         /0+lkbSRj7f4lOyREREIwNCV3iPck4+/35HPkR+RCJXeK/jPFN+R3wnewODQ4AzeIJfp88Pd+8+h4houqhu7G/0BDcCqH7sf7h//H6IXswfkB/UH
         IPCiG7ML5Av1C2Yfdx+IH5kfGpRp92CVcJWAlZCVmwGsAb0BzwEIlfiU/89uAG4A
         """
+
+    static let dacSynthCode = """
+        // A sawtooth from a phase accumulator, a new sample every 125 µs (8 kHz), sent to an MCP4921 DAC on SPI (CS on
+        // pin 10), playing an A minor arpeggio: a quarter of a second a note
+        #include <SPI.h>
+
+        const int CS = 10;
+        // the phase step for each note: 65536 * frequency / 8000
+        const uint16_t steps[] = {901, 1072, 1350, 1802};
+        uint16_t phase = 0;
+        int note = 0;
+        unsigned int samples = 0;
+        unsigned long next;
+
+        void writeDac(uint16_t code) {
+          digitalWrite(CS, LOW);
+          SPI.transfer16(0x3000 | code);  // DAC A, unbuffered, gain 1, on
+          digitalWrite(CS, HIGH);
+        }
+
+        void setup() {
+          pinMode(CS, OUTPUT);
+          digitalWrite(CS, HIGH);
+          SPI.begin();
+          SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+          next = micros();
+        }
+
+        void loop() {
+          while ((long)(micros() - next) < 0) {}
+          next += 125;
+          writeDac(phase >> 4);
+          phase += steps[note];
+          if (++samples == 2000) {
+            samples = 0;
+            note = (note + 1) % 4;
+          }
+        }
+        """
+
+    static let dacSynthFirmware = """
+        DJReAAyUfgEMlKUBDJSGAAyUhgAMlIYADJSGAAyU1AQMlIYADJSGAAyUhgAMlIYADJSGAAyUhgAMlIYADJSGAAyUzAEMlIYADJTjAwyUFQQMlIYA
+        DJSGAAyUhgAMlIYADJSGAAyUhgAAAAAIAAIBAAADBAcAAAAAAAAAAAECBAgQIECAAQIECBAgAQIECBAgBAQEBAQEBAQCAgICAgIDAwMDAwMAAAAA
+        JQAoACsAAAAAACQAJwAqAAIARQQRJB++z+/Y4N6/zb8R4KDgseDg7vrgAsAFkA2SoDKxB9n3IeCg4rHgAcAdkqs9sgfh9xDgzuXQ4ATAIZf+AQ6U
+        aAXNNdEHyfcOlDEFDJRuBQyUAAAMtAX8DcCevQAADbQH/v3PnrWOvQAADbQH/v3PjrUIlY69AAANtAf+/c+OtZ69AAANtAf+/c+etQiVz5Pfk+wB
+        YOCK4A6U2wLOAZBjDpSIAGHgiuDfkc+RDJTbAmHgiuAOlJ8CYeCK4A6U2wIOlEcBgJEsAYgjgfCft/iUgJEsAYEwyfSNs4CTKgEts4CRKwGAlYIj
+        jbufv4DljL2B4I29DpQWAmCTIAFwkyEBgJMiAZCTIwEIlZCTKgHuzw+TH5MOlBYCAJEgARCRIQEgkSIBMJEjAasBvAFAG1ELYgtzC3f97s/ZAcgB
+        g1ifT69Pv0+AkyABkJMhAaCTIgGwkyMBgJEoAZCRKQEk4JaVh5UqleH3DpSlAICRJgGQkScB/AHuD/8f61/+TyCRKAEwkSkBQIFRgSQPNR8wkykB
+        IJMoASCRJAEwkSUBL18/TyA9R+A0BznwMJMlASCTJAEfkQ+RCJUQkiUBEJIkAQGWZOBw4A6UQAWQkycBgJMmAe/Pz5PPt/iUgJEtAYERJ8Dq6fDg
+        hJHm6PDglJHoL/Dg7g//H+JV/0+lkbSR7JHpIyH0YeCK4A6U2wJh4IrgDpSfAoy1gGGMvYy1gGSMvWHgjeAOlJ8CYeCL4A6UnwKAkS0Bj1+Aky0B
+        z7/PkQiVCJUfkg+SD7YPkhEkL5M/k0+TX5Nvk3+Tj5Ofk6+Tv5Pvk/+T4JEAAfCRAQEJlf+R75G/ka+Rn5GPkX+Rb5FfkU+RP5EvkQ+QD74PkB+Q
+        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
+        """
 }

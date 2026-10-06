@@ -78,7 +78,7 @@ enum SymbolRenderer {
         switch kind {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .digitalDelay:
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac, .digitalDelay:
             return 0
         case .schmittInverter, .unbufferedInverter: return 1.8
         case .analogSwitch: return 1.6
@@ -111,7 +111,7 @@ enum SymbolRenderer {
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
             if let package = element.kind.chipPackage {
                 drawChip(package, title: element.kind.isMicrocontroller ? package.name : element.model?.name ?? package.name,
                          led: element.kind == .rp2040, posts: posts, at: a, b, unit: u, style: style, in: ctx)
@@ -320,7 +320,7 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .digitalDelay:
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac, .digitalDelay:
             break
         }
 
@@ -1241,7 +1241,7 @@ enum SymbolRenderer {
         case .ota:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
             guard let package = element.kind.chipPackage, let box = chipBox(package, posts: posts, at: a, b, unit: u) else {
                 return [(a, b)]
             }
@@ -1279,7 +1279,7 @@ enum SymbolRenderer {
         -> (from: CGPoint, to: CGPoint, hidden: ClosedRange<CGFloat>?)? {
         switch element.kind {
         case .ground, .netLabel, .probe, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter,
-             .analogMux, .analogSelector, .pll:
+             .analogMux, .analogSelector, .pll, .dac:
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil

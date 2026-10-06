@@ -47,7 +47,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case opAmp, ota, multiplier, comparator
     case vco, vcf, envelope, vca, sampleHold, divider
     case timer555, schmittInverter, unbufferedInverter, analogSwitch
-    case logicGate, flipFlop, decadeCounter, binaryCounter, analogMux, analogSelector, pll
+    case logicGate, flipFlop, decadeCounter, binaryCounter, analogMux, analogSelector, pll, dac
     case atmega328p, atmega2560, attiny85, rp2040
     case delayLine, digitalDelay, vactrol
     case memristor
@@ -187,6 +187,7 @@ extension ElementKind {
         case .analogMux: return "Analog Multiplexer"
         case .analogSelector: return "Analog Selector"
         case .pll: return "Phase-Locked Loop"
+        case .dac: return "SPI DAC"
         case .unbufferedInverter: return "Unbuffered Inverter"
         case .memristor: return "Memristor"
         case .probe: return "Voltage Probe"
@@ -218,7 +219,7 @@ extension ElementKind {
              .atmega328p, .atmega2560,
              .attiny85, .rp2040: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return "U"
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
         case .probe: return "P"
@@ -237,7 +238,7 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .digitalDelay, .vactrol: return .effects
         case .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch: return .timersAndLogic
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return .timersAndLogic
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return .timersAndLogic
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
         case .memristor: return .memristors
         case .probe, .ammeter, .speaker: return .instruments
@@ -274,7 +275,7 @@ extension ElementKind {
         case .njfet, .ota, .schmittInverter, .unbufferedInverter, .analogSwitch, .multiplier, .delayLine, .digitalDelay, .vactrol:
             return nil
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return nil
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return nil
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return nil
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
@@ -344,7 +345,7 @@ extension ElementKind {
         case .ota, .vactrol: return 4
         case .timer555: return 5
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.length
-        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return chipPackage?.length
+        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return chipPackage?.length
         default: return nil
         }
     }
@@ -380,7 +381,7 @@ extension ElementKind {
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.terminalNames ?? []
         case .schmittInverter, .unbufferedInverter: return ["in", "out"]
         case .logicGate: return ["in1", "in2", "out"]
-        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return chipPackage?.terminalNames ?? []
+        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return chipPackage?.terminalNames ?? []
         default: return ["a", "b"]
         }
     }
@@ -418,7 +419,7 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return GridPoint(0, board?.length ?? 13)
-        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return GridPoint(0, chipPackage?.length ?? 3)
+        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return GridPoint(0, chipPackage?.length ?? 3)
         default: return GridPoint(4, 0)
         }
     }
@@ -572,6 +573,13 @@ extension ElementKind {
                 ParamSpec("fMin", "VCO frequency at 0 V", unit: "Hz", default: 100, range: 0.1...1_000_000),
                 ParamSpec("fMax", "VCO frequency at the supply", unit: "Hz", default: 2000, range: 1...2_000_000),
             ] + Self.logicParams(upper: 0.52, lower: 0.48)
+        case .dac:
+            return [
+                ParamSpec("supply", "Supply (VDD)", unit: "V", default: 5, range: 2.7...5.5, log: false),
+                ParamSpec("upper", "Input rising threshold", unit: "× supply", default: 0.7, range: 0.3...0.9, log: false),
+                ParamSpec("lower", "Input falling threshold", unit: "× supply", default: 0.2, range: 0.1...0.7, log: false),
+                ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 10, range: 0.1...1000),
+            ]
         case .unbufferedInverter:
             return [
                 ParamSpec("supply", "Supply", unit: "V", default: 9, range: 3...18, log: false),
@@ -780,7 +788,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
             return packagePins
         default:
             return [a, b]
@@ -888,6 +896,11 @@ extension ElementKind {
                           values: ["upper": 0.52, "lower": 0.48, "outputResistance": 400]),
                 PartModel(name: "74HC4046", summary: "The fast phase-locked loop, for 2 to 6 V supplies",
                           values: ["upper": 0.52, "lower": 0.48, "outputResistance": 50]),
+            ]
+        case .dac:
+            return [
+                PartModel(name: "MCP4921", summary: "12-bit DAC on SPI: write 0x3000 + code (gain 1, on) with CS low, and OUT goes to VREF × code / 4096",
+                          values: ["upper": 0.7, "lower": 0.2, "outputResistance": 10]),
             ]
         case .unbufferedInverter:
             return [

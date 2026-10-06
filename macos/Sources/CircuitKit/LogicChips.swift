@@ -43,6 +43,10 @@ extension ElementKind {
             return ChipPackage(name: "CD4051", terminalNames: (0...7).map { "x\($0)" } + ["a", "b", "c", "inhibit", "x"],
                                pinLabels: (0...7).map { "X\($0)" } + ["A", "B", "C", "INH", "X"],
                                pinPlaces: (0...7).map(second) + [first(4), first(5), first(6), first(7), first(0)], length: 7)
+        case .dac:
+            return ChipPackage(name: "MCP4921", terminalNames: ["cs", "sck", "sdi", "ldac", "vref", "out"],
+                               pinLabels: ["CS", "SCK", "SDI", "LDAC", "VREF", "OUT"],
+                               pinPlaces: [second(0), second(1), second(2), second(3), second(4), first(0)], length: 4)
         case .pll:
             return ChipPackage(name: "CD4046", terminalNames: ["signal", "comparator", "vco_in", "inhibit", "vco_out", "pc1", "pc2"],
                                pinLabels: ["SIG", "COMP", "VCO IN", "INH", "VCO", "PC1", "PC2"],
@@ -60,7 +64,7 @@ extension ElementKind {
     /// state changes when an input crosses one, and their outputs drive towards the hidden supply or ground.
     public var isLogic: Bool {
         switch self {
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return true
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return true
         default: return false
         }
     }
@@ -75,6 +79,7 @@ extension ElementKind {
         case .analogMux: return [8, 9, 10, 11]
         case .analogSelector: return [2, 3]
         case .pll: return [0, 1, 3]
+        case .dac: return [0, 1, 2, 3]
         default: return []
         }
     }
@@ -101,6 +106,8 @@ public struct LogicState: Equatable, Sendable {
     public var phase = 0.0
     public var shift: UInt32 = 0
     public var bits = 0
+    /// A DAC's input register
+    public var latch: UInt32 = 0
 
     public init(inputs: UInt32 = 0, count: Int = 0) {
         self.inputs = inputs
@@ -154,6 +161,23 @@ enum Logic {
             } else if fell(0) {
                 state.count = (old.count + 1) & 0xFFF
             }
+        case .dac:
+            // CS, SCK, SDI, LDAC. While CS is low, SDI is shifted in on each rising edge of SCK; when CS goes high after
+            // sixteen bits they become the input register (unless bit 15, which picks DAC B, is set: the MCP4921 has
+            // only A), and the output takes the input register while LDAC is low
+            if fell(0) {
+                state.shift = 0
+                state.bits = 0
+            }
+            if !level(0) && rose(1) && state.bits < 16 {
+                state.shift = state.shift << 1 | (level(2) ? 1 : 0)
+                state.bits += 1
+            }
+            if rose(0) {
+                if state.bits == 16 && state.shift & 0x8000 == 0 { state.latch = state.shift & 0xFFFF }
+                state.bits = 0
+            }
+            if !level(3) { state.count = Int(state.latch) }
         case .pll:
             // phase comparator 2: a rising edge of the signal pumps up (or ends pumping down), one of the comparator
             // input pumps down (or ends pumping up), so the output stays off once the two are in phase
@@ -186,6 +210,14 @@ enum Logic {
         default:
             return []
         }
+    }
+
+    /// An MCP4921's output for the word in its output register: the reference times the 12-bit code over 4096, times
+    /// two unless the GA bit (13) is set; 0 V while shut down (the SHDN bit, 12, clear)
+    static func dacOutput(_ word: Int, reference: Double, supply: Double) -> Double {
+        guard word & 0x1000 != 0 else { return 0 }
+        let gain = word & 0x2000 != 0 ? 1.0 : 2.0
+        return min(max(reference * Double(word & 0xFFF) / 4096 * gain, 0), supply)
     }
 
     /// The channel a multiplexer or selector connects to its common terminal, or nil while inhibited

@@ -128,6 +128,9 @@ public final class Simulator {
     private var chipPinStates: [Int: [PinState]] = [:]
     private var chipCycleCarry: [Int: Double] = [:]
     private var chipIndices: [Int] = []
+    /// For each chip, its pins that logic parts' inputs are wired to, and those inputs (the part and the input's bit):
+    /// what the chip does on these pins is replayed into the parts as it happened, change by change
+    private var chipWatches: [Int: [Int: [(element: Int, bit: Int)]]] = [:]
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
     var digitalState: [Bool] = []
     /// What each logic part remembers: its inputs' levels, its count
@@ -306,7 +309,7 @@ public final class Simulator {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter, .pll: return true
+                 .binaryCounter, .pll, .dac: return true
             default: return false
             }
         }
@@ -337,6 +340,7 @@ public final class Simulator {
             chipPinStates[i] = chips[i]?.pinStates
         }
         memristorIndices = indices { $0 == .memristor }
+        watchChipPins()
         for (i, element) in newCircuit.elements.enumerated() {
             if let state = previous[element.id] {
                 capacitorVoltage[i] = state.cv
@@ -508,6 +512,7 @@ public final class Simulator {
             chipPinStates[i] = chip.pinStates
             chipCycleCarry[i] = 0
         }
+        watchChipPins()
         matrixIsCurrent = false
         sequenceOwnsKeyboard = false
         currentsAreStale = true
@@ -921,6 +926,9 @@ public final class Simulator {
                 for k in element.kind.logicOutputs where k < nodes.count {
                     stampConductance(&matrix, m, nodes[k], 0, constants[i].outputConductance)
                 }
+            case .dac:
+                // the output: driven to its voltage through its output resistance
+                if nodes.count > 5 { stampConductance(&matrix, m, nodes[5], 0, constants[i].outputConductance) }
             case .analogMux, .analogSelector:
                 // the channel the select inputs pick, connected to the common terminal
                 if let channel = Logic.channel(element.kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
@@ -1032,6 +1040,10 @@ public final class Simulator {
                 if digitalState[i] {
                     stampCurrent(&rhs, 0, nodes[1], c.supply * c.outputConductance)
                 }
+            case .dac:
+                guard nodes.count > 5 else { continue }
+                let output = Logic.dacOutput(logicStates[i].count, reference: voltage(nodes[4]), supply: c.supply)
+                stampCurrent(&rhs, 0, nodes[5], output * c.outputConductance)
             case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .pll:
                 let kind = kinds[i]
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where high {
@@ -1236,7 +1248,7 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
             c.supply = max(p("supply"), 0.1)
             c.upper = p("upper") * c.supply
             c.lower = min(p("lower"), p("upper")) * c.supply
@@ -1907,6 +1919,7 @@ public final class Simulator {
         chip.reset()
         chipCycleCarry[index] = 0
         chipPinStates[index] = chip.pinStates
+        watchChipPins()
         matrixIsCurrent = false
         currentsAreStale = true
     }
@@ -1929,6 +1942,55 @@ public final class Simulator {
             let states = chip.pinStates
             if !Self.samePinSetup(states, chipPinStates[i]) { matrixIsCurrent = false }
             chipPinStates[i] = states
+        }
+        replayPinEvents()
+    }
+
+    /// Finds the logic parts' inputs wired to chips' pins, and has the chips log those pins
+    private func watchChipPins() {
+        chipWatches = [:]
+        for i in chipIndices {
+            guard let chip = chips[i], i < topology.elementNodes.count else { continue }
+            let chipNodes = topology.elementNodes[i]
+            var byPin: [Int: [(element: Int, bit: Int)]] = [:]
+            for j in kinds.indices where kinds[j].isLogic && j < topology.elementNodes.count {
+                let nodes = topology.elementNodes[j]
+                for (bit, terminal) in kinds[j].logicInputs.enumerated() where terminal < nodes.count && nodes[terminal] > 0 {
+                    for (pin, node) in chipNodes.enumerated() where node == nodes[terminal] {
+                        byPin[pin, default: []].append((j, bit))
+                    }
+                }
+            }
+            chip.watchedPins = byPin.keys.sorted()
+            if !byPin.isEmpty { chipWatches[i] = byPin }
+        }
+    }
+
+    /// Plays what the chips did on the watched pins during their run into the logic parts wired to them, in the order
+    /// it happened: an SPI word clocked out within one step reaches a DAC bit by bit
+    private func replayPinEvents() {
+        guard !chipWatches.isEmpty else { return }
+        var events: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
+        for (i, _) in chipWatches {
+            guard let chip = chips[i] else { continue }
+            for event in chip.takePinEvents() {
+                events.append((Double(event.cycle) / chip.clock, events.count, i, event))
+            }
+        }
+        events.sort { ($0.time, $0.order) < ($1.time, $1.order) }
+        for (_, _, i, event) in events {
+            for target in chipWatches[i]?[event.pin] ?? [] {
+                let old = logicStates[target.element]
+                let mask = UInt32(1) << UInt32(target.bit)
+                let inputs = event.high ? old.inputs | mask : old.inputs & ~mask
+                guard inputs != old.inputs else { continue }
+                let kind = kinds[target.element]
+                let next = Logic.next(kind, old, inputs: inputs)
+                logicStates[target.element] = next
+                if (kind == .analogMux || kind == .analogSelector) && Logic.channel(kind, next) != Logic.channel(kind, old) {
+                    matrixIsCurrent = false
+                }
+            }
         }
     }
 
@@ -2157,6 +2219,13 @@ public final class Simulator {
                 total += kind == .logicGate ? flows[k] : max(flows[k], 0)
             }
             return (total, flows)
+        case .dac:
+            var flows = [Double](repeating: 0, count: nodes.count)
+            guard nodes.count > 5 else { return (0, flows) }
+            let c = constants[i]
+            let target = Logic.dacOutput(logicStates[i].count, reference: v(nodes[4]), supply: c.supply)
+            flows[5] = (target - v(nodes[5])) * c.outputConductance
+            return (flows[5], flows)
         case .analogMux, .analogSelector:
             // through the channel that is on, into the common terminal
             var flows = [Double](repeating: 0, count: nodes.count)

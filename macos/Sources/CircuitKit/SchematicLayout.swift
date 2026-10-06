@@ -49,7 +49,7 @@ public enum SchematicLayout {
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicInputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicInputs),
         .analogMux: names(.analogMux, Array(0...11)), .analogSelector: ["x0", "x1", "select", "inhibit"],
-        .pll: ["signal", "comparator", "vco_in", "inhibit"],
+        .pll: ["signal", "comparator", "vco_in", "inhibit"], .dac: ["cs", "sck", "sdi", "ldac", "vref"],
     ]
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .unbufferedInverter: ["out"],
@@ -62,7 +62,7 @@ public enum SchematicLayout {
         .logicGate: ["out"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicOutputs),
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicOutputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicOutputs), .analogMux: ["x"], .analogSelector: ["x"],
-        .pll: ["vco_out", "pc1", "pc2"],
+        .pll: ["vco_out", "pc1", "pc2"], .dac: ["out"],
     ]
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
                                             .keyboardGate]
@@ -101,7 +101,7 @@ public enum SchematicLayout {
             return frame(0...3, -2...2)
         case .vactrol: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
             return frame(0...(e.kind.chipPackage?.length ?? 13), -2...2)
         default:
             let length = abs(e.b.x - e.a.x) + abs(e.b.y - e.a.y)
@@ -515,7 +515,7 @@ public enum SchematicLayout {
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
                     case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
-                         .analogSelector, .pll:
+                         .analogSelector, .pll, .dac:
                         // analog inputs (a logic chip's inputs) down the left, digital pins (its outputs) down the right
                         put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.kind.chipPackage?.length ?? 13)))
                         width = 6

@@ -10,6 +10,19 @@ public enum PinState: Equatable, Sendable {
     case output(high: Bool)
 }
 
+/// A watched pin's driven level changing: how many cycles into the run it changed, the pin, its new level
+public struct PinEvent: Equatable, Sendable {
+    public var cycle: Int
+    public var pin: Int
+    public var high: Bool
+
+    public init(cycle: Int, pin: Int, high: Bool) {
+        self.cycle = cycle
+        self.pin = pin
+        self.high = high
+    }
+}
+
 /// A microcontroller running its firmware: the circuit sets the voltages on its pins and runs it for a number of
 /// clock cycles, then reads back what each pin does
 public protocol Microcontroller: AnyObject {
@@ -29,6 +42,12 @@ public protocol Microcontroller: AnyObject {
     var serialOutput: [UInt8] { get }
     /// Bytes waiting to be received
     var serialInput: [UInt8] { get set }
+
+    /// Pins whose driven level the chip logs as it runs, for logic parts that read them: a clock or data line can
+    /// change many times within one step of the circuit
+    var watchedPins: [Int] { get set }
+    /// The changes to the watched pins' driven levels logged since the last call, in order
+    func takePinEvents() -> [PinEvent]
 
     /// Runs whole instructions until at least `count` more cycles have passed
     func run(cycles count: Int)
