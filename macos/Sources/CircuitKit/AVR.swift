@@ -320,8 +320,11 @@ public final class AVR: Microcontroller {
         // where a timer may be driving one), and at each SPI and TWI event, logged where they change
         while cycles < end {
             step()
-            if ioWritten || watchesTimerPins {
+            if ioWritten {
                 ioWritten = false
+                timerDrivesWatchedPin = watchedPinDrivenByTimer()
+                logWatchedPins(at: cycles)
+            } else if timerDrivesWatchedPin {
                 logWatchedPins(at: cycles)
             }
         }
@@ -329,8 +332,22 @@ public final class AVR: Microcontroller {
 
     /// Set by every write to an I/O register: only those (and the timers, SPI and TWI) change what the pins do
     private var ioWritten = false
-    /// Whether a watched pin is one a timer can drive, which it does without a register write
-    private var watchesTimerPins = false
+    /// Whether a timer drives a watched pin now (its compare output mode is set), which it does without a register
+    /// write; it can only start or stop with one
+    private var timerDrivesWatchedPin = false
+
+    private func watchedPinDrivenByTimer() -> Bool {
+        for timer in timers {
+            for unit in 0..<timer.units where timer.compareOutputMode(unit) != 0 {
+                if watchedPins.contains(timer.spec.pins[unit]) { return true }
+                if timer.spec.kind == .tiny1, unit < timer.spec.complements.count,
+                   watchedPins.contains(timer.spec.complements[unit]) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
 
     /// Where the present run started, for the pin events' times
     private var runStart = 0
@@ -347,9 +364,7 @@ public final class AVR: Microcontroller {
     public var watchedPins: [Int] = [] {
         didSet {
             watchedLevels = watchedPins.map { drivenLevel($0) }
-            watchesTimerPins = watchedPins.contains { pin in
-                timers.contains { $0.spec.pins.contains(pin) || $0.spec.complements.contains(pin) }
-            }
+            timerDrivesWatchedPin = watchedPinDrivenByTimer()
         }
     }
     private var watchedLevels: [Bool?] = []
