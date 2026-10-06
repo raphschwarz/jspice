@@ -66,6 +66,9 @@ enum ScreenshotRunner {
         Shot(name: "42-mega-bargraph-light", example: "arduino-mega-bargraph", dark: false, seconds: 0.5, select: .atmega2560),
         Shot(name: "43-attiny85-dimmer-dark", example: "attiny85-dimmer", dark: true, seconds: 0.5, select: .attiny85),
         Shot(name: "44-pico-knob-light", example: "pico-knob", dark: false, seconds: 2.5, select: .rp2040),
+        Shot(name: "45-cmos-sequencer-dark", example: "cmos-sequencer", dark: true, seconds: 2, select: .analogMux),
+        Shot(name: "46-baby10-light", example: "baby10", dark: false, seconds: 1.5, select: .decadeCounter),
+        Shot(name: "47-cmos-drone-dark", example: "cmos-drone", dark: true, seconds: 1, select: .logicGate),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {

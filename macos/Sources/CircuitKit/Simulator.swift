@@ -130,6 +130,8 @@ public final class Simulator {
     private var chipIndices: [Int] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
     var digitalState: [Bool] = []
+    /// What each logic part remembers: its inputs' levels, its count
+    var logicStates: [LogicState] = []
     /// Op-amps: how often the input has been pulled back to the linear range in the present Newton solve
     private var opAmpCrossings: [Int] = []
     /// The main current of each element: from `a` to `b` for two-terminal parts, into the drain or collector for
@@ -207,6 +209,7 @@ public final class Simulator {
     private var rejectLimited2: [Double] = []
     private var rejectLimited3: [Double] = []
     private var rejectDigital: [Bool] = []
+    private var rejectLogic: [LogicState] = []
     /// Extra conductance across every junction while gmin stepping, otherwise zero
     private var junctionConductance = 0.0
     /// Set when this Newton iteration held a junction, gate or op-amp input back from the solution: the iteration is then
@@ -239,6 +242,7 @@ public final class Simulator {
     private struct SavedState {
         var cv, cvp, cvo, ci, lv, li, lip, lio, m, l1, l2, l3: Double
         var digital: Bool
+        var logic: LogicState
         var module: ModuleState
         var noise: UInt64
         var delay: DelayHistory?
@@ -252,7 +256,7 @@ public final class Simulator {
                 cv: capacitorVoltage[i], cvp: capacitorVoltagePrevious[i], cvo: capacitorVoltageOlder[i],
                 ci: capacitorCurrent[i], lv: inductorVoltage[i], li: inductorCurrent[i], lip: inductorCurrentPrevious[i],
                 lio: inductorCurrentOlder[i], m: memristorStates[i], l1: limitedVoltage[i],
-                l2: limitedVoltage2[i], l3: limitedVoltage3[i], digital: digitalState[i], module: moduleStates[i],
+                l2: limitedVoltage2[i], l3: limitedVoltage3[i], digital: digitalState[i], logic: logicStates[i], module: moduleStates[i],
                 noise: noiseState[i], delay: delayHistory[i])
         }
         // chips keep running through edits that leave their firmware alone
@@ -282,6 +286,7 @@ public final class Simulator {
         limitedVoltage2 = Array(repeating: 0, count: count)
         limitedVoltage3 = Array(repeating: 0, count: count)
         digitalState = Array(repeating: false, count: count)
+        logicStates = Array(repeating: LogicState(), count: count)
         moduleStates = Array(repeating: ModuleState(), count: count)
         noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
@@ -299,7 +304,8 @@ public final class Simulator {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .comparator, .vco, .vcf, .envelope, .vca,
-                 .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return true
+                 .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
+                 .binaryCounter: return true
             default: return false
             }
         }
@@ -344,6 +350,7 @@ public final class Simulator {
                 limitedVoltage2[i] = state.l2
                 limitedVoltage3[i] = state.l3
                 digitalState[i] = state.digital
+                logicStates[i] = state.logic
                 moduleStates[i] = state.module
                 noiseState[i] = state.noise
                 if let delay = state.delay, element.kind == .delayLine {
@@ -387,6 +394,7 @@ public final class Simulator {
         limitedVoltage3[i] = 0
         // a Schmitt inverter's input starts low, so its output starts high; a 555 decides from its trigger
         digitalState[i] = element.kind == .schmittInverter
+        logicStates[i] = LogicState()
         // a keyboard's pitch starts at the present note rather than gliding up from 0 V
         if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
         // each noise source has its own sequence, the same every run
@@ -457,6 +465,8 @@ public final class Simulator {
         limitedVoltage2 = other.limitedVoltage2
         limitedVoltage3 = other.limitedVoltage3
         digitalState = other.digitalState
+        if logicStates != other.logicStates { matrixIsCurrent = false }
+        logicStates = other.logicStates
         moduleStates = other.moduleStates
         for (i, chip) in chips {
             guard let source = other.chips[i] else { continue }
@@ -598,6 +608,7 @@ public final class Simulator {
                 Self.copy(limitedVoltage2, into: &rejectLimited2)
                 Self.copy(limitedVoltage3, into: &rejectLimited3)
                 rejectDigital = digitalState
+                rejectLogic = logicStates
             }
             var converged = solve(at: t)
             if isFailed { return }
@@ -615,8 +626,9 @@ public final class Simulator {
                 Self.copy(rejectLimited, into: &limitedVoltage)
                 Self.copy(rejectLimited2, into: &limitedVoltage2)
                 Self.copy(rejectLimited3, into: &limitedVoltage3)
-                if digitalState != rejectDigital {
+                if digitalState != rejectDigital || logicStates != rejectLogic {
                     digitalState = rejectDigital
+                    logicStates = rejectLogic
                     matrixIsCurrent = false
                 }
                 rejectedSubsteps += 1
@@ -898,6 +910,16 @@ public final class Simulator {
             case .schmittInverter:
                 // output drives towards the hidden supply or ground through its output resistance
                 stampConductance(&matrix, m, nodes[1], 0, 1 / max(element[param: "outputResistance"], 0.1))
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter:
+                // each output likewise; the inputs draw nothing
+                for k in element.kind.logicOutputs where k < nodes.count {
+                    stampConductance(&matrix, m, nodes[k], 0, constants[i].outputConductance)
+                }
+            case .analogMux, .analogSelector:
+                // the channel the select inputs pick, connected to the common terminal
+                if let channel = Logic.channel(element.kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
+                    stampConductance(&matrix, m, nodes[channel], common, constants[i].onConductance)
+                }
             case .atmega328p, .atmega2560, .attiny85, .rp2040:
                 // each output pin drives towards the supply or ground through its resistance; a pull-up is a resistor
                 // to the supply, a pull-down one to ground; other inputs draw nothing
@@ -1003,6 +1025,11 @@ public final class Simulator {
             case .schmittInverter:
                 if digitalState[i] {
                     stampCurrent(&rhs, 0, nodes[1], c.supply * c.outputConductance)
+                }
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter:
+                let kind = kinds[i]
+                for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where high {
+                    stampCurrent(&rhs, 0, nodes[k], c.supply * c.outputConductance)
                 }
             case .atmega328p, .atmega2560, .attiny85, .rp2040:
                 guard let states = chipPinStates[i] else { continue }
@@ -1193,6 +1220,13 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+            c.supply = max(p("supply"), 0.1)
+            c.upper = p("upper") * c.supply
+            c.lower = min(p("lower"), p("upper")) * c.supply
+            c.outputConductance = 1 / max(p("outputResistance"), 0.1)
+            c.onConductance = 1 / max(p("onResistance"), 1e-3)
+            c.value = Self.choice(p("function"), 0...Double(Logic.gateFunctions.count - 1))
         case .atmega328p, .atmega2560, .attiny85, .rp2040:
             c.supply = min(max(p("supply"), 0.5), 6)
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
@@ -1588,6 +1622,10 @@ public final class Simulator {
         var changed = false
         for i in digitalIndices {
             let nodes = topology.elementNodes[i]
+            if kinds[i].isLogic {
+                if updateLogic(i, nodes) { changed = true }
+                continue
+            }
             var high = digitalState[i]
             switch kinds[i] {
             case .timer555:
@@ -1619,6 +1657,31 @@ public final class Simulator {
             }
         }
         return changed
+    }
+
+    /// Reads a logic part's inputs (each with its thresholds' hysteresis) and moves it on; true if what it puts out changed
+    private func updateLogic(_ i: Int, _ nodes: [Int]) -> Bool {
+        let kind = kinds[i]
+        let c = constants[i]
+        let old = logicStates[i]
+        var inputs = old.inputs
+        for (bit, terminal) in kind.logicInputs.enumerated() where terminal < nodes.count {
+            let mask = UInt32(1) << UInt32(bit)
+            let v = voltage(nodes[terminal])
+            let high = inputs & mask != 0 ? v >= c.lower : v > c.upper
+            if high { inputs |= mask } else { inputs &= ~mask }
+        }
+        guard inputs != old.inputs else { return false }
+        let next = Logic.next(kind, old, inputs: inputs)
+        logicStates[i] = next
+        if kind == .analogMux || kind == .analogSelector {
+            guard Logic.channel(kind, next) != Logic.channel(kind, old) else { return false }
+            // the switches are in the base matrix
+            matrixIsCurrent = false
+            return true
+        }
+        let function = Int(c.value)
+        return Logic.outputs(kind, next, function: function) != Logic.outputs(kind, old, function: function)
     }
 
     // MARK: - After each step
@@ -1953,6 +2016,25 @@ public final class Simulator {
             let target = digitalState[i] ? constants[i].supply : 0
             let current = (target - v(nodes[1])) * constants[i].outputConductance
             return (current, [0, current])
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter:
+            // the main current: what the outputs supply (for a gate, what its output puts out)
+            let c = constants[i]
+            let kind = element.kind
+            var flows = [Double](repeating: 0, count: nodes.count)
+            var total = 0.0
+            for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where k < nodes.count {
+                flows[k] = ((high ? c.supply : 0) - v(nodes[k])) * c.outputConductance
+                total += kind == .logicGate ? flows[k] : max(flows[k], 0)
+            }
+            return (total, flows)
+        case .analogMux, .analogSelector:
+            // through the channel that is on, into the common terminal
+            var flows = [Double](repeating: 0, count: nodes.count)
+            guard let channel = Logic.channel(element.kind, logicStates[i]), channel < nodes.count - 1 else { return (0, flows) }
+            let current = (v(nodes[channel]) - v(nodes[nodes.count - 1])) * constants[i].onConductance
+            flows[channel] = -current
+            flows[nodes.count - 1] = current
+            return (current, flows)
         case .atmega328p, .atmega2560, .attiny85, .rp2040:
             let c = constants[i]
             var flows = [Double](repeating: 0, count: nodes.count)
@@ -2054,8 +2136,9 @@ public final class Simulator {
         if kind.isTransistor { return v(1) - v(2) }
         if kind == .ota || kind.drivesOutput { return v(2) }
         if kind == .timer555 { return v(2) - v(0) }
-        if kind.isMicrocontroller { return constants[index].supply }
+        if kind.isMicrocontroller || kind.chipPackage != nil { return constants[index].supply }
         if kind == .schmittInverter { return v(1) }
+        if kind == .logicGate { return v(2) }
         return kind.isVoltageSource ? v(1) - v(0) : v(0) - v(1)
     }
 
@@ -2097,9 +2180,23 @@ public final class Simulator {
         }
     }
 
-    /// True while a 555's or Schmitt inverter's output is high
+    /// True while a 555's, Schmitt inverter's or logic gate's output is high
     public func isHigh(_ index: Int) -> Bool {
-        index < digitalState.count ? digitalState[index] : false
+        if index < kinds.count, kinds[index] == .logicGate { return logicOutputs(index).first ?? false }
+        return index < digitalState.count ? digitalState[index] : false
+    }
+
+    /// Whether each output of a logic part is high, in the order of its output terminals
+    public func logicOutputs(_ index: Int) -> [Bool] {
+        guard index < kinds.count, index < logicStates.count else { return [] }
+        return Logic.outputs(kinds[index], logicStates[index], function: Int(constants[index].value))
+    }
+
+    /// A counter's count, a flip-flop's Q (1 or 0), or the channel a multiplexer has on (-1 while inhibited)
+    public func logicCount(_ index: Int) -> Int {
+        guard index < kinds.count, index < logicStates.count else { return 0 }
+        if kinds[index] == .analogMux || kinds[index] == .analogSelector { return Logic.channel(kinds[index], logicStates[index]) ?? -1 }
+        return logicStates[index].count
     }
 
     /// 0 (open) to 1 (closed) for analog switches

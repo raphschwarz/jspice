@@ -32,7 +32,7 @@ enum SymbolIcons {
         case .nmos, .pmos, .npn, .pnp, .njfet:
             element = Element(kind: kind, a: .zero, b: GridPoint(2, 0))
             (a, b, unit) = (CGPoint(x: 7, y: 11), CGPoint(x: 16, y: 11), 4.5)
-        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .logicGate:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 5, y: 11), CGPoint(x: 29, y: 11), 5.5)
         case .ota, .vactrol:
@@ -41,8 +41,8 @@ enum SymbolIcons {
         case .timer555:
             element = Element(kind: kind, a: .zero, b: GridPoint(0, 5))
             (a, b, unit) = (CGPoint(x: 17, y: -0.5), CGPoint(x: 17, y: 22), 4.5)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040:
-            let length = CGFloat(kind.board?.length ?? 13)
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+            let length = CGFloat(kind.chipPackage?.length ?? 13)
             element = Element(kind: kind, a: .zero, b: GridPoint(0, Int(length)))
             unit = min(19.6 / length, 4.4)
             (a, b) = (CGPoint(x: 17, y: 11 - length * unit / 2), CGPoint(x: 17, y: 11 + length * unit / 2))
@@ -61,7 +61,8 @@ enum SymbolIcons {
         switch kind {
         case .potentiometer, .analogSwitch:
             posts = [a, b, CGPoint(x: (a.x + b.x) / 2, y: 2)]
-        case .ota, .timer555, .atmega328p, .atmega2560, .attiny85, .rp2040:
+        case .ota, .timer555, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
+             .analogSelector:
             // the element's own terminal layout, scaled into the icon
             posts = element.posts.map { CGPoint(x: a.x + CGFloat($0.x) * unit, y: a.y + CGFloat($0.y) * unit) }
         default:

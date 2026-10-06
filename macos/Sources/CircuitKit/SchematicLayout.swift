@@ -33,6 +33,10 @@ public enum SchematicLayout {
         zip(board.terminalNames, board.pinPlaces).filter { $0.1.second == second }.map(\.0)
     }
 
+    private static func names(_ kind: ElementKind, _ terminals: [Int]) -> [String] {
+        terminals.map { kind.terminalNames[$0] }
+    }
+
     static let inputs: [ElementKind: [String]] = [
         .opAmp: ["minus", "plus"], .ota: ["minus", "plus", "bias"], .timer555: ["trig", "thr", "dis", "ctrl", "reset"],
         .schmittInverter: ["in"], .npn: ["base"], .pnp: ["base"], .nmos: ["gate"], .pmos: ["gate"], .njfet: ["gate"],
@@ -41,6 +45,10 @@ public enum SchematicLayout {
         .vca: ["in", "cv"], .sampleHold: ["in", "trig"], .divider: ["clock", "reset"],
         .atmega328p: microcontrollerSide(.uno, second: true), .atmega2560: microcontrollerSide(.mega, second: true),
         .attiny85: microcontrollerSide(.attiny85, second: true), .rp2040: microcontrollerSide(.pico, second: true),
+        .logicGate: ["in1", "in2"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicInputs),
+        .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicInputs),
+        .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicInputs),
+        .analogMux: names(.analogMux, Array(0...11)), .analogSelector: ["x0", "x1", "select", "inhibit"],
     ]
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .npn: ["collector", "emitter"],
@@ -49,11 +57,14 @@ public enum SchematicLayout {
         .comparator: ["out"], .vco: ["out"], .vcf: ["out"], .envelope: ["out"], .vca: ["out"], .sampleHold: ["out"], .divider: ["out"],
         .atmega328p: microcontrollerSide(.uno, second: false), .atmega2560: microcontrollerSide(.mega, second: false),
         .attiny85: microcontrollerSide(.attiny85, second: false), .rp2040: microcontrollerSide(.pico, second: false),
+        .logicGate: ["out"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicOutputs),
+        .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicOutputs),
+        .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicOutputs), .analogMux: ["x"], .analogSelector: ["x"],
     ]
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
                                             .keyboardGate]
     static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca,
-                                               .sampleHold, .divider]
+                                               .sampleHold, .divider, .logicGate]
 
     static func isRailName(_ name: String) -> Bool {
         let s = name.uppercased().replacingOccurrences(of: " ", with: "")
@@ -81,11 +92,12 @@ public enum SchematicLayout {
         case .ground: return [e.b]
         case .netLabel, .wire: return []
         case .nmos, .pmos, .npn, .pnp, .njfet: return frame(1...2, -1...1)
-        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .logicGate:
             return frame(0...3, -2...2)
         case .vactrol: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040: return frame(0...(e.kind.board?.length ?? 13), -2...2)
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+            return frame(0...(e.kind.chipPackage?.length ?? 13), -2...2)
         default:
             let length = abs(e.b.x - e.a.x) + abs(e.b.y - e.a.y)
             var result = Set<GridPoint>()
@@ -496,10 +508,16 @@ public enum SchematicLayout {
                     case .timer555:
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
-                    case .atmega328p, .atmega2560, .attiny85, .rp2040:
-                        // analog inputs down the left, digital pins down the right
-                        put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.kind.board?.length ?? 13)))
+                    case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
+                         .analogSelector:
+                        // analog inputs (a logic chip's inputs) down the left, digital pins (its outputs) down the right
+                        put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.kind.chipPackage?.length ?? 13)))
                         width = 6
+                    case .logicGate:
+                        // the input the signal comes in by lines up with it
+                        let second = via != nil && via == p.connections[1]
+                        let ay = via != nil ? vy + 1 : 0
+                        put(p, GridPoint(x, ay), GridPoint(x + 4, ay), flipped: second)
                     case .potentiometer:
                         put(p, GridPoint(x, vy - 2), GridPoint(x, vy + 2))
                         width = 2
@@ -678,7 +696,7 @@ public enum SchematicLayout {
             if amplifiers.contains(p.kind), posts.prefix(2).contains(point) {
                 return element.axisDirection * -1
             }
-            if p.kind == .timer555 || p.kind.isMicrocontroller {
+            if p.kind == .timer555 || p.kind.chipPackage != nil {
                 let perpendicular = element.perpendicular
                 let relative = point - element.a
                 let side = relative.x * perpendicular.x + relative.y * perpendicular.y

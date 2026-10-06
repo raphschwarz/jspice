@@ -77,7 +77,8 @@ enum SymbolRenderer {
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
-             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040:
+             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
             return 0
         case .schmittInverter: return 1.8
         case .analogSwitch: return 1.6
@@ -110,10 +111,13 @@ enum SymbolRenderer {
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040:
-            if let board = element.kind.board {
-                drawMicrocontroller(board, posts: posts, at: a, b, unit: u, style: style, in: ctx)
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+            if let package = element.kind.chipPackage {
+                drawChip(package, title: element.kind.isMicrocontroller ? package.name : element.model?.name ?? package.name,
+                         led: element.kind == .rp2040, posts: posts, at: a, b, unit: u, style: style, in: ctx)
             }
+        case .logicGate:
+            drawGate(element, at: a, b, unit: u, style: style, in: ctx)
         case .analogSwitch:
             drawTwoTerminal(element, at: a, b, unit: u, style: style, in: ctx)
             if posts.count == 3 { drawControl(from: posts[2], at: a, b, unit: u, style: style, in: ctx) }
@@ -306,7 +310,8 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: x0 + 0.2 * u, y: -0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
-             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040:
+             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
             break
         }
 
@@ -864,6 +869,94 @@ enum SymbolRenderer {
         ctx.restoreGState()
     }
 
+    /// A logic gate's body, from where the input leads end to its front, in its own frame (the gate runs along +x)
+    private static func gateBody(length L: CGFloat, unit u: CGFloat) -> (left: CGFloat, right: CGFloat) {
+        let left = min(0.6 * u, L * 0.2)
+        let width = min(2.2 * u, max(L - left - 0.8 * u, 1.3 * u))
+        return (left, left + width)
+    }
+
+    /// Where a gate's output lead starts: its front, past the bubble if it has one
+    static func gateOutputStart(length L: CGFloat, unit u: CGFloat) -> CGFloat {
+        gateBody(length: L, unit: u).right + 0.4 * u
+    }
+
+    /// A two-input logic gate in the usual shapes: AND (flat back, round front), OR (curved back, pointed front), XOR (a
+    /// second curve behind), a bubble for the inverting ones, and the hysteresis loop for Schmitt inputs
+    private static func drawGate(_ element: Element, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                 in ctx: CGContext) {
+        let L = hypot(b.x - a.x, b.y - a.y)
+        guard L > 0.5 else { return }
+        let colors = style.terminalColors.count >= 3 ? style.terminalColors : [style.fill, style.fill, style.fill]
+        let function = Int(element[param: "function"].rounded())
+        let inverted = function == 0 || function == 1 || function == 5
+        let orShape = function == 1 || function == 3 || function == 4 || function == 5
+        let exclusive = function == 4 || function == 5
+        let schmitt = element[param: "upper"] - element[param: "lower"] > 0.1
+        let (left, right) = gateBody(length: L, unit: u)
+        let h = 1.3 * u
+        let r = 0.2 * u
+
+        ctx.saveGState()
+        enterFrame(of: element, at: a, b, in: ctx)
+        let body = CGMutablePath()
+        if orShape {
+            let width = right - left
+            body.move(to: CGPoint(x: left, y: -h))
+            body.addQuadCurve(to: CGPoint(x: right, y: 0), control: CGPoint(x: left + width * 0.75, y: -h))
+            body.addQuadCurve(to: CGPoint(x: left, y: h), control: CGPoint(x: left + width * 0.75, y: h))
+            body.addQuadCurve(to: CGPoint(x: left, y: -h), control: CGPoint(x: left + 0.45 * u, y: 0))
+        } else {
+            let radius = min(h, right - left)
+            body.move(to: CGPoint(x: left, y: -h))
+            body.addLine(to: CGPoint(x: right - radius, y: -h))
+            body.addArc(center: CGPoint(x: right - radius, y: 0), radius: radius, startAngle: -.pi / 2, endAngle: .pi / 2,
+                        clockwise: false)
+            body.addLine(to: CGPoint(x: left, y: h))
+            body.closeSubpath()
+        }
+        ctx.addPath(body)
+        ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.08).cgColor)
+        ctx.fillPath()
+
+        let marks = CGMutablePath()
+        marks.addPath(body)
+        if exclusive {
+            let back = left - 0.3 * u
+            marks.move(to: CGPoint(x: back, y: -h))
+            marks.addQuadCurve(to: CGPoint(x: back, y: h), control: CGPoint(x: back + 0.45 * u, y: 0))
+        }
+        if inverted {
+            marks.addEllipse(in: CGRect(x: right, y: -r, width: 2 * r, height: 2 * r))
+        }
+        if schmitt {
+            // the hysteresis loop
+            let x0 = left + (right - left) * 0.3
+            let s = 0.22 * u
+            marks.move(to: CGPoint(x: x0, y: s))
+            marks.addLine(to: CGPoint(x: x0 + 2 * s, y: s))
+            marks.addLine(to: CGPoint(x: x0 + 2 * s, y: -s))
+            marks.move(to: CGPoint(x: x0 + s, y: s))
+            marks.addLine(to: CGPoint(x: x0 + s, y: -s))
+            marks.addLine(to: CGPoint(x: x0 + 3 * s, y: -s))
+        }
+        stroke(marks, width: style.lineWidth, from: style.fill, to: style.fill, start: 0, end: 1, length: L, in: ctx)
+
+        // input leads reach the back of the body (through the extra curve of an XOR)
+        let inputEnd = orShape ? left + 0.09 * u : left
+        for (y, color) in [(-u, colors[0]), (u, colors[1])] {
+            let lead = CGMutablePath()
+            lead.move(to: CGPoint(x: 0, y: y))
+            lead.addLine(to: CGPoint(x: inputEnd, y: y))
+            stroke(lead, width: style.lineWidth, from: color, to: color, start: 0, end: 1, length: L, in: ctx)
+        }
+        let output = CGMutablePath()
+        output.move(to: CGPoint(x: inverted ? right + 2 * r : right, y: 0))
+        output.addLine(to: CGPoint(x: L, y: 0))
+        stroke(output, width: style.lineWidth, from: colors[2], to: colors[2], start: 0, end: 1, length: L, in: ctx)
+        ctx.restoreGState()
+    }
+
     /// N-channel JFET: gate at `a` with an arrow into the channel; drain and source two grid units either side of `b`
     private static func drawJFET(_ element: Element, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
                                  in ctx: CGContext) {
@@ -935,28 +1028,34 @@ enum SymbolRenderer {
         return ([point(0.3, 2), point(4.7, 2), point(4.7, -2), point(0.3, -2)], along, side)
     }
 
-    /// Box of a microcontroller in screen space: corners, unit vector along the chip, unit vector towards its digital pins
-    static func chipBox(_ board: Board, posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat)
+    /// Box of a chip in screen space: corners, unit vector along the chip, unit vector towards its first side's pins (a
+    /// microcontroller's digital pins, a logic chip's outputs)
+    static func chipBox(_ package: ChipPackage, posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat)
         -> (corners: [CGPoint], along: CGPoint, side: CGPoint)? {
-        guard posts.count == board.pinPlaces.count, !posts.isEmpty else { return nil }
+        guard posts.count == package.pinPlaces.count, !posts.isEmpty else { return nil }
         let length = hypot(b.x - a.x, b.y - a.y)
         guard length > 0.5 else { return nil }
         let along = CGPoint(x: (b.x - a.x) / length, y: (b.y - a.y) / length)
-        // the first pin is three units to the side of `a`
-        let side = CGPoint(x: (posts[0].x - a.x) / (3 * u), y: (posts[0].y - a.y) / (3 * u))
+        // the first terminal is three units to the side of its place along the chip
+        let first = package.pinPlaces[0]
+        let offset = CGFloat(first.offset) * u
+        let sign: CGFloat = first.second ? -1 : 1
+        let side = CGPoint(x: sign * (posts[0].x - a.x - along.x * offset) / (3 * u),
+                           y: sign * (posts[0].y - a.y - along.y * offset) / (3 * u))
         func point(_ t: CGFloat, _ s: CGFloat) -> CGPoint {
             CGPoint(x: a.x + along.x * t * u + side.x * s * u, y: a.y + along.y * t * u + side.y * s * u)
         }
-        let end = CGFloat(board.length) + 0.7
+        let end = CGFloat(package.length) + 0.7
         return ([point(-0.7, 2), point(end, 2), point(end, -2), point(-0.7, -2)], along, side)
     }
 
-    /// A microcontroller: a box with a notch, its digital pins down one side and its analog inputs down the other
-    private static func drawMicrocontroller(_ board: Board, posts: [CGPoint], at a: CGPoint, _ b: CGPoint, unit u: CGFloat,
-                                            style: SymbolStyle, in ctx: CGContext) {
-        guard let box = chipBox(board, posts: posts, at: a, b, unit: u) else { return }
-        let places = board.pinPlaces
-        let labels = board.pinLabels
+    /// A chip: a box with a notch, a microcontroller's digital pins (a logic chip's outputs) down one side and its analog
+    /// inputs (a logic chip's inputs) down the other
+    private static func drawChip(_ package: ChipPackage, title: String, led: Bool, posts: [CGPoint], at a: CGPoint, _ b: CGPoint,
+                                 unit u: CGFloat, style: SymbolStyle, in ctx: CGContext) {
+        guard let box = chipBox(package, posts: posts, at: a, b, unit: u) else { return }
+        let places = package.pinPlaces
+        let labels = package.pinLabels
         let colors = style.terminalColors.count == posts.count ? style.terminalColors : Array(repeating: style.fill, count: posts.count)
         let outline = CGMutablePath()
         outline.addLines(between: box.corners)
@@ -990,15 +1089,19 @@ enum SymbolRenderer {
         }
         if u >= 8 {
             let centre = CGPoint(x: (box.corners[0].x + box.corners[2].x) / 2, y: (box.corners[0].y + box.corners[2].y) / 2)
-            // the chip's name in two lines: "ATmega" over "328P", "ATtiny" over "85"
-            let name = board.chip
+            // the chip's name in two lines: "ATmega" over "328P", "CD" over "4017"; "74HC4017" in one
+            let name = title
             let split = name.firstIndex { $0.isNumber } ?? name.endIndex
-            drawText(String(name[..<split]), at: CGPoint(x: centre.x, y: centre.y - 0.45 * u), size: 0.62 * u, color: style.fill,
-                     anchor: 0.5, bold: true, in: ctx)
-            drawText(String(name[split...]), at: CGPoint(x: centre.x, y: centre.y + 0.45 * u), size: 0.62 * u, color: style.fill,
-                     anchor: 0.5, bold: true, in: ctx)
+            if split == name.startIndex {
+                drawText(name, at: centre, size: 0.62 * u, color: style.fill, anchor: 0.5, bold: true, in: ctx)
+            } else {
+                drawText(String(name[..<split]), at: CGPoint(x: centre.x, y: centre.y - 0.45 * u), size: 0.62 * u, color: style.fill,
+                         anchor: 0.5, bold: true, in: ctx)
+                drawText(String(name[split...]), at: CGPoint(x: centre.x, y: centre.y + 0.45 * u), size: 0.62 * u, color: style.fill,
+                         anchor: 0.5, bold: true, in: ctx)
+            }
         }
-        if board == .pico {
+        if led {
             // the board's own LED (GP25), near the USB end, lit when the sketch turns it on
             let led = CGPoint(x: a.x + box.along.x * 0.6 * u, y: a.y + box.along.y * 0.6 * u)
             let green = RGBA(0.25, 0.95, 0.35)
@@ -1115,19 +1218,21 @@ enum SymbolRenderer {
             return [(a, end)]
         case .nmos, .pmos, .npn, .pnp, .njfet:
             return posts.count == 3 ? [(a, b), (posts[1], posts[2])] : [(a, b)]
-        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .logicGate:
             return posts.count == 3 ? [(posts[0], posts[1]), (a, b)] : [(a, b)]
         case .vactrol:
             return posts.count == 4 ? [(posts[0], posts[1]), (posts[2], posts[3]), (a, b)] : [(a, b)]
         case .ota:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
-        case .atmega328p, .atmega2560, .attiny85, .rp2040:
-            guard let board = element.kind.board, let box = chipBox(board, posts: posts, at: a, b, unit: u) else { return [(a, b)] }
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+            guard let package = element.kind.chipPackage, let box = chipBox(package, posts: posts, at: a, b, unit: u) else {
+                return [(a, b)]
+            }
             let c = box.corners
             var result = [(c[0], c[1]), (c[1], c[2]), (c[2], c[3]), (c[3], c[0])]
             // lines across the box, so a click anywhere inside it selects the chip
-            let lines = max(board.length * 3 / 4, 2)
+            let lines = max(package.length * 3 / 4, 2)
             for k in 1..<lines {
                 let t = CGFloat(k) / CGFloat(lines)
                 result.append((CGPoint(x: c[0].x + (c[1].x - c[0].x) * t, y: c[0].y + (c[1].y - c[0].y) * t),
@@ -1157,7 +1262,8 @@ enum SymbolRenderer {
     static func dotPath(_ element: Element, a: CGPoint, b: CGPoint, posts: [CGPoint], unit u: CGFloat)
         -> (from: CGPoint, to: CGPoint, hidden: ClosedRange<CGFloat>?)? {
         switch element.kind {
-        case .ground, .netLabel, .probe, .atmega328p, .atmega2560, .attiny85, .rp2040:
+        case .ground, .netLabel, .probe, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter,
+             .analogMux, .analogSelector:
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil
@@ -1176,6 +1282,12 @@ enum SymbolRenderer {
             return (CGPoint(x: a.x + (b.x - a.x) * start / length, y: a.y + (b.y - a.y) * start / length), b, nil)
         case .vactrol:
             return nil
+        case .logicGate:
+            // the output lead, from the gate's body
+            let length = hypot(b.x - a.x, b.y - a.y)
+            guard length > 0 else { return nil }
+            let start = min(length, gateOutputStart(length: length, unit: u))
+            return (CGPoint(x: a.x + (b.x - a.x) * start / length, y: a.y + (b.y - a.y) * start / length), b, nil)
         case .opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             // the output lead, from the triangle's tip
             let length = hypot(b.x - a.x, b.y - a.y)

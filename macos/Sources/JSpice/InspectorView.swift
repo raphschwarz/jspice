@@ -380,6 +380,18 @@ struct LiveReadings: View {
                     reading("Output", simulator.isHigh(index) ? "High" : "Low")
                     reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
                     reading("Output current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .logicGate {
+                    reading("Output", simulator.isHigh(index) ? "High" : "Low")
+                    reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
+                    reading("Output current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .decadeCounter || kind == .binaryCounter {
+                    reading("Count", "\(simulator.logicCount(index))")
+                } else if kind == .flipFlop {
+                    reading("Q", simulator.logicCount(index) == 1 ? "High" : "Low")
+                } else if kind == .analogMux || kind == .analogSelector {
+                    let channel = simulator.logicCount(index)
+                    reading("Channel on", channel < 0 ? "None (inhibited)" : "X\(channel)")
+                    reading("Current", SI.format(simulator.current(index), unit: "A"))
                 } else if kind == .analogSwitch {
                     let conduction = simulator.switchConduction(index)
                     reading("Switch", conduction > 0.5 ? "Closed" : "Open")

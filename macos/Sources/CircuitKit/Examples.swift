@@ -42,6 +42,7 @@ public enum Examples {
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
+        cmosSequencer, babyTen, cmosDrone,
         ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
     ]
@@ -342,6 +343,118 @@ public enum Examples {
             NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "pulse", "b": "GND"]),
             NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 12], connections: ["plus": "pulse", "minus": "GND"]),
         ], scopes: [("LFO", .voltage), ("SPK1", .voltage)]))
+
+    // MARK: CMOS logic
+
+    /// A CD4093 gate as an oscillator: its output charges the capacitor through the resistor (and `pot`, a potentiometer
+    /// wired as a variable resistor, if given) until the Schmitt input turns it round, at
+    /// f = 1 / (R C ln((1 - VT-/V) VT+ / ((1 - VT+/V) VT-))), about 1 / (0.81 R C). Its other input gates it: while
+    /// `enable` is low the output stays high.
+    static func gatedOscillator(_ index: Int, resistance: Double, capacitance: Double, enable: String, cap: String, out: String,
+                                supply: Double = 12, pot: Double? = nil) -> [NetlistPart] {
+        var parts = [
+            NetlistPart(kind: .logicGate, name: "U\(index)", params: model(.logicGate, "CD4093").merging(["supply": supply]) { $1 },
+                        connections: ["in1": cap, "in2": enable, "out": out]),
+            NetlistPart(kind: .capacitor, name: "C\(index)", params: ["capacitance": capacitance], connections: ["a": cap, "b": "GND"]),
+        ]
+        if let pot {
+            let middle = out + "r"
+            parts.append(NetlistPart(kind: .resistor, name: "R\(index)", params: ["resistance": resistance],
+                                     connections: ["a": out, "b": middle]))
+            parts.append(NetlistPart(kind: .potentiometer, name: "P\(index)", params: ["resistance": 100_000, "position": pot],
+                                     connections: ["a": middle, "wiper": cap]))
+        } else {
+            parts.append(NetlistPart(kind: .resistor, name: "R\(index)", params: ["resistance": resistance],
+                                     connections: ["a": out, "b": cap]))
+        }
+        return parts
+    }
+
+    /// The pot positions of the sequencer's eight steps: a minor pentatonic phrase, two volts being two octaves
+    static let sequencerSteps: [Double] = [0, 3, 7, 10, 12, 10, 7, 3].map { $0 / 24 }
+
+    static func sequencerParts() -> [NetlistPart] {
+        var parts = [
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 12], connections: ["plus": "VCC", "minus": "GND"]),
+            NetlistPart(kind: .toggleSwitch, name: "S1", connections: ["a": "VCC", "b": "run"], closed: true),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 100_000], connections: ["a": "run", "b": "GND"]),
+        ]
+        parts += gatedOscillator(1, resistance: 300_000, capacitance: 1e-6, enable: "run", cap: "timing", out: "clock")
+        parts.append(NetlistPart(kind: .binaryCounter, name: "U2", params: model(.binaryCounter, "CD4040"),
+                                 connections: ["clock": "clock", "reset": "GND", "q1": "sa", "q2": "sb", "q3": "sc"]))
+        parts.append(NetlistPart(kind: .dcVoltage, name: "VREF", params: ["voltage": 2], connections: ["plus": "ref", "minus": "GND"]))
+        var mux = ["a": "sa", "b": "sb", "c": "sc", "inhibit": "GND", "x": "cv"]
+        for (k, position) in sequencerSteps.enumerated() {
+            parts.append(NetlistPart(kind: .potentiometer, name: "P\(k + 1)", params: ["resistance": 10_000, "position": position],
+                                     connections: ["a": "GND", "b": "ref", "wiper": "x\(k)"]))
+            mux["x\(k)"] = "x\(k)"
+        }
+        parts.append(NetlistPart(kind: .analogMux, name: "U3", params: model(.analogMux, "CD4051"), connections: mux))
+        parts.append(NetlistPart(kind: .probe, name: "CV", connections: ["plus": "cv", "minus": "GND"]))
+        parts.append(NetlistPart(kind: .vco, name: "U4", params: model(.vco, "AS3340").merging(["waveform": 0, "frequency": 130.81]) { $1 },
+                                 connections: ["cv": "cv", "pw": "GND", "out": "osc"]))
+        parts.append(NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 6], connections: ["plus": "osc", "minus": "GND"]))
+        return parts
+    }
+
+    static let cmosSequencer = Example(
+        id: "cmos-sequencer", title: "CMOS 8-step sequencer (sound)",
+        summary: "A CD4093 clock steps a CD4040 counter, whose first three outputs pick one of eight knobs through a CD4051 multiplexer: the voltage plays an AS3340 VCO at one volt per octave. S1 stops and starts it. Turn on sound and set the knobs on the front panel.",
+        symbol: "slider.vertical.3",
+        circuit: drawn(sequencerParts(), scopes: [("C1", .voltage), ("CV", .voltage)]))
+
+    /// The Baby 10's steps: where each knob is set
+    static let babyTenSteps: [Double] = [0.25, 0.45, 0.35, 0.6]
+
+    static func babyTenParts() -> [NetlistPart] {
+        var parts = [NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 12], connections: ["plus": "VCC", "minus": "GND"])]
+        parts += gatedOscillator(1, resistance: 220_000, capacitance: 1e-6, enable: "VCC", cap: "timing", out: "clock")
+        parts.append(NetlistPart(kind: .decadeCounter, name: "U2", params: model(.decadeCounter, "CD4017"),
+                                 connections: ["clock": "clock", "inhibit": "GND", "reset": "q4", "q0": "q0", "q1": "q1", "q2": "q2",
+                                               "q3": "q3", "q4": "q4"]))
+        for (k, position) in babyTenSteps.enumerated() {
+            parts.append(NetlistPart(kind: .potentiometer, name: "P\(k + 1)", params: ["resistance": 100_000, "position": position],
+                                     connections: ["a": "GND", "b": "q\(k)", "wiper": "w\(k)"]))
+            parts.append(NetlistPart(kind: .diode, name: "D\(k + 1)", params: model(.diode, "1N4148"),
+                                     connections: ["anode": "w\(k)", "cathode": "bus"]))
+        }
+        parts.append(NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 100_000], connections: ["a": "bus", "b": "cv"]))
+        parts.append(NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 22_000], connections: ["a": "cv", "b": "GND"]))
+        parts.append(NetlistPart(kind: .probe, name: "CV", connections: ["plus": "cv", "minus": "GND"]))
+        parts.append(NetlistPart(kind: .vco, name: "U3", params: model(.vco, "AS3340").merging(["waveform": 2, "frequency": 110]) { $1 },
+                                 connections: ["cv": "cv", "pw": "GND", "out": "osc"]))
+        parts.append(NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 6], connections: ["plus": "osc", "minus": "GND"]))
+        return parts
+    }
+
+    static let babyTen = Example(
+        id: "baby10", title: "Baby 10 sequencer, four steps (sound)",
+        summary: "The classic CD4017 step sequencer: each step's output feeds its knob, a diode passes the knob's voltage to the CV bus, and Q4 resets the count after four steps. A CD4093 clocks it; an AS3340 plays the CV. Turn on sound.",
+        symbol: "dial.medium",
+        circuit: drawn(babyTenParts(), scopes: [("C1", .voltage), ("CV", .voltage)]))
+
+    static func droneParts() -> [NetlistPart] {
+        var parts = [NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 9], connections: ["plus": "VCC", "minus": "GND"])]
+        parts += gatedOscillator(1, resistance: 22_000, capacitance: 47e-9, enable: "VCC", cap: "ca", out: "a", supply: 9, pot: 0.4)
+        parts += gatedOscillator(2, resistance: 56_000, capacitance: 47e-9, enable: "VCC", cap: "cb", out: "b", supply: 9)
+        parts.append(NetlistPart(kind: .logicGate, name: "U3", params: model(.logicGate, "CD4070").merging(["supply": 9]) { $1 },
+                                 connections: ["in1": "a", "in2": "b", "out": "xor"]))
+        parts.append(NetlistPart(kind: .flipFlop, name: "U4", params: model(.flipFlop, "CD4013").merging(["supply": 9]) { $1 },
+                                 connections: ["clock": "a", "d": "qbar", "qbar": "qbar", "q": "sub", "set": "GND", "reset": "GND"]))
+        parts.append(NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 10_000], connections: ["a": "xor", "b": "mix"]))
+        parts.append(NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 10_000], connections: ["a": "sub", "b": "mix"]))
+        parts.append(NetlistPart(kind: .resistor, name: "R5", params: ["resistance": 10_000], connections: ["a": "mix", "b": "GND"]))
+        parts.append(NetlistPart(kind: .capacitor, name: "C3", params: ["capacitance": 1e-6], connections: ["a": "mix", "b": "spk"]))
+        parts.append(NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "spk", "b": "GND"]))
+        parts.append(NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 4], connections: ["plus": "spk", "minus": "GND"]))
+        return parts
+    }
+
+    static let cmosDrone = Example(
+        id: "cmos-drone", title: "CMOS drone (sound)",
+        summary: "Two CD4093 oscillators, a CD4070 XOR that sounds their sum and difference, and a CD4013 flip-flop dividing the first by two for a sub-octave, mixed into a speaker. Turn on sound and turn P1 to detune.",
+        symbol: "waveform.path",
+        circuit: drawn(droneParts(), scopes: [("C1", .voltage), ("SPK1", .voltage)]))
 
     // MARK: Microcontrollers
 

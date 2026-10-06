@@ -47,6 +47,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case opAmp, ota, multiplier, comparator
     case vco, vcf, envelope, vca, sampleHold, divider
     case timer555, schmittInverter, analogSwitch
+    case logicGate, flipFlop, decadeCounter, binaryCounter, analogMux, analogSelector
     case atmega328p, atmega2560, attiny85, rp2040
     case delayLine, vactrol
     case memristor
@@ -178,6 +179,12 @@ extension ElementKind {
         case .rp2040: return "RP2040 (Raspberry Pi Pico)"
         case .schmittInverter: return "Schmitt Inverter"
         case .analogSwitch: return "Analog Switch"
+        case .logicGate: return "Logic Gate"
+        case .flipFlop: return "D Flip-Flop"
+        case .decadeCounter: return "Decade Counter"
+        case .binaryCounter: return "Binary Counter"
+        case .analogMux: return "Analog Multiplexer"
+        case .analogSelector: return "Analog Selector"
         case .memristor: return "Memristor"
         case .probe: return "Voltage Probe"
         case .ammeter: return "Ammeter"
@@ -206,6 +213,7 @@ extension ElementKind {
         case .opAmp, .ota, .multiplier, .comparator, .delayLine, .timer555, .schmittInverter, .analogSwitch, .atmega328p, .atmega2560,
              .attiny85, .rp2040: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
         case .probe: return "P"
@@ -224,6 +232,7 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .vactrol: return .effects
         case .timer555, .schmittInverter, .analogSwitch: return .timersAndLogic
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector: return .timersAndLogic
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
         case .memristor: return .memristors
         case .probe, .ammeter, .speaker: return .instruments
@@ -259,6 +268,7 @@ extension ElementKind {
         case .timer555: return "5"
         case .njfet, .ota, .schmittInverter, .analogSwitch, .multiplier, .delayLine, .vactrol: return nil
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return nil
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector: return nil
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
@@ -288,6 +298,8 @@ extension ElementKind {
         case .comparator: return "c"
         case .divider: return "f"
         case .atmega328p: return "m"
+        case .logicGate: return "b"
+        case .decadeCounter: return "t"
         default: return nil
         }
     }
@@ -313,6 +325,7 @@ extension ElementKind {
     public var isAxisAligned: Bool {
         isTransistor || self == .opAmp || self == .ota || self == .potentiometer || self == .timer555 || self == .analogSwitch
             || self == .multiplier || self == .delayLine || self == .vactrol || isModule || self == .comparator || isMicrocontroller
+            || isLogic
     }
 
     /// Parts that can be mirrored across their axis
@@ -325,6 +338,7 @@ extension ElementKind {
         case .ota, .vactrol: return 4
         case .timer555: return 5
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.length
+        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector: return chipPackage?.length
         default: return nil
         }
     }
@@ -358,12 +372,14 @@ extension ElementKind {
         case .timer555: return ["gnd", "trig", "out", "reset", "ctrl", "thr", "dis", "vcc"]
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.terminalNames ?? []
         case .schmittInverter: return ["in", "out"]
+        case .logicGate: return ["in1", "in2", "out"]
+        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector: return chipPackage?.terminalNames ?? []
         default: return ["a", "b"]
         }
     }
 
-    /// Parts that switch between discrete states (a 555's flip-flop, a Schmitt trigger's output)
-    public var isDigital: Bool { self == .timer555 || self == .schmittInverter }
+    /// Parts that switch between discrete states (a 555's flip-flop, a Schmitt trigger's output, CMOS logic)
+    public var isDigital: Bool { self == .timer555 || self == .schmittInverter || isLogic }
 
     public var isVoltageSource: Bool {
         self == .dcVoltage || self == .acVoltage || self == .squareVoltage || self == .noiseVoltage || isKeyboard
@@ -395,6 +411,7 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return GridPoint(0, board?.length ?? 13)
+        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector: return GridPoint(0, chipPackage?.length ?? 3)
         default: return GridPoint(4, 0)
         }
     }
@@ -531,6 +548,13 @@ extension ElementKind {
                 ParamSpec("onResistance", "On resistance", unit: "Ω", default: 125, range: 1...10_000),
                 ParamSpec("supply", "Logic supply", unit: "V", default: 12, range: 2...18, log: false),
             ]
+        case .logicGate:
+            return [ParamSpec.choice("function", "Function", Logic.gateFunctions)] + Self.logicParams(upper: 0.59, lower: 0.39)
+        case .flipFlop, .decadeCounter, .binaryCounter:
+            return Self.logicParams(upper: 0.52, lower: 0.48)
+        case .analogMux, .analogSelector:
+            return [ParamSpec("onResistance", "On resistance", unit: "Ω", default: 125, range: 1...10_000)]
+                + Array(Self.logicParams(upper: 0.52, lower: 0.48).dropLast())
         case .njfet:
             return [
                 ParamSpec("pinchOff", "Pinch-off voltage", unit: "V", default: -1.5, range: -8...(-0.2), log: false),
@@ -594,6 +618,19 @@ extension ElementKind {
                 ParamSpec("initialState", "Initial state", unit: "", default: 0, range: 0...1, log: false),
             ]
         }
+    }
+}
+
+extension ElementKind {
+    /// A CMOS part's supply, input thresholds and output resistance. Plain CMOS inputs switch at half the supply (with a
+    /// little hysteresis, so noise on a slow edge does not make them chatter); Schmitt inputs further apart.
+    static func logicParams(upper: Double, lower: Double) -> [ParamSpec] {
+        [
+            ParamSpec("supply", "Supply", unit: "V", default: 12, range: 3...18, log: false),
+            ParamSpec("upper", "Input rising threshold", unit: "× supply", default: upper, range: 0.3...0.9, log: false),
+            ParamSpec("lower", "Input falling threshold", unit: "× supply", default: lower, range: 0.1...0.7, log: false),
+            ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 400, range: 1...10_000),
+        ]
     }
 }
 
@@ -688,11 +725,11 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         return [right(4), left(3), right(3), right(2), left(4), left(2), left(1), right(1)]
     }
 
-    /// A microcontroller's pins, down its two sides from `a` (the Uno's D0-D13 on the side opposite `perpendicular`,
-    /// A0-A5 on the other)
-    public var microcontrollerPins: [GridPoint] {
+    /// A microcontroller's or logic chip's pins, down its two sides from `a` (the Uno's D0-D13 on the side opposite
+    /// `perpendicular`, A0-A5 on the other)
+    public var packagePins: [GridPoint] {
         let d = axisDirection
-        return (kind.board?.pinPlaces ?? []).map { a + d * $0.offset + perpendicular * ($0.second ? 3 : -3) }
+        return (kind.chipPackage?.pinPlaces ?? []).map { a + d * $0.offset + perpendicular * ($0.second ? 3 : -3) }
     }
 
     /// Terminal positions: [a, b] for two-terminal parts, [a] for ground, [gate, drain, source] for MOSFETs,
@@ -707,7 +744,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a, t.drain, t.source]
         case .potentiometer, .analogSwitch:
             return [a, b, wiper]
-        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .logicGate:
             return [a - perpendicular, a + perpendicular, b]
         case .vactrol:
             return [a - perpendicular, a + perpendicular, b - perpendicular, b + perpendicular]
@@ -715,8 +752,8 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
-        case .atmega328p, .atmega2560, .attiny85, .rp2040:
-            return microcontrollerPins
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+            return packagePins
         default:
             return [a, b]
         }
@@ -797,6 +834,58 @@ extension ElementKind {
                           values: ["supply": 12, "upper": 0.6, "lower": 0.38, "outputResistance": 400]),
                 PartModel(name: "74HC14", summary: "One gate of the fast CMOS hex Schmitt inverter",
                           values: ["supply": 5, "upper": 0.54, "lower": 0.32, "outputResistance": 50]),
+            ]
+        case .logicGate:
+            func gate(_ name: String, _ summary: String, _ function: Double, schmitt: Bool = false, hc: Bool = false) -> PartModel {
+                PartModel(name: name, summary: summary, values: [
+                    "function": function, "supply": hc ? 5 : 12, "upper": schmitt ? (hc ? 0.53 : 0.59) : 0.52,
+                    "lower": schmitt ? (hc ? 0.31 : 0.39) : 0.48, "outputResistance": hc ? 50 : 400,
+                ])
+            }
+            return [
+                gate("CD4093", "One gate of the quad Schmitt NAND: gated oscillators, noise boxes, drones", 0, schmitt: true),
+                gate("CD4011", "One gate of the quad NAND", 0),
+                gate("CD4001", "One gate of the quad NOR", 1),
+                gate("CD4081", "One gate of the quad AND", 2),
+                gate("CD4071", "One gate of the quad OR", 3),
+                gate("CD4070", "One gate of the quad XOR: octave-up and ring-modulator-like effects", 4),
+                gate("CD4077", "One gate of the quad XNOR", 5),
+                gate("74HC132", "One gate of the fast quad Schmitt NAND, at 5 V", 0, schmitt: true, hc: true),
+                gate("74HC00", "One gate of the fast quad NAND, at 5 V", 0, hc: true),
+                gate("74HC86", "One gate of the fast quad XOR, at 5 V", 4, hc: true),
+            ]
+        case .flipFlop:
+            return [
+                PartModel(name: "CD4013", summary: "One half of the dual D flip-flop, with set and reset; Q̄ to D makes it divide by two",
+                          values: ["supply": 12, "upper": 0.52, "lower": 0.48, "outputResistance": 400]),
+            ]
+        case .decadeCounter:
+            return [
+                PartModel(name: "CD4017", summary: "Decade counter with ten decoded outputs: step sequencers (the Baby 10), dividers",
+                          values: ["supply": 12, "upper": 0.52, "lower": 0.48, "outputResistance": 400]),
+                PartModel(name: "74HC4017", summary: "The fast decade counter, at 5 V",
+                          values: ["supply": 5, "upper": 0.52, "lower": 0.48, "outputResistance": 50]),
+            ]
+        case .binaryCounter:
+            return [
+                PartModel(name: "CD4040", summary: "Twelve-stage binary counter, counting on the falling edge: octave dividers",
+                          values: ["supply": 12, "upper": 0.52, "lower": 0.48, "outputResistance": 400]),
+                PartModel(name: "74HC4040", summary: "The fast twelve-stage binary counter, at 5 V",
+                          values: ["supply": 5, "upper": 0.52, "lower": 0.48, "outputResistance": 50]),
+            ]
+        case .analogMux:
+            return [
+                PartModel(name: "CD4051", summary: "Eight-channel analog multiplexer: A, B and C pick the channel X connects to",
+                          values: ["onResistance": 125, "supply": 12, "upper": 0.52, "lower": 0.48]),
+                PartModel(name: "74HC4051", summary: "The fast eight-channel multiplexer, at 5 V",
+                          values: ["onResistance": 70, "supply": 5, "upper": 0.52, "lower": 0.48]),
+            ]
+        case .analogSelector:
+            return [
+                PartModel(name: "CD4053", summary: "One switch of the triple two-channel multiplexer: SEL picks X0 or X1",
+                          values: ["onResistance": 125, "supply": 12, "upper": 0.52, "lower": 0.48]),
+                PartModel(name: "74HC4053", summary: "One switch of the fast triple two-channel multiplexer, at 5 V",
+                          values: ["onResistance": 70, "supply": 5, "upper": 0.52, "lower": 0.48]),
             ]
         case .analogSwitch:
             return [
