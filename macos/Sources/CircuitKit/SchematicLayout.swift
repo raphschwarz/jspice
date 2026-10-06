@@ -49,7 +49,7 @@ public enum SchematicLayout {
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicInputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicInputs),
         .analogMux: names(.analogMux, Array(0...11)), .analogSelector: ["x0", "x1", "select", "inhibit"],
-        .pll: ["signal", "comparator", "vcoIn", "inhibit"],
+        .pll: ["signal", "comparator", "vco_in", "inhibit"],
     ]
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .unbufferedInverter: ["out"],
@@ -62,7 +62,7 @@ public enum SchematicLayout {
         .logicGate: ["out"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicOutputs),
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicOutputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicOutputs), .analogMux: ["x"], .analogSelector: ["x"],
-        .pll: ["vcoOut", "pc1", "pc2"],
+        .pll: ["vco_out", "pc1", "pc2"],
     ]
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
                                             .keyboardGate]

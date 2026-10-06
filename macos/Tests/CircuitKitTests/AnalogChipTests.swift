@@ -52,6 +52,7 @@ final class AnalogChipTests: XCTestCase {
         }
         XCTAssertEqual((low + high) / 2, 4.5, accuracy: 0.1)
         XCTAssertEqual((high - low) / 2 / 0.05, 10 / (1 + 11 / 25.0), accuracy: 0.8)
+        XCTAssertEqual(simulator.convergenceFailures, 0)
     }
 
     /// Rising edges of a PLL's VCO between two times
@@ -72,7 +73,7 @@ final class AnalogChipTests: XCTestCase {
         let simulator = try simulator([
             NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 6], connections: ["plus": "vc", "minus": "GND"]),
             NetlistPart(kind: .pll, name: "U1", params: Examples.model(.pll, "CD4046").merging(["fMin": 100, "fMax": 2000]) { $1 },
-                        connections: ["signal": "GND", "comparator": "GND", "vcoIn": "vc", "inhibit": "GND", "vcoOut": "vco"]),
+                        connections: ["signal": "GND", "comparator": "GND", "vco_in": "vc", "inhibit": "GND", "vco_out": "vco"]),
         ], timeStep: 2e-5)
         let rises = vcoRises(simulator, index(simulator, "U1"), from: 0.1, to: 0.3)
         XCTAssertEqual(Double(rises), 1050 * 0.2, accuracy: 2)
@@ -104,6 +105,7 @@ final class AnalogChipTests: XCTestCase {
         XCTAssertGreaterThan(high - low, 6)
         XCTAssertEqual((low + high) / 2, 4.5, accuracy: 1)
         XCTAssertFalse(simulator.isFailed)
+        XCTAssertEqual(simulator.convergenceFailures, 0)
     }
 
     /// When the PT2399's echo of a pulse comes out, with `resistance` from pin 6 to ground

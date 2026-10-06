@@ -27,6 +27,8 @@ func benchmark(seconds: Double, ids: [String]) {
             continue
         }
         let simulator = Simulator(circuit: example.circuit, timeStep: 1 / rate)
+        // as the sound runs it: substeps only where Newton-Raphson needs them
+        simulator.errorControl = false
         let listened = example.circuit.elements.firstIndex { $0.kind == .speaker } ?? 0
         let steps = max(1, Int(seconds * rate))
         var total = 0.0

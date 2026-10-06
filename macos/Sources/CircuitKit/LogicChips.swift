@@ -44,7 +44,7 @@ extension ElementKind {
                                pinLabels: (0...7).map { "X\($0)" } + ["A", "B", "C", "INH", "X"],
                                pinPlaces: (0...7).map(second) + [first(4), first(5), first(6), first(7), first(0)], length: 7)
         case .pll:
-            return ChipPackage(name: "CD4046", terminalNames: ["signal", "comparator", "vcoIn", "inhibit", "vcoOut", "pc1", "pc2"],
+            return ChipPackage(name: "CD4046", terminalNames: ["signal", "comparator", "vco_in", "inhibit", "vco_out", "pc1", "pc2"],
                                pinLabels: ["SIG", "COMP", "VCO IN", "INH", "VCO", "PC1", "PC2"],
                                pinPlaces: [second(0), second(1), second(2), second(3), first(0), first(1), first(2)], length: 3)
         case .analogSelector:

@@ -1320,7 +1320,11 @@ public final class Simulator {
         let overdrive = vgs - threshold
         if overdrive <= 0 { return (leak * vds, 0, leak) }
         if vds < overdrive {
-            return (beta * (overdrive * vds - vds * vds / 2) + leak * vds, beta * vds, beta * (overdrive - vds) + leak)
+            // channel-length modulation here too, as in SPICE's level 1, so the current runs on smoothly into saturation
+            let modulation = 1 + lambda * vds
+            let base = overdrive * vds - vds * vds / 2
+            return (beta * base * modulation + leak * vds, beta * vds * modulation,
+                    beta * (overdrive - vds) * modulation + beta * base * lambda + leak)
         }
         let id = beta / 2 * overdrive * overdrive * (1 + lambda * vds) + leak * vds
         return (id, beta * overdrive * (1 + lambda * vds), beta / 2 * overdrive * overdrive * lambda + leak)

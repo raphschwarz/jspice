@@ -65,7 +65,7 @@ public enum NetlistLayout {
     public static func terminalIndex(_ terminal: String, of kind: ElementKind) -> Int? {
         let names = kind.terminalNames
         let key = terminal.trimmingCharacters(in: .whitespaces).lowercased()
-        if let index = names.firstIndex(of: key) { return index }
+        if let index = names.firstIndex(where: { $0.lowercased() == key }) { return index }
         let aliases: [String: String] = ["+": "plus", "-": "minus", "−": "minus", "in+": "plus", "in-": "minus",
                                           "output": "out", "input": "in", "g": "gate", "d": "drain", "s": "source",
                                           "b": "base", "c": "collector", "e": "emitter", "anode": "a", "cathode": "b",

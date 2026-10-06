@@ -461,7 +461,7 @@ public enum Examples {
             NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 5, "frequency": 220, "offset": 6],
                         connections: ["plus": "sig", "minus": "GND"]),
             NetlistPart(kind: .pll, name: "U1", params: model(.pll, "CD4046").merging(["fMin": 100, "fMax": 2000]) { $1 },
-                        connections: ["signal": "sig", "comparator": "half", "vcoIn": "vc", "inhibit": "GND", "vcoOut": "vco", "pc2": "pc"]),
+                        connections: ["signal": "sig", "comparator": "half", "vco_in": "vc", "inhibit": "GND", "vco_out": "vco", "pc2": "pc"]),
             // the loop filter: phase comparator 2 charges C1 through R1; R2 damps the loop
             NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 100_000], connections: ["a": "pc", "b": "vc"]),
             NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "vc", "b": "damp"]),

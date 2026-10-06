@@ -233,6 +233,8 @@ final class SimulatorTests: XCTestCase {
 
     func testEveryExampleRunsWithItsSuggestedPacing() {
         for example in Examples.all {
+            // an example whose netlist the layout could not draw comes out empty
+            XCTAssertFalse(example.circuit.elements.isEmpty, "\(example.id) has no parts")
             let pacing = Pacing.suggest(for: example.circuit)
             let simulator = Simulator(circuit: example.circuit, timeStep: pacing.timeStep)
             let steps = min(20_000, Int(pacing.speed * 3 / pacing.timeStep))
