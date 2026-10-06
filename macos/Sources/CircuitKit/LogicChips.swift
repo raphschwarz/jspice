@@ -43,6 +43,10 @@ extension ElementKind {
             return ChipPackage(name: "CD4051", terminalNames: (0...7).map { "x\($0)" } + ["a", "b", "c", "inhibit", "x"],
                                pinLabels: (0...7).map { "X\($0)" } + ["A", "B", "C", "INH", "X"],
                                pinPlaces: (0...7).map(second) + [first(4), first(5), first(6), first(7), first(0)], length: 7)
+        case .pll:
+            return ChipPackage(name: "CD4046", terminalNames: ["signal", "comparator", "vcoIn", "inhibit", "vcoOut", "pc1", "pc2"],
+                               pinLabels: ["SIG", "COMP", "VCO IN", "INH", "VCO", "PC1", "PC2"],
+                               pinPlaces: [second(0), second(1), second(2), second(3), first(0), first(1), first(2)], length: 3)
         case .analogSelector:
             return ChipPackage(name: "CD4053", terminalNames: ["x0", "x1", "select", "inhibit", "x"],
                                pinLabels: ["X0", "X1", "SEL", "INH", "X"],
@@ -56,7 +60,7 @@ extension ElementKind {
     /// state changes when an input crosses one, and their outputs drive towards the hidden supply or ground.
     public var isLogic: Bool {
         switch self {
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector: return true
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return true
         default: return false
         }
     }
@@ -70,6 +74,7 @@ extension ElementKind {
         case .binaryCounter: return [0, 1]
         case .analogMux: return [8, 9, 10, 11]
         case .analogSelector: return [2, 3]
+        case .pll: return [0, 1, 3]
         default: return []
         }
     }
@@ -81,16 +86,21 @@ extension ElementKind {
         case .flipFlop: return [4, 5]
         case .decadeCounter: return Array(3...13)
         case .binaryCounter: return Array(2...13)
+        case .pll: return [4, 5]
         default: return []
         }
     }
 }
 
-/// What a logic part remembers: the level of each input as last read (bit k for its k-th logic input), and its count
-/// (a counter's count, a flip-flop's Q)
+/// What a logic part remembers: the level of each input as last read (bit k for its k-th logic input), its count (a
+/// counter's count, a flip-flop's Q, a PLL's phase comparator 2: 1 pumping up, -1 down, 0 off), a PLL's VCO phase (0 to
+/// 1), and a DAC's shift register and the bits shifted into it
 public struct LogicState: Equatable, Sendable {
     public var inputs: UInt32 = 0
     public var count = 0
+    public var phase = 0.0
+    public var shift: UInt32 = 0
+    public var bits = 0
 
     public init(inputs: UInt32 = 0, count: Int = 0) {
         self.inputs = inputs
@@ -119,7 +129,8 @@ enum Logic {
         func level(_ k: Int) -> Bool { inputs & (1 << UInt32(k)) != 0 }
         func rose(_ k: Int) -> Bool { level(k) && old.inputs & (1 << UInt32(k)) == 0 }
         func fell(_ k: Int) -> Bool { !level(k) && old.inputs & (1 << UInt32(k)) != 0 }
-        var state = LogicState(inputs: inputs, count: old.count)
+        var state = old
+        state.inputs = inputs
         switch kind {
         case .flipFlop:
             // D, CLK, S, R: set and reset act at once, whatever the clock; otherwise Q takes D on the clock's rising edge
@@ -143,6 +154,11 @@ enum Logic {
             } else if fell(0) {
                 state.count = (old.count + 1) & 0xFFF
             }
+        case .pll:
+            // phase comparator 2: a rising edge of the signal pumps up (or ends pumping down), one of the comparator
+            // input pumps down (or ends pumping up), so the output stays off once the two are in phase
+            if rose(0) { state.count = state.count < 0 ? 0 : 1 }
+            if rose(1) { state.count = state.count > 0 ? 0 : -1 }
         default:
             break
         }
@@ -164,6 +180,9 @@ enum Logic {
             return (0...9).map { state.count == $0 } + [state.count < 5]
         case .binaryCounter:
             return (0..<12).map { state.count & (1 << $0) != 0 }
+        case .pll:
+            // the VCO (stopped low while inhibited), and phase comparator 1: the XOR of the signal and comparator inputs
+            return [!level(2) && state.phase < 0.5, level(0) != level(1)]
         default:
             return []
         }

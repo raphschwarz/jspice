@@ -73,6 +73,9 @@ public enum Pacing {
             case .rp2040:
                 // arduino-pico's PWM runs at 1 kHz
                 scales.append(contentsOf: [1, 1e-3])
+            case .pll:
+                // its VCO at its fastest
+                scales.append(1 / max(element[param: "fMax"], 1))
             default:
                 break
             }

@@ -78,9 +78,9 @@ enum SymbolRenderer {
         switch kind {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
             return 0
-        case .schmittInverter: return 1.8
+        case .schmittInverter, .unbufferedInverter: return 1.8
         case .analogSwitch: return 1.6
         case .resistor, .potentiometer, .inductor: return 2
         case .memristor: return 2.2
@@ -111,7 +111,7 @@ enum SymbolRenderer {
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
             if let package = element.kind.chipPackage {
                 drawChip(package, title: element.kind.isMicrocontroller ? package.name : element.model?.name ?? package.name,
                          led: element.kind == .rp2040, posts: posts, at: a, b, unit: u, style: style, in: ctx)
@@ -293,6 +293,15 @@ enum SymbolRenderer {
             // closed while the control input is high
             path.move(to: CGPoint(x: c - h, y: 0))
             path.addLine(to: style.brightness > 0.5 ? CGPoint(x: c + h, y: -0.2 * u) : CGPoint(x: c + h * 0.85, y: -0.75 * u))
+        case .unbufferedInverter:
+            // triangle and output bubble
+            let r = 0.17 * u
+            let tip = c + h - 2 * r
+            path.move(to: CGPoint(x: c - h, y: -0.8 * u))
+            path.addLine(to: CGPoint(x: c - h, y: 0.8 * u))
+            path.addLine(to: CGPoint(x: tip, y: 0))
+            path.closeSubpath()
+            path.addEllipse(in: CGRect(x: tip, y: -r, width: 2 * r, height: 2 * r))
         case .schmittInverter:
             // triangle, output bubble, and the hysteresis glyph inside
             let r = 0.17 * u
@@ -311,7 +320,7 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
             break
         }
 
@@ -1225,7 +1234,7 @@ enum SymbolRenderer {
         case .ota:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
             guard let package = element.kind.chipPackage, let box = chipBox(package, posts: posts, at: a, b, unit: u) else {
                 return [(a, b)]
             }
@@ -1263,7 +1272,7 @@ enum SymbolRenderer {
         -> (from: CGPoint, to: CGPoint, hidden: ClosedRange<CGFloat>?)? {
         switch element.kind {
         case .ground, .netLabel, .probe, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter,
-             .analogMux, .analogSelector:
+             .analogMux, .analogSelector, .pll:
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil
@@ -1274,7 +1283,7 @@ enum SymbolRenderer {
             guard let box = timerBox(posts: posts, at: a, b, unit: u) else { return nil }
             let pin = posts[2]
             return (CGPoint(x: pin.x + box.side.x * u, y: pin.y + box.side.y * u), pin, nil)
-        case .schmittInverter:
+        case .schmittInverter, .unbufferedInverter:
             // current flows from the output only
             let length = hypot(b.x - a.x, b.y - a.y)
             guard length > 0 else { return nil }

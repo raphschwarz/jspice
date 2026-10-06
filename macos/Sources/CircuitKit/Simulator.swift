@@ -296,7 +296,8 @@ public final class Simulator {
         func indices(_ include: (ElementKind) -> Bool) -> [Int] { kinds.indices.filter { include(kinds[$0]) } }
         nonlinearIndices = indices {
             switch $0 {
-            case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch, .multiplier, .vactrol: return true
+            case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch, .multiplier, .vactrol,
+                 .unbufferedInverter, .pll: return true
             default: return false
             }
         }
@@ -305,7 +306,7 @@ public final class Simulator {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter: return true
+                 .binaryCounter, .pll: return true
             default: return false
             }
         }
@@ -314,6 +315,7 @@ public final class Simulator {
                 || $0.isModule || $0 == .comparator
         }
         dynamicIndices = statefulIndices.filter { [.capacitor, .inductor, .opAmp, .memristor, .vactrol].contains(kinds[$0]) }
+            + indices { $0 == .pll }
         reactiveIndices = indices { $0 == .capacitor || $0 == .inductor }
         stepIndices = statefulIndices.filter { !dynamicIndices.contains($0) }
         delayHistory = [:]
@@ -910,7 +912,7 @@ public final class Simulator {
             case .schmittInverter:
                 // output drives towards the hidden supply or ground through its output resistance
                 stampConductance(&matrix, m, nodes[1], 0, 1 / max(element[param: "outputResistance"], 0.1))
-            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter:
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .pll:
                 // each output likewise; the inputs draw nothing
                 for k in element.kind.logicOutputs where k < nodes.count {
                     stampConductance(&matrix, m, nodes[k], 0, constants[i].outputConductance)
@@ -1026,7 +1028,7 @@ public final class Simulator {
                 if digitalState[i] {
                     stampCurrent(&rhs, 0, nodes[1], c.supply * c.outputConductance)
                 }
-            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter:
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .pll:
                 let kind = kinds[i]
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where high {
                     stampCurrent(&rhs, 0, nodes[k], c.supply * c.outputConductance)
@@ -1220,13 +1222,20 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
             c.supply = max(p("supply"), 0.1)
             c.upper = p("upper") * c.supply
             c.lower = min(p("lower"), p("upper")) * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
             c.onConductance = 1 / max(p("onResistance"), 1e-3)
             c.value = Self.choice(p("function"), 0...Double(Logic.gateFunctions.count - 1))
+            c.frequency = max(p("fMin"), 0)
+            c.high = max(p("fMax"), c.frequency)
+        case .unbufferedInverter:
+            c.supply = p("supply")
+            c.threshold = p("threshold")
+            c.beta = max(p("beta"), 1e-9)
+            c.value = max(p("lambda"), 0)
         case .atmega328p, .atmega2560, .attiny85, .rp2040:
             c.supply = min(max(p("supply"), 0.5), 6)
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
@@ -1291,8 +1300,8 @@ public final class Simulator {
 
     /// Level-1 (Shichman-Hodges) MOSFET for positive vgs/vds: drain current and its derivatives. A 1 nS leak from drain
     /// to source keeps a switched-off transistor's drain from floating; it is in the current as well as in its slope.
-    func mosfetCurrent(vgs: Double, vds: Double, threshold: Double, beta: Double) -> (id: Double, gm: Double, gds: Double) {
-        let lambda = 0.01
+    func mosfetCurrent(vgs: Double, vds: Double, threshold: Double, beta: Double, lambda: Double = 0.01)
+        -> (id: Double, gm: Double, gds: Double) {
         let leak = 1e-9
         let overdrive = vgs - threshold
         if overdrive <= 0 { return (leak * vds, 0, leak) }
@@ -1301,6 +1310,27 @@ public final class Simulator {
         }
         let id = beta / 2 * overdrive * overdrive * (1 + lambda * vds) + leak * vds
         return (id, beta * overdrive * (1 + lambda * vds), beta / 2 * overdrive * overdrive * lambda + leak)
+    }
+
+    /// An unbuffered CMOS inverter's output current (into the output node) and its derivatives with respect to the input
+    /// and output voltages: the PMOS's current from the supply less the NMOS's to ground, each transistor symmetric in
+    /// drain and source
+    func inverterCurrent(_ i: Int, vin: Double, vout: Double) -> (current: Double, dIn: Double, dOut: Double) {
+        let c = constants[i]
+        func branch(gate vg: Double, drain vd: Double) -> (current: Double, dGate: Double, dDrain: Double) {
+            // an NMOS with its source at 0 V: the current into its drain
+            if vd >= 0 {
+                let m = mosfetCurrent(vgs: vg, vds: vd, threshold: c.threshold, beta: c.beta, lambda: c.value)
+                return (m.id, m.gm, m.gds)
+            }
+            // below its source the drain acts as the source, and the current flows out of it
+            let m = mosfetCurrent(vgs: vg - vd, vds: -vd, threshold: c.threshold, beta: c.beta, lambda: c.value)
+            return (-m.id, -m.gm, m.gm + m.gds)
+        }
+        let n = branch(gate: vin, drain: vout)
+        // the PMOS is an NMOS seen from the supply
+        let p = branch(gate: c.supply - vin, drain: c.supply - vout)
+        return (p.current - n.current, -p.dGate - n.dGate, -p.dDrain - n.dDrain)
     }
 
     struct BipolarModel {
@@ -1469,6 +1499,33 @@ public final class Simulator {
                 stampTerminal(collector, p * model.ic, model.dicVbe, model.dicVbc)
                 stampTerminal(base, p * model.ib, model.dibVbe, model.dibVbc)
                 stampTerminal(emitter, -p * (model.ic + model.ib), -(model.dicVbe + model.dibVbe), -(model.dicVbc + model.dibVbc))
+
+            case .unbufferedInverter:
+                let (input, output) = (nodes[0], nodes[1])
+                var vin = voltage(input)
+                var vout = voltage(output)
+                // limit the change per iteration, as for a MOSFET's gate and drain
+                if abs(vin - limitedVoltage[i]) > 0.5 || abs(vout - limitedVoltage2[i]) > 2 { limiting = true }
+                vin = limitedVoltage[i] + max(-0.5, min(0.5, vin - limitedVoltage[i]))
+                vout = limitedVoltage2[i] + max(-2, min(2, vout - limitedVoltage2[i]))
+                limitedVoltage[i] = vin
+                limitedVoltage2[i] = vout
+                var (current, dIn, dOut) = inverterCurrent(i, vin: vin, vout: vout)
+                // a shunt from the output to half the supply while gmin stepping
+                current -= junctionConductance * (vout - c.supply / 2)
+                dOut -= junctionConductance
+                guard output > 0 else { continue }
+                // the current into the output, linearised: its row takes the current leaving
+                add(&matrix, m, output - 1, input - 1, -dIn)
+                add(&matrix, m, output - 1, output - 1, -dOut)
+                rhs[output - 1] += current - dIn * vin - dOut * vout
+
+            case .pll:
+                // phase comparator 2: driven high while pumping up, low while pumping down, and otherwise let go
+                let pump = logicStates[i].count
+                guard pump != 0, nodes.count > 6 else { continue }
+                stampConductance(&matrix, m, nodes[6], 0, c.outputConductance)
+                if pump > 0 { stampCurrent(&rhs, 0, nodes[6], c.supply * c.outputConductance) }
 
             case .nmos, .pmos, .njfet:
                 let (polarity, threshold, beta) = (c.polarity, c.threshold, c.beta)
@@ -1681,7 +1738,7 @@ public final class Simulator {
             return true
         }
         let function = Int(c.value)
-        return Logic.outputs(kind, next, function: function) != Logic.outputs(kind, old, function: function)
+        return Logic.outputs(kind, next, function: function) != Logic.outputs(kind, old, function: function) || next.count != old.count
     }
 
     // MARK: - After each step
@@ -1732,6 +1789,12 @@ public final class Simulator {
                     let target = towardsOn / rate
                     memristorStates[i] = target + (memristorStates[i] - target) * exp(-rate * h)
                 }
+            case .pll:
+                // the VCO runs at a frequency from fMin to fMax as VCO IN goes from 0 V to the supply; inhibited, it stops
+                guard logicStates[i].inputs & 0b100 == 0 else { break }
+                let fraction = min(max(voltage(nodes[2]) / max(parameters.supply, 1e-3), 0), 1)
+                let frequency = parameters.frequency + (parameters.high - parameters.frequency) * fraction
+                logicStates[i].phase = (logicStates[i].phase + frequency * h).truncatingRemainder(dividingBy: 1)
             default:
                 break
             }
@@ -2016,7 +2079,10 @@ public final class Simulator {
             let target = digitalState[i] ? constants[i].supply : 0
             let current = (target - v(nodes[1])) * constants[i].outputConductance
             return (current, [0, current])
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter:
+        case .unbufferedInverter:
+            let current = inverterCurrent(i, vin: v(nodes[0]), vout: v(nodes[1])).current
+            return (current, [0, current])
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .pll:
             // the main current: what the outputs supply (for a gate, what its output puts out)
             let c = constants[i]
             let kind = element.kind
@@ -2137,7 +2203,7 @@ public final class Simulator {
         if kind == .ota || kind.drivesOutput { return v(2) }
         if kind == .timer555 { return v(2) - v(0) }
         if kind.isMicrocontroller || kind.chipPackage != nil { return constants[index].supply }
-        if kind == .schmittInverter { return v(1) }
+        if kind == .schmittInverter || kind == .unbufferedInverter { return v(1) }
         if kind == .logicGate { return v(2) }
         return kind.isVoltageSource ? v(1) - v(0) : v(0) - v(1)
     }

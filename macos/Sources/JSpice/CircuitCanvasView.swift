@@ -308,8 +308,9 @@ final class CircuitCanvasView: NSView {
         case .noiseVoltage: return "Noise " + SI.format(element[param: "amplitude"], unit: "V")
         case .memristor:
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
-        case .opAmp, .ota, .timer555, .schmittInverter, .analogSwitch, .njfet, .multiplier, .delayLine, .vactrol, .comparator,
-             .vcf, .envelope, .vca, .sampleHold, .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector:
+        case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch, .njfet, .multiplier, .delayLine, .vactrol,
+             .comparator,
+             .vcf, .envelope, .vca, .sampleHold, .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
             // the real part it behaves like
             return element.model?.name ?? "Custom"
         case .atmega328p, .atmega2560, .attiny85, .rp2040:
@@ -417,7 +418,7 @@ final class CircuitCanvasView: NSView {
             // a vertical transistor's collector and emitter leads reach two units to the side
             case _ where element.kind.isTransistor: offset = alongX ? 0.4 * unit : 2.3 * unit
             case .timer555, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
-                 .analogSelector: offset = 0
+                 .analogSelector, .pll: offset = 0
             case _ where element.kind.drivesOutput || element.kind == .ota || element.kind == .logicGate: offset = 1.9 * unit
             case .vactrol: offset = 1.9 * unit
             default: offset = (isProbe ? 1.0 : 1.05) * unit
@@ -927,8 +928,9 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
     case .probe, .netLabel, .speaker: return [.voltage]
     case .ground, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
-         .analogSelector: return []
-    case .opAmp, .ota, .timer555, .schmittInverter, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold,
+         .analogSelector, .pll: return []
+    case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope,
+         .vca, .sampleHold,
          .divider, .logicGate:
         return [.voltage, .current]
     case .analogSwitch: return [.voltage, .current, .resistance]

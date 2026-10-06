@@ -384,6 +384,15 @@ struct LiveReadings: View {
                     reading("Output", simulator.isHigh(index) ? "High" : "Low")
                     reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
                     reading("Output current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .unbufferedInverter {
+                    reading("Input voltage", SI.format(simulator.terminalVoltages(index).first ?? 0, unit: "V"))
+                    reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
+                    reading("Output current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .pll {
+                    let outputs = simulator.logicOutputs(index)
+                    reading("VCO", outputs.first == true ? "High" : "Low")
+                    let pump = simulator.logicCount(index)
+                    reading("Phase comparator 2", pump > 0 ? "Pumping up" : pump < 0 ? "Pumping down" : "Off (locked)")
                 } else if kind == .decadeCounter || kind == .binaryCounter {
                     reading("Count", "\(simulator.logicCount(index))")
                 } else if kind == .flipFlop {

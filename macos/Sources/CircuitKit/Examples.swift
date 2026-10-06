@@ -42,7 +42,7 @@ public enum Examples {
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
-        cmosSequencer, babyTen, cmosDrone,
+        cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz,
         ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
     ]
@@ -455,6 +455,62 @@ public enum Examples {
         summary: "Two CD4093 oscillators, a CD4070 XOR that sounds their sum and difference, and a CD4013 flip-flop dividing the first by two for a sub-octave, mixed into a speaker. Turn on sound and turn P1 to detune.",
         symbol: "waveform.path",
         circuit: drawn(droneParts(), scopes: [("C1", .voltage), ("SPK1", .voltage)]))
+
+    static func pllParts() -> [NetlistPart] {
+        [
+            NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 5, "frequency": 220, "offset": 6],
+                        connections: ["plus": "sig", "minus": "GND"]),
+            NetlistPart(kind: .pll, name: "U1", params: model(.pll, "CD4046").merging(["fMin": 100, "fMax": 2000]) { $1 },
+                        connections: ["signal": "sig", "comparator": "half", "vcoIn": "vc", "inhibit": "GND", "vcoOut": "vco", "pc2": "pc"]),
+            // the loop filter: phase comparator 2 charges C1 through R1; R2 damps the loop
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 100_000], connections: ["a": "pc", "b": "vc"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "vc", "b": "damp"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 1e-6], connections: ["a": "damp", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "VC", connections: ["plus": "vc", "minus": "GND"]),
+            // the VCO divided by two goes back to the comparator, so the VCO locks at twice the input
+            NetlistPart(kind: .flipFlop, name: "U2", params: model(.flipFlop, "CD4013"),
+                        connections: ["clock": "vco", "d": "qb", "qbar": "qb", "q": "half", "set": "GND", "reset": "GND"]),
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 47_000], connections: ["a": "vco", "b": "mix"]),
+            NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 47_000], connections: ["a": "sig", "b": "mix"]),
+            NetlistPart(kind: .resistor, name: "R5", params: ["resistance": 10_000], connections: ["a": "mix", "b": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C2", params: ["capacitance": 1e-6], connections: ["a": "mix", "b": "spk"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "spk", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 3], connections: ["plus": "spk", "minus": "GND"]),
+        ]
+    }
+
+    static let pllOctave = Example(
+        id: "pll-octave", title: "PLL octave up (sound)",
+        summary: "A CD4046 phase-locked loop with a CD4013 dividing its VCO by two in the loop: the VCO locks at twice the 220 Hz input, an octave up, mixed with it. Watch VCO IN settle as it locks; turn on sound.",
+        symbol: "arrow.up.and.down.circle",
+        circuit: drawn(pllParts(), scopes: [("VC", .voltage), ("SPK1", .voltage)]))
+
+    static func fuzzParts() -> [NetlistPart] {
+        [
+            NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 0.2, "frequency": 110], connections: ["plus": "in", "minus": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 100e-9], connections: ["a": "in", "b": "a"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "a", "b": "ia"]),
+            NetlistPart(kind: .unbufferedInverter, name: "U1", params: model(.unbufferedInverter, "CD4049UB"),
+                        connections: ["in": "ia", "out": "oa"]),
+            // the gain: a megohm pot as a variable feedback resistor
+            NetlistPart(kind: .potentiometer, name: "P1", params: ["resistance": 1_000_000, "position": 0.5],
+                        connections: ["a": "oa", "wiper": "ia"]),
+            NetlistPart(kind: .capacitor, name: "C2", params: ["capacitance": 100e-9], connections: ["a": "oa", "b": "b"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 22_000], connections: ["a": "b", "b": "ib"]),
+            NetlistPart(kind: .unbufferedInverter, name: "U2", params: model(.unbufferedInverter, "CD4049UB"),
+                        connections: ["in": "ib", "out": "ob"]),
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 470_000], connections: ["a": "ob", "b": "ib"]),
+            NetlistPart(kind: .capacitor, name: "C3", params: ["capacitance": 1e-6], connections: ["a": "ob", "b": "spk"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "spk", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 5], connections: ["plus": "spk", "minus": "GND"]),
+        ]
+    }
+
+    static let cmosFuzz = Example(
+        id: "cmos-fuzz", title: "CMOS fuzz (sound)",
+        summary: "Two unbuffered CD4049UB inverters biased as amplifiers, the classic CMOS fuzz: each biases itself at half the supply through its feedback resistor and clips softly at the rails. P1 sets the gain. Turn on sound.",
+        symbol: "bolt.horizontal",
+        circuit: drawn(fuzzParts(), scopes: [("VIN", .voltage), ("SPK1", .voltage)]))
 
     // MARK: Microcontrollers
 
