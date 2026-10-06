@@ -69,6 +69,9 @@ enum ScreenshotRunner {
         Shot(name: "45-cmos-sequencer-dark", example: "cmos-sequencer", dark: true, seconds: 2, select: .analogMux),
         Shot(name: "46-baby10-light", example: "baby10", dark: false, seconds: 1.5, select: .decadeCounter),
         Shot(name: "47-cmos-drone-dark", example: "cmos-drone", dark: true, seconds: 1, select: .logicGate),
+        Shot(name: "48-pll-octave-light", example: "pll-octave", dark: false, seconds: 2, select: .pll),
+        Shot(name: "49-cmos-fuzz-dark", example: "cmos-fuzz", dark: true, seconds: 1, select: .unbufferedInverter),
+        Shot(name: "50-pt2399-echo-light", example: "pt2399-echo", dark: false, seconds: 2, select: .digitalDelay),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {

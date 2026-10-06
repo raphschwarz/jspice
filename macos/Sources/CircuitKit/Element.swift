@@ -49,7 +49,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case timer555, schmittInverter, unbufferedInverter, analogSwitch
     case logicGate, flipFlop, decadeCounter, binaryCounter, analogMux, analogSelector, pll
     case atmega328p, atmega2560, attiny85, rp2040
-    case delayLine, vactrol
+    case delayLine, digitalDelay, vactrol
     case memristor
     case probe, ammeter, speaker
 
@@ -171,6 +171,7 @@ extension ElementKind {
         case .sampleHold: return "Sample & Hold"
         case .divider: return "Clock Divider"
         case .delayLine: return "BBD Delay Line"
+        case .digitalDelay: return "Digital Echo"
         case .vactrol: return "Vactrol"
         case .timer555: return "555 Timer"
         case .atmega328p: return "ATmega328P (Arduino Uno)"
@@ -212,7 +213,8 @@ extension ElementKind {
         case .led: return "LED"
         case .npn, .pnp, .njfet: return "Q"
         case .nmos, .pmos: return "M"
-        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch,
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .timer555, .schmittInverter, .unbufferedInverter,
+             .analogSwitch,
              .atmega328p, .atmega2560,
              .attiny85, .rp2040: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
@@ -233,7 +235,7 @@ extension ElementKind {
         case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
         case .opAmp, .ota, .multiplier, .comparator: return .amplifiers
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
-        case .delayLine, .vactrol: return .effects
+        case .delayLine, .digitalDelay, .vactrol: return .effects
         case .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch: return .timersAndLogic
         case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return .timersAndLogic
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
@@ -269,7 +271,8 @@ extension ElementKind {
         case .pmos: return "p"
         case .opAmp: return "u"
         case .timer555: return "5"
-        case .njfet, .ota, .schmittInverter, .unbufferedInverter, .analogSwitch, .multiplier, .delayLine, .vactrol: return nil
+        case .njfet, .ota, .schmittInverter, .unbufferedInverter, .analogSwitch, .multiplier, .delayLine, .digitalDelay, .vactrol:
+            return nil
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return nil
         case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll: return nil
         case .memristor: return "m"
@@ -363,6 +366,7 @@ extension ElementKind {
         case .opAmp: return ["minus", "plus", "out"]
         case .multiplier: return ["x", "y", "out"]
         case .delayLine: return ["in", "ctrl", "out"]
+        case .digitalDelay: return ["in", "time", "out"]
         case .comparator: return ["minus", "plus", "out"]
         case .vco: return ["cv", "pw", "out"]
         case .vcf: return ["in", "cv", "out"]
@@ -401,7 +405,7 @@ extension ElementKind {
     /// phase, an envelope's stage, a held sample), with two inputs either side of `a` and the output at `b`
     public var isModule: Bool {
         switch self {
-        case .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return true
+        case .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return true
         default: return false
         }
     }
@@ -496,6 +500,14 @@ extension ElementKind {
                 ParamSpec("clock", "Clock at 0 V", unit: "Hz", default: 40_000, range: 1000...200_000),
                 ParamSpec("clockPerVolt", "Clock per volt of control", unit: "Hz", default: 10_000, range: 0...100_000, log: false),
                 ParamSpec("gain", "Gain", unit: "", default: 1, range: 0...2, log: false),
+            ]
+        case .digitalDelay:
+            return [
+                ParamSpec("shortest", "Delay with pin 6 at 0 Ω", unit: "s", default: 0.0242, range: 0.005...0.2),
+                ParamSpec("delayPerKilohm", "Delay per kΩ from pin 6 to ground", unit: "s", default: 0.0115, range: 0.001...0.1),
+                ParamSpec("gain", "Echo level", unit: "", default: 1, range: 0...2, log: false),
+                ParamSpec("limit", "Output swing", unit: "V", default: 2, range: 0.5...6, log: false),
+                ParamSpec("noise", "Converter noise at 100 ms (RMS)", unit: "V", default: 0.002, range: 0...0.05, log: false),
             ]
         case .vactrol:
             return [
@@ -759,7 +771,8 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a, t.drain, t.source]
         case .potentiometer, .analogSwitch:
             return [a, b, wiper]
-        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .logicGate:
+        case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
+             .logicGate:
             return [a - perpendicular, a + perpendicular, b]
         case .vactrol:
             return [a - perpendicular, a + perpendicular, b - perpendicular, b + perpendicular]
@@ -1003,6 +1016,11 @@ extension ElementKind {
                           values: ["division": 2]),
                 PartModel(name: "CD4017", summary: "Decade counter's carry out: one cycle every ten clocks", values: ["division": 10]),
                 PartModel(name: "CD4040", summary: "Binary counter, Q4 output: one cycle every sixteen clocks", values: ["division": 16]),
+            ]
+        case .digitalDelay:
+            return [
+                PartModel(name: "PT2399", summary: "The echo chip: the resistance from pin 6 to ground sets the delay (about 30 ms to 340 ms); longer delays are darker and noisier",
+                          values: ["shortest": 0.0242, "delayPerKilohm": 0.0115, "gain": 1, "limit": 2, "noise": 0.002]),
             ]
         case .vactrol:
             return [

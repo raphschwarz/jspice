@@ -41,7 +41,7 @@ public enum SchematicLayout {
         .opAmp: ["minus", "plus"], .ota: ["minus", "plus", "bias"], .timer555: ["trig", "thr", "dis", "ctrl", "reset"],
         .schmittInverter: ["in"], .unbufferedInverter: ["in"], .npn: ["base"], .pnp: ["base"], .nmos: ["gate"], .pmos: ["gate"], .njfet: ["gate"],
         .potentiometer: ["a", "b"], .analogSwitch: ["a", "control"], .multiplier: ["x", "y"], .delayLine: ["in", "ctrl"],
-        .vactrol: ["anode"], .comparator: ["minus", "plus"], .vco: ["cv", "pw"], .vcf: ["in", "cv"], .envelope: ["gate", "trig"],
+        .vactrol: ["anode"], .digitalDelay: ["in", "time"], .comparator: ["minus", "plus"], .vco: ["cv", "pw"], .vcf: ["in", "cv"], .envelope: ["gate", "trig"],
         .vca: ["in", "cv"], .sampleHold: ["in", "trig"], .divider: ["clock", "reset"],
         .atmega328p: microcontrollerSide(.uno, second: true), .atmega2560: microcontrollerSide(.mega, second: true),
         .attiny85: microcontrollerSide(.attiny85, second: true), .rp2040: microcontrollerSide(.pico, second: true),
@@ -55,7 +55,7 @@ public enum SchematicLayout {
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .unbufferedInverter: ["out"],
         .npn: ["collector", "emitter"],
         .pnp: ["collector", "emitter"], .nmos: ["drain", "source"], .pmos: ["drain", "source"], .njfet: ["drain", "source"],
-        .potentiometer: ["wiper"], .analogSwitch: ["b"], .multiplier: ["out"], .delayLine: ["out"], .vactrol: ["b"],
+        .potentiometer: ["wiper"], .analogSwitch: ["b"], .multiplier: ["out"], .delayLine: ["out"], .digitalDelay: ["out"], .vactrol: ["b"],
         .comparator: ["out"], .vco: ["out"], .vcf: ["out"], .envelope: ["out"], .vca: ["out"], .sampleHold: ["out"], .divider: ["out"],
         .atmega328p: microcontrollerSide(.uno, second: false), .atmega2560: microcontrollerSide(.mega, second: false),
         .attiny85: microcontrollerSide(.attiny85, second: false), .rp2040: microcontrollerSide(.pico, second: false),
@@ -66,7 +66,8 @@ public enum SchematicLayout {
     ]
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
                                             .keyboardGate]
-    static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca,
+    static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf,
+                                               .envelope, .vca,
                                                .sampleHold, .divider, .logicGate]
 
     static func isRailName(_ name: String) -> Bool {
@@ -95,7 +96,8 @@ public enum SchematicLayout {
         case .ground: return [e.b]
         case .netLabel, .wire: return []
         case .nmos, .pmos, .npn, .pnp, .njfet: return frame(1...2, -1...1)
-        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .logicGate:
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
+             .logicGate:
             return frame(0...3, -2...2)
         case .vactrol: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
@@ -525,7 +527,7 @@ public enum SchematicLayout {
                     case .potentiometer:
                         put(p, GridPoint(x, vy - 2), GridPoint(x, vy + 2))
                         width = 2
-                    case _ where p.kind.isModule && p.kind != .delayLine:
+                    case _ where p.kind.isModule && p.kind != .delayLine && p.kind != .digitalDelay:
                         // a synth chip: the input the signal comes in by lines up with it
                         let second = via != nil && via == p.connections[1]
                         let ay = via != nil ? vy + 1 : 0

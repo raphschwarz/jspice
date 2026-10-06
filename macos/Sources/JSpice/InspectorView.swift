@@ -384,6 +384,9 @@ struct LiveReadings: View {
                     reading("Output", simulator.isHigh(index) ? "High" : "Low")
                     reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
                     reading("Output current", SI.format(simulator.current(index), unit: "A"))
+                } else if kind == .digitalDelay {
+                    reading("Delay", SI.format(simulator.echoDelaySeconds(index), unit: "s"))
+                    reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
                 } else if kind == .unbufferedInverter {
                     reading("Input voltage", SI.format(simulator.terminalVoltages(index).first ?? 0, unit: "V"))
                     reading("Output voltage", SI.format(simulator.voltageAcross(index), unit: "V"))

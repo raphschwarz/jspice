@@ -42,7 +42,7 @@ public enum Examples {
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
-        cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz,
+        cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz, echo,
         ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
     ]
@@ -511,6 +511,41 @@ public enum Examples {
         summary: "Two unbuffered CD4049UB inverters biased as amplifiers, the classic CMOS fuzz: each biases itself at half the supply through its feedback resistor and clips softly at the rails. P1 sets the gain. Turn on sound.",
         symbol: "bolt.horizontal",
         circuit: drawn(fuzzParts(), scopes: [("VIN", .voltage), ("SPK1", .voltage)]))
+
+    static func echoParts() -> [NetlistPart] {
+        [
+            // a plucked note: an AS3340 saw through a VCA that an AS3310 envelope opens on each beat
+            NetlistPart(kind: .squareVoltage, name: "BEAT", params: ["high": 5, "low": 0, "frequency": 0.8, "duty": 0.05],
+                        connections: ["plus": "gate", "minus": "GND"]),
+            NetlistPart(kind: .envelope, name: "U1", params: model(.envelope, "AS3310").merging(["attack": 0.002, "decay": 0.15, "sustain": 0, "release": 0.1]) { $1 },
+                        connections: ["gate": "gate", "trig": "GND", "out": "env"]),
+            NetlistPart(kind: .vco, name: "U2", params: model(.vco, "AS3340").merging(["waveform": 0, "frequency": 220, "amplitude": 2]) { $1 },
+                        connections: ["cv": "GND", "pw": "GND", "out": "saw"]),
+            NetlistPart(kind: .vca, name: "U3", params: model(.vca, "Linear"), connections: ["in": "saw", "cv": "env", "out": "dry"]),
+            // into the echo: the dry signal and, through REPEATS, the echo itself
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "dry", "b": "send"]),
+            NetlistPart(kind: .potentiometer, name: "REPEATS", params: ["resistance": 50_000, "position": 0.1],
+                        connections: ["a": "wet", "wiper": "send"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 100_000], connections: ["a": "send", "b": "GND"]),
+            NetlistPart(kind: .digitalDelay, name: "U4", params: model(.digitalDelay, "PT2399"),
+                        connections: ["in": "send", "time": "t", "out": "wet"]),
+            // TIME: the resistance from pin 6 to ground
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 1000], connections: ["a": "t", "b": "t2"]),
+            NetlistPart(kind: .potentiometer, name: "TIME", params: ["resistance": 50_000, "position": 0.2],
+                        connections: ["a": "t2", "wiper": "GND"]),
+            // out: dry and echo together
+            NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 10_000], connections: ["a": "dry", "b": "mix"]),
+            NetlistPart(kind: .resistor, name: "R5", params: ["resistance": 10_000], connections: ["a": "wet", "b": "mix"]),
+            NetlistPart(kind: .resistor, name: "R6", params: ["resistance": 10_000], connections: ["a": "mix", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 2], connections: ["plus": "mix", "minus": "GND"]),
+        ]
+    }
+
+    static let echo = Example(
+        id: "pt2399-echo", title: "PT2399 echo (sound)",
+        summary: "A plucked note into a PT2399 echo chip. TIME is the resistance from its pin 6 to ground (about 30 to 600 ms); REPEATS feeds the echo back into it. Longer delays sound darker and noisier, as on the real chip. Turn on sound.",
+        symbol: "dot.radiowaves.right",
+        circuit: drawn(echoParts(), scopes: [("U3", .voltage), ("SPK1", .voltage)]))
 
     // MARK: Microcontrollers
 

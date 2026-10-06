@@ -78,7 +78,7 @@ enum SymbolRenderer {
         switch kind {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .digitalDelay:
             return 0
         case .schmittInverter, .unbufferedInverter: return 1.8
         case .analogSwitch: return 1.6
@@ -107,7 +107,7 @@ enum SymbolRenderer {
             drawJFET(element, at: a, b, unit: u, style: style, in: ctx)
         case .opAmp, .ota, .comparator:
             drawOpAmp(element, posts: posts, at: a, b, unit: u, style: style, in: ctx)
-        case .multiplier, .delayLine, .vactrol, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .multiplier, .delayLine, .digitalDelay, .vactrol, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
@@ -320,7 +320,7 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .digitalDelay:
             break
         }
 
@@ -678,7 +678,7 @@ enum SymbolRenderer {
             body.addLine(to: CGPoint(x: cx + k, y: k))
             body.move(to: CGPoint(x: cx - k, y: k))
             body.addLine(to: CGPoint(x: cx + k, y: -k))
-        case .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             let left = min(0.6 * u, L * 0.15)
             let right = max(left + u, L - 0.6 * u)
             line([CGPoint(x: 0, y: -u), CGPoint(x: left, y: -u)], colors[0])
@@ -799,6 +799,12 @@ enum SymbolRenderer {
             }
             square(0.62, 1.05, cycles: 4)
             square(-0.05, 0.38, cycles: 2)
+        case .digitalDelay:
+            // a pulse and its echoes, each fainter
+            for (k, height) in [1.0, 0.62, 0.38, 0.22].enumerated() {
+                let x = 0.08 + 0.28 * CGFloat(k)
+                polyline([p(x - 0.05, 0), p(x, CGFloat(height)), p(x + 0.05, 0)])
+            }
         default:
             break
         }
@@ -1227,7 +1233,8 @@ enum SymbolRenderer {
             return [(a, end)]
         case .nmos, .pmos, .npn, .pnp, .njfet:
             return posts.count == 3 ? [(a, b), (posts[1], posts[2])] : [(a, b)]
-        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .logicGate:
+        case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
+             .logicGate:
             return posts.count == 3 ? [(posts[0], posts[1]), (a, b)] : [(a, b)]
         case .vactrol:
             return posts.count == 4 ? [(posts[0], posts[1]), (posts[2], posts[3]), (a, b)] : [(a, b)]
@@ -1297,7 +1304,7 @@ enum SymbolRenderer {
             guard length > 0 else { return nil }
             let start = min(length, gateOutputStart(length: length, unit: u))
             return (CGPoint(x: a.x + (b.x - a.x) * start / length, y: a.y + (b.y - a.y) * start / length), b, nil)
-        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             // the output lead, from the triangle's tip
             let length = hypot(b.x - a.x, b.y - a.y)
             guard length > 0 else { return nil }

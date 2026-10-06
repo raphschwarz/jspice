@@ -105,4 +105,52 @@ final class AnalogChipTests: XCTestCase {
         XCTAssertEqual((low + high) / 2, 4.5, accuracy: 1)
         XCTAssertFalse(simulator.isFailed)
     }
+
+    /// When the PT2399's echo of a pulse comes out, with `resistance` from pin 6 to ground
+    private func echoDelay(resistance: Double) throws -> Double {
+        let simulator = try simulator([
+            NetlistPart(kind: .squareVoltage, name: "PULSE", params: ["high": 1, "low": 0, "frequency": 0.5, "duty": 0.01],
+                        connections: ["plus": "in", "minus": "GND"]),
+            NetlistPart(kind: .digitalDelay, name: "U1", params: Examples.model(.digitalDelay, "PT2399").merging(["noise": 0]) { $1 },
+                        connections: ["in": "in", "time": "t", "out": "out"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": resistance], connections: ["a": "t", "b": "GND"]),
+        ])
+        let echo = index(simulator, "U1")
+        // the pulse starts at once: its echo crosses half way a delay later
+        while simulator.time < 0.8 {
+            simulator.step()
+            if simulator.voltageAcross(echo) > 0.5 {
+                XCTAssertEqual(simulator.echoDelaySeconds(echo), 0.0242 + 0.0115 * resistance / 1000, accuracy: 1e-6)
+                return simulator.time
+            }
+        }
+        return .infinity
+    }
+
+    func testEchoDelayFollowsPin6sResistance() throws {
+        // the datasheet's table: 342 ms at 27.6 kΩ, and 11.5 ms more per kΩ
+        XCTAssertEqual(try echoDelay(resistance: 27_600), 0.342, accuracy: 0.004)
+        XCTAssertEqual(try echoDelay(resistance: 10_000), 0.139, accuracy: 0.003)
+        XCTAssertEqual(try echoDelay(resistance: 600), 0.031, accuracy: 0.002)
+    }
+
+    func testEchoExampleRepeats() throws {
+        let example = try XCTUnwrap(Examples.example("pt2399-echo"))
+        let simulator = Simulator(circuit: example.circuit, timeStep: 1e-4)
+        let echo = index(simulator, "U4")
+        // TIME at a fifth of 50 kΩ plus 1 kΩ: 11 kΩ
+        while simulator.time < 0.01 { simulator.step() }
+        XCTAssertEqual(simulator.echoDelaySeconds(echo), 0.0242 + 0.0115 * 11, accuracy: 0.002)
+        // the note sounds in the echo's output a delay after it starts, and again a delay after that, quieter
+        var peaks = [Double](repeating: 0, count: 3)
+        while simulator.time < 0.5 {
+            simulator.step()
+            let slot = Int((simulator.time - 0.07) / 0.15)
+            if slot >= 0 && slot < 3 { peaks[slot] = max(peaks[slot], abs(simulator.voltageAcross(echo))) }
+        }
+        XCTAssertGreaterThan(peaks[0], 0.1, "\(peaks)")
+        XCTAssertGreaterThan(peaks[1], 0.05, "\(peaks)")
+        XCTAssertLessThan(peaks[1], peaks[0], "\(peaks)")
+        XCTAssertFalse(simulator.isFailed)
+    }
 }

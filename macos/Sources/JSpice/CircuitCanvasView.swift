@@ -308,8 +308,8 @@ final class CircuitCanvasView: NSView {
         case .noiseVoltage: return "Noise " + SI.format(element[param: "amplitude"], unit: "V")
         case .memristor:
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
-        case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch, .njfet, .multiplier, .delayLine, .vactrol,
-             .comparator,
+        case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch, .njfet, .multiplier, .delayLine,
+             .digitalDelay, .vactrol, .comparator,
              .vcf, .envelope, .vca, .sampleHold, .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll:
             // the real part it behaves like
             return element.model?.name ?? "Custom"
@@ -929,7 +929,8 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     case .probe, .netLabel, .speaker: return [.voltage]
     case .ground, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
          .analogSelector, .pll: return []
-    case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope,
+    case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .multiplier, .comparator, .delayLine, .digitalDelay, .vco,
+         .vcf, .envelope,
          .vca, .sampleHold,
          .divider, .logicGate:
         return [.voltage, .current]

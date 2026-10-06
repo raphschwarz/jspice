@@ -304,7 +304,7 @@ public final class Simulator {
         drivenIndices = indices {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
-                 .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .comparator, .vco, .vcf, .envelope, .vca,
+                 .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
                  .binaryCounter, .pll: return true
             default: return false
@@ -355,7 +355,7 @@ public final class Simulator {
                 logicStates[i] = state.logic
                 moduleStates[i] = state.module
                 noiseState[i] = state.noise
-                if let delay = state.delay, element.kind == .delayLine {
+                if let delay = state.delay, element.kind == .delayLine || element.kind == .digitalDelay {
                     // a delay line keeps what it holds, in a history long enough for its new settings
                     let capacity = delayCapacity(i, timeStep: timeStep)
                     delayHistory[i] = delay.values.count == capacity ? delay : delay.resampled(stepRatio: 1, capacity: capacity)
@@ -538,7 +538,7 @@ public final class Simulator {
     /// Steps of history a delay line keeps: enough for the slowest clock its control is likely to set
     private func delayCapacity(_ i: Int, timeStep dt: Double) -> Int {
         let c = constants[i]
-        let longest = min(c.value / (2 * max(c.frequency * 0.05, 100)), 2)
+        let longest = kinds[i] == .digitalDelay ? Self.longestEcho : min(c.value / (2 * max(c.frequency * 0.05, 100)), 2)
         return min(Int(longest / dt) + 4, 4_000_000)
     }
 
@@ -892,9 +892,13 @@ public final class Simulator {
                 add(&matrix, m, minus, row, 1)
                 add(&matrix, m, row, plus, 1)
                 add(&matrix, m, row, minus, -1)
-            case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+            case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
                 // output: a voltage source to ground, whose voltage the nonlinear stage (or the delay line, or the chip's
                 // state) sets
+                if element.kind == .digitalDelay {
+                    // an echo chip's pin 6: its internal reference behind its internal resistance
+                    stampConductance(&matrix, m, nodes[1], 0, 1 / constants[i].value)
+                }
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
                 add(&matrix, m, nodes[2] - 1, row, -1)
@@ -1045,6 +1049,10 @@ public final class Simulator {
             case .delayLine:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = delayedOutput(i) }
+            case .digitalDelay:
+                stampCurrent(&rhs, 0, nodes[1], Self.echoReference / c.value)
+                let row = topology.sourceRow[i]
+                if row >= 0 { rhs[row] = moduleStates[i].output }
             case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = moduleStates[i].output }
@@ -1157,6 +1165,12 @@ public final class Simulator {
             c.frequency = max(p("clock"), 1)
             c.slew = p("clockPerVolt")
             c.gain = p("gain")
+        case .digitalDelay:
+            c.slew = max(p("delayPerKilohm"), 1e-6)
+            c.value = max(p("shortest"), 1e-3) / c.slew * 1000
+            c.gain = p("gain")
+            c.limit = max(p("limit"), 0.01)
+            c.amplitude = max(p("noise"), 0)
         case .comparator:
             c.high = p("high")
             c.low = p("low")
@@ -1821,10 +1835,56 @@ public final class Simulator {
             case .delayLine:
                 if delayHistory[i] == nil { delayHistory[i] = DelayHistory(capacity: delayCapacity(i, timeStep: timeStep)) }
                 delayHistory[i]?.append(voltage(nodes[0]))
+            case .digitalDelay:
+                if delayHistory[i] == nil { delayHistory[i] = DelayHistory(capacity: delayCapacity(i, timeStep: timeStep)) }
+                delayHistory[i]?.append(voltage(nodes[0]))
+                updateEcho(i)
             default:
                 break
             }
         }
+    }
+
+    /// An echo chip's longest delay
+    static let longestEcho = 1.0
+    /// The reference an echo chip's pin 6 sits behind
+    static let echoReference = 2.5
+
+    /// An echo chip's delay. Its pin 6 is an internal reference behind an internal resistance, and the current drawn
+    /// from it sets the clock: so the delay goes with the resistance from pin 6 to ground plus the internal one (the
+    /// PT2399 datasheet's table: about 11.5 ms per kΩ, plus 24 ms), and a control voltage through a resistor moves it.
+    func echoDelay(_ i: Int) -> Double {
+        let c = constants[i]
+        let nodes = topology.elementNodes[i]
+        guard nodes.count > 1 else { return c.slew * c.value / 1000 }
+        let current = (Self.echoReference - voltage(nodes[1])) / c.value
+        guard current > Self.echoReference / 1e9 else { return Self.longestEcho }
+        let delay = c.slew * (Self.echoReference / current) / 1000
+        return min(max(delay, 1e-3), Self.longestEcho)
+    }
+
+    /// The delay of the echo chip at `index`, in seconds
+    public func echoDelaySeconds(_ index: Int) -> Double {
+        guard index < kinds.count, kinds[index] == .digitalDelay, x.count == topology.matrixSize else { return 0 }
+        return echoDelay(index)
+    }
+
+    /// An echo chip's output over the next step: its input one delay ago, with the converters' noise, through two poles
+    /// of low-pass filtering. Both follow the clock: the longer the delay the slower it runs, so the noisier and the
+    /// darker the echo (20 kHz of bandwidth at 30 ms, 2.4 kHz at 340 ms).
+    private func updateEcho(_ i: Int) {
+        let c = constants[i]
+        let delay = echoDelay(i)
+        let delayed = delayHistory[i]?.value(stepsAgo: delay / timeStep - 1) ?? 0
+        // white noise of the given RMS in a 24 kHz band, whatever the step
+        let noise = c.amplitude * (delay / 0.1) * (1 / (48_000 * timeStep)).squareRoot() * (c.amplitude > 0 ? nextNoise(i) : 0)
+        let cutoff = min(820 / delay, 20_000, 0.4 / timeStep)
+        let g = 1 - exp(-2 * .pi * cutoff * timeStep)
+        var s = moduleStates[i]
+        s.s1 += g * (delayed + noise - s.s1)
+        s.s2 += g * (s.s1 - s.s2)
+        s.output = c.limit * tanh(c.gain * s.s2 / c.limit)
+        moduleStates[i] = s
     }
 
     /// A logic input with hysteresis, as the synth chips have: high above 1.5 V, low again below 1 V
@@ -2053,7 +2113,7 @@ public final class Simulator {
                                         beta: constants[i].beta, saturation: constants[i].saturation)
             let (ic, ib) = (p * model.ic, p * model.ib)
             return (ic, [-ib, -ic, ic + ib])
-        case .opAmp, .multiplier, .comparator, .delayLine, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             let row = topology.sourceRow[i]
             let current = row >= 0 && row < x.count ? x[row] : 0
             return (current, [0, 0, current])
