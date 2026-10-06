@@ -330,8 +330,31 @@ public final class AVR: Microcontroller {
         }
     }
 
-    /// Set by every write to an I/O register: only those (and the timers, SPI and TWI) change what the pins do
+    /// Set by a write to a register that can change what a pin does (a port, or a timer's, USART's, SPI's or TWI's
+    /// control): only those (and the timers, SPI and TWI as they run) do
     private var ioWritten = false
+    /// Those registers, by address, while pins are watched (empty otherwise)
+    private var pinRegisters: [Bool] = []
+
+    private func findPinRegisters() -> [Bool] {
+        var result = [Bool](repeating: false, count: ioEnd)
+        func mark(_ address: Int) { if address >= 0 && address < ioEnd { result[address] = true } }
+        for base in variant.ports { (0...2).forEach { mark(base + $0) } }
+        for timer in timers {
+            mark(timer.spec.controlA)
+            mark(timer.spec.controlB)
+        }
+        for usart in usarts { mark(usart.spec.controlB) }
+        if let spi {
+            mark(spi.spec.control)
+            mark(spi.spec.dataRegister)
+        }
+        if let twi {
+            mark(twi.spec.control)
+            mark(twi.spec.dataRegister)
+        }
+        return result
+    }
     /// Whether a timer drives a watched pin now (its compare output mode is set), which it does without a register
     /// write; it can only start or stop with one
     private var timerDrivesWatchedPin = false
@@ -365,6 +388,7 @@ public final class AVR: Microcontroller {
         didSet {
             watchedLevels = watchedPins.map { drivenLevel($0) }
             timerDrivesWatchedPin = watchedPinDrivenByTimer()
+            pinRegisters = watchedPins.isEmpty ? [] : findPinRegisters()
         }
     }
     private var watchedLevels: [Bool?] = []
@@ -574,7 +598,7 @@ public final class AVR: Microcontroller {
             if address < dataSize { d[address] = value }
             return
         }
-        ioWritten = true
+        if address < pinRegisters.count && pinRegisters[address] { ioWritten = true }
         switch handlers[address] {
         case .plain:
             d[address] = value
