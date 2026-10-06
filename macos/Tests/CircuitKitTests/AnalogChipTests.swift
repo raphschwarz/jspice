@@ -33,19 +33,21 @@ final class AnalogChipTests: XCTestCase {
     }
 
     func testUnbufferedInverterAmplifiesWithFeedback() throws {
-        // 1 MΩ of feedback over 100 kΩ: an inverting gain of 10 / (1 + 11 / A), about 7 with A = 25, biased at 4.5 V
+        // 1 MΩ of feedback over 100 kΩ: an inverting gain of 10 / (1 + 11 / A), about 7 with A = 25, biased at 4.5 V. It
+        // starts with its output at the rail, where it has no gain, and the coupling capacitor charges through 1.1 MΩ
+        // until it comes into its linear range
         let simulator = try simulator([
             NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 0.05, "frequency": 1000], connections: ["plus": "in", "minus": "GND"]),
-            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 1e-6], connections: ["a": "in", "b": "a"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 100e-9], connections: ["a": "in", "b": "a"]),
             NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 100_000], connections: ["a": "a", "b": "x"]),
             NetlistPart(kind: .unbufferedInverter, name: "U1", params: Examples.model(.unbufferedInverter, "CD4069UB"),
                         connections: ["in": "x", "out": "y"]),
             NetlistPart(kind: .resistor, name: "RF", params: ["resistance": 1_000_000], connections: ["a": "y", "b": "x"]),
         ])
         let inverter = index(simulator, "U1")
-        while simulator.time < 0.5 { simulator.step() }
+        while simulator.time < 1 { simulator.step() }
         var (low, high) = (Double.infinity, -Double.infinity)
-        while simulator.time < 0.51 {
+        while simulator.time < 1.01 {
             simulator.step()
             let v = simulator.voltageAcross(inverter)
             (low, high) = (min(low, v), max(high, v))
