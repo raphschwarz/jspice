@@ -316,13 +316,21 @@ public final class AVR: Microcontroller {
             while cycles < end { step() }
             return
         }
-        // the watched pins' levels after each instruction (and at each SPI and TWI event within one), logged where
-        // they change
+        // the watched pins' levels after each instruction that wrote an I/O register (or after every instruction,
+        // where a timer may be driving one), and at each SPI and TWI event, logged where they change
         while cycles < end {
             step()
-            logWatchedPins(at: cycles)
+            if ioWritten || watchesTimerPins {
+                ioWritten = false
+                logWatchedPins(at: cycles)
+            }
         }
     }
+
+    /// Set by every write to an I/O register: only those (and the timers, SPI and TWI) change what the pins do
+    private var ioWritten = false
+    /// Whether a watched pin is one a timer can drive, which it does without a register write
+    private var watchesTimerPins = false
 
     /// Where the present run started, for the pin events' times
     private var runStart = 0
@@ -337,7 +345,12 @@ public final class AVR: Microcontroller {
     }
 
     public var watchedPins: [Int] = [] {
-        didSet { watchedLevels = watchedPins.map { drivenLevel($0) } }
+        didSet {
+            watchedLevels = watchedPins.map { drivenLevel($0) }
+            watchesTimerPins = watchedPins.contains { pin in
+                timers.contains { $0.spec.pins.contains(pin) || $0.spec.complements.contains(pin) }
+            }
+        }
     }
     private var watchedLevels: [Bool?] = []
     private var pinEvents: [PinEvent] = []
@@ -546,6 +559,7 @@ public final class AVR: Microcontroller {
             if address < dataSize { d[address] = value }
             return
         }
+        ioWritten = true
         switch handlers[address] {
         case .plain:
             d[address] = value
