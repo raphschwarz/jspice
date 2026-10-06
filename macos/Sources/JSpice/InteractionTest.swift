@@ -149,11 +149,15 @@ enum InteractionTest {
         undo.beginUndoGrouping()
         editor.load(Examples.example("led")!)
         undo.endUndoGrouping()
-        await pause(0.8)
         let led = elements(.led).first!.id
         let switchElement = elements(.toggleSwitch).first!
-        let brightnessBefore = index(of: led).map { editor.simulation.simulator.brightness($0) } ?? 0
-        check(brightnessBefore > 0.9, "the LED example lights its LED")
+        // the simulation runs in real time on the window's frames: give a busy machine a few seconds to get going
+        var brightnessBefore = 0.0
+        for _ in 0..<15 where brightnessBefore <= 0.9 {
+            await pause(0.2)
+            brightnessBefore = index(of: led).map { editor.simulation.simulator.brightness($0) } ?? 0
+        }
+        check(brightnessBefore > 0.9, "the LED example lights its LED (brightness \(brightnessBefore))")
         let middle = GridPoint((switchElement.a.x + switchElement.b.x) / 2, (switchElement.a.y + switchElement.b.y) / 2)
         await click(middle)
         await pause(0.4)
