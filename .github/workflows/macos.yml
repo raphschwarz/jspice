@@ -43,8 +43,6 @@ jobs:
           grep -q 'frequency' build/mcp.txt
       - name: Audio Unit validation (registers the extension, then Apple's auval checks the effect and the instrument)
         if: hashFiles('macos/scripts/bundle.sh') != ''
-        # still finding out how far a CI runner's audio system goes; its output is read until it passes reliably
-        continue-on-error: true
         timeout-minutes: 8
         run: |
           /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R "$PWD/build/JSpice.app"
