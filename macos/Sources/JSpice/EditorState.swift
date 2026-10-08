@@ -42,6 +42,9 @@ final class EditorState: ObservableObject {
     @Published var sketchStatus: [UUID: SketchStatus] = [:]
     /// The control waiting for a MIDI controller to be moved (MIDI Learn): a part, or a part inside a block part
     @Published var midiLearning: MIDITarget?
+    /// What reading a schematic drawing is doing, while it does
+    @Published var captureStatus: String?
+    var captureTask: Task<Void, Never>?
     /// Incremented to ask the canvas to fit the circuit in view
     @Published private(set) var fitRequest = 1
 

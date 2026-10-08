@@ -268,6 +268,12 @@ public final class CircuitSession {
              description: "The circuit as a SPICE deck for ngspice or LTspice, with JSpice's own device equations: its parts by net, .model lines, op-amps and tubes as behavioural sources, transformers as coupled inductors, blocks as subcircuits, and a .tran analysis. Parts with no SPICE element (chips, microcontrollers) are named in comments. Writes it to path if given.",
              inputSchema: schema(["path": string("File to write (optional)")]),
              run: { session, arguments in try session.exportSpice(arguments) }),
+        Tool(name: "capture_schematic",
+             description: "Reads a schematic drawing (a PNG, JPEG, HEIC or TIFF photo or scan, or the first page of a PDF) into the circuit, replacing it: Claude reads the drawing, with its text labels found on the page as hints, and writes the netlist; JSpice builds it, sends back anything that does not build for another look, and draws it as a tidy schematic. Returns the circuit with the reader's notes and the parts it was unsure of: check those against the drawing. Needs ANTHROPIC_API_KEY in the server's environment. You can also read a drawing yourself and call build_circuit.",
+             inputSchema: schema(["path": string("The drawing's file"),
+                                  "hint": string("Anything that helps read it (optional): \"the op-amps are TL072\", \"ignore the power section\"")],
+                                 required: ["path"]),
+             run: { session, arguments in try session.captureSchematic(arguments) }),
         Tool(name: "breadboard",
              description: "The circuit laid out on a full-size solderless breadboard (63 columns, strips a–e and f–j, a + and − rail top and bottom): each part's legs and the hole each goes in (a1…j63, or a rail), chips straddling the channel with pin 1 bottom left and their units packed into as few packages as possible, transistors' legs in datasheet order with the flat face towards you, electrolytics' + leg on the higher DC voltage, the jumper wires, the rails' nets, and what is wired from off the board (supplies, sources, speakers). Checked: problems lists anything the board would connect differently from the schematic (empty when it matches).",
              inputSchema: schema([:]), run: { session, _ in session.breadboard() }),
@@ -1630,6 +1636,39 @@ public final class CircuitSession {
         return ["netlist": deck]
     }
 
+    func captureSchematic(_ arguments: [String: Any]) throws -> Any {
+        let path = (try Self.text(arguments, "path") as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: path) else { throw ToolError("No file at \(path)") }
+        let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+        guard !key.isEmpty else {
+            throw ToolError("capture_schematic needs ANTHROPIC_API_KEY in the MCP server's environment; without it, look at the drawing yourself and call build_circuit")
+        }
+        let hint = arguments["hint"] as? String
+        // the tools are synchronous: wait for the reading, which runs on its own
+        let box = CaptureBox()
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            do { box.result = .success(try await SchematicCapture.capture(URL(fileURLWithPath: path), key: key, hint: hint)) }
+            catch { box.result = .failure(error) }
+            done.signal()
+        }
+        done.wait()
+        switch box.result {
+        case .success(let capture)?:
+            replace(capture.circuit, "Capture Schematic")
+            var result = describe()
+            result["notes"] = capture.notes
+            result["uncertain"] = capture.uncertain
+            result["attempts"] = capture.attempts
+            if !capture.title.isEmpty { result["title"] = capture.title }
+            return result
+        case .failure(let error)?:
+            throw ToolError("\(error)")
+        case nil:
+            throw ToolError("The reading did not finish")
+        }
+    }
+
     func breadboard() -> Any {
         let layout = Breadboard.layout(circuit)
         func legs(_ legs: [Breadboard.Leg]) -> [[String: Any]] {
@@ -1761,4 +1800,9 @@ struct Trace {
 
 extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+/// The result of a schematic reading, handed from its task to the waiting tool
+private final class CaptureBox: @unchecked Sendable {
+    var result: Result<SchematicCapture.Capture, Error>?
 }

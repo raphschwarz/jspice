@@ -70,6 +70,7 @@ struct EditorView: View {
                 VStack(spacing: 8) {
                     ToolHUD(editor: editor)
                     ProblemBanner(simulation: editor.simulation)
+                    CaptureBanner(editor: editor)
                 }
                 .padding(.top, 12)
                 .animation(.snappy(duration: 0.2), value: editor.tool)
