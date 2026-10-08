@@ -173,10 +173,17 @@ public enum Stripboard {
         }
 
         /// An empty piece in `block` for a net, nearest `row`, at least `distance` rows from `away` and at most `reach`
-        func emptyRow(in block: Int, near row: Int, away: Int? = nil, distance: Int = 0, reach: Int = .max) -> Int? {
-            signalRows.filter { r in
+        func emptyRow(in block: Int, near row: Int, away: Int? = nil, distance: Int = 0, reach: Int = .max,
+                      for net: String? = nil) -> Int? {
+            let rows = signalRows.filter { r in
                 empty(Piece(block: block, row: r)) && away.map { abs(r - $0) >= distance && abs(r - $0) <= reach } ?? true
-            }.min { abs($0 - row) < abs($1 - row) }
+            }
+            // a row where the net already has the piece of strip in the block beside: the strip joins the two, no link
+            if let net, let joined = rows.filter({ r in [block - 1, block + 1].contains { pieceNet[Piece(block: $0, row: r)] == net } })
+                .min(by: { abs($0 - row) < abs($1 - row) }) {
+                return joined
+            }
+            return rows.min { abs($0 - row) < abs($1 - row) }
         }
 
         /// The first block from `start` where `count` neighbouring rows are empty in `width` blocks side by side, and
@@ -379,7 +386,21 @@ public enum Stripboard {
         }
 
         // two-lead parts across the strips: both legs in one column, on pieces of their nets
-        for part in plan.twoLead {
+        // two-lead parts in the order of their connections: each next to what it joins that is already placed
+        var placedNets = Set(b.pieceNet.values).union(b.busRow.keys)
+        var waiting = plan.twoLead
+        var ordered: [NetlistPart] = []
+        while !waiting.isEmpty {
+            let k = waiting.indices.max { a, c in
+                let na = waiting[a].connections.values.filter { placedNets.contains($0) && b.busRow[$0] == nil }.count
+                let nc = waiting[c].connections.values.filter { placedNets.contains($0) && b.busRow[$0] == nil }.count
+                return na != nc ? na < nc : a > c
+            }!
+            let next = waiting.remove(at: k)
+            placedNets.formUnion(next.connections.values)
+            ordered.append(next)
+        }
+        for part in ordered {
             if part.kind == .toggleSwitch || part.kind == .pushButton {
                 offParts.append(part)
                 continue
@@ -412,7 +433,7 @@ public enum Stripboard {
                 search: for (anchor, other, swapped) in [(n0, n1, false), (n1, n0, true)] {
                     for block in (0..<b.blocks).reversed() {
                         for r in b.rows(of: anchor, in: block) {
-                            guard let row = b.emptyRow(in: block, near: r < middle ? r + least : r - least, away: r, distance: least, reach: reach),
+                            guard let row = b.emptyRow(in: block, near: r < middle ? r + least : r - least, away: r, distance: least, reach: reach, for: other),
                                   let c = b.column(in: block, rows: r, row) else { continue }
                             b.claim(Piece(block: block, row: row), other)
                             let a = Hole(row: r, column: c), o = Hole(row: row, column: c)
@@ -429,8 +450,8 @@ public enum Stripboard {
                 // two supplies far apart: a piece of the second beside the first's strip
                 if let a = r0, let c = r1, abs(a - c) > reach { r1 = nil }
                 let new0 = r0 == nil, new1 = r1 == nil
-                if r0 == nil { r0 = b.emptyRow(in: block, near: r1.map { $0 < middle ? $0 + least : $0 - least } ?? middle, away: r1, distance: least) }
-                if r1 == nil, let a = r0 { r1 = b.emptyRow(in: block, near: a < middle ? a + least : a - least, away: a, distance: least) }
+                if r0 == nil { r0 = b.emptyRow(in: block, near: r1.map { $0 < middle ? $0 + least : $0 - least } ?? middle, away: r1, distance: least, for: n0) }
+                if r1 == nil, let a = r0 { r1 = b.emptyRow(in: block, near: a < middle ? a + least : a - least, away: a, distance: least, for: n1) }
                 if let a = r0, let c = r1, let column = b.column(in: block, rows: a, c) {
                     if new0 { b.claim(Piece(block: block, row: a), n0) }
                     if new1 { b.claim(Piece(block: block, row: c), n1) }
