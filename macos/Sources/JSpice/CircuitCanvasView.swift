@@ -311,7 +311,7 @@ final class CircuitCanvasView: NSView {
         case .memristor:
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
         case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch, .njfet, .multiplier, .delayLine,
-             .digitalDelay, .vactrol, .comparator,
+             .digitalDelay, .vactrol, .comparator, .triode, .pentode, .transformer,
              .vcf, .envelope, .vca, .sampleHold, .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
             // the real part it behaves like
             return element.model?.name ?? "Custom"
@@ -387,7 +387,7 @@ final class CircuitCanvasView: NSView {
             let alongX = abs(b.x - a.x) >= abs(b.y - a.y)
             var horizontal = alongX
             var otherSide = false
-            if element.kind.isTransistor {
+            if element.kind.isTransistor || element.kind.isTube {
                 // beside the channel, on the side away from the gate
                 let away: CGFloat = b.x >= a.x ? 1 : -1
                 anchor = CGPoint(x: b.x + (horizontal ? 0.6 * away * unit : 0), y: b.y)
@@ -418,11 +418,11 @@ final class CircuitCanvasView: NSView {
             let offset: CGFloat
             switch element.kind {
             // a vertical transistor's collector and emitter leads reach two units to the side
-            case _ where element.kind.isTransistor: offset = alongX ? 0.4 * unit : 2.3 * unit
+            case _ where element.kind.isTransistor || element.kind.isTube: offset = alongX ? 0.4 * unit : 2.3 * unit
             case .timer555, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
                  .analogSelector, .pll, .dac: offset = 0
             case _ where element.kind.drivesOutput || element.kind == .ota || element.kind == .logicGate: offset = 1.9 * unit
-            case .vactrol: offset = 1.9 * unit
+            case .vactrol, .transformer: offset = 1.9 * unit
             default: offset = (isProbe ? 1.0 : 1.05) * unit
             }
             let width = sizes.map(\.width).max() ?? 0

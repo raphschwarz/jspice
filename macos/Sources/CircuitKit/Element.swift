@@ -28,6 +28,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
     case sources = "Sources"
     case switches = "Switches"
     case semiconductors = "Semiconductors"
+    case tubes = "Tubes & Transformers"
     case amplifiers = "Amplifiers"
     case synth = "Synth Chips"
     case microcontrollers = "Microcontrollers"
@@ -45,6 +46,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case dcVoltage, acVoltage, squareVoltage, noiseVoltage, currentSource, keyboardPitch, keyboardGate, audioInput
     case toggleSwitch, pushButton
     case diode, zener, led, npn, pnp, nmos, pmos, njfet
+    case triode, pentode, transformer
     case opAmp, ota, multiplier, comparator
     case vco, vcf, envelope, vca, sampleHold, divider
     case timer555, schmittInverter, unbufferedInverter, analogSwitch
@@ -164,6 +166,9 @@ extension ElementKind {
         case .nmos: return "NMOS Transistor"
         case .pmos: return "PMOS Transistor"
         case .njfet: return "N-JFET"
+        case .triode: return "Triode"
+        case .pentode: return "Pentode"
+        case .transformer: return "Transformer"
         case .opAmp: return "Op-Amp"
         case .ota: return "OTA"
         case .multiplier: return "Multiplier"
@@ -221,6 +226,8 @@ extension ElementKind {
         case .led: return "LED"
         case .npn, .pnp, .njfet: return "Q"
         case .nmos, .pmos: return "M"
+        case .triode, .pentode: return "VT"
+        case .transformer: return "T"
         case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .timer555, .schmittInverter, .unbufferedInverter,
              .analogSwitch,
              .atmega328p, .atmega2560,
@@ -243,6 +250,7 @@ extension ElementKind {
         case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate, .audioInput: return .sources
         case .toggleSwitch, .pushButton: return .switches
         case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
+        case .triode, .pentode, .transformer: return .tubes
         case .opAmp, .ota, .multiplier, .comparator: return .amplifiers
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .digitalDelay, .vactrol: return .effects
@@ -282,7 +290,8 @@ extension ElementKind {
         case .pmos: return "p"
         case .opAmp: return "u"
         case .timer555: return "5"
-        case .njfet, .ota, .schmittInverter, .unbufferedInverter, .analogSwitch, .multiplier, .delayLine, .digitalDelay, .vactrol:
+        case .njfet, .ota, .schmittInverter, .unbufferedInverter, .analogSwitch, .multiplier, .delayLine, .digitalDelay, .vactrol,
+             .triode, .pentode, .transformer:
             return nil
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return nil
         case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return nil
@@ -318,6 +327,8 @@ extension ElementKind {
         case .atmega328p: return "m"
         case .logicGate: return "b"
         case .decadeCounter: return "t"
+        case .triode: return "q"
+        case .transformer: return "r"
         default: return nil
         }
     }
@@ -337,13 +348,17 @@ extension ElementKind {
     /// Three-terminal transistors drawn with their control terminal at `a` and their channel at `b`
     public var isTransistor: Bool { self == .nmos || self == .pmos || self == .npn || self == .pnp || self == .njfet }
 
+    /// Vacuum tubes: drawn like a transistor (control grid at `a`, plate above `b` and cathode below it), in a glass
+    /// envelope; a pentode's screen grid comes out at `b`
+    public var isTube: Bool { self == .triode || self == .pentode }
+
     public var isBipolar: Bool { self == .npn || self == .pnp }
 
     /// Parts whose terminals depend on a direction, which stay horizontal or vertical
     public var isAxisAligned: Bool {
         isTransistor || self == .opAmp || self == .ota || self == .potentiometer || self == .timer555 || self == .analogSwitch
             || self == .multiplier || self == .delayLine || self == .vactrol || isModule || self == .comparator || isMicrocontroller
-            || isLogic || self == .block
+            || isLogic || self == .block || isTube || self == .transformer
     }
 
     /// Parts offered in the library and the quick-add palette: a block is placed from the blocks the user has saved
@@ -355,8 +370,8 @@ extension ElementKind {
     /// Length in grid units of parts whose size is fixed (their terminals sit at set places around the body)
     public var fixedLength: Int? {
         switch self {
-        case .nmos, .pmos, .npn, .pnp, .njfet: return 2
-        case .ota, .vactrol: return 4
+        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode: return 2
+        case .ota, .vactrol, .transformer: return 4
         case .timer555: return 5
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.length
         case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return chipPackage?.length
@@ -376,6 +391,9 @@ extension ElementKind {
         case .probe, .speaker: return ["plus", "minus"]
         case .ammeter: return ["in", "out"]
         case .nmos, .pmos, .njfet: return ["gate", "drain", "source"]
+        case .triode: return ["grid", "plate", "cathode"]
+        case .pentode: return ["grid", "plate", "cathode", "screen"]
+        case .transformer: return ["p1", "p2", "s1", "s2"]
         case .npn, .pnp: return ["base", "collector", "emitter"]
         case .potentiometer: return ["a", "b", "wiper"]
         case .analogSwitch: return ["a", "b", "control"]
@@ -426,12 +444,32 @@ extension ElementKind {
         }
     }
 
+    /// Koren's constants for a tube, then the capacitances between its electrodes
+    static func tubeParams(mu: Double, ex: Double, kg1: Double, kg2: Double?, kp: Double, kvb: Double, rgi: Double,
+                           cgk: Double, cgp: Double, cpk: Double) -> [ParamSpec] {
+        var specs = [
+            ParamSpec("mu", "Amplification factor (µ)", unit: "", default: mu, range: 1...200),
+            ParamSpec("ex", "Exponent", unit: "", default: ex, range: 1...2, log: false),
+            ParamSpec("kg1", "Plate current constant (kg1)", unit: "", default: kg1, range: 10...10_000),
+        ]
+        if let kg2 { specs.append(ParamSpec("kg2", "Screen current constant (kg2)", unit: "", default: kg2, range: 10...100_000)) }
+        specs += [
+            ParamSpec("kp", "Knee constant (kp)", unit: "", default: kp, range: 1...2000),
+            ParamSpec("kvb", "Knee voltage constant (kvb)", unit: "V²", default: kvb, range: 0.1...10_000),
+            ParamSpec("rgi", "Grid current resistance", unit: "Ω", default: rgi, range: 100...100_000),
+            ParamSpec("cgk", "Grid–cathode capacitance", unit: "F", default: cgk, range: 0...1e-10, log: false),
+            ParamSpec("cgp", "Grid–plate capacitance (Miller)", unit: "F", default: cgp, range: 0...1e-10, log: false),
+            ParamSpec("cpk", "Plate–cathode capacitance", unit: "F", default: cpk, range: 0...1e-10, log: false),
+        ]
+        return specs
+    }
+
     /// Offset of the second point when the element is placed with a single click
     public var defaultOffset: GridPoint {
         switch self {
         case .ground: return GridPoint(0, 1)
         case .netLabel, .port: return GridPoint(1, 0)
-        case .nmos, .pmos, .npn, .pnp, .njfet: return GridPoint(2, 0)
+        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return GridPoint(0, board?.length ?? 13)
         case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return GridPoint(0, chipPackage?.length ?? 3)
@@ -612,6 +650,18 @@ extension ElementKind {
                 ParamSpec("pinchOff", "Pinch-off voltage", unit: "V", default: -1.5, range: -8...(-0.2), log: false),
                 ParamSpec("idss", "Saturation current (IDSS)", unit: "A", default: 3e-3, range: 1e-5...0.1),
             ]
+        case .triode:
+            return Self.tubeParams(mu: 100, ex: 1.4, kg1: 1060, kg2: nil, kp: 600, kvb: 300, rgi: 2000, cgk: 2.3e-12, cgp: 2.4e-12, cpk: 0.9e-12)
+        case .pentode:
+            return Self.tubeParams(mu: 8.7, ex: 1.35, kg1: 1460, kg2: 4500, kp: 48, kvb: 12, rgi: 1000, cgk: 14e-12, cgp: 0.85e-12, cpk: 12e-12)
+        case .transformer:
+            return [
+                ParamSpec("inductance", "Primary inductance", unit: "H", default: 20, range: 1e-6...1000),
+                ParamSpec("ratio", "Turns ratio (secondary ÷ primary)", unit: "", default: 0.0316228, range: 0.001...1000),
+                ParamSpec("coupling", "Coupling (1: no leakage)", unit: "", default: 0.998, range: 0.5...1, log: false),
+                ParamSpec("rp", "Primary winding resistance", unit: "Ω", default: 200, range: 0...100_000, log: false),
+                ParamSpec("rs", "Secondary winding resistance", unit: "Ω", default: 0.4, range: 0...100_000, log: false),
+            ]
         case .lamp:
             return [
                 ParamSpec("resistance", "Resistance", unit: "Ω", default: 100, range: 1...100_000),
@@ -783,7 +833,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     public var transistorTerminals: (drain: GridPoint, source: GridPoint) {
         let up = b - perpendicular * 2
         let down = b + perpendicular * 2
-        return kind == .nmos || kind == .npn || kind == .njfet ? (up, down) : (down, up)
+        return kind == .nmos || kind == .npn || kind == .njfet || kind.isTube ? (up, down) : (down, up)
     }
 
     /// The potentiometer's wiper, two grid units to the side of its middle; also an analog switch's control input
@@ -819,15 +869,18 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         switch kind {
         case .ground, .netLabel, .port:
             return [a]
-        case .nmos, .pmos, .npn, .pnp, .njfet:
+        case .nmos, .pmos, .npn, .pnp, .njfet, .triode:
             let t = transistorTerminals
             return [a, t.drain, t.source]
+        case .pentode:
+            let t = transistorTerminals
+            return [a, t.drain, t.source, b]
         case .potentiometer, .analogSwitch:
             return [a, b, wiper]
         case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
              .logicGate:
             return [a - perpendicular, a + perpendicular, b]
-        case .vactrol:
+        case .vactrol, .transformer:
             return [a - perpendicular, a + perpendicular, b - perpendicular, b + perpendicular]
         case .ota:
             return [a - perpendicular, a + perpendicular, b, biasInput]
@@ -845,6 +898,9 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     public var extentPoints: [GridPoint] {
         posts.count > 2 ? posts + [a, b] : [a, b]
     }
+
+    /// The ideal transformer a transformer part is simulated with (see `Circuit.expandModels`)
+    public var isTransformerCore: Bool { kind == .transformer && self[param: "core"] == 1 }
 
     /// Ideal conductors: their ends are the same node
     public var isConductor: Bool {
@@ -1087,6 +1143,39 @@ extension ElementKind {
                           values: ["ron": 1500, "iref": 0.01, "roff": 1e7, "gamma": 0.75, "attack": 0.0025, "decay": 0.035]),
                 PartModel(name: "NSL-32", summary: "Slow release: compressors and opto tremolo",
                           values: ["ron": 500, "iref": 0.02, "roff": 5e5, "gamma": 0.8, "attack": 0.005, "decay": 0.25]),
+            ]
+        case .triode:
+            func tube(_ name: String, _ summary: String, _ mu: Double, _ ex: Double, _ kg1: Double, _ kp: Double,
+                      _ cgk: Double, _ cgp: Double, _ cpk: Double) -> PartModel {
+                PartModel(name: name, summary: summary, values: [
+                    "mu": mu, "ex": ex, "kg1": kg1, "kp": kp, "kvb": 300, "rgi": 2000, "cgk": cgk, "cgp": cgp, "cpk": cpk,
+                ])
+            }
+            return [
+                tube("12AX7", "ECC83: high gain (µ 100), the preamp tube of guitar amps", 100, 1.4, 1060, 600, 2.3e-12, 2.4e-12, 0.9e-12),
+                tube("12AT7", "ECC81: medium gain (µ 60), reverb drivers and phase inverters", 60, 1.35, 460, 300, 2.3e-12, 2.2e-12, 1.0e-12),
+                tube("12AU7", "ECC82: low gain (µ 21.5), more current: cathode followers, drivers", 21.5, 1.3, 1180, 84, 2.3e-12, 2.2e-12, 1.0e-12),
+                tube("ECC88", "6DJ8: low noise, high transconductance, hi-fi preamps", 28, 1.3, 330, 320, 3.3e-12, 1.4e-12, 1.8e-12),
+            ]
+        case .pentode:
+            return [
+                PartModel(name: "6L6GC", summary: "Beam power tube of American amps (Fender): about 30 W a pair", values: [
+                    "mu": 8.7, "ex": 1.35, "kg1": 1460, "kg2": 4500, "kp": 48, "kvb": 12, "rgi": 1000,
+                    "cgk": 14e-12, "cgp": 0.85e-12, "cpk": 12e-12,
+                ]),
+                PartModel(name: "EL34", summary: "Power pentode of British amps (Marshall): about 50 W a pair", values: [
+                    "mu": 11, "ex": 1.35, "kg1": 650, "kg2": 4200, "kp": 60, "kvb": 24, "rgi": 1000,
+                    "cgk": 15e-12, "cgp": 1.1e-12, "cpk": 8e-12,
+                ]),
+            ]
+        case .transformer:
+            return [
+                PartModel(name: "Output 8 kΩ : 8 Ω", summary: "A single-ended output transformer: 20 H primary, 1 kΩ of plate load for each ohm of speaker",
+                          values: ["inductance": 20, "ratio": 0.0316228, "coupling": 0.998, "rp": 200, "rs": 0.4]),
+                PartModel(name: "Mains 230 V : 12 V", summary: "A small power transformer for a 12 V supply",
+                          values: ["inductance": 5, "ratio": 0.0521739, "coupling": 0.995, "rp": 30, "rs": 0.5]),
+                PartModel(name: "Interstage 1 : 2", summary: "Steps a signal up twice: coupling and phase splitting",
+                          values: ["inductance": 30, "ratio": 2, "coupling": 0.995, "rp": 500, "rs": 1500]),
             ]
         case .njfet:
             return [

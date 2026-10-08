@@ -29,14 +29,14 @@ enum SymbolIcons {
         case .ground:
             element = Element(kind: kind, a: .zero, b: GridPoint(0, 1))
             (a, b, unit) = (CGPoint(x: 17, y: 4), CGPoint(x: 17, y: 14), 10)
-        case .nmos, .pmos, .npn, .pnp, .njfet:
+        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode:
             element = Element(kind: kind, a: .zero, b: GridPoint(2, 0))
             (a, b, unit) = (CGPoint(x: 7, y: 11), CGPoint(x: 16, y: 11), 4.5)
         case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
              .logicGate:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 5, y: 11), CGPoint(x: 29, y: 11), 5.5)
-        case .ota, .vactrol:
+        case .ota, .vactrol, .transformer:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 7, y: 9), CGPoint(x: 27, y: 9), 4.6)
         case .timer555:

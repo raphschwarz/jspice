@@ -51,12 +51,19 @@ for kind, text in cases_of(models_body).items():
         MODELS[(kind, name)] = swift_dictionary(values)
 
 def example_parts(example_id):
-    """A netlist example's parts, read from Examples.swift"""
+    """A netlist example's parts, read from Examples.swift (its parts may come from a function of the examples, given
+    one of them: the Fuzz Face's guitar)"""
     source = open(os.path.join(SOURCES, 'Examples.swift')).read()
     start = source.index('id: "%s"' % example_id)
     end = source.index('scopes:', start)
+    text = source[start:end]
+    shared = re.search(r'(\w+)\(guitar: (NetlistPart\(.*?\]\))\)', text, re.S)
+    if shared:
+        body = source[source.index('static func %s(' % shared.group(1)):]
+        body = body[:body.index('\n    }\n')]
+        text = body.replace('guitar,', shared.group(2) + ',', 1)
     parts = []
-    for match in re.finditer(r'NetlistPart\(kind: \.(\w+), name: "(\w+)"(.*?)connections: (\[[^\]]*\])\)', source[start:end], re.S):
+    for match in re.finditer(r'NetlistPart\(kind: \.(\w+), name: "(\w+)"(.*?)connections: (\[[^\]]*\])\)', text, re.S):
         kind, name, middle, connections = match.groups()
         params = {}
         model = re.search(r'model\(\.(\w+), "([^"]+)"\)', middle)
@@ -163,6 +170,33 @@ def spice_elements(parts, ac_source=None):
                 lines.append('C%s_stage %s 0 1 IC=0' % (n, stage))
                 lines.append('R%s_stage %s 0 %.12g' % (n, stage, tau))
                 lines.append('B%s %s 0 V=%.12g*tanh(v(%s)/%.12g)' % (n, pin('out'), limit, stage, limit))
+        elif k in ('triode', 'pentode'):
+            # Koren's equations, as Tubes.swift: plate (and screen) current, grid current, the electrode capacitances
+            g, pl, ca = pin('grid'), pin('plate'), pin('cathode')
+            mu, ex, kg1, kp, kvb, rgi = (param(p, x) for x in ('mu', 'ex', 'kg1', 'kp', 'kvb', 'rgi'))
+            vg, vp = 'V(%s,%s)' % (g, ca), 'V(%s,%s)' % (pl, ca)
+            if k == 'triode':
+                e1 = '%s/%.12g*ln(1+exp(%.12g*(1/%.12g+%s/sqrt(%.12g+%s*%s))))' % (vp, kp, kp, mu, vg, kvb, vp, vp)
+                lines.append('B%s_p %s %s I=2*pwr(max(%s,0),%.12g)/%.12g' % (n, pl, ca, e1, ex, kg1))
+            else:
+                sc = pin('screen')
+                vs = 'max(V(%s,%s),1e-3)' % (sc, ca)
+                e1 = '%s/%.12g*ln(1+exp(%.12g*(1/%.12g+%s/%s)))' % (vs, kp, kp, mu, vg, vs)
+                lines.append('B%s_p %s %s I=2*pwr(max(%s,0),%.12g)/%.12g*atan(max(%s,0)/%.12g)' % (n, pl, ca, e1, ex, kg1, vp, kvb))
+                lines.append('B%s_s %s %s I=pwr(max(%s+V(%s,%s)/%.12g,0),%.12g)/%.12g' % (n, sc, ca, vg, sc, ca, mu, ex, param(p, 'kg2')))
+            lines.append('B%s_g %s %s I=pwr(max(%s,0),1.5)/%.12g' % (n, g, ca, vg, rgi))
+            for key, a, b in (('cgk', g, ca), ('cgp', g, pl), ('cpk', pl, ca)):
+                if param(p, key) > 0:
+                    lines.append('C%s_%s %s %s %.12g IC=0' % (n, key, a, b, param(p, key)))
+        elif k == 'transformer':
+            # two coupled inductors with their windings' resistances
+            lp, ratio, coupling = max(param(p, 'inductance'), 1e-12), param(p, 'ratio'), min(max(param(p, 'coupling'), 0.01), 1)
+            px, sx = 'n_%s_px' % n, 'n_%s_sx' % n
+            lines.append('R%s_p %s %s %.12g' % (n, pin('p1'), px, max(param(p, 'rp'), 1e-6)))
+            lines.append('L%s_p %s %s %.12g IC=0' % (n, px, pin('p2'), lp))
+            lines.append('R%s_s %s %s %.12g' % (n, sx, pin('s1'), max(param(p, 'rs'), 1e-6)))
+            lines.append('L%s_s %s %s %.12g IC=0' % (n, sx, pin('s2'), lp * ratio ** 2))
+            lines.append('K%s L%s_p L%s_s %.12g' % (n, n, n, coupling))
         elif k in ('speaker', 'probe'):
             pass
         else:
@@ -206,6 +240,38 @@ def P(kind, name, connections, **params):
     return dict(kind=kind, name=name, params=params, connections=connections)
 
 TL072 = MODELS[('opAmp', 'TL072')]
+# Koren's 12AX7 (Element.swift's triode defaults) and 6L6GC
+TUBE_12AX7 = dict(mu=100, ex=1.4, kg1=1060, kp=600, kvb=300, rgi=2000, cgk=2.3e-12, cgp=2.4e-12, cpk=0.9e-12)
+TUBE_6L6GC = MODELS[('pentode', '6L6GC')]
+OUTPUT_TRANSFORMER = MODELS[('transformer', 'Output 8 kΩ : 8 Ω')]
+
+def triode_stage(amplitude):
+    """A 12AX7 common-cathode stage, as in a guitar amp's first stage: 250 V through 100 kΩ, 1.5 kΩ and 22 µF at the
+    cathode, 1 MΩ grid leak"""
+    return [
+        P('dcVoltage', 'VB', dict(plus='bplus', minus='GND'), voltage=250),
+        P('acVoltage', 'VIN', dict(plus='in', minus='GND'), amplitude=amplitude, frequency=1000),
+        P('capacitor', 'CIN', dict(a='in', b='grid'), capacitance=22e-9),
+        P('resistor', 'RG', dict(a='grid', b='GND'), resistance=1e6),
+        P('triode', 'V1', dict(grid='grid', plate='plate', cathode='cath'), **TUBE_12AX7),
+        P('resistor', 'RP', dict(a='bplus', b='plate'), resistance=100_000),
+        P('resistor', 'RK', dict(a='cath', b='GND'), resistance=1500),
+        P('capacitor', 'CK', dict(a='cath', b='GND'), capacitance=22e-6),
+        P('capacitor', 'COUT', dict(a='plate', b='out'), capacitance=22e-9),
+        P('resistor', 'RL', dict(a='out', b='GND'), resistance=1e6)]
+
+PENTODE_STAGE = [
+    # a single-ended 6L6GC into an output transformer and an 8 Ω speaker, cathode biased
+    P('dcVoltage', 'VB', dict(plus='bplus', minus='GND'), voltage=300),
+    P('acVoltage', 'VIN', dict(plus='in', minus='GND'), amplitude=8, frequency=1000),
+    P('capacitor', 'CIN', dict(a='in', b='grid'), capacitance=100e-9),
+    P('resistor', 'RG', dict(a='grid', b='GND'), resistance=470_000),
+    P('pentode', 'V1', dict(grid='grid', plate='plate', cathode='cath', screen='screen'), **TUBE_6L6GC),
+    P('resistor', 'RS', dict(a='bplus', b='screen'), resistance=470),
+    P('resistor', 'RK', dict(a='cath', b='GND'), resistance=250),
+    P('capacitor', 'CK', dict(a='cath', b='GND'), capacitance=100e-6),
+    P('transformer', 'T1', dict(p1='bplus', p2='plate', s1='spk', s2='GND'), **OUTPUT_TRANSFORMER),
+    P('resistor', 'RSPK', dict(a='spk', b='GND'), resistance=8)]
 
 CASES = [
     dict(id='rc-step', note='RC low-pass, 1 ms time constant, on a 100 Hz square wave', duration=0.03, probes=['out'], parts=[
@@ -286,6 +352,17 @@ CASES = [
         P('opAmp', 'U2', dict(minus='GND', plus='hys', out='sq'), **TL072),
         P('resistor', 'R2', dict(a='tri', b='hys'), resistance=50_000),
         P('resistor', 'R3', dict(a='hys', b='sq'), resistance=100_000)]),
+    dict(id='triode', note='12AX7 common-cathode stage overdriven by 3 V at 1 kHz: grid current and clipping', duration=0.03,
+         probes=['plate', 'cath'], parts=triode_stage(3)),
+    dict(id='pentode', note='single-ended 6L6GC into an output transformer and 8 Ω, 8 V at 1 kHz on the grid', duration=0.03,
+         probes=['plate', 'spk'], parts=PENTODE_STAGE),
+    dict(id='transformer', note='mains transformer, 230 V : 12 V, into a half-wave rectifier, 470 µF and 100 Ω', duration=0.06,
+         probes=['sec', 'out'], parts=[
+        P('acVoltage', 'V1', dict(plus='mains', minus='GND'), amplitude=325, frequency=50),
+        P('transformer', 'T1', dict(p1='mains', p2='GND', s1='sec', s2='GND'), **MODELS[('transformer', 'Mains 230 V : 12 V')]),
+        P('diode', 'D1', dict(anode='sec', cathode='out')),
+        P('capacitor', 'C1', dict(a='out', b='GND'), capacitance=470e-6),
+        P('resistor', 'R1', dict(a='out', b='GND'), resistance=100)]),
     dict(id='fuzz', example='fuzz', note='the Fuzz Face example (two BC108s)', duration=0.03, probes=['c2', 'out']),
     dict(id='overdrive', example='overdrive', note='the diode-clipper overdrive example (TL072, 1N4148s)', duration=0.02,
          probes=['amp', 'clip']),
@@ -327,6 +404,10 @@ AC_CASES = [
         P('capacitor', 'C1', dict(a='a', b='out'), capacitance=10e-9),
         P('capacitor', 'C2', dict(a='b', b='GND'), capacitance=10e-9),
         P('opAmp', 'U1', dict(minus='out', plus='b', out='out'), **TL072)]),
+    dict(id='triode', note='12AX7 common-cathode stage: gain and the Miller roll-off', source='VIN', settle=1.0,
+         probes=['plate', 'out'], fstop=1e6, parts=triode_stage(0.1)),
+    dict(id='output-transformer', note='6L6GC into its output transformer: the low end from the primary inductance',
+         source='VIN', settle=1.0, probes=['spk'], parts=PENTODE_STAGE),
     dict(id='fuzz', example='fuzz', note='the Fuzz Face example (two BC108s), small signals', source='GTR', settle=0.5,
          probes=['c2', 'out']),
     dict(id='overdrive', example='overdrive', note='the overdrive example below clipping', source='VIN', settle=0.5,

@@ -79,7 +79,9 @@ extension Circuit {
     /// the block's name, a dot and their own ("X1.R2"). Net labels inside a block are its own (two copies of a block
     /// do not join at a label inside them), except ground.
     public func flattened() -> Circuit {
-        guard elements.contains(where: { $0.kind == .block && $0.block != nil }) else { return self }
+        guard elements.contains(where: { ($0.kind == .block && $0.block != nil) || $0.kind.isTube || $0.kind == .transformer }) else {
+            return self
+        }
         var result = self
         var copies = 0
         func expand(_ instance: Element, depth: Int) {
@@ -109,7 +111,67 @@ extension Circuit {
             }
         }
         for element in elements where element.kind == .block { expand(element, depth: 0) }
+        result.expandModels()
         return result
+    }
+
+    /// Parts simulated as other parts, put in after the rest (see `flattened`): a transformer as its windings'
+    /// resistances, its leakage and magnetising inductances and an ideal core (exactly two coupled inductors), and a
+    /// tube's capacitances between its electrodes. Their own parts are drawn far off, below and to the left.
+    mutating func expandModels() {
+        var added: [Element] = []
+        var copies = 0
+        // a circuit flattened already has them
+        let present = Set(elements.map(\.id))
+        func part(_ owner: Element, _ role: Int, _ kind: ElementKind, _ a: GridPoint, _ b: GridPoint, _ suffix: String,
+                  _ params: [String: Double] = [:]) {
+            var element = Element(kind: kind, name: owner.name.isEmpty ? "" : owner.name + "." + suffix, a: a, b: b, params: params)
+            element.id = UUID.combining(owner.id, UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, UInt8(role))))
+            if !present.contains(element.id) { added.append(element) }
+        }
+        for owner in elements {
+            switch owner.kind {
+            case .transformer where owner[param: "core"] == 0:
+                copies += 1
+                let origin = GridPoint(-1_000_000 * copies, -1_000_000)
+                let pins = owner.posts
+                guard pins.count == 4 else { continue }
+                let lp = max(owner[param: "inductance"], 1e-12)
+                let k = min(max(owner[param: "coupling"], 0.01), 1)
+                let ratio = max(owner[param: "ratio"], 1e-6)
+                // coupled inductors Lp and Ls = n² Lp with coupling k are exactly a leakage inductance (1 - k²) Lp in
+                // series with the primary, a magnetising inductance k² Lp across it, and an ideal transformer of
+                // ratio k n
+                let x = origin, y = origin + GridPoint(0, 2), secondary = origin + GridPoint(0, 4)
+                let rp = owner[param: "rp"], rs = owner[param: "rs"]
+                if rp > 0 { part(owner, 1, .resistor, pins[0], x, "Rp", ["resistance": rp]) } else { part(owner, 1, .wire, pins[0], x, "Rp") }
+                let leakage = (1 - k * k) * lp
+                if leakage > 1e-9 * lp { part(owner, 2, .inductor, x, y, "Lleak", ["inductance": leakage]) } else { part(owner, 2, .wire, x, y, "Lleak") }
+                part(owner, 3, .inductor, y, pins[1], "Lm", ["inductance": k * k * lp])
+                var core = Element(kind: .transformer, name: owner.name.isEmpty ? "" : owner.name + ".core",
+                                   a: origin + GridPoint(10, 10), b: origin + GridPoint(14, 10),
+                                   params: ["core": 1, "ratio": k * ratio])
+                core.id = UUID.combining(owner.id, UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4)))
+                if !present.contains(core.id) { added.append(core) }
+                let corePins = core.posts
+                part(owner, 5, .wire, corePins[0], y, "w1")
+                part(owner, 6, .wire, corePins[1], pins[1], "w2")
+                part(owner, 7, .wire, corePins[2], secondary, "w3")
+                part(owner, 8, .wire, corePins[3], pins[3], "w4")
+                if rs > 0 { part(owner, 9, .resistor, secondary, pins[2], "Rs", ["resistance": rs]) } else { part(owner, 9, .wire, secondary, pins[2], "Rs") }
+            case .triode, .pentode:
+                let pins = owner.posts
+                guard pins.count >= 3 else { continue }
+                // grid, plate, cathode
+                for (role, (key, from, to)) in [("cgk", 0, 2), ("cgp", 0, 1), ("cpk", 1, 2)].enumerated() {
+                    let farads = owner[param: key]
+                    if farads > 0 { part(owner, 10 + role, .capacitor, pins[from], pins[to], key.uppercased(), ["capacitance": farads]) }
+                }
+            default:
+                continue
+            }
+        }
+        elements += added
     }
 
     /// The circuit as a block: the ports it has, under `name`, with its scopes, sequence and MIDI mappings left out

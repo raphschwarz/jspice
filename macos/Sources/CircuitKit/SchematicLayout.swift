@@ -60,6 +60,7 @@ public enum SchematicLayout {
     static let inputs: [ElementKind: [String]] = [
         .opAmp: ["minus", "plus"], .ota: ["minus", "plus", "bias"], .timer555: ["trig", "thr", "dis", "ctrl", "reset"],
         .schmittInverter: ["in"], .unbufferedInverter: ["in"], .npn: ["base"], .pnp: ["base"], .nmos: ["gate"], .pmos: ["gate"], .njfet: ["gate"],
+        .triode: ["grid"], .pentode: ["grid"], .transformer: ["p1", "p2"],
         .potentiometer: ["a", "b"], .analogSwitch: ["a", "control"], .multiplier: ["x", "y"], .delayLine: ["in", "ctrl"],
         .vactrol: ["anode"], .digitalDelay: ["in", "time"], .comparator: ["minus", "plus"], .vco: ["cv", "pw"], .vcf: ["in", "cv"], .envelope: ["gate", "trig"],
         .vca: ["in", "cv"], .sampleHold: ["in", "trig"], .divider: ["clock", "reset"],
@@ -75,6 +76,7 @@ public enum SchematicLayout {
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .unbufferedInverter: ["out"],
         .npn: ["collector", "emitter"],
         .pnp: ["collector", "emitter"], .nmos: ["drain", "source"], .pmos: ["drain", "source"], .njfet: ["drain", "source"],
+        .triode: ["plate", "cathode"], .pentode: ["plate", "cathode"], .transformer: ["s1", "s2"],
         .potentiometer: ["wiper"], .analogSwitch: ["b"], .multiplier: ["out"], .delayLine: ["out"], .digitalDelay: ["out"], .vactrol: ["b"],
         .comparator: ["out"], .vco: ["out"], .vcf: ["out"], .envelope: ["out"], .vca: ["out"], .sampleHold: ["out"], .divider: ["out"],
         .atmega328p: microcontrollerSide(.uno, second: false), .atmega2560: microcontrollerSide(.mega, second: false),
@@ -116,10 +118,11 @@ public enum SchematicLayout {
         case .ground: return [e.b]
         case .netLabel, .wire: return []
         case .nmos, .pmos, .npn, .pnp, .njfet: return frame(1...2, -1...1)
+        case .triode, .pentode: return frame(0...2, -1...1)
         case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
              .logicGate:
             return frame(0...3, -2...2)
-        case .vactrol: return frame(1...3, -2...2)
+        case .vactrol, .transformer: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,
              .block:
@@ -330,7 +333,7 @@ public enum SchematicLayout {
             for p in parts where p.role == .series {
                 guard let n0 = p.connections[0], let n1 = p.connections[1] else { continue }
                 for amp in parts where amp.role == .directed
-                    && (amplifiers.contains(amp.kind) || amp.kind.isTransistor || amp.kind == .schmittInverter
+                    && (amplifiers.contains(amp.kind) || amp.kind.isTransistor || amp.kind.isTube || amp.kind == .schmittInverter
                         || amp.kind == .unbufferedInverter) {
                     let ins = Set(inputNets(amp))
                     let outs = Set(outputNetList(amp))
@@ -552,7 +555,7 @@ public enum SchematicLayout {
                         }
                         let ay = via != nil ? vy + 1 : 0
                         put(p, GridPoint(x, ay), GridPoint(x + 4, ay), flipped: top == "plus")
-                    case .npn, .pnp, .nmos, .pmos, .njfet:
+                    case .npn, .pnp, .nmos, .pmos, .njfet, .triode, .pentode:
                         put(p, GridPoint(x, vy), GridPoint(x + 2, vy))
                         width = 2
                     case .timer555:
@@ -605,7 +608,7 @@ public enum SchematicLayout {
                 }
                 // parts to ground (or up to a supply) from the nets this column drives go just right of it
                 var shuntX = right + 2
-                for p in column where !p.kind.isTransistor {
+                for p in column where !p.kind.isTransistor && !p.kind.isTube {
                     for net in outputsOf(p) where driver[net] === p {
                         let list = shunts[net] ?? []
                         let ups = list.filter { s in
@@ -663,7 +666,7 @@ public enum SchematicLayout {
                     let down = !(other.map { cls($0) == .rail && !isNegativeRail($0) } ?? false)
                     let step = down ? GridPoint(0, 1) : GridPoint(0, -1)
                     // straight on a transistor's collector or emitter when it points the same way
-                    if let drv, let pin = driverPin, drv.kind.isTransistor, slots[down] == 0, let da = drv.a {
+                    if let drv, let pin = driverPin, drv.kind.isTransistor || drv.kind.isTube, slots[down] == 0, let da = drv.a {
                         let cy = Double(da.y + drv.b.y) / 2
                         let pointsDown = Double(pin.y) > cy
                         let pointsUp = Double(pin.y) < cy

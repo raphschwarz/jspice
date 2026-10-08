@@ -43,7 +43,7 @@ public enum Examples {
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
         cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz, echo, blocks,
-        ringModulator, chorus, fuzz, guitarFuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, arduinoDAC, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
+        ringModulator, chorus, fuzz, guitarFuzz, tubeAmp, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, arduinoDAC, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
     ]
 
@@ -801,6 +801,34 @@ public enum Examples {
         circuit: drawn(fuzzFaceParts(guitar: NetlistPart(kind: .audioInput, name: "GTR", params: ["level": 0.15, "loop": 1],
                                                          connections: ["plus": "gtr", "minus": "GND"])),
                        scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
+
+    /// A small guitar amp: a 12AX7 preamp stage into a single-ended 6L6GC, its output transformer into an 8 Ω speaker
+    static let tubeAmp = Example(
+        id: "tube-amp", title: "Single-ended tube amp (sound)",
+        summary: "A guitar riff through a 12AX7 preamp stage (a gain of about 60) and a volume knob into a 6L6GC, cathode biased, driving an 8 Ω speaker through its output transformer, from 300 V. Turn on sound and turn VOLUME up until the power tube clips.",
+        symbol: "hifispeaker.fill",
+        circuit: drawn([
+            NetlistPart(kind: .dcVoltage, name: "VB", params: ["voltage": 300], connections: ["plus": "+300V", "minus": "GND"]),
+            NetlistPart(kind: .audioInput, name: "GTR", params: ["level": 0.15, "loop": 1], connections: ["plus": "gtr", "minus": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 22e-9], connections: ["a": "gtr", "b": "g1"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 1e6], connections: ["a": "g1", "b": "GND"]),
+            NetlistPart(kind: .triode, name: "V1", params: model(.triode, "12AX7"), connections: ["grid": "g1", "plate": "p1", "cathode": "k1"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 100_000], connections: ["a": "+300V", "b": "p1"]),
+            NetlistPart(kind: .resistor, name: "R3", params: ["resistance": 1500], connections: ["a": "k1", "b": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C2", params: ["capacitance": 22e-6], connections: ["a": "k1", "b": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C3", params: ["capacitance": 22e-9], connections: ["a": "p1", "b": "vol"]),
+            NetlistPart(kind: .potentiometer, name: "VOLUME", params: ["resistance": 1e6, "position": 0.6, "taper": 1],
+                        connections: ["a": "GND", "b": "vol", "wiper": "g2"]),
+            NetlistPart(kind: .pentode, name: "V2", params: model(.pentode, "6L6GC"),
+                        connections: ["grid": "g2", "plate": "p2", "cathode": "k2", "screen": "sc"]),
+            NetlistPart(kind: .resistor, name: "R4", params: ["resistance": 470], connections: ["a": "+300V", "b": "sc"]),
+            NetlistPart(kind: .resistor, name: "R5", params: ["resistance": 250], connections: ["a": "k2", "b": "GND"]),
+            NetlistPart(kind: .capacitor, name: "C4", params: ["capacitance": 100e-6], connections: ["a": "k2", "b": "GND"]),
+            NetlistPart(kind: .transformer, name: "T1", params: model(.transformer, "Output 8 kΩ : 8 Ω"),
+                        connections: ["p1": "+300V", "p2": "p2", "s1": "spk", "s2": "GND"]),
+            NetlistPart(kind: .resistor, name: "R6", params: ["resistance": 8], connections: ["a": "spk", "b": "GND"]),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 5], connections: ["plus": "spk", "minus": "GND"]),
+        ], scopes: [("V1", .voltage), ("SPK1", .voltage)]))
 
     /// Overdrive: a TL072 with a gain of 22 into a pair of 1N4148 diodes that clip at about ±0.6 V
     static let overdrive = Example(

@@ -79,7 +79,7 @@ enum SymbolRenderer {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
              .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac, .digitalDelay,
-             .port, .block:
+             .port, .block, .triode, .pentode, .transformer:
             return 0
         case .schmittInverter, .unbufferedInverter: return 1.8
         case .analogSwitch: return 1.6
@@ -109,6 +109,10 @@ enum SymbolRenderer {
             drawBipolar(element, at: a, b, unit: u, style: style, in: ctx)
         case .njfet:
             drawJFET(element, at: a, b, unit: u, style: style, in: ctx)
+        case .triode, .pentode:
+            drawTube(element, at: a, b, unit: u, style: style, in: ctx)
+        case .transformer:
+            drawTransformer(element, at: a, b, unit: u, style: style, in: ctx)
         case .opAmp, .ota, .comparator:
             drawOpAmp(element, posts: posts, at: a, b, unit: u, style: style, in: ctx)
         case .multiplier, .delayLine, .digitalDelay, .vactrol, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
@@ -328,7 +332,8 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
         case .wire, .ground, .netLabel, .port, .block, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac, .digitalDelay:
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac, .digitalDelay,
+             .triode, .pentode, .transformer:
             break
         }
 
@@ -1020,6 +1025,94 @@ enum SymbolRenderer {
         ctx.restoreGState()
     }
 
+    /// A tube in its glass envelope: the plate above, the cathode below, the control grid between them (dashed) and, for a
+    /// pentode, the screen grid above it, coming out at the side; the cathode glows with its heater
+    private static func drawTube(_ element: Element, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                 in ctx: CGContext) {
+        let L = hypot(b.x - a.x, b.y - a.y)
+        guard L > 0.5 else { return }
+        let pentode = element.kind == .pentode
+        let colors = style.terminalColors.count >= 3 ? style.terminalColors : [style.fill, style.fill, style.fill]
+        let (gridColor, plateColor, cathodeColor) = (colors[0], colors[1], colors[2])
+        let screenColor = colors.count > 3 ? colors[3] : style.fill
+        ctx.saveGState()
+        enterFrame(of: element, at: a, b, in: ctx)
+        let centre = CGPoint(x: L / 2, y: 0)
+        let radius = 1.45 * u
+        let envelope = CGRect(x: centre.x - radius, y: -radius, width: 2 * radius, height: 2 * radius)
+        // the heater's warm glow, then the glass
+        ctx.setFillColor(RGBA(1, 0.55, 0.15).withAlpha(0.10).cgColor)
+        ctx.fillEllipse(in: envelope)
+        ctx.setStrokeColor(style.fill.cgColor)
+        ctx.setLineWidth(style.lineWidth)
+        ctx.strokeEllipse(in: envelope)
+        let inner = (centre.x - 0.62 * u)...(centre.x + 0.62 * u)
+        func line(_ points: [CGPoint], _ color: RGBA, width: CGFloat? = nil, dashed: Bool = false) {
+            let path = CGMutablePath()
+            path.addLines(between: points)
+            ctx.saveGState()
+            if dashed { ctx.setLineDash(phase: 0, lengths: [0.2 * u, 0.14 * u]) }
+            stroke(path, width: width ?? style.lineWidth, from: color, to: color, start: 0, end: 1, length: L, in: ctx)
+            ctx.restoreGState()
+        }
+        // plate: a bar, its lead out of the top and across to its terminal
+        line([CGPoint(x: inner.lowerBound, y: -0.8 * u), CGPoint(x: inner.upperBound, y: -0.8 * u)], plateColor, width: style.lineWidth * 1.6)
+        line([CGPoint(x: centre.x, y: -0.8 * u), CGPoint(x: centre.x, y: -2 * u), CGPoint(x: L, y: -2 * u)], plateColor)
+        // cathode: a bar with turned-up ends, its lead out of the bottom
+        line([CGPoint(x: inner.lowerBound, y: 0.6 * u), CGPoint(x: inner.lowerBound, y: 0.8 * u),
+              CGPoint(x: inner.upperBound, y: 0.8 * u), CGPoint(x: inner.upperBound, y: 0.6 * u)], cathodeColor)
+        line([CGPoint(x: centre.x, y: 0.8 * u), CGPoint(x: centre.x, y: 2 * u), CGPoint(x: L, y: 2 * u)], cathodeColor)
+        // control grid, nearest the cathode in a pentode
+        let gridY: CGFloat = pentode ? 0.3 * u : 0
+        line([CGPoint(x: 0, y: 0), CGPoint(x: inner.lowerBound - 0.15 * u, y: 0), CGPoint(x: inner.lowerBound - 0.15 * u, y: gridY)], gridColor)
+        line([CGPoint(x: inner.lowerBound - 0.15 * u, y: gridY), CGPoint(x: inner.upperBound, y: gridY)], gridColor, dashed: true)
+        if pentode {
+            // screen grid, out to the side
+            line([CGPoint(x: inner.lowerBound, y: -0.3 * u), CGPoint(x: inner.upperBound + 0.15 * u, y: -0.3 * u)], screenColor, dashed: true)
+            line([CGPoint(x: inner.upperBound + 0.15 * u, y: -0.3 * u), CGPoint(x: inner.upperBound + 0.15 * u, y: 0), CGPoint(x: L, y: 0)], screenColor)
+        }
+        ctx.restoreGState()
+    }
+
+    /// Two windings facing each other across an iron core, with dots at the ends that are in phase (p1 and s1)
+    private static func drawTransformer(_ element: Element, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
+                                        in ctx: CGContext) {
+        let L = hypot(b.x - a.x, b.y - a.y)
+        guard L > 0.5 else { return }
+        let colors = style.terminalColors.count >= 4 ? style.terminalColors : [style.fill, style.fill, style.fill, style.fill]
+        ctx.saveGState()
+        enterFrame(of: element, at: a, b, in: ctx)
+        let primaryX = L / 2 - 0.55 * u, secondaryX = L / 2 + 0.55 * u
+        /// A winding of four turns from the top to the bottom, bulging towards `side`
+        func winding(_ x: CGFloat, _ end: CGFloat, side: CGFloat, top: RGBA, bottom: RGBA) {
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: end, y: -u))
+            path.addLine(to: CGPoint(x: x, y: -u))
+            for k in 0..<4 {
+                let y0 = -u + CGFloat(k) * 0.5 * u
+                path.addArc(center: CGPoint(x: x, y: y0 + 0.25 * u), radius: 0.25 * u, startAngle: -.pi / 2, endAngle: .pi / 2,
+                            clockwise: side < 0)
+            }
+            path.addLine(to: CGPoint(x: end, y: u))
+            stroke(path, width: style.lineWidth, from: top, to: bottom, start: 0, end: 1, length: L, in: ctx)
+        }
+        winding(primaryX, 0, side: -1, top: colors[0], bottom: colors[1])
+        winding(secondaryX, L, side: 1, top: colors[2], bottom: colors[3])
+        // the core
+        let core = CGMutablePath()
+        for x in [L / 2 - 0.12 * u, L / 2 + 0.12 * u] {
+            core.move(to: CGPoint(x: x, y: -1.15 * u))
+            core.addLine(to: CGPoint(x: x, y: 1.15 * u))
+        }
+        stroke(core, width: style.lineWidth, from: style.fill, to: style.fill, start: 0, end: 1, length: L, in: ctx)
+        // phase dots
+        ctx.setFillColor(style.fill.cgColor)
+        for x in [primaryX - 0.45 * u, secondaryX + 0.45 * u] {
+            ctx.fillEllipse(in: CGRect(x: x - 0.09 * u, y: -1.25 * u - 0.09 * u, width: 0.18 * u, height: 0.18 * u))
+        }
+        ctx.restoreGState()
+    }
+
     /// The analog switch's control input: a dashed line from its terminal to the lever
     private static func drawControl(from control: CGPoint, at a: CGPoint, _ b: CGPoint, unit u: CGFloat, style: SymbolStyle,
                                     in ctx: CGContext) {
@@ -1247,8 +1340,10 @@ enum SymbolRenderer {
             let length = max(hypot(b.x - a.x, b.y - a.y), 1)
             let end = CGPoint(x: a.x + (b.x - a.x) / length * u, y: a.y + (b.y - a.y) / length * u)
             return [(a, end)]
-        case .nmos, .pmos, .npn, .pnp, .njfet:
-            return posts.count == 3 ? [(a, b), (posts[1], posts[2])] : [(a, b)]
+        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode:
+            return posts.count >= 3 ? [(a, b), (posts[1], posts[2])] : [(a, b)]
+        case .transformer:
+            return posts.count == 4 ? [(posts[0], posts[1]), (posts[2], posts[3]), (a, b)] : [(a, b)]
         case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
              .logicGate:
             return posts.count == 3 ? [(posts[0], posts[1]), (a, b)] : [(a, b)]
@@ -1300,8 +1395,10 @@ enum SymbolRenderer {
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil
-        case .nmos, .pmos, .npn, .pnp, .njfet:
-            return posts.count == 3 ? (posts[1], posts[2], nil) : nil
+        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode:
+            return posts.count >= 3 ? (posts[1], posts[2], nil) : nil
+        case .transformer:
+            return nil
         case .timer555:
             // the output lead
             guard let box = timerBox(posts: posts, at: a, b, unit: u) else { return nil }

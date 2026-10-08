@@ -114,9 +114,16 @@ struct Topology {
         // voltage sources and op-amp outputs get a current unknown, unless they are shorted out
         sourceRow = Array(repeating: -1, count: elements.count)
         var row = nodeCount - 1
-        for (i, element) in elements.enumerated() where element.kind.isVoltageSource || element.kind.drivesOutput {
+        for (i, element) in elements.enumerated() where element.kind.isVoltageSource || element.kind.drivesOutput || element.isTransformerCore {
             let name = element.name.isEmpty ? element.kind.displayName : element.name
-            if element.kind.drivesOutput {
+            if element.isTransformerCore {
+                // an ideal transformer with both windings shorted would leave its current undetermined
+                let n = elementNodes[i]
+                if n.count < 4 || (n[0] == n[1] && n[2] == n[3]) {
+                    shorted.insert(i)
+                    continue
+                }
+            } else if element.kind.drivesOutput {
                 if elementNodes[i][2] == 0 {
                     shorted.insert(i)
                     problems.append("The output of \(name) is connected straight to ground.")

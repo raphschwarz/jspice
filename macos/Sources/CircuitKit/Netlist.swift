@@ -99,7 +99,7 @@ public enum NetlistLayout {
         func p(_ x: Int, _ y: Int) -> GridPoint { origin + GridPoint(x, y) }
         let (a, b): (GridPoint, GridPoint)
         switch part.kind {
-        case .nmos, .pmos, .npn, .pnp, .njfet: (a, b) = (p(4, 4), p(6, 4))
+        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode: (a, b) = (p(4, 4), p(6, 4))
         case .potentiometer, .analogSwitch: (a, b) = (p(3, 5), p(7, 5))
         case .timer555: (a, b) = (p(6, 2), p(6, 7))
         case .ground: (a, b) = (p(5, 4), p(5, 5))

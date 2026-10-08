@@ -535,8 +535,17 @@ struct LiveReadings: View {
                     reading("Collector current", SI.format(simulator.current(index), unit: "A"))
                     reading("Power", SI.format(abs(simulator.value(.power, of: index)), unit: "W"))
                 } else {
-                    reading(kind.isTransistor ? "Drain–source voltage" : "Voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
-                    reading(kind.isTransistor ? "Drain current" : "Current", SI.format(simulator.current(index), unit: "A"))
+                    reading(kind.isTransistor ? "Drain–source voltage" : kind.isTube ? "Plate–cathode voltage"
+                                : kind == .transformer ? "Secondary voltage" : "Voltage",
+                            SI.format(simulator.voltageAcross(index), unit: "V"))
+                    if kind.isTube {
+                        let v = simulator.terminalVoltages(index)
+                        if v.count >= 3 { reading("Grid–cathode voltage", SI.format(v[0] - v[2], unit: "V")) }
+                    }
+                    if kind != .transformer {
+                        reading(kind.isTransistor ? "Drain current" : kind.isTube ? "Plate current" : "Current",
+                                SI.format(simulator.current(index), unit: "A"))
+                    }
                     reading("Power", SI.format(abs(simulator.value(.power, of: index)), unit: "W"))
                     if kind == .memristor {
                         reading("Resistance", SI.format(simulator.value(.resistance, of: index), unit: "Ω"))

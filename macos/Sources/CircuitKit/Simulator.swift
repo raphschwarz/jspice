@@ -324,7 +324,7 @@ public final class Simulator {
         nonlinearIndices = indices {
             switch $0 {
             case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch, .multiplier, .vactrol,
-                 .unbufferedInverter, .pll: return true
+                 .unbufferedInverter, .pll, .triode, .pentode: return true
             default: return false
             }
         }
@@ -934,6 +934,21 @@ public final class Simulator {
                 stampConductance(&matrix, m, nodes[0], nodes[1], a0 * element[param: "capacitance"] / h)
             case .inductor where !linearising:
                 stampConductance(&matrix, m, nodes[0], nodes[1], h / (a0 * max(element[param: "inductance"], 1e-15)))
+            case .transformer:
+                // an ideal transformer (a transformer part's core): the secondary is a voltage source of `ratio` times
+                // the primary's voltage, and the primary carries `ratio` times the secondary's current, so it passes
+                // on exactly the power the secondary delivers
+                let row = topology.sourceRow[i]
+                guard row >= 0, nodes.count == 4 else { continue }
+                let r = constants[i].value
+                add(&matrix, m, nodes[2] - 1, row, -1)
+                add(&matrix, m, nodes[3] - 1, row, 1)
+                add(&matrix, m, nodes[0] - 1, row, r)
+                add(&matrix, m, nodes[1] - 1, row, -r)
+                add(&matrix, m, row, nodes[2] - 1, 1)
+                add(&matrix, m, row, nodes[3] - 1, -1)
+                add(&matrix, m, row, nodes[0] - 1, -r)
+                add(&matrix, m, row, nodes[1] - 1, r)
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
@@ -1193,6 +1208,8 @@ public final class Simulator {
         var onConductance = 0.0, offConductance = 0.0, outputConductance = 0.0, dischargeConductance = 0.0, highDrop = 0.0
         // memristors
         var tau = 1.0, von = 0.0, voff = 0.0
+        // tubes
+        var tube = TubeModel()
     }
 
     /// A parameter that picks a setting, as a whole number within `range` (typed or scripted values can be anything)
@@ -1297,6 +1314,10 @@ public final class Simulator {
             c.highDrop = max(p("decay"), 1e-6)
         case .nmos, .pmos, .njfet:
             (c.polarity, c.threshold, c.beta) = fetParameters(element)
+        case .triode, .pentode:
+            c.tube = TubeModel(mu: p("mu"), ex: p("ex"), kg1: p("kg1"), kg2: p("kg2"), kp: p("kp"), kvb: p("kvb"), rgi: p("rgi"))
+        case .transformer:
+            c.value = p("ratio")
         case .opAmp:
             c.offset = p("offset")
             c.gain = max(p("gain"), 1)
@@ -1630,6 +1651,53 @@ public final class Simulator {
                 stampConductance(&matrix, m, nodes[6], 0, c.outputConductance)
                 if pump > 0 { stampCurrent(&rhs, 0, nodes[6], c.supply * c.outputConductance) }
 
+            case .triode, .pentode:
+                let (grid, plate, cathode) = (nodes[0], nodes[1], nodes[2])
+                let pentode = kinds[i] == .pentode
+                let screen = pentode && nodes.count > 3 ? nodes[3] : 0
+                var vgk = voltage(grid) - voltage(cathode)
+                var vpk = voltage(plate) - voltage(cathode)
+                var vsk = pentode ? voltage(screen) - voltage(cathode) : 0
+                // limit each change per iteration: the grid finely (the current is steep in it), the plate and screen
+                // in bigger steps, as they swing over hundreds of volts
+                if abs(vgk - limitedVoltage[i]) > 2 || abs(vpk - limitedVoltage2[i]) > 50 || abs(vsk - limitedVoltage3[i]) > 50 {
+                    limiting = true
+                }
+                vgk = limitedVoltage[i] + max(-2, min(2, vgk - limitedVoltage[i]))
+                vpk = limitedVoltage2[i] + max(-50, min(50, vpk - limitedVoltage2[i]))
+                vsk = limitedVoltage3[i] + max(-50, min(50, vsk - limitedVoltage3[i]))
+                limitedVoltage[i] = vgk
+                limitedVoltage2[i] = vpk
+                limitedVoltage3[i] = vsk
+                /// a current from `a` to `b` through the tube, following the voltage from `plus` to `minus` with slope `g`
+                func follows(_ a: Int, _ b: Int, _ plus: Int, _ minus: Int, _ g: Double) {
+                    add(&matrix, m, a - 1, plus - 1, g)
+                    add(&matrix, m, a - 1, minus - 1, -g)
+                    add(&matrix, m, b - 1, plus - 1, -g)
+                    add(&matrix, m, b - 1, minus - 1, g)
+                }
+                if pentode {
+                    let t = c.tube.pentode(vgk: vgk, vsk: vsk, vpk: vpk)
+                    follows(plate, cathode, grid, cathode, t.plateGrid)
+                    follows(plate, cathode, screen, cathode, t.plateScreen)
+                    follows(plate, cathode, plate, cathode, t.platePlate)
+                    stampCurrent(&rhs, plate, cathode, t.plate - t.plateGrid * vgk - t.plateScreen * vsk - t.platePlate * vpk)
+                    follows(screen, cathode, grid, cathode, t.screenGrid)
+                    follows(screen, cathode, screen, cathode, t.screenScreen)
+                    stampCurrent(&rhs, screen, cathode, t.screen - t.screenGrid * vgk - t.screenScreen * vsk)
+                } else {
+                    let t = c.tube.triode(vgk: vgk, vpk: vpk)
+                    follows(plate, cathode, grid, cathode, t.dGrid)
+                    follows(plate, cathode, plate, cathode, t.dPlate)
+                    stampCurrent(&rhs, plate, cathode, t.current - t.dGrid * vgk - t.dPlate * vpk)
+                }
+                let g = c.tube.grid(vgk: vgk)
+                stampConductance(&matrix, m, grid, cathode, g.slope)
+                stampCurrent(&rhs, grid, cathode, g.current - g.slope * vgk)
+                // shunts while gmin stepping
+                stampConductance(&matrix, m, plate, cathode, junctionConductance)
+                stampConductance(&matrix, m, grid, cathode, junctionConductance)
+
             case .nmos, .pmos, .njfet:
                 let (polarity, threshold, beta) = (c.polarity, c.threshold, c.beta)
                 let gate = nodes[0]
@@ -1907,6 +1975,10 @@ public final class Simulator {
         case .nmos, .pmos, .njfet:
             limitedVoltage[i] = v(0) - v(2)
             limitedVoltage2[i] = v(1) - v(2)
+        case .triode, .pentode:
+            limitedVoltage[i] = v(0) - v(2)
+            limitedVoltage2[i] = v(1) - v(2)
+            if nodes.count > 3 { limitedVoltage3[i] = v(3) - v(2) }
         case .unbufferedInverter:
             limitedVoltage[i] = v(0)
             limitedVoltage2[i] = v(1)
@@ -2400,6 +2472,24 @@ public final class Simulator {
             let row = topology.sourceRow[i]
             let current = row >= 0 && row < x.count ? x[row] : 0
             return (current, [0, 0, current])
+        case .triode, .pentode:
+            let tube = constants[i].tube
+            let vgk = v(nodes[0]) - v(nodes[2])
+            let vpk = v(nodes[1]) - v(nodes[2])
+            let ig = tube.grid(vgk: vgk).current
+            if element.kind == .pentode, nodes.count > 3 {
+                let t = tube.pentode(vgk: vgk, vsk: v(nodes[3]) - v(nodes[2]), vpk: vpk)
+                return (t.plate, [-ig, -t.plate, t.plate + t.screen + ig, -t.screen])
+            }
+            let ip = tube.triode(vgk: vgk, vpk: vpk).current
+            return (ip, [-ig, -ip, ip + ig])
+        case .transformer:
+            // the part itself; its core carries the currents (see `Circuit.expandModels`)
+            let row = topology.sourceRow[i]
+            let current = row >= 0 && row < x.count ? x[row] : 0
+            let r = constants[i].value
+            // out of the core: the secondary's current at s1, back in at s2; the primary's comes in at p1
+            return (current, [-r * current, r * current, current, -current])
         case .vactrol:
             let c = constants[i]
             let led = diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: c.saturation, nvt: c.nvt).current
@@ -2557,7 +2647,8 @@ public final class Simulator {
         if nodes.count == 1 { return (nodes[0], 0) }
         guard nodes.count >= 2 else { return nil }
         let kind = kinds[index]
-        if kind.isTransistor { return (nodes[1], nodes[2]) }
+        if kind.isTransistor || kind.isTube { return (nodes[1], nodes[2]) }
+        if kind == .transformer { return nodes.count == 4 ? (nodes[2], nodes[3]) : nil }
         if kind == .ota || kind.drivesOutput { return (nodes[2], 0) }
         if kind == .timer555 { return (nodes[2], nodes[0]) }
         if kind.isMicrocontroller || kind.chipPackage != nil || kind == .block { return nil }
