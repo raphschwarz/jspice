@@ -47,6 +47,16 @@ enum SymbolIcons {
             element = Element(kind: kind, a: .zero, b: GridPoint(0, Int(length)))
             unit = min(19.6 / length, 4.4)
             (a, b) = (CGPoint(x: 17, y: 11 - length * unit / 2), CGPoint(x: 17, y: 11 + length * unit / 2))
+        case .block:
+            // a box with an input and an output
+            var inner = Circuit()
+            inner.elements = [Element(kind: .port, name: "in", a: GridPoint(0, 0), b: GridPoint(1, 0), params: ["side": 1]),
+                              Element(kind: .port, name: "out", a: GridPoint(4, 0), b: GridPoint(5, 0), params: ["side": 2])]
+            var box = Element(kind: kind, a: .zero, b: GridPoint(0, 2))
+            box.block = inner.asBlock(named: "")
+            element = box
+            unit = 4.4
+            (a, b) = (CGPoint(x: 17, y: 11 - unit), CGPoint(x: 17, y: 11 + unit))
         case .analogSwitch:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 2, y: 16), CGPoint(x: 32, y: 16), 6.5)
@@ -63,7 +73,7 @@ enum SymbolIcons {
         case .potentiometer, .analogSwitch:
             posts = [a, b, CGPoint(x: (a.x + b.x) / 2, y: 2)]
         case .ota, .timer555, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
-             .analogSelector, .pll, .dac:
+             .analogSelector, .pll, .dac, .block:
             // the element's own terminal layout, scaled into the icon
             posts = element.posts.map { CGPoint(x: a.x + CGFloat($0.x) * unit, y: a.y + CGFloat($0.y) * unit) }
         default:
