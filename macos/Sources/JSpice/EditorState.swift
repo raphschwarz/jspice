@@ -336,6 +336,51 @@ final class EditorState: ObservableObject {
         return AudioClip(name: url.deletingPathExtension().lastPathComponent, sampleRate: format.sampleRate, samples: samples)
     }
 
+    // MARK: - SPICE
+
+    /// Replaces the circuit with a SPICE netlist, drawn as a schematic (File ▸ Import SPICE Netlist)
+    func importSpice() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ["cir", "net", "sp", "spi", "spice", "ckt"].compactMap { UTType(filenameExtension: $0) } + [.plainText]
+        panel.message = "Choose a SPICE netlist: R, C, L, sources, diodes, transistors, coupled inductors and subcircuits are drawn"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let (imported, warnings) = try SpiceNetlist.circuit(from: text)
+            edit("Import SPICE Netlist") { $0 = imported }
+            selection = []
+            requestFit()
+            if !warnings.isEmpty {
+                let alert = NSAlert()
+                alert.messageText = "Some of the netlist was left out"
+                alert.informativeText = warnings.prefix(12).joined(separator: "\n") + (warnings.count > 12 ? "\n…" : "")
+                alert.runModal()
+            }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "That netlist can't be imported"
+            alert.informativeText = "\(error)"
+            alert.runModal()
+        }
+    }
+
+    /// Writes the circuit as a SPICE deck (File ▸ Export SPICE Netlist)
+    func exportSpice() {
+        let save = NSSavePanel()
+        save.allowedContentTypes = [UTType(filenameExtension: "cir") ?? .plainText]
+        let title = canvas?.window?.title ?? "Circuit"
+        save.nameFieldStringValue = title + ".cir"
+        guard save.runModal() == .OK, let url = save.url else { return }
+        do {
+            try SpiceNetlist.export(circuit, title: title).write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "The netlist couldn't be written"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
     /// Renders the circuit's speaker to a WAV file, offline, for as long as asked (File ▸ Export Sound)
     func exportSound() {
         guard let speaker = circuit.elements.firstIndex(where: { $0.kind == .speaker }) else {

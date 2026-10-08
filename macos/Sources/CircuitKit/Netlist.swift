@@ -40,9 +40,12 @@ public struct NetlistPart: Sendable {
 public enum NetlistError: Error, CustomStringConvertible {
     case unknownTerminal(part: String, terminal: String, valid: [String])
     case duplicateName(String)
+    case empty
 
     public var description: String {
         switch self {
+        case .empty:
+            return "There are no parts to draw"
         case let .unknownTerminal(part, terminal, valid):
             return "\(part) has no terminal \"\(terminal)\"; its terminals are \(valid.joined(separator: ", "))"
         case let .duplicateName(name):

@@ -246,6 +246,17 @@ public final class CircuitSession {
         Tool(name: "list_blocks",
              description: "Lists the blocks that can be used: those made with define_block in this session and those in the block library, with their pins.",
              inputSchema: schema([:]), run: { session, _ in session.listBlocks() }),
+        Tool(name: "import_spice",
+             description: "Replaces the circuit with a SPICE netlist, drawn as a tidy schematic: R, C, L, V and I (DC, SIN, PULSE; a 0 V source becomes an ammeter), D, Q, M (level 1), J (N-channel) with their .model parameters, K (two coupled inductors become a transformer) and X with .subckt (subcircuits become blocks). The first line is the title, as in SPICE; M is milli and MEG mega. Returns what was left out.",
+             inputSchema: schema([
+                "netlist": string("The netlist's text"),
+                "path": string("Or a file to read it from"),
+             ]),
+             run: { session, arguments in try session.importSpice(arguments) }),
+        Tool(name: "export_spice",
+             description: "The circuit as a SPICE deck for ngspice or LTspice, with JSpice's own device equations: its parts by net, .model lines, op-amps and tubes as behavioural sources, transformers as coupled inductors, blocks as subcircuits, and a .tran analysis. Parts with no SPICE element (chips, microcontrollers) are named in comments. Writes it to path if given.",
+             inputSchema: schema(["path": string("File to write (optional)")]),
+             run: { session, arguments in try session.exportSpice(arguments) }),
         Tool(name: "save_circuit",
              description: "Saves the circuit as a .jspice file the JSpice app can open.",
              inputSchema: schema(["path": string("File path")], required: ["path"]),
@@ -1440,6 +1451,31 @@ public final class CircuitSession {
     }
 
     // MARK: - Files
+
+    func importSpice(_ arguments: [String: Any]) throws -> Any {
+        var text = arguments["netlist"] as? String ?? ""
+        if text.isEmpty, let path = arguments["path"] as? String, !path.isEmpty {
+            do { text = try String(contentsOfFile: (path as NSString).expandingTildeInPath, encoding: .utf8) } catch {
+                throw ToolError("Can't read \(path)")
+            }
+        }
+        guard !text.isEmpty else { throw ToolError("Give the netlist as \"netlist\" or a file as \"path\"") }
+        let (imported, warnings) = try SpiceNetlist.circuit(from: text)
+        replace(imported, "Import SPICE Netlist")
+        var result = describe()
+        result["left_out"] = warnings
+        return result
+    }
+
+    func exportSpice(_ arguments: [String: Any]) throws -> Any {
+        let deck = SpiceNetlist.export(circuit)
+        if let path = arguments["path"] as? String, !path.isEmpty {
+            let file = (path as NSString).expandingTildeInPath
+            do { try deck.write(toFile: file, atomically: true, encoding: .utf8) } catch { throw ToolError("Can't write \(path)") }
+            return ["saved": file, "netlist": deck]
+        }
+        return ["netlist": deck]
+    }
 
     func save(_ arguments: [String: Any]) throws -> Any {
         let path = (try Self.text(arguments, "path") as NSString).expandingTildeInPath

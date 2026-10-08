@@ -353,6 +353,26 @@ final class AutomationTests: XCTestCase {
         XCTAssertThrowsError(try session.call("sweep", arguments: ["part": "C1", "parameter": "voltage", "values": [1], "measure": ["type": "op", "probes": ["V(out)"]]]))
     }
 
+    func testAnAgentCanImportAndExportSpice() throws {
+        let session = CircuitSession()
+        let imported = try XCTUnwrap(session.call("import_spice", arguments: ["netlist": """
+        divider
+        V1 in 0 DC 9
+        R1 in out 10k
+        R2 out 0 20k
+        G1 a 0 in 0 1m
+        .end
+        """]) as? [String: Any])
+        XCTAssertEqual((imported["parts"] as? [[String: Any]])?.count, 3)
+        XCTAssertEqual((imported["left_out"] as? [String])?.count, 1)
+        let measured = try XCTUnwrap(session.call("measure", arguments: [:]) as? [String: Any])
+        XCTAssertNotNil(measured)
+        let exported = try XCTUnwrap(session.call("export_spice", arguments: [:]) as? [String: Any])
+        let deck = try XCTUnwrap(exported["netlist"] as? String)
+        XCTAssertTrue(deck.contains("R1 in out 10000"), deck)
+        XCTAssertTrue(deck.contains("V1 in 0 DC 9"), deck)
+    }
+
     func testAnAgentCanMapMIDIControllers() throws {
         let session = CircuitSession()
         _ = try session.call("build_circuit", arguments: ["parts": [

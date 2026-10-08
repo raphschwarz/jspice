@@ -96,6 +96,11 @@ struct CircuitCommands: Commands {
             Button("Export Sound…") { editor?.exportSound() }
                 .disabled(editor == nil)
             Divider()
+            Button("Import SPICE Netlist…") { editor?.importSpice() }
+                .disabled(editor == nil)
+            Button("Export SPICE Netlist…") { editor?.exportSpice() }
+                .disabled(editor == nil)
+            Divider()
             Menu("Examples") {
                 ForEach(Examples.all) { example in
                     Button(example.title) { editor?.load(example) }
