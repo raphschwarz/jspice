@@ -18,6 +18,8 @@ final class SpiceCrossCheckTests: XCTestCase {
         let duration: Double
         let times: [Double]
         let probes: [Probe]
+        /// °C, when not the parts' nominal 27 °C
+        let temperature: Double?
         let example: String?
         let parts: [Part]?
     }
@@ -58,7 +60,9 @@ final class SpiceCrossCheckTests: XCTestCase {
             NetlistPart(kind: try XCTUnwrap(ElementKind(rawValue: part.kind)), name: part.name, params: part.params,
                         connections: part.connections)
         }
-        return try SchematicLayout.layout(parts)
+        var circuit = try SchematicLayout.layout(parts)
+        if let temperature = test.temperature { circuit.settings.temperature = temperature }
+        return circuit
     }
 
     private static func interpolate(_ times: [Double], _ values: [Double], at t: Double) -> Double {

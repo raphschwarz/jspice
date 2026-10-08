@@ -89,6 +89,17 @@ public final class Simulator {
     var limitedVoltage: [Double] = []
     var limitedVoltage2: [Double] = []
     var limitedVoltage3: [Double] = []
+    /// The charge on each junction's capacitance, two slots a part (a diode's junction in the first; a transistor's
+    /// base-emitter junction in the first and base-collector in the second), at the last solution and the one before,
+    /// and the current it took to charge it over the last step
+    var junctionCharge: [Double] = []
+    var junctionChargePrevious: [Double] = []
+    var junctionCurrent: [Double] = []
+    /// The parts with junction capacitance or stored charge
+    private var junctionIndices: [Int] = []
+    /// The circuit's temperature in kelvin, and the thermal voltage kT/q there
+    public private(set) var kelvin = Simulator.nominalKelvin
+    private(set) var vt = Simulator.thermalVoltage
     /// Random number generator state of each noise source (xorshift), so a run can be repeated exactly
     var noiseState: [UInt64] = []
     /// What went into each delay line, one value per step, oldest overwritten first
@@ -243,7 +254,9 @@ public final class Simulator {
     private var limiting = false
     private var traces: [UUID: ScopeTrace] = [:]
 
+    /// The thermal voltage kT/q at the nominal temperature, 27 °C, which the parts' parameters are given at
     static let thermalVoltage = 0.025852
+    static let nominalKelvin = 300.15
     static let gmin = 1e-12
     static let maxNewtonIterations = 80
     /// Junction shunts for gmin stepping, strongest first, ending without any
@@ -267,6 +280,7 @@ public final class Simulator {
 
     private struct SavedState {
         var cv, cvp, cvo, ci, lv, li, lip, lio, m, l1, l2, l3: Double
+        var q: [Double]
         var digital: Bool
         var logic: LogicState
         var module: ModuleState
@@ -282,7 +296,10 @@ public final class Simulator {
                 cv: capacitorVoltage[i], cvp: capacitorVoltagePrevious[i], cvo: capacitorVoltageOlder[i],
                 ci: capacitorCurrent[i], lv: inductorVoltage[i], li: inductorCurrent[i], lip: inductorCurrentPrevious[i],
                 lio: inductorCurrentOlder[i], m: memristorStates[i], l1: limitedVoltage[i],
-                l2: limitedVoltage2[i], l3: limitedVoltage3[i], digital: digitalState[i], logic: logicStates[i], module: moduleStates[i],
+                l2: limitedVoltage2[i], l3: limitedVoltage3[i],
+                q: 2 * i + 1 < junctionCharge.count ? [junctionCharge[2 * i], junctionCharge[2 * i + 1],
+                                                       junctionChargePrevious[2 * i], junctionChargePrevious[2 * i + 1]] : [0, 0, 0, 0],
+                digital: digitalState[i], logic: logicStates[i], module: moduleStates[i],
                 noise: noiseState[i], delay: delayHistory[i])
         }
         // chips keep running through edits that leave their firmware alone
@@ -298,8 +315,12 @@ public final class Simulator {
         }
         circuit = newCircuit
         flat = newCircuit.flattened()
+        setTemperature(newCircuit.settings.temperature)
         topology = Topology(circuit: flat)
         let count = flat.elements.count
+        junctionCharge = Array(repeating: 0, count: 2 * count)
+        junctionChargePrevious = Array(repeating: 0, count: 2 * count)
+        junctionCurrent = Array(repeating: 0, count: 2 * count)
         capacitorVoltage = Array(repeating: 0, count: count)
         capacitorVoltagePrevious = Array(repeating: 0, count: count)
         capacitorCurrent = Array(repeating: 0, count: count)
@@ -364,6 +385,7 @@ public final class Simulator {
             chipPinStates[i] = chips[i]?.pinStates
         }
         memristorIndices = indices { $0 == .memristor }
+        junctionIndices = kinds.indices.filter { constants[$0].cj0 > 0 || constants[$0].cj1 > 0 || constants[$0].transit > 0 }
         audioClips = [:]
         for i in indices({ $0 == .audioInput }) {
             let clip = flat.elements[i].audio ?? AudioClip.guitarRiff
@@ -384,6 +406,8 @@ public final class Simulator {
                 limitedVoltage[i] = state.l1
                 limitedVoltage2[i] = state.l2
                 limitedVoltage3[i] = state.l3
+                (junctionCharge[2 * i], junctionCharge[2 * i + 1]) = (state.q[0], state.q[1])
+                (junctionChargePrevious[2 * i], junctionChargePrevious[2 * i + 1]) = (state.q[2], state.q[3])
                 digitalState[i] = state.digital
                 logicStates[i] = state.logic
                 moduleStates[i] = state.module
@@ -427,6 +451,11 @@ public final class Simulator {
         limitedVoltage[i] = 0
         limitedVoltage2[i] = 0
         limitedVoltage3[i] = 0
+        for k in [2 * i, 2 * i + 1] where k < junctionCharge.count {
+            junctionCharge[k] = 0
+            junctionChargePrevious[k] = 0
+            junctionCurrent[k] = 0
+        }
         // a Schmitt inverter's input starts low, so its output starts high; a 555 decides from its trigger
         digitalState[i] = element.kind == .schmittInverter
         logicStates[i] = LogicState()
@@ -454,7 +483,8 @@ public final class Simulator {
         for (i, history) in delayHistory {
             delayHistory[i] = history.resampled(stepRatio: dt / previous, capacity: delayCapacity(i, timeStep: dt))
         }
-        // rebuild the history at the new step from the present slope
+        // rebuild the history at the new step from the present slope (the junctions' charges as if still)
+        junctionChargePrevious = junctionCharge
         substepLevel = 0
         lastLevel = 0
         olderLevel = 0
@@ -499,6 +529,9 @@ public final class Simulator {
         limitedVoltage = other.limitedVoltage
         limitedVoltage2 = other.limitedVoltage2
         limitedVoltage3 = other.limitedVoltage3
+        junctionCharge = other.junctionCharge
+        junctionChargePrevious = other.junctionChargePrevious
+        junctionCurrent = other.junctionCurrent
         digitalState = other.digitalState
         if logicStates != other.logicStates { matrixIsCurrent = false }
         logicStates = other.logicStates
@@ -563,7 +596,9 @@ public final class Simulator {
         }
         circuit = newCircuit
         flat = newFlat
+        setTemperature(newCircuit.settings.temperature)
         constants = newFlat.elements.map { makeConstants($0) }
+        junctionIndices = kinds.indices.filter { constants[$0].cj0 > 0 || constants[$0].cj1 > 0 || constants[$0].transit > 0 }
         for (i, chip) in chips { chip.supply = constants[i].supply }
         for (i, history) in delayHistory {
             let capacity = delayCapacity(i, timeStep: timeStep)
@@ -1210,6 +1245,10 @@ public final class Simulator {
         var tau = 1.0, von = 0.0, voff = 0.0
         // tubes
         var tube = TubeModel()
+        // junction capacitances: zero-bias capacitance, junction potential and grading of a diode's junction or a
+        // transistor's base-emitter (0) and base-collector (1) junctions, and the transit time of the charge stored
+        // by the forward current
+        var cj0 = 0.0, vj0 = 1.0, m0 = 0.5, cj1 = 0.0, vj1 = 0.75, m1 = 0.33, transit = 0.0
     }
 
     /// A parameter that picks a setting, as a whole number within `range` (typed or scripted values can be anything)
@@ -1253,12 +1292,18 @@ public final class Simulator {
         case .diode, .led:
             (c.saturation, c.nvt) = diodeParameters(element)
             c.critical = c.nvt * log(c.nvt / (sqrt(2) * c.saturation))
+            c.cj0 = max(p("cj0"), 0)
+            if element.kind == .diode { c.transit = max(p("tt"), 0) }
         case .zener:
             c.value = abs(p("breakdown"))
+            c.cj0 = max(p("cj0"), 0)
         case .npn, .pnp:
             c.beta = max(p("beta"), 1)
-            c.saturation = max(p("saturationCurrent"), 1e-20)
-            c.critical = Self.thermalVoltage * log(Self.thermalVoltage / (sqrt(2) * c.saturation))
+            c.saturation = atTemperature(max(p("saturationCurrent"), 1e-20), emission: 1)
+            c.critical = vt * log(vt / (sqrt(2) * c.saturation))
+            (c.cj0, c.vj0, c.m0) = (max(p("cje"), 0), 0.75, 0.33)
+            (c.cj1, c.vj1, c.m1) = (max(p("cjc"), 0), 0.75, 0.33)
+            c.transit = max(p("tf"), 0)
         case .multiplier:
             c.gain = p("scale")
             c.limit = max(p("limit"), 0.1)
@@ -1383,13 +1428,80 @@ public final class Simulator {
         case .led:
             // emission coefficient 2, saturation current chosen for the colour's forward voltage at 10 mA
             let color = LEDColor(rawValue: Int(Self.choice(element[param: "color"], 0...4))) ?? .red
-            let nvt = 2 * Self.thermalVoltage
-            return (0.01 / exp(color.forwardVoltage / nvt), nvt)
+            // (fitted at the nominal temperature)
+            return (atTemperature(0.01 / exp(color.forwardVoltage / (2 * Self.thermalVoltage)), emission: 2), 2 * vt)
         case .zener:
-            return (1e-14, Self.thermalVoltage)
+            return (atTemperature(1e-14, emission: 1), vt)
         default:
-            return (max(element[param: "saturationCurrent"], 1e-30), max(element[param: "emission"], 0.1) * Self.thermalVoltage)
+            let n = max(element[param: "emission"], 0.1)
+            return (atTemperature(max(element[param: "saturationCurrent"], 1e-30), emission: n), n * vt)
         }
+    }
+
+    /// Sets the temperature the parts work at (°C): their thermal voltage, and with it their saturation currents
+    private func setTemperature(_ celsius: Double) {
+        kelvin = min(max(celsius, -200), 500) + 273.15
+        vt = Self.thermalVoltage * kelvin / Self.nominalKelvin
+    }
+
+    /// A junction's saturation current at the circuit's temperature, from its value at the nominal temperature, as
+    /// SPICE scales it: Is · (T/Tnom)^(XTI/n) · exp((T/Tnom − 1) Eg / (n Vt)), with silicon's band gap (1.11 eV) and
+    /// XTI 3
+    func atTemperature(_ saturation: Double, emission n: Double) -> Double {
+        let ratio = kelvin / Self.nominalKelvin
+        guard ratio != 1 else { return saturation }
+        return saturation * exp((ratio - 1) * 1.11 / (n * vt)) * pow(ratio, 3 / n)
+    }
+
+    /// The charge on a junction's depletion capacitance at voltage `v`, and the capacitance (SPICE's: graded as
+    /// (1 − v/vj)^−m up to half the junction potential, then continued in a straight line)
+    static func depletion(_ v: Double, cj: Double, vj: Double, m: Double) -> (charge: Double, capacitance: Double) {
+        guard cj > 0 else { return (0, 0) }
+        let fc = 0.5
+        if v < fc * vj {
+            let s = pow(1 - v / vj, -m)
+            return (cj * vj / (1 - m) * (1 - (1 - v / vj) * s), cj * s)
+        }
+        let f1 = vj / (1 - m) * (1 - pow(1 - fc, 1 - m))
+        let f2 = pow(1 - fc, 1 + m)
+        let f3 = 1 - fc * (1 + m)
+        let vf = fc * vj
+        return (cj * f1 + cj / f2 * (f3 * (v - vf) + m / (2 * vj) * (v * v - vf * vf)), cj / f2 * (f3 + m * v / vj))
+    }
+
+    /// The charge a part's junction (slot 0 or 1) holds at voltage `v` (in the part's own polarity) and its slope:
+    /// depletion charge, plus for a diode's junction and a transistor's base-emitter junction the charge its forward
+    /// current stores over the transit time
+    private func junctionChargeAndCapacitance(_ i: Int, slot: Int, _ v: Double) -> (charge: Double, capacitance: Double) {
+        let c = constants[i]
+        var (q, cap) = slot == 0 ? Self.depletion(v, cj: c.cj0, vj: c.vj0, m: c.m0) : Self.depletion(v, cj: c.cj1, vj: c.vj1, m: c.m1)
+        if slot == 0 && c.transit > 0 {
+            let forward: (current: Double, conductance: Double)
+            switch kinds[i] {
+            case .npn, .pnp:
+                let e = exp(min(v / vt, 700))
+                forward = (c.saturation * (e - 1), c.saturation * e / vt)
+            default:
+                forward = diodeCurrent(v, saturation: c.saturation, nvt: c.nvt)
+            }
+            q += c.transit * forward.current
+            cap += c.transit * forward.conductance
+        }
+        return (q, cap)
+    }
+
+    /// Stamps the charging of a junction's charge (slot `slot` of part `i`) over the substep, linearised at junction
+    /// voltage `v` (in the part's polarity `p`), from `plus` to `minus`
+    private func stampJunctionCharge(_ matrix: inout [Double], _ rhs: inout [Double], _ m: Int, _ i: Int, slot: Int,
+                                     _ plus: Int, _ minus: Int, polarity p: Double, _ v: Double) {
+        guard !linearising else { return }
+        let (q, cap) = junctionChargeAndCapacitance(i, slot: slot, v)
+        guard cap > 0 || q != 0 else { return }
+        let k = 2 * i + slot
+        let current = (a0 * q + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
+        let g = a0 * cap / h
+        stampConductance(&matrix, m, plus, minus, g)
+        stampCurrent(&rhs, plus, minus, p * (current - g * v))
     }
 
     /// Junction voltage limiting (as in SPICE's pnjlim), so Newton does not overshoot into exp() overflow
@@ -1412,10 +1524,10 @@ public final class Simulator {
 
     /// A Zener diode: an ordinary forward junction, plus a reverse current that rises steeply past the breakdown voltage
     func zenerCurrent(_ vd: Double, breakdown: Double) -> (current: Double, conductance: Double) {
-        let forward = diodeCurrent(vd, saturation: 1e-14, nvt: Self.thermalVoltage)
-        let e = exp(min(-(vd + breakdown) / Self.thermalVoltage, 700))
+        let forward = diodeCurrent(vd, saturation: atTemperature(1e-14, emission: 1), nvt: vt)
+        let e = exp(min(-(vd + breakdown) / vt, 700))
         let reverse = Self.zenerKneeCurrent * e
-        return (forward.current - reverse, forward.conductance + reverse / Self.thermalVoltage)
+        return (forward.current - reverse, forward.conductance + reverse / vt)
     }
 
     /// Level-1 (Shichman-Hodges) MOSFET for positive vgs/vds: drain current and its derivatives. A 1 nS leak from drain
@@ -1466,7 +1578,6 @@ public final class Simulator {
 
     /// Ebers-Moll transport model of an NPN transistor (a PNP is the same with all voltages and currents negated)
     func bipolarCurrents(vbe: Double, vbc: Double, beta: Double, saturation: Double = Simulator.transistorSaturationCurrent) -> BipolarModel {
-        let vt = Self.thermalVoltage
         let reverseBeta = 1.0
         let f = exp(min(vbe / vt, 700))
         let r = exp(min(vbc / vt, 700))
@@ -1566,10 +1677,10 @@ public final class Simulator {
                 gd += junctionConductance
                 stampConductance(&matrix, m, nodes[0], nodes[1], gd)
                 stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
+                if c.cj0 > 0 || c.transit > 0 { stampJunctionCharge(&matrix, &rhs, m, i, slot: 0, nodes[0], nodes[1], polarity: 1, vd) }
 
             case .zener:
                 let breakdown = c.value
-                let vt = Self.thermalVoltage
                 let new = voltage(nodes[0]) - voltage(nodes[1])
                 let old = limitedVoltage[i]
                 var vd = new
@@ -1587,11 +1698,11 @@ public final class Simulator {
                 gd += junctionConductance
                 stampConductance(&matrix, m, nodes[0], nodes[1], gd)
                 stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
+                if c.cj0 > 0 { stampJunctionCharge(&matrix, &rhs, m, i, slot: 0, nodes[0], nodes[1], polarity: 1, vd) }
 
             case .npn, .pnp:
                 let p: Double = kinds[i] == .npn ? 1 : -1
                 let (base, collector, emitter) = (nodes[0], nodes[1], nodes[2])
-                let vt = Self.thermalVoltage
                 let critical = c.critical
                 // limit the junctions in the transistor's own polarity
                 let vbe = limitJunction(p * (voltage(base) - voltage(emitter)), old: limitedVoltage[i], nvt: vt, critical: critical)
@@ -1623,6 +1734,8 @@ public final class Simulator {
                 stampTerminal(collector, p * model.ic, model.dicVbe, model.dicVbc)
                 stampTerminal(base, p * model.ib, model.dibVbe, model.dibVbc)
                 stampTerminal(emitter, -p * (model.ic + model.ib), -(model.dicVbe + model.dibVbe), -(model.dicVbc + model.dibVbc))
+                if c.cj0 > 0 || c.transit > 0 { stampJunctionCharge(&matrix, &rhs, m, i, slot: 0, base, emitter, polarity: p, vbe) }
+                if c.cj1 > 0 { stampJunctionCharge(&matrix, &rhs, m, i, slot: 1, base, collector, polarity: p, vbc) }
 
             case .unbufferedInverter:
                 let (input, output) = (nodes[0], nodes[1])
@@ -1919,6 +2032,15 @@ public final class Simulator {
                 admittance(nodes[0], nodes[1], .capacitance(c.value))
             case .inductor:
                 admittance(nodes[0], nodes[1], .inductance(c.value))
+            case .diode, .led, .zener:
+                let capacitance = junctionChargeAndCapacitance(i, slot: 0, voltage(nodes[0]) - voltage(nodes[1])).capacitance
+                if capacitance > 0 { admittance(nodes[0], nodes[1], .capacitance(capacitance)) }
+            case .npn, .pnp:
+                let p: Double = kinds[i] == .npn ? 1 : -1
+                let be = junctionChargeAndCapacitance(i, slot: 0, p * (voltage(nodes[0]) - voltage(nodes[2]))).capacitance
+                let bc = junctionChargeAndCapacitance(i, slot: 1, p * (voltage(nodes[0]) - voltage(nodes[1]))).capacitance
+                if be > 0 { admittance(nodes[0], nodes[2], .capacitance(be)) }
+                if bc > 0 { admittance(nodes[0], nodes[1], .capacitance(bc)) }
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 if row >= 0 { drives[i] = .row(row) }
             case .currentSource:
@@ -2064,6 +2186,24 @@ public final class Simulator {
 
     /// After each substep: the state of capacitors, inductors, op-amps' internal stages, vactrols and memristors
     private func updateDynamicStates() {
+        for i in junctionIndices {
+            let nodes = topology.elementNodes[i]
+            func commit(_ slot: Int, _ v: Double) {
+                let k = 2 * i + slot
+                let q = junctionChargeAndCapacitance(i, slot: slot, v).charge
+                junctionCurrent[k] = (a0 * q + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
+                junctionChargePrevious[k] = junctionCharge[k]
+                junctionCharge[k] = q
+            }
+            switch kinds[i] {
+            case .npn, .pnp:
+                let p: Double = kinds[i] == .npn ? 1 : -1
+                commit(0, p * (voltage(nodes[0]) - voltage(nodes[2])))
+                commit(1, p * (voltage(nodes[0]) - voltage(nodes[1])))
+            default:
+                commit(0, voltage(nodes[0]) - voltage(nodes[1]))
+            }
+        }
         for i in dynamicIndices {
             let nodes = topology.elementNodes[i]
             let parameters = constants[i]
@@ -2444,9 +2584,9 @@ public final class Simulator {
             return twoTerminal(constants[i].value)
         case .diode, .led:
             let c = constants[i]
-            return twoTerminal(diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: c.saturation, nvt: c.nvt).current)
+            return twoTerminal(diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: c.saturation, nvt: c.nvt).current + junctionCurrent[2 * i])
         case .zener:
-            return twoTerminal(zenerCurrent(v(nodes[0]) - v(nodes[1]), breakdown: constants[i].value).current)
+            return twoTerminal(zenerCurrent(v(nodes[0]) - v(nodes[1]), breakdown: constants[i].value).current + junctionCurrent[2 * i])
         case .memristor:
             return twoTerminal((v(nodes[0]) - v(nodes[1])) * memristorConductance(i, state: memristorStates[i]))
         case .nmos, .pmos, .njfet:
@@ -2466,7 +2606,9 @@ public final class Simulator {
             let p: Double = element.kind == .npn ? 1 : -1
             let model = bipolarCurrents(vbe: p * (v(nodes[0]) - v(nodes[2])), vbc: p * (v(nodes[0]) - v(nodes[1])),
                                         beta: constants[i].beta, saturation: constants[i].saturation)
-            let (ic, ib) = (p * model.ic, p * model.ib)
+            // with the junctions' charging currents: base to emitter, base to collector
+            let (be, bc) = (p * junctionCurrent[2 * i], p * junctionCurrent[2 * i + 1])
+            let (ic, ib) = (p * model.ic - bc, p * model.ib + be + bc)
             return (ic, [-ib, -ic, ic + ib])
         case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
             let row = topology.sourceRow[i]

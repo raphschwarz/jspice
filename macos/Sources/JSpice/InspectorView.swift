@@ -622,6 +622,18 @@ struct CircuitInspector: View {
                             }
                     }
                 }
+                LabeledContent("Temperature") {
+                    HStack(spacing: 4) {
+                        Slider(value: Binding(get: { settings.temperature }, set: { celsius in
+                            editor.updateSettings { $0.temperature = celsius.rounded() }
+                        }), in: -40...125)
+                        .frame(maxWidth: 110)
+                        Text(String(format: "%.0f °C", settings.temperature))
+                            .monospacedDigit()
+                            .frame(width: 48, alignment: .trailing)
+                    }
+                }
+                .help("The temperature the diodes and transistors work at: hotter, their junctions drop about 2 mV less per degree")
                 LabeledContent("Circuit time", value: SI.format(simulation.status.time, unit: "s", digits: 4))
             } header: {
                 Text("Simulation")

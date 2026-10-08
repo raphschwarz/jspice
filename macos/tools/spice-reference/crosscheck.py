@@ -2,10 +2,9 @@
 
 Each case is a circuit as JSpice netlist parts (an example from Examples.swift, read from the source, or one defined
 here). It is translated into a SPICE deck whose device models are JSpice's own equations (Shockley diodes, Ebers-Moll
-transistors, level-1 MOSFETs, JSpice's op-amp macromodel as behavioural sources), run in ngspice with tight
-tolerances, and the probed node voltages are sampled. The one addition: 1 pF on each junction, which JSpice's models do
-not have, so that ngspice's switching edges are not infinitely fast (it gives up on those); at these circuits' time
-scales it changes nothing measurable. The result, Tests/CircuitKitTests/Fixtures/spice-reference.json,
+transistors, level-1 MOSFETs, JSpice's op-amp macromodel as behavioural sources, junction capacitances and stored
+charge as SPICE's), run in ngspice with tight tolerances, and the probed node voltages are sampled. A case may run at
+another temperature than the parts' nominal 27 °C. The result, Tests/CircuitKitTests/Fixtures/spice-reference.json,
 is what SpiceCrossCheckTests compares JSpice with: so differences measure JSpice's numerics, not its models.
 
 python3 crosscheck.py            # writes the fixture (needs ngspice)
@@ -83,19 +82,20 @@ def param(part, key):
 def net(name):
     return '0' if name in ('GND', '0') else 'n_' + re.sub(r'\W', '_', name)
 
-def spice_deck(parts, duration, probes, step):
-    lines, models = spice_elements(parts)
+def spice_deck(parts, duration, probes, step, temperature=27):
+    lines, models = spice_elements(parts, temperature=temperature)
     data = tempfile.mktemp(suffix='.txt')
     lines += models
     lines += ['.tran %.6g %.12g 0 %.6g uic' % (step, duration, step), '.control', 'run',
               'wrdata %s %s' % (data, ' '.join('v(%s)' % net(x) for x in probes)), 'quit', '.endc', '.end']
     return '\n'.join(lines) + '\n', data
 
-def spice_elements(parts, ac_source=None):
+def spice_elements(parts, ac_source=None, temperature=27):
     """The deck's options and element lines, and its models; `ac_source` is the source driven in an AC analysis"""
+    # JSpice's thermal voltage, 25.852 mV, is kT/q at 300.00 K: its nominal 27 °C
+    nominal = VT / 8.617333262e-5 - 273.15
     lines = ['* JSpice cross-check', '.options reltol=1e-6 abstol=1e-13 vntol=1e-8 gmin=1e-12 method=gear maxord=2 itl4=200',
-             # JSpice's thermal voltage, 25.852 mV, is kT/q at 300.00 K
-             '.options temp=%.4f tnom=%.4f' % (VT / 8.617333262e-5 - 273.15, VT / 8.617333262e-5 - 273.15)]
+             '.options temp=%.4f tnom=%.4f' % (nominal + temperature - 27, nominal)]
     models = []
     for p in parts:
         k, n, c = p['kind'], p['name'], p['connections']
@@ -132,12 +132,14 @@ def spice_elements(parts, ac_source=None):
             elif k == 'zener':
                 model = 'IS=1e-14 N=1 BV=%.12g IBV=5e-3' % abs(param(p, 'breakdown'))
             else:
-                model = 'IS=%.12g N=%.12g' % (max(param(p, 'saturationCurrent'), 1e-30), max(param(p, 'emission'), 0.1))
-            models.append('.model D_%s D(%s CJO=1p)' % (n, model))
+                model = 'IS=%.12g N=%.12g TT=%.12g' % (max(param(p, 'saturationCurrent'), 1e-30), max(param(p, 'emission'), 0.1),
+                                                      param(p, 'tt'))
+            models.append('.model D_%s D(%s CJO=%.12g VJ=1 M=0.5)' % (n, model, param(p, 'cj0')))
             lines.append('D%s %s %s D_%s' % (n, pin('anode'), pin('cathode'), n))
         elif k in ('npn', 'pnp'):
-            models.append('.model Q_%s %s(IS=%.12g BF=%.12g BR=1 CJE=1p CJC=1p)' % (n, k.upper(), max(param(p, 'saturationCurrent'), 1e-20),
-                                                                   max(param(p, 'beta'), 1)))
+            models.append('.model Q_%s %s(IS=%.12g BF=%.12g BR=1 CJE=%.12g VJE=0.75 MJE=0.33 CJC=%.12g VJC=0.75 MJC=0.33 TF=%.12g)' % (
+                n, k.upper(), max(param(p, 'saturationCurrent'), 1e-20), max(param(p, 'beta'), 1), param(p, 'cje'), param(p, 'cjc'),
+                param(p, 'tf')))
             lines.append('Q%s %s %s %s Q_%s' % (n, pin('collector'), pin('base'), pin('emitter'), n))
         elif k in ('nmos', 'pmos'):
             threshold = param(p, 'threshold')
@@ -206,13 +208,10 @@ def spice_elements(parts, ac_source=None):
             if k == 'acVoltage':
                 lines[-1] = 'V%s %s %s DC %.12g' % (n, pin('plus'), pin('minus'), param(p, 'offset'))
             lines[-1] += ' AC 1'
-    if ac_source is not None:
-        # the junction capacitances only ease ngspice's switching edges; a small-signal comparison is exact without them
-        models = [re.sub(r' CJ[OEC]=1p', '', m) for m in models]
     return lines, models
 
-def run_ngspice(parts, duration, probes, step):
-    deck, data = spice_deck(parts, duration, probes, step)
+def run_ngspice(parts, duration, probes, step, temperature=27):
+    deck, data = spice_deck(parts, duration, probes, step, temperature)
     with tempfile.NamedTemporaryFile('w', suffix='.cir', delete=False) as f:
         f.write(deck)
     result = subprocess.run(['ngspice', '-b', f.name], capture_output=True, text=True, timeout=600)
@@ -308,6 +307,8 @@ CASES = [
         P('npn', 'Q1', dict(base='base', collector='col', emitter='emi'), beta=150),
         P('acVoltage', 'VIN', dict(plus='sig', minus='GND'), amplitude=0.05, frequency=1000),
         P('capacitor', 'CIN', dict(a='sig', b='base'), capacitance=1e-6)]),
+    dict(id='hot-common-emitter', note='the common-emitter amplifier at 70 °C: more saturation current, less base voltage',
+         duration=0.1, probes=['col', 'base'], temperature=70, parts=None),
     dict(id='astable', note='the blinker: a two-transistor astable multivibrator with LEDs, about 0.7 s a cycle',
          duration=3, probes=['c1', 'b1'], periodic=['c1', 'b1'], parts=[
         P('dcVoltage', 'VCC', dict(plus='vcc', minus='GND'), voltage=9),
@@ -364,9 +365,20 @@ CASES = [
         P('capacitor', 'C1', dict(a='out', b='GND'), capacitance=470e-6),
         P('resistor', 'R1', dict(a='out', b='GND'), resistance=100)]),
     dict(id='fuzz', example='fuzz', note='the Fuzz Face example (two BC108s)', duration=0.03, probes=['c2', 'out']),
+    dict(id='rectifier-1n4001', note='a 1N4001 rectifying 2 kHz: its 5.7 µs of stored charge lets current back for a moment',
+         duration=0.002, probes=['out'], parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=10, frequency=2000),
+        P('diode', 'D1', dict(anode='in', cathode='out'), **MODELS[('diode', '1N4001')]),
+        P('capacitor', 'C1', dict(a='out', b='GND'), capacitance=1e-6),
+        P('resistor', 'R1', dict(a='out', b='GND'), resistance=1000)]),
     dict(id='overdrive', example='overdrive', note='the diode-clipper overdrive example (TL072, 1N4148s)', duration=0.02,
          probes=['amp', 'clip']),
 ]
+
+def case_parts(id):
+    return next(c for c in CASES if c['id'] == id)['parts']
+
+next(c for c in CASES if c['id'] == 'hot-common-emitter')['parts'] = case_parts('common-emitter')
 
 # Small-signal (AC) analysis: ngspice's operating point and .ac sweep; JSpice settles the circuit with the driven
 # source's amplitude at zero and linearises it there
@@ -387,7 +399,7 @@ AC_CASES = [
         P('zener', 'D1', dict(anode='GND', cathode='out'), breakdown=5.1),
         P('resistor', 'R2', dict(a='out', b='GND'), resistance=1000)]),
     dict(id='common-emitter', note='NPN common-emitter amplifier with a bypassed emitter', source='VIN', settle=0.3,
-         probes=['col', 'base'], parts=[p for p in CASES[5]['parts']]),
+         probes=['col', 'base'], parts=list(case_parts('common-emitter'))),
     dict(id='jfet', note='N-JFET common-source stage biased at -0.75 V', source='VG', settle=0.001, probes=['drain'], parts=[
         P('dcVoltage', 'VDD', dict(plus='vdd', minus='GND'), voltage=12),
         P('acVoltage', 'VG', dict(plus='gate', minus='GND'), amplitude=0.5, offset=-0.75, frequency=1000),
@@ -396,7 +408,7 @@ AC_CASES = [
         P('capacitor', 'CL', dict(a='out', b='GND'), capacitance=10e-9),
         P('njfet', 'J1', dict(gate='gate', drain='drain', source='GND'))]),
     dict(id='opamp-inverting', note='TL072 inverting amplifier, gain 10, out to its 3 MHz bandwidth', source='VIN', settle=0.001,
-         probes=['out'], fstop=1e7, parts=[p for p in CASES[9]['parts']]),
+         probes=['out'], fstop=1e7, parts=list(case_parts('opamp-inverting'))),
     dict(id='sallen-key', note='TL072 Sallen-Key low-pass, 1.59 kHz, Q 0.5', source='VIN', settle=0.01, probes=['out'], parts=[
         P('acVoltage', 'VIN', dict(plus='in', minus='GND'), amplitude=1, frequency=1000),
         P('resistor', 'R1', dict(a='in', b='a'), resistance=10_000),
@@ -472,7 +484,7 @@ def main():
         parts = example_parts(case['example']) if 'example' in case else case['parts']
         samples = 400
         step = case['duration'] / 20_000
-        time, waves = run_ngspice(parts, case['duration'], case['probes'], step)
+        time, waves = run_ngspice(parts, case['duration'], case['probes'], step, case.get('temperature', 27))
         times = [case['duration'] * (k + 1) / samples for k in range(samples)]
         probes = []
         for name in case['probes']:
@@ -486,6 +498,8 @@ def main():
             probes.append(entry)
         entry = dict(id=case['id'], note=case['note'], duration=case['duration'], times=[round(t, 12) for t in times],
                      probes=probes)
+        if 'temperature' in case:
+            entry['temperature'] = case['temperature']
         if 'example' in case:
             entry['example'] = case['example']
         else:

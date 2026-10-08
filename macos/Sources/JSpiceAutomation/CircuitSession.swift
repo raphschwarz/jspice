@@ -103,6 +103,10 @@ public final class CircuitSession {
              description: "Opens or closes a switch or push button.",
              inputSchema: schema(["part": string("Part name"), "closed": ["type": "boolean"]], required: ["part", "closed"]),
              run: { session, arguments in try session.setSwitch(arguments) }),
+        Tool(name: "set_temperature",
+             description: "Sets the temperature the circuit works at, in °C (27 by default, where the parts' parameters are given). Diodes, LEDs and bipolar transistors follow it as in SPICE: their saturation current rises and their junctions drop about 2 mV less per degree, so a bias point drifts as a real one does.",
+             inputSchema: schema(["celsius": ["description": "Temperature in °C, -200 to 500"]], required: ["celsius"]),
+             run: { session, arguments in try session.setTemperature(arguments) }),
         Tool(name: "map_midi",
              description: "Maps a MIDI controller (control change number 0–119) to a potentiometer, switch or push button, as MIDI Learn does in the app: the pot follows the controller across its travel, a switch or button is on from 64 up. The mapping is saved with the circuit. remove true takes the part's mapping away.",
              inputSchema: schema([
@@ -627,6 +631,14 @@ public final class CircuitSession {
         return ["part": circuit.elements[index].name, "closed": closed]
     }
 
+    func setTemperature(_ arguments: [String: Any]) throws -> Any {
+        guard let celsius = try Self.number(arguments["celsius"], "celsius"), (-200...500).contains(celsius) else {
+            throw ToolError("\"celsius\" should be a temperature from -200 to 500 °C")
+        }
+        change("Change Temperature") { $0.settings.temperature = celsius }
+        return ["temperature": celsius]
+    }
+
     func mapMIDI(_ arguments: [String: Any]) throws -> Any {
         let index = try index(ofPart: try Self.text(arguments, "part"))
         let element = circuit.elements[index]
@@ -718,6 +730,7 @@ public final class CircuitSession {
             "nets": nets.sorted(),
             "problems": simulator.problems,
             "suggested_time_step": Pacing.suggest(for: circuit).timeStep,
+            "temperature": circuit.settings.temperature,
         ]
         if let sequence = circuit.sequence { result["sequence"] = Self.describe(sequence) }
         return result

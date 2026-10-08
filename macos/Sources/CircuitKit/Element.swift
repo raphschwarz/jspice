@@ -494,11 +494,17 @@ extension ElementKind {
                 ParamSpec("taper", "Taper (0 linear, 1 audio)", unit: "", default: 0, range: 0...1, log: false),
             ]
         case .zener:
-            return [ParamSpec("breakdown", "Breakdown voltage", unit: "V", default: 5.1, range: 1...50, log: false)]
+            return [
+                ParamSpec("breakdown", "Breakdown voltage", unit: "V", default: 5.1, range: 1...50, log: false),
+                ParamSpec("cj0", "Junction capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+            ]
         case .npn, .pnp:
             return [
                 ParamSpec("beta", "Current gain", unit: "", default: 100, range: 5...1000),
                 ParamSpec("saturationCurrent", "Saturation current", unit: "A", default: 1e-14, range: 1e-17...1e-5),
+                ParamSpec("cje", "Base–emitter capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+                ParamSpec("cjc", "Base–collector capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+                ParamSpec("tf", "Forward transit time", unit: "s", default: 0, range: 0...1e-6, log: false),
             ]
         case .multiplier:
             return [
@@ -709,9 +715,14 @@ extension ElementKind {
             return [
                 ParamSpec("saturationCurrent", "Saturation current", unit: "A", default: 1e-14, range: 1e-18...1e-6),
                 ParamSpec("emission", "Emission coefficient", unit: "", default: 1, range: 0.5...3, log: false),
+                ParamSpec("cj0", "Junction capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+                ParamSpec("tt", "Transit time (stored charge)", unit: "s", default: 0, range: 0...1e-4, log: false),
             ]
         case .led:
-            return [ParamSpec("color", "Color", unit: "", default: 0, range: 0...4, log: false)]
+            return [
+                ParamSpec("color", "Color", unit: "", default: 0, range: 0...4, log: false),
+                ParamSpec("cj0", "Junction capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+            ]
         case .nmos, .pmos:
             return [
                 ParamSpec("threshold", "Threshold voltage", unit: "V", default: 1.5, range: 0.1...5, log: false),
@@ -1054,27 +1065,37 @@ extension ElementKind {
         case .diode:
             return [
                 PartModel(name: "Generic silicon", summary: "An ideal silicon junction",
-                          values: ["saturationCurrent": 1e-14, "emission": 1]),
+                          values: ["saturationCurrent": 1e-14, "emission": 1, "cj0": 1e-12, "tt": 0]),
                 PartModel(name: "1N4148", summary: "Small-signal switching diode: the usual clipping diode",
-                          values: ["saturationCurrent": 2.52e-9, "emission": 1.752]),
-                PartModel(name: "1N4001", summary: "Rectifier", values: ["saturationCurrent": 14.1e-9, "emission": 1.984]),
+                          values: ["saturationCurrent": 2.52e-9, "emission": 1.752, "cj0": 4e-12, "tt": 20e-9]),
+                PartModel(name: "1N4001", summary: "Rectifier: slow to let go of its stored charge",
+                          values: ["saturationCurrent": 14.1e-9, "emission": 1.984, "cj0": 25.9e-12, "tt": 5.7e-6]),
                 PartModel(name: "1N34A", summary: "Germanium: soft, low-voltage clipping for vintage fuzz",
-                          values: ["saturationCurrent": 2.6e-6, "emission": 1.6]),
-                PartModel(name: "BAT41", summary: "Schottky: low forward voltage", values: ["saturationCurrent": 2.8e-8, "emission": 1.06]),
+                          values: ["saturationCurrent": 2.6e-6, "emission": 1.6, "cj0": 0.5e-12, "tt": 0]),
+                PartModel(name: "BAT41", summary: "Schottky: low forward voltage, no stored charge",
+                          values: ["saturationCurrent": 2.8e-8, "emission": 1.06, "cj0": 2e-12, "tt": 0]),
             ]
         case .npn:
             return [
-                PartModel(name: "Generic", summary: "A plain silicon NPN", values: ["beta": 100, "saturationCurrent": 1e-14]),
-                PartModel(name: "2N3904", summary: "General purpose", values: ["beta": 300, "saturationCurrent": 6.7e-15]),
-                PartModel(name: "BC547C", summary: "High gain, low noise", values: ["beta": 500, "saturationCurrent": 1.8e-14]),
-                PartModel(name: "2N5088", summary: "Very high gain: fuzz and distortion pedals", values: ["beta": 800, "saturationCurrent": 2e-14]),
-                PartModel(name: "BC108", summary: "Silicon Fuzz Face", values: ["beta": 300, "saturationCurrent": 1.8e-14]),
+                PartModel(name: "Generic", summary: "A plain silicon NPN",
+                          values: ["beta": 100, "saturationCurrent": 1e-14, "cje": 1e-12, "cjc": 1e-12, "tf": 0]),
+                PartModel(name: "2N3904", summary: "General purpose",
+                          values: ["beta": 300, "saturationCurrent": 6.7e-15, "cje": 4.5e-12, "cjc": 3.6e-12, "tf": 300e-12]),
+                PartModel(name: "BC547C", summary: "High gain, low noise",
+                          values: ["beta": 500, "saturationCurrent": 1.8e-14, "cje": 11.5e-12, "cjc": 5.25e-12, "tf": 410e-12]),
+                PartModel(name: "2N5088", summary: "Very high gain: fuzz and distortion pedals",
+                          values: ["beta": 800, "saturationCurrent": 2e-14, "cje": 6e-12, "cjc": 4e-12, "tf": 450e-12]),
+                PartModel(name: "BC108", summary: "Silicon Fuzz Face",
+                          values: ["beta": 300, "saturationCurrent": 1.8e-14, "cje": 12e-12, "cjc": 5e-12, "tf": 500e-12]),
             ]
         case .pnp:
             return [
-                PartModel(name: "Generic", summary: "A plain silicon PNP", values: ["beta": 100, "saturationCurrent": 1e-14]),
-                PartModel(name: "2N3906", summary: "General purpose", values: ["beta": 200, "saturationCurrent": 1.4e-15]),
-                PartModel(name: "AC128", summary: "Germanium: the original Fuzz Face", values: ["beta": 90, "saturationCurrent": 5e-8]),
+                PartModel(name: "Generic", summary: "A plain silicon PNP",
+                          values: ["beta": 100, "saturationCurrent": 1e-14, "cje": 1e-12, "cjc": 1e-12, "tf": 0]),
+                PartModel(name: "2N3906", summary: "General purpose",
+                          values: ["beta": 200, "saturationCurrent": 1.4e-15, "cje": 8e-12, "cjc": 4.5e-12, "tf": 510e-12]),
+                PartModel(name: "AC128", summary: "Germanium: the original Fuzz Face, slow (about 1 MHz)",
+                          values: ["beta": 90, "saturationCurrent": 5e-8, "cje": 60e-12, "cjc": 30e-12, "tf": 150e-9]),
             ]
         case .multiplier:
             return [

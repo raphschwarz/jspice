@@ -70,12 +70,15 @@ public struct SimulationSettings: Codable, Hashable, Sendable {
     public var speed: Double
     public var autoTimeStep: Bool
     public var timeStep: Double
+    /// The temperature the parts work at, in °C (their parameters are given at 27 °C)
+    public var temperature: Double
 
-    public init(autoSpeed: Bool = true, speed: Double = 1, autoTimeStep: Bool = true, timeStep: Double = 1e-5) {
+    public init(autoSpeed: Bool = true, speed: Double = 1, autoTimeStep: Bool = true, timeStep: Double = 1e-5, temperature: Double = 27) {
         self.autoSpeed = autoSpeed
         self.speed = speed
         self.autoTimeStep = autoTimeStep
         self.timeStep = timeStep
+        self.temperature = temperature
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,6 +87,7 @@ public struct SimulationSettings: Codable, Hashable, Sendable {
         speed = try container.decodeIfPresent(Double.self, forKey: .speed) ?? 1
         autoTimeStep = try container.decodeIfPresent(Bool.self, forKey: .autoTimeStep) ?? true
         timeStep = try container.decodeIfPresent(Double.self, forKey: .timeStep) ?? 1e-5
+        temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 27
     }
 }
 
