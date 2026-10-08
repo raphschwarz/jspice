@@ -78,8 +78,8 @@ extension Circuit {
     /// made from the block's and their own, so a part keeps its state while the circuit is edited; their names are
     /// the block's name, a dot and their own ("X1.R2"). Net labels inside a block are its own (two copies of a block
     /// do not join at a label inside them), except ground.
-    public func flattened() -> Circuit {
-        guard elements.contains(where: { ($0.kind == .block && $0.block != nil) || $0.kind.isTube || $0.kind == .transformer }) else {
+    public func flattened(expandingModels: Bool = true) -> Circuit {
+        guard elements.contains(where: { ($0.kind == .block && $0.block != nil) || (expandingModels && ($0.kind.isTube || $0.kind == .transformer)) }) else {
             return self
         }
         var result = self
@@ -111,7 +111,7 @@ extension Circuit {
             }
         }
         for element in elements where element.kind == .block { expand(element, depth: 0) }
-        result.expandModels()
+        if expandingModels { result.expandModels() }
         return result
     }
 

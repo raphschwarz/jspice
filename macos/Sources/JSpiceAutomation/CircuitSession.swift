@@ -268,6 +268,12 @@ public final class CircuitSession {
              description: "The circuit as a SPICE deck for ngspice or LTspice, with JSpice's own device equations: its parts by net, .model lines, op-amps and tubes as behavioural sources, transformers as coupled inductors, blocks as subcircuits, and a .tran analysis. Parts with no SPICE element (chips, microcontrollers) are named in comments. Writes it to path if given.",
              inputSchema: schema(["path": string("File to write (optional)")]),
              run: { session, arguments in try session.exportSpice(arguments) }),
+        Tool(name: "breadboard",
+             description: "The circuit laid out on a full-size solderless breadboard (63 columns, strips a–e and f–j, a + and − rail top and bottom): each part's legs and the hole each goes in (a1…j63, or a rail), chips straddling the channel with pin 1 bottom left and their units packed into as few packages as possible, transistors' legs in datasheet order with the flat face towards you, electrolytics' + leg on the higher DC voltage, the jumper wires, the rails' nets, and what is wired from off the board (supplies, sources, speakers). Checked: problems lists anything the board would connect differently from the schematic (empty when it matches).",
+             inputSchema: schema([:]), run: { session, _ in session.breadboard() }),
+        Tool(name: "bom",
+             description: "The bill of materials for building the circuit: each part as bought (values, electrolytics' voltage ratings from the operating point, chips by package, transistors with their leg order), how many, and which parts of the schematic they are; plus the jumper wires and what is wired from off the board.",
+             inputSchema: schema([:]), run: { session, _ in session.billOfMaterials() }),
         Tool(name: "save_circuit",
              description: "Saves the circuit as a .jspice file the JSpice app can open.",
              inputSchema: schema(["path": string("File path")], required: ["path"]),
@@ -1618,6 +1624,33 @@ public final class CircuitSession {
             return ["saved": file, "netlist": deck]
         }
         return ["netlist": deck]
+    }
+
+    func breadboard() -> Any {
+        let layout = Breadboard.layout(circuit)
+        func legs(_ legs: [Breadboard.Leg]) -> [[String: Any]] {
+            legs.map { ["leg": $0.name, "hole": $0.hole.description, "net": $0.net.isEmpty ? "(free)" : $0.net] }
+        }
+        var rails: [String: String] = [:]
+        for (rail, net) in layout.rails { rails[rail.name] = net }
+        return [
+            "columns": layout.width,
+            "rails": rails,
+            "parts": layout.placements.map { placement -> [String: Any] in
+                var item: [String: Any] = ["name": placement.name, "part": placement.title, "legs": legs(placement.legs)]
+                if let note = placement.note { item["note"] = note }
+                return item
+            },
+            "jumpers": layout.jumpers.map { ["from": $0.from.description, "to": $0.to.description, "net": $0.net] },
+            "off_board": layout.offBoard.map { ["name": $0.name, "what": $0.title, "wires": legs($0.wires)] },
+            "notes": layout.notes,
+            "problems": Breadboard.verify(layout),
+        ] as [String: Any]
+    }
+
+    func billOfMaterials() -> Any {
+        let layout = Breadboard.layout(circuit)
+        return ["items": layout.bom.map { ["quantity": $0.quantity, "part": $0.description, "designators": $0.parts] as [String: Any] }]
     }
 
     func save(_ arguments: [String: Any]) throws -> Any {

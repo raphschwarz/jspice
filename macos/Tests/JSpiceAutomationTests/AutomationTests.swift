@@ -402,6 +402,19 @@ final class AutomationTests: XCTestCase {
         ]))
     }
 
+    func testAnAgentCanLayOutABreadboard() throws {
+        let session = CircuitSession()
+        _ = try session.call("load_example", arguments: ["id": "fuzz"])
+        let board = try XCTUnwrap(session.call("breadboard", arguments: [:]) as? [String: Any])
+        XCTAssertEqual((board["problems"] as? [String])?.isEmpty, true, "\(board["problems"] ?? "")")
+        let parts = try XCTUnwrap(board["parts"] as? [[String: Any]])
+        XCTAssertFalse(parts.isEmpty)
+        XCTAssertTrue(parts.allSatisfy { ($0["legs"] as? [[String: Any]])?.isEmpty == false })
+        XCTAssertNotNil(board["jumpers"] as? [[String: Any]])
+        let bom = try XCTUnwrap((session.call("bom", arguments: [:]) as? [String: Any])?["items"] as? [[String: Any]])
+        XCTAssertTrue(bom.contains { ($0["part"] as? String)?.contains("resistor") == true })
+    }
+
     func testAnAgentCanMapMIDIControllers() throws {
         let session = CircuitSession()
         _ = try session.call("build_circuit", arguments: ["parts": [

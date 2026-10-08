@@ -23,35 +23,11 @@ struct EditorView: View {
                 .navigationSplitViewColumnWidth(min: 210, ideal: 236, max: 320)
         } detail: {
             VStack(spacing: 0) {
-                CircuitCanvas(editor: editor, circuit: document.circuit)
-                    .overlay {
-                        if document.circuit.elements.isEmpty { WelcomeView(editor: editor) }
-                    }
-                    .overlay(alignment: .top) {
-                        VStack(spacing: 8) {
-                            ToolHUD(editor: editor)
-                            ProblemBanner(simulation: editor.simulation)
-                        }
-                        .padding(.top, 12)
-                        .animation(.snappy(duration: 0.2), value: editor.tool)
-                    }
-                    .overlay(alignment: .bottomTrailing) {
-                        if !document.circuit.elements.isEmpty {
-                            ZoomControl(editor: editor).padding(12)
-                        }
-                    }
-                    .overlay(alignment: .top) {
-                        if editor.showQuickAdd {
-                            ZStack(alignment: .top) {
-                                Color.black.opacity(0.06)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture { editor.choose(editor.tool) }
-                                QuickAddPalette(editor: editor).padding(.top, 56)
-                            }
-                            .transition(.opacity)
-                        }
-                    }
-                    .animation(.easeOut(duration: 0.12), value: editor.showQuickAdd)
+                if editor.showBreadboard && !document.circuit.elements.isEmpty {
+                    BreadboardView(editor: editor, circuit: document.circuit)
+                } else {
+                    schematic
+                }
                 if editor.showPanel && FrontPanel.hasControls(document.circuit) {
                     FrontPanel(editor: editor, circuit: document.circuit)
                 }
@@ -80,6 +56,39 @@ struct EditorView: View {
         .onDisappear { editor.simulation.setSound(false) }
         .onChange(of: undoManager) { _, manager in editor.undoManager = manager }
         .onChange(of: document.circuit) { _, circuit in editor.simulation.load(circuit) }
+    }
+
+    /// The schematic, with its welcome, tool and zoom overlays
+    private var schematic: some View {
+        CircuitCanvas(editor: editor, circuit: document.circuit)
+            .overlay {
+                if document.circuit.elements.isEmpty { WelcomeView(editor: editor) }
+            }
+            .overlay(alignment: .top) {
+                VStack(spacing: 8) {
+                    ToolHUD(editor: editor)
+                    ProblemBanner(simulation: editor.simulation)
+                }
+                .padding(.top, 12)
+                .animation(.snappy(duration: 0.2), value: editor.tool)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !document.circuit.elements.isEmpty {
+                    ZoomControl(editor: editor).padding(12)
+                }
+            }
+            .overlay(alignment: .top) {
+                if editor.showQuickAdd {
+                    ZStack(alignment: .top) {
+                        Color.black.opacity(0.06)
+                            .contentShape(Rectangle())
+                            .onTapGesture { editor.choose(editor.tool) }
+                        QuickAddPalette(editor: editor).padding(.top, 56)
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.12), value: editor.showQuickAdd)
     }
 }
 
@@ -129,6 +138,10 @@ struct EditorToolbar: ToolbarContent {
             .disabled(!simulation.hasSpeaker)
             .help(simulation.hasSpeaker ? "Listen to the speaker: runs the circuit in real time at audio rate"
                                         : "Add a speaker to the circuit to listen to it")
+            Toggle(isOn: $editor.showBreadboard) {
+                Label("Breadboard", systemImage: "circle.grid.3x3")
+            }
+            .help("Show the circuit built on a breadboard, with its jumpers and bill of materials")
             Toggle(isOn: $editor.showPanel) {
                 Label("Panel", systemImage: "slider.horizontal.3")
             }

@@ -29,6 +29,8 @@ final class EditorState: ObservableObject {
     @Published var showInspector = true
     /// The front panel of knobs and switches below the schematic
     @Published var showPanel = true
+    /// The circuit as built on a breadboard, in place of the schematic
+    @Published var showBreadboard = false
     /// The quick-add palette (⌘K or /): type a part's name to place it
     @Published var showQuickAdd = false
     /// The keyboard shortcuts sheet (⌘/ or ?)
