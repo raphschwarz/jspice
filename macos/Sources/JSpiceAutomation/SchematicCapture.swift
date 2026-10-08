@@ -342,9 +342,39 @@ public enum SchematicCapture {
             let text = lines.joined(separator: "\n")
             let message = ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any])
                 .flatMap { $0["error"] as? [String: Any] }?["message"] as? String
+            if [429, 500, 502, 503, 504, 529].contains(http.statusCode) {
+                let wait = (http.value(forHTTPHeaderField: "retry-after")).flatMap(Double.init)
+                throw Busy(message: "HTTP \(http.statusCode)" + (message.map { ": " + $0 } ?? ""), wait: wait)
+            }
             throw CaptureError.api("HTTP \(http.statusCode)" + (message.map { ": " + $0 } ?? ""))
         }
-        return reply(fromEvents: lines)
+        let result = reply(fromEvents: lines)
+        // overloaded part-way through the stream
+        if let error = result.error, error.lowercased().contains("overloaded") { throw Busy(message: error, wait: nil) }
+        return result
+    }
+
+    /// The API is busy or rate-limited for now: worth asking again
+    struct Busy: Error {
+        var message: String
+        var wait: Double?
+    }
+
+    /// `send`, asked again up to three times when the API is busy, waiting longer each time (or as long as it says)
+    static func sendRetrying(_ body: [String: Any], key: String, progress: @escaping @Sendable (String) -> Void) async throws -> Reply {
+        var delay = 2.0
+        for attempt in 1... {
+            do {
+                return try await send(body, key: key, progress: progress)
+            } catch let busy as Busy {
+                guard attempt <= 3 else { throw CaptureError.api(busy.message) }
+                let wait = min(busy.wait ?? delay, 60)
+                progress("Claude is busy: trying again in \(Int(wait.rounded())) s…")
+                try await Task.sleep(nanoseconds: UInt64(wait * 1e9))
+                delay *= 2
+            }
+        }
+        fatalError("unreachable")
     }
 
     // MARK: - From netlist to circuit
@@ -435,7 +465,7 @@ public enum SchematicCapture {
         var attempt = 0
         while true {
             attempt += 1
-            let reply = try await send(body(messages: messages), key: key, progress: progress)
+            let reply = try await sendRetrying(body(messages: messages), key: key, progress: progress)
             if let error = reply.error { throw CaptureError.api(error) }
             if reply.stopReason == "refusal" { throw CaptureError.refused(reply.refusal) }
             if reply.stopReason == "max_tokens" { throw CaptureError.unusable("the netlist was too long to finish") }

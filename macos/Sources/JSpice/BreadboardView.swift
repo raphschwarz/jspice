@@ -9,7 +9,6 @@ struct BreadboardView: View {
     let circuit: Circuit
     @State private var layout: Breadboard.Layout?
     @State private var problems: [String] = []
-    @State private var pointer: CGPoint?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -18,13 +17,7 @@ struct BreadboardView: View {
                     let size = BoardGeometry(width: layout.width).size
                     Canvas { context, _ in draw(context, layout) }
                         .frame(width: size.width, height: size.height)
-                        .onContinuousHover { phase in
-                            switch phase {
-                            case .active(let location): pointer = location
-                            case .ended: pointer = nil
-                            }
-                        }
-                        .overlay(alignment: .topLeading) { readout(layout) }
+                        .overlay { BoardHoverReadout { readout(layout, at: $0) } }
                         .padding(20)
                 } else {
                     ProgressView("Laying out the board…").padding(40)
@@ -70,17 +63,10 @@ struct BreadboardView: View {
 
     // MARK: - Drawing
 
-    private func readout(_ layout: Breadboard.Layout) -> some View {
-        Group {
-            if let pointer, let hole = BoardGeometry(width: layout.width).hole(near: pointer) {
-                let net = layout.nets[hole] ?? stripNet(hole, layout)
-                Text("\(hole.description)" + (net.map { "  ·  \($0.isEmpty ? "free pin" : $0)" } ?? ""))
-                    .font(.caption.monospaced())
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(8)
-            }
-        }
+    private func readout(_ layout: Breadboard.Layout, at pointer: CGPoint) -> String? {
+        guard let hole = BoardGeometry(width: layout.width).hole(near: pointer) else { return nil }
+        let net = layout.nets[hole] ?? stripNet(hole, layout)
+        return "\(hole.description)" + (net.map { "  ·  \($0.isEmpty ? "free pin" : $0)" } ?? "")
     }
 
     /// The net of a free hole: the net of anything in its strip or on its rail
@@ -422,5 +408,33 @@ struct BoardSidePanel: View {
         let lines = ["Quantity,Part,Designators"] + bom.map { "\($0.quantity),\(quoted($0.description)),\(quoted($0.parts.joined(separator: " ")))" }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+    }
+}
+
+/// The hole under the pointer and what is on it, over a board: kept apart from the board's own view, so that moving
+/// the pointer redraws only this and not every hole and part
+struct BoardHoverReadout: View {
+    let text: (CGPoint) -> String?
+    @State private var pointer: CGPoint?
+
+    var body: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location): pointer = location
+                case .ended: pointer = nil
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                if let pointer, let line = text(pointer) {
+                    Text(line)
+                        .font(.caption.monospaced())
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(8)
+                        .allowsHitTesting(false)
+                }
+            }
     }
 }

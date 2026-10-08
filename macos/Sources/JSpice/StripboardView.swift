@@ -9,7 +9,6 @@ struct StripboardView: View {
     let circuit: Circuit
     @State private var layout: Stripboard.Layout?
     @State private var problems: [String] = []
-    @State private var pointer: CGPoint?
 
     private let pitch: CGFloat = 16
     private var origin: CGPoint { CGPoint(x: pitch * 3, y: pitch * 2) }
@@ -21,13 +20,7 @@ struct StripboardView: View {
                     Canvas { context, _ in draw(context, layout) }
                         .frame(width: origin.x + CGFloat(layout.columns) * pitch + pitch * 2,
                                height: origin.y + CGFloat(layout.rows) * pitch + pitch)
-                        .onContinuousHover { phase in
-                            switch phase {
-                            case .active(let location): pointer = location
-                            case .ended: pointer = nil
-                            }
-                        }
-                        .overlay(alignment: .topLeading) { readout(layout) }
+                        .overlay { BoardHoverReadout { readout(layout, at: $0) } }
                         .padding(20)
                 } else {
                     ProgressView("Laying out the board…").padding(40)
@@ -78,18 +71,11 @@ struct StripboardView: View {
         return Stripboard.Hole(row: row, column: column)
     }
 
-    private func readout(_ layout: Stripboard.Layout) -> some View {
-        Group {
-            if let pointer, let hole = hole(near: pointer, layout) {
-                let cut = layout.cuts.contains(hole)
-                let net = cut ? "cut" : layout.net(at: hole).map { $0.isEmpty || $0.hasPrefix("\u{0}") ? "free pin" : $0 }
-                Text(hole.description + (net.map { "  ·  \($0)" } ?? ""))
-                    .font(.caption.monospaced())
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(8)
-            }
-        }
+    private func readout(_ layout: Stripboard.Layout, at pointer: CGPoint) -> String? {
+        guard let hole = hole(near: pointer, layout) else { return nil }
+        let cut = layout.cuts.contains(hole)
+        let net = cut ? "cut" : layout.net(at: hole).map { $0.isEmpty || $0.hasPrefix("\u{0}") ? "free pin" : $0 }
+        return hole.description + (net.map { "  ·  \($0)" } ?? "")
     }
 
     private func draw(_ context: GraphicsContext, _ layout: Stripboard.Layout) {

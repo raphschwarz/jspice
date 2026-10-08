@@ -570,8 +570,27 @@ final class EditorState: ObservableObject {
             }
             return
         }
+        // a controller sweeping sends dozens of changes a second: they are applied together, once per turn of the run
+        // loop, so the circuit is copied and the simulation updated once for all of them
+        if pendingControlChanges.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.applyPendingControlChanges() }
+            }
+        }
+        pendingControlChanges.append((channel, controller, value))
+    }
+
+    private var pendingControlChanges: [(channel: Int, controller: Int, value: Int)] = []
+
+    private func applyPendingControlChanges() {
+        let changes = pendingControlChanges
+        pendingControlChanges = []
         var next = circuit
-        if next.applyControlChange(controller: controller, channel: channel, value: value) { document.circuit = next }
+        var changed = false
+        for change in changes {
+            if next.applyControlChange(controller: change.controller, channel: change.channel, value: change.value) { changed = true }
+        }
+        if changed && next != circuit { document.circuit = next }
     }
 
     // MARK: - Microcontrollers

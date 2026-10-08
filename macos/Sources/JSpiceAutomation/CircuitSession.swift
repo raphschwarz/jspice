@@ -340,6 +340,21 @@ public final class CircuitSession {
         throw ToolError("\(what) should be a number")
     }
 
+    /// A value a parameter can take: finite, one of its settings where it picks one, positive for a resistance,
+    /// capacitance, inductance or frequency, and a fraction for a position. Beyond that a value may go past the
+    /// inspector's slider (a current source may run backwards, a supply be negative).
+    private static func checked(_ value: Double, _ spec: ParamSpec) throws -> Double {
+        guard value.isFinite else { throw ToolError("\(spec.key) should be a finite number") }
+        if !spec.choices.isEmpty, !spec.choices.contains(where: { $0.value == value }) {
+            throw ToolError("\(spec.key) should be one of " + spec.choices.map { "\(SI.trimmed($0.value, digits: 3)) (\($0.name))" }.joined(separator: ", "))
+        }
+        if ["resistance", "capacitance", "inductance", "frequency"].contains(spec.key) && value <= 0 {
+            throw ToolError("\(spec.key) should be positive")
+        }
+        if spec.key == "position" && !(0...1).contains(value) { throw ToolError("position should be from 0 to 1") }
+        return value
+    }
+
     private static func text(_ arguments: [String: Any], _ key: String) throws -> String {
         guard let value = arguments[key] as? String, !value.isEmpty else { throw ToolError("Missing \"\(key)\"") }
         return value
@@ -387,10 +402,10 @@ public final class CircuitSession {
         }
         if let params = params as? [String: Any] {
             for (key, value) in params {
-                guard kind.params.contains(where: { $0.key == key }) else {
+                guard let spec = kind.params.first(where: { $0.key == key }) else {
                     throw ToolError("\(kind.rawValue) has no parameter \(key); parameters: \(kind.params.map(\.key).joined(separator: ", "))")
                 }
-                result[key] = try number(value, key)
+                result[key] = try number(value, key).map { try checked($0, spec) }
             }
         } else if params != nil {
             throw ToolError("\"params\" should be an object")
@@ -618,7 +633,8 @@ public final class CircuitSession {
         guard let spec = element.kind.params.first(where: { $0.key == key }) else {
             throw ToolError("\(element.name) has no parameter \(key); parameters: \(element.kind.params.map(\.key).joined(separator: ", "))")
         }
-        guard let value = try Self.number(arguments["value"], key) else { throw ToolError("Missing \"value\"") }
+        guard let given = try Self.number(arguments["value"], key) else { throw ToolError("Missing \"value\"") }
+        let value = try Self.checked(given, spec)
         change("Change \(spec.name)") { $0.elements[index][param: key] = value }
         return ["part": element.name, key: value, "model": circuit.elements[index].model?.name ?? "custom"]
     }
