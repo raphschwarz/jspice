@@ -208,9 +208,19 @@ final class BlocksTests: XCTestCase {
             let v = simulator.voltageAcross(speaker)
             swing = (min(swing.low, v), max(swing.high, v))
         }
-        // a 110 Hz square wave of ±1 V, darkened twice: well under its full swing, but still there
-        XCTAssertGreaterThan(swing.high - swing.low, 0.2)
-        XCTAssertLessThan(swing.high - swing.low, 1.9)
+        // a 110 Hz square wave of ±1 V, its edges rounded off but its swing kept
+        XCTAssertGreaterThan(swing.high - swing.low, 1)
+        XCTAssertLessThan(swing.high - swing.low, 2.05)
+        // the two copies in series, at their own settings (530 Hz and 265 Hz): two poles, 12 dB an octave well above
+        let source = try XCTUnwrap(example.circuit.elements.firstIndex { $0.name == "VIN" })
+        let settled = Simulator.settled(example.circuit, holding: source)
+        let model = try XCTUnwrap(settled.smallSignalModel())
+        let out = settled.nodes(of: speaker)[0]
+        let response = try XCTUnwrap(model.response(input: source, plus: out, minus: 0, frequencies: [20, 5000, 10_000]))
+        XCTAssertEqual(response[0].magnitude, 1, accuracy: 0.01)
+        let expected = 1 / ((1 + pow(5000 / 530.5, 2)).squareRoot() * (1 + pow(5000 / 265.3, 2)).squareRoot())
+        XCTAssertEqual(response[1].magnitude, expected, accuracy: expected * 0.02)
+        XCTAssertEqual(response[1].magnitude / response[2].magnitude, 4, accuracy: 0.1)
         XCTAssertEqual(simulator.convergenceFailures, 0)
     }
 }

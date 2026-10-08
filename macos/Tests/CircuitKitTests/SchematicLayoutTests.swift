@@ -74,8 +74,8 @@ final class SchematicLayoutTests: XCTestCase {
         for p in parts {
             for (terminal, net) in p.connections {
                 let key = Topology.isGroundName(net) ? "GND" : net
-                let index = NetlistLayout.terminalIndex(terminal, of: p.kind)!
-                byNet[key, default: []].insert("\(p.name).\(p.kind.terminalNames[index])")
+                let index = NetlistLayout.terminalIndex(terminal, names: p.terminalNames)!
+                byNet[key, default: []].insert("\(p.name).\(p.terminalNames[index])")
             }
         }
         return Set(byNet.values)
