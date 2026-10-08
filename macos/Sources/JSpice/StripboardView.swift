@@ -33,6 +33,7 @@ struct StripboardView: View {
                     ProgressView("Laying out the board…").padding(40)
                 }
             }
+            .defaultScrollAnchor(.topLeading)
             .background(Color(nsColor: .underPageBackgroundColor))
             Divider()
             if let layout {

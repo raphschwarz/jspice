@@ -28,10 +28,12 @@ struct EditorView: View {
                 case .breadboard: BreadboardView(editor: editor, circuit: document.circuit)
                 case .stripboard: StripboardView(editor: editor, circuit: document.circuit)
                 }
-                if editor.showPanel && FrontPanel.hasControls(document.circuit) {
+                // a board is for building: the panel and scopes give it their room
+                let onBoard = editor.board != .schematic && !document.circuit.elements.isEmpty
+                if editor.showPanel && FrontPanel.hasControls(document.circuit) && !onBoard {
                     FrontPanel(editor: editor, circuit: document.circuit)
                 }
-                if !document.circuit.scopes.isEmpty {
+                if !document.circuit.scopes.isEmpty && !onBoard {
                     Divider()
                     ScopePanel(editor: editor, circuit: document.circuit)
                 }
