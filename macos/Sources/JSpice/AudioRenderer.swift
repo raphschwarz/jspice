@@ -30,6 +30,8 @@ final class AudioRenderer: @unchecked Sendable {
     private let shared: OSAllocatedUnfairLock<Shared>
 
     private let output: AudioOutput
+    /// Whether an audio input part plays the Mac's live input
+    private let liveInput: Bool
     /// Sound queued ahead of the speaker: enough to ride out a busy moment, short enough to answer a knob quickly
     private let latency = 0.05
     /// Samples made between letting go of the simulator
@@ -62,7 +64,9 @@ final class AudioRenderer: @unchecked Sendable {
     /// Starts playing from where `display` is; nil if there is no sound output
     init?(continuing display: Simulator, speaker: Int, fullScale: Double, scopeWindow: Double, paused: Bool) {
         output = AudioOutput()
-        guard output.start() else { return nil }
+        let wantsInput = display.circuit.flattened().elements.contains { $0.kind == .audioInput && $0[param: "input"] >= 0.5 }
+        guard output.start(input: wantsInput) else { return nil }
+        liveInput = wantsInput && output.inputSampleRate > 0
         simulator = Simulator(circuit: display.circuit, timeStep: 1 / output.sampleRate)
         simulator.configureScopes(window: scopeWindow)
         // the sound sets its own step by how fast the computer keeps up: substeps only where Newton-Raphson needs them
@@ -176,6 +180,14 @@ final class AudioRenderer: @unchecked Sendable {
         var peak = 0.0
         let steps = oversampling
         let started = ProcessInfo.processInfo.systemUptime
+        if liveInput {
+            // the input for this chunk, handed over before it is simulated
+            let inputRate = output.inputSampleRate
+            let samples = output.readInput(Int((Double(count) * inputRate / rate).rounded(.up)) + 1)
+            lock.withLock {
+                simulator.liveInput = Simulator.LiveInput(samples: samples, sampleRate: inputRate, startTime: simulator.time)
+            }
+        }
         while produced < count && !failed {
             let keyboard = shared.withLock { state -> Simulator.KeyboardState? in
                 defer { state.keyboard = nil }

@@ -159,6 +159,26 @@ public final class CircuitSession {
                 "settle": ["description": "ac: seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
              ], required: ["source", "output"]),
              run: { session, arguments in try session.frequencyResponse(arguments) }),
+        Tool(name: "set_audio_input",
+             description: "Gives an audio input part (kind \"audioInput\", a voltage source that plays a sound) a WAV file to play: 8 to 32-bit PCM or float, any sample rate, mixed to mono, up to a minute. Its level parameter is the peak voltage of full scale (0.5 V by default, about a guitar's), offset is added, and loop plays it over and over. Without a path it plays the built-in guitar riff.",
+             inputSchema: schema([
+                "part": string("Name of the audio input part"),
+                "path": string("WAV file to play (left out: the built-in guitar riff)"),
+                "level": ["description": "Volts at full scale"],
+                "loop": ["type": "boolean", "description": "Play it over and over (default true)"],
+             ], required: ["part"]),
+             run: { session, arguments in try session.setAudioInput(arguments) }),
+        Tool(name: "render_audio",
+             description: "Simulates the circuit for a while and writes what a part hears, the speaker by default, to a WAV file (24-bit mono), as the app's speaker would play it: the voltage across it, divided by its full scale, without DC and softly limited above full scale. Audio inputs play their sounds and keyboard events play the keyboard sources. Returns the peak level (1 is full scale) and the fraction of samples that clipped.",
+             inputSchema: schema([
+                "path": string("WAV file to write"),
+                "duration": ["description": "Seconds of sound (at most 120)"],
+                "output": string("Part whose voltage is the sound (default: the speaker)"),
+                "sample_rate": ["description": "Samples per second (default 48000)"],
+                "full_scale": ["description": "Volts that make full scale (default: the speaker's full scale parameter, or 1 V for other parts)"],
+                "keyboard": ["type": "array", "items": ["type": "object"], "description": "Notes to play, as in simulate"],
+             ], required: ["path", "duration"]),
+             run: { session, arguments in try session.renderAudio(arguments) }),
         Tool(name: "define_block",
              description: "Makes a block: a circuit used as one part (a subcircuit). Its parts are a netlist as in build_circuit, with \"port\" parts as its pins: {\"kind\": \"port\", \"name\": \"in\", \"connections\": {\"net\": \"in\"}} makes a pin named in on the net in. Ports go on the left of the block (inputs) or the right (outputs): by their side parameter (1 left, 2 right), or if it is left out, on the right when a part's output drives the port's net or the port's name contains \"out\". Net labels inside a block are its own; GND is shared. Then use it in build_circuit or add_part as {\"kind\": \"block\", \"block\": \"name\", \"connections\": {\"in\": \"...\", \"out\": \"...\"}}; each use is a copy with its own state. save true also keeps it in the block library, where the app's library shows it.",
              inputSchema: schema([
@@ -773,6 +793,69 @@ public final class CircuitSession {
     }
 
     /// Keyboard events for simulate: a time, and a note to press or nil to release
+    // MARK: - Sound
+
+    func setAudioInput(_ arguments: [String: Any]) throws -> Any {
+        let index = try index(ofPart: try Self.text(arguments, "part"))
+        guard circuit.elements[index].kind == .audioInput else { throw ToolError("\(circuit.elements[index].name) is not an audio input") }
+        var clip: AudioClip?
+        if let path = arguments["path"] as? String, !path.isEmpty {
+            let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            let data: Data
+            do { data = try Data(contentsOf: url) } catch { throw ToolError("Can't read \(path)") }
+            do { clip = try AudioClip(name: url.deletingPathExtension().lastPathComponent, wav: data) } catch {
+                throw ToolError("\(path): \(error)")
+            }
+        }
+        let level = try Self.number(arguments["level"], "level")
+        let loop = arguments["loop"] as? Bool
+        change("Choose Sound") {
+            $0.elements[index].audio = clip
+            $0.elements[index][param: "input"] = 0
+            if let level { $0.elements[index][param: "level"] = level }
+            if let loop { $0.elements[index][param: "loop"] = loop ? 1 : 0 }
+        }
+        let playing = clip ?? AudioClip.guitarRiff
+        return ["part": circuit.elements[index].name, "sound": playing.name, "seconds": playing.duration,
+                "sample_rate": playing.sampleRate, "level": circuit.elements[index][param: "level"]]
+    }
+
+    func renderAudio(_ arguments: [String: Any]) throws -> Any {
+        let path = (try Self.text(arguments, "path") as NSString).expandingTildeInPath
+        guard let duration = try Self.number(arguments["duration"], "duration"), duration > 0, duration <= 120 else {
+            throw ToolError("\"duration\" should be between 0 and 120 seconds")
+        }
+        let output: Int
+        if let name = arguments["output"] as? String, !name.isEmpty {
+            output = try index(ofPart: name)
+        } else if let speaker = circuit.elements.firstIndex(where: { $0.kind == .speaker }) {
+            output = speaker
+        } else {
+            throw ToolError("There is no speaker; name the part to record as \"output\"")
+        }
+        let sampleRate = try Self.number(arguments["sample_rate"], "sample_rate") ?? 48_000
+        guard (8000...192_000).contains(sampleRate) else { throw ToolError("\"sample_rate\" should be between 8000 and 192000") }
+        let fullScale = try Self.number(arguments["full_scale"], "full_scale")
+        if let fullScale, !(fullScale > 0) { throw ToolError("\"full_scale\" should be positive") }
+        let events = try Self.keyboardEvents(arguments["keyboard"])
+        let wallStart = Date()
+        let result = AudioRender.render(circuit, output: output, duration: duration, sampleRate: sampleRate, fullScale: fullScale,
+                                        keyboard: events, deadline: wallStart.addingTimeInterval(Self.maxWallSeconds))
+        do {
+            try WAV.encode(result.samples, sampleRate: result.sampleRate).write(to: URL(fileURLWithPath: path))
+        } catch {
+            throw ToolError("Can't write \(path)")
+        }
+        let seconds = Double(result.samples.count) / result.sampleRate
+        var reply: [String: Any] = [
+            "saved": path, "seconds": seconds, "sample_rate": result.sampleRate,
+            "peak": result.peak, "clipped": result.clipped, "wall_seconds": Date().timeIntervalSince(wallStart),
+            "truncated": seconds < duration - 0.5 / sampleRate,
+        ]
+        if !result.problems.isEmpty { reply["problems"] = result.problems }
+        return reply
+    }
+
     static func keyboardEvents(_ value: Any?) throws -> [(at: Double, note: Double?)] {
         guard let value else { return [] }
         guard let list = value as? [[String: Any]] else { throw ToolError("\"keyboard\" should be a list of {\"at\": seconds, \"note\": 60} or {\"at\": seconds, \"off\": true}") }
@@ -987,7 +1070,7 @@ public final class CircuitSession {
     /// The circuit without its sources' own periods, for estimating how long it takes to settle
     private func circuitWithoutSources() -> Circuit {
         var copy = circuit
-        copy.elements.removeAll { $0.kind == .acVoltage || $0.kind == .squareVoltage || $0.kind == .noiseVoltage }
+        copy.elements.removeAll { [.acVoltage, .squareVoltage, .noiseVoltage, .audioInput].contains($0.kind) }
         return copy
     }
 

@@ -76,6 +76,9 @@ public enum Pacing {
                 scales.append(contentsOf: [1, 1e-3])
             case .digitalDelay:
                 scales.append(element[param: "shortest"])
+            case .audioInput:
+                // sound: a millisecond resolves its notes' fundamentals
+                scales.append(1e-3)
             case .pll:
                 // its VCO at its fastest
                 scales.append(1 / max(element[param: "fMax"], 1))

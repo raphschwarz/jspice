@@ -43,7 +43,7 @@ public enum Examples {
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
         cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz, echo, blocks,
-        ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, arduinoDAC, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
+        ringModulator, chorus, fuzz, guitarFuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, arduinoDAC, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
     ]
 
@@ -762,14 +762,12 @@ public enum Examples {
             NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 5], connections: ["plus": "mix", "minus": "GND"]),
         ], scopes: [("LFO", .voltage), ("SPK1", .voltage)]))
 
-    /// The silicon Fuzz Face: two high-gain NPNs in a feedback pair, the 100 k from Q2's emitter biasing Q1
-    static let fuzz = Example(
-        id: "fuzz", title: "Fuzz Face (sound)",
-        summary: "The classic two-transistor fuzz (silicon, BC108) on a guitar's G string. Turn on sound and turn FUZZ up.",
-        symbol: "bolt.horizontal",
-        circuit: drawn([
+    /// The silicon Fuzz Face: two high-gain NPNs in a feedback pair, the 100 k from Q2's emitter biasing Q1, played by
+    /// `guitar` (a source on the net "gtr")
+    static func fuzzFaceParts(guitar: NetlistPart) -> [NetlistPart] {
+        [
             NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 9], connections: ["plus": "+9V", "minus": "GND"]),
-            NetlistPart(kind: .acVoltage, name: "GTR", params: ["amplitude": 0.1, "frequency": 196], connections: ["plus": "gtr", "minus": "GND"]),
+            guitar,
             NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 2.2e-6], connections: ["a": "gtr", "b": "b1"]),
             NetlistPart(kind: .npn, name: "Q1", params: model(.npn, "BC108"), connections: ["base": "b1", "collector": "c1", "emitter": "GND"]),
             NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 33_000], connections: ["a": "+9V", "b": "c1"]),
@@ -784,7 +782,25 @@ public enum Examples {
             NetlistPart(kind: .potentiometer, name: "VOLUME", params: ["resistance": 500_000, "position": 0.6, "taper": 1],
                         connections: ["a": "GND", "b": "outc", "wiper": "out"]),
             NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 2], connections: ["plus": "out", "minus": "GND"]),
-        ], scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
+        ]
+    }
+
+    static let fuzz = Example(
+        id: "fuzz", title: "Fuzz Face (sound)",
+        summary: "The classic two-transistor fuzz (silicon, BC108) on a guitar's G string. Turn on sound and turn FUZZ up.",
+        symbol: "bolt.horizontal",
+        circuit: drawn(fuzzFaceParts(guitar: NetlistPart(kind: .acVoltage, name: "GTR", params: ["amplitude": 0.1, "frequency": 196],
+                                                         connections: ["plus": "gtr", "minus": "GND"])),
+                       scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
+
+    /// The same fuzz played by a recorded guitar riff (an audio input), or by a real guitar through the Mac's input
+    static let guitarFuzz = Example(
+        id: "guitar-fuzz", title: "Fuzz Face on a guitar riff (sound)",
+        summary: "The Fuzz Face played by a recorded guitar riff from an audio input part. Turn on sound; choose your own sound file in the inspector, or set the input to the Mac's live input and plug in a guitar. File ▸ Export Sound writes the result to a WAV file.",
+        symbol: "guitars",
+        circuit: drawn(fuzzFaceParts(guitar: NetlistPart(kind: .audioInput, name: "GTR", params: ["level": 0.15, "loop": 1],
+                                                         connections: ["plus": "gtr", "minus": "GND"])),
+                       scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
 
     /// Overdrive: a TL072 with a gain of 22 into a pair of 1N4148 diodes that clip at about ±0.6 V
     static let overdrive = Example(

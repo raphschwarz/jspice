@@ -17,6 +17,8 @@ public struct NetlistPart: Sendable {
     public var firmware: Data?
     /// A block part's circuit
     public var block: BlockDefinition?
+    /// An audio input's sound
+    public var audio: AudioClip?
 
     /// Names of the terminals: the kind's, or a block's ports'
     public var terminalNames: [String] {
@@ -109,6 +111,7 @@ public enum NetlistLayout {
         for spec in part.kind.params where params[spec.key] == nil { params[spec.key] = spec.defaultValue }
         var element = Element(kind: part.kind, name: part.name, a: a, b: b, params: params, flipped: part.flipped)
         element.block = part.block
+        element.audio = part.audio
         return element
     }
 
@@ -221,6 +224,7 @@ public enum NetlistExtractor {
             part.code = element.code
             part.firmware = element.firmware
             part.block = element.block
+            part.audio = element.audio
             parts.append(part)
         }
         return parts

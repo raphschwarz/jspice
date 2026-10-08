@@ -253,6 +253,8 @@ extension Simulator {
         switch quiet.elements[source].kind {
         case .acVoltage, .noiseVoltage:
             quiet.elements[source][param: "amplitude"] = 0
+        case .audioInput:
+            quiet.elements[source][param: "level"] = 0
         case .squareVoltage:
             quiet.elements[source][param: "high"] = quiet.elements[source][param: "low"]
         default:
@@ -265,7 +267,7 @@ extension Simulator {
     /// left out) and a time step to settle it with
     public static func settling(_ circuit: Circuit) -> (duration: Double, timeStep: Double) {
         var still = circuit
-        still.elements.removeAll { $0.kind == .acVoltage || $0.kind == .squareVoltage || $0.kind == .noiseVoltage }
+        still.elements.removeAll { [.acVoltage, .squareVoltage, .noiseVoltage, .audioInput].contains($0.kind) }
         return (5 * (Pacing.slowestTimeScale(of: still) ?? 0), Pacing.suggest(for: still).timeStep)
     }
 

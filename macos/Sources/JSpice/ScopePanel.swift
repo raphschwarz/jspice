@@ -33,7 +33,7 @@ private struct ScopeRow: View {
     /// The source a frequency response is driven from: the one chosen, or the circuit's first signal source
     private var source: Element? {
         if let id = spec.sourceID, let chosen = sources.first(where: { $0.id == id }) { return chosen }
-        let preference: [ElementKind] = [.acVoltage, .squareVoltage, .keyboardPitch, .noiseVoltage, .currentSource, .keyboardGate, .dcVoltage]
+        let preference: [ElementKind] = [.acVoltage, .audioInput, .squareVoltage, .keyboardPitch, .noiseVoltage, .currentSource, .keyboardGate, .dcVoltage]
         for kind in preference {
             if let found = sources.first(where: { $0.kind == kind }) { return found }
         }

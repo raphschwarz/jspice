@@ -93,6 +93,8 @@ struct CircuitCommands: Commands {
             Button("Export Image…") { editor?.exportImage() }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
                 .disabled(editor == nil)
+            Button("Export Sound…") { editor?.exportSound() }
+                .disabled(editor == nil)
             Divider()
             Menu("Examples") {
                 ForEach(Examples.all) { example in

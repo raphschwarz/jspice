@@ -139,6 +139,17 @@ struct ElementInspector: View {
                 BlockSection(editor: editor, element: element)
             }
 
+            if element.kind == .audioInput && element[param: "input"] < 0.5 {
+                Section("Sound") {
+                    let clip = element.audio ?? AudioClip.guitarRiff
+                    LabeledContent(clip.name, value: String(format: "%.1f s", clip.duration))
+                    Button("Choose Sound File…", systemImage: "waveform") { editor.chooseSound(for: element.id) }
+                    if element.audio != nil {
+                        Button("Use the Guitar Riff", systemImage: "guitars") { editor.useGuitarRiff(for: element.id) }
+                    }
+                }
+            }
+
             if element.kind.isSwitch {
                 Section {
                     Toggle("Closed", isOn: Binding(get: { element.closed }, set: { _ in editor.toggleSwitch(element.id) }))

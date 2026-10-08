@@ -306,6 +306,8 @@ final class CircuitCanvasView: NSView {
             return live ? SI.format(simulator.voltageAcross(index), unit: "V") : "1 V/oct"
         case .keyboardGate: return "Gate " + SI.format(element[param: "high"], unit: "V")
         case .noiseVoltage: return "Noise " + SI.format(element[param: "amplitude"], unit: "V")
+        case .audioInput:
+            return element[param: "input"] >= 0.5 ? "Live in" : (element.audio?.name ?? AudioClip.guitarRiff.name)
         case .memristor:
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
         case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch, .njfet, .multiplier, .delayLine,

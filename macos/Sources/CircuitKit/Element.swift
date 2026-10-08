@@ -42,7 +42,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
 
 public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case wire, ground, netLabel, resistor, potentiometer, lamp, capacitor, inductor
-    case dcVoltage, acVoltage, squareVoltage, noiseVoltage, currentSource, keyboardPitch, keyboardGate
+    case dcVoltage, acVoltage, squareVoltage, noiseVoltage, currentSource, keyboardPitch, keyboardGate, audioInput
     case toggleSwitch, pushButton
     case diode, zener, led, npn, pnp, nmos, pmos, njfet
     case opAmp, ota, multiplier, comparator
@@ -150,6 +150,7 @@ extension ElementKind {
         case .acVoltage: return "AC Voltage"
         case .squareVoltage: return "Square Wave"
         case .noiseVoltage: return "Noise"
+        case .audioInput: return "Audio In"
         case .currentSource: return "Current Source"
         case .keyboardPitch: return "Keyboard Pitch"
         case .keyboardGate: return "Keyboard Gate"
@@ -211,6 +212,7 @@ extension ElementKind {
         case .capacitor: return "C"
         case .inductor: return "L"
         case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage: return "V"
+        case .audioInput: return "IN"
         case .currentSource: return "I"
         case .keyboardPitch: return "CV"
         case .keyboardGate: return "GATE"
@@ -238,7 +240,7 @@ extension ElementKind {
     public var category: ElementCategory {
         switch self {
         case .wire, .ground, .netLabel, .resistor, .potentiometer, .lamp, .capacitor, .inductor: return .basics
-        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate: return .sources
+        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate, .audioInput: return .sources
         case .toggleSwitch, .pushButton: return .switches
         case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
         case .opAmp, .ota, .multiplier, .comparator: return .amplifiers
@@ -268,7 +270,7 @@ extension ElementKind {
         case .acVoltage: return "a"
         case .squareVoltage: return "q"
         case .currentSource: return "i"
-        case .keyboardPitch, .keyboardGate, .noiseVoltage: return nil
+        case .keyboardPitch, .keyboardGate, .noiseVoltage, .audioInput: return nil
         case .toggleSwitch: return "s"
         case .pushButton: return "b"
         case .diode: return "d"
@@ -302,6 +304,7 @@ extension ElementKind {
         case .keyboardPitch: return "k"
         case .keyboardGate: return "g"
         case .noiseVoltage: return "n"
+        case .audioInput: return "p"
         case .multiplier: return "x"
         case .delayLine: return "d"
         case .vactrol: return "v"
@@ -367,7 +370,7 @@ extension ElementKind {
         case .ground: return ["gnd"]
         case .netLabel, .port: return ["net"]
         case .block: return []
-        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate:
+        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate, .audioInput:
             return ["minus", "plus"]
         case .diode, .zener, .led: return ["anode", "cathode"]
         case .probe, .speaker: return ["plus", "minus"]
@@ -402,7 +405,7 @@ extension ElementKind {
     public var isDigital: Bool { self == .timer555 || self == .schmittInverter || isLogic }
 
     public var isVoltageSource: Bool {
-        self == .dcVoltage || self == .acVoltage || self == .squareVoltage || self == .noiseVoltage || isKeyboard
+        self == .dcVoltage || self == .acVoltage || self == .squareVoltage || self == .noiseVoltage || isKeyboard || self == .audioInput
     }
 
     /// Sources played from the computer keyboard or a MIDI keyboard
@@ -641,6 +644,13 @@ extension ElementKind {
             return [ParamSpec("current", "Current", unit: "A", default: 0.01, range: 1e-6...10)]
         case .noiseVoltage:
             return [ParamSpec("amplitude", "RMS amplitude", unit: "V", default: 1, range: 0.001...10)]
+        case .audioInput:
+            return [
+                .choice("input", "Input", ["Sound file", "Live input (with sound on)"]),
+                ParamSpec("level", "Peak voltage at full scale", unit: "V", default: 0.5, range: 0.001...10),
+                .choice("loop", "Playback", ["Once", "Loop"], default: 1),
+                ParamSpec("offset", "Offset", unit: "V", default: 0, range: -15...15, log: false),
+            ]
         case .keyboardPitch:
             return [ParamSpec("glide", "Glide", unit: "s", default: 0, range: 0...2, log: false)]
         case .keyboardGate:
@@ -701,6 +711,8 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     public var firmware: Data?
     /// A block part's circuit
     public var block: BlockDefinition?
+    /// An audio input part's sound
+    public var audio: AudioClip?
 
     public init(id: UUID = UUID(), kind: ElementKind, name: String = "", a: GridPoint, b: GridPoint,
                 params: [String: Double] = [:], closed: Bool = false, flipped: Bool = false) {
@@ -727,6 +739,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         code = try container.decodeIfPresent(String.self, forKey: .code)
         firmware = try container.decodeIfPresent(Data.self, forKey: .firmware)
         block = try container.decodeIfPresent(BlockDefinition.self, forKey: .block)
+        audio = try container.decodeIfPresent(AudioClip.self, forKey: .audio)
     }
 
     /// How the part is drawn as a box with pins down its sides: a chip's, or a block's from its ports

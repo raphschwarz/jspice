@@ -87,7 +87,7 @@ enum SymbolRenderer {
         case .memristor: return 2.2
         case .lamp, .probe, .ammeter, .speaker: return 1.4
         case .capacitor, .dcVoltage: return 0.5
-        case .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate: return 1.6
+        case .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .keyboardPitch, .keyboardGate: return 1.6
         case .toggleSwitch, .pushButton: return 1.6
         case .diode, .zener, .led: return 1
         }
@@ -188,7 +188,7 @@ enum SymbolRenderer {
             let inner = body - 0.35 * u
             ctx.setFillColor(style.accent.withAlpha(0.28).cgColor)
             ctx.fill(CGRect(x: c - h, y: -0.3 * u, width: max(0, inner * CGFloat(style.memristorState)), height: 0.6 * u))
-        case .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .probe, .ammeter, .keyboardPitch, .keyboardGate:
+        case .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .probe, .ammeter, .keyboardPitch, .keyboardGate:
             ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.08).cgColor)
             ctx.fillEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
         default:
@@ -233,7 +233,7 @@ enum SymbolRenderer {
             minus.addLine(to: CGPoint(x: c - h, y: 0.38 * u))
             thickPlate = minus
             addPlus(to: path, at: CGPoint(x: c + h + 0.4 * u, y: -0.75 * u), size: 0.16 * u)
-        case .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
+        case .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .keyboardPitch, .keyboardGate:
             // the waveform (or keys) inside is drawn upright afterwards
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
             addPlus(to: path, at: CGPoint(x: c + h + 0.3 * u, y: -0.8 * u), size: 0.16 * u)
@@ -355,7 +355,7 @@ enum SymbolRenderer {
         ctx.restoreGState()
 
         let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-        if kind == .acVoltage || kind == .squareVoltage || kind == .noiseVoltage || kind.isKeyboard {
+        if kind == .acVoltage || kind == .squareVoltage || kind == .noiseVoltage || kind.isKeyboard || kind == .audioInput {
             // the waveform stays upright whatever the source's direction
             let glyph = CGMutablePath()
             if kind == .keyboardPitch {
@@ -364,6 +364,14 @@ enum SymbolRenderer {
                 for dx in [-0.15, 0.15] {
                     glyph.move(to: CGPoint(x: mid.x + CGFloat(dx) * u, y: mid.y - 0.3 * u))
                     glyph.addLine(to: CGPoint(x: mid.x + CGFloat(dx) * u, y: mid.y + 0.3 * u))
+                }
+            } else if kind == .audioInput {
+                // a sound's waveform: a decaying burst
+                for i in 0...30 {
+                    let t = CGFloat(i) / 30
+                    let point = CGPoint(x: mid.x - 0.48 * u + t * 0.96 * u,
+                                        y: mid.y - 0.3 * u * exp(-2.2 * t) * sin(2 * .pi * 4 * t))
+                    if i == 0 { glyph.move(to: point) } else { glyph.addLine(to: point) }
                 }
             } else if kind == .noiseVoltage {
                 // a jagged, random-looking trace

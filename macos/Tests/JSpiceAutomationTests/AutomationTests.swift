@@ -266,6 +266,45 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(session.circuit.elements.first { $0.name == "U1" }?.model?.name, "LM358")
     }
 
+    /// An agent plays a WAV file through a fuzz and renders what the speaker hears to another
+    func testAnAgentCanRenderSound() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let tone = (0..<24_000).map { Float(sin(2 * .pi * 220 * Double($0) / 24_000)) }
+        let input = folder.appendingPathComponent("tone.wav")
+        try WAV.encode(tone, sampleRate: 24_000).write(to: input)
+
+        let session = CircuitSession()
+        _ = try session.call("build_circuit", arguments: ["parts": [
+            ["kind": "audioInput", "name": "GTR", "connections": ["plus": "in", "minus": "GND"]],
+            ["kind": "resistor", "name": "R1", "params": ["resistance": "1k"], "connections": ["a": "in", "b": "clip"]],
+            ["kind": "diode", "name": "D1", "model": "1N4148", "connections": ["anode": "clip", "cathode": "GND"]],
+            ["kind": "diode", "name": "D2", "model": "1N4148", "connections": ["anode": "GND", "cathode": "clip"]],
+            ["kind": "speaker", "name": "SPK1", "params": ["fullScale": 1], "connections": ["plus": "clip", "minus": "GND"]],
+        ]])
+        let chosen = try XCTUnwrap(session.call("set_audio_input", arguments: ["part": "GTR", "path": input.path, "level": 2]) as? [String: Any])
+        XCTAssertEqual(chosen["sound"] as? String, "tone")
+        XCTAssertEqual(chosen["seconds"] as? Double ?? 0, 1, accuracy: 1e-9)
+        let audio = try XCTUnwrap(session.circuit.elements.first { $0.name == "GTR" }?.audio)
+        XCTAssertEqual(audio.sampleRate, 24_000)
+
+        let output = folder.appendingPathComponent("out.wav")
+        let rendered = try XCTUnwrap(session.call("render_audio", arguments: ["path": output.path, "duration": 0.5, "sample_rate": 24_000]) as? [String: Any])
+        XCTAssertEqual(rendered["seconds"] as? Double ?? 0, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(rendered["truncated"] as? Bool, false)
+        // ±2 V into two diodes: clipped at about ±0.7 V
+        XCTAssertEqual(rendered["peak"] as? Double ?? 0, 0.7, accuracy: 0.15)
+        let written = try WAV.decode(Data(contentsOf: output))
+        XCTAssertEqual(written.samples.count, 12_000)
+        XCTAssertEqual(written.sampleRate, 24_000)
+
+        let server = MCPServer(session: session)
+        let (message, isError) = try call(server, "set_audio_input", ["part": "R1"])
+        XCTAssertTrue(isError)
+        XCTAssertTrue((message as? String)?.contains("not an audio input") ?? false, "\(message)")
+    }
+
     func testErrorsExplainWhatToFix() throws {
         let server = MCPServer(session: CircuitSession())
         let (message, isError) = try call(server, "build_circuit", ["parts": [

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import AVFoundation
 import CircuitKit
 
 /// Everything about one open circuit window: the selected tool and parts, the view's zoom and scroll position, and
@@ -289,6 +290,88 @@ final class EditorState: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(block.circuit), (try? data.write(to: file)) != nil else { return }
         NSDocumentController.shared.openDocument(withContentsOf: file, display: true) { _, _, _ in }
+    }
+
+    // MARK: - Sound files
+
+    /// Asks for a sound file (any format macOS reads: WAV, AIFF, MP3, AAC…) and gives it to an audio input part
+    func chooseSound(for id: UUID) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.message = "Choose a sound for the audio input to play (up to a minute is kept)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let clip = try Self.readSound(url)
+            edit("Choose Sound") { $0.update(id) { $0.audio = clip } }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "That sound can't be read"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
+    func useGuitarRiff(for id: UUID) {
+        edit("Choose Sound") { $0.update(id) { $0.audio = nil } }
+    }
+
+    /// A sound file as a clip: its channels mixed to one, at its own sample rate
+    static func readSound(_ url: URL) throws -> AudioClip {
+        let file = try AVAudioFile(forReading: url)
+        let format = file.processingFormat
+        let frames = AVAudioFrameCount(min(Double(file.length), AudioClip.longest * format.sampleRate))
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        try file.read(into: buffer, frameCount: frames)
+        guard let channels = buffer.floatChannelData else { throw CocoaError(.fileReadCorruptFile) }
+        let count = Int(buffer.frameLength)
+        let channelCount = Int(format.channelCount)
+        var samples = [Float](repeating: 0, count: count)
+        for c in 0..<channelCount {
+            for k in 0..<count { samples[k] += channels[c][k] / Float(channelCount) }
+        }
+        return AudioClip(name: url.deletingPathExtension().lastPathComponent, sampleRate: format.sampleRate, samples: samples)
+    }
+
+    /// Renders the circuit's speaker to a WAV file, offline, for as long as asked (File ▸ Export Sound)
+    func exportSound() {
+        guard let speaker = circuit.elements.firstIndex(where: { $0.kind == .speaker }) else {
+            let alert = NSAlert()
+            alert.messageText = "There is no speaker to record"
+            alert.informativeText = "Put a speaker across the output you want to hear, then export again."
+            alert.runModal()
+            return
+        }
+        let ask = NSAlert()
+        ask.messageText = "Export Sound"
+        ask.informativeText = "Renders the speaker's sound to a WAV file (48 kHz, 24 bits), simulating as long as it takes. Seconds of sound:"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
+        field.stringValue = "10"
+        ask.accessoryView = field
+        ask.addButton(withTitle: "Export…")
+        ask.addButton(withTitle: "Cancel")
+        guard ask.runModal() == .alertFirstButtonReturn, let seconds = SI.parse(field.stringValue), seconds > 0, seconds <= 600 else { return }
+        let save = NSSavePanel()
+        save.allowedContentTypes = [.wav]
+        save.nameFieldStringValue = (canvas?.window?.title ?? "Circuit") + ".wav"
+        guard save.runModal() == .OK, let url = save.url else { return }
+        let circuit = self.circuit
+        Task.detached(priority: .userInitiated) {
+            let result = AudioRender.render(circuit, output: speaker, duration: seconds)
+            let written = (try? WAV.encode(result.samples, sampleRate: result.sampleRate).write(to: url)) != nil
+            await MainActor.run {
+                let done = NSAlert()
+                if written {
+                    done.messageText = "Sound exported"
+                    let clipped = result.clipped > 0 ? String(format: " %.1f %% of it went over the speaker's full scale and was softly limited.", result.clipped * 100) : ""
+                    done.informativeText = String(format: "%.1f seconds written to %@.", Double(result.samples.count) / result.sampleRate, url.lastPathComponent) + clipped
+                } else {
+                    done.messageText = "The sound couldn't be written"
+                }
+                done.runModal()
+            }
+        }
     }
 
     /// Moves the selection by whole grid units (arrow keys)

@@ -22,6 +22,8 @@
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.education</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>An Audio In part set to the live input plays the sound coming into your Mac (a microphone, or a guitar through an audio interface) through the circuit.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>

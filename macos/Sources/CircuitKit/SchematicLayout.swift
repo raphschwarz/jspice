@@ -84,7 +84,7 @@ public enum SchematicLayout {
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicOutputs), .analogMux: ["x"], .analogSelector: ["x"],
         .pll: ["vco_out", "pc1", "pc2"], .dac: ["out"],
     ]
-    static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch,
+    static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .keyboardPitch,
                                             .keyboardGate]
     static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf,
                                                .envelope, .vca,
@@ -131,7 +131,7 @@ public enum SchematicLayout {
             let middle = GridPoint((e.a.x + e.b.x) / 2, (e.a.y + e.b.y) / 2)
             switch e.kind {
             case .acVoltage, .squareVoltage, .currentSource, .probe, .ammeter, .speaker, .lamp, .capacitor, .dcVoltage,
-                 .schmittInverter, .unbufferedInverter, .led, .keyboardPitch, .keyboardGate, .noiseVoltage:
+                 .schmittInverter, .unbufferedInverter, .led, .keyboardPitch, .keyboardGate, .noiseVoltage, .audioInput:
                 result.insert(middle + p)
                 result.insert(middle - p)
             case .potentiometer, .analogSwitch:
@@ -170,6 +170,7 @@ public enum SchematicLayout {
         let code: String?
         let firmware: Data?
         let block: BlockDefinition?
+        let audio: AudioClip?
         var connections: [Int: String]
         var role = Role.orphan
         var a: GridPoint?
@@ -190,6 +191,7 @@ public enum SchematicLayout {
             code = part.code
             firmware = part.firmware
             block = part.block
+            audio = part.audio
             self.connections = connections
         }
 
@@ -222,6 +224,7 @@ public enum SchematicLayout {
             element.code = code
             element.firmware = firmware
             element.block = block
+            element.audio = audio
             return element
         }
 

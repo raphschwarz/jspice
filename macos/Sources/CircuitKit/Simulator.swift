@@ -48,6 +48,24 @@ public final class Simulator {
     }
 
     public var keyboard = KeyboardState()
+
+    /// Sound coming in live, for audio input parts set to the live input: samples at a rate, the first at `startTime`
+    /// of circuit time. The sound thread hands each chunk over before simulating it; between chunks the last sample holds.
+    public struct LiveInput: Sendable {
+        public var samples: [Float]
+        public var sampleRate: Double
+        public var startTime: Double
+
+        public init(samples: [Float], sampleRate: Double, startTime: Double) {
+            self.samples = samples
+            self.sampleRate = sampleRate
+            self.startTime = startTime
+        }
+    }
+
+    public var liveInput: LiveInput?
+    /// The sounds of audio input parts playing a file, by element index (a part without a sound plays a guitar riff)
+    private var audioClips: [Int: (sampleRate: Double, samples: [Float])] = [:]
     /// True while a playing sequence sets the keyboard
     private var sequenceOwnsKeyboard = false
 
@@ -312,7 +330,7 @@ public final class Simulator {
         }
         drivenIndices = indices {
             switch $0 {
-            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .capacitor, .inductor, .timer555,
+            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
                  .binaryCounter, .pll, .dac: return true
@@ -346,6 +364,11 @@ public final class Simulator {
             chipPinStates[i] = chips[i]?.pinStates
         }
         memristorIndices = indices { $0 == .memristor }
+        audioClips = [:]
+        for i in indices({ $0 == .audioInput }) {
+            let clip = flat.elements[i].audio ?? AudioClip.guitarRiff
+            audioClips[i] = (clip.sampleRate, clip.samples)
+        }
         watchChipPins()
         for (i, element) in flat.elements.enumerated() {
             if let state = previous[element.id] {
@@ -911,7 +934,7 @@ public final class Simulator {
                 stampConductance(&matrix, m, nodes[0], nodes[1], a0 * element[param: "capacitance"] / h)
             case .inductor where !linearising:
                 stampConductance(&matrix, m, nodes[0], nodes[1], h / (a0 * max(element[param: "inductance"], 1e-15)))
-            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
+            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
                 let minus = nodes[0] - 1
@@ -998,9 +1021,37 @@ public final class Simulator {
         case .noiseVoltage:
             // this step's sample, drawn when the last step finished
             return c.amplitude * capacitorVoltage[i]
+        case .audioInput:
+            return c.offset + c.value * audioSample(i, at: t)
         default:
             return 0
         }
+    }
+
+    /// An audio input's sound at circuit time `t`, from −1 to 1: its file (looped or once), or the live input
+    private func audioSample(_ i: Int, at t: Double) -> Double {
+        if constants[i].high >= 0.5 {
+            guard let live = liveInput, !live.samples.isEmpty else { return 0 }
+            let position = min(max((t - live.startTime) * live.sampleRate, 0), Double(live.samples.count - 1))
+            return Self.interpolate(live.samples, at: position)
+        }
+        guard let clip = audioClips[i], !clip.samples.isEmpty else { return 0 }
+        var position = t * clip.sampleRate
+        let length = Double(clip.samples.count)
+        if constants[i].duty >= 0.5 {
+            position = position.truncatingRemainder(dividingBy: length)
+        } else if position >= length - 1 {
+            return 0
+        }
+        return Self.interpolate(clip.samples, at: max(position, 0))
+    }
+
+    private static func interpolate(_ samples: [Float], at position: Double) -> Double {
+        let k = Int(position)
+        let f = position - Double(k)
+        let a = Double(samples[min(k, samples.count - 1)])
+        let b = Double(samples[min(k + 1, samples.count - 1)])
+        return a + (b - a) * f
     }
 
     /// The next sample of a noise source: Gaussian with unit variance (Box-Muller from two uniform numbers)
@@ -1032,7 +1083,7 @@ public final class Simulator {
             let nodes = topology.elementNodes[i]
             let c = constants[i]
             switch kinds[i] {
-            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
+            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = sourceVoltage(i, at: t) }
             case .currentSource:
@@ -1177,6 +1228,11 @@ public final class Simulator {
             c.high = p("high")
         case .noiseVoltage:
             c.amplitude = max(p("amplitude"), 0)
+        case .audioInput:
+            c.value = p("level")
+            c.offset = p("offset")
+            c.duty = Self.choice(p("loop"), 0...1)
+            c.high = Self.choice(p("input"), 0...1)
         case .diode, .led:
             (c.saturation, c.nvt) = diodeParameters(element)
             c.critical = c.nvt * log(c.nvt / (sqrt(2) * c.saturation))
@@ -1795,7 +1851,7 @@ public final class Simulator {
                 admittance(nodes[0], nodes[1], .capacitance(c.value))
             case .inductor:
                 admittance(nodes[0], nodes[1], .inductance(c.value))
-            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
+            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 if row >= 0 { drives[i] = .row(row) }
             case .currentSource:
                 drives[i] = .current(from: nodes[0], to: nodes[1])
@@ -2309,7 +2365,7 @@ public final class Simulator {
             return twoTerminal(capacitorCurrent[i])
         case .inductor:
             return twoTerminal(inductorCurrent[i])
-        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
+        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
             let row = topology.sourceRow[i]
             return twoTerminal(row >= 0 && row < x.count ? x[row] : 0)
         case .currentSource:
