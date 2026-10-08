@@ -305,6 +305,22 @@ final class AutomationTests: XCTestCase {
         XCTAssertTrue((message as? String)?.contains("not an audio input") ?? false, "\(message)")
     }
 
+    func testAnAgentCanMeasureDistortion() throws {
+        let session = CircuitSession()
+        _ = try session.call("load_example", arguments: ["id": "overdrive"])
+        let result = try XCTUnwrap(session.call("spectrum", arguments: ["probe": "V(D1)", "duration": 0.2, "settle": 0.1]) as? [String: Any])
+        // the example's 220 Hz input, clipped by the diodes: well above 10 % THD, odd harmonics first
+        XCTAssertEqual(result["fundamental_hz"] as? Double ?? 0, 220, accuracy: 1)
+        XCTAssertGreaterThan(result["thd_percent"] as? Double ?? 0, 10)
+        let harmonics = try XCTUnwrap(result["harmonics"] as? [[String: Any]])
+        XCTAssertEqual(harmonics.count, 10)
+        let third = harmonics[2]["relative_db"] as? Double ?? -999
+        let second = harmonics[1]["relative_db"] as? Double ?? 0
+        XCTAssertGreaterThan(third, second + 10)
+        XCTAssertEqual(result["resolution_hz"] as? Double ?? 0, 1 / 0.2, accuracy: 0.1)
+        XCTAssertThrowsError(try session.call("spectrum", arguments: ["probe": "V(nowhere)"]))
+    }
+
     func testAnAgentCanMapMIDIControllers() throws {
         let session = CircuitSession()
         _ = try session.call("build_circuit", arguments: ["parts": [

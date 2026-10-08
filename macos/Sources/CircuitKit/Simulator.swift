@@ -2686,13 +2686,18 @@ public final class Simulator {
     public func trace(_ id: UUID) -> ScopeTrace? { traces[id] }
 
     private func record(_ trace: ScopeTrace, _ index: Int) {
+        func scoped() -> Double {
+            switch trace.spec.quantity {
+            case .current: return scopedCurrent(index)
+            case .power: return voltageAcross(index) * scopedCurrent(index)
+            default: return value(trace.spec.quantity, of: index)
+            }
+        }
         switch trace.spec.plot {
         case .time:
-            switch trace.spec.quantity {
-            case .current: trace.add(scopedCurrent(index), at: time)
-            case .power: trace.add(voltageAcross(index) * scopedCurrent(index), at: time)
-            default: trace.add(value(trace.spec.quantity, of: index), at: time)
-            }
+            trace.add(scoped(), at: time)
+        case .spectrum:
+            trace.addSample(scoped(), at: time)
         case .currentVersusVoltage:
             trace.addPoint(voltage: voltageAcross(index), current: scopedCurrent(index), at: time)
         case .frequencyResponse:
@@ -2726,11 +2731,28 @@ public final class ScopeTrace {
     private var bucketStart = 0.0
     private var bucketMin = Double.infinity
     private var bucketMax = -Double.infinity
+    /// For a spectrum: the newest `spectrumLength` values at even intervals (between steps, on the line joining them)
+    private var ring: [Double] = []
+    private var ringNext = 0
+    private var ringCount = 0
+    private var nextTick = 0.0
+    private var previousTime = 0.0
+    private var previousValue = 0.0
+    private var sampling = false
+    /// The simulation's recent step, on average: the spectrum shows nothing faster than it can follow
+    private var averageStep = 0.0
+
+    /// Samples a spectrum is worked out from: eight windows' worth, 2048 a window
+    public static let spectrumLength = 16_384
 
     init(spec: ScopeSpec, window: Double) {
         self.spec = spec
         self.window = max(window, 1e-12)
+        if spec.plot == .spectrum { ring = [Double](repeating: 0, count: Self.spectrumLength) }
     }
+
+    /// Seconds between a spectrum's samples
+    public var sampleInterval: Double { window / 2048 }
 
     var interval: Double { window / Double(Self.capacity) }
 
@@ -2745,6 +2767,14 @@ public final class ScopeTrace {
         bucketStart = other.bucketStart
         bucketMin = other.bucketMin
         bucketMax = other.bucketMax
+        ring = other.ring
+        ringNext = other.ringNext
+        ringCount = other.ringCount
+        nextTick = other.nextTick
+        previousTime = other.previousTime
+        previousValue = other.previousValue
+        sampling = other.sampling
+        averageStep = other.averageStep
     }
 
     func clear() {
@@ -2757,6 +2787,54 @@ public final class ScopeTrace {
         bucketStart = 0
         bucketMin = .infinity
         bucketMax = -.infinity
+        ringNext = 0
+        ringCount = 0
+        sampling = false
+        averageStep = 0
+    }
+
+    /// Records a value for a spectrum: one sample at each tick of `sampleInterval` passed since the last value,
+    /// on the line from it
+    func addSample(_ value: Double, at time: Double) {
+        guard value.isFinite, !ring.isEmpty else { return }
+        lastValue = value
+        let interval = sampleInterval
+        if !sampling || time < previousTime {
+            sampling = true
+            ringNext = 0
+            ringCount = 0
+            averageStep = 0
+            nextTick = time
+        } else {
+            let step = time - previousTime
+            if step > 0 { averageStep = averageStep == 0 ? step : averageStep * 0.98 + step * 0.02 }
+        }
+        // after a long gap only the newest ring's worth matters
+        if (time - nextTick) / interval > Double(ring.count) { nextTick = time - Double(ring.count - 1) * interval }
+        let span = time - previousTime
+        while nextTick <= time {
+            let f = span > 0 ? min(max((nextTick - previousTime) / span, 0), 1) : 1
+            ring[ringNext] = previousValue + (value - previousValue) * f
+            ringNext = (ringNext + 1) % ring.count
+            ringCount = min(ringCount + 1, ring.count)
+            nextTick += interval
+        }
+        previousTime = time
+        previousValue = value
+    }
+
+    /// The spectrum's samples, oldest first
+    public var evenSamples: [Double] {
+        guard ringCount > 0 else { return [] }
+        let start = (ringNext - ringCount + ring.count) % ring.count
+        return (0..<ringCount).map { ring[(start + $0) % ring.count] }
+    }
+
+    /// The spectrum of the recent samples, up to the highest frequency both the sampling and the simulation's steps
+    /// show; nil until there are enough
+    public func spectrum() -> Spectrum? {
+        let top = averageStep > 0 ? 0.5 / averageStep : .infinity
+        return Spectrum.analyze(evenSamples, interval: sampleInterval, maxFrequency: top)
     }
 
     func add(_ value: Double, at time: Double) {

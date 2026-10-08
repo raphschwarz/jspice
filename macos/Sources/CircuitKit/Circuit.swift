@@ -32,6 +32,8 @@ public enum ScopePlot: String, Codable, Sendable {
     /// The voltage's gain and phase against frequency for small signals from a source (a Bode plot), around the
     /// circuit's operating point with that source held still
     case frequencyResponse
+    /// The quantity's spectrum: amplitude against frequency, with its fundamental and harmonic distortion
+    case spectrum
 }
 
 /// A trace shown in the scope panel: one quantity of one element over time, or its current against its voltage.

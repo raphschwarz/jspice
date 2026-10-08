@@ -28,6 +28,7 @@ private struct ScopeRow: View {
     /// The sources a frequency response can be driven from
     let sources: [Element]
     @State private var response = ResponseCache()
+    @State private var spectrum = SpectrumCache()
     @Environment(\.colorScheme) private var colorScheme
 
     /// The source a frequency response is driven from: the one chosen, or the circuit's first signal source
@@ -68,6 +69,10 @@ private struct ScopeRow: View {
                         Divider()
                         Text("Frequency Response").tag(ScopeChoice.response)
                     }
+                    if canPlotSpectrum(element.kind) {
+                        if !canPlotResponse(element.kind) { Divider() }
+                        Text("Spectrum").tag(ScopeChoice.spectrum)
+                    }
                 }
                 .labelsHidden()
                 .controlSize(.small)
@@ -104,6 +109,22 @@ private struct ScopeRow: View {
                                 }
                             }
                         }
+                    } else if spec.plot == .spectrum {
+                        let result = spectrum.update(trace)
+                        VStack(alignment: .leading, spacing: 0) {
+                            if let f0 = result?.fundamental {
+                                Text(SI.format(f0, unit: "Hz")).foregroundStyle(color)
+                                    .font(.title3.monospacedDigit().weight(.medium))
+                                if let thd = result?.thd {
+                                    Text(String(format: thd < 0.001 ? "THD %.3f %%" : "THD %.2f %%", thd * 100))
+                                        .font(.callout.monospacedDigit()).foregroundStyle(.primary)
+                                }
+                                Text("\(SI.format(result?.rms ?? 0, unit: spec.quantity.unit)) RMS")
+                                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            } else {
+                                Text(result == nil ? "Listening…" : "No clear pitch").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                     } else if spec.plot == .currentVersusVoltage {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(SI.format(trace?.lastVoltage ?? 0, unit: "V")).foregroundStyle(voltageColor)
@@ -124,6 +145,8 @@ private struct ScopeRow: View {
             if spec.plot == .frequencyResponse {
                 ResponsePlot(editor: editor, cache: response, elementID: element.id, sourceID: source?.id,
                              gainColor: voltageColor, phaseColor: phaseColor)
+            } else if spec.plot == .spectrum {
+                SpectrumPlot(editor: editor, cache: spectrum, scopeID: spec.id, unit: spec.quantity.unit, color: color)
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
                     Canvas { context, size in
@@ -143,12 +166,14 @@ private struct ScopeRow: View {
         case quantity(Quantity)
         case curve
         case response
+        case spectrum
     }
 
     private var selection: ScopeChoice {
         switch spec.plot {
         case .currentVersusVoltage: return .curve
         case .frequencyResponse: return .response
+        case .spectrum: return .spectrum
         case .time: return .quantity(spec.quantity)
         }
     }
@@ -159,6 +184,8 @@ private struct ScopeRow: View {
             editor.setScopePlot(spec.id, .currentVersusVoltage)
         case .response:
             editor.setScopePlot(spec.id, .frequencyResponse)
+        case .spectrum:
+            editor.setScopePlot(spec.id, .spectrum)
         case .quantity(let quantity):
             if spec.plot != .time { editor.setScopePlot(spec.id, .time) }
             editor.setScopeQuantity(spec.id, quantity)
@@ -529,5 +556,139 @@ private struct ResponsePlot: View {
         let leftSide = x(frequencies[k]) > plot.midX
         context.draw(Text(text).font(labelFont.weight(.semibold)).foregroundStyle(.primary),
                      at: CGPoint(x: x(frequencies[k]) + (leftSide ? -6 : 6), y: plot.minY + 2), anchor: leftSide ? .topTrailing : .topLeading)
+    }
+}
+
+/// The spectrum of a scope's recent samples, worked out at most five times a second
+final class SpectrumCache {
+    private var checked = Date.distantPast
+    private(set) var spectrum: Spectrum?
+
+    func update(_ trace: ScopeTrace?) -> Spectrum? {
+        guard Date().timeIntervalSince(checked) >= 0.18 else { return spectrum }
+        checked = Date()
+        spectrum = trace?.spectrum()
+        return spectrum
+    }
+}
+
+/// Amplitude against frequency on log scales (dB of the quantity's unit), the harmonics of the fundamental marked
+/// and numbered, with a readout under the pointer
+private struct SpectrumPlot: View {
+    let editor: EditorState
+    let cache: SpectrumCache
+    let scopeID: UUID
+    let unit: String
+    let color: Color
+    @State private var pointer: CGPoint?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+            let spectrum = cache.update(editor.simulation.simulator.trace(scopeID))
+            Canvas { context, size in draw(context, size, spectrum) }
+        }
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let location): pointer = location
+            case .ended: pointer = nil
+            }
+        }
+    }
+
+    private static func decibels(_ amplitude: Double) -> Double { 20 * log10(max(amplitude, 1e-15)) }
+
+    private func draw(_ context: GraphicsContext, _ size: CGSize, _ spectrum: Spectrum?) {
+        let labelFont = Font.caption2.monospacedDigit()
+        let plot = CGRect(x: 58, y: 10, width: max(10, size.width - 72), height: max(10, size.height - 28))
+        let grid = Color.secondary.opacity(0.25)
+        context.stroke(Path(plot), with: .color(grid), lineWidth: 1)
+        guard let spectrum, spectrum.amplitudes.count > 8 else {
+            context.draw(Text("Run the circuit to see its spectrum").font(.caption).foregroundStyle(.secondary),
+                         at: CGPoint(x: plot.midX, y: plot.midY))
+            return
+        }
+        // from a few bins up (below that is the window's own blur) to the highest true frequency
+        let low = log10(spectrum.binWidth * 3), high = log10(spectrum.maxFrequency)
+        guard high > low else { return }
+        let x: (Double) -> CGFloat = { plot.minX + CGFloat((log10($0) - low) / (high - low)) * plot.width }
+
+        var decade = pow(10, low.rounded(.up))
+        while decade <= pow(10, high) * 1.0001 {
+            var line = Path()
+            line.move(to: CGPoint(x: x(decade), y: plot.minY))
+            line.addLine(to: CGPoint(x: x(decade), y: plot.maxY))
+            context.stroke(line, with: .color(grid), lineWidth: 1)
+            context.draw(Text(SI.format(decade, unit: "Hz")).font(labelFont).foregroundStyle(.secondary),
+                         at: CGPoint(x: x(decade), y: plot.maxY + 3), anchor: .top)
+            decade *= 10
+        }
+
+        // levels: 100 dB down from the strongest, in steps of 20
+        let first = 3
+        let shown = spectrum.amplitudes[first...]
+        let strongest = Self.decibels(shown.max() ?? 1)
+        let top = (strongest / 20).rounded(.up) * 20
+        let bottom = top - 100
+        let y: (Double) -> CGFloat = { plot.maxY - CGFloat((min(max($0, bottom), top) - bottom) / (top - bottom)) * plot.height }
+        let suffix = unit == "V" ? "dBV" : "dB"
+        var level = top
+        while level >= bottom - 0.001 {
+            var line = Path()
+            line.move(to: CGPoint(x: plot.minX, y: y(level)))
+            line.addLine(to: CGPoint(x: plot.maxX, y: y(level)))
+            context.stroke(line, with: .color(grid), lineWidth: 1)
+            context.draw(Text(String(format: "%.0f %@", level + 0, suffix)).font(labelFont).foregroundStyle(.secondary),
+                         at: CGPoint(x: plot.minX - 6, y: y(level)), anchor: .trailing)
+            level -= 20
+        }
+
+        // the loudest bin in each column of pixels, filled down to the floor
+        var columns: [Int: Double] = [:]
+        for k in first..<spectrum.amplitudes.count {
+            let column = Int(x(spectrum.frequency(ofBin: k)).rounded())
+            columns[column] = max(columns[column] ?? 0, spectrum.amplitudes[k])
+        }
+        let sorted = columns.keys.sorted()
+        guard let firstColumn = sorted.first, let lastColumn = sorted.last else { return }
+        var outline = Path()
+        var fill = Path()
+        fill.move(to: CGPoint(x: CGFloat(firstColumn), y: plot.maxY))
+        for (i, column) in sorted.enumerated() {
+            let point = CGPoint(x: CGFloat(column), y: y(Self.decibels(columns[column] ?? 0)))
+            if i == 0 { outline.move(to: point) } else { outline.addLine(to: point) }
+            fill.addLine(to: point)
+        }
+        fill.addLine(to: CGPoint(x: CGFloat(lastColumn), y: plot.maxY))
+        fill.closeSubpath()
+        var clipped = context
+        clipped.clip(to: Path(plot))
+        clipped.fill(fill, with: .color(color.opacity(0.18)))
+        clipped.stroke(outline, with: .color(color), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+
+        // the fundamental and its harmonics
+        for harmonic in spectrum.harmonics {
+            let point = CGPoint(x: x(harmonic.frequency), y: y(Self.decibels(harmonic.amplitude)))
+            guard plot.insetBy(dx: -1, dy: -1).contains(point) else { continue }
+            clipped.fill(Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)), with: .color(color))
+            context.draw(Text(harmonic.number == 1 ? "f₀" : "\(harmonic.number)").font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary),
+                         at: CGPoint(x: point.x, y: max(plot.minY + 6, point.y - 9)))
+        }
+
+        // the readout under the pointer
+        guard let pointer, plot.contains(pointer) else { return }
+        let frequency = pow(10, low + Double((pointer.x - plot.minX) / plot.width) * (high - low))
+        let bin = min(spectrum.amplitudes.count - 1, max(first, Int((frequency / spectrum.binWidth).rounded())))
+        // the strongest bin near the pointer, so a peak is easy to read
+        let near = (max(first, bin - 2)...min(spectrum.amplitudes.count - 1, bin + 2)).max { spectrum.amplitudes[$0] < spectrum.amplitudes[$1] } ?? bin
+        let at = spectrum.frequency(ofBin: near)
+        var marker = Path()
+        marker.move(to: CGPoint(x: x(at), y: plot.minY))
+        marker.addLine(to: CGPoint(x: x(at), y: plot.maxY))
+        context.stroke(marker, with: .color(Color.secondary.opacity(0.6)), lineWidth: 1)
+        let text = "\(SI.format(at, unit: "Hz"))   " + String(format: "%.1f %@", Self.decibels(spectrum.amplitudes[near]), suffix)
+        let leftSide = x(at) > plot.midX
+        context.draw(Text(text).font(labelFont.weight(.semibold)).foregroundStyle(.primary),
+                     at: CGPoint(x: x(at) + (leftSide ? -6 : 6), y: plot.minY + 2), anchor: leftSide ? .topTrailing : .topLeading)
     }
 }

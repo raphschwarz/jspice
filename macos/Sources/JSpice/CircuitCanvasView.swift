@@ -789,6 +789,9 @@ final class CircuitCanvasView: NSView {
         if canPlotResponse(hit.kind) {
             menu.addItem(item("Add Frequency Response") { [weak self] in self?.editor.addScope(hit.id, .voltage, plot: .frequencyResponse) })
         }
+        if let quantity = scopeQuantities(for: hit.kind).first, canPlotSpectrum(hit.kind) {
+            menu.addItem(item("Add Spectrum") { [weak self] in self?.editor.addScope(hit.id, quantity, plot: .spectrum) })
+        }
         if MIDIMapping.mappable.contains(hit.kind) {
             menu.addItem(.separator())
             let learning = editor.midiLearning == EditorState.MIDITarget(part: hit.id, inner: nil)
@@ -988,6 +991,11 @@ func canPlotCurve(_ kind: ElementKind) -> Bool {
 }
 
 /// Parts whose voltage can be plotted against frequency: anything with a voltage, apart from the sources that drive it
+/// Parts with a voltage or current whose spectrum means something: everything a scope can show over time
+func canPlotSpectrum(_ kind: ElementKind) -> Bool {
+    !scopeQuantities(for: kind).isEmpty
+}
+
 func canPlotResponse(_ kind: ElementKind) -> Bool {
     scopeQuantities(for: kind).contains(.voltage) && !kind.isVoltageSource && kind != .currentSource
 }

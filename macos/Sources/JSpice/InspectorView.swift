@@ -203,6 +203,11 @@ struct ElementInspector: View {
                         editor.addScope(element.id, .voltage, plot: .frequencyResponse)
                     }
                 }
+                if let quantity = quantities.first, canPlotSpectrum(element.kind) {
+                    Button("Add Spectrum", systemImage: "chart.bar.xaxis") {
+                        editor.addScope(element.id, quantity, plot: .spectrum)
+                    }
+                }
                 Button("Rotate", systemImage: "rotate.right") { editor.rotateSelection() }
                 if element.kind.canFlip {
                     Button("Flip", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.flipSelection() }

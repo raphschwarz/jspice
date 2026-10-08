@@ -168,6 +168,16 @@ public final class CircuitSession {
                 "settle": ["description": "ac: seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
              ], required: ["source", "output"]),
              run: { session, arguments in try session.frequencyResponse(arguments) }),
+        Tool(name: "spectrum",
+             description: "The spectrum of a probe's signal, as a spectrum analyser shows it: the circuit runs from rest for settle seconds, then its signal is recorded for duration seconds and analysed (Hann window, FFT). Returns the fundamental, total harmonic distortion (THD, the RMS of harmonics 2 to 10 over the fundamental), each harmonic's frequency and level, the strongest other peaks, and the signal's RMS and mean. Keyboard events play as in simulate.",
+             inputSchema: schema([
+                "probe": string("What to analyse: \"V(net)\", \"V(part)\", \"I(part)\"…"),
+                "duration": ["description": "Seconds recorded for the analysis (default 0.5); the resolution is 1 / duration"],
+                "settle": ["description": "Seconds run first and not analysed, so the circuit settles (default 0.2)"],
+                "max_frequency": ["description": "Highest frequency of interest in Hz (default 20k); sets the time step"],
+                "keyboard": ["type": "array", "items": ["type": "object"], "description": "Notes to play, as in simulate"],
+             ], required: ["probe"]),
+             run: { session, arguments in try session.spectrum(arguments) }),
         Tool(name: "set_audio_input",
              description: "Gives an audio input part (kind \"audioInput\", a voltage source that plays a sound) a WAV file to play: 8 to 32-bit PCM or float, any sample rate, mixed to mono, up to a minute. Its level parameter is the peak voltage of full scale (0.5 V by default, about a guitar's), offset is added, and loop plays it over and over. Without a path it plays the built-in guitar riff.",
              inputSchema: schema([
@@ -826,6 +836,69 @@ public final class CircuitSession {
 
     /// Keyboard events for simulate: a time, and a note to press or nil to release
     // MARK: - Sound
+
+    func spectrum(_ arguments: [String: Any]) throws -> Any {
+        let probe = try probe(try Self.text(arguments, "probe"))
+        let duration = try Self.number(arguments["duration"], "duration") ?? 0.5
+        let settle = try Self.number(arguments["settle"], "settle") ?? 0.2
+        let maxFrequency = try Self.number(arguments["max_frequency"], "max_frequency") ?? 20_000
+        guard duration > 0, settle >= 0, maxFrequency > 0 else { throw ToolError("duration and max_frequency should be positive, settle not negative") }
+        let timeStep = min(Pacing.suggest(for: circuit).timeStep, 1 / (4 * maxFrequency))
+        let total = ((duration + settle) / timeStep).rounded(.up)
+        guard total <= Double(Self.maxSteps) else {
+            throw ToolError("That is \(Int(total)) steps; at most \(Self.maxSteps). Use a shorter duration or a lower max_frequency.")
+        }
+        let events = try Self.keyboardEvents(arguments["keyboard"])
+        let simulator = Simulator(circuit: circuit, timeStep: timeStep)
+        if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
+        let settleSteps = Int((settle / timeStep).rounded())
+        let wallStart = Date()
+        var values: [Double] = []
+        values.reserveCapacity(Int(total) - settleSteps)
+        var nextEvent = 0
+        for step in 0..<Int(total) {
+            while nextEvent < events.count && events[nextEvent].at <= simulator.time + timeStep / 2 {
+                simulator.keyboard = Simulator.KeyboardState(note: events[nextEvent].note ?? simulator.keyboard.note, gate: events[nextEvent].note != nil)
+                nextEvent += 1
+            }
+            simulator.step()
+            if simulator.isFailed { break }
+            if step >= settleSteps { values.append(probe.read(simulator)) }
+            if step % 4096 == 0 && Date().timeIntervalSince(wallStart) > Self.maxWallSeconds { break }
+        }
+        if simulator.isFailed { throw ToolError("The simulation failed: \(simulator.problems.joined(separator: " "))") }
+        guard let spectrum = Spectrum.analyze(values, interval: timeStep, maxFrequency: maxFrequency) else {
+            throw ToolError("Too short to analyse: record at least 64 steps (a longer duration)")
+        }
+        func decibels(_ a: Double) -> Double { 20 * log10(max(a, 1e-15)) }
+        var result: [String: Any] = [
+            "probe": probe.label, "resolution_hz": spectrum.resolution, "max_frequency": spectrum.maxFrequency,
+            "rms": spectrum.rms, "mean": spectrum.mean, "time_step": timeStep,
+        ]
+        if let f0 = spectrum.fundamental { result["fundamental_hz"] = f0 }
+        if let thd = spectrum.thd { result["thd_percent"] = thd * 100 }
+        let reference = spectrum.harmonics.first?.amplitude ?? 0
+        result["harmonics"] = spectrum.harmonics.map { harmonic -> [String: Any] in
+            var entry: [String: Any] = ["n": harmonic.number, "frequency": harmonic.frequency, "amplitude": harmonic.amplitude,
+                                        "level_db": decibels(harmonic.amplitude)]
+            if reference > 0 { entry["relative_db"] = decibels(harmonic.amplitude / reference) }
+            return entry
+        }
+        // the strongest peaks that are not harmonics: hum, intermodulation, aliasing…
+        let a = spectrum.amplitudes
+        let loudest = a.dropFirst(3).max() ?? 0
+        let harmonicBins = Set(spectrum.harmonics.flatMap { h -> [Int] in
+            let c = Int((h.frequency / spectrum.binWidth).rounded())
+            return Array((c - 3)...(c + 3))
+        })
+        let peaks = (3..<max(3, a.count - 1)).filter {
+            a[$0] > a[$0 - 1] && a[$0] >= a[$0 + 1] && a[$0] > loudest * 1e-3 && !harmonicBins.contains($0)
+        }
+        .sorted { a[$0] > a[$1] }
+        .prefix(8)
+        result["other_peaks"] = peaks.map { ["frequency": spectrum.frequency(ofBin: $0), "level_db": decibels(a[$0])] }
+        return result
+    }
 
     func setAudioInput(_ arguments: [String: Any]) throws -> Any {
         let index = try index(ofPart: try Self.text(arguments, "part"))
