@@ -207,7 +207,7 @@ final class RP2040 {
         if let peripheral = findPeripheral(address) {
             peripheral.writeUint32Atomic(address & 0xFFF, value, (address & 0x3000) >> 12)
         } else if address < UInt32(RP2040.bootromSize) {
-            bootrom.storeBytes(of: value, toByteOffset: Int(address & ~3), as: UInt32.self)
+            // ROM: a stray write (a null pointer in a sketch) changes nothing, as on the chip
         } else if address >= RP2040.flashStart && address < RP2040.flashStart + UInt32(RP2040.flashSize) {
             flash.storeBytes(of: value, toByteOffset: Int(address - RP2040.flashStart), as: UInt32.self)
         } else if address >= RP2040.ramStart && address < RP2040.ramStart + UInt32(RP2040.sramSize) {

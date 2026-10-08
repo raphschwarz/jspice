@@ -383,7 +383,11 @@ final class RPADC: RPPeripheral {
 
     override init(chip: RP2040, name: String) {
         super.init(chip: chip, name: name)
-        sampleAlarm = chip.clock.createAlarm { [unowned self] in self.completeRead(self.channelValues[self.currentChannel], error: false) }
+        sampleAlarm = chip.clock.createAlarm { [unowned self] in
+            // AINSEL has room for channels 5-7, which do not exist: they read 0
+            let channel = self.currentChannel
+            self.completeRead(channel < self.channelValues.count ? self.channelValues[channel] : 0, error: false)
+        }
         multiShotAlarm = chip.clock.createAlarm { [unowned self] in if self.cs & (1 << 3) != 0 { self.startRead() } }
     }
 
@@ -395,7 +399,7 @@ final class RPADC: RPPeripheral {
         get { Int((cs >> 12) & 0x7) }
         set {
             cs &= ~(0x7 << 12)
-            cs |= (UInt32(newValue) & 12) << 12  // as rp2040js: masked with the shift, not the mask
+            cs |= (UInt32(newValue) & 7) << 12
         }
     }
 
@@ -521,8 +525,9 @@ final class RPPWM: RPPeripheral {
             pinB1 = index * 2 + 1
             pinA2 = index < 7 ? 16 + index * 2 : -1
             pinB2 = index < 7 ? 16 + index * 2 + 1 : -1
-            alarmA = RPTimer32PeriodicAlarm(timer: timer) { [unowned self] in self.setA(false) }
-            alarmB = RPTimer32PeriodicAlarm(timer: timer) { [unowned self] in self.setB(false) }
+            // the counter meets a compare value: counting up the output goes low; counting down (phase-correct) high
+            alarmA = RPTimer32PeriodicAlarm(timer: timer) { [unowned self] in self.setA(self.countingDown) }
+            alarmB = RPTimer32PeriodicAlarm(timer: timer) { [unowned self] in self.setB(self.countingDown) }
             alarmBottom = RPTimer32PeriodicAlarm(timer: timer) { [unowned self] in self.wrap() }
             alarmA.enable = true
             alarmB.enable = true
@@ -593,13 +598,15 @@ final class RPPWM: RPPeripheral {
             }
         }
 
+        /// In phase-correct mode, on the way back down from the top
+        private var countingDown: Bool { csr & (1 << 1) != 0 && timer.rawCounter > timer.top }
+
         private func wrap() {
             pwm.channelInterrupt(index)
             updateDoubleBuffered()
-            if csr & (1 << 1) == 0 {
-                setA(alarmA.target > 0)
-                setB(alarmB.target > 0)
-            }
+            // at the bottom (in phase-correct mode too) the output is high while the counter is below its compare value
+            setA(alarmA.target > 0)
+            setB(alarmB.target > 0)
         }
 
         func setA(_ value: Bool) {
@@ -790,6 +797,8 @@ final class RPDMA: RPPeripheral {
         private func transfer() {
             let control = ctrl
             move()
+            // a PWM slice's wrap asks for one transfer each time it wraps
+            if (RPDREQ.pwmWrap0..<RPDREQ.pwmWrap0 + 8).contains(treq) { dma.clearDREQ(treq) }
             if control & (1 << 4) != 0 {
                 if ringMask != 0 && control & (1 << 10) == 0 {
                     readAddress = (readAddress & ~ringMask) | ((readAddress &+ dataSize) & ringMask)
@@ -818,7 +827,8 @@ final class RPDMA: RPPeripheral {
         }
 
         func scheduleTransfer() {
-            if dma.dreq[treq] || treq == 0x3F {
+            // 0x3B-0x3E are the pacing timers and 0x3F permanent: no DREQ line of their own
+            if treq == 0x3F || (treq < dma.dreq.count && dma.dreq[treq]) {
                 transferAlarm.schedule(0)
             } else {
                 let delay = dma.timerMicros(treq)

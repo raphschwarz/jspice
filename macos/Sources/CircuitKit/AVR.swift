@@ -441,6 +441,8 @@ public final class AVR: Microcontroller {
             let source = sources[index]
             if source.clears { data[source.flag] &= ~source.flagBit }
             interruptsChanged = true
+            // an interrupt on a low level asks again for as long as the pin stays low
+            if externalWatch { externalInterrupts() }
             pushPC(pc)
             data[AVR.SREG] &= ~AVR.flagI
             pc = source.vector * variant.vectorWords
@@ -614,6 +616,8 @@ public final class AVR: Microcontroller {
         case .mask:
             d[address] = value
             interruptsChanged = true
+            // an interrupt on a low level enabled while the pin is low
+            if externalWatch { externalInterrupts() }
         case .statusRegister:
             if value & AVR.flagI != 0 && d[AVR.SREG] & AVR.flagI == 0 { interruptDelay = enableDelay }
             d[AVR.SREG] = value
@@ -649,12 +653,10 @@ public final class AVR: Microcontroller {
             adcControlWrite(value)
         case .externalControl:
             d[address] = value
-            externalWatch = false
-            for (k, spec) in variant.externalInterrupts.enumerated() {
-                // edges are watched from now on: start from the present levels
-                externalPrevious[k] = externalLevel(spec.pin)
-                if Int(d[spec.control]) >> spec.shift & 3 != 0 { externalWatch = true }
-            }
+            // edges are watched from now on, starting from the present levels; a low level (sense 0) is watched too
+            externalWatch = !variant.externalInterrupts.isEmpty
+            for (k, spec) in variant.externalInterrupts.enumerated() { externalPrevious[k] = externalLevel(spec.pin) }
+            externalInterrupts()
         case .pinChangeMask:
             d[address] = value
             pinChangeWatch = false
@@ -676,8 +678,6 @@ public final class AVR: Microcontroller {
             twi?.writeStatus(value)
         case .twiData:
             twi?.writeData(value)
-        default:
-            d[address] = value
         }
     }
 
@@ -759,8 +759,15 @@ public final class AVR: Microcontroller {
         if admux & 0x20 != 0 { value <<= 6 }  // left adjusted
         d[adc.low] = UInt8(truncatingIfNeeded: value)
         d[adc.high] = UInt8(truncatingIfNeeded: value >> 8)
-        d[adc.control] = d[adc.control] & ~0x40 | 0x10
-        adcDoneAt = nil
+        let control = d[adc.control]
+        if control & 0x80 != 0 && control & 0x20 != 0 && d[adc.controlB] & 0x07 == 0 {
+            // auto trigger in free-running mode: the next conversion starts at once
+            d[adc.control] = control | 0x10
+            adcDoneAt = cycles + 13 * [2, 2, 4, 8, 16, 32, 64, 128][Int(control & 7)]
+        } else {
+            d[adc.control] = control & ~0x40 | 0x10
+            adcDoneAt = nil
+        }
         adcFirst = false
         interruptsChanged = true
     }
@@ -787,7 +794,14 @@ public final class AVR: Microcontroller {
             let level = externalLevel(spec.pin)
             let sense = Int(d[spec.control]) >> spec.shift & 3
             let previous = externalPrevious[k]
-            if (sense == 1 && level != previous) || (sense == 2 && previous && !level) || (sense == 3 && level && !previous) {
+            if sense == 0 {
+                // a low level asks while it lasts (when the interrupt is enabled), with no edge needed
+                let asking = !level && d[spec.mask] & spec.maskBit != 0
+                if asking != (d[spec.flag] & spec.flagBit != 0) {
+                    if asking { d[spec.flag] |= spec.flagBit } else { d[spec.flag] &= ~spec.flagBit }
+                    interruptsChanged = true
+                }
+            } else if (sense == 1 && level != previous) || (sense == 2 && previous && !level) || (sense == 3 && level && !previous) {
                 d[spec.flag] |= spec.flagBit
                 interruptsChanged = true
             }
@@ -1600,6 +1614,8 @@ final class AVRUSART {
         avr.data[spec.statusA] = 0x20  // the transmit buffer starts empty
         avr.data[spec.controlC] = 0x06
         output = []
+        // what was typed before a reset is not received after it
+        input = []
         busyUntil = 0
         pending = nil
         receiveNext = 0
