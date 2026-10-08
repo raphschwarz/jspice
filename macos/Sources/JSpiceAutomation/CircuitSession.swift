@@ -172,6 +172,28 @@ public final class CircuitSession {
                 "settle": ["description": "ac: seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
              ], required: ["source", "output"]),
              run: { session, arguments in try session.frequencyResponse(arguments) }),
+        Tool(name: "sweep",
+             description: "Steps one parameter of one part through a list of values (or from start to stop) and measures the circuit at each: how a filter's corner follows a capacitor, a bias point follows a resistor, a fuzz's gain follows its pot. Returns a row of measurements per value.",
+             inputSchema: schema([
+                "part": string("Part name"),
+                "parameter": string("Parameter key from list_parts, for example \"resistance\" or \"position\""),
+                "values": ["type": "array", "items": [String: Any](), "description": "The values (numbers or strings with SI prefixes)"],
+                "start": ["description": "First value, when not giving values"],
+                "stop": ["description": "Last value"],
+                "points": ["type": "integer", "description": "How many values from start to stop (default 11, at most 100)"],
+                "logarithmic": ["type": "boolean", "description": "Even ratios instead of even steps (default: true when stop is ten times start or more)"],
+                "measure": ["type": "object", "description": "What to measure on each circuit: {\"type\": \"ac\", \"source\": \"VIN\", \"output\": \"V(out)\", \"frequencies\": [100, 1000]} (small-signal gain and phase, with the peak and the -3 dB corner when there are three or more frequencies), {\"type\": \"op\", \"probes\": [\"V(out)\", \"I(Q1)\"]} (the operating point it settles to), or {\"type\": \"transient\", \"duration\": 0.1, \"skip\": 0.05, \"probes\": [\"V(out)\"]} (min, max, mean, RMS, peak-to-peak and frequency after skip seconds). Each may give settle (seconds)."],
+             ], required: ["part", "parameter", "measure"]),
+             run: { session, arguments in try session.sweep(arguments) }),
+        Tool(name: "monte_carlo",
+             description: "Tolerance analysis: measures many copies of the circuit, each with its parts' values drawn within their tolerances (normally distributed, three standard deviations at the tolerance), as a batch built from real parts would come out. Resistors vary ±5 %, capacitors and inductors ±10 %, transistors' gain ±30 % and JFETs ±20 % unless told otherwise. Returns, for each measurement, its nominal value and the spread: mean, standard deviation, minimum, maximum, and the 5th and 95th percentiles, and which run went furthest each way.",
+             inputSchema: schema([
+                "runs": ["type": "integer", "description": "How many copies (default 50, at most 500)"],
+                "seed": ["type": "integer", "description": "Seed of the random draws, to repeat an analysis exactly (default 1)"],
+                "tolerances": ["type": "object", "description": "± fractions by kind: resistors, capacitors, inductors, transistor_gain, fets; and parts: {\"R1\": 0.001} for single parts"],
+                "measure": ["type": "object", "description": "What to measure on each circuit: {\"type\": \"ac\", \"source\": \"VIN\", \"output\": \"V(out)\", \"frequencies\": [100, 1000]} (small-signal gain and phase, with the peak and the -3 dB corner when there are three or more frequencies), {\"type\": \"op\", \"probes\": [\"V(out)\", \"I(Q1)\"]} (the operating point it settles to), or {\"type\": \"transient\", \"duration\": 0.1, \"skip\": 0.05, \"probes\": [\"V(out)\"]} (min, max, mean, RMS, peak-to-peak and frequency after skip seconds). Each may give settle (seconds)."],
+             ], required: ["measure"]),
+             run: { session, arguments in try session.monteCarlo(arguments) }),
         Tool(name: "noise",
              description: "Noise analysis, as SPICE's .noise: the circuit settles from rest (its input source held still), is linearised, and every resistor's thermal noise (4kT/R), junction's shot noise (2qI), field-effect transistor's channel noise, tube's and op-amp's input noise (TL072 18 nV/√Hz, NE5532 5, LM358 40) is carried to the output. Returns the output's noise density at each frequency, the same referred to the input source (divided by the gain from it), the total RMS noise over the band, and the parts it comes from, loudest first. No flicker (1/f) noise.",
              inputSchema: schema([
@@ -901,6 +923,176 @@ public final class CircuitSession {
         ]
         if let source { reply["input"] = circuit.elements[source].name }
         return reply
+    }
+
+    // MARK: - Sweeps and tolerances
+
+    /// Measurements of a circuit (this one, or a copy with other values), by name
+    private func measure(_ circuit: Circuit, _ spec: [String: Any]) throws -> [String: Double] {
+        let type = (spec["type"] as? String ?? "ac").lowercased()
+        let settle = try Self.number(spec["settle"], "settle")
+        if let settle, !(settle >= 0 && settle < 1000) { throw ToolError("\"settle\" should be from 0 to 1000 seconds") }
+        var metrics: [String: Double] = [:]
+        switch type {
+        case "ac":
+            let source = try index(ofPart: try Self.text(spec, "source"))
+            let output = try Self.text(spec, "output")
+            let frequencies = try (spec["frequencies"] as? [Any])?.map { try Self.number($0, "frequencies") ?? 0 } ?? [1000]
+            guard !frequencies.isEmpty, frequencies.count <= 400, frequencies.allSatisfy({ $0 > 0 && $0 < 1e10 }) else {
+                throw ToolError("\"frequencies\" should be 1 to 400 positive frequencies")
+            }
+            let simulator = Simulator.settled(circuit, holding: source, duration: settle)
+            if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
+            let (plus, minus) = try smallSignalNodes(output, simulator)
+            guard let model = simulator.smallSignalModel(),
+                  let response = model.response(input: source, plus: plus, minus: minus, frequencies: frequencies) else {
+                throw ToolError("The linearised circuit can't be solved")
+            }
+            let gains = response.map { 20 * log10(max($0.magnitude, 1e-15)) }
+            for (k, f) in frequencies.enumerated() {
+                metrics["gain_db@" + String(format: "%g", f)] = gains[k]
+                metrics["phase_deg@" + String(format: "%g", f)] = response[k].phase * 180 / .pi
+            }
+            if frequencies.count >= 3, let peak = gains.indices.max(by: { gains[$0] < gains[$1] }) {
+                metrics["peak_db"] = gains[peak]
+                metrics["peak_hz"] = frequencies[peak]
+                let level = gains[peak] - 3
+                for k in 1..<gains.count where (gains[k - 1] - level) * (gains[k] - level) < 0 {
+                    let f = (gains[k - 1] - level) / (gains[k - 1] - gains[k])
+                    metrics["corner_hz"] = frequencies[k - 1] * pow(frequencies[k] / frequencies[k - 1], f)
+                    break
+                }
+            }
+        case "op":
+            guard let specs = spec["probes"] as? [String], !specs.isEmpty else { throw ToolError("\"probes\" should list what to read") }
+            let probes = try specs.map(probe)
+            // every signal source held still: the operating point is where the circuit rests
+            var still = circuit
+            for i in still.elements.indices where [.acVoltage, .squareVoltage, .noiseVoltage, .audioInput].contains(still.elements[i].kind) {
+                still = Simulator.quiet(still, holding: i)
+            }
+            let simulator = Simulator.settled(still, holding: nil, duration: settle)
+            if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
+            for probe in probes { metrics[probe.label] = probe.read(simulator) }
+        case "transient":
+            guard let specs = spec["probes"] as? [String], !specs.isEmpty else { throw ToolError("\"probes\" should list what to record") }
+            let probes = try specs.map(probe)
+            guard let duration = try Self.number(spec["duration"], "duration"), duration > 0 else { throw ToolError("\"duration\" should be positive") }
+            let skip = try Self.number(spec["skip"], "skip") ?? 0
+            let timeStep = min(Pacing.suggest(for: circuit).timeStep, duration / 400)
+            let steps = Int(((duration + skip) / timeStep).rounded(.up))
+            guard steps <= Self.maxSteps else { throw ToolError("That is \(steps) steps; at most \(Self.maxSteps)") }
+            let simulator = Simulator(circuit: circuit, timeStep: timeStep)
+            var traces = probes.map { _ in Trace() }
+            for _ in 0..<steps {
+                simulator.step()
+                if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
+                guard simulator.time >= skip else { continue }
+                for k in probes.indices { traces[k].add(probes[k].read(simulator), at: simulator.time, sample: false, keep: true) }
+            }
+            for (probe, trace) in zip(probes, traces) where trace.count > 0 {
+                let mean = trace.sum / Double(trace.count)
+                metrics[probe.label + " mean"] = mean
+                metrics[probe.label + " rms"] = (trace.sumOfSquares / Double(trace.count)).squareRoot()
+                metrics[probe.label + " min"] = trace.minimum
+                metrics[probe.label + " max"] = trace.maximum
+                metrics[probe.label + " peak_to_peak"] = trace.maximum - trace.minimum
+                if let frequency = trace.frequency() { metrics[probe.label + " frequency"] = frequency }
+            }
+        default:
+            throw ToolError("\"type\" should be ac, op or transient")
+        }
+        return metrics
+    }
+
+    func sweep(_ arguments: [String: Any]) throws -> Any {
+        let index = try index(ofPart: try Self.text(arguments, "part"))
+        let key = try Self.text(arguments, "parameter")
+        let element = circuit.elements[index]
+        guard element.kind.params.contains(where: { $0.key == key }) else {
+            throw ToolError("\(element.name) has no parameter \(key); parameters: \(element.kind.params.map(\.key).joined(separator: ", "))")
+        }
+        guard let spec = arguments["measure"] as? [String: Any] else { throw ToolError("\"measure\" should say what to measure") }
+        var values = try (arguments["values"] as? [Any])?.map { try Self.number($0, "values") ?? 0 } ?? []
+        if values.isEmpty {
+            guard let start = try Self.number(arguments["start"], "start"), let stop = try Self.number(arguments["stop"], "stop") else {
+                throw ToolError("Give \"values\", or \"start\" and \"stop\"")
+            }
+            let points = max(2, min(100, (arguments["points"] as? NSNumber)?.intValue ?? 11))
+            let logarithmic = arguments["logarithmic"] as? Bool ?? (start > 0 && stop / start >= 10)
+            values = Sweep.values(from: start, to: stop, count: points, logarithmic: logarithmic)
+        }
+        guard values.count <= 100 else { throw ToolError("At most 100 values") }
+        let wallStart = Date()
+        var rows: [[String: Any]] = []
+        var truncated = false
+        for value in values {
+            if Date().timeIntervalSince(wallStart) > Self.maxWallSeconds {
+                truncated = true
+                break
+            }
+            var variant = circuit
+            variant.elements[index][param: key] = value
+            var row: [String: Any] = ["value": value]
+            do {
+                for (name, metric) in try measure(variant, spec) { row[name] = metric }
+            } catch {
+                row["error"] = "\(error)"
+            }
+            rows.append(row)
+        }
+        return ["part": element.name, "parameter": key, "rows": rows, "truncated": truncated,
+                "wall_seconds": Date().timeIntervalSince(wallStart)]
+    }
+
+    func monteCarlo(_ arguments: [String: Any]) throws -> Any {
+        guard let spec = arguments["measure"] as? [String: Any] else { throw ToolError("\"measure\" should say what to measure") }
+        let runs = max(1, min(500, (arguments["runs"] as? NSNumber)?.intValue ?? 50))
+        let seed = UInt64(truncatingIfNeeded: (arguments["seed"] as? NSNumber)?.int64Value ?? 1)
+        var tolerances = Tolerances()
+        if let given = arguments["tolerances"] as? [String: Any] {
+            for (key, value) in given where key != "parts" {
+                guard let fraction = try Self.number(value, key), fraction >= 0, fraction < 1 else { throw ToolError("\(key) should be a fraction from 0 to 1") }
+                switch key {
+                case "resistors": tolerances.resistors = fraction
+                case "capacitors": tolerances.capacitors = fraction
+                case "inductors": tolerances.inductors = fraction
+                case "transistor_gain": tolerances.transistorGain = fraction
+                case "fets": tolerances.fets = fraction
+                default: throw ToolError("Unknown tolerance \(key): resistors, capacitors, inductors, transistor_gain, fets, parts")
+                }
+            }
+            for (name, value) in given["parts"] as? [String: Any] ?? [:] {
+                guard let fraction = try Self.number(value, name), fraction >= 0, fraction < 1 else { throw ToolError("\(name) should be a fraction from 0 to 1") }
+                tolerances.parts[circuit.elements[try index(ofPart: name)].id] = fraction
+            }
+        }
+        let wallStart = Date()
+        let nominal = try measure(circuit, spec)
+        var samples: [String: [(run: Int, value: Double)]] = [:]
+        var failed = 0, done = 0
+        for run in 1...runs {
+            if Date().timeIntervalSince(wallStart) > Self.maxWallSeconds { break }
+            done += 1
+            guard let metrics = try? measure(tolerances.variant(of: circuit, seed: seed, run: run), spec) else {
+                failed += 1
+                continue
+            }
+            for (name, value) in metrics { samples[name, default: []].append((run, value)) }
+        }
+        var results: [String: Any] = [:]
+        for (name, values) in samples {
+            guard let summary = Tolerances.summary(values.map(\.value)) else { continue }
+            var entry: [String: Any] = [
+                "mean": summary.mean, "std": summary.standardDeviation, "min": summary.minimum, "max": summary.maximum,
+                "p5": summary.low, "p95": summary.high,
+            ]
+            if let value = nominal[name] { entry["nominal"] = value }
+            if let low = values.min(by: { $0.value < $1.value }) { entry["min_run"] = low.run }
+            if let high = values.max(by: { $0.value < $1.value }) { entry["max_run"] = high.run }
+            results[name] = entry
+        }
+        return ["runs": done, "failed": failed, "seed": seed, "metrics": results, "wall_seconds": Date().timeIntervalSince(wallStart)]
     }
 
     // MARK: - Sound

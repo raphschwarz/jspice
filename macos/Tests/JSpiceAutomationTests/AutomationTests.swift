@@ -321,6 +321,38 @@ final class AutomationTests: XCTestCase {
         XCTAssertThrowsError(try session.call("spectrum", arguments: ["probe": "V(nowhere)"]))
     }
 
+    func testAnAgentCanSweepAndCheckTolerances() throws {
+        let session = CircuitSession()
+        _ = try session.call("build_circuit", arguments: ["parts": [
+            ["kind": "acVoltage", "name": "VIN", "params": ["amplitude": 1, "offset": 10, "frequency": 1000], "connections": ["plus": "in", "minus": "GND"]],
+            ["kind": "resistor", "name": "R1", "params": ["resistance": "1k"], "connections": ["a": "in", "b": "out"]],
+            ["kind": "resistor", "name": "R2", "params": ["resistance": "1k"], "connections": ["a": "out", "b": "GND"]],
+            ["kind": "capacitor", "name": "C1", "params": ["capacitance": "100n"], "connections": ["a": "out", "b": "GND"]],
+        ]])
+        // the corner of R1 ∥ R2 with C1 follows C1: 1 / (2π 500 Ω C)
+        let sweep = try XCTUnwrap(session.call("sweep", arguments: [
+            "part": "C1", "parameter": "capacitance", "values": ["100n", "1u"],
+            "measure": ["type": "ac", "source": "VIN", "output": "V(out)", "frequencies": FrequencySweep.logarithmic(from: 10, to: 100_000, pointsPerDecade: 50)],
+        ]) as? [String: Any])
+        let rows = try XCTUnwrap(sweep["rows"] as? [[String: Any]])
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows[0]["corner_hz"] as? Double ?? 0, 1 / (2 * .pi * 500 * 100e-9), accuracy: 30)
+        XCTAssertEqual(rows[1]["corner_hz"] as? Double ?? 0, 1 / (2 * .pi * 500 * 1e-6), accuracy: 3)
+        XCTAssertEqual(rows[0]["peak_db"] as? Double ?? 0, 20 * log10(0.5), accuracy: 0.01)
+        // 1 % resistors: the divider's 5 V spread by about 5 V × 1 % / 3 / √2
+        let tolerance = try XCTUnwrap(session.call("monte_carlo", arguments: [
+            "runs": 200, "tolerances": ["resistors": 0.01], "measure": ["type": "op", "probes": ["V(out)"]],
+        ]) as? [String: Any])
+        XCTAssertEqual(tolerance["runs"] as? Int, 200)
+        let metric = try XCTUnwrap((tolerance["metrics"] as? [String: Any])?["V(out)"] as? [String: Double])
+        XCTAssertEqual(metric["nominal"] ?? 0, 5, accuracy: 1e-3)
+        XCTAssertEqual(metric["mean"] ?? 0, 5, accuracy: 0.01)
+        XCTAssertEqual(metric["std"] ?? 0, 5 * 0.01 / 3 / 2.0.squareRoot(), accuracy: 0.004)
+        XCTAssertLessThan(metric["max"] ?? 99, 5.08)
+        XCTAssertGreaterThan(metric["min"] ?? 0, 4.92)
+        XCTAssertThrowsError(try session.call("sweep", arguments: ["part": "C1", "parameter": "voltage", "values": [1], "measure": ["type": "op", "probes": ["V(out)"]]]))
+    }
+
     func testAnAgentCanMapMIDIControllers() throws {
         let session = CircuitSession()
         _ = try session.call("build_circuit", arguments: ["parts": [

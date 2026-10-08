@@ -29,6 +29,8 @@ private struct ScopeRow: View {
     let sources: [Element]
     @State private var response = ResponseCache()
     @State private var spectrum = SpectrumCache()
+    /// Whether the frequency response shades the spread its parts' tolerances give
+    @State private var showSpread = false
     @Environment(\.colorScheme) private var colorScheme
 
     /// The source a frequency response is driven from: the one chosen, or the circuit's first signal source
@@ -86,11 +88,15 @@ private struct ScopeRow: View {
                     .controlSize(.small)
                     .fixedSize()
                     .help("The source the response is measured from")
+                    Toggle("Tolerances", isOn: $showSpread)
+                        .toggleStyle(.checkbox)
+                        .controlSize(.small)
+                        .help("Shade where the response of 24 copies falls, their resistors drawn within 5 %, capacitors and inductors within 10 % and transistors' gain within 30 %")
                 }
                 TimelineView(.periodic(from: .now, by: 0.2)) { _ in
                     let trace = editor.simulation.simulator.trace(spec.id)
                     if spec.plot == .frequencyResponse {
-                        let result = response.update(editor.simulation.simulator, elementID: element.id, sourceID: source?.id)
+                        let result = response.update(editor.simulation.simulator, elementID: element.id, sourceID: source?.id, spread: showSpread)
                         if let note = result.note {
                             Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         } else if let peak = result.peak {
@@ -149,7 +155,7 @@ private struct ScopeRow: View {
             .padding(10)
             Divider()
             if spec.plot == .frequencyResponse {
-                ResponsePlot(editor: editor, cache: response, elementID: element.id, sourceID: source?.id,
+                ResponsePlot(editor: editor, cache: response, elementID: element.id, sourceID: source?.id, spread: showSpread,
                              gainColor: voltageColor, phaseColor: phaseColor)
             } else if spec.plot == .spectrum {
                 SpectrumPlot(editor: editor, cache: spectrum, scopeID: spec.id, unit: spec.quantity.unit, color: color)
@@ -407,8 +413,17 @@ final class ResponseCache {
     private var key: Key?
     private var checked = Date.distantPast
     private(set) var response = Response(note: "Working it out…")
+    /// The lowest and highest gain (dB) at each frequency over copies with their values drawn within tolerance
+    private(set) var spread: (low: [Double], high: [Double])?
+    private var spreadCircuit: Circuit?
+    private var spreadTask: Task<Void, Never>?
 
-    func update(_ simulator: Simulator, elementID: UUID, sourceID: UUID?) -> Response {
+    func update(_ simulator: Simulator, elementID: UUID, sourceID: UUID?, spread wanted: Bool = false) -> Response {
+        if !wanted && spreadCircuit != nil {
+            spreadTask?.cancel()
+            spreadCircuit = nil
+            spread = nil
+        }
         guard Date().timeIntervalSince(checked) >= 0.18 else { return response }
         checked = Date()
         let circuit = simulator.circuit
@@ -437,6 +452,7 @@ final class ResponseCache {
             unsettled -= progress.simulatedTime
         }
         guard let (plus, minus) = shadow.acrossNodes(index) else { return set(Response(note: "This part has no voltage to plot")) }
+        if wanted && quiet != spreadCircuit { startSpread(quiet, input: input, element: index) }
         guard let model = shadow.smallSignalModel() else { return set(Response(note: "Nothing to show while the circuit can't be solved")) }
         let key = Key(input: input, plus: plus, minus: minus)
         if model == self.model && key == self.key { return response }
@@ -451,6 +467,35 @@ final class ResponseCache {
             result.noisiest = noise.contributions.first?.label
         }
         return set(result)
+    }
+
+    /// Works out the spread in the background: 24 copies of the circuit, each settled and linearised
+    private func startSpread(_ quiet: Circuit, input: Int, element: Int) {
+        spreadTask?.cancel()
+        spreadCircuit = quiet
+        spread = nil
+        let frequencies = Self.frequencies
+        spreadTask = Task.detached(priority: .utility) { [weak self] in
+            var low = [Double](repeating: .infinity, count: frequencies.count)
+            var high = [Double](repeating: -.infinity, count: frequencies.count)
+            let tolerances = Tolerances()
+            for run in 1...24 {
+                if Task.isCancelled { return }
+                let simulator = Simulator.settled(tolerances.variant(of: quiet, seed: 1, run: run), holding: input, maxSteps: 200_000)
+                guard let (plus, minus) = simulator.acrossNodes(element), let model = simulator.smallSignalModel(),
+                      let values = model.response(input: input, plus: plus, minus: minus, frequencies: frequencies) else { continue }
+                for (k, value) in values.enumerated() {
+                    let gain = 20 * log10(max(value.magnitude, 1e-12))
+                    low[k] = min(low[k], gain)
+                    high[k] = max(high[k], gain)
+                }
+            }
+            guard !Task.isCancelled, low.allSatisfy(\.isFinite) else { return }
+            await MainActor.run { [weak self] in
+                guard let self, self.spreadCircuit == quiet else { return }
+                self.spread = (low, high)
+            }
+        }
     }
 
     private func set(_ new: Response) -> Response {
@@ -470,13 +515,14 @@ private struct ResponsePlot: View {
     let cache: ResponseCache
     let elementID: UUID
     let sourceID: UUID?
+    let spread: Bool
     let gainColor: Color
     let phaseColor: Color
     @State private var pointer: CGPoint?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.2)) { _ in
-            let response = cache.update(editor.simulation.simulator, elementID: elementID, sourceID: sourceID)
+            let response = cache.update(editor.simulation.simulator, elementID: elementID, sourceID: sourceID, spread: spread)
             Canvas { context, size in draw(context, size, response) }
         }
         .onContinuousHover { phase in
@@ -556,6 +602,15 @@ private struct ResponsePlot: View {
         }
         var clipped = context
         clipped.clip(to: Path(plot.insetBy(dx: -1, dy: -1)))
+        // where the copies with their values drawn within tolerance fall
+        if spread, let band = cache.spread, band.low.count == frequencies.count {
+            var area = Path()
+            area.move(to: CGPoint(x: x(frequencies[0]), y: y(band.high[0])))
+            for k in frequencies.indices.dropFirst() { area.addLine(to: CGPoint(x: x(frequencies[k]), y: y(band.high[k]))) }
+            for k in frequencies.indices.reversed() { area.addLine(to: CGPoint(x: x(frequencies[k]), y: y(band.low[k]))) }
+            area.closeSubpath()
+            clipped.fill(area, with: .color(gainColor.opacity(0.2)))
+        }
         clipped.stroke(phaseLine, with: .color(phaseColor.opacity(0.8)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3]))
         clipped.stroke(gainLine, with: .color(gainColor), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
