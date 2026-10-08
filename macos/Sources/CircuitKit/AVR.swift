@@ -44,7 +44,10 @@ public final class AVR: Microcontroller {
 
     /// Pin voltages the chip sees, set by the circuit before it runs; the digital levels follow them with hysteresis
     public var pinVoltages: [Double] {
-        didSet { updateInputLevels() }
+        didSet {
+            updateInputLevels()
+            peripheralsTouched()
+        }
     }
     public private(set) var pinHigh: [Bool]
     /// Supply and ADC reference voltage
@@ -54,7 +57,10 @@ public final class AVR: Microcontroller {
     public var serialOutput: [UInt8] { usarts.first?.output ?? [] }
     public var serialInput: [UInt8] {
         get { usarts.first?.input ?? [] }
-        set { usarts.first?.input = newValue }
+        set {
+            usarts.first?.input = newValue
+            peripheralsTouched()
+        }
     }
 
     private var adcDoneAt: Int?
@@ -271,6 +277,8 @@ public final class AVR: Microcontroller {
         pinChangeWatch = false
         interruptsChanged = true
         nextInterrupt = nil
+        servicedAt = cycles
+        nextService = 0
     }
 
     /// Behaves as simavr does where it differs from the chip, to compare with it instruction by instruction
@@ -281,6 +289,7 @@ public final class AVR: Microcontroller {
         flagsClearOnWrite = false
         pwmDoubleBuffered = false
         for usart in usarts { data[usart.spec.controlB] = 0x08 }
+        peripheralsTouched()
     }
 
     /// Takes on another chip's whole state (the sound thread's chip, for the window's simulator to show)
@@ -296,6 +305,8 @@ public final class AVR: Microcontroller {
         if let twi, let source = other.twi { twi.adopt(source) }
         adcDoneAt = other.adcDoneAt
         adcFirst = other.adcFirst
+        servicedAt = other.servicedAt
+        nextService = 0
         interruptDelay = other.interruptDelay
         externalPrevious = other.externalPrevious
         externalWatch = other.externalWatch
@@ -461,9 +472,38 @@ public final class AVR: Microcontroller {
         interruptDelay == 0 && data[AVR.SREG] & AVR.flagI != 0 && pendingInterrupt() != nil
     }
 
-    private func tick(_ count: Int) {
+    // The peripherals are looked at only when one of them has something to do: a timer's next tick, a USART's next
+    // byte, the ADC's result, an SPI or TWI clock edge. In between, an instruction only counts its cycles (looking at
+    // every peripheral after every instruction made the chip run at little more than real time). A write to an I/O
+    // register brings them up to date first and has them looked at after the instruction, as before.
+
+    /// The cycle at which a peripheral next needs looking at (0: after the next instruction)
+    private var nextService = 0
+    /// The cycle the timers' prescalers were last brought up to
+    private var servicedAt = 0
+
+    @inline(__always) private func tick(_ count: Int) {
         cycles += count
-        for timer in timers where timer.prescale != 0 { timer.advance(count) }
+        if cycles >= nextService { service() }
+    }
+
+    /// Brings the timers' prescalers up to now (no timer is due to tick before then), and has the peripherals looked at
+    /// after this instruction: called before an I/O register is written, and when something outside changes the chip
+    func peripheralsTouched() {
+        let elapsed = cycles - servicedAt
+        if elapsed > 0 {
+            for timer in timers where timer.prescale != 0 { timer.advance(elapsed) }
+        }
+        servicedAt = cycles
+        nextService = 0
+    }
+
+    private func service() {
+        let elapsed = cycles - servicedAt
+        servicedAt = cycles
+        if elapsed > 0 {
+            for timer in timers where timer.prescale != 0 { timer.advance(elapsed) }
+        }
         for usart in usarts where usart.needsUpdate { usart.update() }
         if let done = adcDoneAt, cycles >= done { adcFinish() }
         // at 8 MHz the SPI clock changes every cycle, more than once within an instruction: watched pins are logged at
@@ -482,6 +522,13 @@ public final class AVR: Microcontroller {
                 if !watchedPins.isEmpty { logWatchedPins(at: at) }
             }
         }
+        var next = Int.max
+        for timer in timers where timer.prescale != 0 { next = min(next, cycles + timer.prescale - timer.accumulator) }
+        for usart in usarts { next = min(next, usart.nextUpdate) }
+        if let done = adcDoneAt { next = min(next, done) }
+        if let spi { next = min(next, spi.nextEvent) }
+        if let twi { next = min(next, twi.nextEvent) }
+        nextService = next
     }
 
     /// A pin's digital level as the circuit gives it
@@ -600,6 +647,7 @@ public final class AVR: Microcontroller {
             if address < dataSize { d[address] = value }
             return
         }
+        peripheralsTouched()
         if address < pinRegisters.count && pinRegisters[address] { ioWritten = true }
         switch handlers[address] {
         case .plain:
@@ -682,6 +730,7 @@ public final class AVR: Microcontroller {
     }
 
     private func writeBit(_ address: Int, _ bit: Int, _ value: Bool) {
+        peripheralsTouched()
         let mask = UInt8(1) << bit
         switch handlers[address] {
         case .pin:
@@ -1701,6 +1750,22 @@ final class AVRUSART {
 
     var needsUpdate: Bool {
         busyUntil != 0 || simPumpAt != nil || (!input.isEmpty && avr.data[spec.controlB] & 0x10 != 0)
+    }
+
+    /// The cycle `update` next has something to do at (0: after the next instruction; Int.max: nothing to do)
+    var nextUpdate: Int {
+        var next = Int.max
+        if !avr.transmitDoubleBuffered {
+            if let at = simPumpAt { next = at }
+        } else if busyUntil != 0 {
+            next = busyUntil
+        }
+        if !input.isEmpty && avr.data[spec.controlB] & 0x10 != 0 {
+            // a byte is received once the last one has been read (a read the chip is not told of): until then, looked
+            // at after every instruction
+            next = min(next, avr.data[spec.statusA] & 0x80 == 0 ? receiveNext : 0)
+        }
+        return next
     }
 
     func update() {
