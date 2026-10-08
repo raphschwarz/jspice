@@ -344,7 +344,9 @@ final class AutomationTests: XCTestCase {
             "runs": 200, "tolerances": ["resistors": 0.01], "measure": ["type": "op", "probes": ["V(out)"]],
         ]) as? [String: Any])
         XCTAssertEqual(tolerance["runs"] as? Int, 200)
-        let metric = try XCTUnwrap((tolerance["metrics"] as? [String: Any])?["V(out)"] as? [String: Double])
+        let entry = try XCTUnwrap((tolerance["metrics"] as? [String: Any])?["V(out)"] as? [String: Any])
+        let metric = entry.compactMapValues { $0 as? Double }
+        XCTAssertNotNil(entry["min_run"] as? Int)
         XCTAssertEqual(metric["nominal"] ?? 0, 5, accuracy: 1e-3)
         XCTAssertEqual(metric["mean"] ?? 0, 5, accuracy: 0.01)
         XCTAssertEqual(metric["std"] ?? 0, 5 * 0.01 / 3 / 2.0.squareRoot(), accuracy: 0.004)
