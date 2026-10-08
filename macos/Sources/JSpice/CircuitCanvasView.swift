@@ -23,6 +23,8 @@ final class CircuitCanvasView: NSView {
     let editor: EditorState
     private var refreshLink: CADisplayLink?
     private var drag: Drag?
+    /// The circuit the move in progress last gave the editor: anything else found there was changed by someone else
+    private var movedCircuit: Circuit?
     private var lastFitRequest = 0
     private var mouseLocation: CGPoint?
     /// For a click on a switch: toggle it on mouse up if the mouse did not move
@@ -662,13 +664,33 @@ final class CircuitCanvasView: NSView {
         case .placing(var element)?:
             element.b = grid(point)
             drag = .placing(constrained(element))
-        case .moving(let start, let original, let ids, let moved)?:
+        case .moving(let start, var original, let ids, let moved)?:
             let delta = grid(point) - start
             if delta != .zero || moved {
                 if !moved { editor.beginInteraction() }
+                if moved, let last = movedCircuit, editor.circuit != last {
+                    // the circuit changed during the move (a knob turned, a MIDI controller, an AI agent's edit)
+                    let current = editor.circuit
+                    guard Set(current.elements.map(\.id)) == Set(original.elements.map(\.id)) else {
+                        // parts added or taken away: the move ends where it is rather than undo them
+                        editor.endInteraction("Move")
+                        drag = nil
+                        movedCircuit = nil
+                        return
+                    }
+                    // the change is kept: the move goes on from the circuit as it is now, the parts where they started
+                    let starts = original.elements
+                    original = current
+                    original.elements = starts.map { start in
+                        guard var now = current[start.id] else { return start }
+                        (now.a, now.b) = (start.a, start.b)
+                        return now
+                    }
+                }
                 var next = original
                 next.move(ids, by: delta)
                 editor.setDuringInteraction(next)
+                movedCircuit = editor.circuit
                 drag = .moving(start: start, original: original, ids: ids, moved: true)
                 pendingToggle = nil
             }
@@ -710,6 +732,7 @@ final class CircuitCanvasView: NSView {
                 editor.selection = [id]
             }
         case .moving(_, _, let ids, let moved)?:
+            movedCircuit = nil
             if moved {
                 // terminals dropped onto the middle of a wire join it
                 editor.connectDuringInteraction(ids)

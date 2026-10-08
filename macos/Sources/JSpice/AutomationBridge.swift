@@ -54,33 +54,37 @@ final class AutomationBridge {
         """
     }
 
-    /// One client connection, on its own thread: each request is handled on the main thread against the active window
+    /// One client connection, on its own thread. Each request looks at the active window's circuit on the main thread,
+    /// then runs here, so a long simulation or optimization does not freeze the window; what it changes goes to the
+    /// window on the main thread, as an undoable edit.
     nonisolated private static func serve(_ fd: Int32) {
         let session = CircuitSession()
         let server = MCPServer(session: session)
         server.serverName = "jspice-app"
         server.perform = { body in
-            var outcome: Any = ()
+            var current: Circuit?
+            weak var window: EditorState?
             DispatchQueue.main.sync {
-                MainActor.assumeIsolated { outcome = AutomationBridge.run(session, body) }
+                MainActor.assumeIsolated {
+                    window = EditorRegistry.active
+                    current = window?.document.circuit
+                }
             }
-            return outcome
+            guard let current else {
+                return Result<Any, Error>.failure(ToolError("No circuit window is open in JSpice. Open or create one (File ▸ New), then try again."))
+            }
+            // keep the session's simulation if the window's circuit has not changed since the last call
+            if session.circuit != current { session.circuit = current }
+            session.onChange = { circuit, action in
+                DispatchQueue.main.sync {
+                    MainActor.assumeIsolated { window?.applyAutomation(circuit, action) }
+                }
+            }
+            return body()
         }
         LocalSocket.readLines(fd) { line in
             if let reply = server.handle(line) { LocalSocket.write(fd, reply) }
         }
         close(fd)
-    }
-
-    private static func run(_ session: CircuitSession, _ body: () -> Any) -> Any {
-        guard let editor = EditorRegistry.active else {
-            return Result<Any, Error>.failure(ToolError("No circuit window is open in JSpice. Open or create one (File ▸ New), then try again."))
-        }
-        // keep the session's simulation if the window's circuit has not changed since the last call
-        if session.circuit != editor.document.circuit { session.circuit = editor.document.circuit }
-        session.onChange = { [weak editor] circuit, action in
-            editor?.applyAutomation(circuit, action)
-        }
-        return body()
     }
 }
