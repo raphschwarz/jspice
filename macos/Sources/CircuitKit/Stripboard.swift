@@ -198,13 +198,24 @@ public enum Stripboard {
         /// A free hole on `net`: in its strip if it is a supply, in a piece of it with room, or a new piece near `block`
         mutating func hole(on net: String, near block: Int) -> Hole {
             if let bus = busRow[net] {
-                for b in 0..<max(blocks, 1) {
-                    if let c = Stripboard.columns(of: (block + b) % max(blocks, 1)).first(where: { !used.contains(Hole(row: bus, column: $0)) }) {
+                // the supply strips run the board's whole length, uncut, the holes between blocks included; when they
+                // are full the board grows
+                let count = max(blocks, 1)
+                for b in 0..<count {
+                    let k = ((block + b) % count + count) % count
+                    let columns = Stripboard.columns(of: k).lowerBound...Stripboard.gap(after: k)
+                    if let c = columns.first(where: { !used.contains(Hole(row: bus, column: $0)) }) {
+                        touch(k)
                         let hole = Hole(row: bus, column: c)
                         used.insert(hole)
                         return hole
                     }
                 }
+                let k = blocks
+                touch(k)
+                let hole = Hole(row: bus, column: Stripboard.columns(of: k).lowerBound)
+                used.insert(hole)
+                return hole
             }
             let near = pieces(of: net).filter { free($0).count >= 3 }.min { abs($0.block - block) < abs($1.block - block) }
             let piece: Piece
@@ -475,7 +486,7 @@ public enum Stripboard {
             }
         }
 
-        b.layout.columns = max(b.blocks * (span + 1) - 1, span)
+        b.layout.columns = max(b.blocks * (span + 1), span)
         b.layout.notes.append("Cut the strips at the holes marked ✕ (a 3.5 mm drill bit turned by hand), then check with a meter that neighbouring strips are apart")
         b.layout.bom = Breadboard.billOfMaterials(b.layout.placements.map { ($0.name, $0.title, $0.style) },
                                                   offBoard: b.layout.offBoard.map { ($0.name, $0.title) },
