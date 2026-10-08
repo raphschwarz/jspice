@@ -185,6 +185,17 @@ public final class CircuitSession {
                 "measure": ["type": "object", "description": "What to measure on each circuit: {\"type\": \"ac\", \"source\": \"VIN\", \"output\": \"V(out)\", \"frequencies\": [100, 1000]} (small-signal gain and phase, with the peak and the -3 dB corner when there are three or more frequencies), {\"type\": \"op\", \"probes\": [\"V(out)\", \"I(Q1)\"]} (the operating point it settles to), or {\"type\": \"transient\", \"duration\": 0.1, \"skip\": 0.05, \"probes\": [\"V(out)\"]} (min, max, mean, RMS, peak-to-peak and frequency after skip seconds). Each may give settle (seconds)."],
              ], required: ["part", "parameter", "measure"]),
              run: { session, arguments in try session.sweep(arguments) }),
+        Tool(name: "optimize",
+             description: "Finds part values that meet targets: a downhill simplex (Nelder-Mead) search over the parameters given, each within its range (on a log scale for values that span decades), measuring the circuit at each try. Targets: {\"metric\": \"corner_hz\", \"value\": 1000} to hit a value, {\"metric\": \"gain_db@1000\", \"min\": 19, \"max\": 21} to stay in a range, or {\"metric\": \"V(out) rms\", \"goal\": \"maximize\"}; each may have a weight. Errors are relative, except in dB and degrees, which count as they are. series 12, 24 or 96 then moves resistors, capacitors and inductors to E12, E24 or E96 values, trying the neighbours of each. The result is applied to the circuit unless apply is false.",
+             inputSchema: schema([
+                "parameters": ["type": "array", "items": ["type": "object"], "description": "What to change: [{\"part\": \"C1\", \"parameter\": \"capacitance\", \"min\": \"1n\", \"max\": \"10u\"}], with log true or false (default: true when max is ten times min or more)"],
+                "measure": ["type": "object", "description": "What to measure on each circuit: {\"type\": \"ac\", \"source\": \"VIN\", \"output\": \"V(out)\", \"frequencies\": [100, 1000]} (small-signal gain and phase, with the peak and the -3 dB corner when there are three or more frequencies), {\"type\": \"op\", \"probes\": [\"V(out)\", \"I(Q1)\"]} (the operating point it settles to), or {\"type\": \"transient\", \"duration\": 0.1, \"skip\": 0.05, \"probes\": [\"V(out)\"]} (min, max, mean, RMS, peak-to-peak and frequency after skip seconds). Each may give settle (seconds)."],
+                "targets": ["type": "array", "items": ["type": "object"], "description": "What to achieve, by the measurements' names"],
+                "evaluations": ["type": "integer", "description": "Most measurements to make (default 150, at most 1000)"],
+                "series": ["type": "integer", "description": "12, 24 or 96: end on standard values"],
+                "apply": ["type": "boolean", "description": "Set the values found in the circuit (default true)"],
+             ], required: ["parameters", "measure", "targets"]),
+             run: { session, arguments in try session.optimize(arguments) }),
         Tool(name: "monte_carlo",
              description: "Tolerance analysis: measures many copies of the circuit, each with its parts' values drawn within their tolerances (normally distributed, three standard deviations at the tolerance), as a batch built from real parts would come out. Resistors vary ±5 %, capacitors and inductors ±10 %, transistors' gain ±30 % and JFETs ±20 % unless told otherwise. Returns, for each measurement, its nominal value and the spread: mean, standard deviation, minimum, maximum, and the 5th and 95th percentiles, and which run went furthest each way.",
              inputSchema: schema([
@@ -1054,6 +1065,138 @@ public final class CircuitSession {
         }
         return ["part": element.name, "parameter": key, "rows": rows, "truncated": truncated,
                 "wall_seconds": Date().timeIntervalSince(wallStart)]
+    }
+
+    func optimize(_ arguments: [String: Any]) throws -> Any {
+        guard let spec = arguments["measure"] as? [String: Any] else { throw ToolError("\"measure\" should say what to measure") }
+        guard let given = arguments["parameters"] as? [[String: Any]], !given.isEmpty, given.count <= 12 else {
+            throw ToolError("\"parameters\" should list 1 to 12 values to change")
+        }
+        struct Knob {
+            var index: Int, key: String, low: Double, high: Double, log: Bool
+            var passive: Bool
+            func value(_ u: Double) -> Double { log ? low * pow(high / low, u) : low + (high - low) * u }
+            func unit(_ v: Double) -> Double {
+                let u = log ? Foundation.log(v / low) / Foundation.log(high / low) : (v - low) / (high - low)
+                return u.isFinite ? min(max(u, 0), 1) : 0.5
+            }
+        }
+        var knobs: [Knob] = []
+        for entry in given {
+            let index = try index(ofPart: try Self.text(entry, "part"))
+            let key = try Self.text(entry, "parameter")
+            let element = circuit.elements[index]
+            guard let spec = element.kind.params.first(where: { $0.key == key }) else {
+                throw ToolError("\(element.name) has no parameter \(key); parameters: \(element.kind.params.map(\.key).joined(separator: ", "))")
+            }
+            let low = try Self.number(entry["min"], "min") ?? spec.range.lowerBound
+            let high = try Self.number(entry["max"], "max") ?? spec.range.upperBound
+            guard high > low else { throw ToolError("\(element.name) \(key): min should be below max") }
+            let log = entry["log"] as? Bool ?? (low > 0 && high / low >= 10)
+            guard !log || low > 0 else { throw ToolError("\(element.name) \(key): a log scale needs a positive min") }
+            let passive = ["resistance", "capacitance", "inductance"].contains(key)
+            knobs.append(Knob(index: index, key: key, low: low, high: high, log: log, passive: passive))
+        }
+        struct Target {
+            var metric: String, value: Double?, low: Double?, high: Double?, goal: Double, weight: Double
+            /// dB and degrees count as they are; anything else relative to the target
+            func scale(_ reference: Double) -> Double {
+                metric.contains("db") || metric.contains("deg") ? 1 : max(abs(reference), 1e-12)
+            }
+        }
+        guard let targetList = arguments["targets"] as? [[String: Any]], !targetList.isEmpty else { throw ToolError("\"targets\" should say what to achieve") }
+        let targets = try targetList.map { entry -> Target in
+            let goal = (entry["goal"] as? String)?.lowercased()
+            guard goal == nil || goal == "minimize" || goal == "maximize" else { throw ToolError("\"goal\" should be minimize or maximize") }
+            return Target(metric: try Self.text(entry, "metric"), value: try Self.number(entry["value"], "value"),
+                          low: try Self.number(entry["min"], "min"), high: try Self.number(entry["max"], "max"),
+                          goal: goal == "minimize" ? 1 : goal == "maximize" ? -1 : 0, weight: try Self.number(entry["weight"], "weight") ?? 1)
+        }
+        func variant(at values: [Double]) -> Circuit {
+            var copy = self.circuit
+            for (knob, value) in zip(knobs, values) { copy.elements[knob.index][param: knob.key] = value }
+            return copy
+        }
+        var missing = Set<String>()
+        func cost(_ values: [Double]) -> (cost: Double, metrics: [String: Double]) {
+            guard let metrics = try? measure(variant(at: values), spec) else { return (1e12, [:]) }
+            var total = 0.0
+            for target in targets {
+                guard let m = metrics[target.metric] else {
+                    missing.insert(target.metric)
+                    total += 1e6
+                    continue
+                }
+                if let value = target.value {
+                    let e = (m - value) / target.scale(value)
+                    total += target.weight * e * e
+                }
+                if let low = target.low, m < low {
+                    let e = (low - m) / target.scale(low)
+                    total += target.weight * e * e
+                }
+                if let high = target.high, m > high {
+                    let e = (m - high) / target.scale(high)
+                    total += target.weight * e * e
+                }
+                if target.goal != 0 { total += target.weight * target.goal * m / target.scale(m) }
+            }
+            return (total, metrics)
+        }
+        let limit = max(10, min(1000, (arguments["evaluations"] as? NSNumber)?.intValue ?? 150))
+        let wallStart = Date()
+        let start = knobs.map { $0.unit(circuit.elements[$0.index][param: $0.key]) }
+        let found = Optimizer.minimize({ point in
+            Date().timeIntervalSince(wallStart) > Self.maxWallSeconds ? .greatestFiniteMagnitude : cost(zip(knobs, point).map { $0.value($1) }).cost
+        }, start: start, evaluations: limit)
+        if !missing.isEmpty {
+            throw ToolError("No measurement named \(missing.sorted().joined(separator: ", ")); the measurement gives \(cost(knobs.map { circuit.elements[$0.index][param: $0.key] }).metrics.keys.sorted().joined(separator: ", "))")
+        }
+        var values = zip(knobs, found.point).map { $0.value($1) }
+        var best = cost(values)
+        var evaluations = found.evaluations
+        // standard values: the nearest of each, then whichever neighbour helps, until none does
+        if let size = (arguments["series"] as? NSNumber)?.intValue {
+            guard ESeries.mantissas(size) != nil else { throw ToolError("\"series\" should be 12, 24 or 96") }
+            for (k, knob) in knobs.enumerated() where knob.passive {
+                if let around = ESeries.around(values[k], series: size) { values[k] = around.nearest }
+            }
+            best = cost(values)
+            var improved = true
+            while improved && evaluations < limit + 100 {
+                improved = false
+                for (k, knob) in knobs.enumerated() where knob.passive {
+                    guard let around = ESeries.around(values[k], series: size) else { continue }
+                    for candidate in [around.below, around.above] where candidate >= knob.low * 0.999 && candidate <= knob.high * 1.001 {
+                        var trial = values
+                        trial[k] = candidate
+                        let result = cost(trial)
+                        evaluations += 1
+                        if result.cost < best.cost {
+                            values = trial
+                            best = result
+                            improved = true
+                        }
+                    }
+                }
+            }
+        }
+        if arguments["apply"] as? Bool ?? true {
+            change("Optimize") { circuit in
+                for (knob, value) in zip(knobs, values) { circuit.elements[knob.index][param: knob.key] = value }
+            }
+        }
+        return [
+            "values": zip(knobs, values).map { ["part": circuit.elements[$0.index].name, "parameter": $0.key, "value": $1] },
+            "cost": best.cost, "metrics": best.metrics, "evaluations": evaluations,
+            "wall_seconds": Date().timeIntervalSince(wallStart),
+            "targets": targets.map { target -> [String: Any] in
+                var entry: [String: Any] = ["metric": target.metric]
+                if let m = best.metrics[target.metric] { entry["achieved"] = m }
+                if let v = target.value { entry["wanted"] = v }
+                return entry
+            },
+        ]
     }
 
     func monteCarlo(_ arguments: [String: Any]) throws -> Any {

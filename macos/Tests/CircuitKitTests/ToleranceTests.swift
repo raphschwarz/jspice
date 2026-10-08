@@ -54,3 +54,31 @@ final class ToleranceTests: XCTestCase {
         XCTAssertEqual(Sweep.values(from: 0, to: 10, count: 3, logarithmic: false), [0, 5, 10])
     }
 }
+
+/// The optimizer and standard values
+final class OptimizerTests: XCTestCase {
+    func testFindsTheBottomOfAValley() {
+        // Rosenbrock's banana valley, scaled into the unit square: least at (0.75, 0.75)
+        let result = Optimizer.minimize({ p in
+            let x = p[0] * 4 - 2, y = p[1] * 4 - 2
+            return (1 - x) * (1 - x) + 100 * (y - x * x) * (y - x * x)
+        }, start: [0.2, 0.8], evaluations: 2000, tolerance: 1e-14)
+        XCTAssertEqual(result.point[0], 0.75, accuracy: 0.01)
+        XCTAssertEqual(result.point[1], 0.75, accuracy: 0.01)
+        // and stays in the cube when the least is outside it
+        let edge = Optimizer.minimize({ p in -p[0] }, start: [0.5], evaluations: 100)
+        XCTAssertEqual(edge.point[0], 1, accuracy: 1e-6)
+    }
+
+    func testStandardValues() throws {
+        let e12 = try XCTUnwrap(ESeries.around(1590, series: 12))
+        XCTAssertEqual(e12.nearest, 1500, accuracy: 1e-9)
+        XCTAssertEqual(e12.below, 1200, accuracy: 1e-9)
+        XCTAssertEqual(e12.above, 1800, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(ESeries.around(0.000_000_159, series: 24)).nearest, 160e-9, accuracy: 1e-15)
+        XCTAssertEqual(try XCTUnwrap(ESeries.around(9.9, series: 12)).nearest, 10, accuracy: 1e-9)
+        XCTAssertEqual(ESeries.mantissas(96)?.count, 96)
+        XCTAssertEqual(try XCTUnwrap(ESeries.around(4990, series: 96)).nearest, 4990, accuracy: 1e-9)
+        XCTAssertNil(ESeries.around(100, series: 7))
+    }
+}

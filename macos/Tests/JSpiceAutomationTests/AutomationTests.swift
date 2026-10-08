@@ -373,6 +373,35 @@ final class AutomationTests: XCTestCase {
         XCTAssertTrue(deck.contains("V1 in 0 DC 9"), deck)
     }
 
+    func testAnAgentCanOptimizeAFilter() throws {
+        let session = CircuitSession()
+        _ = try session.call("build_circuit", arguments: ["parts": [
+            ["kind": "acVoltage", "name": "VIN", "params": ["amplitude": 1, "frequency": 1000], "connections": ["plus": "in", "minus": "GND"]],
+            ["kind": "resistor", "name": "R1", "params": ["resistance": "1k"], "connections": ["a": "in", "b": "out"]],
+            ["kind": "capacitor", "name": "C1", "params": ["capacitance": "10n"], "connections": ["a": "out", "b": "GND"]],
+        ]])
+        let measure: [String: Any] = ["type": "ac", "source": "VIN", "output": "V(out)",
+                                      "frequencies": FrequencySweep.logarithmic(from: 10, to: 100_000, pointsPerDecade: 40)]
+        // a 1 kHz corner with R1 at 1 kΩ: C1 = 159 nF
+        let result = try XCTUnwrap(session.call("optimize", arguments: [
+            "parameters": [["part": "C1", "parameter": "capacitance", "min": "1n", "max": "10u"]],
+            "measure": measure, "targets": [["metric": "corner_hz", "value": 1000]], "apply": false,
+        ]) as? [String: Any])
+        let value = try XCTUnwrap((result["values"] as? [[String: Any]])?.first?["value"] as? Double)
+        XCTAssertEqual(value, 1 / (2 * .pi * 1000 * 1000), accuracy: 3e-9)
+        XCTAssertEqual(session.circuit.elements.first { $0.name == "C1" }?[param: "capacitance"], 10e-9, "not applied")
+        // on E12 values, and applied: 150 nF (1.06 kHz) is nearer than 180 nF (884 Hz)
+        let snapped = try XCTUnwrap(session.call("optimize", arguments: [
+            "parameters": [["part": "C1", "parameter": "capacitance", "min": "1n", "max": "10u"]],
+            "measure": measure, "targets": [["metric": "corner_hz", "value": 1000]], "series": 12,
+        ]) as? [String: Any])
+        XCTAssertNotNil(snapped["metrics"])
+        XCTAssertEqual(session.circuit.elements.first { $0.name == "C1" }?[param: "capacitance"] ?? 0, 150e-9, accuracy: 1e-15)
+        XCTAssertThrowsError(try session.call("optimize", arguments: [
+            "parameters": [["part": "C1", "parameter": "capacitance"]], "measure": measure, "targets": [["metric": "nothing", "value": 1]],
+        ]))
+    }
+
     func testAnAgentCanMapMIDIControllers() throws {
         let session = CircuitSession()
         _ = try session.call("build_circuit", arguments: ["parts": [
