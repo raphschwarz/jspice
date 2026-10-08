@@ -42,10 +42,23 @@ public enum SI {
         let cleaned = text.trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "−", with: "-")
             .replacingOccurrences(of: ",", with: ".")
+        // "R47": the R of the RKM code (IEC 60062) as the decimal point, before any digit
+        if let first = cleaned.first, first == "R" || first == "r", cleaned.dropFirst().first?.isNumber == true {
+            return parse("0." + cleaned.dropFirst())
+        }
         let scanner = Scanner(string: cleaned)
         scanner.locale = Locale(identifier: "en_US_POSIX")
-        guard let number = scanner.scanDouble() else { return nil }
+        guard var number = scanner.scanDouble() else { return nil }
+        let scanned = cleaned[..<scanner.currentIndex]
         let rest = String(cleaned[scanner.currentIndex...]).trimmingCharacters(in: .whitespaces)
+        // the RKM code's prefix in place of the decimal point, as schematics print values: 4k7, 2R2, 1M5, 4u7
+        let prefixLength = rest.lowercased().hasPrefix("meg") ? 3 : 1
+        let fraction = rest.dropFirst(prefixLength).prefix { $0.isNumber }
+        if !fraction.isEmpty, !scanned.contains("."), !scanned.lowercased().contains("e"),
+           let first = rest.first, first.isLetter || first == "µ" || first == "μ",
+           let digits = Double("0." + fraction) {
+            number += number < 0 ? -digits : digits
+        }
         var multiplier = 1.0
         if rest.lowercased().hasPrefix("meg") {
             multiplier = 1e6

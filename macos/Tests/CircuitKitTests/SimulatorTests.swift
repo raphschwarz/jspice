@@ -444,6 +444,15 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(SI.parse("−3 V")!, -3, accuracy: 1e-12)
         XCTAssertEqual(SI.parse("60 Hz")!, 60, accuracy: 1e-12)
         XCTAssertNil(SI.parse("abc"))
+        // values as schematics print them (the RKM code): the prefix stands for the decimal point
+        XCTAssertEqual(SI.parse("4k7")!, 4700, accuracy: 1e-9)
+        XCTAssertEqual(SI.parse("2R2")!, 2.2, accuracy: 1e-12)
+        XCTAssertEqual(SI.parse("R47")!, 0.47, accuracy: 1e-12)
+        XCTAssertEqual(SI.parse("1M5")!, 1.5e6, accuracy: 1e-6)
+        XCTAssertEqual(SI.parse("4u7")!, 4.7e-6, accuracy: 1e-18)
+        XCTAssertEqual(SI.parse("3n3F")!, 3.3e-9, accuracy: 1e-21)
+        XCTAssertEqual(SI.parse("5V1")!, 5.1, accuracy: 1e-12)
+        XCTAssertEqual(SI.parse("2k2 Ω")!, 2200, accuracy: 1e-9)
     }
 
     func testCircuitRoundTripsThroughJSON() throws {
