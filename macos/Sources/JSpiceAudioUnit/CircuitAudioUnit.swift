@@ -28,13 +28,19 @@ public final class CircuitAudioUnit: AUAudioUnit {
     }
 
     public override init(componentDescription: AudioComponentDescription, options: AudioComponentInstantiationOptions = []) throws {
-        isInstrument = componentDescription.componentType == kAudioUnitType_MusicDevice
+        let instrument = componentDescription.componentType == kAudioUnitType_MusicDevice
+        isInstrument = instrument
         let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
-        outputBus = try AUAudioUnitBus(format: format)
-        outputBus.maximumChannelCount = 2
-        inputBus = isInstrument ? nil : try AUAudioUnitBus(format: format)
-        kernel = CircuitKernel(effect: !isInstrument)
-        library = PluginLibrary.entries(instrument: isInstrument, folder: Self.exportFolder)
+        let output = try AUAudioUnitBus(format: format)
+        output.maximumChannelCount = 2
+        outputBus = output
+        if instrument {
+            inputBus = nil
+        } else {
+            inputBus = try AUAudioUnitBus(format: format)
+        }
+        kernel = CircuitKernel(effect: !instrument)
+        library = PluginLibrary.entries(instrument: instrument, folder: Self.exportFolder)
         try super.init(componentDescription: componentDescription, options: options)
         outputArray = AUAudioUnitBusArray(audioUnit: self, busType: .output, busses: [outputBus])
         inputArray = AUAudioUnitBusArray(audioUnit: self, busType: .input, busses: inputBus.map { [$0] } ?? [])
