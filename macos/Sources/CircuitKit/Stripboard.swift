@@ -9,7 +9,7 @@ import Foundation
 /// supplies as on a breadboard; pots, switches, sockets and supplies are wired from off the board, as in a box.
 /// `verify` checks that the board connects exactly the circuit's nets.
 public enum Stripboard {
-    /// Strips on the board
+    /// Strips on the largest board laid out; a circuit gets as few as it needs, so supply links stay short
     public static let rows = 25
     /// Holes in a block of strip
     static let span = 5
@@ -181,10 +181,14 @@ public enum Stripboard {
 
         /// The first block from `start` where `count` neighbouring rows are empty in `width` blocks side by side, and
         /// the first of those rows (nearest the middle of the board)
-        func room(_ count: Int, width: Int = 1, from start: Int = 0) -> (block: Int, row: Int) {
+        func room(_ count: Int, width: Int = 1, from start: Int = 0, avoiding: Set<Int> = []) -> (block: Int, row: Int) {
             let middle = (signalRows.first! + signalRows.last!) / 2
             var block = start
             while true {
+                if avoiding.contains(block) {
+                    block += 1
+                    continue
+                }
                 let starts = signalRows.filter { r in
                     (0..<count).allSatisfy { k in
                         signalRows.contains(r + k) && (0..<width).allSatisfy { empty(Piece(block: block + $0, row: r + k)) }
@@ -259,7 +263,12 @@ public enum Stripboard {
         // the supplies' strips: the most used positive at the top, ground at the bottom, a second supply above ground
         let first = plan.positives.first
         let second = plan.negatives.first ?? plan.positives.dropFirst().first
-        var bottom = Stripboard.rows - 1
+        // as many strips as the tallest chip needs, with room around it: the shorter the board, the shorter the
+        // links to the supplies
+        let tallest = max(plan.packs.map { $0.package.pins / 2 }.max() ?? 0, plan.inline.isEmpty ? 0 : 4)
+        let signal = min(max(10, tallest + 5), Stripboard.rows - 3)
+        var bottom = signal + (first == nil ? 0 : 1) + (second == nil ? 0 : 1)
+        b.layout.rows = bottom + 1
         b.busRow["GND"] = bottom
         b.layout.buses[bottom] = "GND"
         if let second {
@@ -304,25 +313,69 @@ public enum Stripboard {
             b.layout.placements.append(Placement(name: pack.name, title: plan.title(pack), style: .dip(pins: p.pins), legs: legs, note: plan.note(pack)))
         }
 
-        // transistors and vactrols: their legs down one column, across neighbouring strips
+        // transistors and vactrols: their legs down one column, across neighbouring strips, each in a block of its own.
+        // A transistor whose end leg is on a supply next to the strips it stands on (an emitter on ground) is turned
+        // so that leg goes straight into the supply's strip.
         var offParts: [NetlistPart] = []
+        var inlineBlocks = Set<Int>()
+        let topBus = b.busRow.first { $0.value == b.signalRows.first! - 1 }?.key
+        let bottomBus = b.busRow.first { $0.value == b.signalRows.last! + 1 }?.key
         for part in plan.inline {
             if part.kind == .potentiometer {
                 offParts.append(part)
                 continue
             }
             let (order, style, title, note) = Breadboard.inline(part, facing: "to the left, legs from the top")
-            let (block, row) = b.room(order.count)
+            // where each leg goes: rows from the top, flipped (legs listed from the bottom), and which leg is on a supply
+            var placed: (block: Int, rows: [Int], flipped: Bool)?
+            if case .transistor = style {
+                let nets = order.map { part.connections[$0] }
+                for flipped in [false, true] {
+                    let top = flipped ? nets.last! : nets.first!, bottom = flipped ? nets.first! : nets.last!
+                    let n = order.count
+                    if let bus = bottomBus, bottom == bus {
+                        let busRow = b.signalRows.last! + 1
+                        let (block, _) = b.room(n - 1, avoiding: inlineBlocks)
+                        // the rows above the supply strip, empty in some block
+                        var k = block
+                        while !(1..<n).allSatisfy({ b.empty(Piece(block: k, row: busRow - $0)) }) || inlineBlocks.contains(k)
+                                || b.used.contains(Hole(row: busRow, column: Stripboard.columns(of: k).lowerBound + span / 2)) { k += 1 }
+                        let rows = (0..<n).map { busRow - (n - 1) + $0 }
+                        placed = (k, flipped ? rows.reversed() : rows, flipped)
+                        break
+                    }
+                    if let bus = topBus, top == bus {
+                        let busRow = b.signalRows.first! - 1
+                        var k = 0
+                        while !(1..<n).allSatisfy({ b.empty(Piece(block: k, row: busRow + $0)) }) || inlineBlocks.contains(k)
+                                || b.used.contains(Hole(row: busRow, column: Stripboard.columns(of: k).lowerBound + span / 2)) { k += 1 }
+                        let rows = (0..<n).map { busRow + $0 }
+                        placed = (k, flipped ? rows.reversed() : rows, flipped)
+                        break
+                    }
+                }
+            }
+            if placed == nil {
+                let (block, row) = b.room(order.count, avoiding: inlineBlocks)
+                placed = (block, (0..<order.count).map { row + $0 }, false)
+            }
+            let (block, rows, flipped) = placed!
+            inlineBlocks.insert(block)
+            b.touch(block)
             let column = Stripboard.columns(of: block).lowerBound + span / 2
             var legs: [Leg] = []
             for (k, terminal) in order.enumerated() {
-                let hole = Hole(row: row + k, column: column)
+                let hole = Hole(row: rows[k], column: column)
                 b.used.insert(hole)
-                b.claim(Piece(block: block, row: row + k), part.connections[terminal] ?? freePin())
+                if b.layout.buses[rows[k]] == nil {
+                    b.claim(Piece(block: block, row: rows[k]), part.connections[terminal] ?? freePin())
+                }
                 legs.append(Leg(name: terminal, hole: hole, net: part.connections[terminal] ?? ""))
             }
+            // flipped, the first leg is at the bottom: drawn from it upwards, the flat face turns to the right
+            let said = flipped ? Breadboard.inline(part, facing: "to the right, legs from the bottom").note : note
             b.layout.placements.append(Placement(name: part.name, title: title, style: style, legs: legs,
-                                                 note: part.kind == .vactrol ? (note ?? "") + "; its leads bent to one column" : note))
+                                                 note: part.kind == .vactrol ? (said ?? "") + "; its leads bent to one column" : said))
         }
 
         // two-lead parts across the strips: both legs in one column, on pieces of their nets
@@ -433,7 +486,7 @@ public enum Stripboard {
             }
         }
 
-        // links: each net's pieces of strip, as the cuts leave them, joined in a chain; a supply's to its strip
+        // links: each net's pieces of strip, as the cuts leave them, joined by the shortest links; a supply's to its strip
         let cuts = Set(b.layout.cuts)
         /// The run of strip a piece is in: its row, and the cuts before it
         func run(_ piece: Piece) -> Hole {
@@ -445,7 +498,7 @@ public enum Stripboard {
             let ordered = groups.values.map { $0.sorted() }.sorted { $0[0] < $1[0] }
             /// A hole in one of the pieces and one in the supply's strip, down one column
             func linkHoles(_ a: [Piece], toRow bus: Int) -> (Hole, Hole)? {
-                for piece in a {
+                for piece in a.sorted(by: { abs($0.row - bus) < abs($1.row - bus) }) {
                     if let c = b.column(in: piece.block, rows: piece.row, bus) { return (Hole(row: piece.row, column: c), Hole(row: bus, column: c)) }
                 }
                 return nil
@@ -464,21 +517,38 @@ public enum Stripboard {
                 }
                 continue
             }
-            for (a, c) in zip(ordered, ordered.dropFirst()) {
-                // the nearest two pieces of the two runs, in one column if they share a block
-                var pair: (Hole, Hole)?
-                for pa in a { for pc in c where pa.block == pc.block {
-                    if pair == nil, let column = b.column(in: pa.block, rows: pa.row, pc.row) {
-                        pair = (Hole(row: pa.row, column: column), Hole(row: pc.row, column: column))
+            // the runs joined by the shortest links that join them all (a minimum spanning tree, grown from the first)
+            func distance(_ a: Piece, _ c: Piece) -> Int { abs(a.block - c.block) * (span + 1) + abs(a.row - c.row) }
+            var joined = [0]
+            var waiting = Array(ordered.indices.dropFirst())
+            while !waiting.isEmpty {
+                var best: (from: Int, to: Int, pa: Piece, pc: Piece, length: Int)?
+                for i in joined {
+                    for j in waiting {
+                        for pa in ordered[i] where !b.free(pa).isEmpty {
+                            for pc in ordered[j] where !b.free(pc).isEmpty {
+                                let length = distance(pa, pc)
+                                if best == nil || length < best!.length { best = (i, j, pa, pc, length) }
+                            }
+                        }
                     }
-                } }
-                if let (from, to) = pair {
+                }
+                guard let best else {
+                    b.layout.notes.append("No room for a link on \(net)")
+                    break
+                }
+                waiting.removeAll { $0 == best.to }
+                joined.append(best.to)
+                let (pa, pc) = (best.pa, best.pc)
+                // in one column when the two pieces share a block, else from the nearer ends of the two
+                if pa.block == pc.block, let column = b.column(in: pa.block, rows: pa.row, pc.row) {
+                    let from = Hole(row: pa.row, column: column), to = Hole(row: pc.row, column: column)
                     b.cover(from, to)
                     b.layout.links.append(Link(from: from, to: to, net: net))
                     continue
                 }
-                guard let pa = a.last(where: { !b.free($0).isEmpty }), let pc = c.first(where: { !b.free($0).isEmpty }),
-                      let from = b.take(pa, right: true), let to = b.take(pc) else {
+                let leftward = pc.block < pa.block
+                guard let from = b.take(pa, right: !leftward), let to = b.take(pc, right: leftward) else {
                     b.layout.notes.append("No room for a link on \(net)")
                     continue
                 }
@@ -491,7 +561,7 @@ public enum Stripboard {
         b.layout.bom = Breadboard.billOfMaterials(b.layout.placements.map { ($0.name, $0.title, $0.style) },
                                                   offBoard: b.layout.offBoard.map { ($0.name, $0.title) },
                                                   wires: b.layout.links.count, wireName: "wire links")
-        b.layout.bom.append(Breadboard.Item(quantity: 1, description: "stripboard, \(Stripboard.rows) strips × \(b.layout.columns) holes", parts: []))
+        b.layout.bom.append(Breadboard.Item(quantity: 1, description: "stripboard, \(b.layout.rows) strips × \(b.layout.columns) holes", parts: []))
         for pins in Set(plan.packs.map(\.package.pins)).sorted() {
             let names = plan.packs.filter { $0.package.pins == pins }.map(\.name)
             b.layout.bom.append(Breadboard.Item(quantity: names.count, description: "DIP-\(pins) socket", parts: names))

@@ -5,8 +5,13 @@ import XCTest
 /// datasheets put them
 final class StripboardTests: XCTestCase {
     func testEveryExampleIsConnectedExactlyAsDrawn() {
+        var report: [String] = []
         for example in Examples.all {
             let layout = Stripboard.layout(example.circuit)
+            // how tidy: the links' count and length in holes, and the board's size
+            let lengths = layout.links.map { abs($0.from.row - $0.to.row) + abs($0.from.column - $0.to.column) }
+            report.append(String(format: "%-22@ %2d × %3d  %3d links, %4d holes long, longest %2d", example.id as NSString,
+                                 layout.rows, layout.columns, lengths.count, lengths.reduce(0, +), lengths.max() ?? 0))
             XCTAssertEqual(Stripboard.verify(layout), [], "\(example.id): \(layout.notes)")
             let placed = layout.placements.map { $0.name + " " + $0.title } + layout.offBoard.map(\.name)
             for element in example.circuit.flattened(expandingModels: false).elements
@@ -21,6 +26,7 @@ final class StripboardTests: XCTestCase {
                                             "\(example.id): \(placement.name)")
             }
         }
+        print("Stripboard layouts (strips × holes, links):\n" + report.joined(separator: "\n"))
     }
 
     private func layout(_ parts: [NetlistPart]) throws -> Stripboard.Layout {
@@ -81,7 +87,11 @@ final class StripboardTests: XCTestCase {
         let q1 = try XCTUnwrap(layout.placements.first { $0.name == "Q1" })
         XCTAssertEqual(q1.legs.map(\.name), ["emitter", "base", "collector"], "a 2N3904 runs E B C")
         XCTAssertEqual(Set(q1.legs.map(\.hole.column)).count, 1)
-        XCTAssertEqual(q1.legs.map(\.hole.row), [q1.legs[0].hole.row, q1.legs[0].hole.row + 1, q1.legs[0].hole.row + 2])
+        let rows = q1.legs.map(\.hole.row)
+        XCTAssertTrue(rows == [rows[0], rows[0] + 1, rows[0] + 2] || rows == [rows[0], rows[0] - 1, rows[0] - 2], "\(rows)")
+        // the emitter, on ground, goes straight into the ground strip: the transistor turned round to reach it
+        XCTAssertEqual(layout.buses[q1.legs[0].hole.row], "GND")
+        XCTAssertTrue(q1.note?.contains("to the right, legs from the bottom: E B C") ?? false, q1.note ?? "")
         // the pot goes on the panel, wired by its lugs
         let pot = try XCTUnwrap(layout.offBoard.first { $0.name == "VOL" })
         XCTAssertEqual(pot.wires.map(\.name), ["lug 1", "lug 2", "lug 3"])
