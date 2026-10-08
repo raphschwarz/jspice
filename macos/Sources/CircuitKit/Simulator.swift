@@ -261,8 +261,9 @@ public final class Simulator {
     private var traces: [UUID: ScopeTrace] = [:]
 
     /// The thermal voltage kT/q at the nominal temperature, 27 °C, which the parts' parameters are given at
-    /// kT/q at the nominal temperature, 300.15 K
-    static let thermalVoltage = 0.0258646
+    /// The thermal voltage the parts' equations take at their nominal temperature (the SPICE cross-checks run ngspice at
+    /// the temperature that gives the same kT/q: tools/spice-reference)
+    static let thermalVoltage = 0.025852
     static let nominalKelvin = 300.15
     static let gmin = 1e-12
     static let maxNewtonIterations = 80
