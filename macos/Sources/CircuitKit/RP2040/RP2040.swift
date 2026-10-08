@@ -21,18 +21,21 @@ final class RP2040 {
     var roscFrequency: Double = 6.5e6
     var interruptNMIMask: UInt32 = 0
 
-    private(set) var core: CortexM0!
+    // The parts used at almost every instruction (the core, the system timer's block, SIO, DMA, PWM, the ADC) are held
+    // by `owned` and referred to without counting: a counted reference costs a retain and a release at each use.
+    private var owned: [AnyObject] = []
+    private(set) unowned(unsafe) var core: CortexM0!
     private(set) var pllSys: RPPLL!
     private(set) var pllUSB: RPPLL!
     private(set) var clocks: RPClocks!
-    private(set) var ppb: RPPPB!
-    private(set) var sio: RPSIO!
+    private(set) unowned(unsafe) var ppb: RPPPB!
+    private(set) unowned(unsafe) var sio: RPSIO!
     private(set) var uart: [RPUART] = []
-    private(set) var pwm: RPPWM!
-    private(set) var adc: RPADC!
+    private(set) unowned(unsafe) var pwm: RPPWM!
+    private(set) unowned(unsafe) var adc: RPADC!
     private(set) var gpio: [RPGPIOPin] = []
     private(set) var qspi: [RPGPIOPin] = []
-    private(set) var dma: RPDMA!
+    private(set) unowned(unsafe) var dma: RPDMA!
     private(set) var pio: [RPPIO] = []
     private(set) var usbCtrl: RPUSBController!
     private(set) var spi: [RPSPI] = []
@@ -54,21 +57,33 @@ final class RP2040 {
         RPBootrom.b1.withUnsafeBytes { bootrom.copyMemory(from: $0.baseAddress!, byteCount: RP2040.bootromSize) }
 
         // the same order as rp2040.ts, which matters where one peripheral uses another as it is made
-        core = CortexM0(chip: self)
+        let newCore = CortexM0(chip: self)
+        owned.append(newCore)
+        core = newCore
         pllSys = RPPLL(chip: self, name: "PLL_SYS_BASE")
         pllUSB = RPPLL(chip: self, name: "PLL_USB_BASE")
         clocks = RPClocks(chip: self, name: "CLOCKS_BASE")
-        ppb = RPPPB(chip: self, name: "PPB")
-        sio = RPSIO(chip: self)
+        let newPpb = RPPPB(chip: self, name: "PPB")
+        owned.append(newPpb)
+        ppb = newPpb
+        let newSio = RPSIO(chip: self)
+        owned.append(newSio)
+        sio = newSio
         uart = [RPUART(chip: self, name: "UART0", irq: RPIRQ.uart0, dreqTX: RPDREQ.uart0TX),
                 RPUART(chip: self, name: "UART1", irq: RPIRQ.uart1, dreqTX: RPDREQ.uart1TX)]
         i2c = [RPI2C(chip: self, name: "I2C0", index: 0, irq: RPIRQ.i2c0),
                RPI2C(chip: self, name: "I2C1", index: 1, irq: RPIRQ.i2c1)]
-        pwm = RPPWM(chip: self, name: "PWM_BASE")
-        adc = RPADC(chip: self, name: "ADC")
+        let newPwm = RPPWM(chip: self, name: "PWM_BASE")
+        owned.append(newPwm)
+        pwm = newPwm
+        let newAdc = RPADC(chip: self, name: "ADC")
+        owned.append(newAdc)
+        adc = newAdc
         gpio = (0..<30).map { RPGPIOPin(chip: self, index: $0) }
         qspi = (0..<6).map { RPGPIOPin(chip: self, index: $0, qspi: true) }
-        dma = RPDMA(chip: self, name: "DMA")
+        let newDma = RPDMA(chip: self, name: "DMA")
+        owned.append(newDma)
+        dma = newDma
         pio = [RPPIO(chip: self, name: "PIO0", firstIRQ: RPIRQ.pio0IRQ0, index: 0),
                RPPIO(chip: self, name: "PIO1", firstIRQ: RPIRQ.pio1IRQ0, index: 1)]
         usbCtrl = RPUSBController(chip: self, name: "USB")
