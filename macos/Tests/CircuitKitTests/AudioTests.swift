@@ -147,9 +147,10 @@ final class AudioTests: XCTestCase {
     func testAudioInputIsQuietForTheOperatingPoint() throws {
         // small-signal analysis holds sound sources at their offset
         let (simulator, _) = try ramp(loop: true)
-        let quiet = Simulator.quiet(simulator.circuit, holding: nil)
-        let index = try XCTUnwrap(quiet.elements.firstIndex { $0.kind == .audioInput })
+        let index = try XCTUnwrap(simulator.circuit.elements.firstIndex { $0.kind == .audioInput })
+        let quiet = Simulator.quiet(simulator.circuit, holding: index)
         XCTAssertEqual(quiet.elements[index][param: "level"], 0)
+        XCTAssertEqual(quiet.elements[index][param: "offset"], 0.5)
     }
 
     func testRenderThroughAFilter() throws {
