@@ -59,6 +59,16 @@ public final class CircuitAudioUnit: AUAudioUnit {
     public override var inputBusses: AUAudioUnitBusArray { inputArray }
     public override var outputBusses: AUAudioUnitBusArray { outputArray }
 
+    /// Mono or stereo: the circuit is mono, its input the channels' average and its speaker in every output channel
+    public override var channelCapabilities: [NSNumber]? {
+        isInstrument ? [0, 1, 0, 2] : [1, 1, 1, 2, 2, 2]
+    }
+
+    public override func shouldChange(to format: AVAudioFormat, for bus: AUAudioUnitBus) -> Bool {
+        (1...2).contains(format.channelCount) && format.commonFormat == .pcmFormatFloat32 && !format.isInterleaved
+            && super.shouldChange(to: format, for: bus)
+    }
+
     public override func allocateRenderResources() throws {
         try super.allocateRenderResources()
         kernel.allocate(sampleRate: outputBus.format.sampleRate, inputFormat: inputBus?.format, maximumFrames: Int(maximumFramesToRender))

@@ -54,35 +54,40 @@ final class PluginTests: XCTestCase {
         XCTAssertLessThanOrEqual(peakLoud, 1)
     }
 
-    func testAnInstrumentPlaysNotesAndItsKnobsAreParameters() throws {
+    func testAnInstrumentPlaysNotes() throws {
         let entry = try XCTUnwrap(PluginLibrary.entries(instrument: true).first { $0.name.hasPrefix("Mono synth") })
         let processor = try XCTUnwrap(CircuitProcessor(circuit: entry.circuit, sampleRate: 48_000))
         XCTAssertTrue(processor.hasKeyboard)
-        XCTAssertFalse(processor.controls.isEmpty)
-        func level(_ blocks: Int) -> Float {
-            var output = [Float](repeating: 0, count: 256)
-            var peak = Float(0)
-            for _ in 0..<blocks {
-                output.withUnsafeMutableBufferPointer { processor.process(input: nil, output: $0.baseAddress!, frames: 256) }
-                peak = max(peak, output.map(abs).max()!)
-            }
-            return peak
-        }
-        _ = level(40)
-        let quiet = level(20)
+        let quiet = level(processor, 40)
         processor.noteOn(57)
-        let playing = level(60)
+        let playing = level(processor, 60)
         XCTAssertGreaterThan(playing, max(quiet * 3, 0.02), "a held note sounds")
         processor.noteOff(57)
+    }
+
+    func testKnobsAreParameters() throws {
+        let entry = try XCTUnwrap(PluginLibrary.entries(instrument: false).first { $0.name.hasPrefix("LM13700 filter") })
+        let processor = try XCTUnwrap(CircuitProcessor(circuit: entry.circuit, sampleRate: 48_000))
+        let k = try XCTUnwrap(processor.controls.firstIndex { $0.name == "CUTOFF" })
+        XCTAssertFalse(processor.controls[k].isSwitch)
+        XCTAssertEqual(processor.controls[k].value, 0.5)
         // moving a knob changes the circuit the next block runs
-        let before = processor.controls[0].value
-        processor.set(0, to: before > 0.5 ? 0.1 : 0.9)
-        _ = level(1)
-        XCTAssertNotEqual(processor.controls[0].value, before)
-        let part = processor.controls[0]
-        let element = try XCTUnwrap(processor.circuit.elements.first { $0.id == part.part })
-        if part.inner == nil {
-            XCTAssertEqual(part.isSwitch ? (element.closed ? 1 : 0) : element[param: "position"], processor.controls[0].value)
+        processor.set(k, to: 0.9)
+        _ = level(processor, 1)
+        XCTAssertEqual(processor.controls[k].value, 0.9)
+        let element = try XCTUnwrap(processor.circuit.elements.first { $0.id == processor.controls[k].part })
+        XCTAssertEqual(element[param: "position"], 0.9)
+        XCTAssertFalse(processor.isFailed)
+        processor.set(99, to: 1)
+    }
+
+    private func level(_ processor: CircuitProcessor, _ blocks: Int) -> Float {
+        var output = [Float](repeating: 0, count: 256)
+        var peak = Float(0)
+        for _ in 0..<blocks {
+            output.withUnsafeMutableBufferPointer { processor.process(input: nil, output: $0.baseAddress!, frames: 256) }
+            peak = max(peak, output.map(abs).max()!)
         }
+        return peak
     }
 }

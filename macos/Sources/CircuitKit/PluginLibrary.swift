@@ -13,17 +13,20 @@ public enum PluginLibrary {
     public static let folder = "Music/JSpice/Audio Units"
 
     /// The circuit as an effect: its audio inputs take the host's sound; a circuit without one, but with a single
-    /// sine source, has the source turned into an audio input at the source's amplitude. Nil without a speaker.
+    /// sine or square source, has the source turned into an audio input of the same swing. Nil without a speaker.
     public static func effect(_ circuit: Circuit) -> Circuit? {
         guard circuit.elements.contains(where: { $0.kind == .speaker }) else { return nil }
         if circuit.flattened().elements.contains(where: { $0.kind == .audioInput }) { return circuit }
-        let sources = circuit.elements.indices.filter { circuit.elements[$0].kind == .acVoltage }
+        let sources = circuit.elements.indices.filter { [.acVoltage, .squareVoltage].contains(circuit.elements[$0].kind) }
         guard sources.count == 1 else { return nil }
         var circuit = circuit
         let source = circuit.elements[sources[0]]
+        // the sound swings as far as the test signal did, about the same middle
+        let (level, offset) = source.kind == .acVoltage
+            ? (source[param: "amplitude"], source[param: "offset"])
+            : ((source[param: "high"] - source[param: "low"]) / 2, (source[param: "high"] + source[param: "low"]) / 2)
         var input = Element(id: source.id, kind: .audioInput, name: source.name, a: source.a, b: source.b,
-                            params: ["input": 1, "loop": 1, "level": min(max(source[param: "amplitude"], 0.001), 10),
-                                     "offset": source[param: "offset"]])
+                            params: ["input": 1, "loop": 1, "level": min(max(abs(level), 0.001), 10), "offset": offset])
         input.flipped = source.flipped
         circuit.elements[sources[0]] = input
         return circuit
@@ -41,6 +44,9 @@ public enum PluginLibrary {
     public static func entries(instrument: Bool, folder: URL? = nil) -> [Entry] {
         let make: (Circuit) -> Circuit? = instrument ? Self.instrument : Self.effect
         var entries = Examples.all.compactMap { example in make(example.circuit).map { Entry(name: example.title, circuit: $0) } }
+        // the examples built for sound in (a guitar through a pedal) first
+        let native = Set(Examples.all.filter { $0.circuit.flattened().elements.contains { $0.kind == .audioInput } }.map(\.title))
+        entries = entries.filter { native.contains($0.name) } + entries.filter { !native.contains($0.name) }
         if let folder, let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) {
             for file in files.filter({ $0.pathExtension == "jspice" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
                 guard let data = try? Data(contentsOf: file), let circuit = try? JSONDecoder().decode(Circuit.self, from: data),
