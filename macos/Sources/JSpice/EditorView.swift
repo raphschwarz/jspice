@@ -23,10 +23,10 @@ struct EditorView: View {
                 .navigationSplitViewColumnWidth(min: 210, ideal: 236, max: 320)
         } detail: {
             VStack(spacing: 0) {
-                if editor.showBreadboard && !document.circuit.elements.isEmpty {
-                    BreadboardView(editor: editor, circuit: document.circuit)
-                } else {
-                    schematic
+                switch document.circuit.elements.isEmpty ? .schematic : editor.board {
+                case .schematic: schematic
+                case .breadboard: BreadboardView(editor: editor, circuit: document.circuit)
+                case .stripboard: StripboardView(editor: editor, circuit: document.circuit)
                 }
                 if editor.showPanel && FrontPanel.hasControls(document.circuit) {
                     FrontPanel(editor: editor, circuit: document.circuit)
@@ -138,10 +138,13 @@ struct EditorToolbar: ToolbarContent {
             .disabled(!simulation.hasSpeaker)
             .help(simulation.hasSpeaker ? "Listen to the speaker: runs the circuit in real time at audio rate"
                                         : "Add a speaker to the circuit to listen to it")
-            Toggle(isOn: $editor.showBreadboard) {
-                Label("Breadboard", systemImage: "circle.grid.3x3")
+            Picker("View", selection: $editor.board) {
+                Label("Schematic", systemImage: "point.3.connected.trianglepath.dotted").tag(BoardKind.schematic)
+                Label("Breadboard", systemImage: "circle.grid.3x3").tag(BoardKind.breadboard)
+                Label("Stripboard", systemImage: "line.3.horizontal").tag(BoardKind.stripboard)
             }
-            .help("Show the circuit built on a breadboard, with its jumpers and bill of materials")
+            .pickerStyle(.segmented)
+            .help("Show the schematic, or the circuit built on a breadboard or stripboard with its bill of materials")
             Toggle(isOn: $editor.showPanel) {
                 Label("Panel", systemImage: "slider.horizontal.3")
             }

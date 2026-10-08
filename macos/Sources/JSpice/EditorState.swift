@@ -29,8 +29,8 @@ final class EditorState: ObservableObject {
     @Published var showInspector = true
     /// The front panel of knobs and switches below the schematic
     @Published var showPanel = true
-    /// The circuit as built on a breadboard, in place of the schematic
-    @Published var showBreadboard = false
+    /// What the window shows: the schematic, or the circuit as built on a breadboard or stripboard
+    @Published var board: BoardKind = .schematic
     /// The quick-add palette (⌘K or /): type a part's name to place it
     @Published var showQuickAdd = false
     /// The keyboard shortcuts sheet (⌘/ or ?)
@@ -737,4 +737,10 @@ final class EditorState: ObservableObject {
         pan = CGPoint(x: anchor.x - (anchor.x - pan.x) * applied, y: anchor.y - (anchor.y - pan.y) * applied)
         zoom = newZoom
     }
+}
+
+/// The circuit drawn as a schematic, or as it would be built
+enum BoardKind: String, CaseIterable, Identifiable {
+    case schematic = "Schematic", breadboard = "Breadboard", stripboard = "Stripboard"
+    var id: Self { self }
 }

@@ -1,0 +1,163 @@
+import SwiftUI
+import CircuitKit
+
+/// The circuit as it would be built on stripboard: the copper strips and where they are cut, every part across them,
+/// the wire links, and what is wired from off the board, with the bill of materials and a check that the board
+/// connects exactly the schematic's nets.
+struct StripboardView: View {
+    @ObservedObject var editor: EditorState
+    let circuit: Circuit
+    @State private var layout: Stripboard.Layout?
+    @State private var problems: [String] = []
+    @State private var pointer: CGPoint?
+
+    private let pitch: CGFloat = 16
+    private var origin: CGPoint { CGPoint(x: pitch * 3, y: pitch * 2) }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ScrollView([.horizontal, .vertical]) {
+                if let layout {
+                    Canvas { context, _ in draw(context, layout) }
+                        .frame(width: origin.x + CGFloat(layout.columns) * pitch + pitch * 2,
+                               height: origin.y + CGFloat(layout.rows) * pitch + pitch)
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active(let location): pointer = location
+                            case .ended: pointer = nil
+                            }
+                        }
+                        .overlay(alignment: .topLeading) { readout(layout) }
+                        .padding(20)
+                } else {
+                    ProgressView("Laying out the board…").padding(40)
+                }
+            }
+            .background(Color(nsColor: .underPageBackgroundColor))
+            Divider()
+            if let layout {
+                BoardSidePanel(problems: problems,
+                               supplies: layout.buses.sorted { $0.key < $1.key }.map { ("Strip " + Stripboard.letters($0.key), $0.value) },
+                               notes: layout.notes,
+                               parts: layout.placements.map { placement in
+                                   (placement.name + "  " + placement.title,
+                                    placement.legs.filter { !$0.net.isEmpty }.map { "\($0.name) \($0.hole)" }.joined(separator: " · "), placement.note)
+                               },
+                               offBoard: layout.offBoard.map { item in
+                                   ("\(item.name): \(item.title)", item.wires.map { "\($0.name) → \($0.hole)" }.joined(separator: " · "))
+                               },
+                               bom: layout.bom)
+                    .frame(width: 300)
+            }
+        }
+        .task(id: circuit) {
+            let circuit = circuit
+            let result = await Task.detached(priority: .userInitiated) { () -> (Stripboard.Layout, [String]) in
+                let layout = Stripboard.layout(circuit)
+                return (layout, Stripboard.verify(layout))
+            }.value
+            layout = result.0
+            problems = result.1
+        }
+    }
+
+    private func point(_ hole: Stripboard.Hole) -> CGPoint {
+        CGPoint(x: origin.x + CGFloat(hole.column) * pitch + pitch / 2, y: origin.y + CGFloat(hole.row) * pitch + pitch / 2)
+    }
+
+    private func hole(near location: CGPoint, _ layout: Stripboard.Layout) -> Stripboard.Hole? {
+        let column = Int(floor((location.x - origin.x) / pitch)), row = Int(floor((location.y - origin.y) / pitch))
+        guard column >= 0, column < layout.columns, row >= 0, row < layout.rows else { return nil }
+        return Stripboard.Hole(row: row, column: column)
+    }
+
+    private func readout(_ layout: Stripboard.Layout) -> some View {
+        Group {
+            if let pointer, let hole = hole(near: pointer, layout) {
+                let cut = layout.cuts.contains(hole)
+                let net = cut ? "cut" : layout.net(at: hole).map { $0.isEmpty || $0.hasPrefix("\u{0}") ? "free pin" : $0 }
+                Text(hole.description + (net.map { "  ·  \($0)" } ?? ""))
+                    .font(.caption.monospaced())
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(8)
+            }
+        }
+    }
+
+    private func draw(_ context: GraphicsContext, _ layout: Stripboard.Layout) {
+        let p = pitch
+        let board = CGRect(x: origin.x - p * 0.5, y: origin.y - p * 0.5, width: CGFloat(layout.columns + 1) * p, height: CGFloat(layout.rows + 1) * p)
+        context.fill(Path(roundedRect: board, cornerRadius: 4), with: .color(Color(red: 0.86, green: 0.78, blue: 0.62)))
+        // the strips, seen through the board, broken where they are cut
+        let cuts = Set(layout.cuts)
+        for row in 0..<layout.rows {
+            let y = point(Stripboard.Hole(row: row, column: 0)).y
+            let copper = layout.buses[row] == nil ? Color(red: 0.85, green: 0.55, blue: 0.3).opacity(0.55)
+                                                  : Color(red: 0.85, green: 0.5, blue: 0.25).opacity(0.75)
+            context.fill(Path(roundedRect: CGRect(x: origin.x + p * 0.08, y: y - p * 0.4, width: CGFloat(layout.columns) * p - p * 0.16, height: p * 0.8),
+                              cornerRadius: 2), with: .color(copper))
+            context.draw(Text(Stripboard.letters(row)).font(.system(size: 8)).foregroundStyle(.secondary), at: CGPoint(x: origin.x - p * 0.9, y: y))
+            if let net = layout.buses[row] {
+                context.draw(Text(net).font(.system(size: 9, weight: .semibold)).foregroundStyle(net == "GND" ? Color.blue : Color.red),
+                             at: CGPoint(x: origin.x - p * 1.4, y: y), anchor: .trailing)
+            }
+        }
+        var holes = Path()
+        for row in 0..<layout.rows {
+            for column in 0..<layout.columns {
+                let c = point(Stripboard.Hole(row: row, column: column))
+                holes.addEllipse(in: PartPainter.square(c, p * 0.3))
+            }
+        }
+        context.fill(holes, with: .color(Color(white: 0.2)))
+        for column in stride(from: 0, to: layout.columns, by: 5) {
+            context.draw(Text("\(column + 1)").font(.system(size: 8)).foregroundStyle(.secondary),
+                         at: CGPoint(x: point(Stripboard.Hole(row: 0, column: column)).x, y: origin.y - p * 0.9))
+        }
+        // the cuts
+        for cut in cuts {
+            let c = point(cut)
+            context.fill(Path(PartPainter.square(c, p * 0.9)), with: .color(Color(red: 0.86, green: 0.78, blue: 0.62)))
+            var x = Path()
+            x.move(to: CGPoint(x: c.x - p * 0.3, y: c.y - p * 0.3))
+            x.addLine(to: CGPoint(x: c.x + p * 0.3, y: c.y + p * 0.3))
+            x.move(to: CGPoint(x: c.x + p * 0.3, y: c.y - p * 0.3))
+            x.addLine(to: CGPoint(x: c.x - p * 0.3, y: c.y + p * 0.3))
+            context.stroke(x, with: .color(.red), lineWidth: 2)
+        }
+        // links: bare wire, or a coloured sleeve when long
+        for link in layout.links {
+            let a = point(link.from), b = point(link.to)
+            var path = Path()
+            path.move(to: a)
+            path.addLine(to: b)
+            let long = abs(link.from.row - link.to.row) + abs(link.from.column - link.to.column) > 2
+            context.stroke(path, with: .color(long ? wireColor(link.net, layout) : Color(white: 0.6)), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+        }
+        // off-board wires
+        for item in layout.offBoard {
+            for wire in item.wires {
+                let a = point(wire.hole)
+                var path = Path()
+                path.move(to: a)
+                path.addLine(to: CGPoint(x: a.x + p * 0.6, y: a.y - p * 0.8))
+                context.stroke(path, with: .color(wireColor(wire.net, layout)), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                context.draw(Text("\(item.name) \(wire.name)").font(.system(size: 7)).foregroundStyle(.secondary),
+                             at: CGPoint(x: a.x + p * 0.7, y: a.y - p * 0.9), anchor: .bottomLeading)
+            }
+        }
+        for placement in layout.placements {
+            PartPainter.draw(context, placement.style, name: placement.name, title: placement.title,
+                             legs: placement.legs.map { (name: $0.name, point: point($0.hole)) }, pitch: p)
+        }
+    }
+
+    private func wireColor(_ net: String, _ layout: Stripboard.Layout) -> Color {
+        if net == "GND" { return .blue }
+        if layout.buses.values.contains(net) { return net.hasPrefix("−") || net.hasPrefix("-") ? .black : .red }
+        let palette: [Color] = [.orange, .green, .purple, .yellow, .teal, .brown, .pink, .mint, .indigo, .cyan]
+        let hash = net.unicodeScalars.reduce(5381) { ($0 &* 33) &+ Int($1.value) }
+        return palette[abs(hash) % palette.count]
+    }
+}

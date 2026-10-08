@@ -48,71 +48,17 @@ struct BreadboardView: View {
     // MARK: - Side panel
 
     private func sidePanel(_ layout: Breadboard.Layout) -> some View {
-        List {
-            Section {
-                if problems.isEmpty {
-                    Label("Every connection checked against the schematic", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
-                } else {
-                    ForEach(problems, id: \.self) { Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
-                }
-            }
-            Section("Rails") {
-                ForEach(Breadboard.Rail.allCases, id: \.self) { rail in
-                    if let net = layout.rails[rail] { LabeledContent(rail.name.capitalized, value: net) }
-                }
-            }
-            if !layout.notes.isEmpty {
-                Section("Notes") {
-                    ForEach(layout.notes, id: \.self) { Text($0).font(.callout) }
-                }
-            }
-            Section("Parts") {
-                ForEach(Array(layout.placements.enumerated()), id: \.offset) { _, placement in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(placement.name)  \(placement.title)").font(.callout.weight(.medium))
-                        Text(placement.legs.filter { !$0.net.isEmpty }.map { "\($0.name) \($0.hole)" }.joined(separator: " · "))
-                            .font(.caption.monospaced()).foregroundStyle(.secondary)
-                        if let note = placement.note { Text(note).font(.caption).foregroundStyle(.secondary) }
-                    }
-                }
-            }
-            if !layout.offBoard.isEmpty {
-                Section("Off the board") {
-                    ForEach(Array(layout.offBoard.enumerated()), id: \.offset) { _, item in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(item.name): \(item.title)").font(.callout.weight(.medium))
-                            Text(item.wires.map { "\($0.name) → \($0.hole)" }.joined(separator: " · "))
-                                .font(.caption.monospaced()).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            Section {
-                ForEach(Array(layout.bom.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("\(item.quantity) ×").monospacedDigit().frame(width: 34, alignment: .trailing)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(item.description)
-                            if !item.parts.isEmpty { Text(item.parts.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary) }
-                        }
-                    }
-                }
-            } header: {
-                HStack {
-                    Text("Bill of materials")
-                    Spacer()
-                    Button("Copy CSV") { copyBOM(layout) }.buttonStyle(.borderless).controlSize(.small)
-                }
-            }
-        }
-        .listStyle(.sidebar)
-    }
-
-    private func copyBOM(_ layout: Breadboard.Layout) {
-        func quoted(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
-        let lines = ["Quantity,Part,Designators"] + layout.bom.map { "\($0.quantity),\(quoted($0.description)),\(quoted($0.parts.joined(separator: " ")))" }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        BoardSidePanel(problems: problems,
+                       supplies: Breadboard.Rail.allCases.compactMap { rail in layout.rails[rail].map { (rail.name.capitalized, $0) } },
+                       notes: layout.notes,
+                       parts: layout.placements.map { placement in
+                           (placement.name + "  " + placement.title,
+                            placement.legs.filter { !$0.net.isEmpty }.map { "\($0.name) \($0.hole)" }.joined(separator: " · "), placement.note)
+                       },
+                       offBoard: layout.offBoard.map { item in
+                           ("\(item.name): \(item.title)", item.wires.map { "\($0.name) → \($0.hole)" }.joined(separator: " · "))
+                       },
+                       bom: layout.bom)
     }
 
     // MARK: - Drawing
@@ -198,7 +144,10 @@ struct BreadboardView: View {
                              at: CGPoint(x: a.x + p * 0.7, y: a.y - p * 0.9), anchor: .bottomLeading)
             }
         }
-        for placement in layout.placements { drawPart(context, placement, g) }
+        for placement in layout.placements {
+            PartPainter.draw(context, placement.style, name: placement.name, title: placement.title,
+                             legs: placement.legs.map { (name: $0.name, point: g.point($0.hole)) }, pitch: g.pitch)
+        }
     }
 
     private func square(_ c: CGPoint, _ s: CGFloat) -> CGRect { CGRect(x: c.x - s / 2, y: c.y - s / 2, width: s, height: s) }
@@ -213,127 +162,6 @@ struct BreadboardView: View {
         return palette[abs(hash) % palette.count]
     }
 
-    private func drawPart(_ context: GraphicsContext, _ placement: Breadboard.Placement, _ g: BoardGeometry) {
-        let p = g.pitch
-        let points = placement.legs.map { g.point($0.hole) }
-        guard let first = points.first, let last = points.last else { return }
-        let middle = CGPoint(x: (first.x + last.x) / 2, y: (first.y + last.y) / 2)
-        func leads() {
-            for point in points {
-                var lead = Path()
-                lead.move(to: point)
-                lead.addLine(to: middle)
-                context.stroke(lead, with: .color(Color(white: 0.55)), lineWidth: 1.4)
-            }
-        }
-        func label(_ text: String, at point: CGPoint, color: Color = .primary) {
-            context.draw(Text(text).font(.system(size: 8, weight: .semibold)).foregroundStyle(color), at: point)
-        }
-        let angle = atan2(last.y - first.y, last.x - first.x)
-        /// A body along the leads, `length` long
-        func partBody(_ length: CGFloat, _ thickness: CGFloat, _ color: Color, bands: [Color] = [], corner: CGFloat? = nil) {
-            var c = context
-            c.translateBy(x: middle.x, y: middle.y)
-            c.rotate(by: .radians(angle))
-            let rect = CGRect(x: -length / 2, y: -thickness / 2, width: length, height: thickness)
-            c.fill(Path(roundedRect: rect, cornerRadius: corner ?? thickness / 2), with: .color(color))
-            for (k, band) in bands.enumerated() {
-                let x = -length / 2 + length * (0.2 + 0.16 * CGFloat(k))
-                c.fill(Path(CGRect(x: x, y: -thickness / 2, width: length * 0.08, height: thickness)), with: .color(band))
-            }
-        }
-        switch placement.style {
-        case .resistor(let ohms):
-            leads()
-            partBody(min(hypot(last.x - first.x, last.y - first.y) * 0.7, p * 2.6), p * 0.7, Color(red: 0.85, green: 0.76, blue: 0.6), bands: Self.bands(ohms))
-        case .ceramic:
-            leads()
-            context.fill(Path(ellipseIn: square(middle, p * 0.8)), with: .color(Color(red: 0.95, green: 0.75, blue: 0.2)))
-        case .electrolytic:
-            leads()
-            context.fill(Path(ellipseIn: square(middle, p * 1.5)), with: .color(Color(red: 0.15, green: 0.25, blue: 0.55)))
-            if let minus = placement.legs.firstIndex(where: { $0.name == "−" }) {
-                let toward = points[minus]
-                let d = hypot(toward.x - middle.x, toward.y - middle.y)
-                if d > 0 {
-                    let mark = CGPoint(x: middle.x + (toward.x - middle.x) / d * p * 0.5, y: middle.y + (toward.y - middle.y) / d * p * 0.5)
-                    context.fill(Path(ellipseIn: square(mark, p * 0.35)), with: .color(.white.opacity(0.85)))
-                }
-            }
-        case .inductor:
-            leads()
-            partBody(p * 1.8, p * 0.8, Color(red: 0.3, green: 0.55, blue: 0.35))
-        case .diode, .zener:
-            leads()
-            partBody(p * 1.3, p * 0.5, placement.style == .diode ? Color(white: 0.15) : Color(red: 0.9, green: 0.45, blue: 0.2))
-            if let cathode = placement.legs.firstIndex(where: { $0.name == "cathode" }) {
-                let toward = points[cathode]
-                let d = hypot(toward.x - middle.x, toward.y - middle.y)
-                if d > 0 {
-                    let band = CGPoint(x: middle.x + (toward.x - middle.x) / d * p * 0.45, y: middle.y + (toward.y - middle.y) / d * p * 0.45)
-                    context.fill(Path(ellipseIn: square(band, p * 0.3)), with: .color(Color(white: 0.85)))
-                }
-            }
-        case .led(let color):
-            leads()
-            let colors: [Color] = [.red, .green, .blue, .yellow, Color(white: 0.95)]
-            context.fill(Path(ellipseIn: square(middle, p * 1.2)), with: .color(colors[min(max(color, 0), 4)].opacity(0.85)))
-            if let anode = placement.legs.first(where: { $0.name == "anode" }) {
-                label("+", at: CGPoint(x: g.point(anode.hole).x, y: g.point(anode.hole).y - p * 0.6))
-            }
-        case .lamp:
-            leads()
-            context.fill(Path(ellipseIn: square(middle, p * 1.1)), with: .color(.yellow.opacity(0.6)))
-        case .toggle, .button:
-            leads()
-            context.fill(Path(roundedRect: square(middle, p * 1.2), cornerRadius: 2), with: .color(Color(white: 0.25)))
-        case .transistor(let pinout):
-            // a TO-92 seen from above, flat face towards the front
-            let rect = CGRect(x: first.x - p * 0.45, y: first.y - p * 1.0, width: last.x - first.x + p * 0.9, height: p * 0.85)
-            var shape = Path()
-            shape.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-            shape.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            shape.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY), control: CGPoint(x: rect.midX, y: rect.minY - p * 0.6))
-            context.fill(shape, with: .color(Color(white: 0.12)))
-            for (k, point) in points.enumerated() where k < pinout.count {
-                label(String(Array(pinout)[k]), at: CGPoint(x: point.x, y: point.y + p * 0.62), color: .secondary)
-            }
-        case .pot:
-            let rect = CGRect(x: first.x - p * 0.4, y: first.y - p * 1.9, width: last.x - first.x + p * 0.8, height: p * 1.7)
-            context.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(Color(red: 0.2, green: 0.35, blue: 0.7)))
-            context.fill(Path(ellipseIn: square(CGPoint(x: rect.midX, y: rect.midY), p * 1.1)), with: .color(Color(white: 0.85)))
-        case .vactrol:
-            let rect = CGRect(x: first.x - p * 0.3, y: first.y - p * 0.45, width: last.x - first.x + p * 0.6, height: p * 0.9)
-            context.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(Color(white: 0.1)))
-        case .dip:
-            let xs = points.map(\.x), ys = points.map(\.y)
-            let rect = CGRect(x: xs.min()! - p * 0.4, y: ys.min()! + p * 0.3, width: xs.max()! - xs.min()! + p * 0.8, height: ys.max()! - ys.min()! - p * 0.6)
-            context.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(Color(white: 0.13)))
-            // the notch at the pin-1 end, and pin 1's dot
-            context.fill(Path(ellipseIn: CGRect(x: rect.minX - p * 0.25, y: rect.midY - p * 0.25, width: p * 0.5, height: p * 0.5)),
-                         with: .color(Color(red: 0.88, green: 0.87, blue: 0.83)))
-            context.fill(Path(ellipseIn: square(CGPoint(x: rect.minX + p * 0.4, y: rect.maxY - p * 0.35), p * 0.22)), with: .color(Color(white: 0.6)))
-            context.draw(Text(placement.title.components(separatedBy: " (").first ?? placement.title)
-                            .font(.system(size: 9, weight: .bold)).foregroundStyle(.white), at: CGPoint(x: rect.midX, y: rect.midY))
-        }
-        if case .dip = placement.style {
-            label(placement.name, at: CGPoint(x: middle.x, y: points.map(\.y).min()! - p * 0.9))
-        } else {
-            label(placement.name, at: CGPoint(x: middle.x, y: points.map(\.y).min()! - p * (placement.style == .pot ? 2.3 : 1.25)))
-        }
-    }
-
-    /// A resistor's four colour bands: two digits, the multiplier, and gold for 5 %
-    static func bands(_ ohms: Double) -> [Color] {
-        let colors: [Color] = [.black, .brown, .red, .orange, .yellow, .green, .blue, .purple, .gray, .white]
-        guard ohms > 0, ohms.isFinite else { return [] }
-        var exponent = Int(floor(log10(ohms))) - 1
-        var digits = Int((ohms / pow(10, Double(exponent))).rounded())
-        if digits >= 100 { digits /= 10; exponent += 1 }
-        let gold = Color(red: 0.8, green: 0.65, blue: 0.2)
-        let multiplier = exponent >= 0 && exponent <= 9 ? colors[exponent] : exponent == -1 ? gold : Color(white: 0.75)
-        return [colors[digits / 10 % 10], colors[digits % 10], multiplier, gold]
-    }
 }
 
 /// Where the board's holes are drawn
@@ -371,5 +199,221 @@ struct BoardGeometry {
         candidates += Breadboard.Rail.allCases.map { .rail($0, column: column) }
         let best = candidates.min { abs(self.point($0).y - point.y) < abs(self.point($1).y - point.y) }
         return best.flatMap { abs(self.point($0).y - point.y) < pitch * 0.5 ? $0 : nil }
+    }
+}
+
+/// Draws a part as it looks on a board, seen from above, its legs in the holes at `legs`
+enum PartPainter {
+    static func draw(_ context: GraphicsContext, _ style: Breadboard.Style, name: String, title: String,
+                     legs: [(name: String, point: CGPoint)], pitch p: CGFloat) {
+        let points = legs.map(\.point)
+        guard let first = points.first, let last = points.last else { return }
+        let middle = CGPoint(x: (first.x + last.x) / 2, y: (first.y + last.y) / 2)
+        let length = hypot(last.x - first.x, last.y - first.y)
+        let angle = atan2(last.y - first.y, last.x - first.x)
+        func leads() {
+            for point in points {
+                var lead = Path()
+                lead.move(to: point)
+                lead.addLine(to: middle)
+                context.stroke(lead, with: .color(Color(white: 0.55)), lineWidth: 1.4)
+            }
+        }
+        func label(_ text: String, at point: CGPoint, color: Color = .primary) {
+            context.draw(Text(text).font(.system(size: 8, weight: .semibold)).foregroundStyle(color), at: point)
+        }
+        /// The context turned so the legs run left to right along x, centred on the middle
+        var along: GraphicsContext {
+            var c = context
+            c.translateBy(x: middle.x, y: middle.y)
+            c.rotate(by: .radians(angle))
+            return c
+        }
+        /// A body along the leads, `length` long
+        func partBody(_ length: CGFloat, _ thickness: CGFloat, _ color: Color, bands: [Color] = []) {
+            let c = along
+            let rect = CGRect(x: -length / 2, y: -thickness / 2, width: length, height: thickness)
+            c.fill(Path(roundedRect: rect, cornerRadius: thickness / 2), with: .color(color))
+            for (k, band) in bands.enumerated() {
+                let x = -length / 2 + length * (0.2 + 0.16 * CGFloat(k))
+                c.fill(Path(CGRect(x: x, y: -thickness / 2, width: length * 0.08, height: thickness)), with: .color(band))
+            }
+        }
+        /// A mark on the body, towards the leg named `leg`
+        func mark(towards leg: String, _ distance: CGFloat, _ size: CGFloat, _ color: Color) {
+            guard let k = legs.firstIndex(where: { $0.name == leg }) else { return }
+            let toward = points[k]
+            let d = hypot(toward.x - middle.x, toward.y - middle.y)
+            guard d > 0 else { return }
+            let at = CGPoint(x: middle.x + (toward.x - middle.x) / d * distance, y: middle.y + (toward.y - middle.y) / d * distance)
+            context.fill(Path(ellipseIn: square(at, size)), with: .color(color))
+        }
+        var labelAt = CGPoint(x: middle.x, y: points.map(\.y).min()! - p * 1.25)
+        switch style {
+        case .resistor(let ohms):
+            leads()
+            partBody(min(length * 0.7, p * 2.6), p * 0.7, Color(red: 0.85, green: 0.76, blue: 0.6), bands: bands(ohms))
+        case .ceramic:
+            leads()
+            context.fill(Path(ellipseIn: square(middle, p * 0.8)), with: .color(Color(red: 0.95, green: 0.75, blue: 0.2)))
+        case .electrolytic:
+            leads()
+            context.fill(Path(ellipseIn: square(middle, p * 1.5)), with: .color(Color(red: 0.15, green: 0.25, blue: 0.55)))
+            mark(towards: "−", p * 0.5, p * 0.35, .white.opacity(0.85))
+        case .inductor:
+            leads()
+            partBody(min(length * 0.7, p * 1.8), p * 0.8, Color(red: 0.3, green: 0.55, blue: 0.35))
+        case .diode, .zener:
+            leads()
+            partBody(min(length * 0.6, p * 1.3), p * 0.5, style == .diode ? Color(white: 0.15) : Color(red: 0.9, green: 0.45, blue: 0.2))
+            mark(towards: "cathode", p * 0.45, p * 0.3, Color(white: 0.85))
+        case .led(let color):
+            leads()
+            let colors: [Color] = [.red, .green, .blue, .yellow, Color(white: 0.95)]
+            context.fill(Path(ellipseIn: square(middle, p * 1.2)), with: .color(colors[min(max(color, 0), 4)].opacity(0.85)))
+            if let anode = legs.first(where: { $0.name == "anode" }) {
+                label("+", at: CGPoint(x: anode.point.x + p * 0.45, y: anode.point.y - p * 0.45))
+            }
+        case .lamp:
+            leads()
+            context.fill(Path(ellipseIn: square(middle, p * 1.1)), with: .color(.yellow.opacity(0.6)))
+        case .toggle, .button:
+            leads()
+            context.fill(Path(roundedRect: square(middle, p * 1.2), cornerRadius: 2), with: .color(Color(white: 0.25)))
+        case .transistor(let pinout):
+            // a TO-92 seen from above, beside its legs, its flat face towards them
+            let c = along
+            let rect = CGRect(x: -length / 2 - p * 0.45, y: -p * 1.0, width: length + p * 0.9, height: p * 0.85)
+            var shape = Path()
+            shape.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            shape.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            shape.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY), control: CGPoint(x: rect.midX, y: rect.minY - p * 0.6))
+            c.fill(shape, with: .color(Color(white: 0.12)))
+            // the legs' letters on the flat side
+            let normal = CGPoint(x: -sin(angle), y: cos(angle))
+            for (k, point) in points.enumerated() where k < pinout.count {
+                label(String(Array(pinout)[k]), at: CGPoint(x: point.x + normal.x * p * 0.62, y: point.y + normal.y * p * 0.62), color: .secondary)
+            }
+            if abs(sin(angle)) > 0.5 { labelAt = CGPoint(x: middle.x + p * 1.6, y: points.map(\.y).min()! - p * 0.8) }
+        case .pot:
+            let rect = CGRect(x: first.x - p * 0.4, y: first.y - p * 1.9, width: last.x - first.x + p * 0.8, height: p * 1.7)
+            context.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(Color(red: 0.2, green: 0.35, blue: 0.7)))
+            context.fill(Path(ellipseIn: square(CGPoint(x: rect.midX, y: rect.midY), p * 1.1)), with: .color(Color(white: 0.85)))
+            labelAt.y = points.map(\.y).min()! - p * 2.3
+        case .vactrol:
+            along.fill(Path(roundedRect: CGRect(x: -length / 2 - p * 0.3, y: -p * 0.45, width: length + p * 0.6, height: p * 0.9), cornerRadius: 4),
+                       with: .color(Color(white: 0.1)))
+            if abs(sin(angle)) > 0.5 { labelAt = CGPoint(x: middle.x + p * 1.2, y: points.map(\.y).min()! - p * 0.8) }
+        case .dip:
+            let xs = points.map(\.x), ys = points.map(\.y)
+            let wide = xs.max()! - xs.min()! >= ys.max()! - ys.min()!
+            let rect = wide
+                ? CGRect(x: xs.min()! - p * 0.4, y: ys.min()! + p * 0.3, width: xs.max()! - xs.min()! + p * 0.8, height: ys.max()! - ys.min()! - p * 0.6)
+                : CGRect(x: xs.min()! + p * 0.3, y: ys.min()! - p * 0.4, width: xs.max()! - xs.min()! - p * 0.6, height: ys.max()! - ys.min()! + p * 0.8)
+            context.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(Color(white: 0.13)))
+            // the notch at the pin-1 end, and pin 1's dot
+            let notch = wide ? CGPoint(x: rect.minX, y: rect.midY) : CGPoint(x: rect.midX, y: rect.minY)
+            context.fill(Path(ellipseIn: square(notch, p * 0.5)), with: .color(Color(white: 0.6)))
+            context.fill(Path(ellipseIn: square(CGPoint(x: first.x + (first.x < rect.midX ? p * 0.8 : -p * 0.8) * (wide ? 0 : 1),
+                                                        y: first.y + (first.y < rect.midY ? p * 0.8 : -p * 0.8) * (wide ? 1 : 0)), p * 0.22)),
+                         with: .color(Color(white: 0.6)))
+            var c = context
+            c.translateBy(x: rect.midX, y: rect.midY)
+            if !wide { c.rotate(by: .degrees(90)) }
+            c.draw(Text(title.components(separatedBy: " (").first ?? title).font(.system(size: 9, weight: .bold)).foregroundStyle(.white), at: .zero)
+            labelAt = wide ? CGPoint(x: middle.x, y: ys.min()! - p * 0.9) : CGPoint(x: middle.x, y: rect.minY - p * 0.6)
+        }
+        label(name, at: labelAt)
+    }
+
+    static func square(_ c: CGPoint, _ s: CGFloat) -> CGRect { CGRect(x: c.x - s / 2, y: c.y - s / 2, width: s, height: s) }
+
+    /// A resistor's four colour bands: two digits, the multiplier, and gold for 5 %
+    static func bands(_ ohms: Double) -> [Color] {
+        let colors: [Color] = [.black, .brown, .red, .orange, .yellow, .green, .blue, .purple, .gray, .white]
+        guard ohms > 0, ohms.isFinite else { return [] }
+        var exponent = Int(floor(log10(ohms))) - 1
+        var digits = Int((ohms / pow(10, Double(exponent))).rounded())
+        if digits >= 100 { digits /= 10; exponent += 1 }
+        let gold = Color(red: 0.8, green: 0.65, blue: 0.2)
+        let multiplier = exponent >= 0 && exponent <= 9 ? colors[exponent] : exponent == -1 ? gold : Color(white: 0.75)
+        return [colors[digits / 10 % 10], colors[digits % 10], multiplier, gold]
+    }
+}
+
+/// What a board needs beside its picture: whether it checks out, its supplies, notes, each part's holes, what is wired
+/// from off it, and the bill of materials
+struct BoardSidePanel: View {
+    let problems: [String]
+    let supplies: [(String, String)]
+    let notes: [String]
+    let parts: [(String, String, String?)]
+    let offBoard: [(String, String)]
+    let bom: [Breadboard.Item]
+
+    var body: some View {
+        List {
+            Section {
+                if problems.isEmpty {
+                    Label("Every connection checked against the schematic", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                } else {
+                    ForEach(problems, id: \.self) { Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                }
+            }
+            if !supplies.isEmpty {
+                Section("Supplies") {
+                    ForEach(Array(supplies.enumerated()), id: \.offset) { _, supply in LabeledContent(supply.0, value: supply.1) }
+                }
+            }
+            if !notes.isEmpty {
+                Section("Notes") {
+                    ForEach(notes, id: \.self) { Text($0).font(.callout) }
+                }
+            }
+            Section("Parts") {
+                ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(part.0).font(.callout.weight(.medium))
+                        Text(part.1).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        if let note = part.2 { Text(note).font(.caption).foregroundStyle(.secondary) }
+                    }
+                }
+            }
+            if !offBoard.isEmpty {
+                Section("Off the board") {
+                    ForEach(Array(offBoard.enumerated()), id: \.offset) { _, item in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.0).font(.callout.weight(.medium))
+                            Text(item.1).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            Section {
+                ForEach(Array(bom.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("\(item.quantity) ×").monospacedDigit().frame(width: 34, alignment: .trailing)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.description)
+                            if !item.parts.isEmpty { Text(item.parts.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("Bill of materials")
+                    Spacer()
+                    Button("Copy CSV") { copyBOM() }.buttonStyle(.borderless).controlSize(.small)
+                }
+            }
+        }
+        .listStyle(.sidebar)
+    }
+
+    private func copyBOM() {
+        func quoted(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+        let lines = ["Quantity,Part,Designators"] + bom.map { "\($0.quantity),\(quoted($0.description)),\(quoted($0.parts.joined(separator: " ")))" }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
     }
 }

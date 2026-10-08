@@ -415,6 +415,12 @@ final class AutomationTests: XCTestCase {
         XCTAssertNotNil(board["jumpers"] as? [[String: Any]])
         let bom = try XCTUnwrap((session.call("bom", arguments: [:]) as? [String: Any])?["items"] as? [[String: Any]])
         XCTAssertTrue(bom.contains { ($0["part"] as? String)?.contains("resistor") == true })
+        let strip = try XCTUnwrap(session.call("stripboard", arguments: [:]) as? [String: Any])
+        XCTAssertEqual((strip["problems"] as? [String])?.isEmpty, true, "\(strip["problems"] ?? "")")
+        XCTAssertFalse((strip["cuts"] as? [String])?.isEmpty ?? true)
+        let stripBOM = try XCTUnwrap((session.call("bom", arguments: ["board": "stripboard"]) as? [String: Any])?["items"] as? [[String: Any]])
+        XCTAssertTrue(stripBOM.contains { ($0["part"] as? String)?.hasPrefix("stripboard") == true })
+        XCTAssertThrowsError(try session.call("bom", arguments: ["board": "perfboard"]))
     }
 
     func testAnAgentCanMapMIDIControllers() throws {

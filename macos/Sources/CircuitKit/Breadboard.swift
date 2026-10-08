@@ -279,6 +279,26 @@ public enum Breadboard {
         }
     }
 
+    /// A transistor's, pot's or vactrol's legs in order, how it looks, what it is, and which way round it goes
+    /// (`facing` says where the flat face of a transistor is, and in which order its legs then run)
+    static func inline(_ part: NetlistPart, facing: String) -> (order: [String], style: Style, title: String, note: String?) {
+        switch part.kind {
+        case .potentiometer:
+            let ohms = part.params["resistance"] ?? 10_000
+            return (["a", "wiper", "b"], .pot, SI.format(ohms, unit: "Ω") + ((part.params["taper"] ?? 0) >= 0.5 ? " audio (A)" : " linear (B)"),
+                    "Lugs 1, 2, 3 (shaft towards you, lugs down, left to right): a, wiper, b; turning it clockwise moves the wiper towards b")
+        case .vactrol:
+            return (["anode", "cathode", "a", "b"], .vactrol,
+                    Element(kind: .vactrol, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? "VTL5C3",
+                    "The LED's leads (+ is the anode) at one end, the photoresistor's at the other")
+        default:
+            let t = transistor(part)
+            let letter: [Character: String] = ["E": "emitter", "B": "base", "C": "collector", "D": "drain", "S": "source", "G": "gate"]
+            return (t.pinout.map { letter[$0] ?? "" }, .transistor(pinout: t.pinout), t.title,
+                    "Flat face \(facing): " + t.pinout.map(String.init).joined(separator: " ") + (t.note.map { ". " + $0 } ?? ""))
+        }
+    }
+
     // MARK: - Laying out
 
     struct Strip: Hashable, Comparable {
@@ -373,74 +393,166 @@ public enum Breadboard {
         }
     }
 
-    /// Lays the circuit out on a breadboard
-    public static func layout(_ circuit: Circuit) -> Layout {
+    /// A chip package and the parts whose units it holds
+    struct Pack {
+        var package: Package
+        var key: String
+        var units: [(part: NetlistPart, unit: Int)]
+        /// The package's name: "U1", or its one part's name
+        var name = ""
+    }
+
+    /// What goes on a board before any of it is placed, the same for a breadboard and a stripboard: the parts, the
+    /// chips' units packed into packages, the supplies (the circuit's own, and those the chips need), and each net's
+    /// voltage at rest
+    struct Plan {
+        var parts: [NetlistPart] = []
+        var voltages: [String: Double] = [:]
+        var supplies: [(net: String, volts: Double)] = []
+        /// Supplies the chips need that the circuit leaves implicit
+        var virtual: [String: Double] = [:]
+        var packs: [Pack] = []
+        /// Resistors, capacitors, diodes, LEDs, lamps, switches
+        var twoLead: [NetlistPart] = []
+        /// Transistors, pots, vactrols
+        var inline: [NetlistPart] = []
+        /// Sources, speakers, modules, tubes: wired from off the board
+        var off: [NetlistPart] = []
+
+        /// How many legs, wires and supply pins a net has
+        func uses(_ net: String) -> Int {
+            parts.reduce(0) { $0 + $1.connections.values.filter { $0 == net }.count }
+                + packs.reduce(0) { total, pack in total + pack.package.supplies.filter { Breadboard.netName($0.supply, supplies) == net }.count }
+        }
+
+        /// The supplies the most parts use first: positive ones, negative ones
+        var positives: [(net: String, volts: Double)] { supplies.filter { $0.volts > 0 }.sorted { uses($0.net) > uses($1.net) } }
+        var negatives: [(net: String, volts: Double)] { supplies.filter { $0.volts < 0 }.sorted { uses($0.net) > uses($1.net) } }
+
+        /// Each pin of a package: its net and label (nil for a pin left free)
+        func pins(_ pack: Pack) -> [Int: (net: String, label: String)] {
+            let p = pack.package
+            var netOfPin: [Int: (net: String, label: String)] = [:]
+            for (part, unit) in pack.units {
+                let letter = pack.units.count > 1 ? String(Character(UnicodeScalar(UInt8(65 + unit)))) : ""
+                for (terminal, pin) in p.units[unit] {
+                    if let net = part.connections[terminal] { netOfPin[pin] = (net, p.labels[pin] ?? "\(terminal.uppercased())\(letter.isEmpty ? "" : " " + letter)") }
+                }
+                for (terminal, pin) in p.shared {
+                    if let net = part.connections[terminal] { netOfPin[pin] = (net, terminal.uppercased()) }
+                }
+            }
+            for supply in p.supplies { netOfPin[supply.pin] = (Breadboard.netName(supply.supply, supplies), supply.label) }
+            for pin in p.grounded { netOfPin[pin] = ("GND", p.labels[pin] ?? "GND") }
+            return netOfPin
+        }
+
+        /// The note for a package: the datasheet's, and its spare units
+        func note(_ pack: Pack) -> String? {
+            let p = pack.package
+            var note = p.note
+            if pack.units.count < p.units.count && p.units.count > 1 {
+                let spare = "\(p.units.count - pack.units.count) of its \(p.units.count) units unused: tie their inputs to ground"
+                note = note.map { $0 + ". " + spare } ?? spare
+            }
+            return note
+        }
+
+        func title(_ pack: Pack) -> String {
+            pack.package.title + (pack.units.count > 1 ? " (\(pack.units.map(\.part.name).joined(separator: ", ")))" : "")
+        }
+
+        /// The notes every board shares: the supplies the circuit leaves implicit
+        var supplyNotes: [String] {
+            virtual.sorted { $0.key < $1.key }.map { "The chips need a \(SI.format($0.value, unit: "V")) supply (\($0.key)), which the circuit leaves implicit" }
+        }
+
+        /// The supplies wired to the board: each with its source's name
+        var wiredSupplies: [(net: String, volts: Double, name: String)] {
+            supplies.sorted { $0.volts > $1.volts }.filter { uses($0.net) > 0 || virtual[$0.net] != nil }.map { supply in
+                (supply.net, supply.volts, parts.first { $0.kind == .dcVoltage && $0.connections.values.contains(supply.net) }?.name ?? supply.net)
+            }
+        }
+
+        /// The parts wired from off the board, but for the supplies already wired
+        var offBoardParts: [NetlistPart] {
+            off.filter { part in
+                part.kind != .dcVoltage || !supplies.contains { s in part.connections.values.contains(s.net) && part.connections.values.contains("GND") }
+            }
+        }
+    }
+
+    static func plan(_ circuit: Circuit) -> Plan {
         let flat = circuit.flattened(expandingModels: false)
-        let parts = NetlistExtractor.netlist(from: flat).filter { $0.kind != .block && $0.kind != .port }
-        var b = Builder()
-        let voltages = netVoltages(flat, parts)
+        var plan = Plan()
+        plan.parts = NetlistExtractor.netlist(from: flat).filter { $0.kind != .block && $0.kind != .port }
+        plan.voltages = netVoltages(flat, plan.parts)
 
         // supplies: the circuit's own DC sources to ground, and what the chips need
-        var supplies: [(net: String, volts: Double)] = []
-        for part in parts where part.kind == .dcVoltage {
+        for part in plan.parts where part.kind == .dcVoltage {
             let v = part.params["voltage"] ?? 0
-            if part.connections["minus"] == "GND", let net = part.connections["plus"], v != 0 { supplies.append((net, v)) }
-            if part.connections["plus"] == "GND", let net = part.connections["minus"], v != 0 { supplies.append((net, -v)) }
-        }
-        var virtual: [String: Double] = [:]
-        /// The net a chip's supply pin goes to: a supply of the circuit at that voltage, or one added for it
-        func net(for supply: Supply) -> String {
-            guard case .volts(let v) = supply else { return "GND" }
-            if let match = supplies.first(where: { abs($0.volts - v) < 0.5 }) { return match.net }
-            let name = (v > 0 ? "+" : "−") + SI.trimmed(abs(v), digits: 3) + "V"
-            virtual[name] = v
-            supplies.append((name, v))
-            return name
+            if part.connections["minus"] == "GND", let net = part.connections["plus"], v != 0 { plan.supplies.append((net, v)) }
+            if part.connections["plus"] == "GND", let net = part.connections["minus"], v != 0 { plan.supplies.append((net, -v)) }
         }
 
         // chips: units packed into packages
-        struct Pack { var package: Package; var key: String; var units: [(part: NetlistPart, unit: Int)] }
-        var packs: [Pack] = []
-        var twoLead: [NetlistPart] = []
-        var inline: [NetlistPart] = []
-        var off: [NetlistPart] = []
-        for part in parts {
+        for part in plan.parts {
             if let package = package(part) {
                 let shared = package.shared.keys.sorted().map { part.connections[$0] ?? "-" }.joined(separator: ",")
                 let key = package.title + "|" + shared + "|" + package.supplies.map { "\($0.supply)" }.joined(separator: ",")
-                if let k = packs.firstIndex(where: { $0.key == key && $0.units.count < $0.package.units.count }) {
-                    packs[k].units.append((part, packs[k].units.count))
+                if let k = plan.packs.firstIndex(where: { $0.key == key && $0.units.count < $0.package.units.count }) {
+                    plan.packs[k].units.append((part, plan.packs[k].units.count))
                 } else {
-                    packs.append(Pack(package: package, key: key, units: [(part, 0)]))
+                    plan.packs.append(Pack(package: package, key: key, units: [(part, 0)]))
                 }
                 continue
             }
             switch part.kind {
             case .resistor, .capacitor, .inductor, .diode, .zener, .led, .lamp, .toggleSwitch, .pushButton:
-                twoLead.append(part)
+                plan.twoLead.append(part)
             case .npn, .pnp, .njfet, .nmos, .pmos, .potentiometer, .vactrol:
-                inline.append(part)
+                plan.inline.append(part)
             case .wire, .ground, .netLabel, .port, .block, .probe:
                 break
             default:
-                off.append(part)
+                plan.off.append(part)
             }
         }
-        for pack in packs {
-            for supply in pack.package.supplies { _ = net(for: supply.supply) }
+        // the supplies the chips need: one of the circuit's at that voltage, or one added for them
+        for pack in plan.packs {
+            for supply in pack.package.supplies {
+                guard case .volts(let v) = supply.supply, !plan.supplies.contains(where: { abs($0.volts - v) < 0.5 }) else { continue }
+                let name = (v > 0 ? "+" : "−") + SI.trimmed(abs(v), digits: 3) + "V"
+                plan.virtual[name] = v
+                plan.supplies.append((name, v))
+            }
         }
+        // the packages' names: U1, U2… for shared ones, the part's own for a chip alone
+        let usedNames = Set(plan.parts.map(\.name))
+        var number = 0
+        for k in plan.packs.indices {
+            if plan.packs[k].units.count == 1 {
+                plan.packs[k].name = plan.packs[k].units[0].part.name
+                continue
+            }
+            repeat { number += 1 } while usedNames.contains("U\(number)")
+            plan.packs[k].name = "U\(number)"
+        }
+        return plan
+    }
+
+    /// Lays the circuit out on a breadboard
+    public static func layout(_ circuit: Circuit) -> Layout {
+        let plan = plan(circuit)
+        let voltages = plan.voltages
+        var b = Builder()
 
         // the rails: ground on both − rails; the supply most parts use on the top + rail, a second (a negative one first)
         // on the bottom + rail
-        func uses(_ net: String) -> Int {
-            parts.reduce(0) { $0 + $1.connections.values.filter { $0 == net }.count }
-                + packs.reduce(0) { total, pack in total + pack.package.supplies.filter { self.netName($0.supply, supplies) == net }.count }
-        }
         b.railsOf["GND"] = [.topNegative, .bottomNegative]
         b.layout.rails[.topNegative] = "GND"
         b.layout.rails[.bottomNegative] = "GND"
-        let positives = supplies.filter { $0.volts > 0 }.sorted { uses($0.net) > uses($1.net) }
-        let negatives = supplies.filter { $0.volts < 0 }.sorted { uses($0.net) > uses($1.net) }
+        let positives = plan.positives, negatives = plan.negatives
         if let first = positives.first {
             b.railsOf[first.net] = [.topPositive]
             b.layout.rails[.topPositive] = first.net
@@ -452,34 +564,15 @@ public enum Breadboard {
             b.railsOf[first.net]?.append(.bottomPositive)
             b.layout.rails[.bottomPositive] = first.net
         }
-        for (net, volts) in virtual.sorted(by: { $0.key < $1.key }) {
-            b.layout.notes.append("The chips need a \(SI.format(volts, unit: "V")) supply (\(net)), which the circuit leaves implicit")
-        }
+        b.layout.notes += plan.supplyNotes
 
         // chips across the channel, pin 1 at the bottom left
-        var packageNumber = 0
-        let usedNames = Set(parts.map(\.name))
-        for pack in packs {
+        for pack in plan.packs {
             let p = pack.package
             let width = p.pins / 2
             let column = b.run(width, top: nil)
             b.cursor = column + width + 1
-            packageNumber += 1
-            var name = "U\(packageNumber)"
-            while usedNames.contains(name) && pack.units.count > 1 { packageNumber += 1; name = "U\(packageNumber)" }
-            if pack.units.count == 1 { name = pack.units[0].part.name }
-            var netOfPin: [Int: (net: String, label: String)] = [:]
-            for (part, unit) in pack.units {
-                let letter = pack.units.count > 1 ? String(Character(UnicodeScalar(UInt8(65 + unit)))) : ""
-                for (terminal, pin) in p.units[unit] {
-                    if let net = part.connections[terminal] { netOfPin[pin] = (net, p.labels[pin] ?? "\(terminal.uppercased())\(letter.isEmpty ? "" : " " + letter)") }
-                }
-                for (terminal, pin) in p.shared {
-                    if let net = part.connections[terminal] { netOfPin[pin] = (net, terminal.uppercased()) }
-                }
-            }
-            for supply in p.supplies { netOfPin[supply.pin] = (net(for: supply.supply), supply.label) }
-            for pin in p.grounded { netOfPin[pin] = ("GND", p.labels[pin] ?? "GND") }
+            let netOfPin = plan.pins(pack)
             var legs: [Leg] = []
             for pin in 1...p.pins {
                 let top = pin > width
@@ -496,43 +589,13 @@ public enum Breadboard {
                     legs.append(Leg(name: "\(pin) \(p.labels[pin] ?? "—")", hole: hole, net: ""))
                 }
             }
-            var note = p.note
-            if pack.units.count < p.units.count && p.units.count > 1 {
-                let spare = "\(p.units.count - pack.units.count) of its \(p.units.count) units unused: tie their inputs to ground"
-                note = note.map { $0 + ". " + spare } ?? spare
-            }
-            let names = pack.units.map(\.part.name).joined(separator: ", ")
-            b.layout.placements.append(Placement(name: name, title: p.title + (pack.units.count > 1 ? " (\(names))" : ""),
-                                                 style: .dip(pins: p.pins), legs: legs, note: note))
+            b.layout.placements.append(Placement(name: pack.name, title: plan.title(pack), style: .dip(pins: p.pins), legs: legs, note: plan.note(pack)))
         }
 
         // transistors, pots and vactrols: their legs in neighbouring strips, alternately above and below the channel
         var top = true
-        for part in inline {
-            let order: [String]
-            var style: Style
-            var title: String
-            var note: String?
-            switch part.kind {
-            case .potentiometer:
-                order = ["a", "wiper", "b"]
-                style = .pot
-                let ohms = part.params["resistance"] ?? 10_000
-                title = SI.format(ohms, unit: "Ω") + ((part.params["taper"] ?? 0) >= 0.5 ? " audio (A)" : " linear (B)")
-                note = "Legs 1, 2, 3: a, wiper, b (turning it clockwise moves the wiper towards b)"
-            case .vactrol:
-                order = ["anode", "cathode", "a", "b"]
-                style = .vactrol
-                title = Element(kind: .vactrol, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? "VTL5C3"
-                note = "The LED's leads (+ is the anode) at one end, the photoresistor's at the other"
-            default:
-                let t = transistor(part)
-                let letter: [Character: String] = ["E": "emitter", "B": "base", "C": "collector", "D": "drain", "S": "source", "G": "gate"]
-                order = t.pinout.map { letter[$0] ?? "" }
-                style = .transistor(pinout: t.pinout)
-                title = t.title
-                note = "Flat face towards you, legs left to right: " + t.pinout.map(String.init).joined(separator: " ") + (t.note.map { ". " + $0 } ?? "")
-            }
+        for part in plan.inline {
+            let (order, style, title, note) = inline(part, facing: "towards you, legs left to right")
             let column = b.run(order.count, top: top)
             var legs: [Leg] = []
             for (k, terminal) in order.enumerated() {
@@ -550,7 +613,7 @@ public enum Breadboard {
         b.cursor += 1
 
         // two-lead parts: each lead on a strip of its net (or its rail), the two close together
-        for part in twoLead {
+        for part in plan.twoLead {
             let terminals = part.kind.terminalNames
             guard let n0 = part.connections[terminals[0]], let n1 = part.connections[terminals[1]] else {
                 b.layout.notes.append("\(part.name) is not connected at both ends: left off the board")
@@ -577,21 +640,19 @@ public enum Breadboard {
         }
 
         // off the board: supplies, sources, speakers, modules, each terminal wired to a hole of its net
-        for (net, volts) in supplies.sorted(by: { $0.volts > $1.volts }) where uses(net) > 0 || virtual[net] != nil {
-            let plus = b.hole(on: net, near: Breadboard.columns, top: volts > 0)
-            let ground = b.hole(on: "GND", near: Breadboard.columns, top: volts > 0)
-            b.layout.offBoard.append(OffBoard(name: parts.first { $0.kind == .dcVoltage && ($0.connections.values.contains(net)) }?.name ?? net,
-                                              title: "Power supply, \(SI.format(volts, unit: "V"))",
-                                              wires: [Leg(name: volts > 0 ? "+" : "−", hole: plus, net: net), Leg(name: "common", hole: ground, net: "GND")]))
+        for supply in plan.wiredSupplies {
+            let plus = b.hole(on: supply.net, near: Breadboard.columns, top: supply.volts > 0)
+            let ground = b.hole(on: "GND", near: Breadboard.columns, top: supply.volts > 0)
+            b.layout.offBoard.append(OffBoard(name: supply.name, title: "Power supply, \(SI.format(supply.volts, unit: "V"))",
+                                              wires: [Leg(name: supply.volts > 0 ? "+" : "−", hole: plus, net: supply.net), Leg(name: "common", hole: ground, net: "GND")]))
         }
-        for part in off where part.kind != .dcVoltage || !supplies.contains(where: { s in part.connections.values.contains(s.net) && part.connections.values.contains("GND") }) {
-            let title = offBoardTitle(part)
+        for part in plan.offBoardParts {
             var wires: [Leg] = []
             for terminal in part.terminalNames {
                 guard let net = part.connections[terminal] else { continue }
                 wires.append(Leg(name: terminal, hole: b.hole(on: net, near: b.cursor, top: true), net: net))
             }
-            b.layout.offBoard.append(OffBoard(name: part.name, title: title, wires: wires))
+            b.layout.offBoard.append(OffBoard(name: part.name, title: offBoardTitle(part), wires: wires))
         }
 
         // jumpers: the strips of each net joined in a chain; strips of a rail's net to the rail
@@ -622,7 +683,8 @@ public enum Breadboard {
         if b.layout.width > Breadboard.columns {
             b.layout.notes.append("The circuit needs \(b.layout.width) columns: more than one breadboard (63 each), side by side with their rails joined")
         }
-        b.layout.bom = billOfMaterials(b.layout, parts: parts, voltages: voltages)
+        b.layout.bom = billOfMaterials(b.layout.placements.map { ($0.name, $0.title, $0.style) }, offBoard: b.layout.offBoard.map { ($0.name, $0.title) },
+                                       wires: b.layout.jumpers.count, wireName: "jumper wires")
         return b.layout
     }
 
@@ -702,14 +764,15 @@ public enum Breadboard {
         }
     }
 
-    static func billOfMaterials(_ layout: Layout, parts: [NetlistPart], voltages: [String: Double]) -> [Item] {
+    static func billOfMaterials(_ placements: [(name: String, title: String, style: Style)], offBoard: [(name: String, title: String)],
+                                wires: Int, wireName: String) -> [Item] {
         var groups: [String: [String]] = [:]
         var order: [String] = []
         func add(_ description: String, _ name: String) {
             if groups[description] == nil { order.append(description) }
             groups[description, default: []].append(name)
         }
-        for placement in layout.placements {
+        for placement in placements {
             switch placement.style {
             case .resistor: add(placement.title + " resistor, ¼ W", placement.name)
             case .ceramic: add(placement.title + " capacitor, ceramic or film", placement.name)
@@ -721,13 +784,10 @@ public enum Breadboard {
             default: add(placement.title, placement.name)
             }
         }
-        for item in layout.offBoard { add(item.title, item.name) }
-        if !layout.jumpers.isEmpty { add("jumper wires", "\(layout.jumpers.count)") }
-        return order.map { description in
-            let names = groups[description] ?? []
-            let quantity = description == "jumper wires" ? layout.jumpers.count : names.count
-            return Item(quantity: quantity, description: description, parts: description == "jumper wires" ? [] : names)
-        }
+        for item in offBoard { add(item.title, item.name) }
+        var items = order.map { Item(quantity: groups[$0]?.count ?? 0, description: $0, parts: groups[$0] ?? []) }
+        if wires > 0 { items.append(Item(quantity: wires, description: wireName, parts: [])) }
+        return items
     }
 
     // MARK: - Checking

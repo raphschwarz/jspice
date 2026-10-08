@@ -271,9 +271,13 @@ public final class CircuitSession {
         Tool(name: "breadboard",
              description: "The circuit laid out on a full-size solderless breadboard (63 columns, strips a–e and f–j, a + and − rail top and bottom): each part's legs and the hole each goes in (a1…j63, or a rail), chips straddling the channel with pin 1 bottom left and their units packed into as few packages as possible, transistors' legs in datasheet order with the flat face towards you, electrolytics' + leg on the higher DC voltage, the jumper wires, the rails' nets, and what is wired from off the board (supplies, sources, speakers). Checked: problems lists anything the board would connect differently from the schematic (empty when it matches).",
              inputSchema: schema([:]), run: { session, _ in session.breadboard() }),
+        Tool(name: "stripboard",
+             description: "The circuit laid out on stripboard (Veroboard: 25 copper strips lettered A–Y from the top, holes numbered from 1 at the left): the supplies' strips (the main positive supply on A, ground on the bottom strip, a second supply above it), each part standing across the strips with its legs' holes (\"C12\"), chips straddling a cut with pin 1 top left, transistors' legs down one column in datasheet order with the flat face to the left, the holes where the strips must be cut, the wire links, and what is wired from off the board (pots and switches on the panel, by their lugs; supplies, sockets). Checked: problems lists anything the board would connect differently from the schematic.",
+             inputSchema: schema([:]), run: { session, _ in session.stripboard() }),
         Tool(name: "bom",
-             description: "The bill of materials for building the circuit: each part as bought (values, electrolytics' voltage ratings from the operating point, chips by package, transistors with their leg order), how many, and which parts of the schematic they are; plus the jumper wires and what is wired from off the board.",
-             inputSchema: schema([:]), run: { session, _ in session.billOfMaterials() }),
+             description: "The bill of materials for building the circuit: each part as bought (values, electrolytics' voltage ratings from the operating point, chips by package, transistors with their leg order), how many, and which parts of the schematic they are; plus the wires and what is wired from off the board. For a breadboard by default, or a stripboard (with the board and chip sockets).",
+             inputSchema: schema(["board": string("\"breadboard\" (default) or \"stripboard\"")]),
+             run: { session, arguments in try session.billOfMaterials(arguments) }),
         Tool(name: "save_circuit",
              description: "Saves the circuit as a .jspice file the JSpice app can open.",
              inputSchema: schema(["path": string("File path")], required: ["path"]),
@@ -1648,9 +1652,38 @@ public final class CircuitSession {
         ] as [String: Any]
     }
 
-    func billOfMaterials() -> Any {
-        let layout = Breadboard.layout(circuit)
-        return ["items": layout.bom.map { ["quantity": $0.quantity, "part": $0.description, "designators": $0.parts] as [String: Any] }]
+    func stripboard() -> Any {
+        let layout = Stripboard.layout(circuit)
+        func legs(_ legs: [Stripboard.Leg]) -> [[String: Any]] {
+            legs.map { ["leg": $0.name, "hole": $0.hole.description, "net": $0.net.isEmpty ? "(free)" : $0.net] }
+        }
+        var supplies: [String: String] = [:]
+        for (row, net) in layout.buses { supplies["strip " + Stripboard.letters(row)] = net }
+        return [
+            "strips": layout.rows,
+            "holes": layout.columns,
+            "supply_strips": supplies,
+            "parts": layout.placements.map { placement -> [String: Any] in
+                var item: [String: Any] = ["name": placement.name, "part": placement.title, "legs": legs(placement.legs)]
+                if let note = placement.note { item["note"] = note }
+                return item
+            },
+            "cuts": layout.cuts.sorted { ($0.row, $0.column) < ($1.row, $1.column) }.map(\.description),
+            "links": layout.links.map { ["from": $0.from.description, "to": $0.to.description, "net": $0.net] },
+            "off_board": layout.offBoard.map { ["name": $0.name, "what": $0.title, "wires": legs($0.wires)] },
+            "notes": layout.notes,
+            "problems": Stripboard.verify(layout),
+        ] as [String: Any]
+    }
+
+    func billOfMaterials(_ arguments: [String: Any]) throws -> Any {
+        let bom: [Breadboard.Item]
+        switch arguments["board"] as? String ?? "breadboard" {
+        case "breadboard": bom = Breadboard.layout(circuit).bom
+        case "stripboard": bom = Stripboard.layout(circuit).bom
+        case let other: throw ToolError("\"board\" should be \"breadboard\" or \"stripboard\", not \"\(other)\"")
+        }
+        return ["items": bom.map { ["quantity": $0.quantity, "part": $0.description, "designators": $0.parts] as [String: Any] }]
     }
 
     func save(_ arguments: [String: Any]) throws -> Any {
