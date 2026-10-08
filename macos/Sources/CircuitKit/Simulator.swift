@@ -1792,7 +1792,8 @@ public final class Simulator {
                 // the four stages, each a one-pole low-pass whose slope at its present level sets its pole, and the
                 // feedback from the last to the input
                 let s = moduleStates[i]
-                let cutoff = min(c.frequency * pow(2, min(max(voltage(nodes[1]), -16), 16)), 0.4 / timeStep)
+                // (the chip's own cutoff, without the limit the step's length puts on its updates)
+                let cutoff = c.frequency * pow(2, min(max(voltage(nodes[1]), -16), 16))
                 let w = 2 * Double.pi * cutoff
                 let slopes = [s.s1, s.s2, s.s3, s.s4].map { 1 - tanh($0) * tanh($0) }
                 let input = tanh(voltage(nodes[0]) / c.limit - c.gain * s.s4)
@@ -1815,7 +1816,7 @@ public final class Simulator {
             case .digitalDelay:
                 let delay = echoDelay(i)
                 let t = moduleStates[i].output / c.limit
-                let cutoff = min(820 / delay, 20_000, 0.4 / timeStep)
+                let cutoff = min(820 / delay, 20_000)
                 passes(nodes[0], .delay(gain: c.gain * (1 - t * t), time: delay, cutoff: 2 * .pi * cutoff, poles: 2))
             default:
                 break

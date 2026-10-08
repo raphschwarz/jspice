@@ -84,13 +84,13 @@ final class SmallSignalTests: XCTestCase {
                     let phaseError = Self.angle(phase, probe.phaseDegrees[k])
                     if abs(gainError) > abs(worstGain) { worstGain = gainError }
                     if abs(phaseError) > abs(worstPhase) { worstPhase = phaseError }
-                    XCTAssertEqual(gain, probe.gainDB[k], accuracy: 0.05,
+                    XCTAssertEqual(gain, probe.gainDB[k], accuracy: 0.001,
                                    "\(test.id) \(probe.net) gain at \(test.frequencies[k]) Hz")
-                    XCTAssertEqual(phaseError, 0, accuracy: 0.5, "\(test.id) \(probe.net) phase at \(test.frequencies[k]) Hz")
+                    XCTAssertEqual(phaseError, 0, accuracy: 0.01, "\(test.id) \(probe.net) phase at \(test.frequencies[k]) Hz")
                 }
                 table.append("  " + test.id.padding(toLength: 16, withPad: " ", startingAt: 0)
                              + probe.net.padding(toLength: 6, withPad: " ", startingAt: 0)
-                             + String(format: "%8.4f dB %8.3f°", worstGain, worstPhase))
+                             + String(format: "%9.6f dB %9.6f°", worstGain, worstPhase))
             }
         }
         print(table.joined(separator: "\n"))
