@@ -141,7 +141,7 @@ extension Circuit {
                 let ratio = max(owner[param: "ratio"], 1e-6)
                 // coupled inductors Lp and Ls = n² Lp with coupling k are exactly a leakage inductance (1 - k²) Lp in
                 // series with the primary, a magnetising inductance k² Lp across it, and an ideal transformer of
-                // ratio k n
+                // ratio n / k (unloaded, k² of the primary's voltage reaches the core: k n of it the secondary, M / Lp)
                 let x = origin, y = origin + GridPoint(0, 2), secondary = origin + GridPoint(0, 4)
                 let rp = owner[param: "rp"], rs = owner[param: "rs"]
                 if rp > 0 { part(owner, 1, .resistor, pins[0], x, "Rp", ["resistance": rp]) } else { part(owner, 1, .wire, pins[0], x, "Rp") }
@@ -150,7 +150,7 @@ extension Circuit {
                 part(owner, 3, .inductor, y, pins[1], "Lm", ["inductance": k * k * lp])
                 var core = Element(kind: .transformer, name: owner.name.isEmpty ? "" : owner.name + ".core",
                                    a: origin + GridPoint(10, 10), b: origin + GridPoint(14, 10),
-                                   params: ["core": 1, "ratio": k * ratio])
+                                   params: ["core": 1, "ratio": ratio / k])
                 core.id = UUID.combining(owner.id, UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4)))
                 if !present.contains(core.id) { added.append(core) }
                 let corePins = core.posts
