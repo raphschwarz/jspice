@@ -84,8 +84,11 @@ extension Circuit {
         }
         var result = self
         var copies = 0
+        // flattening a circuit flattened already changes nothing: its blocks' parts are there (with these ids)
+        let present = Set(elements.map(\.id))
         func expand(_ instance: Element, depth: Int) {
             guard depth < 8, let block = instance.block else { return }
+            if let first = block.circuit.elements.first, present.contains(UUID.combining(instance.id, first.id)) { return }
             copies += 1
             let offset = GridPoint(1_000_000 * copies, 1_000_000)
             let pins = instance.posts

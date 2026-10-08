@@ -37,7 +37,7 @@ public enum SI {
     }
 
     /// "4.7k" -> 4700, "100 nF" -> 1e-7, "1M" -> 1e6, "2m" -> 0.002, "1meg" -> 1e6.
-    /// Capital M is mega and lowercase m is milli. A trailing unit (Ω, F, H, V, A, Hz, s) is ignored.
+    /// Capital M is mega and lowercase m is milli; u, n and p may be capitals. A trailing unit (Ω, F, H, V, A, Hz, s) is ignored.
     public static func parse(_ text: String) -> Double? {
         let cleaned = text.trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "−", with: "-")
@@ -69,9 +69,10 @@ public enum SI {
             case "M": multiplier = 1e6
             case "k", "K": multiplier = 1e3
             case "m": multiplier = 1e-3
-            case "u", "µ", "μ": multiplier = 1e-6
-            case "n": multiplier = 1e-9
-            case "p": multiplier = 1e-12
+            // printed schematics and SPICE decks write these in capitals too ("100N", "4U7", "22P"); F stays farads
+            case "u", "U", "µ", "μ": multiplier = 1e-6
+            case "n", "N": multiplier = 1e-9
+            case "p", "P": multiplier = 1e-12
             case "f": multiplier = 1e-15
             default: multiplier = 1
             }

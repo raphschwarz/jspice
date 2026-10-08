@@ -175,7 +175,9 @@ public enum NetlistLayout {
 /// numbered; the ground net is "GND". Terminals connected to nothing are left out.
 public enum NetlistExtractor {
     public static func netlist(from circuit: Circuit) -> [NetlistPart] {
-        let simulator = Simulator(circuit: circuit, timeStep: 1e-6)
+        // the nodes alone, as the simulator finds them (a simulator would also set up every chip and clip)
+        let topology = Topology(circuit: circuit.flattened())
+        func nodes(of index: Int) -> [Int] { index < topology.elementNodes.count ? topology.elementNodes[index] : [] }
         let isPart: (Element) -> Bool = { ![.wire, .ground, .netLabel].contains($0.kind) }
         var names: [Int: String] = [0: "GND"]
         var taken: Set<String> = ["GND"]
@@ -186,18 +188,18 @@ public enum NetlistExtractor {
             taken.insert(candidate)
         }
         for (i, element) in circuit.elements.enumerated() where element.kind == .netLabel {
-            if let node = simulator.nodes(of: i).first { name(node, element.name.trimmingCharacters(in: .whitespaces)) }
+            if let node = nodes(of: i).first { name(node, element.name.trimmingCharacters(in: .whitespaces)) }
         }
         var terminalsOnNode: [Int: Int] = [:]
         for (i, element) in circuit.elements.enumerated() where isPart(element) {
-            for (t, node) in simulator.nodes(of: i).enumerated() {
+            for (t, node) in nodes(of: i).enumerated() {
                 terminalsOnNode[node, default: 0] += 1
                 if let given = circuit.netNames["\(element.name).\(element.terminalNames[t])"] { name(node, given) }
             }
         }
         // supplies without a name are named after their voltage, like "+9V"
         for (i, element) in circuit.elements.enumerated() where element.kind == .dcVoltage {
-            let nodes = simulator.nodes(of: i)
+            let nodes = nodes(of: i)
             guard nodes.count == 2 else { continue }
             let volts = element[param: "voltage"]
             let size = SI.trimmed(abs(volts), digits: 3)
@@ -208,12 +210,12 @@ public enum NetlistExtractor {
             }
         }
         let labelled = Set(circuit.elements.enumerated().filter { $0.element.kind == .netLabel || $0.element.kind == .ground }
-            .compactMap { simulator.nodes(of: $0.offset).first })
+            .compactMap { nodes(of: $0.offset).first })
         var counter = 1
         var parts: [NetlistPart] = []
         for (i, element) in circuit.elements.enumerated() where isPart(element) {
             var connections: [String: String] = [:]
-            for (t, node) in simulator.nodes(of: i).enumerated() {
+            for (t, node) in nodes(of: i).enumerated() {
                 // a terminal alone on its node is not connected to anything
                 if node != 0 && (terminalsOnNode[node] ?? 0) < 2 && names[node] == nil && !labelled.contains(node) { continue }
                 if names[node] == nil {

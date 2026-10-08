@@ -453,6 +453,12 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(SI.parse("3n3F")!, 3.3e-9, accuracy: 1e-21)
         XCTAssertEqual(SI.parse("5V1")!, 5.1, accuracy: 1e-12)
         XCTAssertEqual(SI.parse("2k2 Ω")!, 2200, accuracy: 1e-9)
+        // capitals, as SPICE decks and some schematics write them
+        XCTAssertEqual(SI.parse("100N")!, 1e-7, accuracy: 1e-20)
+        XCTAssertEqual(SI.parse("4U7")!, 4.7e-6, accuracy: 1e-18)
+        XCTAssertEqual(SI.parse("22P")!, 22e-12, accuracy: 1e-24)
+        XCTAssertEqual(SI.parse("1MEG")!, 1e6, accuracy: 1e-9)
+        XCTAssertEqual(SI.parse("100F")!, 100, accuracy: 1e-12)
     }
 
     func testCircuitRoundTripsThroughJSON() throws {

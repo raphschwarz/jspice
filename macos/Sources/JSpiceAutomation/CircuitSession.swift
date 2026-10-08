@@ -1017,9 +1017,13 @@ public final class CircuitSession {
             let probes = try specs.map(probe)
             guard let duration = try Self.number(spec["duration"], "duration"), duration > 0 else { throw ToolError("\"duration\" should be positive") }
             let skip = try Self.number(spec["skip"], "skip") ?? 0
+            guard skip >= 0 else { throw ToolError("\"skip\" should not be negative") }
             let timeStep = min(Pacing.suggest(for: circuit).timeStep, duration / 400)
-            let steps = Int(((duration + skip) / timeStep).rounded(.up))
-            guard steps <= Self.maxSteps else { throw ToolError("That is \(steps) steps; at most \(Self.maxSteps)") }
+            let count = ((duration + skip) / timeStep).rounded(.up)
+            guard count.isFinite, count <= Double(Self.maxSteps) else {
+                throw ToolError("That is \(count) steps; at most \(Self.maxSteps)")
+            }
+            let steps = max(1, Int(count))
             let simulator = Simulator(circuit: circuit, timeStep: timeStep)
             var traces = probes.map { _ in Trace() }
             for _ in 0..<steps {
@@ -1115,13 +1119,16 @@ public final class CircuitSession {
         }
         struct Target {
             var metric: String, value: Double?, low: Double?, high: Double?, goal: Double, weight: Double
+            /// What a goal to minimize or maximize counts in: the metric's size at the start (the ratio to a quantity's
+            /// own size would always be ±1, with nothing for the search to follow)
+            var reference = 1.0
             /// dB and degrees count as they are; anything else relative to the target
             func scale(_ reference: Double) -> Double {
                 metric.contains("db") || metric.contains("deg") ? 1 : max(abs(reference), 1e-12)
             }
         }
         guard let targetList = arguments["targets"] as? [[String: Any]], !targetList.isEmpty else { throw ToolError("\"targets\" should say what to achieve") }
-        let targets = try targetList.map { entry -> Target in
+        var targets = try targetList.map { entry -> Target in
             let goal = (entry["goal"] as? String)?.lowercased()
             guard goal == nil || goal == "minimize" || goal == "maximize" else { throw ToolError("\"goal\" should be minimize or maximize") }
             return Target(metric: try Self.text(entry, "metric"), value: try Self.number(entry["value"], "value"),
@@ -1133,13 +1140,19 @@ public final class CircuitSession {
             for (knob, value) in zip(knobs, values) { copy.elements[knob.index][param: knob.key] = value }
             return copy
         }
-        var missing = Set<String>()
+        // the starting point measured first: a measurement that fails, or lacks a metric, is a mistake in the request
+        let initial = try measure(circuit, spec)
+        let absent = targets.map(\.metric).filter { initial[$0] == nil }
+        guard absent.isEmpty else {
+            throw ToolError("No measurement named \(absent.joined(separator: ", ")); the measurement gives \(initial.keys.sorted().joined(separator: ", "))")
+        }
+        for k in targets.indices { targets[k].reference = targets[k].scale(initial[targets[k].metric] ?? 1) }
         func cost(_ values: [Double]) -> (cost: Double, metrics: [String: Double]) {
             guard let metrics = try? measure(variant(at: values), spec) else { return (1e12, [:]) }
             var total = 0.0
             for target in targets {
                 guard let m = metrics[target.metric] else {
-                    missing.insert(target.metric)
+                    // missing at this trial point (no -3 dB corner in range, no oscillation): a poor point
                     total += 1e6
                     continue
                 }
@@ -1155,7 +1168,7 @@ public final class CircuitSession {
                     let e = (m - high) / target.scale(high)
                     total += target.weight * e * e
                 }
-                if target.goal != 0 { total += target.weight * target.goal * m / target.scale(m) }
+                if target.goal != 0 { total += target.weight * target.goal * m / target.reference }
             }
             return (total, metrics)
         }
@@ -1165,9 +1178,6 @@ public final class CircuitSession {
         let found = Optimizer.minimize({ point in
             Date().timeIntervalSince(wallStart) > Self.maxWallSeconds ? .greatestFiniteMagnitude : cost(zip(knobs, point).map { $0.value($1) }).cost
         }, start: start, evaluations: limit)
-        if !missing.isEmpty {
-            throw ToolError("No measurement named \(missing.sorted().joined(separator: ", ")); the measurement gives \(cost(knobs.map { circuit.elements[$0.index][param: $0.key] }).metrics.keys.sorted().joined(separator: ", "))")
-        }
         var values = zip(knobs, found.point).map { $0.value($1) }
         var best = cost(values)
         var evaluations = found.evaluations
@@ -1614,9 +1624,13 @@ public final class CircuitSession {
     func importSpice(_ arguments: [String: Any]) throws -> Any {
         var text = arguments["netlist"] as? String ?? ""
         if text.isEmpty, let path = arguments["path"] as? String, !path.isEmpty {
-            do { text = try String(contentsOfFile: (path as NSString).expandingTildeInPath, encoding: .utf8) } catch {
+            // LTspice writes its netlists in UTF-16 or Windows-1252, not always UTF-8
+            guard let data = FileManager.default.contents(atPath: (path as NSString).expandingTildeInPath) else {
                 throw ToolError("Can't read \(path)")
             }
+            guard let decoded = [String.Encoding.utf8, .utf16, .windowsCP1252].lazy
+                .compactMap({ String(data: data, encoding: $0) }).first else { throw ToolError("Can't read \(path) as text") }
+            text = decoded
         }
         guard !text.isEmpty else { throw ToolError("Give the netlist as \"netlist\" or a file as \"path\"") }
         let (imported, warnings) = try SpiceNetlist.circuit(from: text)

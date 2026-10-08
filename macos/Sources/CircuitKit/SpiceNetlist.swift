@@ -10,7 +10,8 @@ public enum SpiceNetlist {
     /// A SPICE number: "4.7k", "10meg", "1M" (milli, as in SPICE), "100nF", "2.2u", "1e-3"; letters after the scale
     /// (a unit) are ignored
     public static func value(_ text: String) -> Double? {
-        let lower = text.trimmingCharacters(in: .whitespaces).lowercased().replacingOccurrences(of: "µ", with: "u")
+        let lower = text.trimmingCharacters(in: .whitespaces).lowercased()
+            .replacingOccurrences(of: "µ", with: "u").replacingOccurrences(of: "μ", with: "u")
         let scanner = Scanner(string: lower)
         scanner.locale = Locale(identifier: "en_US_POSIX")
         scanner.charactersToBeSkipped = nil
@@ -41,8 +42,9 @@ public enum SpiceNetlist {
                 if let range = line.range(of: marker) { line = String(line[..<range.lowerBound]) }
             }
             line = line.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("+"), !lines.isEmpty {
-                lines[lines.count - 1] += " " + line.dropFirst()
+            // a continuation joins the last line of the deck, past comments and blank lines (not the title)
+            if line.hasPrefix("+"), let k = lines.indices.last(where: { $0 > 0 && !lines[$0].isEmpty && !lines[$0].hasPrefix("*") }) {
+                lines[k] += " " + line.dropFirst()
             } else {
                 lines.append(line)
             }
@@ -54,10 +56,18 @@ public enum SpiceNetlist {
         var subcircuits: [String: (pins: [String], lines: [String])] = [:]
         var top: [String] = []
         var open: (name: String, pins: [String], lines: [String])?
+        // ngspice's interactive commands, between .control and .endc, are not part of the circuit
+        var control = false
         for line in lines.dropFirst() where !line.isEmpty && !line.hasPrefix("*") {
             let words = tokens(line)
             guard let first = words.first?.lowercased() else { continue }
-            if first == ".model", words.count >= 3 {
+            if control {
+                if first == ".endc" { control = false }
+                continue
+            }
+            if first == ".control" {
+                control = true
+            } else if first == ".model", words.count >= 3 {
                 var type = words[2].lowercased()
                 var params: [String: Double] = [:]
                 // "NPN(IS=1e-14 BF=100)" or "NPN IS=1e-14 BF=100"
@@ -83,7 +93,8 @@ public enum SpiceNetlist {
             }
         }
         var cache: [String: BlockDefinition] = [:]
-        let parts = elements(top, models: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings, depth: 0)
+        let parts = elements(top, models: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings, depth: 0,
+                             spellings: Spellings())
         return Import(title: title, parts: parts, warnings: warnings)
     }
 
@@ -125,10 +136,22 @@ public enum SpiceNetlist {
         }
     }
 
-    private static func net(_ name: String, _ prefix: String) -> String {
+    /// Node names as first spelled: SPICE does not tell "Out" from "OUT"
+    private final class Spellings {
+        private var first: [String: String] = [:]
+
+        func canonical(_ name: String) -> String {
+            let key = name.lowercased()
+            if let known = first[key] { return known }
+            first[key] = name
+            return name
+        }
+    }
+
+    private static func net(_ name: String, _ prefix: String, _ spellings: Spellings) -> String {
         let lower = name.lowercased()
         if lower == "0" || lower == "gnd" { return "GND" }
-        return prefix + name
+        return prefix + spellings.canonical(name)
     }
 
     /// The arguments of a source's function: "SIN(0 1 1k)" → [0, 1, 1000]
@@ -139,14 +162,14 @@ public enum SpiceNetlist {
 
     private static func elements(_ lines: [String], models: [String: (type: String, params: [String: Double])],
                                  subcircuits: [String: (pins: [String], lines: [String])], cache: inout [String: BlockDefinition],
-                                 warnings: inout [String], depth: Int, prefix: String = "") -> [NetlistPart] {
+                                 warnings: inout [String], depth: Int, prefix: String = "", spellings: Spellings) -> [NetlistPart] {
         var parts: [NetlistPart] = []
         var inductors: [String: Int] = [:]
         var couplings: [(String, String, Double)] = []
         for line in lines {
             let words = tokens(line)
             guard let name = words.first, let letter = name.lowercased().first else { continue }
-            func node(_ k: Int) -> String? { k < words.count ? net(words[k], prefix) : nil }
+            func node(_ k: Int) -> String? { k < words.count ? net(words[k], prefix, spellings) : nil }
             func number(_ k: Int) -> Double? { k < words.count ? value(words[k]) : nil }
             func keyword(_ key: String) -> Double? {
                 words.first { $0.lowercased().hasPrefix(key.lowercased() + "=") }
@@ -250,7 +273,7 @@ public enum SpiceNetlist {
                 }
                 let pinchOff = min(model.params["VTO"] ?? -2, -0.01)
                 let beta = model.params["BETA"] ?? 1e-4
-                parts.append(NetlistPart(kind: .njfet, name: name, params: ["pinchOff": pinchOff, "idss": beta * pinchOff * pinchOff / 2],
+                parts.append(NetlistPart(kind: .njfet, name: name, params: ["pinchOff": pinchOff, "idss": beta * pinchOff * pinchOff],
                                          connections: ["drain": d, "gate": g, "source": s]))
             case "k":
                 guard words.count >= 4, let k = number(3) else { continue }
@@ -267,9 +290,12 @@ public enum SpiceNetlist {
                 if let made = cache[subName] {
                     block = made
                 } else {
-                    var inner = elements(sub.lines, models: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings, depth: depth + 1)
+                    // a subcircuit's nodes are its own: spelled as it spells them
+                    let inside = Spellings()
+                    var inner = elements(sub.lines, models: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings,
+                                         depth: depth + 1, spellings: inside)
                     for pin in sub.pins {
-                        inner.append(NetlistPart(kind: .port, name: pin, connections: ["net": net(pin, "")]))
+                        inner.append(NetlistPart(kind: .port, name: pin, connections: ["net": net(pin, "", inside)]))
                     }
                     guard let drawn = try? SchematicLayout.layout(inner) else {
                         warnings.append("\(name): subcircuit \(subName) can't be drawn")
@@ -282,7 +308,7 @@ public enum SpiceNetlist {
                 var part = NetlistPart(kind: .block, name: name)
                 part.block = block
                 // pins by name: the block's ports are named after the subcircuit's pins
-                for (pin, n) in zip(sub.pins, nodes) { part.connections[pin] = net(n, prefix) }
+                for (pin, n) in zip(sub.pins, nodes) { part.connections[pin] = net(n, prefix, spellings) }
                 parts.append(part)
             default:
                 warnings.append("\(name): \(letter.uppercased()) elements are not supported, left out")

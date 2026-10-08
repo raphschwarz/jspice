@@ -88,6 +88,8 @@ public enum Stripboard {
 
         /// The net of any hole: what is in it, or else what is on its piece of strip
         public func net(at hole: Hole) -> String? {
+            // (`nets` is worked out each time it is read)
+            let nets = self.nets
             if let net = nets[hole] { return net }
             if let net = buses[hole.row] { return net }
             let cuts = Set(self.cuts)

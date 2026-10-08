@@ -334,7 +334,8 @@ public enum Breadboard {
 
         /// A strip with nothing on it near `column` (on `top` first, then the other half)
         mutating func newStrip(for net: String, near column: Int, top: Bool) -> Strip {
-            for distance in 0..<200 {
+            // past the board's last used column every strip is free, so this always ends
+            for distance in 0... {
                 for c in [column + distance, column - distance] where c >= 1 {
                     for half in [top, !top] {
                         let strip = Strip(column: c, top: half)
@@ -346,7 +347,7 @@ public enum Breadboard {
                     }
                 }
             }
-            fatalError("no strip left")
+            fatalError("unreachable")
         }
 
         func strips(of net: String) -> [Strip] { stripNet.filter { $0.value == net }.map(\.key).sorted() }
@@ -656,7 +657,8 @@ public enum Breadboard {
         }
 
         // jumpers: the strips of each net joined in a chain; strips of a rail's net to the rail
-        for net in Set(b.stripNet.values) where net != "\u{0}" {
+        // (in order of name, so the same circuit gives the same jumpers every time)
+        for net in Set(b.stripNet.values).sorted() where net != "\u{0}" {
             let strips = b.strips(of: net)
             if b.railsOf[net] != nil {
                 for strip in strips {
