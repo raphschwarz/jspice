@@ -115,4 +115,6 @@ jobs:
           git init -q -b screenshots
           git add -- *.png
           git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" commit -q -m "Screenshots of ${GITHUB_SHA}"
-          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" screenshots:ci/macos-screenshots
+          # two runs finishing together race for the branch: the screenshots are a convenience, so losing is no failure
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" screenshots:ci/macos-screenshots \
+            || echo "::warning::another run published its screenshots at the same moment"
