@@ -8,29 +8,58 @@ struct FrontPanel: View {
     @ObservedObject var editor: EditorState
     let circuit: Circuit
 
-    /// The parts that appear on the panel: controls and lamps left to right as on the schematic, then the output meters
-    static func controls(of circuit: Circuit) -> [Element] {
-        func key(_ e: Element) -> (Int, Int, Int) {
-            (e.kind == .speaker ? 1 : 0, min(e.a.x, e.b.x), min(e.a.y, e.b.y))
+    /// One thing on the panel: a part of the circuit, or a part inside one of its blocks (labelled with the block's
+    /// name), placed where its block is
+    struct Control: Identifiable {
+        let element: Element
+        /// The block part it is inside
+        let blockID: UUID?
+        let label: String
+        let place: GridPoint
+        /// Its id in the simulation (a block's parts have ids of their own there)
+        var id: UUID { blockID.map { UUID.inBlock($0, part: element.id) } ?? element.id }
+    }
+
+    private static let shown: Set<ElementKind> = [.potentiometer, .toggleSwitch, .pushButton, .led, .speaker]
+    private static let playable: Set<ElementKind> = [.potentiometer, .toggleSwitch, .pushButton]
+
+    /// The parts that appear on the panel: controls and lamps left to right as on the schematic (those inside a block
+    /// where the block is), then the output meters
+    static func controls(of circuit: Circuit) -> [Control] {
+        var controls = circuit.elements.filter { shown.contains($0.kind) }.map {
+            Control(element: $0, blockID: nil, label: $0.name, place: GridPoint(min($0.a.x, $0.b.x), min($0.a.y, $0.b.y)))
         }
-        return circuit.elements
-            .filter { [.potentiometer, .toggleSwitch, .pushButton, .led, .speaker].contains($0.kind) }
-            .sorted { key($0) < key($1) }
+        for block in circuit.elements where block.kind == .block {
+            for inner in block.block?.circuit.elements ?? [] where shown.contains(inner.kind) && inner.kind != .speaker {
+                controls.append(Control(element: inner, blockID: block.id, label: "\(block.name) \(inner.name)",
+                                        place: GridPoint(min(block.a.x, block.b.x), min(block.a.y, block.b.y))))
+            }
+        }
+        func key(_ c: Control) -> (Int, Int, Int) { (c.element.kind == .speaker ? 1 : 0, c.place.x, c.place.y) }
+        return controls.sorted { key($0) < key($1) }
     }
 
     static func hasControls(_ circuit: Circuit) -> Bool {
-        circuit.elements.contains { [.potentiometer, .toggleSwitch, .pushButton].contains($0.kind) }
+        circuit.elements.contains {
+            playable.contains($0.kind) || ($0.block?.circuit.elements.contains { playable.contains($0.kind) } ?? false)
+        }
     }
 
     var body: some View {
         let controls = Self.controls(of: circuit)
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 26) {
-                ForEach(controls) { element in
+                ForEach(controls) { control in
                     VStack(spacing: 6) {
-                        control(for: element)
+                        self.control(for: control)
                             .frame(height: 74)
-                        PanelLabel(name: element.name) { editor.rename(element.id, to: $0) }
+                        PanelLabel(name: control.label) { name in
+                            if let block = control.blockID {
+                                editor.updateInsideBlock(block, control.element.id, actionName: "Rename") { $0.name = name }
+                            } else {
+                                editor.rename(control.element.id, to: name)
+                            }
+                        }
                     }
                     .frame(minWidth: 64)
                 }
@@ -44,21 +73,42 @@ struct FrontPanel: View {
     }
 
     @ViewBuilder
-    private func control(for element: Element) -> some View {
+    private func control(for control: Control) -> some View {
+        let element = control.element
         switch element.kind {
         case .potentiometer:
             Knob(position: element[param: "position"],
-                 turn: { editor.turnPotentiometer(element.id, by: $0) },
-                 reset: { editor.turnPotentiometer(element.id, by: 0.5 - element[param: "position"]) })
+                 turn: { turn(control, by: $0) },
+                 reset: { turn(control, by: 0.5 - element[param: "position"]) })
         case .toggleSwitch:
-            ToggleSwitch(on: element.closed) { editor.toggleSwitch(element.id) }
+            ToggleSwitch(on: element.closed) {
+                if let block = control.blockID {
+                    editor.playInsideBlock(block, element.id) { $0.closed.toggle() }
+                } else {
+                    editor.toggleSwitch(element.id)
+                }
+            }
         case .pushButton:
-            PushButton(pressed: element.closed) { editor.setPressed(element.id, $0) }
+            PushButton(pressed: element.closed) { pressed in
+                if let block = control.blockID {
+                    editor.playInsideBlock(block, element.id) { $0.closed = pressed }
+                } else {
+                    editor.setPressed(element.id, pressed)
+                }
+            }
         case .led:
-            PanelLamp(simulation: editor.simulation, elementID: element.id,
+            PanelLamp(simulation: editor.simulation, elementID: control.id,
                       color: LEDColor(rawValue: Int(element[param: "color"])) ?? .red)
         default:
             LevelMeter(simulation: editor.simulation)
+        }
+    }
+
+    private func turn(_ control: Control, by delta: Double) {
+        if let block = control.blockID {
+            editor.playInsideBlock(block, control.element.id) { $0[param: "position"] = min(1, max(0, $0[param: "position"] + delta)) }
+        } else {
+            editor.turnPotentiometer(control.element.id, by: delta)
         }
     }
 }
@@ -302,7 +352,8 @@ private struct PanelLamp: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 30)) { _ in
-            let index = simulation.simulator.circuit.index(of: elementID)
+            // (a lamp inside a block is a part of the simulation's flattened circuit)
+            let index = simulation.simulator.flatIndex(of: elementID)
             let brightness = index.map { simulation.simulator.brightness($0) } ?? 0
             let hue = lampColor
             ZStack {

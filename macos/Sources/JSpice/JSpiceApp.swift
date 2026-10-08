@@ -59,6 +59,9 @@ struct CircuitCommands: Commands {
             Button("Tidy Up") { editor?.tidyUp() }
                 .keyboardShortcut("t", modifiers: [.command, .option])
                 .disabled(editor?.circuit.elements.isEmpty ?? true)
+            Button("Save as Block…") { editor?.promptSaveAsBlock() }
+                .keyboardShortcut("b", modifiers: [.command, .shift])
+                .disabled(editor?.circuit.elements.isEmpty ?? true)
             Divider()
             Button("Add Part…") { editor?.showQuickAdd = true }
                 .keyboardShortcut("k", modifiers: .command)

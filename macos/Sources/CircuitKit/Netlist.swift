@@ -15,6 +15,13 @@ public struct NetlistPart: Sendable {
     /// A microcontroller's sketch and firmware
     public var code: String?
     public var firmware: Data?
+    /// A block part's circuit
+    public var block: BlockDefinition?
+
+    /// Names of the terminals: the kind's, or a block's ports'
+    public var terminalNames: [String] {
+        kind == .block ? (block?.terminalNames ?? []) : kind.terminalNames
+    }
 
     public init(kind: ElementKind, name: String = "", params: [String: Double] = [:], flipped: Bool = false,
                 connections: [String: String] = [:], closed: Bool = false, id: UUID? = nil) {
@@ -63,7 +70,16 @@ public enum NetlistLayout {
 
     /// Index of a terminal given by name (case-insensitive), or by 1-based number
     public static func terminalIndex(_ terminal: String, of kind: ElementKind) -> Int? {
-        let names = kind.terminalNames
+        terminalIndex(terminal, names: kind.terminalNames)
+    }
+
+    /// Index of a terminal of a part (a block's port by name), by name or by 1-based number
+    public static func terminalIndex(_ terminal: String, of element: Element) -> Int? {
+        terminalIndex(terminal, names: element.terminalNames)
+    }
+
+    /// Index of a terminal among `names`, by name (case-insensitive, or a usual alias) or by 1-based number
+    public static func terminalIndex(_ terminal: String, names: [String]) -> Int? {
         let key = terminal.trimmingCharacters(in: .whitespaces).lowercased()
         if let index = names.firstIndex(where: { $0.lowercased() == key }) { return index }
         let aliases: [String: String] = ["+": "plus", "-": "minus", "−": "minus", "in+": "plus", "in-": "minus",
@@ -85,12 +101,15 @@ public enum NetlistLayout {
         case .potentiometer, .analogSwitch: (a, b) = (p(3, 5), p(7, 5))
         case .timer555: (a, b) = (p(6, 2), p(6, 7))
         case .ground: (a, b) = (p(5, 4), p(5, 5))
-        case .netLabel: (a, b) = (p(5, 4), p(6, 4))
+        case .netLabel, .port: (a, b) = (p(5, 4), p(6, 4))
+        case .block: (a, b) = (p(5, 1), p(5, 1 + (part.block?.chipPackage.length ?? 2)))
         default: (a, b) = (p(3, 4), p(7, 4))
         }
         var params = part.params
         for spec in part.kind.params where params[spec.key] == nil { params[spec.key] = spec.defaultValue }
-        return Element(kind: part.kind, name: part.name, a: a, b: b, params: params, flipped: part.flipped)
+        var element = Element(kind: part.kind, name: part.name, a: a, b: b, params: params, flipped: part.flipped)
+        element.block = part.block
+        return element
     }
 
     /// Adds `parts` to `circuit`, one per cell from cell `firstCell` on. Returns the new parts' ids.
@@ -111,8 +130,8 @@ public enum NetlistLayout {
             // check every terminal before adding anything
             var leads: [(post: GridPoint, net: String)] = []
             for (terminal, net) in part.connections.sorted(by: { $0.key < $1.key }) {
-                guard let index = terminalIndex(terminal, of: part.kind) else {
-                    throw NetlistError.unknownTerminal(part: element.name, terminal: terminal, valid: part.kind.terminalNames)
+                guard let index = terminalIndex(terminal, names: part.terminalNames) else {
+                    throw NetlistError.unknownTerminal(part: element.name, terminal: terminal, valid: part.terminalNames)
                 }
                 let net = net.trimmingCharacters(in: .whitespaces)
                 guard !net.isEmpty else { continue }
@@ -167,7 +186,7 @@ public enum NetlistExtractor {
         for (i, element) in circuit.elements.enumerated() where isPart(element) {
             for (t, node) in simulator.nodes(of: i).enumerated() {
                 terminalsOnNode[node, default: 0] += 1
-                if let given = circuit.netNames["\(element.name).\(element.kind.terminalNames[t])"] { name(node, given) }
+                if let given = circuit.netNames["\(element.name).\(element.terminalNames[t])"] { name(node, given) }
             }
         }
         // supplies without a name are named after their voltage, like "+9V"
@@ -195,12 +214,13 @@ public enum NetlistExtractor {
                     while taken.contains("N\(counter)") { counter += 1 }
                     name(node, "N\(counter)")
                 }
-                connections[element.kind.terminalNames[t]] = names[node]
+                connections[element.terminalNames[t]] = names[node]
             }
             var part = NetlistPart(kind: element.kind, name: element.name, params: element.params, flipped: element.flipped,
                                    connections: connections, closed: element.closed, id: element.id)
             part.code = element.code
             part.firmware = element.firmware
+            part.block = element.block
             parts.append(part)
         }
         return parts

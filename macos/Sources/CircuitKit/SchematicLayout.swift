@@ -25,6 +25,26 @@ public enum SchematicLayout {
         return result
     }
 
+    /// Sets the side of each port that is left to choose its own (side 0): the right, as an output, when a part's
+    /// output drives its net or its name says so ("out", "output2"), else the left, as an input
+    public static func choosingPortSides(_ parts: [NetlistPart]) -> [NetlistPart] {
+        var driven = Set<String>()
+        for part in parts where part.kind != .port {
+            let names = part.terminalNames
+            let outputNames = part.kind == .block ? (part.block?.ports.filter(\.right).map(\.name) ?? []) : (outputs[part.kind] ?? [])
+            for (terminal, net) in part.connections {
+                if let i = NetlistLayout.terminalIndex(terminal, names: names), outputNames.contains(names[i]) { driven.insert(net) }
+            }
+        }
+        return parts.map { part in
+            guard part.kind == .port, Simulator.choice(part.params["side"] ?? 0, 0...2) == 0,
+                  let net = part.connections.values.first else { return part }
+            var chosen = part
+            chosen.params["side"] = driven.contains(net) || part.name.lowercased().contains("out") ? 2 : 1
+            return chosen
+        }
+    }
+
     // MARK: - Tables
 
     /// A microcontroller's terminals on one side: the second side counts as its inputs (the Uno's analog inputs), the
@@ -101,8 +121,9 @@ public enum SchematicLayout {
             return frame(0...3, -2...2)
         case .vactrol: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
-            return frame(0...(e.kind.chipPackage?.length ?? 13), -2...2)
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,
+             .block:
+            return frame(0...(e.chipPackage?.length ?? 13), -2...2)
         default:
             let length = abs(e.b.x - e.a.x) + abs(e.b.y - e.a.y)
             var result = Set<GridPoint>()
@@ -148,6 +169,7 @@ public enum SchematicLayout {
         let closed: Bool
         let code: String?
         let firmware: Data?
+        let block: BlockDefinition?
         var connections: [Int: String]
         var role = Role.orphan
         var a: GridPoint?
@@ -167,11 +189,29 @@ public enum SchematicLayout {
             closed = part.closed
             code = part.code
             firmware = part.firmware
+            block = part.block
             self.connections = connections
         }
 
+        /// The terminals' names: the kind's, or a block's ports'
+        var terminalNames: [String] { kind == .block ? (block?.terminalNames ?? []) : kind.terminalNames }
+
+        /// A chip's or a block's box
+        var package: ChipPackage? { kind == .block ? block?.chipPackage : kind.chipPackage }
+
+        /// The terminals that take the signal in and those that put it out: a block's ports on its left and its right
+        var inputNames: [String]? {
+            guard kind == .block else { return SchematicLayout.inputs[kind] }
+            return block.map { $0.ports.filter { !$0.right }.map(\.name) }
+        }
+
+        var outputNames: [String]? {
+            guard kind == .block else { return SchematicLayout.outputs[kind] }
+            return block.map { $0.ports.filter(\.right).map(\.name) }
+        }
+
         func net(_ terminal: String) -> String? {
-            kind.terminalNames.firstIndex(of: terminal).flatMap { connections[$0] }
+            terminalNames.firstIndex(of: terminal).flatMap { connections[$0] }
         }
 
         /// Connected nets in terminal order
@@ -181,6 +221,7 @@ public enum SchematicLayout {
             var element = Element(id: id, kind: kind, name: name, a: a ?? .zero, b: b, params: params, closed: closed, flipped: flipped)
             element.code = code
             element.firmware = firmware
+            element.block = block
             return element
         }
 
@@ -208,8 +249,8 @@ public enum SchematicLayout {
             for part in input where part.kind != .ground && part.kind != .netLabel && part.kind != .wire {
                 var connections: [Int: String] = [:]
                 for (terminal, net) in part.connections {
-                    guard let index = NetlistLayout.terminalIndex(terminal, of: part.kind) else {
-                        throw NetlistError.unknownTerminal(part: part.name, terminal: terminal, valid: part.kind.terminalNames)
+                    guard let index = NetlistLayout.terminalIndex(terminal, names: part.terminalNames) else {
+                        throw NetlistError.unknownTerminal(part: part.name, terminal: terminal, valid: part.terminalNames)
                     }
                     let net = net.trimmingCharacters(in: .whitespaces)
                     if !net.isEmpty { connections[index] = net }
@@ -236,9 +277,9 @@ public enum SchematicLayout {
 
         func consumers(_ net: String) -> [Part] { parts.filter { $0.connections.values.contains(net) } }
 
-        func inputNets(_ p: Part) -> [String] { (inputs[p.kind] ?? []).compactMap { p.net($0) } }
+        func inputNets(_ p: Part) -> [String] { (p.inputNames ?? []).compactMap { p.net($0) } }
 
-        func outputNetList(_ p: Part) -> [String] { (outputs[p.kind] ?? []).compactMap { p.net($0) } }
+        func outputNetList(_ p: Part) -> [String] { (p.outputNames ?? []).compactMap { p.net($0) } }
 
         private func classify() {
             let allNets = Set(parts.flatMap(\.nets))
@@ -250,13 +291,13 @@ public enum SchematicLayout {
                 if let plus, ground.contains(plus), let minus, !ground.contains(minus) { rails.insert(minus) }
             }
             rails.formUnion(allNets.filter { isRailName($0) && !ground.contains($0) })
-            let hasDirected = parts.contains { inputs[$0.kind] != nil }
+            let hasDirected = parts.contains { $0.inputNames != nil }
             if !hasDirected {
                 // a small passive circuit: draw its supply with wires, like a loop
                 rails = rails.filter { rail in parts.reduce(0) { $0 + $1.connections.values.filter { $0 == rail }.count } > 4 }
             }
             for p in parts {
-                let count = p.kind.terminalNames.count
+                let count = p.terminalNames.count
                 let classes = (0..<count).map { cls(p.connections[$0]) }
                 let signals = classes.filter { $0 == .signal }.count
                 if sources.contains(p.kind) && count == 2 {
@@ -267,7 +308,7 @@ public enum SchematicLayout {
                     } else {
                         p.role = .orphan
                     }
-                } else if inputs[p.kind] != nil {
+                } else if p.inputNames != nil {
                     p.role = .directed
                 } else if count == 2 {
                     if signals == 2 {
@@ -515,9 +556,10 @@ public enum SchematicLayout {
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
                     case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
-                         .analogSelector, .pll, .dac:
-                        // analog inputs (a logic chip's inputs) down the left, digital pins (its outputs) down the right
-                        put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.kind.chipPackage?.length ?? 13)))
+                         .analogSelector, .pll, .dac, .block:
+                        // analog inputs (a logic chip's or a block's inputs) down the left, digital pins (its outputs) down
+                        // the right
+                        put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.package?.length ?? 13)))
                         width = 6
                     case .logicGate:
                         // the input the signal comes in by lines up with it
@@ -658,7 +700,7 @@ public enum SchematicLayout {
             }
             // anything else: supply decoupling and unconnected parts, along the right
             for p in parts where p.a == nil {
-                if p.role == .railShunt, let first = p.connections.first(where: { cls($0.value) == .rail })?.key, p.kind.terminalNames.count == 2 {
+                if p.role == .railShunt, let first = p.connections.first(where: { cls($0.value) == .rail })?.key, p.terminalNames.count == 2 {
                     putTwo(p, first: first, GridPoint(x, 0), GridPoint(x, 4))
                     x += 3
                 } else {
@@ -702,7 +744,7 @@ public enum SchematicLayout {
             if amplifiers.contains(p.kind), posts.prefix(2).contains(point) {
                 return element.axisDirection * -1
             }
-            if p.kind == .timer555 || p.kind.chipPackage != nil {
+            if p.kind == .timer555 || p.package != nil {
                 let perpendicular = element.perpendicular
                 let relative = point - element.a
                 let side = relative.x * perpendicular.x + relative.y * perpendicular.y
@@ -971,7 +1013,7 @@ public enum SchematicLayout {
             circuit.elements += extra
             // remember which net each terminal is on, so later changes can refer to nets by name
             for p in placed where !p.name.isEmpty {
-                for (i, net) in p.connections { circuit.netNames["\(p.name).\(p.kind.terminalNames[i])"] = net }
+                for (i, net) in p.connections { circuit.netNames["\(p.name).\(p.terminalNames[i])"] = net }
             }
             return circuit
         }

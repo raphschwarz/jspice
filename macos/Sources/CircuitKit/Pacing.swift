@@ -22,7 +22,8 @@ public enum Pacing {
     /// The circuit's time constants and periods, estimated from its parts. Each capacitor or inductor is paired with the
     /// smallest and the largest resistance in the circuit, since either may be the one it charges through.
     static func timeScales(of circuit: Circuit) -> [Double] {
-        let elements = circuit.elements
+        // the parts inside blocks count as much as any
+        let elements = circuit.flattened().elements
         var resistances: [Double] = []
         for element in elements {
             switch element.kind {

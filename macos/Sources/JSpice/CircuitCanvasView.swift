@@ -391,7 +391,7 @@ final class CircuitCanvasView: NSView {
                 anchor = CGPoint(x: b.x + (horizontal ? 0.6 * away * unit : 0), y: b.y)
                 otherSide = horizontal && away < 0
                 horizontal = false
-            } else if element.kind == .timer555 || element.kind.chipPackage != nil {
+            } else if element.kind == .timer555 || element.chipPackage != nil {
                 // centred above the chip
                 let points = element.extentPoints.map(screen)
                 anchor = CGPoint(x: (points.map(\.x).min()! + points.map(\.x).max()!) / 2, y: points.map(\.y).min()! - 0.4 * unit)
@@ -518,7 +518,7 @@ final class CircuitCanvasView: NSView {
         // a ghost of the part a click would place, and the grid point it starts from
         if let kind = editor.tool, drag == nil, let mouse = mouseLocation {
             let start = grid(mouse)
-            let ghost = constrained(Element(kind: kind, a: start, b: start + kind.defaultOffset))
+            let ghost = constrained(newElement(kind, at: start, placed: true))
             let posts = ghost.posts.map(screen)
             let faint = accent.withAlpha(0.45)
             let style = SymbolStyle(lineWidth: lineWidth, terminalColors: Array(repeating: faint, count: posts.count),
@@ -566,16 +566,33 @@ final class CircuitCanvasView: NSView {
 
     /// Transistors, op-amps and potentiometers stay horizontal or vertical (transistors two grid units long); grounds
     /// always point one grid unit away from their terminal
+    /// A part of the chosen kind starting at `point`: as a click would place it, or (not placed) with no length yet. The
+    /// block tool places the block chosen in the library.
+    private func newElement(_ kind: ElementKind, at point: GridPoint, placed: Bool) -> Element {
+        var element = Element(kind: kind, a: point, b: point)
+        if kind == .block {
+            element.block = editor.blockToPlace
+            element.name = editor.blockToPlace?.name ?? ""
+        }
+        if placed { element.b = point + defaultOffset(of: element) }
+        return element
+    }
+
+    /// Where a click puts a part's second point: a block runs down the page as long as its pins need
+    private func defaultOffset(of element: Element) -> GridPoint {
+        element.kind == .block ? GridPoint(0, element.fixedLength ?? 2) : element.kind.defaultOffset
+    }
+
     private func constrained(_ element: Element) -> Element {
         var element = element
-        guard element.kind.isAxisAligned || element.kind == .ground || element.kind == .netLabel else { return element }
+        guard element.kind.isAxisAligned || element.kind == .ground || element.kind == .netLabel || element.kind == .port else { return element }
         let d = element.b - element.a
         if d == .zero { return element }
         let horizontal = abs(d.x) >= abs(d.y)
         let direction = horizontal ? GridPoint(d.x.signum(), 0) : GridPoint(0, d.y.signum())
-        if element.kind == .ground || element.kind == .netLabel {
+        if element.kind == .ground || element.kind == .netLabel || element.kind == .port {
             element.b = element.a + direction
-        } else if let fixed = element.kind.fixedLength {
+        } else if let fixed = element.fixedLength {
             element.b = element.a + direction * fixed
         } else {
             element.b = element.a + direction * max(2, horizontal ? abs(d.x) : abs(d.y))
@@ -596,7 +613,7 @@ final class CircuitCanvasView: NSView {
             return
         }
         if let kind = editor.tool {
-            drag = .placing(Element(kind: kind, a: gridPoint, b: gridPoint))
+            drag = .placing(newElement(kind, at: gridPoint, placed: false))
             needsDisplay = true
             return
         }
@@ -652,7 +669,9 @@ final class CircuitCanvasView: NSView {
             var next = editor.circuit
             next.update(id) { element in
                 if isA { element.a = grid(point) } else { element.b = grid(point) }
-                if element.kind.isAxisAligned || element.kind == .ground || element.kind == .netLabel { element = constrained(element) }
+                if element.kind.isAxisAligned || element.kind == .ground || element.kind == .netLabel || element.kind == .port {
+                    element = constrained(element)
+                }
             }
             if let element = next[id], element.a != element.b { editor.setDuringInteraction(next) }
         case .rubberBand(let start, _, let initial)?:
@@ -677,7 +696,7 @@ final class CircuitCanvasView: NSView {
     override func mouseUp(with event: NSEvent) {
         switch drag {
         case .placing(var element)?:
-            if element.a == element.b { element.b = element.a + element.kind.defaultOffset }
+            if element.a == element.b { element.b = element.a + defaultOffset(of: element) }
             element = constrained(element)
             if element.a != element.b {
                 let id = editor.add(element)
@@ -767,6 +786,13 @@ final class CircuitCanvasView: NSView {
         }
         if canPlotResponse(hit.kind) {
             menu.addItem(item("Add Frequency Response") { [weak self] in self?.editor.addScope(hit.id, .voltage, plot: .frequencyResponse) })
+        }
+        if hit.kind == .block {
+            menu.addItem(.separator())
+            menu.addItem(item("Open Block") { [weak self] in self?.editor.openBlock(hit.id) })
+            if let name = hit.block?.name, BlockLibrary.block(named: name) != nil {
+                menu.addItem(item("Update from Library") { [weak self] in self?.editor.updateBlockFromLibrary(hit.id) })
+            }
         }
         menu.addItem(.separator())
         menu.addItem(item("Rotate") { [weak self] in self?.editor.rotateSelection() })

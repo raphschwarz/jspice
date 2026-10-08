@@ -10,7 +10,11 @@ import Foundation
 /// every step, and memristors update their internal state after each step. The simulation starts from rest: capacitors at
 /// their initial voltage, inductors without current.
 public final class Simulator {
+    /// The circuit as it was loaded
     public private(set) var circuit: Circuit
+    /// What is simulated: the circuit with each block's parts in its place (`Circuit.flattened`). Its elements start
+    /// with the circuit's own, in the same order, so an index into the circuit is one into this too.
+    private(set) var flat: Circuit
     public private(set) var time: Double = 0
     public private(set) var timeStep: Double
     /// Problems that keep the circuit from being simulated, or parts of it from working
@@ -235,6 +239,7 @@ public final class Simulator {
 
     public init(circuit: Circuit = Circuit(), timeStep: Double = 1e-5) {
         self.circuit = Circuit()
+        self.flat = Circuit()
         self.timeStep = timeStep
         h = timeStep
         load(circuit)
@@ -254,7 +259,7 @@ public final class Simulator {
     /// Switches to a changed circuit, keeping the state (charge, current, memristor state) of elements that remain
     public func load(_ newCircuit: Circuit) {
         var previous: [UUID: SavedState] = [:]
-        for (i, element) in circuit.elements.enumerated() where i < capacitorVoltage.count {
+        for (i, element) in flat.elements.enumerated() where i < capacitorVoltage.count {
             previous[element.id] = SavedState(
                 cv: capacitorVoltage[i], cvp: capacitorVoltagePrevious[i], cvo: capacitorVoltageOlder[i],
                 ci: capacitorCurrent[i], lv: inductorVoltage[i], li: inductorCurrent[i], lip: inductorCurrentPrevious[i],
@@ -264,8 +269,8 @@ public final class Simulator {
         }
         // chips keep running through edits that leave their firmware alone
         var previousChips: [UUID: (firmware: Data?, chip: Microcontroller, carry: Double)] = [:]
-        for (i, chip) in chips where i < circuit.elements.count {
-            previousChips[circuit.elements[i].id] = (circuit.elements[i].firmware, chip, chipCycleCarry[i] ?? 0)
+        for (i, chip) in chips where i < flat.elements.count {
+            previousChips[flat.elements[i].id] = (flat.elements[i].firmware, chip, chipCycleCarry[i] ?? 0)
         }
         // node voltages by place, so an edit does not throw away the solution (a latch keeps its state, and a paused
         // circuit still shows its voltages)
@@ -274,8 +279,9 @@ public final class Simulator {
             for (p, point) in topology.points.enumerated() { previousVoltages[point] = voltage(topology.nodeOfPoint[p]) }
         }
         circuit = newCircuit
-        topology = Topology(circuit: newCircuit)
-        let count = newCircuit.elements.count
+        flat = newCircuit.flattened()
+        topology = Topology(circuit: flat)
+        let count = flat.elements.count
         capacitorVoltage = Array(repeating: 0, count: count)
         capacitorVoltagePrevious = Array(repeating: 0, count: count)
         capacitorCurrent = Array(repeating: 0, count: count)
@@ -294,8 +300,8 @@ public final class Simulator {
         noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
         storedCurrents = Array(repeating: 0, count: count)
-        kinds = newCircuit.elements.map(\.kind)
-        constants = newCircuit.elements.map { makeConstants($0) }
+        kinds = flat.elements.map(\.kind)
+        constants = flat.elements.map { makeConstants($0) }
         func indices(_ include: (ElementKind) -> Bool) -> [Int] { kinds.indices.filter { include(kinds[$0]) } }
         nonlinearIndices = indices {
             switch $0 {
@@ -328,7 +334,7 @@ public final class Simulator {
         chipPinStates = [:]
         chipCycleCarry = [:]
         for i in chipIndices {
-            let element = newCircuit.elements[i]
+            let element = flat.elements[i]
             if let previous = previousChips[element.id], previous.firmware == element.firmware,
                previous.chip.pinCount == element.kind.board?.terminalNames.count {
                 chips[i] = previous.chip
@@ -341,7 +347,7 @@ public final class Simulator {
         }
         memristorIndices = indices { $0 == .memristor }
         watchChipPins()
-        for (i, element) in newCircuit.elements.enumerated() {
+        for (i, element) in flat.elements.enumerated() {
             if let state = previous[element.id] {
                 capacitorVoltage[i] = state.cv
                 capacitorVoltagePrevious[i] = state.cvp
@@ -384,7 +390,7 @@ public final class Simulator {
     }
 
     private func initialiseState(_ i: Int) {
-        let element = circuit.elements[i]
+        let element = flat.elements[i]
         let v0 = element.kind == .capacitor ? element[param: "initialVoltage"] : 0
         capacitorVoltage[i] = v0
         capacitorVoltagePrevious[i] = v0
@@ -429,7 +435,7 @@ public final class Simulator {
         substepLevel = 0
         lastLevel = 0
         olderLevel = 0
-        for (i, element) in circuit.elements.enumerated() {
+        for (i, element) in flat.elements.enumerated() {
             if element.kind == .capacitor {
                 let c = max(element[param: "capacitance"], 1e-30)
                 capacitorVoltagePrevious[i] = capacitorVoltage[i] - capacitorCurrent[i] * dt / c
@@ -448,7 +454,7 @@ public final class Simulator {
     /// element's state and its scope traces. The app's sound runs a second simulator on its own thread, and the window's
     /// simulator follows it this way to show what it is doing.
     public func adoptState(of other: Simulator) {
-        guard other.circuit.elements.count == circuit.elements.count, other.x.count == x.count else { return }
+        guard other.flat.elements.count == flat.elements.count, other.x.count == x.count else { return }
         time = other.time
         if timeStep != other.timeStep {
             timeStep = other.timeStep
@@ -500,7 +506,7 @@ public final class Simulator {
         stepCarry = 0
         convergenceFailures = 0
         (substepLevel, lastLevel, olderLevel) = (0, 0, 0)
-        for i in circuit.elements.indices { initialiseState(i) }
+        for i in flat.elements.indices { initialiseState(i) }
         x = Array(repeating: 0, count: topology.matrixSize)
         isFailed = false
         problems = topology.problems
@@ -523,13 +529,18 @@ public final class Simulator {
     /// which needs `load`.
     public func updateParameters(_ newCircuit: Circuit) -> Bool {
         guard newCircuit.elements.count == circuit.elements.count, newCircuit.scopes == circuit.scopes else { return false }
-        for (old, new) in zip(circuit.elements, newCircuit.elements) {
+        // a knob inside a block is a parameter of a part of the flattened circuit
+        let newFlat = newCircuit.flattened()
+        guard newFlat.elements.count == flat.elements.count else { return false }
+        for (old, new) in zip(flat.elements, newFlat.elements) {
             var same = new
             same.params = old.params
+            same.block = old.block
             if same != old { return false }
         }
         circuit = newCircuit
-        constants = newCircuit.elements.map { makeConstants($0) }
+        flat = newFlat
+        constants = newFlat.elements.map { makeConstants($0) }
         for (i, chip) in chips { chip.supply = constants[i].supply }
         for (i, history) in delayHistory {
             let capacity = delayCapacity(i, timeStep: timeStep)
@@ -586,7 +597,7 @@ public final class Simulator {
         guard !isFailed else { return }
         let end = time + timeStep
         // a playing sequence plays the keyboard; when it stops, it lets go of the key it was holding
-        if let sequence = circuit.sequence, sequence.playing, let state = sequence.state(at: end) {
+        if let sequence = flat.sequence, sequence.playing, let state = sequence.state(at: end) {
             keyboard = KeyboardState(note: state.note, gate: state.gate)
             sequenceOwnsKeyboard = true
         } else if sequenceOwnsKeyboard {
@@ -887,7 +898,7 @@ public final class Simulator {
         for node in 1..<max(1, topology.nodeCount) {
             matrix[(node - 1) * m + node - 1] += Self.gmin
         }
-        for (i, element) in circuit.elements.enumerated() {
+        for (i, element) in flat.elements.enumerated() {
             let nodes = topology.elementNodes[i]
             switch element.kind {
             case .resistor, .lamp:
@@ -2428,7 +2439,7 @@ public final class Simulator {
     }
 
     private func computeCurrents() {
-        let elements = circuit.elements
+        let elements = flat.elements
         guard storedCurrents.count == elements.count else { return }
         let hasSolution = x.count == topology.matrixSize
         func v(_ node: Int) -> Double { hasSolution ? voltage(node) : 0 }
@@ -2493,7 +2504,7 @@ public final class Simulator {
         if kind.isTransistor { return (nodes[1], nodes[2]) }
         if kind == .ota || kind.drivesOutput { return (nodes[2], 0) }
         if kind == .timer555 { return (nodes[2], nodes[0]) }
-        if kind.isMicrocontroller || kind.chipPackage != nil { return nil }
+        if kind.isMicrocontroller || kind.chipPackage != nil || kind == .block { return nil }
         if kind == .schmittInverter || kind == .unbufferedInverter { return (nodes[1], 0) }
         if kind == .logicGate { return (nodes[2], 0) }
         return kind.isVoltageSource ? (nodes[1], nodes[0]) : (nodes[0], nodes[1])
@@ -2510,7 +2521,7 @@ public final class Simulator {
         case .current: return current(index)
         case .power: return voltageAcross(index) * current(index)
         case .resistance:
-            let element = circuit.elements[index]
+            let element = flat.elements[index]
             if element.kind == .memristor { return 1 / memristorConductance(index, state: memristorStates[index]) }
             if element.kind == .resistor || element.kind == .lamp || element.kind == .potentiometer {
                 return element[param: "resistance"]
@@ -2522,7 +2533,7 @@ public final class Simulator {
 
     /// 0 (dark) to 1 (full brightness) for LEDs and lamps (and the Pico's LED)
     public func brightness(_ index: Int) -> Double {
-        let element = circuit.elements[index]
+        let element = flat.elements[index]
         switch element.kind {
         case .led:
             return min(1, max(0, current(index) / 0.015))
@@ -2558,7 +2569,7 @@ public final class Simulator {
 
     /// 0 (open) to 1 (closed) for analog switches
     public func switchConduction(_ index: Int) -> Double {
-        guard index < circuit.elements.count, circuit.elements[index].kind == .analogSwitch else { return 0 }
+        guard index < flat.elements.count, flat.elements[index].kind == .analogSwitch else { return 0 }
         let v = terminalVoltages(index)
         guard v.count == 3 else { return 0 }
         let g = analogSwitchConductance(index, control: v[2]).conductance
@@ -2571,6 +2582,12 @@ public final class Simulator {
     }
 
     public var nodeCount: Int { topology.nodeCount }
+
+    /// The index of a part of the circuit as it is simulated: one of the circuit's own, or one inside a block (by its
+    /// id there, `UUID.inBlock`)
+    public func flatIndex(of id: UUID) -> Int? {
+        flat.elements.firstIndex { $0.id == id }
+    }
 
     /// Node number of each terminal of the element at `index` (0 is ground)
     public func nodes(of index: Int) -> [Int] {
@@ -2630,7 +2647,7 @@ public final class Simulator {
     /// One element's current for a scope at every step, without working out the whole circuit's: only wires and
     /// other conductors need the walk through the wire network
     private func scopedCurrent(_ index: Int) -> Double {
-        let element = circuit.elements[index]
+        let element = flat.elements[index]
         if element.isConductor { return current(index) }
         return elementCurrents(index, element) { self.voltage($0) }.main
     }

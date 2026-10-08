@@ -20,6 +20,8 @@ public final class CircuitSession {
     public var onChange: ((Circuit, String) -> Void)?
     /// The simulator kept between `simulate` calls that continue instead of starting over
     private var liveSimulator: Simulator?
+    /// Blocks made with define_block, by name
+    private var blocks: [String: BlockDefinition] = [:]
 
     public init(circuit: Circuit = Circuit()) {
         self.circuit = circuit
@@ -45,7 +47,9 @@ public final class CircuitSession {
     Synth circuits can be played: keyboardPitch parts put out 1 V per octave (0 V at C2) and keyboardGate parts a gate, \
     driven by the "keyboard" events of simulate (for example [{"at": 0, "note": "C4"}, {"at": 0.5, "off": true}]) \
     or by a step sequence (set_sequence). Synth chips (vco, vcf, envelope, vca, sampleHold, comparator, divider) model \
-    the AS3340, AS3320, AS3310, SSM2164, LF398, LM393 and CD4013 and patch together like modules.
+    the AS3340, AS3320, AS3310, SSM2164, LF398, LM393 and CD4013 and patch together like modules. \
+    A circuit can be made into a block with define_block (its "port" parts are its pins) and used as one part, as often \
+    as needed: {"kind": "block", "block": "name", "connections": {...}}.
     """
 
     public static let tools: [Tool] = [
@@ -155,6 +159,17 @@ public final class CircuitSession {
                 "settle": ["description": "ac: seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
              ], required: ["source", "output"]),
              run: { session, arguments in try session.frequencyResponse(arguments) }),
+        Tool(name: "define_block",
+             description: "Makes a block: a circuit used as one part (a subcircuit). Its parts are a netlist as in build_circuit, with \"port\" parts as its pins: {\"kind\": \"port\", \"name\": \"in\", \"connections\": {\"net\": \"in\"}} makes a pin named in on the net in. Ports go on the left of the block (inputs) or the right (outputs): by their side parameter (1 left, 2 right), or if it is left out, on the right when a part's output drives the port's net or the port's name contains "out". Net labels inside a block are its own; GND is shared. Then use it in build_circuit or add_part as {\"kind\": \"block\", \"block\": \"name\", \"connections\": {\"in\": \"...\", \"out\": \"...\"}}; each use is a copy with its own state. save true also keeps it in the block library, where the app's library shows it.",
+             inputSchema: schema([
+                "name": string("The block's name"),
+                "parts": ["type": "array", "description": "Its parts, ports included", "items": partSchema],
+                "save": ["type": "boolean", "description": "Also save it in the block library"],
+             ], required: ["name", "parts"]),
+             run: { session, arguments in try session.defineBlock(arguments) }),
+        Tool(name: "list_blocks",
+             description: "Lists the blocks that can be used: those made with define_block in this session and those in the block library, with their pins.",
+             inputSchema: schema([:]), run: { session, _ in session.listBlocks() }),
         Tool(name: "save_circuit",
              description: "Saves the circuit as a .jspice file the JSpice app can open.",
              inputSchema: schema(["path": string("File path")], required: ["path"]),
@@ -194,6 +209,7 @@ public final class CircuitSession {
         "params": ["type": "object", "description": "Parameter values by key (numbers, or strings with SI prefixes)"],
         "connections": ["type": "object", "description": "Terminal name to net name, for example {\"plus\": \"in\", \"minus\": \"GND\"}"],
         "flipped": ["type": "boolean", "description": "Mirror the part (transistors, op-amps…)"],
+        "block": string("For kind \"block\": the name of a block made with define_block or saved in the block library; its terminals are its ports"),
     ]
 
     static let partSchema: [String: Any] = schema(partProperties, required: ["kind"])
@@ -268,8 +284,8 @@ public final class CircuitSession {
         return result
     }
 
-    private static func netlistPart(_ arguments: [String: Any]) throws -> NetlistPart {
-        let kind = try kind(arguments["kind"])
+    private func netlistPart(_ arguments: [String: Any]) throws -> NetlistPart {
+        let kind = try Self.kind(arguments["kind"])
         var connections: [String: String] = [:]
         if let given = arguments["connections"] as? [String: Any] {
             for (terminal, net) in given {
@@ -277,9 +293,66 @@ public final class CircuitSession {
                 connections[terminal] = net
             }
         }
-        return NetlistPart(kind: kind, name: arguments["name"] as? String ?? "",
-                           params: try parameters(kind: kind, model: arguments["model"], params: arguments["params"]),
-                           flipped: arguments["flipped"] as? Bool ?? false, connections: connections)
+        var part = NetlistPart(kind: kind, name: arguments["name"] as? String ?? "",
+                               params: try Self.parameters(kind: kind, model: arguments["model"], params: arguments["params"]),
+                               flipped: arguments["flipped"] as? Bool ?? false, connections: connections)
+        if kind == .block {
+            guard let name = arguments["block"] as? String, !name.isEmpty else {
+                throw ToolError("A block part needs \"block\": the name of a block (see list_blocks)")
+            }
+            guard let block = self.block(named: name) else {
+                throw ToolError("No block named \(name); blocks: \(availableBlocks().map(\.name).joined(separator: ", "))")
+            }
+            part.block = block
+        }
+        return part
+    }
+
+    /// Blocks made in this session, then those in the block library, then those already used in the circuit
+    private func availableBlocks() -> [BlockDefinition] {
+        var found = Array(blocks.values).sorted { $0.name < $1.name }
+        var names = Set(found.map { $0.name.lowercased() })
+        for block in BlockLibrary.all() + circuit.elements.compactMap(\.block) where !names.contains(block.name.lowercased()) {
+            found.append(block)
+            names.insert(block.name.lowercased())
+        }
+        return found
+    }
+
+    private func block(named name: String) -> BlockDefinition? {
+        availableBlocks().first { $0.name.lowercased() == name.lowercased() }
+    }
+
+    func defineBlock(_ arguments: [String: Any]) throws -> Any {
+        let name = try Self.text(arguments, "name").trimmingCharacters(in: .whitespaces)
+        guard let list = arguments["parts"] as? [[String: Any]] else { throw ToolError("\"parts\" should be an array of parts") }
+        let parts = SchematicLayout.choosingPortSides(try list.map(netlistPart))
+        guard parts.contains(where: { $0.kind == .port }) else {
+            throw ToolError("A block needs at least one port part: {\"kind\": \"port\", \"name\": \"in\", \"connections\": {\"net\": \"in\"}}")
+        }
+        if let used = parts.first(where: { $0.block?.uses(name) ?? false }) {
+            throw ToolError("\(used.name) is block \(name) or uses it: a block cannot contain itself")
+        }
+        let inner: Circuit
+        do {
+            inner = try SchematicLayout.layout(parts)
+        } catch let error as NetlistError {
+            throw ToolError(error.description)
+        }
+        let block = inner.asBlock(named: name)
+        blocks[name] = block
+        if arguments["save"] as? Bool == true { try BlockLibrary.save(block) }
+        return Self.describe(block)
+    }
+
+    func listBlocks() -> Any {
+        availableBlocks().map { Self.describe($0) }
+    }
+
+    static func describe(_ block: BlockDefinition) -> [String: Any] {
+        let ports = block.ports
+        return ["name": block.name, "inputs": ports.filter { !$0.right }.map(\.name), "outputs": ports.filter(\.right).map(\.name),
+                "parts": block.circuit.elements.filter { ![.wire, .ground, .netLabel, .port].contains($0.kind) }.count]
     }
 
     private func replace(_ next: Circuit, _ action: String) {
@@ -316,7 +389,7 @@ public final class CircuitSession {
                 "kind": kind.rawValue,
                 "name": kind.displayName,
                 "category": kind.category.rawValue,
-                "terminals": kind.terminalNames,
+                "terminals": kind == .block ? ["(its ports, by name: see list_blocks)"] : kind.terminalNames,
                 "parameters": parameters,
                 "models": models,
             ]
@@ -336,7 +409,7 @@ public final class CircuitSession {
     func buildCircuit(_ arguments: [String: Any]) throws -> Any {
         guard let parts = arguments["parts"] as? [[String: Any]] else { throw ToolError("\"parts\" should be an array of parts") }
         let append = arguments["append"] as? Bool ?? false
-        try layOut(adding: try parts.map(Self.netlistPart), keepExisting: append, action: append ? "Add Parts" : "Build Circuit")
+        try layOut(adding: try parts.map(netlistPart), keepExisting: append, action: append ? "Add Parts" : "Build Circuit")
         return describe()
     }
 
@@ -368,7 +441,7 @@ public final class CircuitSession {
     }
 
     func addPart(_ arguments: [String: Any]) throws -> Any {
-        let part = try Self.netlistPart(arguments)
+        let part = try netlistPart(arguments)
         let a = try Self.gridPoint(arguments["a"], "a")
         let b = try Self.gridPoint(arguments["b"], "b")
         var name = ""
@@ -379,13 +452,15 @@ public final class CircuitSession {
                 }
                 var params = part.params
                 for spec in part.kind.params where params[spec.key] == nil { params[spec.key] = spec.defaultValue }
-                var end = b ?? a + part.kind.defaultOffset
-                if let fixed = part.kind.fixedLength {
+                let fixedLength = part.kind == .block ? part.block?.chipPackage.length : part.kind.fixedLength
+                var end = b ?? a + (part.kind == .block ? GridPoint(0, fixedLength ?? 2) : part.kind.defaultOffset)
+                if let fixed = fixedLength {
                     let d = end - a
                     let direction = abs(d.x) >= abs(d.y) ? GridPoint(d.x >= 0 ? 1 : -1, 0) : GridPoint(0, d.y >= 0 ? 1 : -1)
                     end = a + direction * fixed
                 }
-                let element = Element(kind: part.kind, name: part.name, a: a, b: end, params: params, flipped: part.flipped)
+                var element = Element(kind: part.kind, name: part.name, a: a, b: end, params: params, flipped: part.flipped)
+                element.block = part.block
                 let id = circuit.add(element)
                 circuit.connectTerminals(of: [id])
                 name = circuit[id]?.name ?? ""
@@ -400,7 +475,7 @@ public final class CircuitSession {
         }
         guard let index = circuit.elements.firstIndex(where: { $0.name == name }) else { return ["ok": true] }
         let element = circuit.elements[index]
-        return ["name": name, "terminals": Dictionary(uniqueKeysWithValues: zip(element.kind.terminalNames, element.posts.map { [$0.x, $0.y] }))]
+        return ["name": name, "terminals": Dictionary(zip(element.terminalNames, element.posts.map { [$0.x, $0.y] })) { first, _ in first }]
     }
 
     func addWire(_ arguments: [String: Any]) throws -> Any {
@@ -573,6 +648,7 @@ public final class CircuitSession {
             }
             if !element.kind.models.isEmpty { part["model"] = element.model?.name ?? "custom" }
             if element.kind.isSwitch { part["closed"] = element.closed }
+            if let block = element.block { part["block"] = block.name }
             parts.append(part)
         }
         var result: [String: Any] = [
@@ -604,8 +680,8 @@ public final class CircuitSession {
         if quantity == "V", let dot = target.lastIndex(of: "."), circuit.elements.contains(where: { $0.name == String(target[..<dot]) }) {
             let index = try index(ofPart: String(target[..<dot]))
             let terminal = String(target[target.index(after: dot)...])
-            guard let t = NetlistLayout.terminalIndex(terminal, of: circuit.elements[index].kind) else {
-                throw ToolError("\(target[..<dot]) has no terminal \(terminal); terminals: \(circuit.elements[index].kind.terminalNames.joined(separator: ", "))")
+            guard let t = NetlistLayout.terminalIndex(terminal, of: circuit.elements[index]) else {
+                throw ToolError("\(target[..<dot]) has no terminal \(terminal); terminals: \(circuit.elements[index].terminalNames.joined(separator: ", "))")
             }
             return Probe(label: trimmed) { $0.terminalVoltage(index, t) }
         }
@@ -726,7 +802,7 @@ public final class CircuitSession {
         for entry in NetlistExtractor.netlist(from: circuit) {
             guard let (terminal, _) = entry.connections.first(where: { $0.value == net }),
                   let index = circuit.elements.firstIndex(where: { $0.id == entry.id }),
-                  let t = circuit.elements[index].kind.terminalNames.firstIndex(of: terminal) else { continue }
+                  let t = circuit.elements[index].terminalNames.firstIndex(of: terminal) else { continue }
             return (index, t)
         }
         if let label = circuit.elements.firstIndex(where: { $0.kind == .netLabel && $0.name == net }) { return (label, 0) }
@@ -740,7 +816,7 @@ public final class CircuitSession {
             guard let index = circuit.elements.firstIndex(where: { $0.id == entry.id }) else { continue }
             let voltages = simulator.terminalVoltages(index)
             for (terminal, net) in entry.connections where nets[net] == nil {
-                if let t = circuit.elements[index].kind.terminalNames.firstIndex(of: terminal), t < voltages.count { nets[net] = voltages[t] }
+                if let t = circuit.elements[index].terminalNames.firstIndex(of: terminal), t < voltages.count { nets[net] = voltages[t] }
             }
         }
         var parts: [String: Any] = [:]
@@ -748,7 +824,7 @@ public final class CircuitSession {
             parts[element.name] = [
                 "voltage": simulator.voltageAcross(i), "current": simulator.current(i),
                 "power": simulator.value(.power, of: i),
-                "terminals": Dictionary(uniqueKeysWithValues: zip(element.kind.terminalNames, simulator.terminalVoltages(i))),
+                "terminals": Dictionary(zip(element.terminalNames, simulator.terminalVoltages(i))) { first, _ in first },
             ] as [String: Any]
         }
         return ["time": simulator.time, "nets": nets, "parts": parts]
@@ -894,8 +970,8 @@ public final class CircuitSession {
         if let dot = target.lastIndex(of: "."), circuit.elements.contains(where: { $0.name == String(target[..<dot]) }) {
             let index = try index(ofPart: String(target[..<dot]))
             let terminal = String(target[target.index(after: dot)...])
-            guard let t = NetlistLayout.terminalIndex(terminal, of: circuit.elements[index].kind) else {
-                throw ToolError("\(target[..<dot]) has no terminal \(terminal); terminals: \(circuit.elements[index].kind.terminalNames.joined(separator: ", "))")
+            guard let t = NetlistLayout.terminalIndex(terminal, of: circuit.elements[index]) else {
+                throw ToolError("\(target[..<dot]) has no terminal \(terminal); terminals: \(circuit.elements[index].terminalNames.joined(separator: ", "))")
             }
             return (simulator.nodes(of: index)[t], 0)
         }

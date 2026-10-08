@@ -86,8 +86,15 @@ struct LibrarySidebar: View {
     private func kinds(in category: ElementCategory) -> [ElementKind] {
         let text = search.trimmingCharacters(in: .whitespaces).lowercased()
         return ElementKind.allCases.filter { kind in
-            kind.category == category && (text.isEmpty || kind.searchTerms.contains { $0.lowercased().contains(text) })
+            kind.isPlaceable && kind.category == category
+                && (text.isEmpty || kind.searchTerms.contains { $0.lowercased().contains(text) })
         }
+    }
+
+    /// The saved blocks that match the search
+    private var blocks: [BlockDefinition] {
+        let text = search.trimmingCharacters(in: .whitespaces).lowercased()
+        return editor.libraryBlocks.filter { text.isEmpty || $0.name.lowercased().contains(text) || "block".contains(text) }
     }
 
     var body: some View {
@@ -99,8 +106,24 @@ struct LibrarySidebar: View {
                     editor.tool = nil
                 }
             }
-            ForEach(ElementCategory.allCases.filter { !kinds(in: $0).isEmpty }) { category in
+            ForEach(ElementCategory.allCases.filter { !kinds(in: $0).isEmpty || ($0 == .blocks && !blocks.isEmpty) }) { category in
                 Section(category.rawValue) {
+                    if category == .blocks {
+                        // the blocks saved with Circuit ▸ Save as Block
+                        ForEach(blocks, id: \.name) { block in
+                            ToolRow(title: block.name, shortcut: nil, isActive: editor.tool == .block && editor.blockToPlace?.name == block.name) {
+                                Image(systemName: "square.on.square.dashed").frame(width: 34, height: 22)
+                            } action: {
+                                editor.choose(block: block)
+                            }
+                            .contextMenu {
+                                Button("Delete from Library", role: .destructive) {
+                                    try? BlockLibrary.delete(named: block.name)
+                                    editor.reloadBlockLibrary()
+                                }
+                            }
+                        }
+                    }
                     ForEach(kinds(in: category)) { kind in
                         ToolRow(title: kind.displayName, shortcut: kind.shortcutLabel, isActive: editor.tool == kind) {
                             Image(nsImage: SymbolIcons.image(kind))

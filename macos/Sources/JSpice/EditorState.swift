@@ -15,6 +15,10 @@ final class EditorState: ObservableObject {
 
     /// The part being placed, or nil for selecting and moving
     @Published var tool: ElementKind?
+    /// The block placed while the tool is `.block`
+    @Published var blockToPlace: BlockDefinition?
+    /// The blocks saved in the block library, read again when one is saved
+    @Published private(set) var libraryBlocks: [BlockDefinition] = BlockLibrary.all()
     @Published var selection: Set<UUID> = []
     @Published var hovered: UUID?
     @Published var zoom: CGFloat = 1.25
@@ -171,8 +175,120 @@ final class EditorState: ObservableObject {
     /// Picks a tool from the keyboard or the palette, and gives the schematic the keyboard back
     func choose(_ kind: ElementKind?) {
         tool = kind
+        if kind != .block { blockToPlace = nil }
         showQuickAdd = false
         if let canvas { canvas.window?.makeFirstResponder(canvas) }
+    }
+
+    /// Picks a block from the library to place, or puts the block tool away when it is the one already chosen
+    func choose(block: BlockDefinition) {
+        if tool == .block && blockToPlace?.name == block.name {
+            choose(nil)
+            return
+        }
+        blockToPlace = block
+        choose(.block)
+    }
+
+    // MARK: - Blocks
+
+    func reloadBlockLibrary() {
+        libraryBlocks = BlockLibrary.all()
+    }
+
+    /// Saves the circuit in the block library as a block named `name` (replacing one of the same name); its ports are
+    /// its pins. Nil when it is saved, otherwise what keeps it from being saved.
+    func saveCircuitAsBlock(named name: String) -> String? {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return "The block needs a name." }
+        guard circuit.elements.contains(where: { $0.kind == .port }) else {
+            return "A block's pins are its Port parts (in the library's Blocks section). Add one for each input and output, wired to where it connects, then save it again."
+        }
+        if let inner = circuit.elements.first(where: { $0.block?.uses(name) ?? false }) {
+            return "\(inner.name) is the block \(name) or contains it, and a block cannot contain itself."
+        }
+        do {
+            try BlockLibrary.save(circuit.asBlock(named: name))
+        } catch {
+            return error.localizedDescription
+        }
+        reloadBlockLibrary()
+        return nil
+    }
+
+    /// Asks for a name and saves the circuit in the block library (Circuit ▸ Save as Block)
+    func promptSaveAsBlock() {
+        let alert = NSAlert()
+        alert.messageText = "Save as Block"
+        alert.informativeText = "The circuit goes into the block library, to be used as one part in other circuits. Its Port parts are the block's pins: those set to Left (or drawn on the left) are its inputs, the others its outputs. A block of the same name is replaced."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        let title = canvas?.window?.title ?? ""
+        field.stringValue = title.isEmpty || title == "Untitled" ? "Block" : (title as NSString).deletingPathExtension
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if let problem = saveCircuitAsBlock(named: field.stringValue) {
+            let failure = NSAlert()
+            failure.messageText = "The block wasn't saved"
+            failure.informativeText = problem
+            failure.runModal()
+        }
+    }
+
+    /// Changes a part inside a block part: a knob or switch of this copy of the block. With an action name it is one
+    /// undo step; without, part of the interaction in progress (a slider being dragged).
+    func updateInsideBlock(_ blockID: UUID, _ innerID: UUID, actionName: String?, _ change: @escaping (inout Element) -> Void) {
+        var next = circuit
+        next.update(blockID) { element in
+            guard var block = element.block, let i = block.circuit.elements.firstIndex(where: { $0.id == innerID }) else { return }
+            change(&block.circuit.elements[i])
+            element.block = block
+        }
+        if let actionName {
+            edit(actionName) { $0 = next }
+        } else {
+            setDuringInteraction(next)
+        }
+    }
+
+    /// Plays a knob, switch or button inside a block part, as on the front panel: played, not an edit to undo
+    func playInsideBlock(_ blockID: UUID, _ innerID: UUID, _ change: (inout Element) -> Void) {
+        var next = circuit
+        next.update(blockID) { element in
+            guard var block = element.block, let i = block.circuit.elements.firstIndex(where: { $0.id == innerID }) else { return }
+            change(&block.circuit.elements[i])
+            element.block = block
+        }
+        if next != circuit { document.circuit = next }
+    }
+
+    /// Replaces a block part's circuit with the library's block of the same name, keeping the settings of the knobs and
+    /// switches that are still in it
+    func updateBlockFromLibrary(_ id: UUID) {
+        guard let element = circuit[id], let old = element.block,
+              var fresh = BlockLibrary.block(named: old.name) else { return }
+        for i in fresh.circuit.elements.indices {
+            guard let previous = old.circuit[fresh.circuit.elements[i].id] else { continue }
+            if previous.kind == .potentiometer { fresh.circuit.elements[i][param: "position"] = previous[param: "position"] }
+            if previous.kind.isSwitch { fresh.circuit.elements[i].closed = previous.closed }
+        }
+        edit("Update Block") { circuit in
+            circuit.update(id) { $0.block = fresh }
+        }
+    }
+
+    /// Opens a block part's circuit in a window of its own, to change it and save it as a block again
+    func openBlock(_ id: UUID) {
+        guard let block = circuit[id]?.block else { return }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("JSpice Blocks", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent(block.name.replacingOccurrences(of: "/", with: "-")).appendingPathExtension("jspice")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(block.circuit), (try? data.write(to: file)) != nil else { return }
+        NSDocumentController.shared.openDocument(withContentsOf: file, display: true) { _, _, _ in }
     }
 
     /// Moves the selection by whole grid units (arrow keys)

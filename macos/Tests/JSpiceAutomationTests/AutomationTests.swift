@@ -114,6 +114,52 @@ final class AutomationTests: XCTestCase {
         XCTAssertTrue(currentError, "ac takes voltages only")
     }
 
+    /// An agent makes an RC low-pass into a block, uses it twice, and measures the pair
+    func testAnAgentCanMakeAndUseBlocks() throws {
+        setenv("JSPICE_BLOCKS", FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path, 1)
+        defer { unsetenv("JSPICE_BLOCKS") }
+        let session = CircuitSession()
+        let defined = try XCTUnwrap(session.call("define_block", arguments: [
+            "name": "RC", "save": true,
+            "parts": [
+                ["kind": "port", "name": "in", "connections": ["net": "in"]],
+                ["kind": "resistor", "name": "R1", "params": ["resistance": "1k"], "connections": ["a": "in", "b": "out"]],
+                ["kind": "capacitor", "name": "C1", "params": ["capacitance": "1u"], "connections": ["a": "out", "b": "GND"]],
+                ["kind": "port", "name": "out", "connections": ["net": "out"]],
+            ],
+        ]) as? [String: Any])
+        // neither port says its side: out goes on the right by its name
+        XCTAssertEqual(defined["inputs"] as? [String], ["in"])
+        XCTAssertEqual(defined["outputs"] as? [String], ["out"])
+        XCTAssertEqual(BlockLibrary.all().map(\.name), ["RC"], "saved in the library")
+        _ = try session.call("build_circuit", arguments: ["parts": [
+            ["kind": "acVoltage", "name": "VIN", "params": ["amplitude": 1, "frequency": 100], "connections": ["plus": "in", "minus": "GND"]],
+            ["kind": "block", "block": "RC", "name": "X1", "connections": ["in": "in", "out": "mid"]],
+            ["kind": "block", "block": "rc", "name": "X2", "connections": ["in": "mid", "out": "out"]],
+        ]])
+        let described = session.describe()
+        let parts = try XCTUnwrap(described["parts"] as? [[String: Any]])
+        XCTAssertEqual(parts.filter { $0["block"] as? String == "RC" }.count, 2)
+        XCTAssertTrue((described["problems"] as? [String])?.isEmpty ?? false)
+        // two first-order stages of 159 Hz: at 159 Hz each is 3 dB down and 45° behind
+        let corner = 1 / (2 * Double.pi * 1000 * 1e-6)
+        let response = try XCTUnwrap(session.call("frequency_response", arguments: [
+            "source": "VIN", "output": "V(X2.out)", "frequencies": [corner],
+        ]) as? [String: Any])
+        let point = try XCTUnwrap((response["points"] as? [[String: Any]])?.first)
+        // the second stage loads the first, so not quite -6 dB: |1 / (1 + 3jw + (jw)^2)| at w = 1 is 1/3
+        XCTAssertEqual(point["gain"] as? Double ?? 0, 1.0 / 3, accuracy: 1e-6)
+        XCTAssertEqual(point["phase_deg"] as? Double ?? 0, -90, accuracy: 1e-4)
+        // and in time: the output follows the input through both stages
+        let simulated = try XCTUnwrap(session.call("simulate", arguments: ["duration": 0.05, "probes": ["V(out)", "V(X1.out)"]]) as? [String: Any])
+        let out = try XCTUnwrap((simulated["probes"] as? [String: Any])?["V(out)"] as? [String: Any])
+        XCTAssertGreaterThan(out["max"] as? Double ?? 0, 0.3)
+        XCTAssertEqual((session.listBlocks() as? [[String: Any]])?.first?["name"] as? String, "RC")
+        XCTAssertThrowsError(try session.call("build_circuit", arguments: ["parts": [["kind": "block", "block": "nope"]]]))
+        XCTAssertThrowsError(try session.call("define_block", arguments: ["name": "Empty", "parts": [["kind": "resistor"]]]),
+                             "a block needs ports")
+    }
+
     func testSimulateChargesACapacitor() throws {
         let session = CircuitSession()
         _ = try session.call("build_circuit", arguments: ["parts": [

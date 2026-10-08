@@ -42,7 +42,7 @@ public enum Examples {
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
         transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
-        cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz, echo,
+        cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz, echo, blocks,
         ringModulator, chorus, fuzz, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, arduinoDAC, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
     ]
@@ -57,6 +57,46 @@ public enum Examples {
         }
         return circuit
     }
+
+    /// A one-pole low-pass with a TONE knob (the pot as a variable resistor) and a TL072 buffer, as a block
+    public static let toneStage: BlockDefinition = {
+        let parts = [
+            NetlistPart(kind: .port, name: "in", params: ["side": 1], connections: ["net": "in"]),
+            NetlistPart(kind: .potentiometer, name: "TONE", params: ["resistance": 100_000, "position": 0.3],
+                        connections: ["a": "in", "wiper": "rc", "b": "rc"]),
+            NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 10e-9], connections: ["a": "rc", "b": "GND"]),
+            NetlistPart(kind: .opAmp, name: "U1", params: model(.opAmp, "TL072"), connections: ["plus": "rc", "minus": "out", "out": "out"]),
+            NetlistPart(kind: .port, name: "out", params: ["side": 2], connections: ["net": "out"]),
+        ]
+        return ((try? SchematicLayout.layout(parts)) ?? Circuit()).asBlock(named: "Tone stage")
+    }()
+
+    /// The tone stage block used twice in series
+    static let blocks: Example = {
+        func stage(_ name: String, _ input: String, _ output: String, tone: Double) -> NetlistPart {
+            var block = toneStage
+            for i in block.circuit.elements.indices where block.circuit.elements[i].kind == .potentiometer {
+                block.circuit.elements[i][param: "position"] = tone
+            }
+            var part = NetlistPart(kind: .block, name: name, connections: ["in": input, "out": output])
+            part.block = block
+            return part
+        }
+        var circuit = drawn([
+            NetlistPart(kind: .squareVoltage, name: "VIN", params: ["frequency": 110, "high": 1, "low": -1, "duty": 0.5],
+                        connections: ["plus": "in", "minus": "GND"]),
+            stage("X1", "in", "mid", tone: 0.3),
+            stage("X2", "mid", "out", tone: 0.6),
+            NetlistPart(kind: .speaker, name: "SPK1", params: ["fullScale": 1], connections: ["plus": "out", "minus": "GND"]),
+        ], scopes: [("VIN", .voltage), ("SPK1", .voltage)])
+        if let speaker = circuit.elements.first(where: { $0.name == "SPK1" }) {
+            circuit.scopes.append(ScopeSpec(elementID: speaker.id, quantity: .voltage, plot: .frequencyResponse))
+        }
+        return Example(
+            id: "blocks", title: "Blocks: two tone stages (sound)",
+            summary: "One low-pass stage saved as a block and used twice in series, each copy with its own TONE knob on the panel. Turn on sound, and right-click a block to open it.",
+            symbol: "square.on.square", circuit: circuit)
+    }()
 
     static let beeper = Example(
         id: "beeper", title: "555 beeper (sound)",

@@ -100,7 +100,7 @@ struct QuickAddPalette: View {
 
     private var items: [Item] {
         let text = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let parts = ElementKind.allCases
+        let parts = ElementKind.allCases.filter(\.isPlaceable)
             .compactMap { kind -> (Item, Int)? in
                 guard let score = Self.score(text, kind.searchTerms) else { return nil }
                 return (.part(kind), score)

@@ -35,6 +35,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
     case effects = "Effects"
     case memristors = "Memristors"
     case instruments = "Instruments"
+    case blocks = "Blocks"
 
     public var id: String { rawValue }
 }
@@ -52,6 +53,8 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case delayLine, digitalDelay, vactrol
     case memristor
     case probe, ammeter, speaker
+    /// A block (a circuit used as one part) and the ports that are its pins
+    case port, block
 
     public var id: String { rawValue }
 }
@@ -193,6 +196,8 @@ extension ElementKind {
         case .probe: return "Voltage Probe"
         case .ammeter: return "Ammeter"
         case .speaker: return "Speaker"
+        case .port: return "Port"
+        case .block: return "Block"
         }
     }
 
@@ -225,6 +230,8 @@ extension ElementKind {
         case .probe: return "P"
         case .ammeter: return "A"
         case .speaker: return "SPK"
+        case .port: return "PORT"
+        case .block: return "X"
         }
     }
 
@@ -242,6 +249,7 @@ extension ElementKind {
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
         case .memristor: return .memristors
         case .probe, .ammeter, .speaker: return .instruments
+        case .port, .block: return .blocks
         }
     }
 
@@ -279,7 +287,7 @@ extension ElementKind {
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
-        case .speaker: return nil
+        case .speaker, .port, .block: return nil
         }
     }
 
@@ -332,8 +340,11 @@ extension ElementKind {
     public var isAxisAligned: Bool {
         isTransistor || self == .opAmp || self == .ota || self == .potentiometer || self == .timer555 || self == .analogSwitch
             || self == .multiplier || self == .delayLine || self == .vactrol || isModule || self == .comparator || isMicrocontroller
-            || isLogic
+            || isLogic || self == .block
     }
+
+    /// Parts offered in the library and the quick-add palette: a block is placed from the blocks the user has saved
+    public var isPlaceable: Bool { self != .block }
 
     /// Parts that can be mirrored across their axis
     public var canFlip: Bool { isAxisAligned }
@@ -354,7 +365,8 @@ extension ElementKind {
     public var terminalNames: [String] {
         switch self {
         case .ground: return ["gnd"]
-        case .netLabel: return ["net"]
+        case .netLabel, .port: return ["net"]
+        case .block: return []
         case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate:
             return ["minus", "plus"]
         case .diode, .zener, .led: return ["anode", "cathode"]
@@ -415,7 +427,7 @@ extension ElementKind {
     public var defaultOffset: GridPoint {
         switch self {
         case .ground: return GridPoint(0, 1)
-        case .netLabel: return GridPoint(1, 0)
+        case .netLabel, .port: return GridPoint(1, 0)
         case .nmos, .pmos, .npn, .pnp, .njfet: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return GridPoint(0, board?.length ?? 13)
@@ -426,8 +438,10 @@ extension ElementKind {
 
     public var params: [ParamSpec] {
         switch self {
-        case .wire, .ground, .netLabel, .toggleSwitch, .pushButton, .probe, .ammeter:
+        case .wire, .ground, .netLabel, .toggleSwitch, .pushButton, .probe, .ammeter, .block:
             return []
+        case .port:
+            return [.choice("side", "Side of the block", ["Where it is drawn", "Left (input)", "Right (output)"])]
         case .speaker:
             return [ParamSpec("fullScale", "Full-scale voltage", unit: "V", default: 5, range: 0.1...50)]
         case .resistor:
@@ -685,6 +699,8 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     /// A microcontroller's program: its source (an Arduino sketch) and the firmware compiled from it
     public var code: String?
     public var firmware: Data?
+    /// A block part's circuit
+    public var block: BlockDefinition?
 
     public init(id: UUID = UUID(), kind: ElementKind, name: String = "", a: GridPoint, b: GridPoint,
                 params: [String: Double] = [:], closed: Bool = false, flipped: Bool = false) {
@@ -710,6 +726,22 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         flipped = try container.decodeIfPresent(Bool.self, forKey: .flipped) ?? false
         code = try container.decodeIfPresent(String.self, forKey: .code)
         firmware = try container.decodeIfPresent(Data.self, forKey: .firmware)
+        block = try container.decodeIfPresent(BlockDefinition.self, forKey: .block)
+    }
+
+    /// How the part is drawn as a box with pins down its sides: a chip's, or a block's from its ports
+    public var chipPackage: ChipPackage? {
+        kind == .block ? block?.chipPackage : kind.chipPackage
+    }
+
+    /// Names of the terminals, in the order of `posts`: the kind's, or a block's ports'
+    public var terminalNames: [String] {
+        kind == .block ? (block?.terminalNames ?? []) : kind.terminalNames
+    }
+
+    /// Length in grid units of a part whose size is fixed
+    public var fixedLength: Int? {
+        kind == .block ? chipPackage?.length : kind.fixedLength
     }
 
     /// A parameter value, falling back to the kind's default
@@ -764,7 +796,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     /// `perpendicular`, A0-A5 on the other)
     public var packagePins: [GridPoint] {
         let d = axisDirection
-        return (kind.chipPackage?.pinPlaces ?? []).map { a + d * $0.offset + perpendicular * ($0.second ? 3 : -3) }
+        return (chipPackage?.pinPlaces ?? []).map { a + d * $0.offset + perpendicular * ($0.second ? 3 : -3) }
     }
 
     /// Terminal positions: [a, b] for two-terminal parts, [a] for ground, [gate, drain, source] for MOSFETs,
@@ -772,7 +804,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     /// switches), [−, +, output] for op-amps, [−, +, output, bias] for OTAs and the eight pins of a 555 in pin order
     public var posts: [GridPoint] {
         switch kind {
-        case .ground, .netLabel:
+        case .ground, .netLabel, .port:
             return [a]
         case .nmos, .pmos, .npn, .pnp, .njfet:
             let t = transistorTerminals
@@ -788,7 +820,8 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,
+             .block:
             return packagePins
         default:
             return [a, b]

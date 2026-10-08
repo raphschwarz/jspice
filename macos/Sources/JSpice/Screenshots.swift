@@ -78,6 +78,7 @@ enum ScreenshotRunner {
         Shot(name: "52-response-netlist-light", example: "netlist", dark: false, seconds: 1, response: "U1"),
         Shot(name: "53-response-filter-dark", example: "vcf", dark: true, seconds: 1, select: .potentiometer, response: "SPK1"),
         Shot(name: "54-response-fuzz-light", example: "fuzz", dark: false, seconds: 1, response: "SPK1"),
+        Shot(name: "55-blocks-dark", example: "blocks", dark: true, seconds: 1.5, select: .block),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {

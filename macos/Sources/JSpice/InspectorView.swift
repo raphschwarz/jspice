@@ -135,6 +135,10 @@ struct ElementInspector: View {
                 MicrocontrollerSection(editor: editor, element: element)
             }
 
+            if element.kind == .block {
+                BlockSection(editor: editor, element: element)
+            }
+
             if element.kind.isSwitch {
                 Section {
                     Toggle("Closed", isOn: Binding(get: { element.closed }, set: { _ in editor.toggleSwitch(element.id) }))
@@ -180,6 +184,60 @@ struct ElementInspector: View {
         .formStyle(.grouped)
         .onAppear { name = element.name }
         .onChange(of: element.name) { _, newName in name = newName }
+    }
+}
+
+/// A block part: which block it is, its pins, and the knobs and switches inside this copy of it
+struct BlockSection: View {
+    @ObservedObject var editor: EditorState
+    let element: Element
+
+    var body: some View {
+        if let block = element.block {
+            let ports = block.ports
+            Section {
+                LabeledContent("Block", value: block.name)
+                LabeledContent("Inputs", value: names(ports.filter { !$0.right }))
+                LabeledContent("Outputs", value: names(ports.filter(\.right)))
+                Button("Open Block", systemImage: "square.and.pencil") { editor.openBlock(element.id) }
+                if editor.libraryBlocks.contains(where: { $0.name == block.name }) {
+                    Button("Update from Library", systemImage: "arrow.triangle.2.circlepath") { editor.updateBlockFromLibrary(element.id) }
+                }
+            } footer: {
+                Text("To change the block, open it, edit it and save it again with Circuit ▸ Save as Block, then update its copies from the library.")
+            }
+            let controls = block.circuit.elements.filter { $0.kind == .potentiometer || $0.kind == .toggleSwitch }
+            if !controls.isEmpty {
+                Section("Controls Inside") {
+                    ForEach(controls) { inner in
+                        if inner.kind == .potentiometer {
+                            LabeledContent(inner.name) {
+                                Slider(value: Binding(
+                                    get: { inner[param: "position"] },
+                                    set: { value in editor.updateInsideBlock(element.id, inner.id, actionName: nil) { $0[param: "position"] = value } }
+                                ), in: 0...1, onEditingChanged: { editing in
+                                    if editing { editor.beginInteraction() } else { editor.endInteraction("Turn \(inner.name)") }
+                                })
+                                .controlSize(.small)
+                            }
+                        } else {
+                            Toggle(inner.name, isOn: Binding(
+                                get: { inner.closed },
+                                set: { closed in
+                                    editor.updateInsideBlock(element.id, inner.id, actionName: closed ? "Close \(inner.name)" : "Open \(inner.name)") {
+                                        $0.closed = closed
+                                    }
+                                }
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func names(_ ports: [BlockDefinition.Port]) -> String {
+        ports.isEmpty ? "None" : ports.map(\.name).joined(separator: ", ")
     }
 }
 
@@ -365,8 +423,17 @@ struct LiveReadings: View {
         TimelineView(.periodic(from: .now, by: 0.2)) { _ in
             let simulator = simulation.simulator
             if let index = simulator.circuit.index(of: elementID) {
-                let kind = simulator.circuit.elements[index].kind
-                if kind == .wire {
+                let element = simulator.circuit.elements[index]
+                let kind = element.kind
+                if kind == .block {
+                    // each pin's voltage
+                    let voltages = simulator.terminalVoltages(index)
+                    ForEach(Array(zip(element.terminalNames, voltages).enumerated()), id: \.offset) { entry in
+                        reading(entry.element.0, SI.format(entry.element.1, unit: "V"))
+                    }
+                } else if kind == .port {
+                    reading("Voltage", SI.format(simulator.terminalVoltages(index).first ?? 0, unit: "V"))
+                } else if kind == .wire {
                     reading("Voltage", SI.format(simulator.terminalVoltages(index).first ?? 0, unit: "V"))
                     reading("Current", SI.format(simulator.current(index), unit: "A"))
                 } else if kind == .probe || kind == .netLabel || kind == .speaker {

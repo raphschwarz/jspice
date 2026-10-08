@@ -78,7 +78,8 @@ enum SymbolRenderer {
         switch kind {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac, .digitalDelay:
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac, .digitalDelay,
+             .port, .block:
             return 0
         case .schmittInverter, .unbufferedInverter: return 1.8
         case .analogSwitch: return 1.6
@@ -99,6 +100,9 @@ enum SymbolRenderer {
             drawGround(at: a, toward: b, unit: u, style: style, in: ctx)
         case .netLabel:
             drawNetLabel(element.name, at: a, toward: b, unit: u, style: style, in: ctx)
+        case .port:
+            // a block's pin: a tag like a net label's, marked as a port
+            drawNetLabel("▸ " + (element.name.isEmpty ? "port" : element.name), at: a, toward: b, unit: u, style: style, in: ctx)
         case .nmos, .pmos:
             drawTransistor(element, at: a, b, unit: u, style: style, in: ctx)
         case .npn, .pnp:
@@ -115,6 +119,10 @@ enum SymbolRenderer {
             if let package = element.kind.chipPackage {
                 drawChip(package, title: element.kind.isMicrocontroller ? package.name : element.model?.name ?? package.name,
                          led: element.kind == .rp2040, posts: posts, at: a, b, unit: u, style: style, in: ctx)
+            }
+        case .block:
+            if let package = element.chipPackage {
+                drawChip(package, title: package.name, led: false, posts: posts, at: a, b, unit: u, style: style, in: ctx)
             }
         case .logicGate:
             drawGate(element, at: a, b, unit: u, style: style, in: ctx)
@@ -1241,8 +1249,9 @@ enum SymbolRenderer {
         case .ota:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
-            guard let package = element.kind.chipPackage, let box = chipBox(package, posts: posts, at: a, b, unit: u) else {
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,
+             .block:
+            guard let package = element.chipPackage, let box = chipBox(package, posts: posts, at: a, b, unit: u) else {
                 return [(a, b)]
             }
             let c = box.corners
