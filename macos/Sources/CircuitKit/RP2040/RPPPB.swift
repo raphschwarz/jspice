@@ -23,11 +23,8 @@ final class RPPPB: RPPeripheral {
         systickAlarm = RPTimer32PeriodicAlarm(timer: systickTimer) { [unowned self] in
             self.systickCountFlag = true
             if self.systickIntEnable {
-                let core = self.chip.core!
-                core.pendingSystick = true
-                core.interruptsUpdated = true
-                // the tick wakes a core waiting in WFI or WFE, as a hardware interrupt does
-                if core.waiting && core.checkForInterrupts() { core.waiting = false }
+                self.chip.core.pendingSystick = true
+                self.chip.core.interruptsUpdated = true
             }
             // a reload of 0 stops the counter at the next wrap (scheduling it again at 0 would never let time pass)
             if self.systickReload == 0 { self.systickAlarm.enable = false }
@@ -143,7 +140,7 @@ final class RPPPB: RPPeripheral {
         case RPPPB.systCVR:
             systickTimer.set(0)
         case RPPPB.systRVR:
-            systickReload = value & 0xFF_FFFF
+            systickReload = value
             if systickReload != 0 && !systickAlarm.enable { systickAlarm.enable = true }
         default:
             super.writeUint32(offset, value)
