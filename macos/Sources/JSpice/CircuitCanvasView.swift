@@ -789,6 +789,14 @@ final class CircuitCanvasView: NSView {
         if canPlotResponse(hit.kind) {
             menu.addItem(item("Add Frequency Response") { [weak self] in self?.editor.addScope(hit.id, .voltage, plot: .frequencyResponse) })
         }
+        if MIDIMapping.mappable.contains(hit.kind) {
+            menu.addItem(.separator())
+            let learning = editor.midiLearning == EditorState.MIDITarget(part: hit.id, inner: nil)
+            menu.addItem(item(learning ? "Cancel MIDI Learn" : "MIDI Learn") { [weak self] in self?.editor.learnMIDI(part: hit.id) })
+            if let mapping = editor.circuit.midiMapping(part: hit.id) {
+                menu.addItem(item("Forget \(mapping.label)") { [weak self] in self?.editor.forgetMIDI(part: hit.id) })
+            }
+        }
         if hit.kind == .block {
             menu.addItem(.separator())
             menu.addItem(item("Open Block") { [weak self] in self?.editor.openBlock(hit.id) })
@@ -888,6 +896,7 @@ final class CircuitCanvasView: NSView {
             return
         case 53:
             drag = nil
+            editor.midiLearning = nil
             editor.tool = nil
             editor.selection = []
             needsDisplay = true

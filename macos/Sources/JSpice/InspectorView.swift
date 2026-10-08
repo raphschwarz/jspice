@@ -139,6 +139,24 @@ struct ElementInspector: View {
                 BlockSection(editor: editor, element: element)
             }
 
+            if MIDIMapping.mappable.contains(element.kind) {
+                Section("MIDI") {
+                    let learning = editor.midiLearning == EditorState.MIDITarget(part: element.id, inner: nil)
+                    if let mapping = editor.circuit.midiMapping(part: element.id) {
+                        LabeledContent("Controller", value: mapping.label)
+                    }
+                    HStack {
+                        Button(learning ? "Move a MIDI Control…" : "MIDI Learn", systemImage: "pianokeys") {
+                            editor.learnMIDI(part: element.id)
+                        }
+                        .foregroundStyle(learning ? Color.orange : Color.primary)
+                        if editor.circuit.midiMapping(part: element.id) != nil {
+                            Button("Forget") { editor.forgetMIDI(part: element.id) }
+                        }
+                    }
+                }
+            }
+
             if element.kind == .audioInput && element[param: "input"] < 0.5 {
                 Section("Sound") {
                     let clip = element.audio ?? AudioClip.guitarRiff

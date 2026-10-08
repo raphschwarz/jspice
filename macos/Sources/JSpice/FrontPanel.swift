@@ -39,6 +39,12 @@ struct FrontPanel: View {
         return controls.sorted { key($0) < key($1) }
     }
 
+    /// How a MIDI mapping names the control: the part on the schematic, or the block part and the part inside it
+    static func midiTarget(_ control: Control) -> EditorState.MIDITarget {
+        control.blockID.map { EditorState.MIDITarget(part: $0, inner: control.element.id) }
+            ?? EditorState.MIDITarget(part: control.element.id, inner: nil)
+    }
+
     static func hasControls(_ circuit: Circuit) -> Bool {
         circuit.elements.contains {
             playable.contains($0.kind) || ($0.block?.circuit.elements.contains { playable.contains($0.kind) } ?? false)
@@ -50,9 +56,19 @@ struct FrontPanel: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 26) {
                 ForEach(controls) { control in
+                    let target = Self.midiTarget(control)
+                    let learning = editor.midiLearning == target
+                    let mapping = circuit.midiMapping(part: target.part, inner: target.inner)
                     VStack(spacing: 6) {
                         self.control(for: control)
                             .frame(height: 74)
+                            .overlay {
+                                if learning {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.orange, lineWidth: 2)
+                                        .padding(-4)
+                                }
+                            }
                         PanelLabel(name: control.label) { name in
                             if let block = control.blockID {
                                 editor.updateInsideBlock(block, control.element.id, actionName: "Rename") { $0.name = name }
@@ -60,8 +76,21 @@ struct FrontPanel: View {
                                 editor.rename(control.element.id, to: name)
                             }
                         }
+                        if learning || mapping != nil {
+                            Text(learning ? "Move a MIDI control" : mapping?.label ?? "")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(learning ? Color.orange : Color.white.opacity(0.45))
+                        }
                     }
                     .frame(minWidth: 64)
+                    .contextMenu {
+                        if Self.playable.contains(control.element.kind) {
+                            Button(learning ? "Cancel MIDI Learn" : "MIDI Learn") { editor.learnMIDI(part: target.part, inner: target.inner) }
+                            if let mapping {
+                                Button("Forget \(mapping.label)") { editor.forgetMIDI(part: target.part, inner: target.inner) }
+                            }
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 34)

@@ -2,7 +2,8 @@ import CoreMIDI
 import Foundation
 
 /// Plays the front window's keyboard sources from any connected MIDI keyboard: note on and off, and pitch bend over
-/// two semitones. Devices plugged in later are picked up as they appear.
+/// two semitones; control changes move the knobs and switches mapped to them (MIDI Learn). Devices plugged in later
+/// are picked up as they appear.
 final class MIDIInput: @unchecked Sendable {
     static let shared = MIDIInput()
 
@@ -45,7 +46,7 @@ final class MIDIInput: @unchecked Sendable {
 
     /// Runs on CoreMIDI's thread: decodes the bytes and hands the notes to the main thread
     private func receive(_ list: UnsafePointer<MIDIPacketList>, from source: UInt) {
-        var events: [(kind: UInt8, a: UInt8, b: UInt8)] = []
+        var events: [(kind: UInt8, channel: UInt8, a: UInt8, b: UInt8)] = []
         var parser = parsers[source] ?? Parser()
         defer { parsers[source] = parser }
         // walk the packets in place: each may be shorter than MIDIPacket's 256 data bytes
@@ -69,7 +70,7 @@ final class MIDIInput: @unchecked Sendable {
                 let kind = parser.status & 0xF0
                 let needed = (kind == 0xC0 || kind == 0xD0) ? 1 : 2
                 if parser.data.count == needed {
-                    events.append((kind, parser.data[0], needed == 2 ? parser.data[1] : 0))
+                    events.append((kind, parser.status & 0x0F, parser.data[0], needed == 2 ? parser.data[1] : 0))
                     parser.data = []
                 }
             }
@@ -78,7 +79,8 @@ final class MIDIInput: @unchecked Sendable {
         guard !events.isEmpty else { return }
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                guard let simulation = EditorRegistry.active?.simulation else { return }
+                guard let editor = EditorRegistry.active else { return }
+                let simulation = editor.simulation
                 for event in events {
                     switch event.kind {
                     case 0x90 where event.b > 0:
@@ -91,6 +93,9 @@ final class MIDIInput: @unchecked Sendable {
                     case 0xB0 where event.a == 123 || event.a == 120:
                         // all notes off, all sound off
                         simulation.allNotesOff()
+                    case 0xB0 where event.a < 120:
+                        // controllers 120 and up are channel mode messages
+                        editor.midiControlChange(channel: Int(event.channel), controller: Int(event.a), value: Int(event.b))
                     default:
                         break
                     }

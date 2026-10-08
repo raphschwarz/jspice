@@ -112,11 +112,12 @@ extension Circuit {
         return result
     }
 
-    /// The circuit as a block: the ports it has, under `name`, with its scopes and sequence left out
+    /// The circuit as a block: the ports it has, under `name`, with its scopes, sequence and MIDI mappings left out
     public func asBlock(named name: String) -> BlockDefinition {
         var inner = self
         inner.scopes = []
         inner.sequence = nil
+        inner.midiMappings = []
         return BlockDefinition(name: name, circuit: inner)
     }
 }

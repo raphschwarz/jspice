@@ -138,14 +138,17 @@ public struct Circuit: Codable, Hashable, Sendable {
     public var netNames: [String: String]
     /// A pattern that plays the keyboard sources, if any
     public var sequence: StepSequence?
+    /// MIDI controllers mapped to the circuit's knobs and switches
+    public var midiMappings: [MIDIMapping]
 
     public init(elements: [Element] = [], scopes: [ScopeSpec] = [], settings: SimulationSettings = SimulationSettings(),
-                netNames: [String: String] = [:], sequence: StepSequence? = nil) {
+                netNames: [String: String] = [:], sequence: StepSequence? = nil, midiMappings: [MIDIMapping] = []) {
         self.elements = elements
         self.scopes = scopes
         self.settings = settings
         self.netNames = netNames
         self.sequence = sequence
+        self.midiMappings = midiMappings
     }
 
     public init(from decoder: Decoder) throws {
@@ -155,6 +158,7 @@ public struct Circuit: Codable, Hashable, Sendable {
         settings = try container.decodeIfPresent(SimulationSettings.self, forKey: .settings) ?? SimulationSettings()
         netNames = try container.decodeIfPresent([String: String].self, forKey: .netNames) ?? [:]
         sequence = try container.decodeIfPresent(StepSequence.self, forKey: .sequence)
+        midiMappings = try container.decodeIfPresent([MIDIMapping].self, forKey: .midiMappings) ?? []
     }
 
     public subscript(id: UUID) -> Element? {
@@ -186,6 +190,7 @@ public struct Circuit: Codable, Hashable, Sendable {
     public mutating func remove(_ ids: Set<UUID>) {
         elements.removeAll { ids.contains($0.id) }
         scopes.removeAll { ids.contains($0.elementID) }
+        midiMappings.removeAll { ids.contains($0.part) }
     }
 
     public mutating func update(_ id: UUID, _ change: (inout Element) -> Void) {

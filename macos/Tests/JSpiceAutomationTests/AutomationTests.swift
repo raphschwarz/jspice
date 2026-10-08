@@ -305,6 +305,24 @@ final class AutomationTests: XCTestCase {
         XCTAssertTrue((message as? String)?.contains("not an audio input") ?? false, "\(message)")
     }
 
+    func testAnAgentCanMapMIDIControllers() throws {
+        let session = CircuitSession()
+        _ = try session.call("build_circuit", arguments: ["parts": [
+            ["kind": "dcVoltage", "name": "V1", "params": ["voltage": 9], "connections": ["plus": "vcc", "minus": "GND"]],
+            ["kind": "potentiometer", "name": "GAIN", "connections": ["a": "vcc", "b": "GND", "wiper": "w"]],
+            ["kind": "resistor", "name": "R1", "connections": ["a": "w", "b": "GND"]],
+        ]])
+        let mapped = try XCTUnwrap(session.call("map_midi", arguments: ["part": "GAIN", "controller": 21, "channel": 1]) as? [String: Any])
+        XCTAssertEqual(mapped["midi"] as? String, "CC 21 · ch 1")
+        XCTAssertEqual(session.circuit.midiMappings.first?.channel, 0)
+        let parts = try XCTUnwrap(session.describe()["parts"] as? [[String: Any]])
+        XCTAssertEqual(parts.first { $0["name"] as? String == "GAIN" }?["midi"] as? String, "CC 21 · ch 1")
+        XCTAssertThrowsError(try session.call("map_midi", arguments: ["part": "R1", "controller": 21]))
+        XCTAssertThrowsError(try session.call("map_midi", arguments: ["part": "GAIN", "controller": 123]))
+        _ = try session.call("map_midi", arguments: ["part": "GAIN", "remove": true])
+        XCTAssertTrue(session.circuit.midiMappings.isEmpty)
+    }
+
     func testErrorsExplainWhatToFix() throws {
         let server = MCPServer(session: CircuitSession())
         let (message, isError) = try call(server, "build_circuit", ["parts": [

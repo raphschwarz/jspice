@@ -38,6 +38,8 @@ final class EditorState: ObservableObject {
     @Published var editingSketch: UUID?
     /// How each microcontroller's last upload went
     @Published var sketchStatus: [UUID: SketchStatus] = [:]
+    /// The control waiting for a MIDI controller to be moved (MIDI Learn): a part, or a part inside a block part
+    @Published var midiLearning: MIDITarget?
     /// Incremented to ask the canvas to fit the circuit in view
     @Published private(set) var fitRequest = 1
 
@@ -442,6 +444,38 @@ final class EditorState: ObservableObject {
         var next = circuit
         next.update(id) { $0[param: "position"] = min(1, max(0, $0[param: "position"] + delta)) }
         if next != circuit { document.circuit = next }
+    }
+
+    // MARK: - MIDI
+
+    struct MIDITarget: Hashable {
+        var part: UUID
+        var inner: UUID?
+    }
+
+    /// Waits for the next MIDI controller moved, to map it to this control; asked again, stops waiting
+    func learnMIDI(part: UUID, inner: UUID? = nil) {
+        let target = MIDITarget(part: part, inner: inner)
+        midiLearning = midiLearning == target ? nil : target
+    }
+
+    func forgetMIDI(part: UUID, inner: UUID? = nil) {
+        edit("Forget MIDI Controller") { $0.forgetMIDI(part: part, inner: inner) }
+    }
+
+    /// A control change from a MIDI device: learned by the control waiting for one, or moving the controls mapped to it
+    /// (live, like turning a knob by hand, so not an undoable edit)
+    func midiControlChange(channel: Int, controller: Int, value: Int) {
+        if let target = midiLearning {
+            midiLearning = nil
+            edit("Learn MIDI Controller") {
+                $0.learnMIDI(controller: controller, channel: nil, part: target.part, inner: target.inner)
+                $0.applyControlChange(controller: controller, channel: channel, value: value)
+            }
+            return
+        }
+        var next = circuit
+        if next.applyControlChange(controller: controller, channel: channel, value: value) { document.circuit = next }
     }
 
     // MARK: - Microcontrollers

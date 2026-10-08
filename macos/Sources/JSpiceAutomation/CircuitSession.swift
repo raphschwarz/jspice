@@ -103,6 +103,15 @@ public final class CircuitSession {
              description: "Opens or closes a switch or push button.",
              inputSchema: schema(["part": string("Part name"), "closed": ["type": "boolean"]], required: ["part", "closed"]),
              run: { session, arguments in try session.setSwitch(arguments) }),
+        Tool(name: "map_midi",
+             description: "Maps a MIDI controller (control change number 0–119) to a potentiometer, switch or push button, as MIDI Learn does in the app: the pot follows the controller across its travel, a switch or button is on from 64 up. The mapping is saved with the circuit. remove true takes the part's mapping away.",
+             inputSchema: schema([
+                "part": string("Part name: a potentiometer, switch or push button"),
+                "controller": ["type": "integer", "description": "Control change number, 0 to 119"],
+                "channel": ["type": "integer", "description": "MIDI channel 1 to 16 (left out: any channel)"],
+                "remove": ["type": "boolean", "description": "Forget the part's mapping instead"],
+             ], required: ["part"]),
+             run: { session, arguments in try session.mapMIDI(arguments) }),
         Tool(name: "set_sequence",
              description: "Sets the step sequencer that plays the circuit's keyboard pitch and gate sources by itself: one step per sixteenth note, each a note or a rest, repeating. It runs on circuit time, in simulate and with sound on in the app. Pass playing false to stop it.",
              inputSchema: schema([
@@ -608,6 +617,28 @@ public final class CircuitSession {
         return ["part": circuit.elements[index].name, "closed": closed]
     }
 
+    func mapMIDI(_ arguments: [String: Any]) throws -> Any {
+        let index = try index(ofPart: try Self.text(arguments, "part"))
+        let element = circuit.elements[index]
+        guard MIDIMapping.mappable.contains(element.kind) else {
+            throw ToolError("\(element.name) is a \(element.kind.displayName); MIDI controllers map to potentiometers, switches and push buttons")
+        }
+        if arguments["remove"] as? Bool == true {
+            change("Forget MIDI Controller") { $0.forgetMIDI(part: element.id) }
+            return ["part": element.name, "midi": NSNull()]
+        }
+        guard let controller = (arguments["controller"] as? NSNumber)?.intValue, (0...119).contains(controller) else {
+            throw ToolError("\"controller\" should be a control change number from 0 to 119")
+        }
+        var channel: Int?
+        if let given = arguments["channel"] {
+            guard let number = (given as? NSNumber)?.intValue, (1...16).contains(number) else { throw ToolError("\"channel\" should be 1 to 16") }
+            channel = number - 1
+        }
+        change("Learn MIDI Controller") { $0.learnMIDI(controller: controller, channel: channel, part: element.id) }
+        return ["part": element.name, "midi": circuit.midiMapping(part: element.id)?.label ?? ""]
+    }
+
     func setSequence(_ arguments: [String: Any]) throws -> Any {
         guard let list = arguments["steps"] as? [Any] else { throw ToolError("\"steps\" should be a list of notes and rests") }
         var steps: [Double?] = []
@@ -669,6 +700,7 @@ public final class CircuitSession {
             if !element.kind.models.isEmpty { part["model"] = element.model?.name ?? "custom" }
             if element.kind.isSwitch { part["closed"] = element.closed }
             if let block = element.block { part["block"] = block.name }
+            if let mapping = circuit.midiMapping(part: element.id) { part["midi"] = mapping.label }
             parts.append(part)
         }
         var result: [String: Any] = [
