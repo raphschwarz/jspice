@@ -86,18 +86,32 @@ final class AutomationTests: XCTestCase {
         let server = MCPServer(session: CircuitSession())
         let (_, buildError) = try call(server, "build_circuit", ["parts": lowPass])
         XCTAssertFalse(buildError)
-        let (value, isError) = try call(server, "frequency_response",
-                                        ["source": "V1", "output": "V(out)", "frequencies": [100, 1000, 10_000]])
-        XCTAssertFalse(isError, "\(value)")
-        let points = try XCTUnwrap((value as? [String: Any])?["points"] as? [[String: Any]])
-        XCTAssertEqual(points.count, 3)
-        let gains = points.compactMap { $0["gain"] as? Double }
-        let phases = points.compactMap { $0["phase_deg"] as? Double }
-        // first order: |H| = 1 / sqrt(1 + (f / fc)²), phase = -atan(f / fc)
-        for (k, f) in [100.0, 1000, 10_000].enumerated() {
-            XCTAssertEqual(gains[k], 1 / (1 + (f / 1000) * (f / 1000)).squareRoot(), accuracy: 0.01, "gain at \(f) Hz")
-            XCTAssertEqual(phases[k], -atan(f / 1000) * 180 / .pi, accuracy: 2, "phase at \(f) Hz")
+        // small-signal analysis (the default) is exact; the transient measurement within its sampling
+        for (method, gainAccuracy, phaseAccuracy) in [("ac", 1e-6, 1e-4), ("transient", 0.01, 2.0)] {
+            let (value, isError) = try call(server, "frequency_response",
+                                            ["source": "V1", "output": "V(out)", "frequencies": [100, 1000, 10_000], "method": method])
+            XCTAssertFalse(isError, "\(value)")
+            XCTAssertEqual((value as? [String: Any])?["method"] as? String, method)
+            let points = try XCTUnwrap((value as? [String: Any])?["points"] as? [[String: Any]])
+            XCTAssertEqual(points.count, 3)
+            let gains = points.compactMap { $0["gain"] as? Double }
+            let phases = points.compactMap { $0["phase_deg"] as? Double }
+            // first order: |H| = 1 / sqrt(1 + (f / fc)²), phase = -atan(f / fc)
+            for (k, f) in [100.0, 1000, 10_000].enumerated() {
+                XCTAssertEqual(gains[k], 1 / (1 + (f / 1000) * (f / 1000)).squareRoot(), accuracy: gainAccuracy, "\(method) gain at \(f) Hz")
+                XCTAssertEqual(phases[k], -atan(f / 1000) * 180 / .pi, accuracy: phaseAccuracy, "\(method) phase at \(f) Hz")
+            }
         }
+        // a sweep finds the corner
+        let (sweep, sweepError) = try call(server, "frequency_response", ["source": "V1", "output": "V(out)", "start": 10, "stop": "100k"])
+        XCTAssertFalse(sweepError, "\(sweep)")
+        let result = try XCTUnwrap(sweep as? [String: Any])
+        XCTAssertEqual((result["points"] as? [[String: Any]])?.count, 81)
+        let corners = try XCTUnwrap(result["minus_3db"] as? [Double])
+        XCTAssertEqual(corners.count, 1)
+        XCTAssertEqual(corners.first ?? 0, 1000, accuracy: 10)
+        let (_, currentError) = try call(server, "frequency_response", ["source": "V1", "output": "I(R1)"])
+        XCTAssertTrue(currentError, "ac takes voltages only")
     }
 
     func testSimulateChargesACapacitor() throws {

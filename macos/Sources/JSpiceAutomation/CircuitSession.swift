@@ -39,7 +39,7 @@ public final class CircuitSession {
     the parts, their terminals, parameters and real-part models (op-amps such as TL072, OTAs such as LM13700, 555, \
     CD40106, CD4066, JFETs…); build a circuit with build_circuit from a netlist (each part lists which net each of its \
     terminals joins; the net "GND" is ground); then simulate it and read waveforms and measurements, or call \
-    frequency_response for filters and amplifiers. Adjust values with set_parameter or set_model and simulate again. \
+    frequency_response for filters and amplifiers (small-signal analysis by default). Adjust values with set_parameter or set_model and simulate again. \
     Values accept SI prefixes as strings ("4.7k", "100n", "2.2u", "1meg"). Probes: "V(net)" is a net's voltage, \
     "V(R1)" the voltage across a part, "I(R1)" its current, "P(R1)" its power, "V(U1.out)" a terminal's voltage. \
     Synth circuits can be played: keyboardPitch parts put out 1 V per octave (0 V at C2) and keyboardGate parts a gate, \
@@ -143,14 +143,16 @@ public final class CircuitSession {
              description: "The present value of every net voltage and every part's voltage, current and power, at the end of the last simulation.",
              inputSchema: schema([:]), run: { session, _ in session.measure() }),
         Tool(name: "frequency_response",
-             description: "Measures gain and phase from an AC voltage source to a probe at a range of frequencies, by simulating each frequency until steady and comparing the waveforms.",
+             description: "Gain and phase from a source to a probe over a range of frequencies. method \"ac\" (the default) is small-signal analysis, as SPICE's .ac: the circuit settles from rest with the source held at its offset, is linearised there, and the response is solved exactly at every frequency in a moment. method \"transient\" drives an AC voltage source with its own amplitude and measures each frequency by simulating until steady, so it includes clipping and other effects of large signals, but takes much longer. The result lists each frequency's gain and phase, the peak, and where the gain crosses 3 dB below the peak.",
              inputSchema: schema([
-                "source": string("Name of the AC voltage source driving the circuit"),
-                "output": string("Probe for the output, for example \"V(out)\""),
+                "source": string("Name of the source driving the circuit: any voltage or current source for ac, an AC voltage source for transient"),
+                "output": string("Probe for the output: \"V(net)\", \"V(part)\" or \"V(part.terminal)\" (transient also takes I, P and R)"),
+                "method": string("ac (default) or transient"),
                 "start": ["description": "Lowest frequency in Hz (default 10)"],
                 "stop": ["description": "Highest frequency in Hz (default 100k)"],
-                "points_per_decade": ["type": "integer", "description": "Default 5"],
+                "points_per_decade": ["type": "integer", "description": "Default 20 for ac, 5 for transient"],
                 "frequencies": ["type": "array", "items": ["type": "number"], "description": "Explicit frequencies instead of start/stop"],
+                "settle": ["description": "ac: seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
              ], required: ["source", "output"]),
              run: { session, arguments in try session.frequencyResponse(arguments) }),
         Tool(name: "save_circuit",
@@ -755,22 +757,27 @@ public final class CircuitSession {
     func frequencyResponse(_ arguments: [String: Any]) throws -> Any {
         let sourceName = try Self.text(arguments, "source")
         let sourceIndex = try index(ofPart: sourceName)
-        guard circuit.elements[sourceIndex].kind == .acVoltage else { throw ToolError("\(sourceName) should be an AC voltage source") }
-        let output = try probe(try Self.text(arguments, "output"))
+        let method = (arguments["method"] as? String ?? "ac").lowercased()
+        guard method == "ac" || method == "transient" else { throw ToolError("\"method\" should be ac or transient") }
+        let small = method == "ac"
+        let limit = small ? 2000 : 200
         var frequencies = try (arguments["frequencies"] as? [Any])?.map { try Self.number($0, "frequencies") ?? 0 } ?? []
         if frequencies.isEmpty {
             let start = try Self.number(arguments["start"], "start") ?? 10
             let stop = try Self.number(arguments["stop"], "stop") ?? 100_000
-            let perDecade = max(1, min(200, (arguments["points_per_decade"] as? NSNumber)?.intValue ?? 5))
+            let perDecade = max(1, min(200, (arguments["points_per_decade"] as? NSNumber)?.intValue ?? (small ? 20 : 5)))
             guard start > 0, stop > start else { throw ToolError("Need 0 < start < stop") }
             let count = (log10(stop / start) * Double(perDecade)).rounded() + 1
-            guard count.isFinite, count <= 200 else { throw ToolError("At most 200 frequencies") }
-            frequencies = (0..<Int(count)).map { start * pow(10, Double($0) / Double(perDecade)) }
+            guard count.isFinite, count <= Double(limit) else { throw ToolError("At most \(limit) frequencies") }
+            frequencies = FrequencySweep.logarithmic(from: start, to: stop, pointsPerDecade: perDecade)
         }
-        guard frequencies.count <= 200 else { throw ToolError("At most 200 frequencies") }
+        guard frequencies.count <= limit else { throw ToolError("At most \(limit) frequencies") }
         guard frequencies.allSatisfy({ $0.isFinite && $0 > 0 && $0 < 1e10 }) else {
             throw ToolError("Frequencies should be positive and below 10 GHz")
         }
+        if small { return try smallSignalResponse(arguments, source: sourceIndex, frequencies: frequencies) }
+        guard circuit.elements[sourceIndex].kind == .acVoltage else { throw ToolError("\(sourceName) should be an AC voltage source") }
+        let output = try probe(try Self.text(arguments, "output"))
         let wallStart = Date()
         var previousPhase: Double?
         // long enough for the slowest part of the circuit to settle, and at least 10 cycles
@@ -828,7 +835,77 @@ public final class CircuitSession {
             if !settled { row["settled"] = false }
             rows.append(row)
         }
-        return ["source": sourceName, "output": output.label, "points": rows]
+        return ["source": sourceName, "output": output.label, "method": "transient", "points": rows]
+    }
+
+    /// frequency_response by small-signal analysis around the operating point the circuit settles to
+    private func smallSignalResponse(_ arguments: [String: Any], source: Int, frequencies: [Double]) throws -> Any {
+        let sourceName = circuit.elements[source].name
+        let kind = circuit.elements[source].kind
+        guard kind.isVoltageSource || kind == .currentSource else { throw ToolError("\(sourceName) should be a voltage or current source") }
+        let spec = try Self.text(arguments, "output")
+        let settle = try Self.number(arguments["settle"], "settle")
+        if let settle, !(settle >= 0 && settle < 1000) { throw ToolError("\"settle\" should be from 0 to 1000 seconds") }
+        let wallStart = Date()
+        let simulator = Simulator.settled(circuit, holding: source, duration: settle)
+        if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
+        let (plus, minus) = try smallSignalNodes(spec, simulator)
+        guard let model = simulator.smallSignalModel(),
+              let response = model.response(input: source, plus: plus, minus: minus, frequencies: frequencies) else {
+            throw ToolError("The linearised circuit can't be solved. Look for parts left floating without a DC path.")
+        }
+        let phases = FrequencySweep.unwrappedPhases(response)
+        let gains = response.map(\.magnitude)
+        var rows: [[String: Any]] = []
+        for (k, frequency) in frequencies.enumerated() {
+            rows.append(["frequency": frequency, "gain": gains[k], "gain_db": 20 * log10(max(gains[k], 1e-15)), "phase_deg": phases[k]])
+        }
+        var result: [String: Any] = [
+            "source": sourceName, "output": spec, "method": "ac", "points": rows,
+            "operating_point": ["time": simulator.time, "output_dc": simulator.nodeVoltage(plus) - simulator.nodeVoltage(minus)],
+            "wall_seconds": Date().timeIntervalSince(wallStart),
+        ]
+        if let peak = gains.indices.max(by: { gains[$0] < gains[$1] }) {
+            let peakDB = 20 * log10(max(gains[peak], 1e-15))
+            result["peak"] = ["frequency": frequencies[peak], "gain_db": peakDB]
+            // where the gain crosses 3 dB below the peak, interpolated on the log-frequency scale
+            var corners: [Double] = []
+            let level = peakDB - 3
+            for k in 1..<max(1, gains.count) {
+                let a = 20 * log10(max(gains[k - 1], 1e-15)) - level
+                let b = 20 * log10(max(gains[k], 1e-15)) - level
+                guard (a < 0) != (b < 0), a != b else { continue }
+                let f = a / (a - b)
+                corners.append(frequencies[k - 1] * pow(frequencies[k] / frequencies[k - 1], f))
+            }
+            result["minus_3db"] = corners
+        }
+        if !simulator.problems.isEmpty { result["problems"] = simulator.problems }
+        return result
+    }
+
+    /// The nodes a voltage probe reads, plus and minus, for small-signal analysis
+    private func smallSignalNodes(_ spec: String, _ simulator: Simulator) throws -> (Int, Int) {
+        let trimmed = spec.trimmingCharacters(in: .whitespaces)
+        guard let open = trimmed.firstIndex(of: "("), trimmed.hasSuffix(")"), trimmed[..<open].uppercased() == "V" else {
+            throw ToolError("For ac, the output should be a voltage: V(net), V(part) or V(part.terminal); use method transient for I, P or R")
+        }
+        let target = String(trimmed[trimmed.index(after: open)..<trimmed.index(before: trimmed.endIndex)])
+        if let dot = target.lastIndex(of: "."), circuit.elements.contains(where: { $0.name == String(target[..<dot]) }) {
+            let index = try index(ofPart: String(target[..<dot]))
+            let terminal = String(target[target.index(after: dot)...])
+            guard let t = NetlistLayout.terminalIndex(terminal, of: circuit.elements[index].kind) else {
+                throw ToolError("\(target[..<dot]) has no terminal \(terminal); terminals: \(circuit.elements[index].kind.terminalNames.joined(separator: ", "))")
+            }
+            return (simulator.nodes(of: index)[t], 0)
+        }
+        if target.uppercased() == "GND" || target == "0" { return (0, 0) }
+        if !circuit.elements.contains(where: { $0.kind != .netLabel && $0.name == target }), let (index, t) = terminal(onNet: target) {
+            return (simulator.nodes(of: index)[t], 0)
+        }
+        let index = try index(ofPart: target)
+        guard let nodes = simulator.acrossNodes(index) else { throw ToolError("\(target) has no voltage to probe") }
+        return (nodes.plus, nodes.minus)
     }
 
     /// The circuit without its sources' own periods, for estimating how long it takes to settle

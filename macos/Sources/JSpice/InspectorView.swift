@@ -165,6 +165,11 @@ struct ElementInspector: View {
                         editor.addScope(element.id, .current, plot: .currentVersusVoltage)
                     }
                 }
+                if canPlotResponse(element.kind) {
+                    Button("Add Frequency Response", systemImage: "chart.line.downtrend.xyaxis") {
+                        editor.addScope(element.id, .voltage, plot: .frequencyResponse)
+                    }
+                }
                 Button("Rotate", systemImage: "rotate.right") { editor.rotateSelection() }
                 if element.kind.canFlip {
                     Button("Flip", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.flipSelection() }

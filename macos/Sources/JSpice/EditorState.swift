@@ -308,6 +308,12 @@ final class EditorState: ObservableObject {
         }
     }
 
+    func setScopeSource(_ id: UUID, _ sourceID: UUID?) {
+        edit("Change Scope") { circuit in
+            if let i = circuit.scopes.firstIndex(where: { $0.id == id }) { circuit.scopes[i].sourceID = sourceID }
+        }
+    }
+
     func removeScope(_ id: UUID) {
         edit("Remove Scope") { $0.scopes.removeAll { $0.id == id } }
     }

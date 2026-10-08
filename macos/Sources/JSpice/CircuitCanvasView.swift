@@ -765,6 +765,9 @@ final class CircuitCanvasView: NSView {
         if canPlotCurve(hit.kind) {
             menu.addItem(item("Add I–V Curve Scope") { [weak self] in self?.editor.addScope(hit.id, .current, plot: .currentVersusVoltage) })
         }
+        if canPlotResponse(hit.kind) {
+            menu.addItem(item("Add Frequency Response") { [weak self] in self?.editor.addScope(hit.id, .voltage, plot: .frequencyResponse) })
+        }
         menu.addItem(.separator())
         menu.addItem(item("Rotate") { [weak self] in self?.editor.rotateSelection() })
         if hit.kind.canFlip {
@@ -945,6 +948,11 @@ func canPlotCurve(_ kind: ElementKind) -> Bool {
     case .resistor, .lamp, .capacitor, .inductor, .diode, .zener, .led, .memristor: return true
     default: return false
     }
+}
+
+/// Parts whose voltage can be plotted against frequency: anything with a voltage, apart from the sources that drive it
+func canPlotResponse(_ kind: ElementKind) -> Bool {
+    scopeQuantities(for: kind).contains(.voltage) && !kind.isVoltageSource && kind != .currentSource
 }
 
 /// Lets a menu item run a closure

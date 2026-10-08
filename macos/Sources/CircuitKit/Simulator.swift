@@ -870,6 +870,19 @@ public final class Simulator {
         baseVersionCount += 1
         baseVersion = baseVersionCount
         let m = topology.matrixSize
+        baseMatrix = makeBaseMatrix()
+        matrixIsCurrent = true
+        if !hasNonlinear && !hasMemristor {
+            baseLU = LUSolver(matrix: baseMatrix, size: m)
+            if baseLU == nil { fail() }
+        } else {
+            baseLU = nil
+        }
+    }
+
+    /// The base matrix's entries; while linearising, without the capacitors and inductors
+    private func makeBaseMatrix() -> [Double] {
+        let m = topology.matrixSize
         var matrix = [Double](repeating: 0, count: m * m)
         for node in 1..<max(1, topology.nodeCount) {
             matrix[(node - 1) * m + node - 1] += Self.gmin
@@ -883,9 +896,9 @@ public final class Simulator {
                 let (upper, lower) = potentiometerResistances(element)
                 stampConductance(&matrix, m, nodes[0], nodes[2], 1 / upper)
                 stampConductance(&matrix, m, nodes[2], nodes[1], 1 / lower)
-            case .capacitor:
+            case .capacitor where !linearising:
                 stampConductance(&matrix, m, nodes[0], nodes[1], a0 * element[param: "capacitance"] / h)
-            case .inductor:
+            case .inductor where !linearising:
                 stampConductance(&matrix, m, nodes[0], nodes[1], h / (a0 * max(element[param: "inductance"], 1e-15)))
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
                 let row = topology.sourceRow[i]
@@ -950,14 +963,7 @@ public final class Simulator {
                 break
             }
         }
-        baseMatrix = matrix
-        matrixIsCurrent = true
-        if !hasNonlinear && !hasMemristor {
-            baseLU = LUSolver(matrix: matrix, size: m)
-            if baseLU == nil { fail() }
-        } else {
-            baseLU = nil
-        }
+        return matrix
     }
 
     func sourceVoltage(_ i: Int, at t: Double) -> Double {
@@ -1609,6 +1615,24 @@ public final class Simulator {
                     vd = vd > 0 ? range : -range
                 }
                 limitedVoltage[i] = vd
+                if linearising {
+                    // small changes: the output follows the internal stage through the slope of its limit, and the
+                    // stage integrates the input, leaking at its pole (without dynamics, the output follows the input)
+                    if c.gbw > 0 {
+                        let w = 2 * Double.pi * c.gbw
+                        let driveSlope = c.slew > 0 ? w * (1 - pow(tanh((vd + c.offset) * w / c.slew), 2)) : w
+                        let t = tanh(capacitorVoltage[i] / c.limit)
+                        let pole = SmallSignalModel.Transfer.pole(gain: (1 - t * t) * driveSlope, rate: w / c.gain)
+                        if plus > 0 { linearEntries.append(.init(row: row, column: plus - 1, scale: -1, transfer: pole)) }
+                        if minus > 0 { linearEntries.append(.init(row: row, column: minus - 1, scale: 1, transfer: pole)) }
+                    } else {
+                        let t = tanh(c.gain * (vd + c.offset) / c.limit)
+                        let slope = c.gain * (1 - t * t)
+                        add(&matrix, m, row, plus - 1, -slope)
+                        add(&matrix, m, row, minus - 1, slope)
+                    }
+                    continue
+                }
                 let (output, slope, _) = opAmpOutput(i, differential: vd)
                 // v(out) = output + slope (vd' - vd), linearised around the present inputs
                 add(&matrix, m, row, plus - 1, -slope)
@@ -1701,6 +1725,131 @@ public final class Simulator {
             default:
                 break
             }
+        }
+    }
+
+    // MARK: - Small-signal analysis
+
+    /// Set while the circuit is being linearised: the base matrix leaves out capacitors and inductors, and op-amps note
+    /// their internal pole in `linearEntries` instead of stamping the slope of one step
+    private var linearising = false
+    private var linearEntries: [SmallSignalModel.Entry] = []
+
+    /// The circuit linearised around its present state, for small-signal (AC) analysis: the operating point is
+    /// whatever the circuit is doing now, so let it settle first. Switches, logic and chips stay as they are; synth
+    /// chips with an audio path (filter, VCA, delay lines, a sample and hold while tracking) pass small signals through
+    /// it, oscillators and envelopes do not. Nil if there is no solution to linearise around.
+    public func smallSignalModel() -> SmallSignalModel? {
+        let m = topology.matrixSize
+        guard m > 0, x.count == m, !isFailed else { return nil }
+        let saved = (limitedVoltage, limitedVoltage2, limitedVoltage3, limiting)
+        linearising = true
+        linearEntries = []
+        var matrix = makeBaseMatrix()
+        var scratch = [Double](repeating: 0, count: m)
+        junctionConductance = 0
+        stampMemristors(&matrix, m)
+        if hasNonlinear {
+            for i in nonlinearIndices { opAmpCrossings[i] = 0 }
+            // linearised at the present solution: the junctions' last linearisation points are taken from it, so
+            // nothing is held back by limiting
+            for i in nonlinearIndices { alignLinearisationPoint(i) }
+            stampNonlinear(&matrix, &scratch, m)
+        }
+        var entries = linearEntries
+        linearising = false
+        linearEntries = []
+        (limitedVoltage, limitedVoltage2, limitedVoltage3, limiting) = saved
+
+        func admittance(_ a: Int, _ b: Int, _ transfer: SmallSignalModel.Transfer) {
+            if a > 0 { entries.append(.init(row: a - 1, column: a - 1, scale: 1, transfer: transfer)) }
+            if b > 0 { entries.append(.init(row: b - 1, column: b - 1, scale: 1, transfer: transfer)) }
+            if a > 0 && b > 0 {
+                entries.append(.init(row: a - 1, column: b - 1, scale: -1, transfer: transfer))
+                entries.append(.init(row: b - 1, column: a - 1, scale: -1, transfer: transfer))
+            }
+        }
+        var drives: [Int: SmallSignalModel.Drive] = [:]
+        for i in kinds.indices {
+            let nodes = topology.elementNodes[i]
+            let c = constants[i]
+            let row = topology.sourceRow[i]
+            // the output row of a chip: v(out) − Σ transfer × v(input) = 0
+            func passes(_ input: Int, _ transfer: SmallSignalModel.Transfer) {
+                guard row >= 0, input > 0 else { return }
+                entries.append(.init(row: row, column: input - 1, scale: -1, transfer: transfer))
+            }
+            switch kinds[i] {
+            case .capacitor:
+                admittance(nodes[0], nodes[1], .capacitance(c.value))
+            case .inductor:
+                admittance(nodes[0], nodes[1], .inductance(c.value))
+            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate:
+                if row >= 0 { drives[i] = .row(row) }
+            case .currentSource:
+                drives[i] = .current(from: nodes[0], to: nodes[1])
+            case .vcf:
+                // the four stages, each a one-pole low-pass whose slope at its present level sets its pole, and the
+                // feedback from the last to the input
+                let s = moduleStates[i]
+                let cutoff = min(c.frequency * pow(2, min(max(voltage(nodes[1]), -16), 16)), 0.4 / timeStep)
+                let w = 2 * Double.pi * cutoff
+                let slopes = [s.s1, s.s2, s.s3, s.s4].map { 1 - tanh($0) * tanh($0) }
+                let input = tanh(voltage(nodes[0]) / c.limit - c.gain * s.s4)
+                passes(nodes[0], .ladder(numerator: pow(w, 4) * slopes[0] * slopes[1] * slopes[2], poles: slopes.map { w * $0 },
+                                         drive: 1 - input * input, feedback: c.gain))
+            case .vca:
+                let (in0, in1) = (voltage(nodes[0]), voltage(nodes[1]))
+                let exponential = c.value < 0.5
+                let raw = exponential ? c.gain * in1 / 20 : max(in1, 0) / c.threshold
+                let gain = exponential ? pow(10, min(raw, 40.0 / 20)) : min(raw, 100)
+                let t = tanh(gain * in0 / c.limit)
+                let gainSlope = exponential ? (raw < 2 ? gain * log(10) * c.gain / 20 : 0) : (in1 > 0 && raw < 100 ? 1 / c.threshold : 0)
+                passes(nodes[0], .delay(gain: gain * (1 - t * t), time: 0, cutoff: 0, poles: 0))
+                passes(nodes[1], .delay(gain: in0 * (1 - t * t) * gainSlope, time: 0, cutoff: 0, poles: 0))
+            case .sampleHold where c.value >= 0.5 && moduleStates[i].high:
+                passes(nodes[0], .delay(gain: 1, time: 0, cutoff: 0, poles: 0))
+            case .delayLine:
+                let clock = max(c.frequency + c.slew * voltage(nodes[1]), c.frequency * 0.05, 100)
+                passes(nodes[0], .delay(gain: c.gain, time: c.value / (2 * clock), cutoff: 0, poles: 0))
+            case .digitalDelay:
+                let delay = echoDelay(i)
+                let t = moduleStates[i].output / c.limit
+                let cutoff = min(820 / delay, 20_000, 0.4 / timeStep)
+                passes(nodes[0], .delay(gain: c.gain * (1 - t * t), time: delay, cutoff: 2 * .pi * cutoff, poles: 2))
+            default:
+                break
+            }
+        }
+        return SmallSignalModel(size: m, nodeCount: topology.nodeCount, matrix: matrix, entries: entries, drives: drives)
+    }
+
+    /// Sets an element's last linearisation point to the present solution, so that stamping it is not held back by
+    /// Newton limiting
+    private func alignLinearisationPoint(_ i: Int) {
+        let nodes = topology.elementNodes[i]
+        func v(_ k: Int) -> Double { voltage(nodes[k]) }
+        switch kinds[i] {
+        case .diode, .led, .zener, .vactrol:
+            limitedVoltage[i] = v(0) - v(1)
+        case .npn, .pnp:
+            let p: Double = kinds[i] == .npn ? 1 : -1
+            limitedVoltage[i] = p * (v(0) - v(2))
+            limitedVoltage2[i] = p * (v(0) - v(1))
+        case .nmos, .pmos, .njfet:
+            limitedVoltage[i] = v(0) - v(2)
+            limitedVoltage2[i] = v(1) - v(2)
+        case .unbufferedInverter:
+            limitedVoltage[i] = v(0)
+            limitedVoltage2[i] = v(1)
+        case .opAmp:
+            limitedVoltage[i] = v(1) - v(0)
+        case .ota:
+            limitedVoltage[i] = v(3) + constants[i].supply
+            limitedVoltage2[i] = v(2) - constants[i].clampLevel
+            limitedVoltage3[i] = -constants[i].clampLevel - v(2)
+        default:
+            break
         }
     }
 
@@ -2327,18 +2476,26 @@ public final class Simulator {
     /// drain minus source (collector minus emitter) for transistors; the output voltage for op-amps
     public func voltageAcross(_ index: Int) -> Double {
         guard index < topology.elementNodes.count, index < kinds.count, x.count == topology.matrixSize else { return 0 }
-        let nodes = topology.elementNodes[index]
-        func v(_ k: Int) -> Double { voltage(nodes[k]) }
-        if nodes.count == 1 { return v(0) }
-        guard nodes.count >= 2 else { return 0 }
         let kind = kinds[index]
-        if kind.isTransistor { return v(1) - v(2) }
-        if kind == .ota || kind.drivesOutput { return v(2) }
-        if kind == .timer555 { return v(2) - v(0) }
         if kind.isMicrocontroller || kind.chipPackage != nil { return constants[index].supply }
-        if kind == .schmittInverter || kind == .unbufferedInverter { return v(1) }
-        if kind == .logicGate { return v(2) }
-        return kind.isVoltageSource ? v(1) - v(0) : v(0) - v(1)
+        guard let (plus, minus) = acrossNodes(index) else { return 0 }
+        return voltage(plus) - voltage(minus)
+    }
+
+    /// The nodes `voltageAcross` reads, plus then minus (0 is ground); nil for parts it reads no nodes of
+    public func acrossNodes(_ index: Int) -> (plus: Int, minus: Int)? {
+        guard index < topology.elementNodes.count, index < kinds.count else { return nil }
+        let nodes = topology.elementNodes[index]
+        if nodes.count == 1 { return (nodes[0], 0) }
+        guard nodes.count >= 2 else { return nil }
+        let kind = kinds[index]
+        if kind.isTransistor { return (nodes[1], nodes[2]) }
+        if kind == .ota || kind.drivesOutput { return (nodes[2], 0) }
+        if kind == .timer555 { return (nodes[2], nodes[0]) }
+        if kind.isMicrocontroller || kind.chipPackage != nil { return nil }
+        if kind == .schmittInverter || kind == .unbufferedInverter { return (nodes[1], 0) }
+        if kind == .logicGate { return (nodes[2], 0) }
+        return kind.isVoltageSource ? (nodes[1], nodes[0]) : (nodes[0], nodes[1])
     }
 
     public func current(_ index: Int) -> Double {
@@ -2446,7 +2603,8 @@ public final class Simulator {
         }
         traces = next
         recordedTraces = circuit.scopes.compactMap { spec in
-            guard let trace = next[spec.id], let index = circuit.index(of: spec.elementID) else { return nil }
+            // a frequency response is worked out when shown, not recorded
+            guard spec.plot != .frequencyResponse, let trace = next[spec.id], let index = circuit.index(of: spec.elementID) else { return nil }
             return (trace, index)
         }
     }
@@ -2463,6 +2621,8 @@ public final class Simulator {
             }
         case .currentVersusVoltage:
             trace.addPoint(voltage: voltageAcross(index), current: scopedCurrent(index), at: time)
+        case .frequencyResponse:
+            break
         }
     }
 

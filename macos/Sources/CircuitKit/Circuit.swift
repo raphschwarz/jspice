@@ -29,6 +29,9 @@ public enum ScopePlot: String, Codable, Sendable {
     case time
     /// Current against voltage: the I–V curve, e.g. a memristor's pinched hysteresis loop
     case currentVersusVoltage
+    /// The voltage's gain and phase against frequency for small signals from a source (a Bode plot), around what the
+    /// circuit is doing now
+    case frequencyResponse
 }
 
 /// A trace shown in the scope panel: one quantity of one element over time, or its current against its voltage.
@@ -37,12 +40,15 @@ public struct ScopeSpec: Codable, Hashable, Identifiable, Sendable {
     public var elementID: UUID
     public var quantity: Quantity
     public var plot: ScopePlot
+    /// For a frequency response: the source driving it (nil: the circuit's first signal source)
+    public var sourceID: UUID?
 
-    public init(id: UUID = UUID(), elementID: UUID, quantity: Quantity, plot: ScopePlot = .time) {
+    public init(id: UUID = UUID(), elementID: UUID, quantity: Quantity, plot: ScopePlot = .time, sourceID: UUID? = nil) {
         self.id = id
         self.elementID = elementID
         self.quantity = quantity
         self.plot = plot
+        self.sourceID = sourceID
     }
 
     public init(from decoder: Decoder) throws {
@@ -51,6 +57,7 @@ public struct ScopeSpec: Codable, Hashable, Identifiable, Sendable {
         elementID = try container.decode(UUID.self, forKey: .elementID)
         quantity = try container.decodeIfPresent(Quantity.self, forKey: .quantity) ?? .voltage
         plot = try container.decodeIfPresent(ScopePlot.self, forKey: .plot) ?? .time
+        sourceID = try container.decodeIfPresent(UUID.self, forKey: .sourceID)
     }
 }
 

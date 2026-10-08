@@ -21,6 +21,8 @@ enum ScreenshotRunner {
         var tool: ElementKind?
         /// The quick-add palette open
         var quickAdd = false
+        /// The part to show the frequency response of, in place of the example's scopes
+        var response: String?
     }
 
     static let shots: [Shot] = [
@@ -73,6 +75,9 @@ enum ScreenshotRunner {
         Shot(name: "49-cmos-fuzz-dark", example: "cmos-fuzz", dark: true, seconds: 1, select: .unbufferedInverter),
         Shot(name: "50-pt2399-echo-light", example: "pt2399-echo", dark: false, seconds: 2, select: .digitalDelay),
         Shot(name: "51-arduino-dac-dark", example: "arduino-dac", dark: true, seconds: 1.5, select: .dac),
+        Shot(name: "52-response-netlist-light", example: "netlist", dark: false, seconds: 1, response: "U1"),
+        Shot(name: "53-response-filter-dark", example: "vcf", dark: true, seconds: 1, select: .potentiometer, response: "SPK1"),
+        Shot(name: "54-response-fuzz-light", example: "fuzz", dark: false, seconds: 1, response: "SPK1"),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {
@@ -126,6 +131,9 @@ enum ScreenshotRunner {
             let example = shot.example.flatMap { Examples.example($0) }
             var circuit = example?.circuit ?? (shot.example == "netlist" ? netlistDemo() : Circuit())
             if shot.tidy, let tidied = try? SchematicLayout.tidy(circuit) { circuit = tidied }
+            if let name = shot.response, let element = circuit.elements.first(where: { $0.name == name }) {
+                circuit.scopes = [ScopeSpec(elementID: element.id, quantity: .voltage, plot: .frequencyResponse)]
+            }
             if shot.closeSwitches {
                 for i in circuit.elements.indices where circuit.elements[i].kind == .toggleSwitch {
                     circuit.elements[i].closed = true

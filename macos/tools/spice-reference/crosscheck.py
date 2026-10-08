@@ -9,6 +9,7 @@ scales it changes nothing measurable. The result, Tests/CircuitKitTests/Fixtures
 is what SpiceCrossCheckTests compares JSpice with: so differences measure JSpice's numerics, not its models.
 
 python3 crosscheck.py            # writes the fixture (needs ngspice)
+python3 crosscheck.py --ac       # small-signal: ngspice's operating point and .ac sweep, spice-ac-reference.json
 """
 import json, math, os, re, subprocess, sys, tempfile
 
@@ -16,6 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '../..'))
 SOURCES = os.path.join(ROOT, 'Sources/CircuitKit')
 FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-reference.json')
+AC_FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-ac-reference.json')
 VT = 0.025852  # Simulator.thermalVoltage
 LED_FORWARD = [1.9, 2.2, 3.0, 2.0, 3.0]  # LEDColor: red, green, blue, yellow, white
 
@@ -75,6 +77,15 @@ def net(name):
     return '0' if name in ('GND', '0') else 'n_' + re.sub(r'\W', '_', name)
 
 def spice_deck(parts, duration, probes, step):
+    lines, models = spice_elements(parts)
+    data = tempfile.mktemp(suffix='.txt')
+    lines += models
+    lines += ['.tran %.6g %.12g 0 %.6g uic' % (step, duration, step), '.control', 'run',
+              'wrdata %s %s' % (data, ' '.join('v(%s)' % net(x) for x in probes)), 'quit', '.endc', '.end']
+    return '\n'.join(lines) + '\n', data
+
+def spice_elements(parts, ac_source=None):
+    """The deck's options and element lines, and its models; `ac_source` is the source driven in an AC analysis"""
     lines = ['* JSpice cross-check', '.options reltol=1e-6 abstol=1e-13 vntol=1e-8 gmin=1e-12 method=gear maxord=2 itl4=200',
              # JSpice's thermal voltage, 25.852 mV, is kT/q at 300.00 K
              '.options temp=%.4f tnom=%.4f' % (VT / 8.617333262e-5 - 273.15, VT / 8.617333262e-5 - 273.15)]
@@ -156,11 +167,15 @@ def spice_deck(parts, duration, probes, step):
             pass
         else:
             raise ValueError('no SPICE equivalent for %s' % k)
-    data = tempfile.mktemp(suffix='.txt')
-    lines += models
-    lines += ['.tran %.6g %.12g 0 %.6g uic' % (step, duration, step), '.control', 'run',
-              'wrdata %s %s' % (data, ' '.join('v(%s)' % net(x) for x in probes)), 'quit', '.endc', '.end']
-    return '\n'.join(lines) + '\n', data
+        if n == ac_source:
+            # held at its offset for the operating point (as JSpice settles with the source's amplitude at zero)
+            if k == 'acVoltage':
+                lines[-1] = 'V%s %s %s DC %.12g' % (n, pin('plus'), pin('minus'), param(p, 'offset'))
+            lines[-1] += ' AC 1'
+    if ac_source is not None:
+        # the junction capacitances only ease ngspice's switching edges; a small-signal comparison is exact without them
+        models = [re.sub(r' CJ[OEC]=1p', '', m) for m in models]
+    return lines, models
 
 def run_ngspice(parts, duration, probes, step):
     deck, data = spice_deck(parts, duration, probes, step)
@@ -276,6 +291,91 @@ CASES = [
          probes=['amp', 'clip']),
 ]
 
+# Small-signal (AC) analysis: ngspice's operating point and .ac sweep; JSpice settles the circuit with the driven
+# source's amplitude at zero and linearises it there
+AC_CASES = [
+    dict(id='rc-lowpass', note='RC low-pass, 159 Hz corner', source='V1', settle=0.01, probes=['out'], parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=1, frequency=100),
+        P('resistor', 'R1', dict(a='in', b='out'), resistance=1000),
+        P('capacitor', 'C1', dict(a='out', b='GND'), capacitance=1e-6)]),
+    dict(id='rlc-resonance', note='series RLC, 1.59 kHz resonance with a Q of 10', source='V1', settle=0.01, probes=['cap'], parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=1, frequency=100),
+        P('resistor', 'R1', dict(a='in', b='l'), resistance=10),
+        P('inductor', 'L1', dict(a='l', b='cap'), inductance=0.01),
+        P('capacitor', 'C1', dict(a='cap', b='GND'), capacitance=1e-6)]),
+    dict(id='zener-ripple', note='5.1 V Zener regulator: ripple through its dynamic resistance', source='V1', settle=0.01,
+         probes=['out'], parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=4, offset=12, frequency=100),
+        P('resistor', 'R1', dict(a='in', b='out'), resistance=470),
+        P('zener', 'D1', dict(anode='GND', cathode='out'), breakdown=5.1),
+        P('resistor', 'R2', dict(a='out', b='GND'), resistance=1000)]),
+    dict(id='common-emitter', note='NPN common-emitter amplifier with a bypassed emitter', source='VIN', settle=0.3,
+         probes=['col', 'base'], parts=[p for p in CASES[5]['parts']]),
+    dict(id='jfet', note='N-JFET common-source stage biased at -0.75 V', source='VG', settle=0.001, probes=['drain'], parts=[
+        P('dcVoltage', 'VDD', dict(plus='vdd', minus='GND'), voltage=12),
+        P('acVoltage', 'VG', dict(plus='gate', minus='GND'), amplitude=0.5, offset=-0.75, frequency=1000),
+        P('resistor', 'RD', dict(a='vdd', b='drain'), resistance=2200),
+        P('resistor', 'RL', dict(a='drain', b='out'), resistance=1000),
+        P('capacitor', 'CL', dict(a='out', b='GND'), capacitance=10e-9),
+        P('njfet', 'J1', dict(gate='gate', drain='drain', source='GND'))]),
+    dict(id='opamp-inverting', note='TL072 inverting amplifier, gain 10, out to its 3 MHz bandwidth', source='VIN', settle=0.001,
+         probes=['out'], fstop=1e7, parts=[p for p in CASES[9]['parts']]),
+    dict(id='sallen-key', note='TL072 Sallen-Key low-pass, 1.59 kHz, Q 0.5', source='VIN', settle=0.01, probes=['out'], parts=[
+        P('acVoltage', 'VIN', dict(plus='in', minus='GND'), amplitude=1, frequency=1000),
+        P('resistor', 'R1', dict(a='in', b='a'), resistance=10_000),
+        P('resistor', 'R2', dict(a='a', b='b'), resistance=10_000),
+        P('capacitor', 'C1', dict(a='a', b='out'), capacitance=10e-9),
+        P('capacitor', 'C2', dict(a='b', b='GND'), capacitance=10e-9),
+        P('opAmp', 'U1', dict(minus='out', plus='b', out='out'), **TL072)]),
+    dict(id='fuzz', example='fuzz', note='the Fuzz Face example (two BC108s), small signals', source='GTR', settle=0.5,
+         probes=['c2', 'out']),
+    dict(id='overdrive', example='overdrive', note='the overdrive example below clipping', source='VIN', settle=0.5,
+         probes=['amp', 'clip']),
+]
+
+def run_ngspice_ac(parts, source, probes, fstart, fstop, per_decade):
+    lines, models = spice_elements(parts, ac_source=source)
+    data = tempfile.mktemp(suffix='.txt')
+    deck = '\n'.join(lines + models + ['.ac dec %d %.6g %.6g' % (per_decade, fstart, fstop), '.control', 'run',
+                                       'wrdata %s %s' % (data, ' '.join('v(%s)' % net(x) for x in probes)),
+                                       'quit', '.endc', '.end']) + '\n'
+    with tempfile.NamedTemporaryFile('w', suffix='.cir', delete=False) as f:
+        f.write(deck)
+    result = subprocess.run(['ngspice', '-b', f.name], capture_output=True, text=True, timeout=600)
+    if not os.path.exists(data) or 'aborted' in result.stdout + result.stderr:
+        sys.exit('ngspice failed:\n' + deck + result.stdout[-3000:] + result.stderr[-3000:])
+    rows = [list(map(float, line.split())) for line in open(data) if line.strip()]
+    os.unlink(data)
+    # each probe: frequency, real part, imaginary part
+    frequencies = [row[0] for row in rows]
+    values = {x: [(row[3 * i + 1], row[3 * i + 2]) for row in rows] for i, x in enumerate(probes)}
+    return frequencies, values
+
+def ac_main():
+    out = []
+    for case in AC_CASES:
+        parts = example_parts(case['example']) if 'example' in case else case['parts']
+        frequencies, values = run_ngspice_ac(parts, case['source'], case['probes'], case.get('fstart', 1), case.get('fstop', 1e5), 5)
+        probes = []
+        for name in case['probes']:
+            part, terminal = next((p['name'], t) for p in parts for t, n in p['connections'].items() if n == name)
+            gains = [math.hypot(re, im) for re, im in values[name]]
+            phases = [math.degrees(math.atan2(im, re)) for re, im in values[name]]
+            probes.append(dict(net=name, part=part, terminal=terminal, gain_db=[round(20 * math.log10(max(g, 1e-30)), 6) for g in gains],
+                               phase_deg=[round(p, 5) for p in phases]))
+        entry = dict(id=case['id'], note=case['note'], source=case['source'], settle=case['settle'],
+                     frequencies=[round(f, 9) for f in frequencies], probes=probes)
+        if 'example' in case:
+            entry['example'] = case['example']
+        else:
+            entry['parts'] = parts
+        out.append(entry)
+        summary = ', '.join('%s %.1f..%.1f dB' % (p['net'], min(p['gain_db']), max(p['gain_db'])) for p in probes)
+        print('%-16s %s' % (case['id'], summary))
+    json.dump(dict(generator='tools/spice-reference/crosscheck.py --ac', ngspice=subprocess.run(
+        ['ngspice', '-v'], capture_output=True, text=True).stdout.split('\n')[1].strip(' *'), cases=out),
+        open(AC_FIXTURE, 'w'), indent=1)
+
 def rising_crossings(time, values):
     level = (max(values) + min(values)) / 2
     result = []
@@ -317,4 +417,4 @@ def main():
         open(FIXTURE, 'w'), indent=1)
 
 if __name__ == '__main__':
-    main()
+    ac_main() if '--ac' in sys.argv else main()
