@@ -89,11 +89,19 @@ private struct ScopeRow: View {
                         if let note = result.note {
                             Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         } else if let peak = result.peak {
+                            // a resonance's peak, or else the passband's gain and its −3 dB corner
                             VStack(alignment: .leading, spacing: 0) {
-                                Text(String(format: "%+.1f dB", result.gains[peak])).foregroundStyle(voltageColor)
+                                Text(String(format: "%+.1f dB", result.gains[peak] + 0)).foregroundStyle(voltageColor)
                                     .font(.title3.monospacedDigit().weight(.medium))
-                                Text("peak at \(SI.format(ResponseCache.frequencies[peak], unit: "Hz"))")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                if result.hasResonance {
+                                    Text("peak at \(SI.format(ResponseCache.frequencies[peak], unit: "Hz"))")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                } else if let corner = result.corner {
+                                    Text("−3 dB at \(SI.format(corner, unit: "Hz"))")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    Text("flat from 10 Hz to 100 kHz").font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                         }
                     } else if spec.plot == .currentVersusVoltage {
@@ -312,8 +320,10 @@ private struct ScopeRow: View {
     }
 }
 
-/// A frequency response worked out from the window's simulator: the circuit linearised around what it is doing now,
-/// at most five times a second, and solved again only when the linearised circuit or the probe has changed
+/// A frequency response around the circuit's operating point. A copy of the circuit, with the driving source held
+/// still, settles in the background, a little at each update and only as long as it takes, and follows every change to
+/// the circuit (a knob turned, a part added). The response is worked out from it at most five times a second, and
+/// again only when the linearised circuit or the probe has changed.
 final class ResponseCache {
     /// 10 Hz to 100 kHz, 30 points a decade
     static let frequencies = FrequencySweep.logarithmic(from: 10, to: 100_000, pointsPerDecade: 30)
@@ -326,6 +336,23 @@ final class ResponseCache {
         var note: String?
 
         var peak: Int? { gains.indices.max { gains[$0] < gains[$1] } }
+
+        /// Where the gain first crosses 3 dB below the peak, interpolated on the log-frequency scale
+        var corner: Double? {
+            guard let peak else { return nil }
+            let level = gains[peak] - 3
+            for k in 1..<max(1, gains.count) where (gains[k - 1] < level) != (gains[k] < level) {
+                let f = (gains[k - 1] - level) / (gains[k - 1] - gains[k])
+                return ResponseCache.frequencies[k - 1] * pow(ResponseCache.frequencies[k] / ResponseCache.frequencies[k - 1], f)
+            }
+            return nil
+        }
+
+        /// Whether the peak stands out from both ends, as a resonance does, rather than being a flat passband
+        var hasResonance: Bool {
+            guard let peak, let first = gains.first, let last = gains.last else { return false }
+            return gains[peak] > max(first, last) + 0.5
+        }
     }
 
     private struct Key: Equatable {
@@ -334,6 +361,10 @@ final class ResponseCache {
         var minus: Int
     }
 
+    /// The quiet copy, the circuit it was given, and how much longer it needs to settle (in circuit time)
+    private var shadow: Simulator?
+    private var shadowCircuit: Circuit?
+    private var unsettled = 0.0
     private var model: SmallSignalModel?
     private var key: Key?
     private var checked = Date.distantPast
@@ -342,14 +373,33 @@ final class ResponseCache {
     func update(_ simulator: Simulator, elementID: UUID, sourceID: UUID?) -> Response {
         guard Date().timeIntervalSince(checked) >= 0.18 else { return response }
         checked = Date()
-        let elements = simulator.circuit.elements
-        guard let sourceID, let input = elements.firstIndex(where: { $0.id == sourceID }) else {
+        let circuit = simulator.circuit
+        guard let sourceID, let input = circuit.elements.firstIndex(where: { $0.id == sourceID }) else {
             return set(Response(note: "Add a source to drive the circuit from"))
         }
-        guard let index = elements.firstIndex(where: { $0.id == elementID }), let (plus, minus) = simulator.acrossNodes(index) else {
-            return set(Response(note: "This part has no voltage to plot"))
+        guard let index = circuit.elements.firstIndex(where: { $0.id == elementID }) else { return response }
+        var quiet = Simulator.quiet(circuit, holding: input)
+        quiet.scopes = []
+        if quiet != shadowCircuit {
+            let settling = Simulator.settling(quiet)
+            if let shadow {
+                // keeps the state of the parts that remain, so a turned knob settles from where it was
+                shadow.load(quiet)
+                shadow.setTimeStep(settling.timeStep)
+            } else {
+                shadow = Simulator(circuit: quiet, timeStep: settling.timeStep)
+            }
+            shadowCircuit = quiet
+            unsettled = max(settling.duration, 10 * settling.timeStep)
         }
-        guard let model = simulator.smallSignalModel() else { return set(Response(note: "Nothing to show while the circuit can't be solved")) }
+        guard let shadow else { return response }
+        if unsettled > 0 {
+            // a slice of the settling at a time, so the window stays responsive: the curve moves to where it settles
+            let progress = shadow.advance(by: unsettled, deadline: ProcessInfo.processInfo.systemUptime + 0.01)
+            unsettled -= progress.simulatedTime
+        }
+        guard let (plus, minus) = shadow.acrossNodes(index) else { return set(Response(note: "This part has no voltage to plot")) }
+        guard let model = shadow.smallSignalModel() else { return set(Response(note: "Nothing to show while the circuit can't be solved")) }
         let key = Key(input: input, plus: plus, minus: minus)
         if model == self.model && key == self.key { return response }
         self.model = model
@@ -421,7 +471,8 @@ private struct ResponsePlot: View {
         // gain: a span of 20 to 80 dB, in steps of 10 or 20
         let top = ((peak + 2) / 10).rounded(.up) * 10
         let bottom = min(top - 20, max(((floor - 2) / 10).rounded(.down) * 10, top - 80))
-        let y: (Double) -> CGFloat = { plot.maxY - CGFloat((min(max($0, bottom), top) - bottom) / (top - bottom)) * plot.height }
+        // (not clamped: the curve runs off the plot where it falls below it, rather than along its floor)
+        let y: (Double) -> CGFloat = { plot.maxY - CGFloat((max($0, bottom - 1000) - bottom) / (top - bottom)) * plot.height }
         let step = top - bottom > 40 ? 20.0 : 10.0
         var level = top
         while level >= bottom - 0.001 {
@@ -429,7 +480,7 @@ private struct ResponsePlot: View {
             line.move(to: CGPoint(x: plot.minX, y: y(level)))
             line.addLine(to: CGPoint(x: plot.maxX, y: y(level)))
             context.stroke(line, with: .color(level == 0 ? Color.secondary.opacity(0.5) : grid), lineWidth: 1)
-            context.draw(Text(String(format: "%+.0f dB", level)).font(labelFont).foregroundStyle(gainColor),
+            context.draw(Text(String(format: "%+.0f dB", level + 0)).font(labelFont).foregroundStyle(gainColor),
                          at: CGPoint(x: plot.minX - 6, y: y(level)), anchor: .trailing)
             level -= step
         }
@@ -442,9 +493,9 @@ private struct ResponsePlot: View {
             (phaseLow, phaseHigh) = (middle - 90, middle + 90)
         }
         let yPhase: (Double) -> CGFloat = { plot.maxY - CGFloat(($0 - phaseLow) / (phaseHigh - phaseLow)) * plot.height }
-        context.draw(Text(String(format: "%.0f°", phaseHigh)).font(labelFont).foregroundStyle(phaseColor),
+        context.draw(Text(String(format: "%.0f°", phaseHigh + 0)).font(labelFont).foregroundStyle(phaseColor),
                      at: CGPoint(x: plot.maxX + 6, y: plot.minY), anchor: .leading)
-        context.draw(Text(String(format: "%.0f°", phaseLow)).font(labelFont).foregroundStyle(phaseColor),
+        context.draw(Text(String(format: "%.0f°", phaseLow + 0)).font(labelFont).foregroundStyle(phaseColor),
                      at: CGPoint(x: plot.maxX + 6, y: plot.maxY), anchor: .leading)
 
         var phaseLine = Path()

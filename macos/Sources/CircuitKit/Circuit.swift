@@ -29,8 +29,8 @@ public enum ScopePlot: String, Codable, Sendable {
     case time
     /// Current against voltage: the I–V curve, e.g. a memristor's pinched hysteresis loop
     case currentVersusVoltage
-    /// The voltage's gain and phase against frequency for small signals from a source (a Bode plot), around what the
-    /// circuit is doing now
+    /// The voltage's gain and phase against frequency for small signals from a source (a Bode plot), around the
+    /// circuit's operating point with that source held still
     case frequencyResponse
 }
 

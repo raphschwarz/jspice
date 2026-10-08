@@ -245,22 +245,41 @@ public enum FrequencySweep {
 }
 
 extension Simulator {
+    /// The circuit with the source at `holding` held still, for finding the operating point a sweep linearises around:
+    /// an AC source at its offset, a square wave at its low level, noise silent
+    public static func quiet(_ circuit: Circuit, holding source: Int?) -> Circuit {
+        var quiet = circuit
+        guard let source, source < quiet.elements.count else { return quiet }
+        switch quiet.elements[source].kind {
+        case .acVoltage, .noiseVoltage:
+            quiet.elements[source][param: "amplitude"] = 0
+        case .squareVoltage:
+            quiet.elements[source][param: "high"] = quiet.elements[source][param: "low"]
+        default:
+            break
+        }
+        return quiet
+    }
+
+    /// How long the circuit takes to settle from rest (five of its slowest time constants, its sources' own periods
+    /// left out) and a time step to settle it with
+    public static func settling(_ circuit: Circuit) -> (duration: Double, timeStep: Double) {
+        var still = circuit
+        still.elements.removeAll { $0.kind == .acVoltage || $0.kind == .squareVoltage || $0.kind == .noiseVoltage }
+        return (5 * (Pacing.slowestTimeScale(of: still) ?? 0), Pacing.suggest(for: still).timeStep)
+    }
+
     /// A simulator that has run the circuit from rest until it settles, for small-signal analysis around where it comes
-    /// to rest: the source at `holding` (the one a sweep will drive) is held still, an AC source at its offset. The
-    /// run lasts `duration`, by default five times the circuit's slowest time constant, in at most `maxSteps` steps.
+    /// to rest: the source at `holding` (the one a sweep will drive) is held still (see `quiet`). The run lasts
+    /// `duration`, by default five times the circuit's slowest time constant, in at most `maxSteps` steps.
     public static func settled(_ circuit: Circuit, holding source: Int?, duration: Double? = nil,
                                maxSteps: Int = 1_000_000) -> Simulator {
-        var quiet = circuit
-        if let source, source < quiet.elements.count, quiet.elements[source].kind == .acVoltage {
-            quiet.elements[source][param: "amplitude"] = 0
-        }
-        // how long it takes to settle, from the circuit without its sources' own periods
-        var still = quiet
-        still.elements.removeAll { $0.kind == .acVoltage || $0.kind == .squareVoltage || $0.kind == .noiseVoltage }
-        let length = max(duration ?? 5 * (Pacing.slowestTimeScale(of: still) ?? 0), 0)
-        var timeStep = Pacing.suggest(for: still).timeStep
+        let held = Self.quiet(circuit, holding: source)
+        let estimate = Self.settling(held)
+        let length = max(duration ?? estimate.duration, 0)
+        var timeStep = estimate.timeStep
         if length / timeStep > Double(maxSteps) { timeStep = length / Double(maxSteps) }
-        let simulator = Simulator(circuit: quiet, timeStep: timeStep)
+        let simulator = Simulator(circuit: held, timeStep: timeStep)
         let steps = max(10, Int((length / timeStep).rounded(.up)))
         for _ in 0..<steps where !simulator.isFailed { simulator.step() }
         return simulator
