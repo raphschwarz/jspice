@@ -418,6 +418,9 @@ final class ResponseCache {
     private var spreadCircuit: Circuit?
     private var spreadTask: Task<Void, Never>?
 
+    /// A scope removed or replaced stops working out its spread
+    deinit { spreadTask?.cancel() }
+
     func update(_ simulator: Simulator, elementID: UUID, sourceID: UUID?, spread wanted: Bool = false) -> Response {
         if !wanted && spreadCircuit != nil {
             spreadTask?.cancel()
@@ -491,7 +494,7 @@ final class ResponseCache {
                 }
             }
             guard !Task.isCancelled, low.allSatisfy(\.isFinite) else { return }
-            await MainActor.run { [weak self] in
+            await MainActor.run { [weak self, low, high] in
                 guard let self, self.spreadCircuit == quiet else { return }
                 self.spread = (low, high)
             }

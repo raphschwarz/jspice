@@ -509,6 +509,21 @@ public final class Simulator {
         }
     }
 
+    /// Copies into an array of the same size in place. Simply assigning would share the other simulator's storage, and
+    /// that one (the sound's, on its own thread) would then have to copy it at its next step.
+    @inline(__always) static func adopt<T>(_ target: inout [T], _ source: [T]) {
+        guard target.count == source.count else {
+            target = source
+            return
+        }
+        target.withUnsafeMutableBufferPointer { target in
+            source.withUnsafeBufferPointer { source in
+                guard let to = target.baseAddress, let from = source.baseAddress else { return }
+                to.update(from: from, count: source.count)
+            }
+        }
+    }
+
     /// Takes on the state of another simulator running the same circuit: its time and time step, solution, every
     /// element's state and its scope traces. The app's sound runs a second simulator on its own thread, and the window's
     /// simulator follows it this way to show what it is doing.
@@ -521,27 +536,27 @@ public final class Simulator {
             delayHistory = [:]
         }
         if digitalState != other.digitalState { matrixIsCurrent = false }
-        x = other.x
-        capacitorVoltage = other.capacitorVoltage
-        capacitorVoltagePrevious = other.capacitorVoltagePrevious
-        capacitorVoltageOlder = other.capacitorVoltageOlder
-        capacitorCurrent = other.capacitorCurrent
-        inductorVoltage = other.inductorVoltage
-        inductorCurrent = other.inductorCurrent
-        inductorCurrentPrevious = other.inductorCurrentPrevious
-        inductorCurrentOlder = other.inductorCurrentOlder
+        Self.adopt(&x, other.x)
+        Self.adopt(&capacitorVoltage, other.capacitorVoltage)
+        Self.adopt(&capacitorVoltagePrevious, other.capacitorVoltagePrevious)
+        Self.adopt(&capacitorVoltageOlder, other.capacitorVoltageOlder)
+        Self.adopt(&capacitorCurrent, other.capacitorCurrent)
+        Self.adopt(&inductorVoltage, other.inductorVoltage)
+        Self.adopt(&inductorCurrent, other.inductorCurrent)
+        Self.adopt(&inductorCurrentPrevious, other.inductorCurrentPrevious)
+        Self.adopt(&inductorCurrentOlder, other.inductorCurrentOlder)
         (substepLevel, lastLevel, olderLevel) = (other.substepLevel, other.lastLevel, other.olderLevel)
-        memristorStates = other.memristorStates
-        limitedVoltage = other.limitedVoltage
-        limitedVoltage2 = other.limitedVoltage2
-        limitedVoltage3 = other.limitedVoltage3
-        junctionCharge = other.junctionCharge
-        junctionChargePrevious = other.junctionChargePrevious
-        junctionCurrent = other.junctionCurrent
-        digitalState = other.digitalState
+        Self.adopt(&memristorStates, other.memristorStates)
+        Self.adopt(&limitedVoltage, other.limitedVoltage)
+        Self.adopt(&limitedVoltage2, other.limitedVoltage2)
+        Self.adopt(&limitedVoltage3, other.limitedVoltage3)
+        Self.adopt(&junctionCharge, other.junctionCharge)
+        Self.adopt(&junctionChargePrevious, other.junctionChargePrevious)
+        Self.adopt(&junctionCurrent, other.junctionCurrent)
+        Self.adopt(&digitalState, other.digitalState)
         if logicStates != other.logicStates { matrixIsCurrent = false }
-        logicStates = other.logicStates
-        moduleStates = other.moduleStates
+        Self.adopt(&logicStates, other.logicStates)
+        Self.adopt(&moduleStates, other.moduleStates)
         for (i, chip) in chips {
             guard let source = other.chips[i] else { continue }
             chip.adopt(source)
@@ -551,7 +566,7 @@ public final class Simulator {
             }
             chipCycleCarry[i] = other.chipCycleCarry[i]
         }
-        noiseState = other.noiseState
+        Self.adopt(&noiseState, other.noiseState)
         convergenceFailures = other.convergenceFailures
         isFailed = other.isFailed
         problems = other.problems
@@ -3073,16 +3088,16 @@ public final class ScopeTrace {
 
     /// Copies another trace's history
     func adopt(_ other: ScopeTrace) {
-        minimums = other.minimums
-        maximums = other.maximums
+        Simulator.adopt(&minimums, other.minimums)
+        Simulator.adopt(&maximums, other.maximums)
         lastValue = other.lastValue
-        voltages = other.voltages
-        currents = other.currents
+        Simulator.adopt(&voltages, other.voltages)
+        Simulator.adopt(&currents, other.currents)
         lastVoltage = other.lastVoltage
         bucketStart = other.bucketStart
         bucketMin = other.bucketMin
         bucketMax = other.bucketMax
-        ring = other.ring
+        Simulator.adopt(&ring, other.ring)
         ringNext = other.ringNext
         ringCount = other.ringCount
         nextTick = other.nextTick

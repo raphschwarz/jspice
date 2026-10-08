@@ -63,16 +63,55 @@ final class SimulationController: ObservableObject {
     }
 
     func load(_ circuit: Circuit) {
+        // a turned knob or a typed value only needs the new values; anything else, a new circuit
+        let quick = simulator.updateParameters(circuit)
+        if !quick {
+            // a part being dragged changes the circuit at every mouse move: rebuild at most every 50 ms while it keeps
+            // changing, and once more for where it ends
+            let now = CACurrentMediaTime()
+            let wait = lastRebuild + Self.rebuildInterval - now
+            if wait > 0 {
+                pendingLoad = circuit
+                if !loadScheduled {
+                    loadScheduled = true
+                    scheduleLoad(after: wait)
+                }
+                return
+            }
+            lastRebuild = now
+        }
+        pendingLoad = nil
         findSpeaker(in: circuit)
         applySettings(of: circuit)
-        // a turned knob or a typed value only needs the new values; anything else, a new circuit
-        if !simulator.updateParameters(circuit) { simulator.load(circuit) }
+        if !quick { simulator.load(circuit) }
         simulator.configureScopes(window: speed * Self.scopeSpan)
         if let renderer, let speaker = speakerIndex {
-            renderer.load(circuit, speaker: speaker, fullScale: circuit.elements[speaker][param: "fullScale"],
-                          scopeWindow: Self.scopeSpan)
+            if renderer.wantedInput != AudioRenderer.wantsInput(circuit) {
+                // the live input was switched on or off: the sound starts again with or without it
+                restartSound()
+            } else {
+                renderer.load(circuit, speaker: speaker, fullScale: circuit.elements[speaker][param: "fullScale"],
+                              scopeWindow: Self.scopeSpan)
+            }
         }
         publish()
+    }
+
+    /// The latest circuit waiting to be loaded while rebuilds are spaced out
+    private var pendingLoad: Circuit?
+    private var loadScheduled = false
+    private var lastRebuild: CFTimeInterval = 0
+    private static let rebuildInterval: CFTimeInterval = 0.05
+
+    private func scheduleLoad(after wait: CFTimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.loadScheduled = false
+                guard let circuit = self.pendingLoad else { return }
+                self.load(circuit)
+            }
+        }
     }
 
     private func findSpeaker(in circuit: Circuit) {

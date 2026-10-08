@@ -625,8 +625,10 @@ struct CircuitInspector: View {
                 LabeledContent("Temperature") {
                     HStack(spacing: 4) {
                         Slider(value: Binding(get: { settings.temperature }, set: { celsius in
-                            editor.updateSettings { $0.temperature = celsius.rounded() }
-                        }), in: -40...125)
+                            editor.updateSettingsDuringInteraction { $0.temperature = celsius.rounded() }
+                        }), in: -40...125, onEditingChanged: { editing in
+                            if !editing { editor.endInteraction("Change Temperature") }
+                        })
                         .frame(maxWidth: 110)
                         Text(String(format: "%.0f °C", settings.temperature))
                             .monospacedDigit()

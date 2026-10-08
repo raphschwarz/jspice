@@ -57,6 +57,8 @@ extension EditorState {
         panel.allowedContentTypes = [.pdf, .png, .jpeg, .heic, .tiff, .image]
         panel.message = "Choose a schematic: a photo or scan of a drawing, or a PDF. Claude reads it into a circuit you can simulate."
         guard panel.runModal() == .OK, let url = panel.url, let key = APIKeyStore.ask() else { return }
+        // a new drawing replaces one still being read
+        captureTask?.cancel()
         captureStatus = "Reading the page…"
         let status: @Sendable (String) -> Void = { [weak self] text in
             Task { @MainActor in if self?.captureTask != nil { self?.captureStatus = text } }

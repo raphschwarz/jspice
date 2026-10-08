@@ -380,7 +380,7 @@ private struct PanelLamp: View {
     let color: LEDColor
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30)) { _ in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !simulation.isRunning)) { _ in
             // (a lamp inside a block is a part of the simulation's flattened circuit)
             let index = simulation.simulator.flatIndex(of: elementID)
             let brightness = index.map { simulation.simulator.brightness($0) } ?? 0
@@ -418,7 +418,7 @@ private struct LevelMeter: View {
     private let segments = 12
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30)) { _ in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !simulation.isRunning)) { _ in
             let level = simulation.outputLevel
             VStack(spacing: 2) {
                 ForEach((0..<segments).reversed(), id: \.self) { k in

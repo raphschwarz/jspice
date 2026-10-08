@@ -58,6 +58,9 @@ final class CircuitCanvasView: NSView {
         refreshLink = nil
         guard window != nil else { return }
         let link = displayLink(target: self, selector: #selector(displayRefresh(_:)))
+        // 60 frames a second is plenty to watch a circuit; at a ProMotion display's 120 the simulation and the drawing
+        // would leave the main thread no time for anything else
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
         link.add(to: .main, forMode: .common)
         refreshLink = link
         window?.makeFirstResponder(self)
@@ -88,7 +91,9 @@ final class CircuitCanvasView: NSView {
     }
 
     @objc private func displayRefresh(_ link: CADisplayLink) {
-        editor.simulation.tick(at: link.timestamp)
+        // simulate for at most half a frame, leaving the rest for drawing and events
+        let frame = link.targetTimestamp - link.timestamp
+        editor.simulation.tick(at: link.timestamp, budget: frame > 0 ? min(0.010, 0.5 * frame) : 0.010)
         if editor.simulation.isRunning || drag != nil { needsDisplay = true }
     }
 

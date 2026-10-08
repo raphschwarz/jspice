@@ -678,6 +678,14 @@ final class EditorState: ObservableObject {
         edit("Change Simulation Settings") { change(&$0.settings) }
     }
 
+    /// Changes a setting from a slider: the whole drag becomes one undo step in `endInteraction`
+    func updateSettingsDuringInteraction(_ change: (inout SimulationSettings) -> Void) {
+        beginInteraction()
+        var next = circuit
+        change(&next.settings)
+        setDuringInteraction(next)
+    }
+
     func load(_ example: Example) {
         edit("Open \(example.title)") { $0 = example.circuit }
         selection = []

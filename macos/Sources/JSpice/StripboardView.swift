@@ -52,11 +52,17 @@ struct StripboardView: View {
             }
         }
         .task(id: circuit) {
+            // a knob turned or a note played changes the circuit many times a second: lay out the board once it rests
+            if layout != nil { try? await Task.sleep(for: .milliseconds(150)) }
+            guard !Task.isCancelled else { return }
             let circuit = circuit
-            let result = await Task.detached(priority: .userInitiated) { () -> (Stripboard.Layout, [String]) in
+            let job = Task.detached(priority: .userInitiated) { () -> (Stripboard.Layout, [String]) in
                 let layout = Stripboard.layout(circuit)
                 return (layout, Stripboard.verify(layout))
-            }.value
+            }
+            let result = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
+            // a newer circuit's layout is on its way: this one is out of date
+            guard !Task.isCancelled else { return }
             layout = result.0
             problems = result.1
         }

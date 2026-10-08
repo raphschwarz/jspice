@@ -32,6 +32,13 @@ final class AudioRenderer: @unchecked Sendable {
     private let output: AudioOutput
     /// Whether an audio input part plays the Mac's live input
     private let liveInput: Bool
+    /// Whether the circuit asked for the live input when the sound started (it may not have been available)
+    let wantedInput: Bool
+
+    /// Whether `circuit` has an audio input part set to the Mac's live input
+    static func wantsInput(_ circuit: Circuit) -> Bool {
+        circuit.flattened().elements.contains { $0.kind == .audioInput && $0[param: "input"] >= 0.5 }
+    }
     /// Sound queued ahead of the speaker: enough to ride out a busy moment, short enough to answer a knob quickly
     private let latency = 0.05
     /// Samples made between letting go of the simulator
@@ -64,7 +71,8 @@ final class AudioRenderer: @unchecked Sendable {
     /// Starts playing from where `display` is; nil if there is no sound output
     init?(continuing display: Simulator, speaker: Int, fullScale: Double, scopeWindow: Double, paused: Bool) {
         output = AudioOutput()
-        let wantsInput = display.circuit.flattened().elements.contains { $0.kind == .audioInput && $0[param: "input"] >= 0.5 }
+        let wantsInput = Self.wantsInput(display.circuit)
+        wantedInput = wantsInput
         guard output.start(input: wantsInput) else { return nil }
         liveInput = wantsInput && output.inputSampleRate > 0
         simulator = Simulator(circuit: display.circuit, timeStep: 1 / output.sampleRate)
@@ -215,7 +223,7 @@ final class AudioRenderer: @unchecked Sendable {
         }
         let now = ProcessInfo.processInfo.systemUptime
         windowBusy += now - started
-        shared.withLock { $0.peak = max($0.peak, peak) }
+        shared.withLock { [peak] in $0.peak = max($0.peak, peak) }
         output.write(chunk[0..<produced])
         if failed {
             // nothing to measure until the circuit is changed or reset
@@ -252,7 +260,7 @@ final class AudioRenderer: @unchecked Sendable {
                 let timeStep = 1 / (rate * Double(oversampling))
                 lock.withLock { simulator.setTimeStep(timeStep) }
             }
-            shared.withLock { $0.achieved = $0.achieved * 0.5 + ratio * 0.5 }
+            shared.withLock { [ratio] in $0.achieved = $0.achieved * 0.5 + ratio * 0.5 }
             restartWindow(at: now)
         }
         return true

@@ -505,7 +505,7 @@ enum SymbolRenderer {
         // the tag: a box with a point towards the terminal, sized to the name, always upright
         let text = name.isEmpty ? "?" : name
         let size = max(5, 0.62 * u)
-        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, size, nil)
+        let font = Self.font(size: size, bold: true)
         let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
         ]))
@@ -1284,10 +1284,25 @@ enum SymbolRenderer {
         ctx.restoreGState()
     }
 
+    /// Fonts by size, made once: every label is drawn at every frame, and making a font each time is slow
+    private static let fonts: NSCache<NSString, CTFont> = {
+        let cache = NSCache<NSString, CTFont>()
+        cache.countLimit = 200
+        return cache
+    }()
+
+    static func font(size: CGFloat, bold: Bool) -> CTFont {
+        let key = "\(bold ? "b" : "r")\(size)" as NSString
+        if let font = fonts.object(forKey: key) { return font }
+        let font = CTFontCreateWithName((bold ? "Helvetica-Bold" : "Helvetica") as CFString, size, nil)
+        fonts.setObject(font, forKey: key)
+        return font
+    }
+
     /// Draws upright text centred vertically on `point`; `anchor` 0 puts the text's start at the point, 1 its end
     static func drawText(_ text: String, at point: CGPoint, size: CGFloat, color: RGBA, anchor: CGFloat, bold: Bool = false,
                          in ctx: CGContext) {
-        let font = CTFontCreateWithName((bold ? "Helvetica-Bold" : "Helvetica") as CFString, size, nil)
+        let font = Self.font(size: size, bold: bold)
         let attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color.cgColor,

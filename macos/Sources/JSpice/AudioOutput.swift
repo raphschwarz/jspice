@@ -18,7 +18,9 @@ final class AudioOutput {
     private let ring: OSAllocatedUnfairLock<Ring>
     private(set) var sampleRate: Double = 48_000
     /// Sound taken from the Mac's input, for audio input parts set to the live input
-    private var inputRing: OSAllocatedUnfairLock<Ring>?
+    /// Set and cleared on the main thread while the sound thread reads it, so the reference is held under a lock too
+    private let inputRing = OSAllocatedUnfairLock<OSAllocatedUnfairLock<Ring>?>(initialState: nil)
+    private var tapInstalled = false
     private(set) var inputSampleRate: Double = 0
     /// Called on the main thread when the output device or its format changes, which stops the engine
     var onConfigurationChange: (() -> Void)?
@@ -81,7 +83,8 @@ final class AudioOutput {
         guard format.sampleRate > 0, format.channelCount > 0 else { return }
         inputSampleRate = format.sampleRate
         let ring = OSAllocatedUnfairLock(initialState: Ring(samples: Array(repeating: 0, count: Int(format.sampleRate))))
-        inputRing = ring
+        inputRing.withLock { $0 = ring }
+        tapInstalled = true
         let channels = Int(format.channelCount)
         node.installTap(onBus: 0, bufferSize: 512, format: format) { buffer, _ in
             guard let data = buffer.floatChannelData else { return }
@@ -106,7 +109,7 @@ final class AudioOutput {
     /// The next `count` samples of input, at `inputSampleRate`: the last one repeated if the input has fallen behind,
     /// and older ones skipped if it has run more than 50 ms ahead, so the delay stays short
     func readInput(_ count: Int) -> [Float] {
-        guard let inputRing, count > 0 else { return [] }
+        guard count > 0, let inputRing = inputRing.withLock({ $0 }) else { return [] }
         let ahead = Int(0.05 * inputSampleRate)
         return inputRing.withLock { state in
             let size = state.samples.count
@@ -129,8 +132,9 @@ final class AudioOutput {
     }
 
     func stop() {
-        if inputRing != nil { engine.inputNode.removeTap(onBus: 0) }
-        inputRing = nil
+        if tapInstalled { engine.inputNode.removeTap(onBus: 0) }
+        tapInstalled = false
+        inputRing.withLock { $0 = nil }
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
         engine.stop()
