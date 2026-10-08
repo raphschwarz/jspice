@@ -184,3 +184,63 @@ final class SchematicCaptureTests: XCTestCase {
         print("Captured \(capture.circuit.elements.count) elements in \(capture.attempts) turns; notes: \(capture.notes)")
     }
 }
+
+/// The score a capture gets against the circuit the drawing shows
+final class CaptureScoreTests: XCTestCase {
+    private func parts(_ circuit: Circuit) -> [NetlistPart] { CaptureScore.netlist(circuit) }
+
+    func testAPerfectReadingScoresOne() throws {
+        let truth = try XCTUnwrap(Examples.example("opamp")?.circuit)
+        let score = CaptureScore.compare(truth, to: truth)
+        XCTAssertEqual(score.found, score.parts)
+        XCTAssertEqual(score.extra, 0)
+        XCTAssertEqual(score.values, score.valued)
+        XCTAssertEqual(score.connections, 1, accuracy: 1e-12)
+        XCTAssertTrue(score.mistakes.isEmpty, "\(score.mistakes)")
+    }
+
+    func testNetNamesAndResistorEndsDoNotMatter() throws {
+        let truth = parts(try XCTUnwrap(Examples.example("fuzz")?.circuit))
+        // every net renamed, every resistor read the other way round, the parts in another order
+        var read = truth.reversed().map { part -> NetlistPart in
+            var part = part
+            part.connections = part.connections.mapValues { $0 == "GND" ? "GND" : "net_" + $0 }
+            if part.kind == .resistor, let a = part.connections["a"], let b = part.connections["b"] {
+                part.connections = ["a": b, "b": a]
+            }
+            return part
+        }
+        XCTAssertEqual(CaptureScore.compare(read, to: truth).connections, 1, accuracy: 1e-12)
+        // names lost: matched by kind and value instead
+        read = read.enumerated().map { k, part in
+            var part = part
+            part.name = "X\(k)"
+            return part
+        }
+        let unnamed = CaptureScore.compare(read, to: truth)
+        XCTAssertEqual(unnamed.found, unnamed.parts)
+        // look-alike parts (two transistors) may swap: most connections still agree
+        XCTAssertGreaterThan(unnamed.connections, 0.5)
+    }
+
+    func testMistakesLowerTheScore() throws {
+        let truth = parts(try XCTUnwrap(Examples.example("opamp")?.circuit))
+        var read = truth
+        // one value misread, one terminal moved to another net, one part missed, one invented
+        let r = try XCTUnwrap(read.firstIndex { $0.kind == .resistor })
+        read[r].params["resistance"] = (read[r].params["resistance"] ?? 1000) * 10
+        let moved = try XCTUnwrap(read.firstIndex { $0.kind == .opAmp })
+        read[moved].connections["plus"] = "nowhere"
+        let other = try XCTUnwrap(read.indices.last { read[$0].kind == .resistor && $0 != r })
+        let missed = read.remove(at: other)
+        read.append(NetlistPart(kind: .capacitor, name: "C99", params: ["capacitance": 1e-9], connections: ["a": "x", "b": "GND"]))
+        let score = CaptureScore.compare(read, to: truth)
+        XCTAssertEqual(score.found, score.parts - 1)
+        XCTAssertEqual(score.extra, 1)
+        XCTAssertEqual(score.values, score.valued - 1)
+        XCTAssertLessThan(score.connections, 1)
+        XCTAssertTrue(score.mistakes.contains { $0.contains(missed.name) && $0.contains("not found") }, "\(score.mistakes)")
+        XCTAssertTrue(score.mistakes.contains { $0.contains("C99") }, "\(score.mistakes)")
+        XCTAssertTrue(score.mistakes.contains { $0.contains("not joined") }, "\(score.mistakes)")
+    }
+}

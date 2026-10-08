@@ -115,6 +115,52 @@ if let flag = arguments.firstIndex(of: "--compile-sketch"), flag + 1 < arguments
     exit(0)
 }
 
+// --capture-eval directory: reads each drawing there (named for the example it shows: fuzz.png, lowpass.pdf) with
+// schematic capture, and scores the circuit read against the example. Needs ANTHROPIC_API_KEY.
+if let flag = arguments.firstIndex(of: "--capture-eval"), flag + 1 < arguments.count {
+    let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+    guard !key.isEmpty else {
+        log("--capture-eval needs ANTHROPIC_API_KEY")
+        exit(2)
+    }
+    let directory = URL(fileURLWithPath: arguments[flag + 1], isDirectory: true)
+    let files = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
+        .filter { ["png", "pdf", "jpg", "jpeg"].contains($0.pathExtension.lowercased()) }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    let done = DispatchSemaphore(value: 0)
+    final class Scores: @unchecked Sendable { var lines: [String] = []; var connections: [Double] = [] }
+    let scores = Scores()
+    Task.detached {
+        for file in files {
+            let id = file.deletingPathExtension().lastPathComponent
+            let name = file.lastPathComponent.padding(toLength: 24, withPad: " ", startingAt: 0)
+            guard let truth = Examples.example(id)?.circuit else {
+                scores.lines.append("\(name) no example \(id)")
+                continue
+            }
+            let started = Date()
+            do {
+                let capture = try await SchematicCapture.capture(file, key: key)
+                let score = CaptureScore.compare(capture.circuit, to: truth)
+                scores.connections.append(score.connections)
+                scores.lines.append("\(name) \(score)  \(capture.attempts) turn(s), \(Int(Date().timeIntervalSince(started))) s")
+                for mistake in score.mistakes.prefix(12) { scores.lines.append("    " + mistake) }
+                for note in capture.notes.prefix(6) { scores.lines.append("    note: " + note) }
+            } catch {
+                scores.connections.append(0)
+                scores.lines.append("\(name) failed: \(error)")
+            }
+            print(scores.lines.joined(separator: "\n"))
+            scores.lines = []
+        }
+        done.signal()
+    }
+    done.wait()
+    let mean = scores.connections.isEmpty ? 0 : scores.connections.reduce(0, +) / Double(scores.connections.count)
+    print(String(format: "mean connection score %.3f over %d drawings", mean, scores.connections.count))
+    exit(0)
+}
+
 if let flag = arguments.firstIndex(of: "--benchmark") {
     var rest = Array(arguments[(flag + 1)...])
     var seconds = 1.0

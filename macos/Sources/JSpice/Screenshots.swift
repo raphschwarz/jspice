@@ -87,10 +87,10 @@ enum ScreenshotRunner {
         Shot(name: "59-stripboard-netlist-dark", example: "netlist", dark: true, seconds: 3, board: .stripboard),
     ]
 
-    static func run(outputDirectory: String, selfTest: Bool) {
+    static func run(outputDirectory: String, selfTest: Bool, drawings: Bool = false) {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
-        let delegate = Delegate(output: URL(fileURLWithPath: outputDirectory, isDirectory: true), selfTest: selfTest)
+        let delegate = Delegate(output: URL(fileURLWithPath: outputDirectory, isDirectory: true), selfTest: selfTest, drawings: drawings)
         self.delegate = delegate
         app.delegate = delegate
         app.run()
@@ -99,10 +99,12 @@ enum ScreenshotRunner {
     private final class Delegate: NSObject, NSApplicationDelegate {
         let output: URL
         let selfTest: Bool
+        let drawings: Bool
 
-        init(output: URL, selfTest: Bool) {
+        init(output: URL, selfTest: Bool, drawings: Bool) {
             self.output = output
             self.selfTest = selfTest
+            self.drawings = drawings
         }
 
         func applicationDidFinishLaunching(_ notification: Notification) {
@@ -111,9 +113,53 @@ enum ScreenshotRunner {
                     let passed = await InteractionTest.run(screenshots: output)
                     exit(passed ? 0 : 1)
                 }
+                if drawings {
+                    await ScreenshotRunner.drawings(to: output)
+                    NSApp.terminate(nil)
+                    return
+                }
                 await ScreenshotRunner.capture(to: output)
                 NSApp.terminate(nil)
             }
+        }
+    }
+
+    /// The examples drawn for schematic capture to read back (`JSpice --render-drawings <directory>`)
+    static let drawingExamples = ["divider", "lowpass", "rc", "opamp", "blinker", "555", "dimmer", "tone", "fuzz",
+                                  "overdrive", "lfo", "vcf"]
+
+    /// Each of `drawingExamples` as its schematic alone, as a PNG and a PDF named for the example: drawings of known
+    /// circuits for `jspice-mcp --capture-eval` to score schematic capture on
+    static func drawings(to directory: URL) async {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        NSApp.appearance = NSAppearance(named: .aqua)
+        for id in drawingExamples {
+            guard var circuit = Examples.example(id)?.circuit else { continue }
+            circuit.scopes = []
+            let document = CircuitDocument(circuit: circuit)
+            let editor = EditorState(document: document)
+            editor.showCurrent = false
+            editor.showValues = true
+            editor.showPanel = false
+            editor.showInspector = false
+            let controller = NSHostingController(rootView: EditorView(document: document, editor: editor))
+            let window = NSWindow(contentViewController: controller)
+            window.styleMask = [.titled, .closable, .resizable]
+            window.setContentSize(NSSize(width: 1600, height: 1000))
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            editor.requestFit()
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            if let canvas = editor.canvas {
+                try? canvas.dataWithPDF(inside: canvas.bounds).write(to: directory.appendingPathComponent("\(id).pdf"))
+                if let rep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds) {
+                    canvas.cacheDisplay(in: canvas.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("\(id).png"))
+                }
+            }
+            window.orderOut(nil)
+            window.close()
         }
     }
 

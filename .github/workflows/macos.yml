@@ -95,6 +95,30 @@ jobs:
       - name: Render screenshots
         if: hashFiles('macos/scripts/bundle.sh') != ''
         run: ./build/JSpice.app/Contents/MacOS/JSpice --screenshots "$PWD/build/screenshots"
+      - name: Drawings for schematic capture (example schematics as PNG and PDF), read back when a key is set
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 20
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ./build/JSpice.app/Contents/MacOS/JSpice --render-drawings "$PWD/build/drawings"
+          ls build/drawings
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "No ANTHROPIC_API_KEY secret: the drawings are not read back (add one to score schematic capture)"
+          else
+            # the PNGs: a PDF of the same schematic would be read from its own text as well
+            mkdir -p build/drawings-png && cp build/drawings/*.png build/drawings-png/
+            ./build/JSpice.app/Contents/MacOS/jspice-mcp --capture-eval build/drawings-png | tee build/capture-eval.txt
+          fi
+      - name: Upload drawings
+        if: always() && hashFiles('macos/build/drawings/*.png') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-drawings
+          path: |
+            macos/build/drawings
+            macos/build/capture-eval.txt
+          if-no-files-found: ignore
       - name: Upload app
         if: hashFiles('macos/scripts/bundle.sh') != ''
         uses: actions/upload-artifact@v4

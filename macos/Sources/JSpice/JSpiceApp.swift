@@ -15,6 +15,10 @@ enum Launcher {
             ScreenshotRunner.run(outputDirectory: arguments[i + 1], selfTest: true)
             return
         }
+        if let i = arguments.firstIndex(of: "--render-drawings"), i + 1 < arguments.count {
+            ScreenshotRunner.run(outputDirectory: arguments[i + 1], selfTest: false, drawings: true)
+            return
+        }
         if let i = arguments.firstIndex(of: "--render-icon"), i + 1 < arguments.count {
             IconRenderer.writeIconSet(to: arguments[i + 1])
             return
