@@ -41,6 +41,19 @@ jobs:
           test "$(wc -l < build/mcp.txt)" -eq 4
           grep -q '"build_circuit"' build/mcp.txt
           grep -q 'frequency' build/mcp.txt
+      - name: Audio Unit validation (registers the extension, then Apple's auval checks the effect and the instrument)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        # still finding out how far a CI runner's audio system goes; its output is read until it passes reliably
+        continue-on-error: true
+        timeout-minutes: 8
+        run: |
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R "$PWD/build/JSpice.app"
+          pluginkit -a "$PWD/build/JSpice.app/Contents/PlugIns/JSpiceAudioUnit.appex"
+          pluginkit -m -v -i org.knowm.jspice.mac.audiounit || true
+          sleep 3
+          auval -a | grep -i jspc || true
+          auval -v aufx jsfx JSpc
+          auval -v aumu jsin JSpc
       - name: Simulation speed at audio rate (release build)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 5

@@ -23,6 +23,8 @@ enum ScreenshotRunner {
         var quickAdd = false
         /// The part to show the frequency response of, in place of the example's scopes
         var response: String?
+        /// The circuit as built on a board, in place of the schematic
+        var board: BoardKind = .schematic
     }
 
     static let shots: [Shot] = [
@@ -79,6 +81,10 @@ enum ScreenshotRunner {
         Shot(name: "53-response-filter-dark", example: "vcf", dark: true, seconds: 1, select: .potentiometer, response: "SPK1"),
         Shot(name: "54-response-fuzz-light", example: "fuzz", dark: false, seconds: 1, response: "SPK1"),
         Shot(name: "55-blocks-dark", example: "blocks", dark: true, seconds: 1.5, select: .block),
+        Shot(name: "56-breadboard-fuzz-light", example: "fuzz", dark: false, seconds: 3, board: .breadboard),
+        Shot(name: "57-breadboard-vcf-dark", example: "vcf", dark: true, seconds: 3, board: .breadboard),
+        Shot(name: "58-stripboard-fuzz-light", example: "fuzz", dark: false, seconds: 3, board: .stripboard),
+        Shot(name: "59-stripboard-netlist-dark", example: "netlist", dark: true, seconds: 3, board: .stripboard),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool) {
@@ -146,6 +152,7 @@ enum ScreenshotRunner {
                 editor.selection = [element.id]
             }
             editor.tool = shot.tool
+            editor.board = shot.board
 
             let controller = NSHostingController(rootView: EditorView(document: document, editor: editor))
             controller.sceneBridgingOptions = [.toolbars, .title]

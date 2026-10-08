@@ -383,6 +383,52 @@ final class EditorState: ObservableObject {
         }
     }
 
+    /// Saves the circuit where the JSpice Audio Unit finds it, as a preset of its effect or instrument
+    /// (File ▸ Export as Audio Unit)
+    func exportAudioUnit() {
+        let effect = PluginLibrary.effect(circuit) != nil, instrument = PluginLibrary.instrument(circuit) != nil
+        guard effect || instrument else {
+            let alert = NSAlert()
+            alert.messageText = "This circuit can't play in a music app yet"
+            alert.informativeText = "An Audio Unit needs a speaker to listen to, and an Audio In part (or one sine source) to take the track's sound as an effect, or keyboard sources to play notes as an instrument."
+            alert.runModal()
+            return
+        }
+        let ask = NSAlert()
+        ask.messageText = "Export as Audio Unit"
+        ask.informativeText = "The circuit appears in your music app as a preset of “JSpice: Circuit \(instrument ? "Instrument" : "Effect")”, its knobs and switches as the plugin's parameters. Name:"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = canvas?.window?.title ?? "Circuit"
+        ask.accessoryView = field
+        ask.addButton(withTitle: "Export")
+        ask.addButton(withTitle: "Cancel")
+        guard ask.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.replacingOccurrences(of: "/", with: "-").trimmingCharacters(in: .whitespaces)
+        let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(PluginLibrary.folder, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let url = folder.appendingPathComponent((name.isEmpty ? "Circuit" : name) + ".jspice")
+            try JSONEncoder().encode(circuit).write(to: url)
+            // let the system know about the extension inside this copy of the app
+            if let plugIn = Bundle.main.builtInPlugInsURL?.appendingPathComponent("JSpiceAudioUnit.appex"),
+               FileManager.default.fileExists(atPath: plugIn.path) {
+                let register = Process()
+                register.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+                register.arguments = ["-a", plugIn.path]
+                try? register.run()
+            }
+            let done = NSAlert()
+            done.messageText = "Exported “\(url.deletingPathExtension().lastPathComponent)”"
+            done.informativeText = "In your music app (Logic, GarageBand, Ableton Live, …), add the Audio Unit “JSpice: Circuit \(instrument ? "Instrument" : "Effect")” and choose this circuit from its presets or its window. Circuits are kept in ~/\(PluginLibrary.folder)."
+            done.runModal()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "The circuit couldn't be exported"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
     /// Renders the circuit's speaker to a WAV file, offline, for as long as asked (File ▸ Export Sound)
     func exportSound() {
         guard let speaker = circuit.elements.firstIndex(where: { $0.kind == .speaker }) else {

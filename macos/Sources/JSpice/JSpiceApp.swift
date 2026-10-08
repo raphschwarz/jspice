@@ -95,6 +95,8 @@ struct CircuitCommands: Commands {
                 .disabled(editor == nil)
             Button("Export Sound…") { editor?.exportSound() }
                 .disabled(editor == nil)
+            Button("Export as Audio Unit…") { editor?.exportAudioUnit() }
+                .disabled(editor == nil)
             Divider()
             Button("Import SPICE Netlist…") { editor?.importSpice() }
                 .disabled(editor == nil)

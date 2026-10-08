@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .executable(name: "JSpice", targets: ["JSpice"]),
         .executable(name: "jspice-mcp", targets: ["jspice-mcp"]),
+        .executable(name: "JSpiceAudioUnit", targets: ["JSpiceAudioUnit"]),
         .library(name: "CircuitKit", targets: ["CircuitKit"]),
         .library(name: "JSpiceAutomation", targets: ["JSpiceAutomation"]),
     ],
@@ -21,6 +22,10 @@ let package = Package(
         .target(name: "JSpiceAutomation", dependencies: ["CircuitKit"]),
         // The MCP server on standard input and output.
         .executableTarget(name: "jspice-mcp", dependencies: ["JSpiceAutomation", "CircuitKit"]),
+        // The Audio Unit (an app extension inside the app): a circuit as an effect or instrument in any music app. Its
+        // process starts in NSExtensionMain, which loads the principal class named in its Info.plist.
+        .executableTarget(name: "JSpiceAudioUnit", dependencies: ["CircuitKit"],
+                          linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
         // The macOS app.
         .executableTarget(name: "JSpice", dependencies: ["CircuitKit", "JSpiceAutomation"]),
         .testTarget(name: "CircuitKitTests", dependencies: ["CircuitKit"], resources: [.copy("Fixtures")]),

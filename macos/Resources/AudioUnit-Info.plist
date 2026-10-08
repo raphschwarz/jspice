@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>JSpice Audio Unit</string>
+    <key>CFBundleDisplayName</key>
+    <string>JSpice Audio Unit</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.knowm.jspice.mac.audiounit</string>
+    <key>CFBundleExecutable</key>
+    <string>JSpiceAudioUnit</string>
+    <key>CFBundlePackageType</key>
+    <string>XPC!</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.AudioUnit-UI</string>
+        <key>NSExtensionPrincipalClass</key>
+        <string>JSpiceAudioUnitViewController</string>
+        <key>NSExtensionAttributes</key>
+        <dict>
+            <key>AudioComponents</key>
+            <array>
+                <dict>
+                    <key>name</key>
+                    <string>JSpice: Circuit Effect</string>
+                    <key>description</key>
+                    <string>A JSpice circuit with the track's sound in its audio inputs</string>
+                    <key>manufacturer</key>
+                    <string>JSpc</string>
+                    <key>type</key>
+                    <string>aufx</string>
+                    <key>subtype</key>
+                    <string>jsfx</string>
+                    <key>version</key>
+                    <integer>65536</integer>
+                    <key>sandboxSafe</key>
+                    <true/>
+                    <key>tags</key>
+                    <array>
+                        <string>Effects</string>
+                        <string>Distortion</string>
+                    </array>
+                </dict>
+                <dict>
+                    <key>name</key>
+                    <string>JSpice: Circuit Instrument</string>
+                    <key>description</key>
+                    <string>A JSpice circuit played by MIDI notes on its keyboard sources</string>
+                    <key>manufacturer</key>
+                    <string>JSpc</string>
+                    <key>type</key>
+                    <string>aumu</string>
+                    <key>subtype</key>
+                    <string>jsin</string>
+                    <key>version</key>
+                    <integer>65536</integer>
+                    <key>sandboxSafe</key>
+                    <true/>
+                    <key>tags</key>
+                    <array>
+                        <string>Synthesizer</string>
+                    </array>
+                </dict>
+            </array>
+        </dict>
+    </dict>
+</dict>
+</plist>
