@@ -79,7 +79,7 @@ final class AudioRenderer: @unchecked Sendable {
         simulator.configureScopes(window: scopeWindow)
         // the sound sets its own step by how fast the computer keeps up: substeps only where Newton-Raphson needs them
         simulator.errorControl = false
-        simulator.adoptState(of: display)
+        simulator.adoptState(of: display, delays: true)
         simulator.keyboard = display.keyboard
         self.speaker = speaker
         self.fullScale = max(fullScale, 1e-3)
@@ -149,8 +149,8 @@ final class AudioRenderer: @unchecked Sendable {
     }
 
     /// Gives the window's simulator this one's present state
-    func share(into display: Simulator) {
-        lock.withLock { display.adoptState(of: simulator) }
+    func share(into display: Simulator, delays: Bool = false) {
+        lock.withLock { display.adoptState(of: simulator, delays: delays) }
     }
 
     // MARK: - The sound thread

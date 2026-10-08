@@ -149,6 +149,9 @@ public final class CircuitProcessor {
             if !simulator.updateParameters(circuit) { simulator.load(circuit) }
         }
         if hasInput {
+            // the simulator lets go of the last block's samples first, so they are written in place (sharing them
+            // would make each block copy them on the render thread)
+            simulator.liveInput = nil
             if input.count != frames + 1 { input = [Float](repeating: 0, count: frames + 1) }
             for k in 0..<frames { input[k] = samples?[k] ?? 0 }
             input[frames] = input[max(frames - 1, 0)]

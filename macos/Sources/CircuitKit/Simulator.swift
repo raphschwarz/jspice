@@ -124,7 +124,7 @@ public final class Simulator {
 
         /// The value `steps` steps ago (fractions interpolate); before the line filled up, silence
         func value(stepsAgo steps: Double) -> Double {
-            let back = min(max(steps, 0), Double(values.count - 2))
+            let back = steps.isFinite ? min(max(steps, 0), Double(values.count - 2)) : 0
             let whole = Int(back.rounded(.down))
             let fraction = back - Double(whole)
             func at(_ k: Int) -> Double {
@@ -261,7 +261,8 @@ public final class Simulator {
     private var traces: [UUID: ScopeTrace] = [:]
 
     /// The thermal voltage kT/q at the nominal temperature, 27 °C, which the parts' parameters are given at
-    static let thermalVoltage = 0.025852
+    /// kT/q at the nominal temperature, 300.15 K
+    static let thermalVoltage = 0.0258646
     static let nominalKelvin = 300.15
     static let gmin = 1e-12
     static let maxNewtonIterations = 80
@@ -527,13 +528,18 @@ public final class Simulator {
     /// Takes on the state of another simulator running the same circuit: its time and time step, solution, every
     /// element's state and its scope traces. The app's sound runs a second simulator on its own thread, and the window's
     /// simulator follows it this way to show what it is doing.
-    public func adoptState(of other: Simulator) {
+    ///
+    /// The delay lines' histories (up to seconds of samples) are taken only with `delays`, or when the time step changes
+    /// (they are recorded at it): taking them at every frame would make the other simulator copy them at its next step.
+    public func adoptState(of other: Simulator, delays: Bool = false) {
         guard other.flat.elements.count == flat.elements.count, other.x.count == x.count else { return }
         time = other.time
         if timeStep != other.timeStep {
             timeStep = other.timeStep
             matrixIsCurrent = false
-            delayHistory = [:]
+            delayHistory = other.delayHistory
+        } else if delays {
+            delayHistory = other.delayHistory
         }
         if digitalState != other.digitalState { matrixIsCurrent = false }
         Self.adopt(&x, other.x)
@@ -627,6 +633,12 @@ public final class Simulator {
         }
         matrixIsCurrent = false
         currentsAreStale = true
+        // a simulation that failed tries again with the new values (from where it was, unless that was not finite)
+        if isFailed {
+            isFailed = false
+            problems = topology.problems
+            if x.contains(where: { !$0.isFinite }) { x = [Double](repeating: 0, count: topology.matrixSize) }
+        }
         return true
     }
 
@@ -794,8 +806,10 @@ public final class Simulator {
         let rhs = self.rhs
         if !hasNonlinear && !hasMemristor {
             guard let lu = baseLU else { fail(); return false }
-            lu.solve(rhs, into: &x)
-            if x.contains(where: { !$0.isFinite }) { fail(); return false }
+            // into a scratch vector first: a failed solve must not leave non-finite voltages behind
+            lu.solve(rhs, into: &workVector)
+            if workVector.contains(where: { !$0.isFinite }) { fail(); return false }
+            Self.copy(workVector, into: &x)
             return true
         }
         Self.copy(x, into: &savedX)
@@ -1331,7 +1345,8 @@ public final class Simulator {
             c.gain = p("scale")
             c.limit = max(p("limit"), 0.1)
         case .delayLine:
-            c.value = max(p("stages"), 1)
+            let stages = p("stages")
+            c.value = stages.isFinite ? max(stages, 1) : 1
             c.frequency = max(p("clock"), 1)
             c.slew = p("clockPerVolt")
             c.gain = p("gain")
@@ -1397,7 +1412,7 @@ public final class Simulator {
             // the bias input: one or two junctions down to the negative supply, 1 mA at 0.6 V per junction
             let drops = min(max(p("biasDrop").rounded(), 1), 2)
             c.supply = p("supply")
-            c.nvt = drops * Self.thermalVoltage
+            c.nvt = drops * vt
             c.saturation = 1e-3 / exp(drops * 0.6 / c.nvt)
             c.critical = c.nvt * log(c.nvt / (sqrt(2) * c.saturation))
             // the output clamps below the supply less the headroom, less a junction drop
@@ -1914,7 +1929,7 @@ public final class Simulator {
             case .ota:
                 let (minus, plus, output, bias) = (nodes[0], nodes[1], nodes[2], nodes[3])
                 let supply = c.supply
-                let vt = Self.thermalVoltage
+                let vt = self.vt
                 // bias input
                 let vj = limitJunction(voltage(bias) + supply, old: limitedVoltage[i], nvt: c.nvt, critical: c.critical)
                 limitedVoltage[i] = vj
@@ -2292,11 +2307,14 @@ public final class Simulator {
                 junctionChargePrevious[k] = junctionCharge[k]
                 junctionCharge[k] = q
             }
+            // at the junction voltages Newton-Raphson last stamped (the solution's, once it converged): a substep accepted
+            // without converging leaves the solution at an unlimited iterate, where exp() would store a huge charge
             switch kinds[i] {
             case .npn, .pnp:
-                let p: Double = kinds[i] == .npn ? 1 : -1
-                commit(0, p * (voltage(nodes[0]) - voltage(nodes[2])))
-                commit(1, p * (voltage(nodes[0]) - voltage(nodes[1])))
+                commit(0, limitedVoltage[i])
+                commit(1, limitedVoltage2[i])
+            case .diode, .led, .zener:
+                commit(0, limitedVoltage[i])
             default:
                 commit(0, voltage(nodes[0]) - voltage(nodes[1]))
             }
@@ -2738,7 +2756,7 @@ public final class Simulator {
             let supply = constants[i].supply
             let bias = otaBias(i, junction: v(nodes[3]) + supply).current
             let level = constants[i].clampLevel
-            let vt = Self.thermalVoltage
+            let vt = self.vt
             let clampUp = diodeCurrent(v(nodes[2]) - level, saturation: 1e-14, nvt: vt).current
             let clampDown = diodeCurrent(-level - v(nodes[2]), saturation: 1e-14, nvt: vt).current
             let output = bias * tanh((v(nodes[1]) - v(nodes[0])) / (2 * vt)) - clampUp + clampDown

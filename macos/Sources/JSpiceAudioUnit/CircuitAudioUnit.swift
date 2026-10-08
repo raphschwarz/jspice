@@ -236,6 +236,31 @@ final class CircuitKernel: @unchecked Sendable {
         lock.withLock { processor?.controls[safe: index]?.value ?? values[safe: index] ?? 0 }
     }
 
+    /// Takes one note or parameter change; true for a note pressed (which should sound for a sample before the next event)
+    private func handle(_ e: UnsafePointer<AURenderEvent>, _ processor: CircuitProcessor) -> Bool {
+        switch e.pointee.head.eventType {
+        case .parameter, .parameterRamp:
+            let parameter = e.pointee.parameter
+            let index = Int(parameter.parameterAddress)
+            if values.indices.contains(index) { values[index] = Double(parameter.value) }
+            processor.set(index, to: Double(parameter.value))
+        case .MIDI:
+            let midi = e.pointee.MIDI
+            let status = midi.data.0 & 0xF0
+            if status == 0x90 && midi.data.2 > 0 {
+                processor.noteOn(Int(midi.data.1))
+                return true
+            } else if status == 0x80 || status == 0x90 {
+                processor.noteOff(Int(midi.data.1))
+            } else if status == 0xB0 && (midi.data.1 == 123 || midi.data.1 == 120) {
+                processor.allNotesOff()
+            }
+        default:
+            break
+        }
+        return false
+    }
+
     func render(flags: UnsafeMutablePointer<AudioUnitRenderActionFlags>, timestamp: UnsafePointer<AudioTimeStamp>,
                 frames: AUAudioFrameCount, output: UnsafeMutablePointer<AudioBufferList>,
                 events: UnsafePointer<AURenderEvent>?, pull: AURenderPullInputBlock?) -> AUAudioUnitStatus {
@@ -255,31 +280,6 @@ final class CircuitKernel: @unchecked Sendable {
             for buffer in buffers { if let data = buffer.mData { memset(data, 0, count * MemoryLayout<Float>.size) } }
             flags.pointee.insert(.unitRenderAction_OutputIsSilence)
             return noErr
-        }
-
-        // notes and parameter changes, at the start of the block
-        var event = events
-        while let e = event {
-            switch e.pointee.head.eventType {
-            case .parameter, .parameterRamp:
-                let parameter = e.pointee.parameter
-                let index = Int(parameter.parameterAddress)
-                if values.indices.contains(index) { values[index] = Double(parameter.value) }
-                processor.set(index, to: Double(parameter.value))
-            case .MIDI:
-                let midi = e.pointee.MIDI
-                let status = midi.data.0 & 0xF0
-                if status == 0x90 && midi.data.2 > 0 {
-                    processor.noteOn(Int(midi.data.1))
-                } else if status == 0x80 || status == 0x90 {
-                    processor.noteOff(Int(midi.data.1))
-                } else if status == 0xB0 && (midi.data.1 == 123 || midi.data.1 == 120) {
-                    processor.allNotesOff()
-                }
-            default:
-                break
-            }
-            event = UnsafePointer(e.pointee.head.next)
         }
 
         // the host's sound, mixed to mono
@@ -305,10 +305,33 @@ final class CircuitKernel: @unchecked Sendable {
                 input = true
             }
         }
+        // notes and parameter changes at their own sample: the block is rendered in pieces between them, so a note that
+        // starts and ends within one block still sounds, and a quick release and press retriggers
+        let start = AUEventSampleTime(timestamp.pointee.mSampleTime)
+        func offset(_ e: UnsafePointer<AURenderEvent>) -> Int {
+            Int(max(0, min(AUEventSampleTime(count), e.pointee.head.eventSampleTime - start)))
+        }
+        var event = events
+        var done = 0
         mono.withUnsafeBufferPointer { mono in
             out.withUnsafeMutableBufferPointer { out in
-                processor.process(input: input ? mono.baseAddress : nil, output: out.baseAddress!, frames: count)
+                while done < count {
+                    while let e = event, offset(e) <= done {
+                        event = UnsafePointer(e.pointee.head.next)
+                        if handle(e, processor) { break }
+                    }
+                    // at least one sample before the next event, so a note pressed is heard before its release
+                    let next = event.map { min(count, max(done + 1, offset($0))) } ?? count
+                    processor.process(input: input ? mono.baseAddress! + done : nil, output: out.baseAddress! + done,
+                                      frames: next - done)
+                    done = next
+                }
             }
+        }
+        // events past the end of the block (a host should not send them): taken now rather than lost
+        while let e = event {
+            event = UnsafePointer(e.pointee.head.next)
+            _ = handle(e, processor)
         }
         out.withUnsafeBufferPointer { out in
             for buffer in buffers {

@@ -188,6 +188,8 @@ final class SimulationController: ObservableObject {
             soundOn = true
         } else {
             renderer?.stop()
+            // the window's simulator goes on from where the sound was, echoes and delays included
+            renderer?.share(into: simulator, delays: true)
             renderer = nil
             soundOn = false
             allNotesOff()
