@@ -1020,7 +1020,8 @@
       "limit": 13.5,
       "slewRate": 13.0,
       "gbw": 3000000.0,
-      "offset": 0.001
+      "offset": 0.001,
+      "noise": 1.8e-08
      },
      "connections": {
       "minus": "inv",
@@ -1191,7 +1192,8 @@
       "limit": 13.5,
       "slewRate": 13.0,
       "gbw": 3000000.0,
-      "offset": 0.001
+      "offset": 0.001,
+      "noise": 1.8e-08
      },
      "connections": {
       "minus": "out",
@@ -2050,6 +2052,518 @@
     }
    ],
    "example": "overdrive"
+  }
+ ],
+ "noise": [
+  {
+   "id": "divider-noise",
+   "note": "two 1 k\u03a9 resistors and 1 nF: 4kT \u00b7 500 \u03a9, rolling off at 318 kHz",
+   "source": "V1",
+   "settle": 0.001,
+   "part": "R1",
+   "terminal": "b",
+   "frequencies": [
+    10.0,
+    15.8489319,
+    25.1188643,
+    39.8107171,
+    63.0957344,
+    100.0,
+    158.489319,
+    251.188643,
+    398.107171,
+    630.957344,
+    1000.0,
+    1584.89319,
+    2511.88643,
+    3981.07171,
+    6309.57344,
+    10000.0,
+    15848.9319,
+    25118.8643,
+    39810.7171,
+    63095.7344,
+    100000.0,
+    158489.319,
+    251188.643,
+    398107.171,
+    630957.344,
+    1000000.0
+   ],
+   "density": [
+    2.87817496e-09,
+    2.87817496e-09,
+    2.87817495e-09,
+    2.87817494e-09,
+    2.87817491e-09,
+    2.87817482e-09,
+    2.87817461e-09,
+    2.87817407e-09,
+    2.87817271e-09,
+    2.87816931e-09,
+    2.87816076e-09,
+    2.87813929e-09,
+    2.87808535e-09,
+    2.87794988e-09,
+    2.87760969e-09,
+    2.87675569e-09,
+    2.87461389e-09,
+    2.86925497e-09,
+    2.85592506e-09,
+    2.82324444e-09,
+    2.74586013e-09,
+    2.57646942e-09,
+    2.2594049e-09,
+    1.79737612e-09,
+    1.29637522e-09,
+    8.72992117e-10
+   ],
+   "parts": [
+    {
+     "kind": "acVoltage",
+     "name": "V1",
+     "params": {
+      "amplitude": 1,
+      "frequency": 1000
+     },
+     "connections": {
+      "plus": "in",
+      "minus": "GND"
+     }
+    },
+    {
+     "kind": "resistor",
+     "name": "R1",
+     "params": {
+      "resistance": 1000
+     },
+     "connections": {
+      "a": "in",
+      "b": "out"
+     }
+    },
+    {
+     "kind": "resistor",
+     "name": "R2",
+     "params": {
+      "resistance": 1000
+     },
+     "connections": {
+      "a": "out",
+      "b": "GND"
+     }
+    },
+    {
+     "kind": "capacitor",
+     "name": "C1",
+     "params": {
+      "capacitance": 1e-09
+     },
+     "connections": {
+      "a": "out",
+      "b": "GND"
+     }
+    }
+   ]
+  },
+  {
+   "id": "common-emitter-noise",
+   "note": "the common-emitter amplifier: shot noise of its collector and base currents",
+   "source": "VIN",
+   "settle": 0.3,
+   "part": "RC",
+   "terminal": "b",
+   "frequencies": [
+    10.0,
+    15.8489319,
+    25.1188643,
+    39.8107171,
+    63.0957344,
+    100.0,
+    158.489319,
+    251.188643,
+    398.107171,
+    630.957344,
+    1000.0,
+    1584.89319,
+    2511.88643,
+    3981.07171,
+    6309.57344,
+    10000.0,
+    15848.9319,
+    25118.8643,
+    39810.7171,
+    63095.7344,
+    100000.0,
+    158489.319,
+    251188.643,
+    398107.171,
+    630957.344,
+    1000000.0
+   ],
+   "density": [
+    9.14228328e-08,
+    9.44835015e-08,
+    9.79478385e-08,
+    1.00607493e-07,
+    1.0209587e-07,
+    1.02764091e-07,
+    1.02980641e-07,
+    1.02907528e-07,
+    1.02530162e-07,
+    1.01764616e-07,
+    1.0069464e-07,
+    9.9689805e-08,
+    9.90352774e-08,
+    9.87036669e-08,
+    9.85568699e-08,
+    9.84957903e-08,
+    9.84710331e-08,
+    9.84611018e-08,
+    9.84571259e-08,
+    9.84555141e-08,
+    9.84548038e-08,
+    9.84543494e-08,
+    9.84537375e-08,
+    9.84524114e-08,
+    9.84491644e-08,
+    9.84410431e-08
+   ],
+   "parts": [
+    {
+     "kind": "dcVoltage",
+     "name": "VCC",
+     "params": {
+      "voltage": 12
+     },
+     "connections": {
+      "plus": "vcc",
+      "minus": "GND"
+     }
+    },
+    {
+     "kind": "resistor",
+     "name": "RB1",
+     "params": {
+      "resistance": 47000
+     },
+     "connections": {
+      "a": "vcc",
+      "b": "base"
+     }
+    },
+    {
+     "kind": "resistor",
+     "name": "RB2",
+     "params": {
+      "resistance": 10000
+     },
+     "connections": {
+      "a": "base",
+      "b": "GND"
+     }
+    },
+    {
+     "kind": "resistor",
+     "name": "RC",
+     "params": {
+      "resistance": 4700
+     },
+     "connections": {
+      "a": "vcc",
+      "b": "col"
+     }
+    },
+    {
+     "kind": "resistor",
+     "name": "RE",
+     "params": {
+      "resistance": 1000
+     },
+     "connections": {
+      "a": "emi",
+      "b": "GND"
+     }
+    },
+    {
+     "kind": "capacitor",
+     "name": "CE",
+     "params": {
+      "capacitance": 1e-05
+     },
+     "connections": {
+      "a": "emi",
+      "b": "GND"
+     }
+    },
+    {
+     "kind": "npn",
+     "name": "Q1",
+     "params": {
+      "beta": 150
+     },
+     "connections": {
+      "base": "base",
+      "collector": "col",
+      "emitter": "emi"
+     }
+    },
+    {
+     "kind": "acVoltage",
+     "name": "VIN",
+     "params": {
+      "amplitude": 0.05,
+      "frequency": 1000
+     },
+     "connections": {
+      "plus": "sig",
+      "minus": "GND"
+     }
+    },
+    {
+     "kind": "capacitor",
+     "name": "CIN",
+     "params": {
+      "capacitance": 1e-06
+     },
+     "connections": {
+      "a": "sig",
+      "b": "base"
+     }
+    }
+   ]
+  },
+  {
+   "id": "jfet-noise",
+   "note": "the N-JFET stage: channel noise",
+   "source": "VG",
+   "settle": 0.001,
+   "part": "RD",
+   "terminal": "b",
+   "frequencies": [
+    10.0,
+    15.8489319,
+    25.1188643,
+    39.8107171,
+    63.0957344,
+    100.0,
+    158.489319,
+    251.188643,
+    398.107171,
+    630.957344,
+    1000.0,
+    1584.89319,
+    2511.88643,
+    3981.07171,
+    6309.57344,
+    10000.0,
+    15848.9319,
+    25118.8643,
+    39810.7171,
+    63095.7344,
+    100000.0,
+    158489.319,
+    251188.643,
+    398107.171,
+    630957.344,
+    1000000.0
+   ],
+   "density": [
+    1.2218212e-08,
+    1.2218181e-08,
+    1.22181032e-08,
+    1.22179079e-08,
+    1.22174171e-08,
+    1.22161848e-08,
+    1.22130914e-08,
+    1.2205334e-08,
+    1.21859287e-08,
+    1.21376864e-08,
+    1.20195772e-08,
+    1.17408719e-08,
+    1.11358971e-08,
+    1.00255758e-08,
+    8.47706537e-09,
+    6.9445198e-09,
+    5.85203548e-09,
+    5.24800992e-09,
+    4.96485144e-09,
+    4.84354018e-09,
+    4.79372919e-09,
+    4.77364751e-09,
+    4.76561222e-09,
+    4.76240682e-09,
+    4.7611297e-09,
+    4.76062111e-09
+   ],
+   "parts": [
+    {
+     "kind": "dcVoltage",
+     "name": "VDD",
+     "params": {
+      "voltage": 12
+     },
+     "connections": {
+      "plus": "vdd",
+      "minus": "GND"
+     }
+    },
+    {
+     "kind": "acVoltage",
+     "name": "VG",
+     "params": {
+      "amplitude": 0.5,
+      "offset": -0.75,
+      "frequency": 1000
+     },
+     "connections": {
+      "plus": "gate",
+      "minus": "GND"
+     }
+    },
+    {
+     "kind": "resistor",
+     "name": "RD",
+     "params": {
+      "resistance": 2200
+     },
+     "connections": {
+      "a": "vdd",
+      "b": "drain"
+     }
+    },
+    {
+     "kind": "resistor",
+     "name": "RL",
+     "params": {
+      "resistance": 1000
+     },
+     "connections": {
+      "a": "drain",
+      "b": "out"
+     }
+    },
+    {
+     "kind": "capacitor",
+     "name": "CL",
+     "params": {
+      "capacitance": 1e-08
+     },
+     "connections": {
+      "a": "out",
+      "b": "GND"
+     }
+    },
+    {
+     "kind": "njfet",
+     "name": "J1",
+     "params": {},
+     "connections": {
+      "gate": "gate",
+      "drain": "drain",
+      "source": "GND"
+     }
+    }
+   ]
+  },
+  {
+   "id": "diode-noise",
+   "note": "a diode carrying 0.43 mA through 10 k\u03a9: its shot noise against the resistor's",
+   "source": "V1",
+   "settle": 0.001,
+   "part": "R1",
+   "terminal": "b",
+   "frequencies": [
+    10.0,
+    15.8489319,
+    25.1188643,
+    39.8107171,
+    63.0957344,
+    100.0,
+    158.489319,
+    251.188643,
+    398.107171,
+    630.957344,
+    1000.0,
+    1584.89319,
+    2511.88643,
+    3981.07171,
+    6309.57344,
+    10000.0,
+    15848.9319,
+    25118.8643,
+    39810.7171,
+    63095.7344,
+    100000.0,
+    158489.319,
+    251188.643,
+    398107.171,
+    630957.344,
+    1000000.0
+   ],
+   "density": [
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298919e-10,
+    7.00298918e-10,
+    7.00298916e-10,
+    7.00298912e-10,
+    7.002989e-10,
+    7.00298871e-10,
+    7.00298796e-10
+   ],
+   "parts": [
+    {
+     "kind": "acVoltage",
+     "name": "V1",
+     "params": {
+      "amplitude": 1,
+      "offset": 5,
+      "frequency": 1000
+     },
+     "connections": {
+      "plus": "in",
+      "minus": "GND"
+     }
+    },
+    {
+     "kind": "resistor",
+     "name": "R1",
+     "params": {
+      "resistance": 10000
+     },
+     "connections": {
+      "a": "in",
+      "b": "a"
+     }
+    },
+    {
+     "kind": "diode",
+     "name": "D1",
+     "params": {},
+     "connections": {
+      "anode": "a",
+      "cathode": "GND"
+     }
+    }
+   ]
   }
  ]
 }

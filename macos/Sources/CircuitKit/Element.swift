@@ -587,6 +587,7 @@ extension ElementKind {
                 ParamSpec("slewRate", "Slew rate (0: unlimited)", unit: "V/µs", default: 0, range: 0...100, log: false),
                 ParamSpec("gbw", "Gain-bandwidth", unit: "Hz", default: 1e9, range: 1e4...1e10),
                 ParamSpec("offset", "Input offset", unit: "V", default: 1e-6, range: -0.01...0.01, log: false),
+                ParamSpec("noise", "Input noise voltage", unit: "V/√Hz", default: 0, range: 0...1e-6, log: false),
             ]
         case .ota:
             return [
@@ -933,15 +934,15 @@ extension ElementKind {
         case .opAmp:
             return [
                 PartModel(name: "Ideal", summary: "Very high gain and bandwidth, no slew limit",
-                          values: ["gain": 1e6, "limit": 15, "slewRate": 0, "gbw": 1e9, "offset": 1e-6]),
+                          values: ["gain": 1e6, "limit": 15, "slewRate": 0, "gbw": 1e9, "offset": 1e-6, "noise": 0]),
                 PartModel(name: "TL072", summary: "JFET input, the synth workhorse: 13 V/µs, 3 MHz",
-                          values: ["gain": 2e5, "limit": 13.5, "slewRate": 13, "gbw": 3e6, "offset": 1e-3]),
+                          values: ["gain": 2e5, "limit": 13.5, "slewRate": 13, "gbw": 3e6, "offset": 1e-3, "noise": 18e-9]),
                 PartModel(name: "LM358", summary: "Low power, slow: 0.3 V/µs, 1 MHz",
-                          values: ["gain": 1e5, "limit": 13.5, "slewRate": 0.3, "gbw": 1e6, "offset": 2e-3]),
+                          values: ["gain": 1e5, "limit": 13.5, "slewRate": 0.3, "gbw": 1e6, "offset": 2e-3, "noise": 40e-9]),
                 PartModel(name: "NE5532", summary: "Low noise audio: 9 V/µs, 10 MHz",
-                          values: ["gain": 1e5, "limit": 13, "slewRate": 9, "gbw": 10e6, "offset": 0.5e-3]),
+                          values: ["gain": 1e5, "limit": 13, "slewRate": 9, "gbw": 10e6, "offset": 0.5e-3, "noise": 5e-9]),
                 PartModel(name: "LM741", summary: "The classic: 0.5 V/µs, 1 MHz",
-                          values: ["gain": 2e5, "limit": 13, "slewRate": 0.5, "gbw": 1e6, "offset": 1e-3]),
+                          values: ["gain": 2e5, "limit": 13, "slewRate": 0.5, "gbw": 1e6, "offset": 1e-3, "noise": 20e-9]),
             ]
         case .ota:
             return [

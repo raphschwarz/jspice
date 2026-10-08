@@ -67,6 +67,8 @@ public struct SmallSignalModel: Equatable, Sendable {
         /// A ladder of one-pole stages with feedback from the last to the input (a four-pole filter chip): the stages
         /// together are T = numerator / Π (jω + pole), and the whole is drive T / (1 + drive feedback T)
         case ladder(numerator: Double, poles: [Double], drive: Double, feedback: Double)
+        /// The same at every frequency
+        case constant(Double)
 
         func value(at omega: Double) -> Complex {
             let s = Complex(0, omega)
@@ -87,6 +89,8 @@ public struct SmallSignalModel: Equatable, Sendable {
                 var t = Complex(numerator)
                 for p in poles { t = t / (s + Complex(p)) }
                 return (drive * t) / (Complex(1) + (drive * feedback) * t)
+            case .constant(let value):
+                return Complex(value)
             }
         }
     }
@@ -143,6 +147,117 @@ public struct SmallSignalModel: Equatable, Sendable {
             results.append(voltages)
         }
         return results
+    }
+
+    /// One source of noise in the circuit: a current between two nodes (a resistor's thermal noise, a junction's shot
+    /// noise), or a voltage in series with an op-amp's input, which reaches its output row through `transfer`
+    public struct NoiseSource: Sendable {
+        /// The part it comes from, and what in it ("R1", "Q1 collector")
+        public var element: Int
+        public var label: String
+        /// Its power spectral density: A²/Hz for a current, V²/Hz for a voltage
+        public var density: Double
+        var injection: Injection
+
+        enum Injection: Sendable {
+            case current(from: Int, to: Int)
+            case row(Int, Transfer)
+        }
+
+        init(element: Int, label: String, density: Double, injection: Injection) {
+            self.element = element
+            self.label = label
+            self.density = density
+            self.injection = injection
+        }
+    }
+
+    /// The noise at an output, frequency by frequency, and each source's share of it over the band
+    public struct NoiseResult: Sendable {
+        public var frequencies: [Double]
+        /// Spectral density at the output, V/√Hz
+        public var output: [Double]
+        /// The same referred to the input source: the output's divided by the gain from it (V/√Hz for a voltage
+        /// source); nil without an input, or where the gain is nil
+        public var input: [Double]?
+        /// RMS noise at the output over the frequencies (trapezoids in frequency), V
+        public var total: Double
+        /// Each source's RMS share of `total` (their squares add up to its square), loudest first
+        public var contributions: [(label: String, element: Int, rms: Double)]
+    }
+
+    /// The noise at V(plus) − V(minus) from `sources`, at each frequency (Hz), and referred to the source at `input`.
+    /// One solve of the transposed equations per frequency gives how every node's current reaches the output.
+    public func noise(plus: Int, minus: Int, input: Int?, sources: [NoiseSource], frequencies: [Double]) -> NoiseResult? {
+        guard size > 0 else { return nil }
+        let m = size
+        var re = [Double](repeating: 0, count: m * m)
+        var im = [Double](repeating: 0, count: m * m)
+        var bre = [Double](repeating: 0, count: m)
+        var bim = [Double](repeating: 0, count: m)
+        var output: [Double] = []
+        var referred: [Double] = []
+        var shares = [[Double]](repeating: [], count: sources.count)
+        func z(_ node: Int) -> Complex { node > 0 && node <= m ? Complex(bre[node - 1], bim[node - 1]) : Complex(0) }
+        for frequency in frequencies {
+            guard frequency > 0, frequency.isFinite else { return nil }
+            let omega = 2 * Double.pi * frequency
+            // the matrix, transposed
+            for r in 0..<m {
+                for c in 0..<m {
+                    re[c * m + r] = matrix[r * m + c]
+                    im[c * m + r] = 0
+                }
+            }
+            for entry in entries {
+                let value = entry.transfer.value(at: omega)
+                re[entry.column * m + entry.row] += entry.scale * value.re
+                im[entry.column * m + entry.row] += entry.scale * value.im
+            }
+            for k in 0..<m {
+                bre[k] = 0
+                bim[k] = 0
+            }
+            if plus > 0 { bre[plus - 1] += 1 }
+            if minus > 0 { bre[minus - 1] -= 1 }
+            guard Self.solveInPlace(&re, &im, &bre, &bim, size: m) else { return nil }
+            var power = 0.0
+            for (k, source) in sources.enumerated() {
+                let gain: Complex
+                switch source.injection {
+                case .current(let a, let b):
+                    gain = z(b) - z(a)
+                case .row(let row, let transfer):
+                    gain = row < m ? Complex(bre[row], bim[row]) * transfer.value(at: omega) : Complex(0)
+                }
+                let share = gain.magnitude * gain.magnitude * source.density
+                shares[k].append(share)
+                power += share
+            }
+            output.append(power.squareRoot())
+            if let input, let drive = drives[input] {
+                let gain: Complex
+                switch drive {
+                case .row(let row): gain = Complex(bre[row], bim[row])
+                case .current(let a, let b): gain = z(b) - z(a)
+                }
+                referred.append(gain.magnitude > 0 ? power.squareRoot() / gain.magnitude : .infinity)
+            }
+        }
+        /// ∫ density² df by trapezoids
+        func integrate(_ values: [Double]) -> Double {
+            var sum = 0.0
+            for k in 1..<max(1, frequencies.count) {
+                sum += (values[k] + values[k - 1]) / 2 * (frequencies[k] - frequencies[k - 1])
+            }
+            return sum
+        }
+        var contributions = sources.enumerated().map { k, source in
+            (label: source.label, element: source.element, rms: integrate(shares[k]).squareRoot())
+        }
+        contributions.sort { $0.rms > $1.rms }
+        return NoiseResult(frequencies: frequencies, output: output, input: input != nil && referred.count == frequencies.count ? referred : nil,
+                           total: integrate(output.map { $0 * $0 }).squareRoot(), contributions: contributions)
     }
 
     /// The response V(plus) − V(minus) to the source at `input` at each frequency in Hz

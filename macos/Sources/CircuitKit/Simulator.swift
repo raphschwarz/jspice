@@ -1249,6 +1249,8 @@ public final class Simulator {
         // transistor's base-emitter (0) and base-collector (1) junctions, and the transit time of the charge stored
         // by the forward current
         var cj0 = 0.0, vj0 = 1.0, m0 = 0.5, cj1 = 0.0, vj1 = 0.75, m1 = 0.33, transit = 0.0
+        // an op-amp's input noise voltage, V/√Hz
+        var noiseDensity = 0.0
     }
 
     /// A parameter that picks a setting, as a whole number within `range` (typed or scripted values can be anything)
@@ -1369,6 +1371,7 @@ public final class Simulator {
             c.limit = max(p("limit"), 0.01)
             c.gbw = p("gbw")
             c.slew = p("slewRate") * 1e6
+            c.noiseDensity = max(p("noise"), 0)
         case .ota:
             // the bias input: one or two junctions down to the negative supply, 1 mA at 0.6 V per junction
             let drops = min(max(p("biasDrop").rounded(), 1), 2)
@@ -1987,6 +1990,79 @@ public final class Simulator {
     /// whatever the circuit is doing now, so let it settle first. Switches, logic and chips stay as they are; synth
     /// chips with an audio path (filter, VCA, delay lines, a sample and hold while tracking) pass small signals through
     /// it, oscillators and envelopes do not. Nil if there is no solution to linearise around.
+    /// The circuit's sources of noise at the present solution, for `SmallSignalModel.noise`: each resistor's thermal
+    /// noise (4kT/R), each junction's shot noise (2qI: a diode's current, a transistor's collector and base currents),
+    /// field-effect transistors' channel noise ((8/3)kT·gm), tubes' (as 2.5/gm of resistance at the grid) and op-amps'
+    /// input noise voltage. There is no flicker (1/f) noise.
+    public func noiseSources() -> [SmallSignalModel.NoiseSource] {
+        guard x.count == topology.matrixSize else { return [] }
+        let q = 1.602176634e-19
+        // kT, from the thermal voltage kT/q
+        let kT = q * vt
+        var sources: [SmallSignalModel.NoiseSource] = []
+        for i in kinds.indices {
+            let nodes = topology.elementNodes[i]
+            let element = flat.elements[i]
+            let c = constants[i]
+            let name = element.name.isEmpty ? element.kind.displayName : element.name
+            func v(_ k: Int) -> Double { voltage(nodes[k]) }
+            func current(_ label: String, _ density: Double, _ a: Int, _ b: Int) {
+                guard density > 0, density.isFinite, a != b else { return }
+                sources.append(.init(element: i, label: label, density: density, injection: .current(from: a, to: b)))
+            }
+            switch kinds[i] {
+            case .resistor, .lamp:
+                current(name, 4 * kT / max(element[param: "resistance"], 1e-9), nodes[0], nodes[1])
+            case .potentiometer:
+                let (upper, lower) = potentiometerResistances(element)
+                current(name + " (a side)", 4 * kT / upper, nodes[0], nodes[2])
+                current(name + " (b side)", 4 * kT / lower, nodes[2], nodes[1])
+            case .diode, .led:
+                current(name, 2 * q * abs(diodeCurrent(v(0) - v(1), saturation: c.saturation, nvt: c.nvt).current), nodes[0], nodes[1])
+            case .zener:
+                current(name, 2 * q * abs(zenerCurrent(v(0) - v(1), breakdown: c.value).current), nodes[0], nodes[1])
+            case .npn, .pnp:
+                let p: Double = kinds[i] == .npn ? 1 : -1
+                let model = bipolarCurrents(vbe: p * (v(0) - v(2)), vbc: p * (v(0) - v(1)), beta: c.beta, saturation: c.saturation)
+                current(name + " collector", 2 * q * abs(model.ic), nodes[1], nodes[2])
+                current(name + " base", 2 * q * abs(model.ib), nodes[0], nodes[2])
+            case .nmos, .pmos, .njfet:
+                var vgs = v(0) - v(2), vds = v(1) - v(2)
+                if c.polarity * vds < 0 {
+                    vgs -= vds
+                    vds = -vds
+                }
+                let gm = mosfetCurrent(vgs: c.polarity * vgs, vds: c.polarity * vds, threshold: c.threshold, beta: c.beta).gm
+                current(name, 8.0 / 3 * kT * abs(gm), nodes[1], nodes[2])
+            case .triode, .pentode:
+                let vgk = v(0) - v(2), vpk = v(1) - v(2)
+                let gm = kinds[i] == .pentode && nodes.count > 3
+                    ? c.tube.pentode(vgk: vgk, vsk: v(3) - v(2), vpk: vpk).plateGrid
+                    : c.tube.triode(vgk: vgk, vpk: vpk).dGrid
+                current(name, 4 * kT * 2.5 * abs(gm), nodes[1], nodes[2])
+            case .opAmp where c.noiseDensity > 0:
+                let row = topology.sourceRow[i]
+                guard row >= 0 else { continue }
+                // a voltage in series with the + input reaches the output row as the inputs do
+                let vd = v(1) - v(0)
+                let transfer: SmallSignalModel.Transfer
+                if c.gbw > 0 {
+                    let w = 2 * Double.pi * c.gbw
+                    let driveSlope = c.slew > 0 ? w * (1 - pow(tanh((vd + c.offset) * w / c.slew), 2)) : w
+                    let t = tanh(capacitorVoltage[i] / c.limit)
+                    transfer = .pole(gain: (1 - t * t) * driveSlope, rate: w / c.gain)
+                } else {
+                    let t = tanh(c.gain * (vd + c.offset) / c.limit)
+                    transfer = .constant(c.gain * (1 - t * t))
+                }
+                sources.append(.init(element: i, label: name, density: c.noiseDensity * c.noiseDensity, injection: .row(row, transfer)))
+            default:
+                break
+            }
+        }
+        return sources
+    }
+
     public func smallSignalModel() -> SmallSignalModel? {
         let m = topology.matrixSize
         guard m > 0, x.count == m, !isFailed else { return nil }

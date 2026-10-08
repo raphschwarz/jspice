@@ -444,6 +444,40 @@ def run_ngspice_ac(parts, source, probes, fstart, fstop, per_decade):
     values = {x: [(row[3 * i + 1], row[3 * i + 2]) for row in rows] for i, x in enumerate(probes)}
     return frequencies, values
 
+# Noise: ngspice's .noise at an output, with each part's thermal and shot noise (no flicker noise), around the same
+# operating point
+NOISE_CASES = [
+    dict(id='divider-noise', note='two 1 kΩ resistors and 1 nF: 4kT · 500 Ω, rolling off at 318 kHz', source='V1', settle=0.001,
+         output='out', parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=1, frequency=1000),
+        P('resistor', 'R1', dict(a='in', b='out'), resistance=1000),
+        P('resistor', 'R2', dict(a='out', b='GND'), resistance=1000),
+        P('capacitor', 'C1', dict(a='out', b='GND'), capacitance=1e-9)]),
+    dict(id='common-emitter-noise', note='the common-emitter amplifier: shot noise of its collector and base currents',
+         source='VIN', settle=0.3, output='col', parts=None),
+    dict(id='jfet-noise', note='the N-JFET stage: channel noise', source='VG', settle=0.001, output='drain', parts=None),
+    dict(id='diode-noise', note='a diode carrying 0.43 mA through 10 kΩ: its shot noise against the resistor\'s', source='V1',
+         settle=0.001, output='a', parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=1, offset=5, frequency=1000),
+        P('resistor', 'R1', dict(a='in', b='a'), resistance=10_000),
+        P('diode', 'D1', dict(anode='a', cathode='GND'))]),
+]
+
+def run_ngspice_noise(parts, source, output, fstart, fstop, per_decade):
+    lines, models = spice_elements(parts, ac_source=source)
+    data = tempfile.mktemp(suffix='.txt')
+    deck = '\n'.join(lines + models + ['.noise v(%s) V%s dec %d %.6g %.6g' % (net(output), source, per_decade, fstart, fstop),
+                                       '.control', 'run', 'setplot noise1', 'wrdata %s onoise_spectrum' % data,
+                                       'quit', '.endc', '.end']) + '\n'
+    with tempfile.NamedTemporaryFile('w', suffix='.cir', delete=False) as f:
+        f.write(deck)
+    result = subprocess.run(['ngspice', '-b', f.name], capture_output=True, text=True, timeout=600)
+    if not os.path.exists(data) or 'aborted' in result.stdout + result.stderr:
+        sys.exit('ngspice failed:\n' + deck + result.stdout[-3000:] + result.stderr[-3000:])
+    rows = [list(map(float, line.split())) for line in open(data) if line.strip()]
+    os.unlink(data)
+    return [row[0] for row in rows], [row[1] for row in rows]
+
 def ac_main():
     out = []
     for case in AC_CASES:
@@ -465,8 +499,17 @@ def ac_main():
         out.append(entry)
         summary = ', '.join('%s %.1f..%.1f dB' % (p['net'], min(p['gain_db']), max(p['gain_db'])) for p in probes)
         print('%-16s %s' % (case['id'], summary))
+    noise = []
+    for case in NOISE_CASES:
+        parts = case['parts'] or (case_parts('common-emitter') if case['id'].startswith('common') else
+                                  next(c for c in AC_CASES if c['id'] == 'jfet')['parts'])
+        frequencies, density = run_ngspice_noise(parts, case['source'], case['output'], 10, 1e6, 5)
+        part, terminal = next((p['name'], t) for p in parts for t, n in p['connections'].items() if n == case['output'])
+        noise.append(dict(id=case['id'], note=case['note'], source=case['source'], settle=case['settle'], part=part, terminal=terminal,
+                          frequencies=[round(f, 9) for f in frequencies], density=[float('%.9g' % d) for d in density], parts=parts))
+        print('%-20s %.3g..%.3g nV/√Hz' % (case['id'], min(density) * 1e9, max(density) * 1e9))
     json.dump(dict(generator='tools/spice-reference/crosscheck.py --ac', ngspice=subprocess.run(
-        ['ngspice', '-v'], capture_output=True, text=True).stdout.split('\n')[1].strip(' *'), cases=out),
+        ['ngspice', '-v'], capture_output=True, text=True).stdout.split('\n')[1].strip(' *'), cases=out, noise=noise),
         open(AC_FIXTURE, 'w'), indent=1)
 
 def rising_crossings(time, values):

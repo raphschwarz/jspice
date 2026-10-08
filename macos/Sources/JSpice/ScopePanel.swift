@@ -107,6 +107,12 @@ private struct ScopeRow: View {
                                 } else {
                                     Text("flat from 10 Hz to 100 kHz").font(.caption).foregroundStyle(.secondary)
                                 }
+                                if let noise = result.noise, noise > 0 {
+                                    Text("noise \(SI.format(noise, unit: "V")) RMS")
+                                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                        .help("Thermal and shot noise at this output from 20 Hz to 20 kHz"
+                                              + (result.noisiest.map { ", most of it from \($0)" } ?? ""))
+                                }
                             }
                         }
                     } else if spec.plot == .spectrum {
@@ -354,6 +360,8 @@ private struct ScopeRow: View {
 final class ResponseCache {
     /// 10 Hz to 100 kHz, 30 points a decade
     static let frequencies = FrequencySweep.logarithmic(from: 10, to: 100_000, pointsPerDecade: 30)
+    /// Where noise is heard
+    static let audioBand = FrequencySweep.logarithmic(from: 20, to: 20_000, pointsPerDecade: 10)
 
     struct Response {
         /// Gain in dB and phase in degrees at each of `frequencies`
@@ -361,6 +369,9 @@ final class ResponseCache {
         var phases: [Double] = []
         /// Why there is nothing to show
         var note: String?
+        /// RMS noise at the output from 20 Hz to 20 kHz, and the part most of it comes from
+        var noise: Double?
+        var noisiest: String?
 
         var peak: Int? { gains.indices.max { gains[$0] < gains[$1] } }
 
@@ -434,7 +445,12 @@ final class ResponseCache {
         guard let values = model.response(input: input, plus: plus, minus: minus, frequencies: Self.frequencies) else {
             return set(Response(note: "The circuit can't be linearised here"))
         }
-        return set(Response(gains: values.map { 20 * log10(max($0.magnitude, 1e-12)) }, phases: FrequencySweep.unwrappedPhases(values)))
+        var result = Response(gains: values.map { 20 * log10(max($0.magnitude, 1e-12)) }, phases: FrequencySweep.unwrappedPhases(values))
+        if let noise = model.noise(plus: plus, minus: minus, input: input, sources: shadow.noiseSources(), frequencies: Self.audioBand) {
+            result.noise = noise.total
+            result.noisiest = noise.contributions.first?.label
+        }
+        return set(result)
     }
 
     private func set(_ new: Response) -> Response {

@@ -172,6 +172,17 @@ public final class CircuitSession {
                 "settle": ["description": "ac: seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
              ], required: ["source", "output"]),
              run: { session, arguments in try session.frequencyResponse(arguments) }),
+        Tool(name: "noise",
+             description: "Noise analysis, as SPICE's .noise: the circuit settles from rest (its input source held still), is linearised, and every resistor's thermal noise (4kT/R), junction's shot noise (2qI), field-effect transistor's channel noise, tube's and op-amp's input noise (TL072 18 nV/√Hz, NE5532 5, LM358 40) is carried to the output. Returns the output's noise density at each frequency, the same referred to the input source (divided by the gain from it), the total RMS noise over the band, and the parts it comes from, loudest first. No flicker (1/f) noise.",
+             inputSchema: schema([
+                "output": string("Probe for the output: \"V(net)\", \"V(part)\" or \"V(part.terminal)\""),
+                "source": string("The input source, for input-referred noise (default: the circuit's signal source)"),
+                "start": ["description": "Lowest frequency in Hz (default 20)"],
+                "stop": ["description": "Highest frequency in Hz (default 20k)"],
+                "points_per_decade": ["type": "integer", "description": "Default 20"],
+                "settle": ["description": "Seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
+             ], required: ["output"]),
+             run: { session, arguments in try session.noise(arguments) }),
         Tool(name: "spectrum",
              description: "The spectrum of a probe's signal, as a spectrum analyser shows it: the circuit runs from rest for settle seconds, then its signal is recorded for duration seconds and analysed (Hann window, FFT). Returns the fundamental, total harmonic distortion (THD, the RMS of harmonics 2 to 10 over the fundamental), each harmonic's frequency and level, the strongest other peaks, and the signal's RMS and mean. Keyboard events play as in simulate.",
              inputSchema: schema([
@@ -848,6 +859,50 @@ public final class CircuitSession {
     }
 
     /// Keyboard events for simulate: a time, and a note to press or nil to release
+    func noise(_ arguments: [String: Any]) throws -> Any {
+        let spec = try Self.text(arguments, "output")
+        let source: Int?
+        if let name = arguments["source"] as? String, !name.isEmpty {
+            source = try index(ofPart: name)
+        } else {
+            let preference: [ElementKind] = [.acVoltage, .audioInput, .squareVoltage, .noiseVoltage, .keyboardPitch, .currentSource]
+            source = preference.lazy.compactMap { kind in self.circuit.elements.firstIndex { $0.kind == kind } }.first
+        }
+        let start = try Self.number(arguments["start"], "start") ?? 20
+        let stop = try Self.number(arguments["stop"], "stop") ?? 20_000
+        let perDecade = max(1, min(200, (arguments["points_per_decade"] as? NSNumber)?.intValue ?? 20))
+        guard start > 0, stop > start, stop < 1e10, log10(stop / start) * Double(perDecade) <= 2000 else {
+            throw ToolError("Need 0 < start < stop < 10 GHz, and at most 2000 frequencies")
+        }
+        let frequencies = FrequencySweep.logarithmic(from: start, to: stop, pointsPerDecade: perDecade)
+        let settle = try Self.number(arguments["settle"], "settle")
+        if let settle, !(settle >= 0 && settle < 1000) { throw ToolError("\"settle\" should be from 0 to 1000 seconds") }
+        let simulator = Simulator.settled(circuit, holding: source, duration: settle)
+        if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
+        let (plus, minus) = try smallSignalNodes(spec, simulator)
+        guard let model = simulator.smallSignalModel(),
+              let result = model.noise(plus: plus, minus: minus, input: source.flatMap { model.canDrive(from: $0) ? $0 : nil },
+                                       sources: simulator.noiseSources(), frequencies: frequencies) else {
+            throw ToolError("The linearised circuit can't be solved. Look for parts left floating without a DC path.")
+        }
+        var points: [[String: Any]] = []
+        for (k, frequency) in frequencies.enumerated() {
+            var point: [String: Any] = ["frequency": frequency, "output_nv_per_root_hz": result.output[k] * 1e9]
+            if let input = result.input, input[k].isFinite { point["input_nv_per_root_hz"] = input[k] * 1e9 }
+            points.append(point)
+        }
+        let power = result.total * result.total
+        var reply: [String: Any] = [
+            "output": spec, "points": points, "total_rms_uv": result.total * 1e6, "band": [start, stop],
+            "contributions": result.contributions.prefix(12).map {
+                ["source": $0.label, "rms_uv": $0.rms * 1e6, "share_percent": power > 0 ? 100 * $0.rms * $0.rms / power : 0]
+            },
+            "temperature": circuit.settings.temperature,
+        ]
+        if let source { reply["input"] = circuit.elements[source].name }
+        return reply
+    }
+
     // MARK: - Sound
 
     func spectrum(_ arguments: [String: Any]) throws -> Any {
