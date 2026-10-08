@@ -10,6 +10,12 @@ import Foundation
 /// every step, and memristors update their internal state after each step. The simulation starts from rest: capacitors at
 /// their initial voltage, inductors without current.
 public final class Simulator {
+    /// Matrix or right-hand-side entries as Newton-Raphson stamps them: written in place, without the checks an array
+    /// makes on every write
+    typealias Entries = UnsafeMutablePointer<Double>
+
+    deinit { stampLog.deallocate() }
+
     /// The circuit as it was loaded
     public private(set) var circuit: Circuit
     /// What is simulated: the circuit with each block's parts in its place (`Circuit.flattened`). Its elements start
@@ -203,7 +209,7 @@ public final class Simulator {
     private var eliminationPlan: EliminationPlan?
     /// Matrix entries written by the stamps of the present Newton iteration (the base matrix and the stamps' own
     /// values are the only things that change the pattern), and how many: more than the log holds means it overflowed
-    private var stampLog: [Int] = []
+    private var stampLog = UnsafeMutableBufferPointer<Int>(start: nil, count: 0)
     private var stampCount = 0
     private var loggingStamps = false
     /// Counts base matrix rebuilds, and which one the elimination plan was last checked against
@@ -833,16 +839,14 @@ public final class Simulator {
         let solved: Bool
         if stampCount > stampLog.count {
             // more stamps than the log holds: check everything this time, and keep a longer log
-            stampLog = [Int](repeating: 0, count: 2 * stampCount)
+            stampLog.deallocate()
+            stampLog = .allocate(capacity: 2 * stampCount)
             solved = LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan, changed: nil)
         } else if planBaseVersion != baseVersion {
             solved = LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan, changed: nil)
         } else {
-            let count = stampCount
-            solved = stampLog.withUnsafeBufferPointer { log in
-                LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan,
-                                      changed: UnsafeBufferPointer(rebasing: log[0..<count]))
-            }
+            solved = LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan,
+                                           changed: UnsafeBufferPointer(rebasing: stampLog[0..<stampCount]))
         }
         // the plan now fits this base matrix: it was made from it, or checked against all of it
         planBaseVersion = baseVersion
@@ -851,11 +855,13 @@ public final class Simulator {
 
     /// Copies element by element into an array of the same size, so the target keeps its storage
     @inline(__always) private static func copy(_ source: [Double], into target: inout [Double]) {
-        guard target.count == source.count else {
+        guard target.count == source.count, !source.isEmpty else {
             target = source
             return
         }
-        for k in source.indices { target[k] = source[k] }
+        target.withUnsafeMutableBufferPointer { target in
+            source.withUnsafeBufferPointer { target.baseAddress!.update(from: $0.baseAddress!, count: $0.count) }
+        }
     }
 
     private func finishStep(at t: Double) {
@@ -877,17 +883,17 @@ public final class Simulator {
     }
 
     /// Conductance g between nodes a and b
-    @inline(__always) private func stampConductance(_ matrix: inout [Double], _ m: Int, _ a: Int, _ b: Int, _ g: Double) {
-        if a > 0 { stamp(&matrix, (a - 1) * m + a - 1, g) }
-        if b > 0 { stamp(&matrix, (b - 1) * m + b - 1, g) }
+    @inline(__always) private func stampConductance(_ matrix: Entries, _ m: Int, _ a: Int, _ b: Int, _ g: Double) {
+        if a > 0 { stamp(matrix, (a - 1) * m + a - 1, g) }
+        if b > 0 { stamp(matrix, (b - 1) * m + b - 1, g) }
         if a > 0 && b > 0 {
-            stamp(&matrix, (a - 1) * m + b - 1, -g)
-            stamp(&matrix, (b - 1) * m + a - 1, -g)
+            stamp(matrix, (a - 1) * m + b - 1, -g)
+            stamp(matrix, (b - 1) * m + a - 1, -g)
         }
     }
 
     /// Adds to one matrix entry, noting where during Newton-Raphson's stamping (see `stampLog`)
-    @inline(__always) private func stamp(_ matrix: inout [Double], _ index: Int, _ value: Double) {
+    @inline(__always) private func stamp(_ matrix: Entries, _ index: Int, _ value: Double) {
         matrix[index] += value
         if loggingStamps {
             if stampCount < stampLog.count { stampLog[stampCount] = index }
@@ -896,14 +902,14 @@ public final class Simulator {
     }
 
     /// A current i flowing through the element from node a to node b
-    @inline(__always) private func stampCurrent(_ rhs: inout [Double], _ a: Int, _ b: Int, _ i: Double) {
+    @inline(__always) private func stampCurrent(_ rhs: Entries, _ a: Int, _ b: Int, _ i: Double) {
         if a > 0 { rhs[a - 1] -= i }
         if b > 0 { rhs[b - 1] += i }
     }
 
     /// Adds `value` at (row, column) given as 0-based matrix indices; negative indices (ground) are skipped
-    @inline(__always) private func add(_ matrix: inout [Double], _ m: Int, _ row: Int, _ column: Int, _ value: Double) {
-        if row >= 0 && column >= 0 { stamp(&matrix, row * m + column, value) }
+    @inline(__always) private func add(_ matrix: Entries, _ m: Int, _ row: Int, _ column: Int, _ value: Double) {
+        if row >= 0 && column >= 0 { stamp(matrix, row * m + column, value) }
     }
 
     /// Conductances of a potentiometer's two halves: a to wiper, wiper to b
@@ -1215,10 +1221,10 @@ public final class Simulator {
         state * constants[i].onConductance + (1 - state) * constants[i].offConductance
     }
 
-    private func stampMemristors(_ matrix: inout [Double], _ m: Int) {
+    private func stampMemristors(_ matrix: Entries, _ m: Int) {
         for i in memristorIndices {
             let nodes = topology.elementNodes[i]
-            stampConductance(&matrix, m, nodes[0], nodes[1], memristorConductance(i, state: memristorStates[i]))
+            stampConductance(matrix, m, nodes[0], nodes[1], memristorConductance(i, state: memristorStates[i]))
         }
     }
 
@@ -1495,7 +1501,7 @@ public final class Simulator {
 
     /// Stamps the charging of a junction's charge (slot `slot` of part `i`) over the substep, linearised at junction
     /// voltage `v` (in the part's polarity `p`), from `plus` to `minus`
-    private func stampJunctionCharge(_ matrix: inout [Double], _ rhs: inout [Double], _ m: Int, _ i: Int, slot: Int,
+    private func stampJunctionCharge(_ matrix: Entries, _ rhs: Entries, _ m: Int, _ i: Int, slot: Int,
                                      _ plus: Int, _ minus: Int, polarity p: Double, _ v: Double) {
         guard !linearising else { return }
         let (q, cap) = junctionChargeAndCapacitance(i, slot: slot, v)
@@ -1503,8 +1509,8 @@ public final class Simulator {
         let k = 2 * i + slot
         let current = (a0 * q + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
         let g = a0 * cap / h
-        stampConductance(&matrix, m, plus, minus, g)
-        stampCurrent(&rhs, plus, minus, p * (current - g * v))
+        stampConductance(matrix, m, plus, minus, g)
+        stampCurrent(rhs, plus, minus, p * (current - g * v))
     }
 
     /// Junction voltage limiting (as in SPICE's pnjlim), so Newton does not overshoot into exp() overflow
@@ -1667,7 +1673,7 @@ public final class Simulator {
         }
     }
 
-    private func stampNonlinear(_ matrix: inout [Double], _ rhs: inout [Double], _ m: Int) {
+    private func stampNonlinear(_ matrix: Entries, _ rhs: Entries, _ m: Int) {
         for i in nonlinearIndices {
             let nodes = topology.elementNodes[i]
             let c = constants[i]
@@ -1678,9 +1684,9 @@ public final class Simulator {
                 var (id, gd) = diodeCurrent(vd, saturation: c.saturation, nvt: c.nvt)
                 id += junctionConductance * vd
                 gd += junctionConductance
-                stampConductance(&matrix, m, nodes[0], nodes[1], gd)
-                stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
-                if c.cj0 > 0 || c.transit > 0 { stampJunctionCharge(&matrix, &rhs, m, i, slot: 0, nodes[0], nodes[1], polarity: 1, vd) }
+                stampConductance(matrix, m, nodes[0], nodes[1], gd)
+                stampCurrent(rhs, nodes[0], nodes[1], id - gd * vd)
+                if c.cj0 > 0 || c.transit > 0 { stampJunctionCharge(matrix, rhs, m, i, slot: 0, nodes[0], nodes[1], polarity: 1, vd) }
 
             case .zener:
                 let breakdown = c.value
@@ -1699,9 +1705,9 @@ public final class Simulator {
                 var (id, gd) = zenerCurrent(vd, breakdown: breakdown)
                 id += junctionConductance * vd
                 gd += junctionConductance
-                stampConductance(&matrix, m, nodes[0], nodes[1], gd)
-                stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
-                if c.cj0 > 0 { stampJunctionCharge(&matrix, &rhs, m, i, slot: 0, nodes[0], nodes[1], polarity: 1, vd) }
+                stampConductance(matrix, m, nodes[0], nodes[1], gd)
+                stampCurrent(rhs, nodes[0], nodes[1], id - gd * vd)
+                if c.cj0 > 0 { stampJunctionCharge(matrix, rhs, m, i, slot: 0, nodes[0], nodes[1], polarity: 1, vd) }
 
             case .npn, .pnp:
                 let p: Double = kinds[i] == .npn ? 1 : -1
@@ -1729,16 +1735,16 @@ public final class Simulator {
                     guard node > 0 else { return }
                     // current into the device at this terminal, linear in vbe and vbc around the limited point
                     let row = node - 1
-                    add(&matrix, m, row, base - 1, gbe + gbc)
-                    add(&matrix, m, row, emitter - 1, -gbe)
-                    add(&matrix, m, row, collector - 1, -gbc)
+                    add(matrix, m, row, base - 1, gbe + gbc)
+                    add(matrix, m, row, emitter - 1, -gbe)
+                    add(matrix, m, row, collector - 1, -gbc)
                     rhs[row] -= current - gbe * realVbe - gbc * realVbc
                 }
                 stampTerminal(collector, p * model.ic, model.dicVbe, model.dicVbc)
                 stampTerminal(base, p * model.ib, model.dibVbe, model.dibVbc)
                 stampTerminal(emitter, -p * (model.ic + model.ib), -(model.dicVbe + model.dibVbe), -(model.dicVbc + model.dibVbc))
-                if c.cj0 > 0 || c.transit > 0 { stampJunctionCharge(&matrix, &rhs, m, i, slot: 0, base, emitter, polarity: p, vbe) }
-                if c.cj1 > 0 { stampJunctionCharge(&matrix, &rhs, m, i, slot: 1, base, collector, polarity: p, vbc) }
+                if c.cj0 > 0 || c.transit > 0 { stampJunctionCharge(matrix, rhs, m, i, slot: 0, base, emitter, polarity: p, vbe) }
+                if c.cj1 > 0 { stampJunctionCharge(matrix, rhs, m, i, slot: 1, base, collector, polarity: p, vbc) }
 
             case .unbufferedInverter:
                 let (input, output) = (nodes[0], nodes[1])
@@ -1756,16 +1762,16 @@ public final class Simulator {
                 dOut -= junctionConductance
                 guard output > 0 else { continue }
                 // the current into the output, linearised: its row takes the current leaving
-                add(&matrix, m, output - 1, input - 1, -dIn)
-                add(&matrix, m, output - 1, output - 1, -dOut)
+                add(matrix, m, output - 1, input - 1, -dIn)
+                add(matrix, m, output - 1, output - 1, -dOut)
                 rhs[output - 1] += current - dIn * vin - dOut * vout
 
             case .pll:
                 // phase comparator 2: driven high while pumping up, low while pumping down, and otherwise let go
                 let pump = logicStates[i].count
                 guard pump != 0, nodes.count > 6 else { continue }
-                stampConductance(&matrix, m, nodes[6], 0, c.outputConductance)
-                if pump > 0 { stampCurrent(&rhs, 0, nodes[6], c.supply * c.outputConductance) }
+                stampConductance(matrix, m, nodes[6], 0, c.outputConductance)
+                if pump > 0 { stampCurrent(rhs, 0, nodes[6], c.supply * c.outputConductance) }
 
             case .triode, .pentode:
                 let (grid, plate, cathode) = (nodes[0], nodes[1], nodes[2])
@@ -1787,32 +1793,32 @@ public final class Simulator {
                 limitedVoltage3[i] = vsk
                 /// a current from `a` to `b` through the tube, following the voltage from `plus` to `minus` with slope `g`
                 func follows(_ a: Int, _ b: Int, _ plus: Int, _ minus: Int, _ g: Double) {
-                    add(&matrix, m, a - 1, plus - 1, g)
-                    add(&matrix, m, a - 1, minus - 1, -g)
-                    add(&matrix, m, b - 1, plus - 1, -g)
-                    add(&matrix, m, b - 1, minus - 1, g)
+                    add(matrix, m, a - 1, plus - 1, g)
+                    add(matrix, m, a - 1, minus - 1, -g)
+                    add(matrix, m, b - 1, plus - 1, -g)
+                    add(matrix, m, b - 1, minus - 1, g)
                 }
                 if pentode {
                     let t = c.tube.pentode(vgk: vgk, vsk: vsk, vpk: vpk)
                     follows(plate, cathode, grid, cathode, t.plateGrid)
                     follows(plate, cathode, screen, cathode, t.plateScreen)
                     follows(plate, cathode, plate, cathode, t.platePlate)
-                    stampCurrent(&rhs, plate, cathode, t.plate - t.plateGrid * vgk - t.plateScreen * vsk - t.platePlate * vpk)
+                    stampCurrent(rhs, plate, cathode, t.plate - t.plateGrid * vgk - t.plateScreen * vsk - t.platePlate * vpk)
                     follows(screen, cathode, grid, cathode, t.screenGrid)
                     follows(screen, cathode, screen, cathode, t.screenScreen)
-                    stampCurrent(&rhs, screen, cathode, t.screen - t.screenGrid * vgk - t.screenScreen * vsk)
+                    stampCurrent(rhs, screen, cathode, t.screen - t.screenGrid * vgk - t.screenScreen * vsk)
                 } else {
                     let t = c.tube.triode(vgk: vgk, vpk: vpk)
                     follows(plate, cathode, grid, cathode, t.dGrid)
                     follows(plate, cathode, plate, cathode, t.dPlate)
-                    stampCurrent(&rhs, plate, cathode, t.current - t.dGrid * vgk - t.dPlate * vpk)
+                    stampCurrent(rhs, plate, cathode, t.current - t.dGrid * vgk - t.dPlate * vpk)
                 }
                 let g = c.tube.grid(vgk: vgk)
-                stampConductance(&matrix, m, grid, cathode, g.slope)
-                stampCurrent(&rhs, grid, cathode, g.current - g.slope * vgk)
+                stampConductance(matrix, m, grid, cathode, g.slope)
+                stampCurrent(rhs, grid, cathode, g.current - g.slope * vgk)
                 // shunts while gmin stepping
-                stampConductance(&matrix, m, plate, cathode, junctionConductance)
-                stampConductance(&matrix, m, grid, cathode, junctionConductance)
+                stampConductance(matrix, m, plate, cathode, junctionConductance)
+                stampConductance(matrix, m, grid, cathode, junctionConductance)
 
             case .nmos, .pmos, .njfet:
                 let (polarity, threshold, beta) = (c.polarity, c.threshold, c.beta)
@@ -1842,13 +1848,13 @@ public final class Simulator {
                 let d = drain - 1
                 let s = source - 1
                 let g = gate - 1
-                add(&matrix, m, d, d, model.gds)
-                add(&matrix, m, d, s, -model.gds - model.gm)
-                add(&matrix, m, d, g, model.gm)
-                add(&matrix, m, s, d, -model.gds)
-                add(&matrix, m, s, s, model.gds + model.gm)
-                add(&matrix, m, s, g, -model.gm)
-                stampCurrent(&rhs, drain, source, equivalent)
+                add(matrix, m, d, d, model.gds)
+                add(matrix, m, d, s, -model.gds - model.gm)
+                add(matrix, m, d, g, model.gm)
+                add(matrix, m, s, d, -model.gds)
+                add(matrix, m, s, s, model.gds + model.gm)
+                add(matrix, m, s, g, -model.gm)
+                stampCurrent(rhs, drain, source, equivalent)
 
             case .opAmp:
                 let row = topology.sourceRow[i]
@@ -1879,15 +1885,15 @@ public final class Simulator {
                     } else {
                         let t = tanh(c.gain * (vd + c.offset) / c.limit)
                         let slope = c.gain * (1 - t * t)
-                        add(&matrix, m, row, plus - 1, -slope)
-                        add(&matrix, m, row, minus - 1, slope)
+                        add(matrix, m, row, plus - 1, -slope)
+                        add(matrix, m, row, minus - 1, slope)
                     }
                     continue
                 }
                 let (output, slope, _) = opAmpOutput(i, differential: vd)
                 // v(out) = output + slope (vd' - vd), linearised around the present inputs
-                add(&matrix, m, row, plus - 1, -slope)
-                add(&matrix, m, row, minus - 1, slope)
+                add(matrix, m, row, plus - 1, -slope)
+                add(matrix, m, row, minus - 1, slope)
                 rhs[row] = output - slope * vd
 
             case .ota:
@@ -1901,7 +1907,7 @@ public final class Simulator {
                 ib += junctionConductance * vj
                 gb += junctionConductance
                 if bias > 0 {
-                    add(&matrix, m, bias - 1, bias - 1, gb)
+                    add(matrix, m, bias - 1, bias - 1, gb)
                     rhs[bias - 1] -= ib - gb * vj + gb * supply
                 }
                 // output current I_abc tanh(vd / 2 Vt), linear in the inputs and the bias pin around this point
@@ -1913,9 +1919,9 @@ public final class Simulator {
                 let vb = vj - supply
                 if output > 0 {
                     let row = output - 1
-                    add(&matrix, m, row, plus - 1, -gd)
-                    add(&matrix, m, row, minus - 1, gd)
-                    add(&matrix, m, row, bias - 1, -gbias)
+                    add(matrix, m, row, plus - 1, -gd)
+                    add(matrix, m, row, minus - 1, gd)
+                    add(matrix, m, row, bias - 1, -gbias)
                     rhs[row] += iout - gd * vd - gbias * vb
                 }
                 // clamps that keep the output within the supply less the headroom
@@ -1933,7 +1939,7 @@ public final class Simulator {
                 gl += junctionConductance
                 if output > 0 {
                     let row = output - 1
-                    add(&matrix, m, row, row, gu + gl)
+                    add(matrix, m, row, row, gu + gl)
                     rhs[row] -= iu - gu * vu - gu * level
                     rhs[row] -= -il - gl * (-level) + gl * vl
                 }
@@ -1948,8 +1954,8 @@ public final class Simulator {
                 let slope = 1 - t * t
                 let fx = c.gain * vy * slope
                 let fy = c.gain * vx * slope
-                add(&matrix, m, row, nodes[0] - 1, -fx)
-                add(&matrix, m, row, nodes[1] - 1, -fy)
+                add(matrix, m, row, nodes[0] - 1, -fx)
+                add(matrix, m, row, nodes[1] - 1, -fy)
                 rhs[row] = c.limit * t - fx * vx - fy * vy
 
             case .vactrol:
@@ -1959,18 +1965,18 @@ public final class Simulator {
                 var (id, gd) = diodeCurrent(vd, saturation: c.saturation, nvt: c.nvt)
                 id += junctionConductance * vd
                 gd += junctionConductance
-                stampConductance(&matrix, m, nodes[0], nodes[1], gd)
-                stampCurrent(&rhs, nodes[0], nodes[1], id - gd * vd)
-                stampConductance(&matrix, m, nodes[2], nodes[3], vactrolConductance(i))
+                stampConductance(matrix, m, nodes[0], nodes[1], gd)
+                stampCurrent(rhs, nodes[0], nodes[1], id - gd * vd)
+                stampConductance(matrix, m, nodes[2], nodes[3], vactrolConductance(i))
 
             case .analogSwitch:
                 let (a, b, control) = (nodes[0], nodes[1], nodes[2])
                 let vc = voltage(control)
                 let (g, slope) = analogSwitchConductance(i, control: vc)
                 let k = slope * (voltage(a) - voltage(b))
-                stampConductance(&matrix, m, a, b, g)
-                add(&matrix, m, a - 1, control - 1, k)
-                add(&matrix, m, b - 1, control - 1, -k)
+                stampConductance(matrix, m, a, b, g)
+                add(matrix, m, a - 1, control - 1, k)
+                add(matrix, m, b - 1, control - 1, -k)
                 if a > 0 { rhs[a - 1] += k * vc }
                 if b > 0 { rhs[b - 1] -= k * vc }
             default:
