@@ -51,7 +51,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case opAmp, ota, multiplier, comparator
     case vco, vcf, envelope, vca, sampleHold, divider
     case timer555, schmittInverter, unbufferedInverter, analogSwitch
-    case logicGate, flipFlop, decadeCounter, binaryCounter, analogMux, analogSelector, pll, dac
+    case logicGate, flipFlop, decadeCounter, binaryCounter, analogMux, analogSelector, pll, dac, shiftRegister
     case atmega328p, atmega2560, attiny85, rp2040
     case delayLine, digitalDelay, vactrol
     case memristor
@@ -61,6 +61,8 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case levelDetector, springReverb, barGraphDriver, balancedCable, vuMeter
     /// Ring modulators and mixers, and a centre-tapped transformer for diode ring modulators
     case balancedModulator, mixerOscillator, tappedTransformer
+    /// Function generator chips (XR2206, ICL8038, LM566) and the LM3900 Norton amplifier
+    case functionGenerator, nortonAmp
     /// A block (a circuit used as one part) and the ports that are its pins
     case port, block
 
@@ -199,6 +201,7 @@ extension ElementKind {
         case .flipFlop: return "D Flip-Flop"
         case .decadeCounter: return "Decade Counter"
         case .binaryCounter: return "Binary Counter"
+        case .shiftRegister: return "Shift Register"
         case .analogMux: return "Analog Multiplexer"
         case .analogSelector: return "Analog Selector"
         case .pll: return "Phase-Locked Loop"
@@ -219,6 +222,8 @@ extension ElementKind {
         case .balancedModulator: return "Balanced Modulator"
         case .mixerOscillator: return "Mixer-Oscillator"
         case .tappedTransformer: return "Centre-Tapped Transformer"
+        case .functionGenerator: return "Function Generator"
+        case .nortonAmp: return "Norton Amplifier"
         case .toneControl: return "Tone Control"
         case .levelDetector: return "Level Detector"
         case .springReverb: return "Spring Reverb Tank"
@@ -256,7 +261,7 @@ extension ElementKind {
              .atmega328p, .atmega2560,
              .attiny85, .rp2040: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return "U"
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
         case .probe: return "P"
@@ -265,7 +270,7 @@ extension ElementKind {
         case .microphone, .electretMic: return "MIC"
         case .pickup: return "PU"
         case .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .levelDetector,
-             .barGraphDriver, .balancedModulator, .mixerOscillator: return "U"
+             .barGraphDriver, .balancedModulator, .mixerOscillator, .functionGenerator, .nortonAmp: return "U"
         case .tappedTransformer: return "T"
         case .springReverb: return "RT"
         case .balancedCable: return "CBL"
@@ -286,13 +291,15 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .digitalDelay, .vactrol: return .effects
         case .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch: return .timersAndLogic
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return .timersAndLogic
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac: return .timersAndLogic
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
         case .memristor: return .memristors
         case .probe, .ammeter, .speaker, .vuMeter: return .instruments
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator,
              .tappedTransformer: return .audio
+        case .functionGenerator: return .synth
+        case .nortonAmp: return .amplifiers
         case .port, .block: return .blocks
         }
     }
@@ -328,14 +335,14 @@ extension ElementKind {
              .triode, .pentode, .transformer:
             return nil
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return nil
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return nil
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac: return nil
         case .memristor: return "m"
         case .probe: return "o"
         case .ammeter: return "x"
         case .speaker, .port, .block: return nil
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator,
-             .mixerOscillator, .tappedTransformer: return nil
+             .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp: return nil
         }
     }
 
@@ -411,7 +418,7 @@ extension ElementKind {
         case .ota, .vactrol, .transformer: return 4
         case .timer555: return 5
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.length
-        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return chipPackage?.length
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac: return chipPackage?.length
         default: return audioChipPackage?.length
         }
     }
@@ -451,7 +458,7 @@ extension ElementKind {
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.terminalNames ?? []
         case .schmittInverter, .unbufferedInverter: return ["in", "out"]
         case .logicGate: return ["in1", "in2", "out"]
-        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return chipPackage?.terminalNames ?? []
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac: return chipPackage?.terminalNames ?? []
         case .electretMic: return ["out", "gnd"]
         case .pickup: return ["hot", "gnd"]
         case .vuMeter: return ["plus", "minus"]
@@ -514,7 +521,7 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return GridPoint(0, board?.length ?? 13)
-        case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return GridPoint(0, chipPackage?.length ?? 3)
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac: return GridPoint(0, chipPackage?.length ?? 3)
         default: return audioChipPackage.map { GridPoint(0, $0.length) } ?? GridPoint(4, 0)
         }
     }
@@ -529,7 +536,7 @@ extension ElementKind {
             return [ParamSpec("fullScale", "Full-scale voltage", unit: "V", default: 5, range: 0.1...50)] + ElementKind.loudspeakerParams
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator,
-             .mixerOscillator, .tappedTransformer:
+             .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp:
             return audioParams
         case .resistor:
             return [ParamSpec("resistance", "Resistance", unit: "Ω", default: 1000, range: 1...10_000_000)]
@@ -568,6 +575,8 @@ extension ElementKind {
                 .choice("waveform", "Waveform", ["Saw", "Triangle", "Pulse", "Sine"]),
                 ParamSpec("frequency", "Frequency at 0 V", unit: "Hz", default: 65.406, range: 0.1...20_000),
                 ParamSpec("amplitude", "Amplitude (peak)", unit: "V", default: 5, range: 0.1...12, log: false),
+                .choice("response", "Control", ["1 V/octave from CV, pulse width from PW", "Linear: Hz per volt from CV to PW"]),
+                ParamSpec("hzPerVolt", "Linear: frequency per volt", unit: "Hz/V", default: 1000, range: 1e-3...1e9),
             ]
         case .vcf:
             return [
@@ -679,6 +688,10 @@ extension ElementKind {
             return [ParamSpec.choice("function", "Function", Logic.gateFunctions)] + Self.logicParams(upper: 0.59, lower: 0.39)
         case .flipFlop, .decadeCounter, .binaryCounter:
             return Self.logicParams(upper: 0.52, lower: 0.48)
+        case .shiftRegister:
+            return [.choice("type", "Chip", ["CD4015 (one half): four stages, reset high",
+                                             "74HC595: eight stages and a latch, clear low, outputs on while OE is low"])]
+                + Self.logicParams(upper: 0.52, lower: 0.48)
         case .pll:
             return [
                 ParamSpec("fMin", "VCO frequency at 0 V", unit: "Hz", default: 100, range: 0.1...1_000_000),
@@ -749,7 +762,10 @@ extension ElementKind {
         case .currentSource:
             return [ParamSpec("current", "Current", unit: "A", default: 0.01, range: 1e-6...10)]
         case .noiseVoltage:
-            return [ParamSpec("amplitude", "RMS amplitude", unit: "V", default: 1, range: 0.001...10)]
+            return [
+                ParamSpec("amplitude", "RMS amplitude", unit: "V", default: 1, range: 0.001...10),
+                .choice("type", "Kind", ["White (Gaussian)", "MM5837: digital, pseudo-random"]),
+            ]
         case .audioInput:
             return [
                 .choice("input", "Input", ["Sound file", "Live input (with sound on)"]),
@@ -947,7 +963,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac,
              .block:
             return packagePins
         default:
@@ -1116,6 +1132,13 @@ extension ElementKind {
                 PartModel(name: "74HC4017", summary: "The fast decade counter, for 2 to 6 V supplies",
                           values: ["upper": 0.52, "lower": 0.48, "outputResistance": 50]),
             ]
+        case .shiftRegister:
+            return [
+                PartModel(name: "CD4015", summary: "One half of the dual four-stage shift register: DATA moves along Q1–Q4 on each rising clock (Klee-style sequencers, delays of logic)",
+                          values: ["type": 0, "upper": 0.52, "lower": 0.48, "outputResistance": 400]),
+                PartModel(name: "74HC595", summary: "Eight-stage shift register with a latch: SER shifts in on SRCLK, RCLK copies the stages to Q0–Q7 (microcontrollers' extra outputs, LED rows)",
+                          values: ["type": 1, "upper": 0.52, "lower": 0.48, "outputResistance": 50, "supply": 5]),
+            ]
         case .binaryCounter:
             return [
                 PartModel(name: "CD4040", summary: "Twelve-stage binary counter, counting on the falling edge: octave dividers",
@@ -1181,6 +1204,10 @@ extension ElementKind {
                           values: ["beta": 200, "saturationCurrent": 1.43e-14, "cje": 22e-12, "cjc": 7.3e-12, "tf": 411e-12]),
                 PartModel(name: "BC549C", summary: "The low-noise BC547C: first stages of preamps",
                           values: ["beta": 520, "saturationCurrent": 2.4e-14, "cje": 11.5e-12, "cjc": 5.25e-12, "tf": 410e-12]),
+                PartModel(name: "SSM2212", summary: "One of a matched, low-noise NPN pair in one package: exponential converters, log amps, preamps (use both halves for the pair)",
+                          values: ["beta": 605, "saturationCurrent": 1.1e-14, "cje": 20e-12, "cjc": 10e-12, "tf": 1e-9]),
+                PartModel(name: "CA3046", summary: "One of the five NPNs of the transistor array, matched and at one temperature: expo converters, differential pairs",
+                          values: ["beta": 110, "saturationCurrent": 1.3e-14, "cje": 0.6e-12, "cjc": 0.58e-12, "tf": 0.5e-9]),
             ]
         case .pnp:
             return [
@@ -1194,6 +1221,8 @@ extension ElementKind {
                           values: ["beta": 80, "saturationCurrent": 1e-7, "cje": 50e-12, "cjc": 25e-12, "tf": 100e-9]),
                 PartModel(name: "OC44", summary: "Germanium, faster (15 MHz): the Tone Bender MkI",
                           values: ["beta": 100, "saturationCurrent": 3e-7, "cje": 15e-12, "cjc": 10e-12, "tf": 10e-9]),
+                PartModel(name: "SSM2220", summary: "One of a matched PNP pair in one package: the classic 1 V/octave exponential converter (use both halves)",
+                          values: ["beta": 165, "saturationCurrent": 1.5e-14, "cje": 25e-12, "cjc": 12e-12, "tf": 1e-9]),
             ]
         case .multiplier:
             return [
@@ -1226,6 +1255,8 @@ extension ElementKind {
                           values: ["drive": 5]),
                 PartModel(name: "SSM2044", summary: "Four-pole low-pass, softer and driven harder (Korg Polysix, Mono/Poly)",
                           values: ["drive": 2]),
+                PartModel(name: "IR3109", summary: "Roland's four-pole OTA filter (Juno-6, 60 and 106, Jupiter-8): smooth, driven gently",
+                          values: ["drive": 3.5]),
             ]
         case .envelope:
             return [
@@ -1320,6 +1351,12 @@ extension ElementKind {
                 PartModel(name: "Generic", summary: "A plain P-channel MOSFET", values: ["threshold": 1.5, "beta": 0.02]),
                 PartModel(name: "BS250", summary: "Small P-MOSFET, 250 mA: reverse-polarity protection, high-side switches",
                           values: ["threshold": 2.4, "beta": 0.04]),
+            ]
+        case .noiseVoltage:
+            return [
+                PartModel(name: "White", summary: "Gaussian white noise", values: ["type": 0, "amplitude": 1]),
+                PartModel(name: "MM5837", summary: "The digital noise chip of drum machines and synths: a 17-stage shift register's pseudo-random bits, about 2.5 V from peak to peak, repeating every few seconds",
+                          values: ["type": 1, "amplitude": 1.25]),
             ]
         case .speaker:
             return ElementKind.loudspeakerModels

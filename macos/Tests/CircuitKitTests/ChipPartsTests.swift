@@ -181,4 +181,93 @@ final class ChipPartsTests: XCTestCase {
         if lag < 0 { lag += 1e-3 }
         XCTAssertEqual(lag * 360 / 1e-3, 90, accuracy: 3)
     }
+
+    // MARK: - Synth chips
+
+    func testFunctionGeneratorsRunAtTheirDatasheetFrequencies() throws {
+        // XR2206: R from pin 7 to ground, f = 1 / (R C); ICL8038: R from pins 4–5 to V+, f = 0.15 / (R C);
+        // LM566: R from pin 6 to V+, f = 2 (V+ − Vc) / (R C V+)
+        let cases: [(String, [NetlistPart], Double)] = [
+            ("XR2206", [r("RT", 10_000, "t", "GND")], 10_000),
+            ("ICL8038", [r("RT", 15_000, "+12V", "t")], 1000),
+            ("LM566", [r("RT", 10_000, "+12V", "t"), dc("VC", 10.2, plus: "c")], 3000),
+        ]
+        for (model, timing, expected) in cases {
+            var rising = 0
+            var last = 0.0
+            try run([
+                dc("VP", 12, plus: "+12V"),
+                part(.functionGenerator, "U1", Examples.model(.functionGenerator, model).merging(["capacitance": 10e-9]) { $1 },
+                     ["timing": "t", "control": "c", "out": "o", "square": "sq"]),
+                r("RO", 100_000, "o", "GND"),
+                r("RS", 100_000, "sq", "GND"),
+                probe("SQUARE", "sq"),
+            ] + timing, dt: 1e-6, seconds: 5e-3, from: 1e-3, watch: ["SQUARE"]) { v in
+                let now = v["SQUARE"] ?? 0
+                if last < 6 && now >= 6 { rising += 1 }
+                last = now
+            }
+            XCTAssertEqual(Double(rising) / 4e-3, expected, accuracy: 0.03 * expected, model)
+        }
+    }
+
+    func testNortonAmpBiasesAtRfOverRbiasOfTheSupplyAndInverts() throws {
+        var low = Double.infinity, high = -Double.infinity
+        try run([
+            dc("VP", 15, plus: "+15V"),
+            part(.acVoltage, "VS", ["amplitude": 0.01, "frequency": 1000], ["plus": "s", "minus": "GND"]),
+            part(.capacitor, "C1", ["capacitance": 10e-6], ["a": "s", "b": "ci"]),
+            r("RIN", 10_000, "ci", "inv"),
+            r("RBIAS", 200_000, "+15V", "noninv"),
+            r("RF", 100_000, "out", "inv"),
+            part(.nortonAmp, "U1", Examples.model(.nortonAmp, "LM3900"), ["minus": "inv", "plus": "noninv", "out": "out"]),
+            probe("OUT", "out"),
+        ], dt: 1e-5, seconds: 0.4, from: 0.39, watch: ["OUT"]) { v in
+            low = min(low, v["OUT"] ?? 0)
+            high = max(high, v["OUT"] ?? 0)
+        }
+        // the rest point: about Rf / Rbias of the supply (above it by a junction's share)
+        XCTAssertEqual((high + low) / 2, 7.5, accuracy: 0.7)
+        // a gain of −Rf / Rin = −10 on 10 mV
+        XCTAssertEqual((high - low) / 2, 0.1, accuracy: 0.015)
+    }
+
+    func testShiftRegistersShiftLatchAndClear() {
+        // inputs: SER, SRCLK, RCLK, OE, SRCLR as bits 0–4
+        func step(_ state: LogicState, _ inputs: UInt32, _ chip: Int) -> LogicState {
+            Logic.next(.shiftRegister, state, inputs: inputs, function: chip)
+        }
+        let ser: UInt32 = 1, clock: UInt32 = 2, latch: UInt32 = 4, clear: UInt32 = 16
+        // 74HC595: shift in 1 then 0, then latch: Q1 high, Q0 low; Q7S the last stage
+        var s = LogicState(inputs: clear)
+        s = step(s, clear | ser, 1)
+        s = step(s, clear | ser | clock, 1)
+        s = step(s, clear, 1)
+        s = step(s, clear | clock, 1)
+        s = step(s, clear, 1)
+        XCTAssertEqual(Logic.outputs(.shiftRegister, s, function: 1).prefix(8).filter { $0 }.count, 0, "nothing reaches Q until RCLK")
+        s = step(s, clear | latch, 1)
+        var q = Logic.outputs(.shiftRegister, s, function: 1)
+        XCTAssertEqual(Array(q.prefix(2)), [false, true])
+        // OE high turns the outputs off
+        s = step(s, clear | latch | 8, 1)
+        q = Logic.outputs(.shiftRegister, s, function: 1)
+        XCTAssertFalse(q[1])
+        // SRCLR low clears the stages
+        s = step(s, latch, 1)
+        XCTAssertEqual(s.shift, 0)
+        // CD4015: four stages, the fifth clock pushes the first one out; RESET high clears
+        var c = LogicState()
+        for k in 0..<5 {
+            c = step(c, (k == 0 ? ser : 0), 0)
+            c = step(c, (k == 0 ? ser : 0) | clock, 0)
+            c = step(c, 0, 0)
+        }
+        XCTAssertEqual(c.shift, 0, "the one shifted in has left the four stages")
+        c = step(c, ser, 0)
+        c = step(c, ser | clock, 0)
+        XCTAssertTrue(Logic.outputs(.shiftRegister, c, function: 0)[0])
+        c = step(c, 16, 0)
+        XCTAssertEqual(c.shift, 0)
+    }
 }

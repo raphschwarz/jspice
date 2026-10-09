@@ -13,7 +13,8 @@ extension ElementKind {
     public var isExpandedPart: Bool {
         switch self {
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
-             .toneControl, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator, .tappedTransformer:
+             .toneControl, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator, .tappedTransformer,
+             .functionGenerator, .nortonAmp:
             return true
         default:
             return false
@@ -67,6 +68,13 @@ extension ElementKind {
             return ChipPackage(name: "SA612", terminalNames: ["inA", "inB", "oscBase", "oscEmitter", "outA", "outB"],
                                pinLabels: ["IN A", "IN B", "OSC B", "OSC E", "OUT A", "OUT B"],
                                pinPlaces: [second(0), second(1), second(2), second(3), first(0), first(1)], length: 4)
+        case .functionGenerator:
+            return ChipPackage(name: "XR2206", terminalNames: ["timing", "control", "out", "square"],
+                               pinLabels: ["TIMING", "CONTROL", "OUT", "SQUARE"],
+                               pinPlaces: [second(0), second(1), first(0), first(1)], length: 2)
+        case .nortonAmp:
+            return ChipPackage(name: "LM3900", terminalNames: ["minus", "plus", "out"], pinLabels: ["−IN", "+IN", "OUT"],
+                               pinPlaces: [second(0), second(1), first(0)], length: 2)
         case .tappedTransformer:
             return ChipPackage(name: "CT", terminalNames: ["a1", "a2", "b1", "ct", "b2"], pinLabels: ["A1", "A2", "B1", "CT", "B2"],
                                pinPlaces: [second(0), second(2), first(0), first(1), first(2)], length: 2)
@@ -193,6 +201,18 @@ extension ElementKind {
                 ParamSpec("supply", "Supply (pin 8)", unit: "V", default: 6, range: 4.5...8, log: false),
                 ParamSpec("tail", "Mixer current", unit: "A", default: 1e-3, range: 1e-4...5e-3),
             ]
+        case .functionGenerator:
+            return [
+                .choice("family", "Chip", ["XR2206: timing resistor to ground, AM on CONTROL",
+                                           "ICL8038: timing resistor to V+, frequency sweep on CONTROL",
+                                           "LM566: timing resistor to V+, frequency control on CONTROL"]),
+                ParamSpec("supply", "Supply", unit: "V", default: 12, range: 5...26, log: false),
+                ParamSpec("capacitance", "Timing capacitor (fitted on its C pins)", unit: "F", default: 10e-9, range: 1e-12...1e-3),
+                .choice("waveform", "OUT", ["Sine", "Triangle"]),
+                ParamSpec("amplitude", "XR2206: OUT's peak (set by pin 3's resistor)", unit: "V", default: 2, range: 0.01...6),
+            ]
+        case .nortonAmp:
+            return [ParamSpec("supply", "Supply", unit: "V", default: 15, range: 4...32, log: false)]
         case .tappedTransformer:
             return [
                 ParamSpec("inductance", "Inductance of winding A", unit: "H", default: 1.5, range: 1e-3...100),
@@ -217,6 +237,20 @@ extension ElementKind {
             return [
                 PartModel(name: "SA612", summary: "Double-balanced mixer with its own oscillator (the NE602 and NE612): 1.5 kΩ inputs and outputs, on 4.5 to 8 V",
                           values: ["supply": 6, "tail": 1e-3]),
+            ]
+        case .functionGenerator:
+            return [
+                PartModel(name: "XR2206", summary: "Function generator: sine (or triangle) and square at 1 / (R C), R from TIMING (pin 7) to ground; amplitude modulation on CONTROL (pin 1)",
+                          values: ["family": 0]),
+                PartModel(name: "ICL8038", summary: "Function generator: sine (or triangle) and square at 0.15 / (R C), R from TIMING (pins 4 and 5) to V+; lowering CONTROL (pin 8) raises the frequency",
+                          values: ["family": 1]),
+                PartModel(name: "LM566", summary: "VCO: triangle and square at 2 (V+ − CONTROL) / (R C V+), R from TIMING (pin 6) to V+",
+                          values: ["family": 2]),
+            ]
+        case .nortonAmp:
+            return [
+                PartModel(name: "LM3900", summary: "One of four Norton (current-differencing) amplifiers: its inputs are junctions at 0.5 V, and it amplifies the difference of their currents. Single supply, 2.5 MHz, 0.5 V/µs",
+                          values: ["supply": 15]),
             ]
         case .tappedTransformer:
             return [
@@ -747,6 +781,74 @@ extension PartExpansion {
             npn(base: oscEmitter, collector: outB, emitter: cb, "Q4", q)
             resistor(vcc, outA, 1500, "RLA")
             resistor(vcc, outB, 1500, "RLB")
+        case .functionGenerator where p.count == 4:
+            // a timing current sensed across 10 Ω sets two oscillators running in step (OUT's sine or triangle and the
+            // square), its frequency in proportion to the current, as the chip charges its capacitor with it
+            let (timing, control, out, square) = (p[0], p[1], p[2], p[3])
+            let supply = param("supply")
+            let c = max(param("capacitance"), 1e-15)
+            let sense = 10.0
+            let (g, vcc, a, b, osc, sq, mid, sqm) = (node(), node(), node(), node(), node(), node(), node(), node())
+            ground(g)
+            add(.dcVoltage, g, vcc, "VCC", ["voltage": supply])
+            let family = Int(param("family").rounded())
+            // the timing current in amps per volt across the sense resistor, times the frequency each amp makes
+            let hertzPerAmp: Double
+            if family == 0 {
+                // XR2206: pin 7 held at 3 V, the current out through R to ground; f = 1 / (R C) = I / (3 V × C)
+                add(.dcVoltage, g, a, "VREF", ["voltage": 3])
+                resistor(a, timing, sense, "RS")
+                add(.wire, timing, b, "WS")
+                hertzPerAmp = 1 / (3 * c)
+            } else {
+                // ICL8038 and LM566: the timing pin follows CONTROL, the current in from V+ through R; ICL8038
+                // f = 0.15 / (R C) with CONTROL at 0.8 V+, LM566 f = 2 (V+ − CONTROL) / (R C V+)
+                let (bias, buffered) = (node(), node())
+                add(.dcVoltage, g, bias, "VBIAS", ["voltage": (family == 1 ? 0.8 : 0.85) * supply])
+                resistor(control, bias, family == 1 ? 10_000 : 1e6, "RBIAS")
+                opAmp(minus: buffered, plus: control, out: buffered, "AB", amplifier(supply: supply, gbw: 10e6, slew: 10))
+                resistor(timing, buffered, sense, "RS")
+                add(.wire, timing, a, "WS")
+                add(.wire, buffered, b, "WB")
+                hertzPerAmp = (family == 1 ? 0.75 : 2) / (supply * c)
+            }
+            let hzPerVolt = hertzPerAmp / sense
+            let sine = family != 2 && param("waveform") < 0.5
+            let peak: Double = family == 0 ? 1 : family == 1 ? (sine ? 0.22 : 0.33) * supply : 1.2
+            threeTerminal(.vco, a, b, osc, "OSC", ["waveform": sine ? 3 : 1, "amplitude": peak, "response": 1, "hzPerVolt": hzPerVolt])
+            threeTerminal(.vco, a, b, sq, "SQ", ["waveform": 2, "amplitude": family == 2 ? 2.7 : supply / 2, "response": 1,
+                                                 "hzPerVolt": hzPerVolt])
+            if family == 0 {
+                // XR2206's amplitude modulation: OUT in proportion to CONTROL's distance from half the supply (full
+                // amplitude with CONTROL at V+, where 100 kΩ inside holds it when left open)
+                let am = node()
+                resistor(control, vcc, 100_000, "RAM")
+                add(.dcVoltage, am, control, "VAM", ["voltage": supply / 2])
+                let product = node()
+                threeTerminal(.multiplier, osc, am, product, "AM", ["scale": param("amplitude") / (supply / 2), "limit": supply / 2])
+                add(.dcVoltage, product, mid, "VOFF", ["voltage": supply / 2])
+            } else {
+                add(.dcVoltage, osc, mid, "VOFF", ["voltage": supply / 2])
+            }
+            resistor(mid, out, family == 0 ? 600 : 1000, "RO")
+            add(.dcVoltage, sq, sqm, "VSQ", ["voltage": supply / 2])
+            resistor(sqm, square, family == 2 ? 50 : 1000, "RSQ")
+        case .nortonAmp where p.count == 3:
+            // the LM3900's Norton amplifier, transistor by transistor: the + input's current mirrored out of the − input
+            // node, the − input the base of a common-emitter stage loaded by 200 µA, an emitter follower out with 1.3 mA
+            // below it, and 470 pF of compensation from the gain stage back to the − input
+            let (minus, plus, out) = (p[0], p[1], p[2])
+            let (g, vcc, gain) = (node(), node(), node())
+            ground(g)
+            add(.dcVoltage, g, vcc, "VCC", ["voltage": param("supply")])
+            let q = ["beta": 200, "saturationCurrent": 1e-14, "cje": 0.5e-12, "cjc": 0.3e-12, "tf": 0.5e-9]
+            npn(base: plus, collector: plus, emitter: g, "Q1", q)
+            npn(base: plus, collector: minus, emitter: g, "Q2", q)
+            npn(base: minus, collector: gain, emitter: g, "Q3", q)
+            add(.currentSource, vcc, gain, "ILOAD", ["current": 200e-6])
+            capacitor(minus, gain, 470e-12, "CC")
+            npn(base: gain, collector: vcc, emitter: out, "Q4", q)
+            add(.currentSource, out, g, "IOUT", ["current": 1.3e-3])
         case .tappedTransformer where p.count == 5:
             // winding A's resistance and leakage, its magnetising inductance, and two ideal cores on it, each driving
             // half the tapped winding (with half its resistance), the halves joined at the tap

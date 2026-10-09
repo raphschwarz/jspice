@@ -252,6 +252,21 @@ public enum Breadboard {
         case .timer555:
             return Package(title: model ?? "NE555", pins: 8,
                            units: [["gnd": 1, "trig": 2, "out": 3, "reset": 4, "ctrl": 5, "thr": 6, "dis": 7, "vcc": 8]], supplies: [])
+        case .shiftRegister:
+            if p("type") < 0.5 {
+                return Package(title: "CD4015", pins: 16,
+                               units: [["srclk": 9, "ser": 7, "srclr": 6, "q0": 5, "q1": 4, "q2": 3, "q3": 10],
+                                       ["srclk": 1, "ser": 15, "srclr": 14, "q0": 13, "q1": 12, "q2": 11, "q3": 2]],
+                               supplies: [(8, "VSS", .ground), (16, "VDD", .volts(cmos))],
+                               labels: [1: "CLOCK B", 2: "Q4 B", 3: "Q3 A", 4: "Q2 A", 5: "Q1 A", 6: "RESET A", 7: "DATA A", 8: "VSS",
+                                        9: "CLOCK A", 10: "Q4 A", 11: "Q3 B", 12: "Q2 B", 13: "Q1 B", 14: "RESET B", 15: "DATA B", 16: "VDD"])
+            }
+            return Package(title: "74HC595", pins: 16,
+                           units: [["q1": 1, "q2": 2, "q3": 3, "q4": 4, "q5": 5, "q6": 6, "q7": 7, "q7s": 9, "srclr": 10, "srclk": 11,
+                                    "rclk": 12, "oe": 13, "ser": 14, "q0": 15]],
+                           supplies: [(8, "GND", .ground), (16, "VCC", .volts(cmos))],
+                           labels: [1: "Q1", 2: "Q2", 3: "Q3", 4: "Q4", 5: "Q5", 6: "Q6", 7: "Q7", 8: "GND", 9: "Q7S", 10: "SRCLR",
+                                    11: "SRCLK", 12: "RCLK", 13: "OE", 14: "SER", 15: "Q0", 16: "VCC"])
         case .decadeCounter:
             return Package(title: model ?? "CD4017", pins: 16,
                            units: [["clock": 14, "inhibit": 13, "reset": 15, "q0": 3, "q1": 2, "q2": 4, "q3": 7, "q4": 10, "q5": 1,
@@ -308,6 +323,35 @@ public enum Breadboard {
                            supplies: [(4, "GND", .ground), (6, "VS", .volts(p("supply")))],
                            labels: [1: "GAIN", 2: "−IN", 3: "+IN", 4: "GND", 5: "VOUT", 6: "VS", 7: "BYPASS", 8: "GAIN"],
                            note: "A 100 µF capacitor from VS to GND right at the chip keeps it from oscillating")
+        case .functionGenerator:
+            let supply = p("supply")
+            switch Int(p("family").rounded()) {
+            case 1:
+                let sine = p("waveform") < 0.5
+                return Package(title: "ICL8038", pins: 14, units: [["timing": 4, "control": 8, "out": sine ? 2 : 3, "square": 9]],
+                               supplies: [(6, "V+", .volts(supply)), (11, "GND", .ground)],
+                               labels: [1: "SINE ADJ", 2: "SINE", 3: "TRIANGLE", 4: "RA", 5: "RB", 6: "V+", 7: "FM BIAS", 8: "FM SWEEP",
+                                        9: "SQUARE", 10: "C", 11: "GND", 12: "SINE ADJ", 13: "NC", 14: "NC"],
+                               note: "Join pins 4 and 5 to the timing resistor; the timing capacitor from pin 10 to ground; join pin 8 to pin 7 for a fixed frequency; 10 kΩ from pin 9 (open collector) to V+")
+            case 2:
+                return Package(title: "LM566", pins: 8, units: [["timing": 6, "control": 5, "out": 4, "square": 3]],
+                               supplies: [(1, "GND", .ground), (8, "V+", .volts(supply))],
+                               labels: [1: "GND", 2: "NC", 3: "SQUARE", 4: "TRIANGLE", 5: "CONTROL", 6: "R1", 7: "C1", 8: "V+"],
+                               note: "The timing capacitor from pin 7 to ground; hold pin 5 between 0.75 and 1 × V+ (a divider) and put 1 nF from pin 5 to pin 6")
+            default:
+                return Package(title: "XR2206", pins: 16, units: [["timing": 7, "control": 1, "out": 2, "square": 11]],
+                               supplies: [(4, "VCC", .volts(supply)), (12, "GND", .ground)],
+                               labels: [1: "AM IN", 2: "OUT", 3: "MULT OUT", 4: "VCC", 5: "C", 6: "C", 7: "TIMING 1", 8: "TIMING 2",
+                                        9: "FSK", 10: "BIAS", 11: "SYNC OUT", 12: "GND", 13: "WAVE", 14: "WAVE", 15: "SYM", 16: "SYM"],
+                               note: "The timing capacitor between pins 5 and 6; 200 Ω from pin 13 to 14 for a sine (open for a triangle); about 60 mV of peak per kΩ from pin 3 to ground; 1 µF from pin 10 to ground; 10 kΩ from pin 11 (open collector) to VCC")
+            }
+        case .nortonAmp:
+            return Package(title: "LM3900", pins: 14,
+                           units: [["plus": 1, "minus": 6, "out": 5], ["plus": 2, "minus": 3, "out": 4], ["plus": 13, "minus": 8, "out": 9],
+                                   ["plus": 12, "minus": 11, "out": 10]],
+                           supplies: [(7, "GND", .ground), (14, "V+", .volts(p("supply")))],
+                           labels: [1: "+IN 1", 2: "+IN 2", 3: "−IN 2", 4: "OUT 2", 5: "OUT 1", 6: "−IN 1", 7: "GND", 8: "−IN 3", 9: "OUT 3",
+                                    10: "OUT 4", 11: "−IN 4", 12: "+IN 4", 13: "+IN 3", 14: "V+"])
         case .balancedModulator:
             return Package(title: model ?? "MC1496", pins: 14,
                            units: [["sigPlus": 1, "gain1": 2, "gain2": 3, "sigMinus": 4, "bias": 5, "outPlus": 6, "carPlus": 8,
@@ -356,6 +400,8 @@ public enum Breadboard {
         case (.npn, "MPSA18"): return ("MPSA18", "EBC", nil)
         case (.npn, "2N2222"): return ("PN2222A", "EBC", "The plastic 2N2222 (PN2222A); the metal-can 2N2222A runs E B C round its tab")
         case (.npn, "BC549C"): return ("BC549C", "CBE", nil)
+        case (.npn, "SSM2212"), (.npn, "CA3046"), (.pnp, "SSM2220"):
+            return (model!, "EBC", "One transistor of a matched set in a single package (8 or 14 pins): wire it from the package by its datasheet's pinout, its partner beside it")
         case (.npn, _): return (model == "2N3904" ? "2N3904" : "2N3904 (or any small NPN)", "EBC", nil)
         case (.pnp, "AC128"): return ("AC128", "EBC", "Germanium, metal can: the dot marks the collector; check with a meter")
         case (.pnp, "NKT275"), (.pnp, "OC44"):

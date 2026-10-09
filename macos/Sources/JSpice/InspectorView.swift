@@ -512,6 +512,10 @@ struct LiveReadings: View {
                     reading("Phase comparator 2", pump > 0 ? "Pumping up" : pump < 0 ? "Pumping down" : "Off (locked)")
                 } else if kind == .decadeCounter || kind == .binaryCounter {
                     reading("Count", "\(simulator.logicCount(index))")
+                } else if kind == .shiftRegister {
+                    // the outputs, first stage on the right
+                    let bits = String(simulator.logicCount(index), radix: 2)
+                    reading("Outputs", String(repeating: "0", count: max(0, (element.model?.name == "74HC595" ? 8 : 4) - bits.count)) + bits)
                 } else if kind == .flipFlop {
                     reading("Q", simulator.logicCount(index) == 1 ? "High" : "Low")
                 } else if kind == .analogMux || kind == .analogSelector {

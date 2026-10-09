@@ -2,7 +2,8 @@ import Foundation
 
 /// Examples for the pedal op-amps, ring modulators and the other chips added with them
 extension Examples {
-    static let chipExamples: [Example] = [tubeScreamer, rat, mc1496Ring, sa612Ring, diodeRing, frequencyShifter]
+    static let chipExamples: [Example] = [tubeScreamer, rat, mc1496Ring, sa612Ring, diodeRing, frequencyShifter, xr2206Generator,
+                                          nortonAmplifier, shiftRegisterSequencer]
 
     private static func part(_ kind: ElementKind, _ name: String, _ params: [String: Double] = [:], _ connections: [String: String])
         -> NetlistPart {
@@ -236,4 +237,68 @@ extension Examples {
         ]
         return parts
     }
+
+    // MARK: - Synth chips
+
+    /// The XR2206 as a function generator: the timing resistor (10 kΩ and a pot) from pin 7 to ground and 47 nF set
+    /// f = 1 / (R C), from about 190 Hz to 2.1 kHz
+    static let xr2206Generator = Example(
+        id: "xr2206", title: "XR2206 function generator (sound)",
+        summary: "The XR2206 on 12 V: 10 kΩ plus the FREQUENCY pot from its timing pin to ground with 47 nF gives f = 1 / (R C), about 190 Hz to 2.1 kHz. It puts out a sine (choose a triangle in the inspector) at 6 V and a square from its sync pin. Turn on sound and turn FREQUENCY.",
+        symbol: "waveform",
+        circuit: drawn([
+            part(.functionGenerator, "U1", Examples.model(.functionGenerator, "XR2206").merging(["capacitance": 47e-9, "amplitude": 2]) { $1 },
+                 ["timing": "t", "control": "am", "out": "sine", "square": "sq"]),
+            r("R1", 10_000, "t", "tp"),
+            rheostat("FREQUENCY", 100_000, position: 0.3, audio: true, "tp", "GND"),
+            r("R2", 100_000, "am", "+12V"),
+            part(.dcVoltage, "VP", ["voltage": 12], ["plus": "+12V", "minus": "GND"]),
+            c("C1", 10e-6, "sine", "out"),
+            r("R3", 10_000, "out", "GND"),
+            r("R4", 10_000, "sq", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 2], ["plus": "out", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage), ("R4", .voltage)]))
+
+    /// An LM3900 amplifier on one supply: its + input fed from the supply through twice the feedback resistor, so the
+    /// output sits at half the supply (a Norton amplifier balances input currents, not voltages)
+    static let nortonAmplifier = Example(
+        id: "lm3900-amp", title: "LM3900 Norton amplifier (sound)",
+        summary: "One of the LM3900's four current-differencing amplifiers, built transistor by transistor, as a single-supply amplifier with a gain of 10: its inputs are junctions at about 0.5 V, and it balances the currents into them. 200 kΩ from 15 V into + and 100 kΩ of feedback set the output's rest at half the supply (Rf / Rbias × V+); 10 kΩ in from the guitar sets the gain, −Rf / Rin. The output's 0.5 V/µs slew and 2.5 MHz shape the top end. Turn on sound.",
+        symbol: "arrow.triangle.branch",
+        circuit: drawn([
+            part(.dcVoltage, "VP", ["voltage": 15], ["plus": "+15V", "minus": "GND"]),
+            guitar(),
+            c("C1", 1e-6, "gtr", "ci"),
+            r("RIN", 10_000, "ci", "inv"),
+            r("RBIAS", 200_000, "+15V", "noninv"),
+            r("RF", 100_000, "out", "inv"),
+            part(.nortonAmp, "U1", Examples.model(.nortonAmp, "LM3900"), ["minus": "inv", "plus": "noninv", "out": "out"]),
+            c("C2", 10e-6, "out", "spk"),
+            r("RL", 10_000, "spk", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 1.5], ["plus": "spk", "minus": "GND"]),
+            part(.probe, "OUT", [:], ["plus": "out", "minus": "GND"]),
+        ], scopes: [("GTR", .voltage), ("OUT", .voltage)]))
+
+    /// A walking pattern from a 74HC595: its last stage, inverted, fed back into its first (a Johnson counter, sixteen
+    /// steps), its outputs summed by equal resistors into a 1 V/octave VCO, a semitone for each output high
+    static let shiftRegisterSequencer = Example(
+        id: "shift-sequencer", title: "Shift-register sequencer (sound)",
+        summary: "A 74HC14 oscillator clocks a 74HC595 five times a second, both its clocks joined. Q7S, inverted by another 74HC14 gate, feeds SER, so ones fill the register and then zeros chase them: sixteen steps. 47 kΩ from each output into 1 kΩ adds about a twelfth of a volt (a semitone) for each output high, and an AS3340 at 1 V/octave plays the run up and down. Turn on sound.",
+        symbol: "stairs",
+        circuit: drawn([
+            part(.dcVoltage, "VCC", ["voltage": 5], ["plus": "+5V", "minus": "GND"]),
+            part(.schmittInverter, "U1A", Examples.model(.schmittInverter, "74HC14"), ["in": "osc", "out": "clk"]),
+            r("RT", 220_000, "clk", "osc"),
+            c("CT", 1e-6, "osc", "GND"),
+            part(.shiftRegister, "U2", Examples.model(.shiftRegister, "74HC595"),
+                 ["ser": "ser", "srclk": "clk", "rclk": "clk", "oe": "GND", "srclr": "+5V",
+                  "q0": "q0", "q1": "q1", "q2": "q2", "q3": "q3", "q4": "q4", "q5": "q5", "q6": "q6", "q7": "q7", "q7s": "q7s"]),
+            part(.schmittInverter, "U1B", Examples.model(.schmittInverter, "74HC14"), ["in": "q7s", "out": "ser"]),
+        ] + (0...7).map { r("RQ\($0)", 47_000, "q\($0)", "cv") } + [
+            r("RCV", 1000, "cv", "GND"),
+            part(.vco, "U3", Examples.model(.vco, "AS3340").merging(["waveform": 0, "frequency": 130.81]) { $1 },
+                 ["cv": "cv", "pw": "GND", "out": "out"]),
+            part(.speaker, "SPK1", ["fullScale": 5], ["plus": "out", "minus": "GND"]),
+            part(.probe, "CV", [:], ["plus": "cv", "minus": "GND"]),
+        ], scopes: [("CV", .voltage), ("SPK1", .voltage)]))
 }

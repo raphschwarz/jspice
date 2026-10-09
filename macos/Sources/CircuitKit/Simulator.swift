@@ -252,6 +252,11 @@ public final class Simulator {
 
     private var matrixIsCurrent = false
     private var hasNonlinear = false
+    /// When the only nonlinear parts are VCAs: nearly linear (a soft limit on a gain), solved in one iteration from the
+    /// predicted solution, their linearisation there exact to second order
+    private var onlyQuasiLinear = false
+    /// This solve started from a prediction
+    private var predictedSolve = false
     private var hasMemristor = false
     private var hasDigital = false
     private var stepCarry = 0.0
@@ -389,7 +394,7 @@ public final class Simulator {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .levelDetector, .springReverb, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter, .pll, .dac: return true
+                 .binaryCounter, .shiftRegister, .pll, .dac: return true
             default: return false
             }
         }
@@ -463,6 +468,7 @@ public final class Simulator {
             if node > 0, let v = previousVoltages[point] { x[node - 1] = v }
         }
         hasNonlinear = !nonlinearIndices.isEmpty
+        onlyQuasiLinear = hasNonlinear && nonlinearIndices.allSatisfy { kinds[$0] == .vca }
         hasDigital = !digitalIndices.isEmpty
         hasMemristor = !memristorIndices.isEmpty
         // the equations' shape may have changed: plan afresh
@@ -879,6 +885,7 @@ public final class Simulator {
         Self.copy(limitedVoltage2, into: &savedLimited2)
         Self.copy(limitedVoltage3, into: &savedLimited3)
         junctionConductance = 0
+        predictedSolve = predictNext
         if predictNext {
             // Newton-Raphson starts from the solution extrapolated along the last substep, a far better guess than the
             // last solution while a signal is moving: one iteration fewer to converge (the fallback is the last solution)
@@ -886,6 +893,7 @@ public final class Simulator {
             predict()
         }
         if newton(iterations: Self.maxNewtonIterations) || isFailed || !hasNonlinear { return !isFailed }
+        predictedSolve = false
         let firstTry = (x, limitedVoltage, limitedVoltage2, limitedVoltage3)
         (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedX, savedLimited, savedLimited2, savedLimited3)
         var converged = false
@@ -975,7 +983,7 @@ public final class Simulator {
                 fail()
                 return false
             }
-            if !hasNonlinear || (iteration > 1 && change < 1e-9 && !limiting) {
+            if !hasNonlinear || (onlyQuasiLinear && predictedSolve) || (iteration > 1 && change < 1e-9 && !limiting) {
                 converged = true
                 break
             }
@@ -1309,7 +1317,7 @@ public final class Simulator {
             case .schmittInverter:
                 // output drives towards the hidden supply or ground through its output resistance
                 stampConductance(matrix, m, nodes[1], 0, 1 / max(element[param: "outputResistance"], 0.1))
-            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .pll:
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
                 // each output likewise; the inputs draw nothing
                 for k in element.kind.logicOutputs where k < nodes.count {
                     stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance)
@@ -1396,6 +1404,18 @@ public final class Simulator {
 
     /// The next sample of a noise source: Gaussian with unit variance (Box-Muller from two uniform numbers)
     private func nextNoise(_ i: Int) -> Double {
+        if constants[i].value >= 0.5 {
+            // the MM5837's 17-stage shift register, its last stage fed back with the 14th: a maximal sequence of 131071
+            // bits, two of them a sample, each ±1
+            var s = noiseState[i] & 0x1FFFF
+            if s == 0 { s = 1 }
+            for _ in 0..<2 {
+                let bit = ((s >> 16) ^ (s >> 13)) & 1
+                s = ((s << 1) | bit) & 0x1FFFF
+            }
+            noiseState[i] = s
+            return s & 1 != 0 ? 1 : -1
+        }
         func uniform() -> Double {
             var s = noiseState[i]
             s ^= s << 13
@@ -1452,7 +1472,7 @@ public final class Simulator {
                 guard nodes.count > 5 else { continue }
                 let output = Logic.dacOutput(logicStates[i].count, reference: voltage(nodes[4]), supply: c.supply)
                 stampCurrent(&rhs, 0, nodes[5], output * c.outputConductance)
-            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .pll:
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
                 let kind = kinds[i]
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where high {
                     stampCurrent(&rhs, 0, nodes[k], c.supply * c.outputConductance)
@@ -1578,6 +1598,7 @@ public final class Simulator {
             c.high = p("high")
         case .noiseVoltage:
             c.amplitude = max(p("amplitude"), 0)
+            c.value = Self.choice(p("type"), 0...1)
         case .audioInput:
             c.value = p("level")
             c.offset = p("offset")
@@ -1621,6 +1642,8 @@ public final class Simulator {
             c.value = Self.choice(p("waveform"), 0...3)
             c.frequency = max(p("frequency"), 0)
             c.amplitude = p("amplitude")
+            c.duty = Self.choice(p("response"), 0...1)
+            c.gain = max(p("hzPerVolt"), 0)
         case .vcf:
             c.frequency = max(p("cutoff"), 0.01)
             c.gain = 4 * max(p("resonance"), 0)
@@ -1700,13 +1723,14 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac:
             c.supply = max(p("supply"), 0.1)
             c.upper = p("upper") * c.supply
             c.lower = min(p("lower"), p("upper")) * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
             c.onConductance = 1 / max(p("onResistance"), 1e-3)
             c.value = Self.choice(p("function"), 0...Double(Logic.gateFunctions.count - 1))
+            if element.kind == .shiftRegister { c.value = Self.choice(p("type"), 0...1) }
             c.frequency = max(p("fMin"), 0)
             c.high = max(p("fMax"), c.frequency)
         case .unbufferedInverter:
@@ -2579,7 +2603,7 @@ public final class Simulator {
             if high { inputs |= mask } else { inputs &= ~mask }
         }
         guard inputs != old.inputs else { return false }
-        let next = Logic.next(kind, old, inputs: inputs)
+        let next = Logic.next(kind, old, inputs: inputs, function: Int(c.value))
         logicStates[i] = next
         if kind == .analogMux || kind == .analogSelector {
             guard Logic.channel(kind, next) != Logic.channel(kind, old) else { return false }
@@ -2851,7 +2875,7 @@ public final class Simulator {
                 let inputs = event.high ? old.inputs | mask : old.inputs & ~mask
                 guard inputs != old.inputs else { continue }
                 let kind = kinds[target.element]
-                let next = Logic.next(kind, old, inputs: inputs)
+                let next = Logic.next(kind, old, inputs: inputs, function: Int(constants[target.element].value))
                 logicStates[target.element] = next
                 if (kind == .analogMux || kind == .analogSelector) && Logic.channel(kind, next) != Logic.channel(kind, old) {
                     matrixIsCurrent = false
@@ -2891,13 +2915,16 @@ public final class Simulator {
             }
             s.output = s.high ? c.high : c.low
         case .vco:
-            // one volt per octave from the CV; the phase runs from 0 to 1 once per cycle
-            let frequency = min(c.frequency * pow(2, min(max(in0, -16), 16)), 0.45 / dt)
+            // one volt per octave from the CV, or (a function generator's timing current, sensed across a resistor) a
+            // frequency in proportion to the voltage from CV to PW; the phase runs from 0 to 1 once per cycle
+            let linear = c.duty >= 0.5
+            let wanted = linear ? c.gain * (in0 - in1) : c.frequency * pow(2, min(max(in0, -16), 16))
+            let frequency = min(max(wanted, 0), 0.45 / dt)
             let increment = frequency * dt
             var phase = s.level + increment
             phase -= phase.rounded(.down)
             s.level = phase
-            let duty = min(max(0.5 + in1 / 10, 0.05), 0.95)
+            let duty = linear ? 0.5 : min(max(0.5 + in1 / 10, 0.05), 0.95)
             s.output = c.amplitude * Self.oscillator(Int(c.value), phase: phase, increment: increment, duty: duty)
         case .vcf:
             // four one-pole stages with soft saturation, the last fed back to the input for resonance: the cutoff
@@ -3130,7 +3157,7 @@ public final class Simulator {
         case .unbufferedInverter:
             let current = inverterCurrent(i, vin: v(nodes[0]), vout: v(nodes[1])).current
             return (current, [0, current])
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .pll:
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
             // the main current: what the outputs supply (for a gate, what its output puts out)
             let c = constants[i]
             let kind = element.kind

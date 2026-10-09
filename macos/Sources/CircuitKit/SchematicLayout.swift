@@ -81,6 +81,7 @@ public enum SchematicLayout {
         .logicGate: ["in1", "in2"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicInputs),
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicInputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicInputs),
+        .shiftRegister: names(.shiftRegister, ElementKind.shiftRegister.logicInputs),
         .analogMux: names(.analogMux, Array(0...11)), .analogSelector: ["x0", "x1", "select", "inhibit"],
         .pll: ["signal", "comparator", "vco_in", "inhibit"], .dac: ["cs", "sck", "sdi", "ldac", "vref"],
     ].merging(audioSides(second: true)) { $1 }
@@ -95,7 +96,8 @@ public enum SchematicLayout {
         .attiny85: microcontrollerSide(.attiny85, second: false), .rp2040: microcontrollerSide(.pico, second: false),
         .logicGate: ["out"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicOutputs),
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicOutputs),
-        .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicOutputs), .analogMux: ["x"], .analogSelector: ["x"],
+        .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicOutputs),
+        .shiftRegister: names(.shiftRegister, ElementKind.shiftRegister.logicOutputs), .analogMux: ["x"], .analogSelector: ["x"],
         .pll: ["vco_out", "pc1", "pc2"], .dac: ["out"],
     ].merging(audioSides(second: false)) { $1 }
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .keyboardPitch,
@@ -138,7 +140,7 @@ public enum SchematicLayout {
             return frame(0...(e.chipPackage?.length ?? 3), -2...2)
         case .vactrol, .transformer: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac,
              .block:
             return frame(0...(e.chipPackage?.length ?? 13), -2...2)
         default:
@@ -575,7 +577,7 @@ public enum SchematicLayout {
                     case .timer555:
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
-                    case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
+                    case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
                          .analogSelector, .pll, .dac, .block:
                         // analog inputs (a logic chip's or a block's inputs) down the left, digital pins (its outputs) down
                         // the right

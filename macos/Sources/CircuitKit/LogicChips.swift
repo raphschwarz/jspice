@@ -40,6 +40,10 @@ extension ElementKind {
             return ChipPackage(name: "CD4040", terminalNames: ["clock", "reset"] + (1...12).map { "q\($0)" },
                                pinLabels: ["CLK", "RST"] + (1...12).map { "Q\($0)" },
                                pinPlaces: [second(0), second(1)] + (0...11).map(first), length: 11)
+        case .shiftRegister:
+            return ChipPackage(name: "74HC595", terminalNames: ["ser", "srclk", "rclk", "oe", "srclr"] + (0...7).map { "q\($0)" } + ["q7s"],
+                               pinLabels: ["SER", "SRCLK", "RCLK", "OE", "SRCLR"] + (0...7).map { "Q\($0)" } + ["Q7S"],
+                               pinPlaces: (0...4).map(second) + (0...8).map(first), length: 8)
         case .analogMux:
             return ChipPackage(name: "CD4051", terminalNames: (0...7).map { "x\($0)" } + ["a", "b", "c", "inhibit", "x"],
                                pinLabels: (0...7).map { "X\($0)" } + ["A", "B", "C", "INH", "X"],
@@ -65,7 +69,7 @@ extension ElementKind {
     /// state changes when an input crosses one, and their outputs drive towards the hidden supply or ground.
     public var isLogic: Bool {
         switch self {
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return true
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac: return true
         default: return false
         }
     }
@@ -77,6 +81,7 @@ extension ElementKind {
         case .flipFlop: return [0, 1, 2, 3]
         case .decadeCounter: return [0, 1, 2]
         case .binaryCounter: return [0, 1]
+        case .shiftRegister: return [0, 1, 2, 3, 4]
         case .analogMux: return [8, 9, 10, 11]
         case .analogSelector: return [2, 3]
         case .pll: return [0, 1, 3]
@@ -92,6 +97,7 @@ extension ElementKind {
         case .flipFlop: return [4, 5]
         case .decadeCounter: return Array(3...13)
         case .binaryCounter: return Array(2...13)
+        case .shiftRegister: return Array(5...13)
         case .pll: return [4, 5]
         default: return []
         }
@@ -133,7 +139,7 @@ enum Logic {
     }
 
     /// The state after the inputs change from `old.inputs` to `inputs` (edges are what changed between the two)
-    static func next(_ kind: ElementKind, _ old: LogicState, inputs: UInt32) -> LogicState {
+    static func next(_ kind: ElementKind, _ old: LogicState, inputs: UInt32, function: Int = 0) -> LogicState {
         func level(_ k: Int) -> Bool { inputs & (1 << UInt32(k)) != 0 }
         func rose(_ k: Int) -> Bool { level(k) && old.inputs & (1 << UInt32(k)) == 0 }
         func fell(_ k: Int) -> Bool { !level(k) && old.inputs & (1 << UInt32(k)) != 0 }
@@ -154,6 +160,27 @@ enum Logic {
                 state.count = 0
             } else if (rose(0) && !level(1)) || (fell(1) && level(0)) {
                 state.count = (old.count + 1) % 10
+            }
+        case .shiftRegister:
+            // SER (DATA), SRCLK (CLOCK), RCLK, OE, SRCLR (RESET): each rising clock moves the stages along one and takes
+            // SER into the first. A CD4015 half has four stages and clears while RESET is high; a 74HC595 has eight,
+            // clears while SRCLR is low, and copies the stages to its latch on RCLK's rising edge (as they were before
+            // a clock edge at the same moment, so with the clocks joined the latch is a stage behind)
+            if function == 0 {
+                if level(4) {
+                    state.shift = 0
+                } else if rose(1) {
+                    state.shift = (old.shift << 1 | (level(0) ? 1 : 0)) & 0xF
+                }
+                state.count = Int(state.shift)
+            } else {
+                if !level(4) {
+                    state.shift = 0
+                } else if rose(1) {
+                    state.shift = (old.shift << 1 | (level(0) ? 1 : 0)) & 0xFF
+                }
+                if rose(2) { state.latch = old.shift }
+                state.count = Int(state.latch)
             }
         case .binaryCounter:
             // CLK, RST: counts on the clock's falling edge; reset holds it at 0
@@ -205,6 +232,15 @@ enum Logic {
             return (0...9).map { state.count == $0 } + [state.count < 5]
         case .binaryCounter:
             return (0..<12).map { state.count & (1 << $0) != 0 }
+        case .shiftRegister:
+            if function == 0 {
+                // a CD4015 half's Q1–Q4 (the last also its serial output)
+                return (0..<8).map { $0 < 4 && state.shift & (UInt32(1) << UInt32($0)) != 0 } + [state.shift & 0x8 != 0]
+            }
+            // a 74HC595's latch, driven while OE is low (the chip lets its outputs float otherwise: here they are held
+            // low), and Q7S, the last stage, always
+            let enabled = !level(3)
+            return (0..<8).map { enabled && state.latch & (UInt32(1) << UInt32($0)) != 0 } + [state.shift & 0x80 != 0]
         case .pll:
             // the VCO (stopped low while inhibited), and phase comparator 1: the XOR of the signal and comparator inputs
             return [!level(2) && state.phase < 0.5, level(0) != level(1)]
