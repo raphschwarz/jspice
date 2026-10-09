@@ -641,7 +641,12 @@ public enum Breadboard {
     }
 
     static func plan(_ circuit: Circuit) -> Plan {
-        let flat = circuit.flattened(expandingModels: false)
+        var flat = circuit.flattened(expandingModels: false)
+        // a loop probe is a link in the built circuit
+        for k in flat.elements.indices where flat.elements[k].kind == .loopProbe {
+            flat.elements[k].kind = .wire
+            flat.elements[k].params = [:]
+        }
         var plan = Plan()
         plan.parts = NetlistExtractor.netlist(from: flat).filter { $0.kind != .block && $0.kind != .port }
         plan.voltages = netVoltages(flat, plan.parts)

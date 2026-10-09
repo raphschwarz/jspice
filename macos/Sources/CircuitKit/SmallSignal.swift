@@ -41,10 +41,17 @@ public struct SmallSignalModel: Equatable, Sendable {
     var entries: [Entry]
     /// What driving each source means: a 1 V source sets its row, a 1 A source injects into its nodes
     var drives: [Int: Drive]
+    /// Each voltage source's nodes (a loop probe's in is its minus, its out its plus)
+    var terminals: [Int: Terminals] = [:]
 
     enum Drive: Equatable, Sendable {
         case row(Int)
         case current(from: Int, to: Int)
+    }
+
+    struct Terminals: Equatable, Sendable {
+        var minus: Int
+        var plus: Int
     }
 
     /// `scale` times the transfer at the frequency, added to the matrix at (row, column)
@@ -95,12 +102,13 @@ public struct SmallSignalModel: Equatable, Sendable {
         }
     }
 
-    init(size: Int, nodeCount: Int, matrix: [Double], entries: [Entry], drives: [Int: Drive]) {
+    init(size: Int, nodeCount: Int, matrix: [Double], entries: [Entry], drives: [Int: Drive], terminals: [Int: Terminals] = [:]) {
         self.size = size
         self.nodeCount = nodeCount
         self.matrix = matrix
         self.entries = entries
         self.drives = drives
+        self.terminals = terminals
     }
 
     /// Whether the element at `index` is a source a sweep can drive
@@ -109,7 +117,22 @@ public struct SmallSignalModel: Equatable, Sendable {
     /// The amplitude and phase of every node voltage (index 0 is ground) at each frequency in Hz, for the source at
     /// `input` driven with 1 V or 1 A; nil if it is not a source, or the equations cannot be solved
     public func solve(input: Int, frequencies: [Double]) -> [[Complex]]? {
-        guard let drive = drives[input], size > 0 else { return nil }
+        guard let drive = drives[input] else { return nil }
+        return solutions(frequencies: frequencies) { b in
+            switch drive {
+            case .row(let row):
+                b[row] = 1
+            case .current(let a, let b0):
+                if a > 0 { b[a - 1] -= 1 }
+                if b0 > 0 { b[b0 - 1] += 1 }
+            }
+        }?.map { x in [Complex(0)] + x.prefix(max(0, nodeCount - 1)) }
+    }
+
+    /// Every unknown (node voltages from node 1, then the sources' and outputs' currents) at each frequency in Hz, for
+    /// the right-hand side `excite` sets (the real parts; zero elsewhere); nil if the equations cannot be solved
+    func solutions(frequencies: [Double], _ excite: (inout [Double]) -> Void) -> [[Complex]]? {
+        guard size > 0 else { return nil }
         let m = size
         var re = [Double](repeating: 0, count: m * m)
         var im = [Double](repeating: 0, count: m * m)
@@ -133,20 +156,71 @@ public struct SmallSignalModel: Equatable, Sendable {
                 bre[k] = 0
                 bim[k] = 0
             }
-            switch drive {
-            case .row(let row):
-                bre[row] = 1
-            case .current(let a, let b):
-                if a > 0 { bre[a - 1] -= 1 }
-                if b > 0 { bre[b - 1] += 1 }
-            }
+            excite(&bre)
             guard Self.solveInPlace(&re, &im, &bre, &bim, size: m) else { return nil }
-            var voltages = [Complex(0)]
-            voltages.reserveCapacity(nodeCount)
-            for node in 1..<max(1, nodeCount) { voltages.append(Complex(bre[node - 1], bim[node - 1])) }
-            results.append(voltages)
+            results.append((0..<m).map { Complex(bre[$0], bim[$0]) })
         }
         return results
+    }
+
+    /// Whether the element at `index` can be a loop's break point: a voltage source with a row (a loop probe)
+    public func canBreakLoop(at index: Int) -> Bool {
+        guard case .row = drives[index] else { return false }
+        return terminals[index] != nil
+    }
+
+    /// The loop gain T (the return ratio) of the feedback loop through the loop probe (or 0 V source) at `probe`, at
+    /// each frequency in Hz, by Middlebrook's double injection: a voltage injected in series at the break gives
+    /// Tv = −v(in) / v(out), a current injected into it gives Ti = i_in / i_out (the currents into the two sides), and
+    /// T = (Tv Ti − 1) / (Tv + Ti + 2), exact for a loop with loading on both sides of the break. The probe's in must face
+    /// the side that drives the loop (an op-amp's output), its out the side driven (the feedback network). Negative
+    /// feedback has T positive at low frequencies; the closed loop's response is the forward gain over 1 + T.
+    public func loopGain(probe: Int, frequencies: [Double]) -> [Complex]? {
+        // (both sides of the break are nodes of their own: a loop does not run through ground)
+        guard case .row(let row)? = drives[probe], let t = terminals[probe], t.minus != t.plus, t.minus > 0, t.plus > 0,
+              t.minus < nodeCount, t.plus < nodeCount else { return nil }
+        func node(_ x: [Complex], _ n: Int) -> Complex { x[n - 1] }
+        // voltage injection: v(out) − v(in) = 1
+        guard let voltage = solutions(frequencies: frequencies, { $0[row] = 1 }),
+              // current injection: 1 A into out, the probe at 0 V; its row holds the current it delivers into out (and so
+              // takes from in)
+              let current = solutions(frequencies: frequencies, { $0[t.plus - 1] += 1 }) else { return nil }
+        var result: [Complex] = []
+        result.reserveCapacity(frequencies.count)
+        for k in frequencies.indices {
+            let tv = Complex(0) - node(voltage[k], t.minus) / node(voltage[k], t.plus)
+            let delivered = current[k][row]
+            let into = Complex(0) - delivered                 // into the driving side, from the break
+            let out = Complex(1) + delivered                  // into the driven side
+            // T = (Tv Ti − 1) / (Tv + Ti + 2) with Ti = into / out, multiplied through by out (zero for an ideal driver)
+            result.append((tv * into - out) / (tv * out + into + 2 * out))
+        }
+        return result
+    }
+
+    /// The impedance between nodes `plus` and `minus` at each frequency in Hz, the sources at rest (voltage sources
+    /// shorted, current sources open): the voltage a 1 A current into `plus` and out of `minus` sets across them
+    public func impedance(plus: Int, minus: Int, frequencies: [Double]) -> [Complex]? {
+        guard plus != minus, plus < nodeCount, minus < nodeCount else { return nil }
+        guard let x = solutions(frequencies: frequencies, { b in
+            if plus > 0 { b[plus - 1] += 1 }
+            if minus > 0 { b[minus - 1] -= 1 }
+        }) else { return nil }
+        return x.map { v in (plus > 0 ? v[plus - 1] : Complex(0)) - (minus > 0 ? v[minus - 1] : Complex(0)) }
+    }
+
+    /// The impedance the source at `input` sees, looking into the circuit from its terminals, at each frequency in Hz
+    /// (a circuit's input impedance): its voltage over the current it delivers, the other sources at rest
+    public func loadImpedance(input: Int, frequencies: [Double]) -> [Complex]? {
+        switch drives[input] {
+        case .row(let row)?:
+            guard let x = solutions(frequencies: frequencies, { $0[row] = 1 }) else { return nil }
+            return x.map { Complex(1) / $0[row] }
+        case .current(let from, let to)?:
+            return impedance(plus: to, minus: from, frequencies: frequencies)
+        case nil:
+            return nil
+        }
     }
 
     /// One source of noise in the circuit: a current between two nodes (a resistor's thermal noise, a junction's shot
@@ -356,6 +430,64 @@ public enum FrequencySweep {
             result.append(phase)
         }
         return result
+    }
+}
+
+/// A feedback loop's stability, read from its loop gain T over a sweep: where |T| crosses 1 (crossover) and how far T's
+/// phase is from −180° there (the phase margin), and where T's phase crosses −180° and how far |T| is below 1 there (the
+/// gain margin). A loop with 45° or more and 6 dB or more settles without much ringing.
+public struct StabilityMargins: Sendable {
+    public struct Crossing: Sendable {
+        public var frequency: Double
+        /// Degrees for a unity-gain crossing, dB for a phase crossing
+        public var margin: Double
+    }
+
+    /// Each frequency where |T| crosses 1, with the phase margin there: how much more phase lag (where |T| falls through
+    /// 1, as at the top of a loop's band) or lead (where it rises through 1, below an AC-coupled loop's band) would take
+    /// T to −1, from −180° to 180° (negative: the loop is unstable)
+    public var unityCrossings: [Crossing] = []
+    /// Each frequency where T's phase crosses −180° (or −540°…), with the gain margin there (dB below unity; negative if
+    /// above)
+    public var phaseCrossings: [Crossing] = []
+
+    /// The smallest phase margin over the unity-gain crossings; nil if |T| never crosses 1 in the sweep
+    public var phaseMargin: Double? { unityCrossings.map(\.margin).min() }
+    /// The highest unity-gain crossing: the loop's bandwidth
+    public var crossover: Double? { unityCrossings.last?.frequency }
+    /// The gain margin at the phase crossing nearest crossover (above it for a stable loop, below it for one with too
+    /// much gain), or at the first if |T| never crosses 1
+    public var gainMargin: Double? {
+        guard let crossover else { return phaseCrossings.first?.margin }
+        return phaseCrossings.min { abs(log($0.frequency / crossover)) < abs(log($1.frequency / crossover)) }?.margin
+    }
+
+    public init(frequencies: [Double], loopGain: [Complex]) {
+        let n = min(frequencies.count, loopGain.count)
+        guard n >= 2 else { return }
+        let db = loopGain.prefix(n).map { 20 * log10(max($0.magnitude, 1e-300)) }
+        let phases = FrequencySweep.unwrappedPhases(Array(loopGain.prefix(n)))
+        func at(_ k: Int, _ fraction: Double) -> Double {
+            frequencies[k - 1] * pow(frequencies[k] / frequencies[k - 1], fraction)
+        }
+        for k in 1..<n {
+            let (a, b) = (db[k - 1], db[k])
+            if (a >= 0) != (b >= 0), a != b {
+                let fraction = a / (a - b)
+                let phase = phases[k - 1] + fraction * (phases[k] - phases[k - 1])
+                var margin = b < a ? 180 + phase : 180 - phase
+                margin -= 360 * ((margin + 180) / 360).rounded(.down)
+                unityCrossings.append(Crossing(frequency: at(k, fraction), margin: margin))
+            }
+            // the phase plus 180° crossing a multiple of 360°
+            let (p, q) = (phases[k - 1] + 180, phases[k] + 180)
+            let (lo, hi) = ((p / 360).rounded(.down), (q / 360).rounded(.down))
+            if lo != hi, p != q {
+                let target = 360 * max(lo, hi)
+                let fraction = (target - p) / (q - p)
+                phaseCrossings.append(Crossing(frequency: at(k, fraction), margin: -(a + fraction * (b - a))))
+            }
+        }
     }
 }
 

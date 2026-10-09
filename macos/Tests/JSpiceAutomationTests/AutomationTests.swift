@@ -82,6 +82,64 @@ final class AutomationTests: XCTestCase {
         XCTAssertThrowsError(try session.call("set_sequence", arguments: ["steps": ["inf"]]))
     }
 
+    /// An op-amp closing its loop through two RC sections, broken by a loop probe: T = A(s) / (s²τ² + 3sτ + 1), whose
+    /// margins are 33.3° at 66.6 kHz and 13.6 dB (see LoopGainTests)
+    func testLoopGainAndImpedanceTools() throws {
+        let server = MCPServer(session: CircuitSession())
+        let parts: [[String: Any]] = [
+            ["kind": "opAmp", "name": "U1", "params": ["gain": 1e5, "gbw": 1e5, "offset": 0], "connections": ["minus": "fb", "plus": "GND", "out": "out"]],
+            ["kind": "loopProbe", "name": "LP1", "connections": ["in": "out", "out": "y"]],
+            ["kind": "resistor", "name": "R1", "params": ["resistance": "1k"], "connections": ["a": "y", "b": "n1"]],
+            ["kind": "capacitor", "name": "C1", "params": ["capacitance": "1n"], "connections": ["1": "n1", "2": "GND"]],
+            ["kind": "resistor", "name": "R2", "params": ["resistance": "1k"], "connections": ["a": "n1", "b": "fb"]],
+            ["kind": "capacitor", "name": "C2", "params": ["capacitance": "1n"], "connections": ["1": "fb", "2": "GND"]],
+        ]
+        let (built, buildError) = try call(server, "build_circuit", ["parts": parts])
+        XCTAssertFalse(buildError, "\(built)")
+        let (value, isError) = try call(server, "loop_gain", [:])
+        XCTAssertFalse(isError, "\(value)")
+        let result = try XCTUnwrap(value as? [String: Any])
+        XCTAssertEqual(try XCTUnwrap(result["crossover_hz"] as? Double), 66_580, accuracy: 700)
+        XCTAssertEqual(try XCTUnwrap(result["phase_margin_deg"] as? Double), 33.3, accuracy: 1)
+        XCTAssertEqual(try XCTUnwrap(result["gain_margin_db"] as? Double), 13.6, accuracy: 0.3)
+        XCTAssertTrue((result["verdict"] as? String)?.hasPrefix("Phase margin 33°") == true, "\(result["verdict"] ?? "")")
+
+        // the RC low-pass (1 kHz): the output node to ground is R ‖ C, the source sees R + 1 / jωC
+        let (_, lowPassError) = try call(server, "build_circuit", ["parts": lowPass])
+        XCTAssertFalse(lowPassError)
+        let (node, nodeError) = try call(server, "impedance", ["at": "out", "start": 1000, "stop": 10_000, "points_per_decade": 1])
+        XCTAssertFalse(nodeError, "\(node)")
+        let nodePoints = try XCTUnwrap((node as? [String: Any])?["points"] as? [[String: Any]])
+        XCTAssertEqual(try XCTUnwrap(nodePoints[0]["ohms"] as? Double), 1000 / 2.squareRoot(), accuracy: 1e-3)
+        XCTAssertEqual(try XCTUnwrap(nodePoints[0]["phase_deg"] as? Double), -45, accuracy: 1e-3)
+        let (input, inputError) = try call(server, "impedance", ["source": "V1", "start": 1000, "stop": 10_000, "points_per_decade": 1])
+        XCTAssertFalse(inputError, "\(input)")
+        let inputPoints = try XCTUnwrap((input as? [String: Any])?["points"] as? [[String: Any]])
+        XCTAssertEqual(try XCTUnwrap(inputPoints[0]["resistance"] as? Double), 1000, accuracy: 1e-3)
+        XCTAssertEqual(try XCTUnwrap(inputPoints[0]["reactance"] as? Double), -1000, accuracy: 1e-3)
+    }
+
+    /// 12 V across 100 Ω: 1.44 W in a quarter-watt resistor
+    func testStressTool() throws {
+        let server = MCPServer(session: CircuitSession())
+        let parts: [[String: Any]] = [
+            ["kind": "dcVoltage", "name": "V1", "params": ["voltage": 12], "connections": ["plus": "a", "minus": "GND"]],
+            ["kind": "resistor", "name": "R1", "params": ["resistance": 100], "connections": ["a": "a", "b": "GND"]],
+            ["kind": "resistor", "name": "R2", "params": ["resistance": "10k"], "connections": ["a": "a", "b": "GND"]],
+        ]
+        let (_, buildError) = try call(server, "build_circuit", ["parts": parts])
+        XCTAssertFalse(buildError)
+        let (value, isError) = try call(server, "stress", ["duration": 0.001])
+        XCTAssertFalse(isError, "\(value)")
+        let result = try XCTUnwrap(value as? [String: Any])
+        let over = try XCTUnwrap(result["overstressed"] as? [[String: Any]])
+        XCTAssertEqual(over.count, 1)
+        XCTAssertEqual(over.first?["part"] as? String, "R1")
+        XCTAssertEqual(try XCTUnwrap(over.first?["load_percent"] as? Double), 576, accuracy: 0.1)
+        XCTAssertEqual((result["checks"] as? [[String: Any]])?.count, 2)
+        XCTAssertTrue((result["verdict"] as? String)?.hasPrefix("1 past their ratings: R1 power 576 %") == true, "\(result["verdict"] ?? "")")
+    }
+
     func testFrequencyResponseOfAnRCLowPass() throws {
         let server = MCPServer(session: CircuitSession())
         let (_, buildError) = try call(server, "build_circuit", ["parts": lowPass])

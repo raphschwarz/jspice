@@ -83,7 +83,8 @@ extension Circuit {
     public func flattened(expandingModels: Bool = true) -> Circuit {
         guard elements.contains(where: {
             ($0.kind == .block && $0.block != nil)
-                || (expandingModels && ($0.kind.isTube || $0.kind == .transformer || $0.expandsIntoParts || $0.runsMakerModel))
+                || (expandingModels && ($0.kind.isTube || $0.kind == .transformer || $0.expandsIntoParts || $0.runsMakerModel
+                    || $0.kind == .loopProbe))
         }) else {
             return self
         }
@@ -146,6 +147,12 @@ extension Circuit {
                 expand(opAmp, block, pins: roles.map { targets[$0] }, depth: 0)
             }
             result.expandModels()
+            // a loop probe is simulated as a 0 V source from in (its minus) to out (its plus), whose row small-signal
+            // analysis drives and reads (see `SmallSignalModel.loopGain`)
+            for k in result.elements.indices where result.elements[k].kind == .loopProbe {
+                result.elements[k].kind = .dcVoltage
+                result.elements[k].params = ["voltage": 0]
+            }
         }
         return result
     }

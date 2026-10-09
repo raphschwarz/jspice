@@ -163,7 +163,7 @@ public enum SchematicCapture {
 
     /// What JSpice can build: each kind's terminals, parameters and models, for the model to choose from
     static var catalog: String {
-        ElementKind.allCases.filter { ![.block, .port, .probe, .wire].contains($0) }.map { kind in
+        ElementKind.allCases.filter { ![.block, .port, .probe, .loopProbe, .wire].contains($0) }.map { kind in
             var line = "\(kind.rawValue) (\(kind.displayName)): terminals \(kind.terminalNames.joined(separator: ", "))"
             // (a model card's other parameters left out: a drawing gives a part's name, not its card)
             let params = kind.params.filter { !$0.advanced }.map { spec in spec.unit.isEmpty ? spec.key : "\(spec.key) [\(spec.unit)]" }
@@ -204,7 +204,7 @@ public enum SchematicCapture {
         func object(_ properties: [String: Any]) -> [String: Any] {
             ["type": "object", "properties": properties, "required": properties.keys.sorted(), "additionalProperties": false]
         }
-        let kinds = ElementKind.allCases.filter { ![.block, .port, .probe, .wire].contains($0) }.map(\.rawValue)
+        let kinds = ElementKind.allCases.filter { ![.block, .port, .probe, .loopProbe, .wire].contains($0) }.map(\.rawValue)
         let part = object([
             "kind": ["type": "string", "enum": kinds],
             "name": ["type": "string"],

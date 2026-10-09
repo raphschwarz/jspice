@@ -36,7 +36,7 @@ public struct CaptureScore: CustomStringConvertible, Sendable {
     /// Parts that work either way round
     static let symmetric: Set<ElementKind> = [.resistor, .capacitor, .inductor, .lamp, .toggleSwitch, .pushButton]
     /// What is drawn but is not a part
-    static let ignored: Set<ElementKind> = [.wire, .ground, .netLabel, .probe, .port, .block]
+    static let ignored: Set<ElementKind> = [.wire, .ground, .netLabel, .probe, .loopProbe, .port, .block]
 
     static func netlist(_ circuit: Circuit) -> [NetlistPart] {
         NetlistExtractor.netlist(from: circuit.flattened(expandingModels: false)).filter { !ignored.contains($0.kind) }

@@ -58,7 +58,11 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     /// A behavioural source (SPICE's B source, and its E, F, G and H sources): a voltage or current set by an expression
     /// of the voltages at its sense pins and the currents through named sources (`code` holds the expression)
     case behavioralSource
-    case probe, ammeter, speaker
+    case probe, ammeter
+    /// A break in a feedback loop for measuring its loop gain: 0 V from `in` (the side that drives) to `out` (the side
+    /// driven), where small-signal analysis injects (see `SmallSignalModel.loopGain`); a link in the built circuit
+    case loopProbe
+    case speaker
     /// Audio parts: microphones and a pickup, preamp, line and power amp chips, dynamics, tone, metering, a reverb tank
     case microphone, electretMic, pickup, instrumentationAmp, lineReceiver, lineDriver, audioPowerAmp, compander, toneControl
     case levelDetector, springReverb, barGraphDriver, balancedCable, vuMeter
@@ -227,6 +231,7 @@ extension ElementKind {
         case .behavioralSource: return "Behavioural Source"
         case .probe: return "Voltage Probe"
         case .ammeter: return "Ammeter"
+        case .loopProbe: return "Loop Probe"
         case .speaker: return "Speaker"
         case .microphone: return "Microphone"
         case .electretMic: return "Electret Mic Capsule"
@@ -295,6 +300,7 @@ extension ElementKind {
         case .behavioralSource: return "B"
         case .probe: return "P"
         case .ammeter: return "A"
+        case .loopProbe: return "LP"
         case .speaker: return "SPK"
         case .microphone, .electretMic: return "MIC"
         case .pickup: return "PU"
@@ -326,7 +332,7 @@ extension ElementKind {
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
         case .memristor: return .memristors
         case .behavioralSource: return .sources
-        case .probe, .ammeter, .speaker, .vuMeter: return .instruments
+        case .probe, .ammeter, .loopProbe, .speaker, .vuMeter: return .instruments
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .agcPreamp, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator,
              .tappedTransformer: return .audio
@@ -375,7 +381,7 @@ extension ElementKind {
         case .behavioralSource: return nil
         case .probe: return "o"
         case .ammeter: return "x"
-        case .speaker, .port, .block: return nil
+        case .loopProbe, .speaker, .port, .block: return nil
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .agcPreamp, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator,
              .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor,
@@ -477,7 +483,7 @@ extension ElementKind {
             return ["minus", "plus"]
         case .diode, .zener, .led: return ["anode", "cathode"]
         case .probe, .speaker: return ["plus", "minus"]
-        case .ammeter: return ["in", "out"]
+        case .ammeter, .loopProbe: return ["in", "out"]
         case .nmos, .pmos, .njfet, .pjfet: return ["gate", "drain", "source"]
         case .triode: return ["grid", "plate", "cathode"]
         case .pentode: return ["grid", "plate", "cathode", "screen"]
@@ -572,7 +578,7 @@ extension ElementKind {
 
     public var params: [ParamSpec] {
         switch self {
-        case .wire, .ground, .netLabel, .toggleSwitch, .pushButton, .probe, .ammeter, .block:
+        case .wire, .ground, .netLabel, .toggleSwitch, .pushButton, .probe, .ammeter, .loopProbe, .block:
             return []
         case .port:
             return [.choice("side", "Side of the block", ["Where it is drawn", "Left (input)", "Right (output)"])]
@@ -589,6 +595,8 @@ extension ElementKind {
                 // a macromodel's resistors that stand for no real resistor (PSpice's T_ABS=-273.15, ngspice's noisy=0)
                 ParamSpec("noiseless", "Thermal noise", unit: "", default: 0, range: 0...1, log: false,
                           choices: [ParamChoice(name: "Noisy", value: 0), ParamChoice(name: "Noiseless", value: 1)], advanced: true),
+                // what part stress checks its average power against
+                ParamSpec("ratedPower", "Rated power", unit: "W", default: 0.25, range: 0.0625...100),
             ]
         case .potentiometer:
             return [
@@ -810,6 +818,8 @@ extension ElementKind {
             return [
                 ParamSpec("capacitance", "Capacitance", unit: "F", default: 10e-6, range: 1e-12...1),
                 ParamSpec("initialVoltage", "Initial voltage", unit: "V", default: 0, range: -50...50, log: false),
+                // what part stress checks its voltage against (0: unrated, not checked)
+                ParamSpec("ratedVoltage", "Rated voltage (0: not checked)", unit: "V", default: 0, range: 0...1000, log: false),
             ]
         case .inductor:
             return [

@@ -88,7 +88,7 @@ enum SymbolRenderer {
         case .analogSwitch: return 1.6
         case .resistor, .potentiometer, .inductor: return 2
         case .memristor: return 2.2
-        case .lamp, .probe, .ammeter, .speaker: return 1.4
+        case .lamp, .probe, .ammeter, .loopProbe, .speaker: return 1.4
         case .capacitor, .dcVoltage: return 0.5
         case .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .keyboardPitch, .keyboardGate: return 1.6
         case .toggleSwitch, .pushButton: return 1.6
@@ -201,8 +201,8 @@ enum SymbolRenderer {
             let inner = body - 0.35 * u
             ctx.setFillColor(style.accent.withAlpha(0.28).cgColor)
             ctx.fill(CGRect(x: c - h, y: -0.3 * u, width: max(0, inner * CGFloat(style.memristorState)), height: 0.6 * u))
-        case .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .probe, .ammeter, .keyboardPitch, .keyboardGate,
-             .electretMic, .vuMeter:
+        case .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .probe, .ammeter, .loopProbe, .keyboardPitch,
+             .keyboardGate, .electretMic, .vuMeter:
             ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.08).cgColor)
             ctx.fillEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
         default:
@@ -304,6 +304,20 @@ enum SymbolRenderer {
             addPlus(to: path, at: CGPoint(x: c - h - 0.35 * u, y: -0.65 * u), size: 0.16 * u)
         case .ammeter:
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
+        case .loopProbe:
+            // a break in the loop: an arrow from the side that drives (in) to the side driven (out), with a sine wave
+            // for what is injected there
+            path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
+            path.move(to: CGPoint(x: c - 0.5 * h, y: 0.35 * h))
+            path.addLine(to: CGPoint(x: c + 0.5 * h, y: 0.35 * h))
+            path.move(to: CGPoint(x: c + 0.25 * h, y: 0.15 * h))
+            path.addLine(to: CGPoint(x: c + 0.5 * h, y: 0.35 * h))
+            path.addLine(to: CGPoint(x: c + 0.25 * h, y: 0.55 * h))
+            path.move(to: CGPoint(x: c - 0.5 * h, y: -0.3 * h))
+            path.addCurve(to: CGPoint(x: c, y: -0.3 * h), control1: CGPoint(x: c - 0.35 * h, y: -0.75 * h),
+                          control2: CGPoint(x: c - 0.15 * h, y: -0.75 * h))
+            path.addCurve(to: CGPoint(x: c + 0.5 * h, y: -0.3 * h), control1: CGPoint(x: c + 0.15 * h, y: 0.15 * h),
+                          control2: CGPoint(x: c + 0.35 * h, y: 0.15 * h))
         case .electretMic:
             // a capsule: a circle with its diaphragm across the front
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))

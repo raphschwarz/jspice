@@ -300,6 +300,7 @@ final class CircuitCanvasView: NSView {
             return live ? SI.format(simulator.voltageAcross(index), unit: "V") : "— V"
         case .ammeter:
             return live ? SI.format(simulator.current(index), unit: "A") : "— A"
+        case .loopProbe: return "T"
         case .resistor: return SI.format(element[param: "resistance"], unit: "Ω")
         case .potentiometer:
             return "\(SI.format(element[param: "resistance"], unit: "Ω")) · \(Int((element[param: "position"] * 100).rounded())) %"
@@ -835,7 +836,9 @@ final class CircuitCanvasView: NSView {
             menu.addItem(item("Add I–V Curve Scope") { [weak self] in self?.editor.addScope(hit.id, .current, plot: .currentVersusVoltage) })
         }
         if canPlotResponse(hit.kind) {
-            menu.addItem(item("Add Frequency Response") { [weak self] in self?.editor.addScope(hit.id, .voltage, plot: .frequencyResponse) })
+            menu.addItem(item(hit.kind == .loopProbe ? "Add Loop Gain" : "Add Frequency Response") { [weak self] in
+                self?.editor.addScope(hit.id, .voltage, plot: .frequencyResponse)
+            })
         }
         if let quantity = scopeQuantities(for: hit.kind).first, canPlotSpectrum(hit.kind) {
             menu.addItem(item("Add Spectrum") { [weak self] in self?.editor.addScope(hit.id, quantity, plot: .spectrum) })
@@ -1016,7 +1019,7 @@ final class CircuitCanvasView: NSView {
 func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     switch kind {
     case .memristor: return [.voltage, .current, .resistance, .power]
-    case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
+    case .wire, .toggleSwitch, .pushButton, .ammeter, .loopProbe: return [.current]
     case .probe, .netLabel, .speaker, .vuMeter, .electretMic, .pickup: return [.voltage]
     case .ground, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
          .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch,
@@ -1047,7 +1050,8 @@ func canPlotSpectrum(_ kind: ElementKind) -> Bool {
 }
 
 func canPlotResponse(_ kind: ElementKind) -> Bool {
-    scopeQuantities(for: kind).contains(.voltage) && !kind.isVoltageSource && kind != .currentSource
+    // (a loop probe's response is its loop's gain)
+    kind == .loopProbe || (scopeQuantities(for: kind).contains(.voltage) && !kind.isVoltageSource && kind != .currentSource)
 }
 
 /// Lets a menu item run a closure

@@ -219,7 +219,7 @@ struct ElementInspector: View {
                     }
                 }
                 if canPlotResponse(element.kind) {
-                    Button("Add Frequency Response", systemImage: "chart.line.downtrend.xyaxis") {
+                    Button(element.kind == .loopProbe ? "Add Loop Gain" : "Add Frequency Response", systemImage: "chart.line.downtrend.xyaxis") {
                         editor.addScope(element.id, .voltage, plot: .frequencyResponse)
                     }
                 }
@@ -531,7 +531,7 @@ struct LiveReadings: View {
                     reading("Current", SI.format(simulator.current(index), unit: "A"))
                 } else if kind == .probe || kind == .netLabel || kind == .speaker {
                     reading("Voltage", SI.format(simulator.voltageAcross(index), unit: "V"))
-                } else if kind == .ammeter {
+                } else if kind == .ammeter || kind == .loopProbe {
                     reading("Current", SI.format(simulator.current(index), unit: "A"))
                 } else if kind == .ota {
                     let v = simulator.terminalVoltages(index)
@@ -631,6 +631,15 @@ struct LiveReadings: View {
                                 SI.format(simulator.current(index), unit: "A"))
                     }
                     reading("Power", SI.format(abs(simulator.value(.power, of: index)), unit: "W"))
+                    // against its rating (see PartStress, which checks the average over a run)
+                    if kind == .resistor || kind == .lamp, element[param: "ratedPower"] > 0 {
+                        rated(abs(simulator.value(.power, of: index)) / element[param: "ratedPower"],
+                              of: SI.format(element[param: "ratedPower"], unit: "W"))
+                    }
+                    if kind == .capacitor, element[param: "ratedVoltage"] > 0 {
+                        rated(abs(simulator.voltageAcross(index)) / element[param: "ratedVoltage"],
+                              of: SI.format(element[param: "ratedVoltage"], unit: "V"))
+                    }
                     if kind == .memristor {
                         reading("Resistance", SI.format(simulator.value(.resistance, of: index), unit: "Ω"))
                         reading("State", "\(Int((simulator.memristorState(index) * 100).rounded())) % on")
@@ -650,6 +659,15 @@ struct LiveReadings: View {
         LabeledContent(title) {
             Text(value).monospacedDigit()
         }
+    }
+
+    /// The share of its rating a part runs at, red past it
+    private func rated(_ load: Double, of rating: String) -> some View {
+        LabeledContent("Of its \(rating) rating") {
+            Text("\(Int((load * 100).rounded())) %").monospacedDigit()
+                .foregroundStyle(load > 1 ? Color.red : load > 0.5 ? Color.orange : Color.primary)
+        }
+        .help(load > 1 ? "Past its rating: it would overheat or break down. Choose a part rated higher." : "")
     }
 }
 

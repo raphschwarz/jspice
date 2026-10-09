@@ -69,7 +69,7 @@ private struct ScopeRow: View {
                     }
                     if canPlotResponse(element.kind) {
                         Divider()
-                        Text("Frequency Response").tag(ScopeChoice.response)
+                        Text(element.kind == .loopProbe ? "Loop Gain" : "Frequency Response").tag(ScopeChoice.response)
                     }
                     if canPlotSpectrum(element.kind) {
                         if !canPlotResponse(element.kind) { Divider() }
@@ -79,7 +79,7 @@ private struct ScopeRow: View {
                 .labelsHidden()
                 .controlSize(.small)
                 .fixedSize()
-                if spec.plot == .frequencyResponse {
+                if spec.plot == .frequencyResponse && element.kind != .loopProbe {
                     Picker("From", selection: Binding(get: { source?.id }, set: { editor.setScopeSource(spec.id, $0) })) {
                         ForEach(sources) { source in
                             Text(source.name.isEmpty ? source.kind.displayName : source.name).tag(Optional(source.id))
@@ -99,13 +99,33 @@ private struct ScopeRow: View {
                         let result = response.update(editor.simulation.simulator, elementID: element.id, sourceID: source?.id, spread: showSpread)
                         if let note = result.note {
                             Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        } else if let margins = result.margins {
+                            // a loop probe: the loop gain's margins
+                            VStack(alignment: .leading, spacing: 0) {
+                                if let margin = margins.phaseMargin {
+                                    Text(String(format: "%.0f° margin", margin + 0))
+                                        .foregroundStyle(margin < 30 ? Color.red : voltageColor)
+                                        .font(.title3.monospacedDigit().weight(.medium))
+                                        .help("Phase margin: 45° or more settles without much ringing, under 0° oscillates")
+                                    if let crossover = margins.crossover {
+                                        Text("crossover \(SI.format(crossover, unit: "Hz"))").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                } else {
+                                    Text(result.gains.first.map { $0 < 0 } == true ? "loop gain under 1" : "loop gain over 1 throughout")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                if let gain = margins.gainMargin {
+                                    Text(String(format: "gain margin %.1f dB", gain + 0))
+                                        .font(.caption.monospacedDigit()).foregroundStyle(gain < 6 ? Color.red : .secondary)
+                                }
+                            }
                         } else if let peak = result.peak {
                             // a resonance's peak, or else the passband's gain and its −3 dB corner
                             VStack(alignment: .leading, spacing: 0) {
                                 Text(String(format: "%+.1f dB", result.gains[peak] + 0)).foregroundStyle(voltageColor)
                                     .font(.title3.monospacedDigit().weight(.medium))
                                 if result.hasResonance {
-                                    Text("peak at \(SI.format(ResponseCache.frequencies[peak], unit: "Hz"))")
+                                    Text("peak at \(SI.format(result.frequencies[peak], unit: "Hz"))")
                                         .font(.caption).foregroundStyle(.secondary)
                                 } else if let corner = result.corner {
                                     Text("−3 dB at \(SI.format(corner, unit: "Hz"))")
@@ -155,7 +175,8 @@ private struct ScopeRow: View {
             .padding(10)
             Divider()
             if spec.plot == .frequencyResponse {
-                ResponsePlot(editor: editor, cache: response, elementID: element.id, sourceID: source?.id, spread: showSpread,
+                ResponsePlot(editor: editor, cache: response, elementID: element.id, sourceID: source?.id,
+                             spread: showSpread && element.kind != .loopProbe,
                              gainColor: voltageColor, phaseColor: phaseColor)
             } else if spec.plot == .spectrum {
                 SpectrumPlot(editor: editor, cache: spectrum, scopeID: spec.id, unit: spec.quantity.unit, color: color)
@@ -368,11 +389,16 @@ final class ResponseCache {
     static let frequencies = FrequencySweep.logarithmic(from: 10, to: 100_000, pointsPerDecade: 30)
     /// Where noise is heard
     static let audioBand = FrequencySweep.logarithmic(from: 20, to: 20_000, pointsPerDecade: 10)
+    /// A loop's gain: 1 Hz to 10 MHz, 20 points a decade (an op-amp's loop crosses over near its gain-bandwidth)
+    static let loopBand = FrequencySweep.logarithmic(from: 1, to: 10e6, pointsPerDecade: 20)
 
     struct Response {
         /// Gain in dB and phase in degrees at each of `frequencies`
         var gains: [Double] = []
         var phases: [Double] = []
+        var frequencies = ResponseCache.frequencies
+        /// A loop probe's: its loop gain's margins
+        var margins: StabilityMargins?
         /// Why there is nothing to show
         var note: String?
         /// RMS noise at the output from 20 Hz to 20 kHz, and the part most of it comes from
@@ -387,7 +413,7 @@ final class ResponseCache {
             let level = gains[peak] - 3
             for k in 1..<max(1, gains.count) where (gains[k - 1] < level) != (gains[k] < level) {
                 let f = (gains[k - 1] - level) / (gains[k - 1] - gains[k])
-                return ResponseCache.frequencies[k - 1] * pow(ResponseCache.frequencies[k] / ResponseCache.frequencies[k - 1], f)
+                return frequencies[k - 1] * pow(frequencies[k] / frequencies[k - 1], f)
             }
             return nil
         }
@@ -430,10 +456,12 @@ final class ResponseCache {
         guard Date().timeIntervalSince(checked) >= 0.18 else { return response }
         checked = Date()
         let circuit = simulator.circuit
-        guard let sourceID, let input = circuit.elements.firstIndex(where: { $0.id == sourceID }) else {
+        guard let index = circuit.elements.firstIndex(where: { $0.id == elementID }) else { return response }
+        // a loop probe's response is its loop's gain, driven at the probe
+        let loop = circuit.elements[index].kind == .loopProbe
+        guard let input = loop ? index : sourceID.flatMap({ id in circuit.elements.firstIndex { $0.id == id } }) else {
             return set(Response(note: "Add a source to drive the circuit from"))
         }
-        guard let index = circuit.elements.firstIndex(where: { $0.id == elementID }) else { return response }
         var quiet = Simulator.quiet(circuit, holding: input)
         quiet.scopes = []
         if quiet != shadowCircuit {
@@ -455,12 +483,21 @@ final class ResponseCache {
             unsettled -= progress.simulatedTime
         }
         guard let (plus, minus) = shadow.acrossNodes(index) else { return set(Response(note: "This part has no voltage to plot")) }
-        if wanted && quiet != spreadCircuit { startSpread(quiet, input: input, element: index) }
+        if wanted && !loop && quiet != spreadCircuit { startSpread(quiet, input: input, element: index) }
         guard let model = shadow.smallSignalModel() else { return set(Response(note: "Nothing to show while the circuit can't be solved")) }
         let key = Key(input: input, plus: plus, minus: minus)
         if model == self.model && key == self.key { return response }
         self.model = model
         self.key = key
+        if loop {
+            guard let t = model.loopGain(probe: index, frequencies: Self.loopBand) else {
+                return set(Response(note: "Put the probe in a feedback loop: its in on the side that drives, its out on the side driven"))
+            }
+            var result = Response(gains: t.map { 20 * log10(max($0.magnitude, 1e-12)) }, phases: FrequencySweep.unwrappedPhases(t))
+            result.frequencies = Self.loopBand
+            result.margins = StabilityMargins(frequencies: Self.loopBand, loopGain: t)
+            return set(result)
+        }
         guard let values = model.response(input: input, plus: plus, minus: minus, frequencies: Self.frequencies) else {
             return set(Response(note: "The circuit can't be linearised here"))
         }
@@ -537,7 +574,7 @@ private struct ResponsePlot: View {
     }
 
     private func draw(_ context: GraphicsContext, _ size: CGSize, _ response: ResponseCache.Response) {
-        let frequencies = ResponseCache.frequencies
+        let frequencies = response.frequencies
         let gains = response.gains
         let phases = response.phases
         let labelFont = Font.caption2.monospacedDigit()

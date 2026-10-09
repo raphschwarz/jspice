@@ -893,6 +893,9 @@ public enum SpiceNetlist {
                 lines.append("\(device("R", name)) \(n("a")) \(n("b")) \(part.closed ? "1m" : "1e12")  ; \(part.closed ? "closed" : "open") switch")
             case .ammeter:
                 lines.append("\(device("V", name)) \(n("in")) \(n("out")) DC 0  ; ammeter")
+            case .loopProbe:
+                // 0 V from in to out: SPICE's way of breaking a loop to measure it (v(out) - v(in) = 0)
+                lines.append("\(device("V", name)) \(n("out")) \(n("in")) DC 0  ; loop probe, driven from in to out")
             case .diode, .led, .zener:
                 let model = "D_" + device("D", name)
                 models.append(".model \(model) D(\(SpiceDiode.cardText(p, kind: part.kind)))")

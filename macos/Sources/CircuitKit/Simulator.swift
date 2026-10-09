@@ -3284,6 +3284,7 @@ public final class Simulator {
             }
         }
         var drives: [Int: SmallSignalModel.Drive] = [:]
+        var terminals: [Int: SmallSignalModel.Terminals] = [:]
         for i in kinds.indices {
             let nodes = topology.elementNodes[i]
             let c = constants[i]
@@ -3352,7 +3353,10 @@ public final class Simulator {
                     admittance(a, b, .capacitance(c))
                 }
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
-                if row >= 0 { drives[i] = .row(row) }
+                if row >= 0 {
+                    drives[i] = .row(row)
+                    terminals[i] = .init(minus: nodes[0], plus: nodes[1])
+                }
             case .currentSource:
                 drives[i] = .current(from: nodes[0], to: nodes[1])
             case .vcf:
@@ -3401,7 +3405,8 @@ public final class Simulator {
                 break
             }
         }
-        return SmallSignalModel(size: m, nodeCount: topology.nodeCount, matrix: matrix, entries: entries, drives: drives)
+        return SmallSignalModel(size: m, nodeCount: topology.nodeCount, matrix: matrix, entries: entries, drives: drives,
+                                terminals: terminals)
     }
 
     /// Sets an element's last linearisation point to the present solution, so that stamping it is not held back by

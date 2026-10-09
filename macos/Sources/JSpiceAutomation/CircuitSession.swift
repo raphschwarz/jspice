@@ -42,6 +42,9 @@ public final class CircuitSession {
     CD40106, CD4066, JFETs…); build a circuit with build_circuit from a netlist (each part lists which net each of its \
     terminals joins; the net "GND" is ground); then simulate it and read waveforms and measurements, or call \
     frequency_response for filters and amplifiers (small-signal analysis by default). Adjust values with set_parameter or set_model and simulate again. \
+    For a feedback loop's stability, break it with a loopProbe part (its "in" on the side that drives, an op-amp's \
+    output, its "out" on the side driven) and call loop_gain for its phase and gain margins; impedance gives a node's or \
+    a source's impedance against frequency, and stress the parts run past their ratings. \
     Values accept SI prefixes as strings ("4.7k", "100n", "2.2u", "1meg"). Probes: "V(net)" is a net's voltage, \
     "V(R1)" the voltage across a part, "I(R1)" its current, "P(R1)" its power, "V(U1.out)" a terminal's voltage. \
     Synth circuits can be played: keyboardPitch parts put out 1 V per octave (0 V at C2) and keyboardGate parts a gate, \
@@ -223,6 +226,34 @@ public final class CircuitSession {
                 "settle": ["description": "Seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
              ], required: ["output"]),
              run: { session, arguments in try session.noise(arguments) }),
+        Tool(name: "loop_gain",
+             description: "Stability of a feedback loop: its loop gain T (the return ratio) at a loopProbe part, by small-signal analysis around the operating point the circuit settles to, with Middlebrook's double injection (a voltage injected in series at the probe and a current injected into it, which together are exact with loading on both sides). The probe's \"in\" must face the side that drives the loop (an op-amp's output), its \"out\" the side driven (the feedback network); in the built circuit it is a link. Returns T's gain and phase at each frequency, the crossover (where |T| falls through 1: the loop's bandwidth), the phase margin there (45° or more settles without much ringing; under 0 oscillates), the gain margin where T's phase reaches -180° (6 dB or more is comfortable), and every crossing.",
+             inputSchema: schema([
+                "probe": string("Name of the loopProbe part (default: the circuit's only one)"),
+                "start": ["description": "Lowest frequency in Hz (default 1)"],
+                "stop": ["description": "Highest frequency in Hz (default 10 MHz)"],
+                "points_per_decade": ["type": "integer", "description": "Default 20"],
+                "settle": ["description": "Seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
+             ], required: []),
+             run: { session, arguments in try session.loopGain(arguments) }),
+        Tool(name: "impedance",
+             description: "Impedance against frequency, by small-signal analysis around the operating point the circuit settles to, every source at rest (voltage sources shorted, current sources open): between a node (or a part's two terminals) and ground, as a 1 A test current into it sees it (an amplifier's output impedance, a filter node's), or what a source sees looking into the circuit (its input impedance). Returns magnitude, phase, resistance and reactance at each frequency, and where the magnitude is least and greatest.",
+             inputSchema: schema([
+                "at": string("Where: \"V(net)\", \"V(part.terminal)\" (to ground) or \"V(part)\" (across a part)"),
+                "source": string("Instead of at: a voltage or current source, for the impedance it drives (the circuit's input impedance)"),
+                "start": ["description": "Lowest frequency in Hz (default 10)"],
+                "stop": ["description": "Highest frequency in Hz (default 100k)"],
+                "points_per_decade": ["type": "integer", "description": "Default 20"],
+                "settle": ["description": "Seconds the circuit runs from rest to settle before it is linearised (default: five of its slowest time constants)"],
+             ], required: []),
+             run: { session, arguments in try session.impedance(arguments) }),
+        Tool(name: "stress",
+             description: "Part stress, as a smoke test: simulates the circuit from rest and checks every rated part against its ratings over the run: each resistor's average power against its ratedPower (a quarter watt unless set), each lamp's against its ratedPower, each capacitor's largest voltage against its ratedVoltage (only where set), and each diode and LED reversed past its model's breakdown voltage (BV). Returns the parts past their ratings, every check with its load (worst over rating, the most loaded first), and the parts that take the most power. Set ratings with set_parameter (ratedPower, ratedVoltage).",
+             inputSchema: schema([
+                "duration": ["description": "Seconds to simulate (default: five of the circuit's slowest time constants, at least 50 ms)"],
+                "skip": ["description": "Seconds from the start not checked, for a circuit's power-up (default 0)"],
+             ], required: []),
+             run: { session, arguments in try session.stress(arguments) }),
         Tool(name: "spectrum",
              description: "The spectrum of a probe's signal, as a spectrum analyser shows it: the circuit runs from rest for settle seconds, then its signal is recorded for duration seconds and analysed (Hann window, FFT). Returns the fundamental, total harmonic distortion (THD, the RMS of harmonics 2 to 10 over the fundamental), each harmonic's frequency and level, the strongest other peaks, and the signal's RMS and mean. Keyboard events play as in simulate.",
              inputSchema: schema([
@@ -1037,6 +1068,154 @@ public final class CircuitSession {
         ]
         if let source { reply["input"] = circuit.elements[source].name }
         return reply
+    }
+
+    /// The frequencies of a small-signal analysis: start to stop, evenly on a log scale
+    private static func sweep(_ arguments: [String: Any], start: Double, stop: Double) throws -> [Double] {
+        let start = try Self.number(arguments["start"], "start") ?? start
+        let stop = try Self.number(arguments["stop"], "stop") ?? stop
+        let perDecade = max(1, min(200, (arguments["points_per_decade"] as? NSNumber)?.intValue ?? 20))
+        guard start > 0, stop > start, stop < 1e10, log10(stop / start) * Double(perDecade) <= 2000 else {
+            throw ToolError("Need 0 < start < stop < 10 GHz, and at most 2000 frequencies")
+        }
+        return FrequencySweep.logarithmic(from: start, to: stop, pointsPerDecade: perDecade)
+    }
+
+    /// The circuit settled and linearised for small-signal analysis, with nothing held
+    private func linearised(_ arguments: [String: Any]) throws -> (simulator: Simulator, model: SmallSignalModel) {
+        let settle = try Self.number(arguments["settle"], "settle")
+        if let settle, !(settle >= 0 && settle < 1000) { throw ToolError("\"settle\" should be from 0 to 1000 seconds") }
+        let simulator = Simulator.settled(circuit, holding: nil, duration: settle)
+        if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
+        guard let model = simulator.smallSignalModel() else {
+            throw ToolError("The linearised circuit can't be solved. Look for parts left floating without a DC path.")
+        }
+        return (simulator, model)
+    }
+
+    func loopGain(_ arguments: [String: Any]) throws -> Any {
+        let probe: Int
+        if let name = arguments["probe"] as? String, !name.isEmpty {
+            probe = try index(ofPart: name)
+            guard circuit.elements[probe].kind == .loopProbe else { throw ToolError("\(name) is not a loopProbe part") }
+        } else {
+            let probes = circuit.elements.indices.filter { circuit.elements[$0].kind == .loopProbe }
+            guard probes.count == 1 else {
+                throw ToolError(probes.isEmpty
+                    ? "Break the loop with a loopProbe part: its \"in\" on the side that drives (an op-amp's output), its \"out\" on the side driven"
+                    : "Name the probe: \(probes.map { circuit.elements[$0].name }.joined(separator: ", "))")
+            }
+            probe = probes[0]
+        }
+        let frequencies = try Self.sweep(arguments, start: 1, stop: 10e6)
+        let wallStart = Date()
+        let (simulator, model) = try linearised(arguments)
+        guard let t = model.loopGain(probe: probe, frequencies: frequencies) else {
+            throw ToolError("The loop gain can't be worked out at \(circuit.elements[probe].name): is it in a loop, both its terminals on nets of their own?")
+        }
+        let phases = FrequencySweep.unwrappedPhases(t)
+        var points: [[String: Any]] = []
+        for (k, frequency) in frequencies.enumerated() {
+            points.append(["frequency": frequency, "gain_db": 20 * log10(max(t[k].magnitude, 1e-300)), "phase_deg": phases[k]])
+        }
+        let margins = StabilityMargins(frequencies: frequencies, loopGain: t)
+        var result: [String: Any] = [
+            "probe": circuit.elements[probe].name, "points": points,
+            "unity_crossings": margins.unityCrossings.map { ["frequency": $0.frequency, "phase_margin_deg": $0.margin] },
+            "phase_crossings": margins.phaseCrossings.map { ["frequency": $0.frequency, "gain_margin_db": $0.margin] },
+            "wall_seconds": Date().timeIntervalSince(wallStart),
+        ]
+        if let crossover = margins.crossover { result["crossover_hz"] = crossover }
+        if let pm = margins.phaseMargin { result["phase_margin_deg"] = pm }
+        if let gm = margins.gainMargin { result["gain_margin_db"] = gm }
+        let low = 20 * log10(max(t.first?.magnitude ?? 0, 1e-300))
+        switch (margins.phaseMargin, margins.gainMargin) {
+        case (nil, _) where low < 0:
+            result["verdict"] = "|T| stays below 1 over the sweep: too little loop gain to matter here (or the probe faces the wrong way)"
+        case (nil, _):
+            result["verdict"] = "|T| stays above 1 over the sweep: sweep higher to find the crossover"
+        case (let pm?, let gm):
+            let ringing = pm < 0 ? "unstable: it oscillates"
+                : pm < 30 ? "barely stable: it rings hard"
+                : pm < 45 ? "stable, with some ringing"
+                : pm < 60 ? "stable, a little overshoot" : "stable, well damped"
+            result["verdict"] = String(format: "Phase margin %.0f°: %@", pm, ringing)
+                + (gm.map { String(format: "; gain margin %.1f dB", $0) } ?? "")
+            if phases.first.map({ abs($0) > 90 }) == true && low > 0 {
+                result["note"] = "T starts out near -1 rather than +1: positive feedback, or the probe faces the wrong way"
+            }
+        }
+        if !simulator.problems.isEmpty { result["problems"] = simulator.problems }
+        return result
+    }
+
+    func impedance(_ arguments: [String: Any]) throws -> Any {
+        let frequencies = try Self.sweep(arguments, start: 10, stop: 100_000)
+        let (simulator, model) = try linearised(arguments)
+        let z: [Complex]?
+        let label: String
+        if let name = arguments["source"] as? String, !name.isEmpty {
+            let source = try index(ofPart: name)
+            guard model.canDrive(from: source) else { throw ToolError("\(name) should be a voltage or current source") }
+            z = model.loadImpedance(input: source, frequencies: frequencies)
+            label = "seen by " + name
+        } else {
+            let spec = try Self.text(arguments, "at")
+            let (plus, minus) = try smallSignalNodes(spec.hasPrefix("V(") || spec.hasPrefix("v(") ? spec : "V(\(spec))", simulator)
+            guard plus != minus else { throw ToolError("\(spec) is ground, or both its ends are one node") }
+            z = model.impedance(plus: plus, minus: minus, frequencies: frequencies)
+            label = spec
+        }
+        guard let z else { throw ToolError("The linearised circuit can't be solved there: is the node floating without a DC path?") }
+        var points: [[String: Any]] = []
+        for (k, frequency) in frequencies.enumerated() {
+            points.append(["frequency": frequency, "ohms": z[k].magnitude, "phase_deg": z[k].phase * 180 / .pi,
+                           "resistance": z[k].re, "reactance": z[k].im])
+        }
+        var result: [String: Any] = ["impedance": label, "points": points]
+        if let least = z.indices.min(by: { z[$0].magnitude < z[$1].magnitude }),
+           let most = z.indices.max(by: { z[$0].magnitude < z[$1].magnitude }) {
+            result["least"] = ["frequency": frequencies[least], "ohms": z[least].magnitude]
+            result["greatest"] = ["frequency": frequencies[most], "ohms": z[most].magnitude]
+        }
+        if !simulator.problems.isEmpty { result["problems"] = simulator.problems }
+        return result
+    }
+
+    func stress(_ arguments: [String: Any]) throws -> Any {
+        let slowest = Pacing.slowestTimeScale(of: circuitWithoutSources()) ?? 0
+        let duration = try Self.number(arguments["duration"], "duration") ?? min(max(5 * slowest, 0.05), 10)
+        let skip = try Self.number(arguments["skip"], "skip") ?? 0
+        guard duration > 0, duration <= 100, skip >= 0, skip < duration else {
+            throw ToolError("Need 0 < duration <= 100 seconds and 0 <= skip < duration")
+        }
+        let wallStart = Date()
+        let (stress, simulator) = PartStress.run(circuit, duration: duration, skip: skip, maxSteps: Self.maxSteps)
+        if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
+        func describe(_ finding: PartStress.Finding) -> [String: Any] {
+            ["part": finding.part, "quantity": finding.quantity, "worst": finding.value, "rating": finding.rating,
+             "unit": finding.unit, "load_percent": 100 * finding.load]
+        }
+        let findings = stress.findings
+        var result: [String: Any] = [
+            "simulated": ["from": skip, "to": simulator.time],
+            "overstressed": stress.overstressed.map(describe),
+            "checks": findings.prefix(30).map(describe),
+            "hottest": stress.hottest(10).map { entry -> [String: Any] in
+                let element = circuit.elements[entry.index]
+                return ["part": element.name.isEmpty ? element.kind.displayName : element.name, "average_w": entry.power,
+                        "peak_w": stress.peaks[entry.index]?.power ?? 0]
+            },
+            "wall_seconds": Date().timeIntervalSince(wallStart),
+        ]
+        let over = stress.overstressed
+        result["verdict"] = over.isEmpty
+            ? "Every rated part within its ratings (\(findings.count) checked)"
+            : "\(over.count) past their ratings: " + over.prefix(5).map {
+                String(format: "%@ %@ %.0f %% of its rating", $0.part, $0.quantity, 100 * $0.load)
+            }.joined(separator: "; ")
+        if !simulator.problems.isEmpty { result["problems"] = simulator.problems }
+        return result
     }
 
     // MARK: - Sweeps and tolerances
