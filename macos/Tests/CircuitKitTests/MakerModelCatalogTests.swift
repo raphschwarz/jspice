@@ -24,7 +24,10 @@ final class MakerModelCatalogTests: XCTestCase {
             throw XCTSkip("Set JSPICE_MAKER_MODELS to download the makers' models and check them (CI does)")
         }
         var report = ["Makers' models measured by JSpice (beside the datasheet, and ngspice on the same file):"]
+        /// Progress as it goes (on standard error, unbuffered), so a run that takes too long shows where
+        func progress(_ text: String) { FileHandle.standardError.write(Data((text + "\n").utf8)) }
         for model in MakerModelCatalog.models {
+            progress("\(model.part): downloading \(model.archive)")
             let imported: (block: BlockDefinition, warnings: [String])
             do {
                 imported = try MakerModelCatalog.download(model)
@@ -38,6 +41,7 @@ final class MakerModelCatalogTests: XCTestCase {
             XCTAssertTrue(imported.warnings.isEmpty, "\(model.part): \(imported.warnings)")
             let pins = try XCTUnwrap(imported.block.source?.pins)
             let started = Date()
+            progress("\(model.part): imported (\(imported.block.circuit.elements.count) parts), measuring")
             let figures = try MakerModels.measureOpAmp(imported.block, pins: pins, supply: model.supply, load: model.load)
             report.append(String(format: "  %@ (%@, measured in %.1f s):", model.part, model.revision, Date().timeIntervalSince(started)))
             report += MakerModelCatalog.comparison(model, figures).map { "    " + $0 }

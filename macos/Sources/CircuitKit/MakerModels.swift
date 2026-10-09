@@ -150,6 +150,10 @@ public enum MakerModels {
         }
     }
 
+    /// Steps to settle each test circuit in: long steps reach the operating point as surely (the step's error control
+    /// shortens them while anything moves), and a maker's model has hundreds of nodes
+    static let settlingSteps = 2_000
+
     public struct MeasurementError: Error, CustomStringConvertible {
         public var description: String
     }
@@ -190,7 +194,7 @@ public enum MakerModels {
         // a follower at rest: offset and supply current
         let follower = try circuit(dc(0), follower: true)
         let vi = try index(follower, "VI"), rl = try index(follower, "RL"), vp = try index(follower, "VP")
-        let rest = Simulator.settled(follower, holding: vi, duration: 0.01, maxSteps: 100_000)
+        let rest = Simulator.settled(follower, holding: vi, duration: 0.01, maxSteps: Self.settlingSteps)
         guard !rest.isFailed else { throw MeasurementError(description: "As a follower it fails: \(rest.problems.joined(separator: "; "))") }
         let offset = rest.terminalVoltage(rl, 0)
         let supplyCurrent = rest.current(vp)
@@ -210,7 +214,7 @@ public enum MakerModels {
             NetlistPart(kind: .resistor, name: "RL", params: ["resistance": load], connections: ["a": "out", "b": "GND"]),
         ])
         let source = try index(inverting, "VI"), r2 = try index(inverting, "R2")
-        let stage = Simulator.settled(inverting, holding: source, duration: 0.01, maxSteps: 100_000)
+        let stage = Simulator.settled(inverting, holding: source, duration: 0.01, maxSteps: Self.settlingSteps)
         guard !stage.isFailed else { throw MeasurementError(description: "As an inverting stage it fails: \(stage.problems.joined(separator: "; "))") }
         let (minus, out) = (stage.nodes(of: r2)[0], stage.nodes(of: r2)[1])
         let frequencies = (0...100).map { pow(10, -1 + Double($0) / 10) }
@@ -251,9 +255,10 @@ public enum MakerModels {
             let c = try circuit(square, follower: true)
             let input = try index(c, "VI"), output = try index(c, "RL")
             let period = 1 / frequency
-            let simulator = Simulator(circuit: c, timeStep: period / 20_000)
+            // (a slewing edge is straight: its 10 % and 90 % crossings come out of a few points on it exactly)
+            let simulator = Simulator(circuit: c, timeStep: period / 4_000)
             var times: [Double] = [], ins: [Double] = [], outs: [Double] = []
-            while simulator.time < 2.5 * period && !simulator.isFailed {
+            while simulator.time < 2 * period && !simulator.isFailed {
                 simulator.step()
                 times.append(simulator.time)
                 ins.append(simulator.terminalVoltage(input, 1))  // (its plus terminal)
@@ -285,7 +290,7 @@ public enum MakerModels {
         // open loop, driven to each side
         func swing(_ volts: Double) throws -> Double {
             let c = try circuit(dc(volts), follower: false)
-            let s = Simulator.settled(c, holding: try index(c, "VI"), duration: 0.01, maxSteps: 100_000)
+            let s = Simulator.settled(c, holding: try index(c, "VI"), duration: 0.01, maxSteps: Self.settlingSteps)
             guard !s.isFailed else { throw MeasurementError(description: "Driven open loop it fails: \(s.problems.joined(separator: "; "))") }
             return s.terminalVoltage(try index(c, "RL"), 0)
         }
