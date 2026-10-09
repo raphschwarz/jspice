@@ -79,7 +79,7 @@ enum SymbolRenderer {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
              .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .digitalDelay,
-             .port, .block, .triode, .pentode, .transformer,
+             .port, .block, .triode, .pentode, .transformer, .behavioralSource,
              .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch, .toneControl, .levelDetector,
              .springReverb, .agcPreamp, .barGraphDriver, .balancedCable:
             return 0
@@ -122,7 +122,7 @@ enum SymbolRenderer {
              .springReverb, .agcPreamp:
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
         case .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch, .toneControl, .barGraphDriver,
-             .balancedCable:
+             .balancedCable, .behavioralSource:
             if let package = element.kind.chipPackage {
                 drawChip(package, title: element.model?.name ?? package.name, led: false, posts: posts, at: a, b, unit: u, style: style, in: ctx)
             }
@@ -360,7 +360,7 @@ enum SymbolRenderer {
             path.move(to: CGPoint(x: x0 + 0.2 * u, y: 0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.2 * u, y: -0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
-        case .wire, .ground, .netLabel, .port, .block, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
+        case .wire, .ground, .netLabel, .port, .block, .behavioralSource, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
              .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .digitalDelay,
              .triode, .pentode, .transformer,

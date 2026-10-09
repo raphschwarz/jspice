@@ -58,6 +58,8 @@ public enum SpiceNetlist {
         var open: (name: String, pins: [String], lines: [String])?
         // ngspice's interactive commands, between .control and .endc, are not part of the circuit
         var control = false
+        // .param's constants, each worked out from those before it
+        var parameters: [String: Double] = [:]
         for line in lines.dropFirst() where !line.isEmpty && !line.hasPrefix("*") {
             let words = tokens(line)
             guard let first = words.first?.lowercased() else { continue }
@@ -84,6 +86,14 @@ public enum SpiceNetlist {
                 open = nil
             } else if first == ".end" {
                 break
+            } else if first == ".param" && open == nil {
+                for assignment in Self.assignments(String(line.dropFirst(6))) {
+                    if let v = Self.evaluate(assignment.value, parameters) {
+                        parameters[assignment.name.lowercased()] = v
+                    } else {
+                        warnings.append(".param \(assignment.name): can't work out \(assignment.value)")
+                    }
+                }
             } else if first.hasPrefix(".") {
                 if [".include", ".lib", ".param", ".func"].contains(first) { warnings.append("\(words[0]) is not followed: \(line)") }
             } else if open != nil {
@@ -94,7 +104,7 @@ public enum SpiceNetlist {
         }
         var cache: [String: BlockDefinition] = [:]
         let parts = elements(top, models: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings, depth: 0,
-                             spellings: Spellings())
+                             spellings: Spellings(), parameters: parameters)
         return Import(title: title, parts: parts, warnings: warnings)
     }
 
@@ -136,6 +146,127 @@ public enum SpiceNetlist {
         }
     }
 
+    /// A number or a `{expression}` of .param's constants
+    static func evaluate(_ text: String, _ parameters: [String: Double]) -> Double? {
+        if let v = value(text) { return v }
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("{") || trimmed.hasPrefix("(") || parameters[trimmed.lowercased()] != nil else { return nil }
+        return (try? SpiceExpression(parsing: trimmed, parameters: parameters))?.constantValue
+    }
+
+    /// `name=value` pairs, a value in braces kept whole
+    static func assignments(_ text: String) -> [(name: String, value: String)] {
+        var result: [(String, String)] = []
+        let cleaned = text.replacingOccurrences(of: #"\s*=\s*"#, with: "=", options: .regularExpression)
+        var depth = 0, current = ""
+        var words: [String] = []
+        for ch in cleaned {
+            if ch == "{" || ch == "(" { depth += 1 }
+            if ch == "}" || ch == ")" { depth = max(0, depth - 1) }
+            if (ch == " " || ch == "\t" || ch == ",") && depth == 0 {
+                if !current.isEmpty { words.append(current) }
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        if !current.isEmpty { words.append(current) }
+        for word in words {
+            let pair = word.split(separator: "=", maxSplits: 1).map(String.init)
+            if pair.count == 2 { result.append((pair[0], pair[1])) }
+        }
+        return result
+    }
+
+    /// The voltage sources a deck's controlled sources read the current of: F and H sources' controls and the I( ) of
+    /// expressions
+    static func sensedSources(_ lines: [String]) -> Set<String> {
+        var result = Set<String>()
+        let current = try? NSRegularExpression(pattern: #"\bi\(\s*([^),\s]+)\s*\)"#, options: .caseInsensitive)
+        for line in lines {
+            guard let letter = line.lowercased().first else { continue }
+            if let current {
+                for match in current.matches(in: line, range: NSRange(line.startIndex..., in: line)) {
+                    if let r = Range(match.range(at: 1), in: line) { result.insert(line[r].lowercased()) }
+                }
+            }
+            guard letter == "f" || letter == "h" else { continue }
+            let words = tokens(line)
+            guard words.count > 3 else { continue }
+            if words[3].lowercased() == "poly", words.count > 4, let n = Int(words[4]) {
+                for k in 0..<n where 5 + k < words.count { result.insert(words[5 + k].lowercased()) }
+            } else {
+                result.insert(words[3].lowercased())
+            }
+        }
+        return result
+    }
+
+    /// A controlled source's expression in terms of SPICE's net and source names, and whether it sets a voltage: E and G
+    /// (gain or transconductance, POLY, VALUE, TABLE), F and H (gain or transresistance, POLY), B (V= or I=)
+    static func controlledSource(_ letter: Character, _ words: [String], _ line: String,
+                                 _ parameters: [String: Double]) throws -> (SpiceExpression, Bool) {
+        let voltage: Bool
+        switch letter {
+        case "e", "h": voltage = true
+        case "f", "g": voltage = false
+        default:
+            // B: V= or I=, from the line itself (an expression may have spaces)
+            guard let match = line.range(of: #"^\S+\s+\S+\s+\S+\s+([VvIi])\s*=\s*"#, options: .regularExpression) else {
+                throw SpiceExpression.ParseError.unexpected("B source without V= or I=", at: line)
+            }
+            let kind = line[match].trimmingCharacters(in: .whitespaces).dropLast().trimmingCharacters(in: .whitespaces).last
+            let text = String(line[match.upperBound...])
+            return (try SpiceExpression(parsing: text, parameters: parameters), kind == "V" || kind == "v")
+        }
+        // (a pair of nets in parentheses leaves an empty word before it)
+        let rest = words.dropFirst(3).filter { !$0.isEmpty }
+        guard let first = rest.first else { throw SpiceExpression.ParseError.unexpected("end", at: line) }
+        let head = first.lowercased()
+        if let range = line.range(of: #"\bVALUE\s*=\s*"#, options: [.regularExpression, .caseInsensitive]) {
+            return (try SpiceExpression(parsing: String(line[range.upperBound...]), parameters: parameters), voltage)
+        }
+        if head == "table" || head.hasPrefix("table{") {
+            // TABLE {expression} = (x, y) (x, y) …
+            guard let open = line.firstIndex(of: "{"), let close = line[open...].firstIndex(of: "}") else {
+                throw SpiceExpression.ParseError.unexpected("TABLE without {expression}", at: line)
+            }
+            let argument = try SpiceExpression(parsing: String(line[open...close]), parameters: parameters)
+            let numbers = line[line.index(after: close)...].split(whereSeparator: { " ,()=\t".contains($0) })
+                .compactMap { evaluate(String($0), parameters) }
+            guard numbers.count >= 2 else { throw SpiceExpression.ParseError.unexpected("TABLE points", at: line) }
+            let xs = stride(from: 0, to: numbers.count - 1, by: 2).map { numbers[$0] }
+            let ys = stride(from: 1, to: numbers.count, by: 2).map { numbers[$0] }
+            return (SpiceExpression(root: .table(argument.root, xs, ys), inputs: argument.inputs), voltage)
+        }
+        if head == "laplace" || head == "freq" || head == "chebyshev" {
+            throw SpiceExpression.ParseError.unknown("\(first.uppercased()) source")
+        }
+        let controlledByVoltage = letter == "e" || letter == "g"
+        if head == "poly", rest.count > 1, let n = Int(rest[1]), n >= 1 {
+            // POLY(n): n controls (pairs of nets, or sources), then the coefficients
+            let controls = controlledByVoltage ? 2 * n : n
+            guard rest.count >= 2 + controls else { throw SpiceExpression.ParseError.unexpected("POLY controls", at: line) }
+            let names = Array(rest[2..<(2 + controls)])
+            let inputs: [SpiceExpression.Input] = controlledByVoltage
+                ? stride(from: 0, to: controls, by: 2).map { .voltage(names[$0], names[$0 + 1]) }
+                : names.map { .current($0) }
+            let coefficients = rest[(2 + controls)...].compactMap { evaluate($0, parameters) }
+            return (SpiceExpression.polynomial(dimensions: n, coefficients: coefficients, inputs: inputs), voltage)
+        }
+        // linear: E/G n+ n- nc+ nc- gain; F/H n+ n- vname gain
+        if controlledByVoltage {
+            guard rest.count >= 3, let gain = evaluate(rest[2], parameters) else {
+                throw SpiceExpression.ParseError.unexpected("gain", at: line)
+            }
+            return (SpiceExpression.polynomial(dimensions: 1, coefficients: [0, gain], inputs: [.voltage(rest[0], rest[1])]), voltage)
+        }
+        guard rest.count >= 2, let gain = evaluate(rest[1], parameters) else {
+            throw SpiceExpression.ParseError.unexpected("gain", at: line)
+        }
+        return (SpiceExpression.polynomial(dimensions: 1, coefficients: [0, gain], inputs: [.current(rest[0])]), voltage)
+    }
+
     /// Node names as first spelled: SPICE does not tell "Out" from "OUT"
     private final class Spellings {
         private var first: [String: String] = [:]
@@ -162,18 +293,21 @@ public enum SpiceNetlist {
 
     private static func elements(_ lines: [String], models: [String: (type: String, params: [String: Double])],
                                  subcircuits: [String: (pins: [String], lines: [String])], cache: inout [String: BlockDefinition],
-                                 warnings: inout [String], depth: Int, prefix: String = "", spellings: Spellings) -> [NetlistPart] {
+                                 warnings: inout [String], depth: Int, prefix: String = "", spellings: Spellings,
+                                 parameters: [String: Double] = [:]) -> [NetlistPart] {
         var parts: [NetlistPart] = []
+        // voltage sources whose current a controlled source reads: kept as sources (a 0 V one is otherwise an ammeter)
+        let sensed = Self.sensedSources(lines)
         var inductors: [String: Int] = [:]
         var couplings: [(String, String, Double)] = []
         for line in lines {
             let words = tokens(line)
             guard let name = words.first, let letter = name.lowercased().first else { continue }
             func node(_ k: Int) -> String? { k < words.count ? net(words[k], prefix, spellings) : nil }
-            func number(_ k: Int) -> Double? { k < words.count ? value(words[k]) : nil }
+            func number(_ k: Int) -> Double? { k < words.count ? Self.evaluate(words[k], parameters) : nil }
             func keyword(_ key: String) -> Double? {
                 words.first { $0.lowercased().hasPrefix(key.lowercased() + "=") }
-                    .flatMap { value(String($0.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[1])) }
+                    .flatMap { Self.evaluate(String($0.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[1]), parameters) }
             }
             switch letter {
             case "r", "c", "l":
@@ -220,7 +354,7 @@ public enum SpiceNetlist {
                     ], connections: ["plus": plus, "minus": minus]))
                 } else {
                     if let function { warnings.append("\(name): \(function.prefix(while: { $0 != "(" })) is read as its DC value, \(dc) V") }
-                    if dc == 0 && function == nil {
+                    if dc == 0 && function == nil && !sensed.contains(name.lowercased()) {
                         // a 0 V source is SPICE's ammeter
                         parts.append(NetlistPart(kind: .ammeter, name: name, connections: ["in": plus, "out": minus]))
                     } else {
@@ -284,6 +418,39 @@ public enum SpiceNetlist {
             case "k":
                 guard words.count >= 4, let k = number(3) else { continue }
                 couplings.append((words[1].lowercased(), words[2].lowercased(), k))
+            case "e", "f", "g", "h", "b":
+                guard let plus = node(1), let minus = node(2) else {
+                    warnings.append("Can't read \(line)")
+                    continue
+                }
+                do {
+                    let (expression, voltage) = try Self.controlledSource(letter, words, line, parameters)
+                    // each net the expression reads on a sense pin of its own
+                    var pins: [String: String] = [:]
+                    var connections = ["plus": plus, "minus": minus]
+                    func pin(_ spiceNet: String) throws -> String {
+                        if Topology.isGroundName(spiceNet) { return "0" }
+                        let lower = spiceNet.lowercased()
+                        if let known = pins[lower] { return known }
+                        guard pins.count < 8 else { throw SpiceExpression.ParseError.unexpected("more than eight nets", at: line) }
+                        let made = "in\(pins.count + 1)"
+                        pins[lower] = made
+                        connections[made] = net(spiceNet, prefix, spellings)
+                        return made
+                    }
+                    var names: [SpiceExpression.Input: String] = [:]
+                    for input in expression.inputs {
+                        switch input {
+                        case let .voltage(a, b): names[input] = "V(" + (try pin(a)) + (try b.map { "," + (try pin($0)) } ?? "") + ")"
+                        case let .current(source): names[input] = "I(\(source))"
+                        }
+                    }
+                    var part = NetlistPart(kind: .behavioralSource, name: name, params: ["mode": voltage ? 1 : 0], connections: connections)
+                    part.code = expression.text { names[$0] ?? "0" }
+                    parts.append(part)
+                } catch {
+                    warnings.append("\(name): \(error), left out")
+                }
             case "x":
                 guard words.count >= 2 else { continue }
                 let subName = words[words.count - 1].lowercased()
@@ -299,7 +466,7 @@ public enum SpiceNetlist {
                     // a subcircuit's nodes are its own: spelled as it spells them
                     let inside = Spellings()
                     var inner = elements(sub.lines, models: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings,
-                                         depth: depth + 1, spellings: inside)
+                                         depth: depth + 1, spellings: inside, parameters: parameters)
                     for pin in sub.pins {
                         inner.append(NetlistPart(kind: .port, name: pin, connections: ["net": net(pin, "", inside)]))
                     }
@@ -435,6 +602,20 @@ public enum SpiceNetlist {
                 let model = "J_" + device("J", name)
                 models.append(".model \(model) NJF(\(SpiceJFET.cardText(p, kind: part.kind)))")
                 lines.append("\(device("J", name)) \(n("drain")) \(n("gate")) \(n("source")) \(model)")
+            case .behavioralSource:
+                // the expression with its pins' nets, and the sources it reads by their names in the deck
+                guard let text = part.code, let expression = try? SpiceExpression(parsing: text) else {
+                    lines.append("* \(name): a behavioural source without an expression, left out")
+                    break
+                }
+                func net(_ pin: String) -> String { Topology.isGroundName(pin) ? "0" : n(pin) }
+                let body = expression.text { input in
+                    switch input {
+                    case let .voltage(a, b): return "V(" + net(a) + (b.map { "," + net($0) } ?? "") + ")"
+                    case let .current(source): return "I(" + device("V", source) + ")"
+                    }
+                }
+                lines.append("\(device("B", name)) \(n("plus")) \(n("minus")) \(p("mode") >= 0.5 ? "V" : "I")={\(body)}")
             case .opAmp:
                 // JSpice's op-amp: an integrator with a pole at the gain-bandwidth, slew limited, ahead of a smooth limit
                 let gain = max(p("gain"), 1), limit = max(p("limit"), 0.01), gbw = p("gbw"), slew = p("slewRate") * 1e6

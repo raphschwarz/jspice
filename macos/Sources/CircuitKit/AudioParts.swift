@@ -29,6 +29,11 @@ extension ElementKind {
         func first(_ offset: Int) -> Board.PinPlace { Board.PinPlace(second: false, offset: offset) }
         func second(_ offset: Int) -> Board.PinPlace { Board.PinPlace(second: true, offset: offset) }
         switch self {
+        case .behavioralSource:
+            // the output across + and −, and the nets the expression reads down the other side
+            return ChipPackage(name: "B", terminalNames: ["plus", "minus"] + (1...8).map { "in\($0)" },
+                               pinLabels: ["+", "−"] + (1...8).map { "\($0)" },
+                               pinPlaces: [first(0), first(1)] + (0..<8).map { second($0) }, length: 7)
         case .microphone:
             return ChipPackage(name: "MIC", terminalNames: ["gnd", "hot", "cold"], pinLabels: ["1 GND", "2 HOT", "3 COLD"],
                                pinPlaces: [first(2), first(0), first(1)], length: 2)

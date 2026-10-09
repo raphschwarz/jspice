@@ -125,7 +125,8 @@ struct Topology {
         // voltage sources and op-amp outputs get a current unknown, unless they are shorted out
         sourceRow = Array(repeating: -1, count: elements.count)
         var row = nodeCount - 1
-        for (i, element) in elements.enumerated() where element.kind.isVoltageSource || element.kind.drivesOutput || element.isTransformerCore {
+        for (i, element) in elements.enumerated()
+        where element.kind.isVoltageSource || element.kind.drivesOutput || element.isTransformerCore || element.setsBehavioralVoltage {
             let name = element.name.isEmpty ? element.kind.displayName : element.name
             if element.isTransformerCore {
                 // an ideal transformer with both windings shorted would leave its current undetermined

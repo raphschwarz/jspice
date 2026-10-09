@@ -55,6 +55,9 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case atmega328p, atmega2560, attiny85, rp2040
     case delayLine, digitalDelay, vactrol
     case memristor
+    /// A behavioural source (SPICE's B source, and its E, F, G and H sources): a voltage or current set by an expression
+    /// of the voltages at its sense pins and the currents through named sources (`code` holds the expression)
+    case behavioralSource
     case probe, ammeter, speaker
     /// Audio parts: microphones and a pickup, preamp, line and power amp chips, dynamics, tone, metering, a reverb tank
     case microphone, electretMic, pickup, instrumentationAmp, lineReceiver, lineDriver, audioPowerAmp, compander, toneControl
@@ -220,6 +223,7 @@ extension ElementKind {
         case .dac: return "SPI DAC"
         case .unbufferedInverter: return "Unbuffered Inverter"
         case .memristor: return "Memristor"
+        case .behavioralSource: return "Behavioural Source"
         case .probe: return "Voltage Probe"
         case .ammeter: return "Ammeter"
         case .speaker: return "Speaker"
@@ -287,6 +291,7 @@ extension ElementKind {
         case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
+        case .behavioralSource: return "B"
         case .probe: return "P"
         case .ammeter: return "A"
         case .speaker: return "SPK"
@@ -319,6 +324,7 @@ extension ElementKind {
         case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return .timersAndLogic
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
         case .memristor: return .memristors
+        case .behavioralSource: return .sources
         case .probe, .ammeter, .speaker, .vuMeter: return .instruments
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .agcPreamp, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator,
@@ -365,6 +371,7 @@ extension ElementKind {
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return nil
         case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return nil
         case .memristor: return "m"
+        case .behavioralSource: return nil
         case .probe: return "o"
         case .ammeter: return "x"
         case .speaker, .port, .block: return nil
@@ -438,7 +445,8 @@ extension ElementKind {
     }
 
     /// Parts offered in the library and the quick-add palette: a block is placed from the blocks the user has saved
-    public var isPlaceable: Bool { self != .block }
+    /// (a behavioural source comes from a netlist, with its expression, until one can be typed in)
+    public var isPlaceable: Bool { self != .block && self != .behavioralSource }
 
     /// Parts that can be mirrored across their axis
     public var canFlip: Bool { isAxisAligned }
@@ -853,6 +861,8 @@ extension ElementKind {
                 ParamSpec("cgs", "Gate-source overlap capacitance (CGSO × W)", unit: "F", default: 0, range: 0...1e-8, log: false),
                 ParamSpec("cgd", "Gate-drain overlap capacitance (CGDO × W)", unit: "F", default: 0, range: 0...1e-8, log: false),
             ] + Self.mosfetCardParams
+        case .behavioralSource:
+            return [ParamSpec("mode", "Sets (0: a current, 1: a voltage)", unit: "", default: 1, range: 0...1, log: false)]
         case .memristor:
             return [
                 ParamSpec("ron", "On resistance", unit: "Ω", default: 1000, range: 1...10_000_000),
@@ -1041,6 +1051,9 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     public var extentPoints: [GridPoint] {
         posts.count > 2 ? posts + [a, b] : [a, b]
     }
+
+    /// A behavioural source that sets a voltage (it has a current unknown of its own, as a voltage source does)
+    public var setsBehavioralVoltage: Bool { kind == .behavioralSource && self[param: "mode"] >= 0.5 }
 
     /// The ideal transformer a transformer part is simulated with (see `Circuit.expandModels`)
     public var isTransformerCore: Bool { kind == .transformer && self[param: "core"] == 1 }

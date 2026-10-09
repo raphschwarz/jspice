@@ -254,6 +254,22 @@ public final class Simulator {
         var gs = 0.0, gd = 0.0, gb = 0.0
     }
     private var meyerHistory: [MeyerHistory] = []
+    /// Each behavioural source's expression, and where its inputs come from: a voltage between two nodes, or the current
+    /// through a source (its row, and the sign that makes it SPICE's: into the source's + terminal)
+    struct BehaviorInput {
+        var plus = 0, minus = 0, row = -1, sign = -1.0
+    }
+    struct Behavior {
+        var expression: SpiceExpression
+        var inputs: [BehaviorInput]
+        var voltage: Bool
+    }
+    private var behaviors: [Behavior?] = []
+    /// What reading the behavioural sources' expressions found wrong
+    private var behaviorProblems: [String] = []
+    private var behaviorValues: [Double] = []
+    /// The time the present solve is for (a behavioural source's `time`)
+    private var solveTime = 0.0
     /// The charges each part stores and integrates, by slot: a diode's junction; a transistor's base-emitter,
     /// base-collector at the internal base, and base-collector at the external base
     static let chargeSlots = 5
@@ -462,7 +478,7 @@ public final class Simulator {
         nonlinearIndices = indices {
             switch $0 {
             case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch, .multiplier, .vactrol,
-                 .unbufferedInverter, .pll, .triode, .pentode, .vca: return true
+                 .unbufferedInverter, .pll, .triode, .pentode, .vca, .behavioralSource: return true
             default: return false
             }
         }
@@ -505,6 +521,7 @@ public final class Simulator {
             chipPinStates[i] = chips[i]?.pinStates
         }
         memristorIndices = indices { $0 == .memristor }
+        compileBehaviors()
         junctionIndices = kinds.indices.filter { storesCharge($0) }
         audioClips = [:]
         for i in indices({ $0 == .audioInput }) {
@@ -592,7 +609,7 @@ public final class Simulator {
         valuesVersion = -1
         matrixIsCurrent = false
         isFailed = false
-        problems = topology.problems
+        problems = topology.problems + behaviorProblems
         configureScopes(window: traces.values.first?.window ?? 1)
         currentsAreStale = true
     }
@@ -761,7 +778,7 @@ public final class Simulator {
         for i in flat.elements.indices { initialiseState(i) }
         x = Array(repeating: 0, count: topology.matrixSize)
         isFailed = false
-        problems = topology.problems
+        problems = topology.problems + behaviorProblems
         for trace in traces.values { trace.clear() }
         delayHistory = [:]
         springTanks = [:]
@@ -804,6 +821,7 @@ public final class Simulator {
         diodes = newFlat.elements.map { $0.kind.isDiode ? SpiceDiode($0, kelvin: kelvin, vt: vt) : SpiceDiode() }
         jfets = newFlat.elements.map { $0.kind == .njfet ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
         mosfets = newFlat.elements.map { $0.kind.isMOSFET ? SpiceMOSFET($0, kelvin: kelvin, vt: vt) : SpiceMOSFET() }
+        compileBehaviors()
         junctionIndices = kinds.indices.filter { storesCharge($0) }
         for (i, chip) in chips { chip.supply = constants[i].supply }
         linkClocks()
@@ -816,7 +834,7 @@ public final class Simulator {
         // a simulation that failed tries again with the new values (from where it was, unless that was not finite)
         if isFailed {
             isFailed = false
-            problems = topology.problems
+            problems = topology.problems + behaviorProblems
             if x.contains(where: { !$0.isFinite }) { x = [Double](repeating: 0, count: topology.matrixSize) }
         }
         return true
@@ -1027,6 +1045,7 @@ public final class Simulator {
     /// junctions are temporarily shunted with conductances strong enough to leave the circuit a single, easily found
     /// solution, and the shunts are stepped down to nothing, each solution leading Newton to the next (gmin stepping).
     private func solve(at t: Double) -> Bool {
+        solveTime = t
         let m = topology.matrixSize
         guard m > 0 else { return true }
         prepareBaseMatrix()
@@ -1235,7 +1254,7 @@ public final class Simulator {
 
     private func fail() {
         isFailed = true
-        problems = topology.problems + ["The circuit can't be solved. Look for voltage sources in parallel, a loop of sources and wires, or a current source with nowhere to go."]
+        problems = topology.problems + behaviorProblems + ["The circuit can't be solved. Look for voltage sources in parallel, a loop of sources and wires, or a current source with nowhere to go."]
     }
 
     // MARK: - Equations
@@ -1367,6 +1386,8 @@ public final class Simulator {
         func unknowns(_ i: Int) -> [Int] {
             var result = topology.elementNodes[i].filter { $0 > 0 }.map { $0 - 1 }
             if topology.sourceRow[i] >= 0 { result.append(topology.sourceRow[i]) }
+            // the rows of the sources a behavioural source reads the current of
+            if i < behaviors.count, let b = behaviors[i] { result += b.inputs.compactMap { $0.row >= 0 && $0.row < m ? $0.row : nil } }
             return result
         }
         // a nonlinear part stamps (and reads) only its own unknowns: they are the nonlinear block, each part's in full
@@ -2495,6 +2516,131 @@ public final class Simulator {
         stampCurrent(rhs, n.dp, n.sp, p * (r.cdrain - gds * vds - gm * vgs))
     }
 
+    /// Reads each behavioural source's expression, and finds what its inputs read: a voltage between its own pins (in1 …
+    /// in8, + and −, or 0 for ground), or the current through a voltage source by name, looked for first beside the source
+    /// (in the same block) and then anywhere
+    private func compileBehaviors() {
+        behaviors = Array(repeating: nil, count: kinds.count)
+        behaviorProblems = []
+        var widest = 0
+        for (i, element) in flat.elements.enumerated() where element.kind == .behavioralSource {
+            let name = element.name.isEmpty ? "B" : element.name
+            // (without an expression it is 0, so a voltage it sets still has its equation)
+            let text = element.code ?? ""
+            var expression = SpiceExpression(root: .constant(0), inputs: [])
+            if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                do {
+                    expression = try SpiceExpression(parsing: text)
+                } catch {
+                    behaviorProblems.append("\(name): can't read its expression \(text): \(error)")
+                }
+            }
+            let nodes = topology.elementNodes[i]
+            let pins = element.terminalNames
+            func node(_ pin: String) -> Int? {
+                let lower = pin.lowercased()
+                if Topology.isGroundName(lower) { return 0 }
+                guard let k = pins.firstIndex(where: { $0.lowercased() == lower }), k < nodes.count else { return nil }
+                return nodes[k]
+            }
+            let scope = element.name.contains(".") ? String(element.name[...element.name.lastIndex(of: ".")!]) : ""
+            var inputs: [BehaviorInput] = []
+            for input in expression.inputs {
+                switch input {
+                case let .voltage(a, b):
+                    let minus: Int? = b.map { node($0) } ?? 0
+                    guard let plus = node(a), let minus else {
+                        behaviorProblems.append("\(name): its expression reads \(a)\(b.map { "," + $0 } ?? ""), not one of its pins")
+                        inputs.append(BehaviorInput())
+                        continue
+                    }
+                    inputs.append(BehaviorInput(plus: plus, minus: minus))
+                case let .current(source):
+                    let wanted = [scope + source, source].map { $0.lowercased() }
+                    let found = wanted.lazy.compactMap { w in
+                        self.flat.elements.indices.first { self.flat.elements[$0].name.lowercased() == w && self.topology.sourceRow[$0] >= 0 }
+                    }.first
+                    guard let j = found else {
+                        behaviorProblems.append("\(name): no voltage source \(source) for its expression to read the current of")
+                        inputs.append(BehaviorInput())
+                        continue
+                    }
+                    // a source's row holds the current it delivers from its + terminal; SPICE's I( ) is into it
+                    inputs.append(BehaviorInput(row: topology.sourceRow[j], sign: -1))
+                }
+            }
+            widest = max(widest, inputs.count)
+            behaviors[i] = Behavior(expression: expression, inputs: inputs, voltage: element[param: "mode"] >= 0.5)
+        }
+        behaviorValues = [Double](repeating: 0, count: max(widest, 1))
+    }
+
+    /// A behavioural source, linearised at the present solution with its expression's exact slopes: a voltage across + and
+    /// − (its own row: v(+) − v(−) = f), or a current from + to − through it
+    private func stampBehavior(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
+        guard i < behaviors.count, let b = behaviors[i] else { return }
+        let count = b.inputs.count
+        for (k, input) in b.inputs.enumerated() {
+            behaviorValues[k] = input.row >= 0 ? (input.row < x.count ? input.sign * x[input.row] : 0)
+                : voltage(input.plus) - voltage(input.minus)
+        }
+        let celsius = kelvin - 273.15
+        let plus = nodes[0] - 1, minus = nodes[1] - 1
+        behaviorValues.withUnsafeBufferPointer { values in
+            let v = values.baseAddress!
+            var equivalent = b.expression.value(v, time: solveTime, celsius: celsius)
+            let row = topology.sourceRow[i]
+            for k in 0..<count {
+                let slope = b.expression.slope(k, v, time: solveTime, celsius: celsius)
+                guard slope != 0 && slope.isFinite else { continue }
+                equivalent -= slope * v[k]
+                let input = b.inputs[k]
+                if b.voltage {
+                    guard row >= 0 else { continue }
+                    if input.row >= 0 {
+                        add(matrix, m, row, input.row, -slope * input.sign)
+                    } else {
+                        add(matrix, m, row, input.plus - 1, -slope)
+                        add(matrix, m, row, input.minus - 1, slope)
+                    }
+                } else if input.row >= 0 {
+                    add(matrix, m, plus, input.row, slope * input.sign)
+                    add(matrix, m, minus, input.row, -slope * input.sign)
+                } else {
+                    add(matrix, m, plus, input.plus - 1, slope)
+                    add(matrix, m, plus, input.minus - 1, -slope)
+                    add(matrix, m, minus, input.plus - 1, -slope)
+                    add(matrix, m, minus, input.minus - 1, slope)
+                }
+            }
+            if b.voltage {
+                guard row >= 0 else { return }
+                // as a voltage source's: its current leaves + and returns at −, and v(+) − v(−) is the expression
+                add(matrix, m, plus, row, -1)
+                add(matrix, m, minus, row, 1)
+                add(matrix, m, row, plus, 1)
+                add(matrix, m, row, minus, -1)
+                if equivalent.isFinite { rhs[row] += equivalent }
+            } else if equivalent.isFinite {
+                stampCurrent(rhs, nodes[0], nodes[1], equivalent)
+            }
+        }
+    }
+
+    /// The current through a behavioural source, from + to − (into + as SPICE has it), at the present solution
+    private func behaviorCurrent(_ i: Int, _ v: (Int) -> Double) -> Double {
+        guard i < behaviors.count, let b = behaviors[i] else { return 0 }
+        if b.voltage {
+            let row = topology.sourceRow[i]
+            return row >= 0 && row < x.count ? -x[row] : 0
+        }
+        var values = [Double](repeating: 0, count: max(b.inputs.count, 1))
+        for (k, input) in b.inputs.enumerated() {
+            values[k] = input.row >= 0 ? (input.row < x.count ? input.sign * x[input.row] : 0) : v(input.plus) - v(input.minus)
+        }
+        return values.withUnsafeBufferPointer { b.expression.value($0.baseAddress!, time: time, celsius: kelvin - 273.15) }
+    }
+
     /// A diode's junction (inside its series resistance), linearised at the present solution and limited as SPICE limits
     /// it, with the charging of its stored charge
     private func stampDiode(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
@@ -2529,6 +2675,9 @@ public final class Simulator {
 
             case .npn, .pnp:
                 stampBipolar(i, nodes, matrix, rhs, m)
+
+            case .behavioralSource:
+                stampBehavior(i, nodes, matrix, rhs, m)
 
             case .njfet:
                 stampJFET(i, nodes, matrix, rhs, m)
@@ -3741,6 +3890,11 @@ public final class Simulator {
             return twoTerminal(d.current(v(anode) - v(nodes[1]), gmin: Self.junctionGmin).current + junctionCurrent[Self.chargeSlots * i])
         case .memristor:
             return twoTerminal((v(nodes[0]) - v(nodes[1])) * memristorConductance(i, state: memristorStates[i]))
+        case .behavioralSource:
+            let current = behaviorCurrent(i, v)
+            var out = [Double](repeating: 0, count: nodes.count)
+            if out.count >= 2 { (out[0], out[1]) = (-current, current) }
+            return (current, out)
         case .njfet:
             let j = jfets[i]
             let n = Self.jfetNodes({ nodes[$0] }, j)
@@ -3972,6 +4126,7 @@ public final class Simulator {
     public func voltageAcross(_ index: Int) -> Double {
         guard index < topology.elementNodes.count, index < kinds.count, x.count == topology.matrixSize else { return 0 }
         let kind = kinds[index]
+        if kind == .behavioralSource, let (plus, minus) = acrossNodes(index) { return voltage(plus) - voltage(minus) }
         if kind.isMicrocontroller || kind.hasChipPackage { return constants[index].supply }
         guard let (plus, minus) = acrossNodes(index) else { return 0 }
         return voltage(plus) - voltage(minus)
@@ -3988,6 +4143,7 @@ public final class Simulator {
         if kind == .transformer { return nodes.count == 4 ? (nodes[2], nodes[3]) : nil }
         if kind == .ota || kind.drivesOutput { return (nodes[2], 0) }
         if kind == .timer555 { return (nodes[2], nodes[0]) }
+        if kind == .behavioralSource { return (nodes[0], nodes[1]) }
         if kind.isMicrocontroller || kind.hasChipPackage || kind == .block { return nil }
         if kind == .schmittInverter || kind == .unbufferedInverter { return (nodes[1], 0) }
         if kind == .logicGate { return (nodes[2], 0) }

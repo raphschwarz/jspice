@@ -10,6 +10,8 @@ is what SpiceCrossCheckTests compares JSpice with: so differences measure JSpice
 python3 crosscheck.py            # writes the fixture (needs ngspice)
 python3 crosscheck.py --ac       # small-signal: ngspice's operating point and .ac sweep, spice-ac-reference.json
 python3 crosscheck.py --devices  # devices at DC: ngspice's .dc sweeps of transistors' currents, spice-device-reference.json
+python3 crosscheck.py --netlists # SPICE decks as written (controlled sources, subcircuits), which JSpice imports and runs,
+                                 # spice-netlist-reference.json
 
 Bipolar transistors are written as their whole Gummel-Poon card, the model JSpice implements as ngspice does, so a
 manufacturer's card can be checked here as it is.
@@ -22,6 +24,7 @@ SOURCES = os.path.join(ROOT, 'Sources/CircuitKit')
 FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-reference.json')
 AC_FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-ac-reference.json')
 DEVICE_FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-device-reference.json')
+NETLIST_FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-netlist-reference.json')
 KQ = 1.38064852e-23 / 1.6021766208e-19  # ngspice's k/q (const.h)
 NOMINAL_KELVIN = 300.15  # Simulator.nominalKelvin
 VT = KQ * NOMINAL_KELVIN  # Simulator.thermalVoltage: kT/q at 27 °C
@@ -827,6 +830,99 @@ def devices_main():
         ['ngspice', '-v'], capture_output=True, text=True).stdout.split('\n')[1].strip(' *'), sweeps=out),
         open(DEVICE_FIXTURE, 'w'), indent=1)
 
+# MARK: - Netlists as written
+
+# Decks ngspice runs as they are and JSpice imports (SpiceNetlist) and runs: E, F, G, H and B sources in every form (gain,
+# POLY, VALUE, TABLE, V= and I=, .param constants), and a subcircuit of them (an op-amp macromodel after Boyle's, with
+# test values, not any maker's) whose F and H read a source inside it
+NETLIST_CASES = [
+    dict(id='controlled-sources', note='E, F, G, H (gain and POLY), B (V= and I=), TABLE and VALUE, driven by a 1 kHz sine',
+         duration=2e-3, probes=['e1', 'g1', 'f1', 'h1', 'p2', 'b1', 'b2', 't3', 'v4'], netlist='''controlled sources
+.param gain=3 rload=2k
+VIN in 0 SIN(0 1 1k)
+R1 in a 1k
+VSENSE a b DC 0
+R2 b 0 1k
+E1 e1 0 in 0 {gain}
+RE1 e1 0 10k
+G1 0 g1 in 0 1m
+RG1 g1 0 {rload}
+F1 0 f1 VSENSE 2
+RF1 f1 0 1k
+H1 h1 0 VSENSE 500
+RH1 h1 0 10k
+E2 p2 0 POLY(2) (in,0) (e1,0) 0.1 0.5 0.2 0.05 0.01 0.02
+RP2 p2 0 10k
+B1 b1 0 V=2*tanh(V(in)*1.5) + 0.1*V(e1,in)
+RB1 b1 0 10k
+B2 0 b2 I=1m*V(in)^2 + 0.5m*I(VSENSE)*1k
+RB2 b2 0 1k
+E3 t3 0 TABLE {V(in)} = (-1,-0.5) (0,0) (0.5,1) (1,1.2)
+RT3 t3 0 10k
+EV v4 0 VALUE={V(in)*V(in) - 0.3*abs(V(in)) + max(min(V(e1), 2), -2)}
+RV4 v4 0 10k
+'''),
+    dict(id='opamp-macromodel', note='an inverting amplifier (gain 4.7) with a Boyle-style op-amp macromodel: an NPN pair, G and '
+         'POLY G stages with Miller compensation, H and F reading the output current, a B source limiting the swing',
+         duration=2e-3, probes=['out', 'inv'], netlist='''op-amp macromodel
+.subckt OPX inp inn vcc vee out
+Q1 c1 inn e1 QIN
+Q2 c2 inp e2 QIN
+RC1 vcc c1 5.3k
+RC2 vcc c2 5.3k
+RE1 e1 e 2k
+RE2 e2 e 2k
+IEE e vee 20u
+GA n6 0 c1 c2 1.9e-4
+R2 n6 0 100k
+CC n6 n7 30p
+GB n7 0 POLY(2) (n6,0) (vcc,vee) 0 2.4 0 0.001
+RO2 n7 0 50
+VSENSE n7 n8 DC 0
+HLIM n9 0 VSENSE 1
+EOUT n10 0 VALUE={V(n8) - 0.05*tanh(V(n9)/0.02)}
+BOUT out 0 V=max(min(V(n10), V(vcc)-1.5), V(vee)+1.5)
+FCLAMP 0 n6 VSENSE 0.01
+.model QIN NPN(IS=8e-16 BF=120 VAF=80)
+.ends
+VCC vcc 0 DC 12
+VEE vee 0 DC -12
+VIN in 0 SIN(0 0.5 2k)
+R1 in inv 10k
+R2 inv out 47k
+RL out 0 2k
+X1 0 inv vcc vee out OPX
+'''),
+]
+
+def netlists_main():
+    out = []
+    for case in NETLIST_CASES:
+        data = tempfile.mktemp(suffix='.txt')
+        step = case['duration'] / 500
+        deck = case['netlist'] + '\n'.join([
+            '.options reltol=1e-6 abstol=1e-13 vntol=1e-8 gmin=1e-12 method=gear maxord=2 itl4=200',
+            '.tran %.6g %.12g 0 %.6g uic' % (step, case['duration'], step), '.control', 'run',
+            'wrdata %s %s' % (data, ' '.join('v(%s)' % p for p in case['probes'])), 'quit', '.endc', '.end']) + '\n'
+        with tempfile.NamedTemporaryFile('w', suffix='.cir', delete=False) as f:
+            f.write(deck)
+        result = subprocess.run(['ngspice', '-b', f.name], capture_output=True, text=True, timeout=600)
+        if not os.path.exists(data):
+            sys.exit('ngspice failed:\n' + deck + result.stdout[-3000:] + result.stderr[-3000:])
+        rows = [list(map(float, line.split())) for line in open(data) if line.strip()]
+        os.unlink(data)
+        time = [row[0] for row in rows]
+        entry = dict(id=case['id'], note=case['note'], netlist=case['netlist'], duration=case['duration'],
+                     times=[float('%.9g' % t) for t in time], probes=[])
+        for k, probe in enumerate(case['probes']):
+            values = [row[2 * k + 1] for row in rows]
+            entry['probes'].append(dict(net=probe, values=[float('%.7g' % v) for v in values]))
+            print('%-18s %-6s %.4g..%.4g V' % (case['id'], probe, min(values), max(values)))
+        out.append(entry)
+    json.dump(dict(generator='tools/spice-reference/crosscheck.py --netlists', ngspice=subprocess.run(
+        ['ngspice', '-v'], capture_output=True, text=True).stdout.split('\n')[1].strip(' *'), cases=out),
+        open(NETLIST_FIXTURE, 'w'), indent=1)
+
 def rising_crossings(time, values):
     level = (max(values) + min(values)) / 2
     result = []
@@ -874,5 +970,7 @@ if __name__ == '__main__':
         ac_main()
     elif '--devices' in sys.argv:
         devices_main()
+    elif '--netlists' in sys.argv:
+        netlists_main()
     else:
         main()
