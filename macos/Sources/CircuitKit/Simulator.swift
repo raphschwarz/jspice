@@ -232,6 +232,14 @@ public final class Simulator {
     private var stampSize = 0
     private var stampMissed = false
     private static let noSlots = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
+    /// The predictor: the solution at the start of the substep being solved, the one before it (the start of the last
+    /// substep kept), whether that one is from an ordinary substep (not across a reset, a load or a part switching
+    /// over), and whether the next solve starts from the prediction
+    private var substepStartX: [Double] = []
+    private var olderX: [Double] = []
+    private var predictorReady = false
+    private var predictNext = false
+    private var predictionRatio = 1.0
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
     private var savedX: [Double] = []
     private var savedLimited: [Double] = []
@@ -454,6 +462,7 @@ public final class Simulator {
         hasDigital = !digitalIndices.isEmpty
         hasMemristor = !memristorIndices.isEmpty
         // the equations' shape may have changed: plan afresh
+        predictorReady = false
         plan = nil
         needsPlan = false
         missedPositions = []
@@ -511,6 +520,7 @@ public final class Simulator {
         let previous = timeStep
         timeStep = dt
         matrixIsCurrent = false
+        predictorReady = false
         // a delay line's history is kept one value per step: resample it to the new step
         for (i, history) in delayHistory {
             delayHistory[i] = history.resampled(stepRatio: dt / previous, capacity: delayCapacity(i, timeStep: dt))
@@ -559,6 +569,7 @@ public final class Simulator {
     public func adoptState(of other: Simulator, delays: Bool = false) {
         guard other.flat.elements.count == flat.elements.count, other.x.count == x.count else { return }
         time = other.time
+        predictorReady = false
         if timeStep != other.timeStep {
             timeStep = other.timeStep
             matrixIsCurrent = false
@@ -631,6 +642,7 @@ public final class Simulator {
         }
         watchChipPins()
         matrixIsCurrent = false
+        predictorReady = false
         sequenceOwnsKeyboard = false
         currentsAreStale = true
     }
@@ -747,12 +759,17 @@ public final class Simulator {
                 rejectDigital = digitalState
                 rejectLogic = logicStates
             }
+            Self.copy(x, into: &substepStartX)
+            predictNext = predictorReady && hasNonlinear
+            predictionRatio = ratio
             var converged = solve(at: t)
             if isFailed { return }
             // a 555 or Schmitt trigger that switches during the substep changes the circuit: solve it again
+            var switched = false
             if hasDigital {
                 for _ in 0..<4 {
                     guard updateDigitalStates() else { break }
+                    switched = true
                     converged = solve(at: t)
                     if isFailed { return }
                 }
@@ -776,6 +793,9 @@ public final class Simulator {
             }
             if !converged { convergenceFailures += 1 }
             updateDynamicStates()
+            // the next substep predicts from this one's start and end, unless the circuit jumped (a part switched over)
+            swap(&olderX, &substepStartX)
+            predictorReady = !switched
             (olderLevel, lastLevel) = (lastLevel, level)
             substeps += 1
             position += units
@@ -852,6 +872,12 @@ public final class Simulator {
         Self.copy(limitedVoltage2, into: &savedLimited2)
         Self.copy(limitedVoltage3, into: &savedLimited3)
         junctionConductance = 0
+        if predictNext {
+            // Newton-Raphson starts from the solution extrapolated along the last substep, a far better guess than the
+            // last solution while a signal is moving: one iteration fewer to converge (the fallback is the last solution)
+            predictNext = false
+            predict()
+        }
         if newton(iterations: Self.maxNewtonIterations) || isFailed || !hasNonlinear { return !isFailed }
         let firstTry = (x, limitedVoltage, limitedVoltage2, limitedVoltage3)
         (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedX, savedLimited, savedLimited2, savedLimited3)
@@ -865,6 +891,17 @@ public final class Simulator {
         // if that failed too, the first try is the better guess to carry on from
         if !converged && !isFailed { (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = firstTry }
         return converged && !isFailed
+    }
+
+    /// Moves `x` along the last substep: x + (x − x before) × this substep's length over the last's
+    private func predict() {
+        let ratio = predictionRatio
+        guard olderX.count == x.count, ratio.isFinite, ratio > 0 else { return }
+        x.withUnsafeMutableBufferPointer { x in
+            olderX.withUnsafeBufferPointer { older in
+                for k in 0..<x.count { x[k] += ratio * (x[k] - older[k]) }
+            }
+        }
     }
 
     /// Newton-Raphson from the present `x`; true when it converged.

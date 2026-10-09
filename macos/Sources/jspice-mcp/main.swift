@@ -46,10 +46,34 @@ func benchmark(seconds: Double, ids: [String]) {
         let name = id.padding(toLength: 18, withPad: " ", startingAt: 0)
         let notes = (simulator.isFailed ? " FAILED" : "") + (total.isFinite ? "" : " (not finite)")
         let solves = String(format: "%5.2f", Double(simulator.newtonIterations) / Double(3 * steps))
+        let error = String(format: "%6.1f", accuracy(of: example.circuit, listened: listened))
         let size = simulator.equationStatistics
         print("\(name)\(perStep) µs/step \(speed)× real time  \(simulator.convergenceFailures) unconverged  \(solves) solves/step"
+              + "  error \(error) dB"
               + "  n \(size.unknowns) nz \(size.nonzeros) lu \(size.factorEntries) nl \(size.nonlinearUnknowns) plans \(simulator.plans)\(notes)")
     }
+}
+
+/// How far the sound's simulation (48 kHz, one step per sample, without error control) is from a 16 times finer one
+/// with error control, over the first 50 ms of the listened part's voltage: the error's energy over the signal's, in dB
+func accuracy(of circuit: Circuit, listened: Int) -> Double {
+    let rate = 48_000.0
+    let finer = 16
+    let audio = Simulator(circuit: circuit, timeStep: 1 / rate)
+    audio.errorControl = false
+    let reference = Simulator(circuit: circuit, timeStep: 1 / (rate * Double(finer)))
+    var error = 0.0
+    var signal = 0.0
+    for _ in 0..<Int(0.05 * rate) {
+        audio.step()
+        for _ in 0..<finer { reference.step() }
+        let a = audio.voltageAcross(listened)
+        let r = reference.voltageAcross(listened)
+        error += (a - r) * (a - r)
+        signal += r * r
+    }
+    guard signal > 0, error.isFinite else { return error == 0 ? -999 : 999 }
+    return max(10 * log10(max(error, 1e-300) / signal), -999)
 }
 
 /// Holds what a background task produced, for the main code waiting on it
