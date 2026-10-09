@@ -26,8 +26,9 @@ final class RPPIOMachine {
     var execCtrl: UInt32 = 0x1F << 12
     var shiftCtrl: UInt32 = 0b11 << 18
     var pinCtrl: UInt32 = 0x5 << 26
-    var rxFIFO = RPFIFO(4)
-    var txFIFO = RPFIFO(4)
+    // (FSTAT is worked out again only once one changes; observers that do not read the old value change it in place)
+    var rxFIFO = RPFIFO(4) { didSet { pio.fifosChanged = true } }
+    var txFIFO = RPFIFO(4) { didSet { pio.fifosChanged = true } }
     var waiting = false
     var waitType = WaitType.none
     var waitIndex: UInt32 = 0
@@ -539,6 +540,9 @@ final class RPPIO: RPPeripheral {
     private let firstIRQ: Int
     var instructions = [UInt32](repeating: 0, count: 32)
     private(set) var machines: [RPPIOMachine] = []
+    /// Set when a machine's FIFO changes: FSTAT, which a sketch polls while it keeps a FIFO full, is kept until then
+    var fifosChanged = true
+    private var fifoStatus: UInt32 = 0
     var fdebug: UInt32 = 0
     var txStall: UInt32 = 0
     var rxStall: UInt32 = 0
@@ -586,15 +590,19 @@ final class RPPIO: RPPeripheral {
             return machines[machine].readUint32(offset - 0xC8 - UInt32(machine) * 0x18)
         }
         switch offset {
-        // (FSTAT is what a sketch polls while it keeps a FIFO full: plain loops)
+        // (plain loops: FSTAT is what a sketch polls while it keeps a FIFO full)
         case 0x000:
             var enabled: UInt32 = 0
             for k in machines.indices where machines[k].enabled { enabled |= 1 << UInt32(k) }
             return enabled
         case 0x004:
-            var status: UInt32 = 0
-            for k in machines.indices { status |= machines[k].fifoStat }
-            return status
+            if fifosChanged {
+                var status: UInt32 = 0
+                for k in machines.indices { status |= machines[k].fifoStat }
+                fifoStatus = status
+                fifosChanged = false
+            }
+            return fifoStatus
         case 0x008: return fdebug
         case 0x00C:
             var levels: UInt32 = 0
