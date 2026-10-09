@@ -41,9 +41,11 @@ public struct PartStress: Sendable {
         self.circuit = circuit
     }
 
-    /// The parts whose readings mean something on their own (not wires, labels, instruments or blocks)
+    /// The parts whose readings mean something on their own: not wires, labels, instruments or blocks, nor the sources,
+    /// which deliver power rather than take it
     static func watched(_ kind: ElementKind) -> Bool {
-        ![.wire, .ground, .netLabel, .port, .block, .probe, .ammeter, .loopProbe].contains(kind) && !kind.isSwitch
+        ![.wire, .ground, .netLabel, .port, .block, .probe, .ammeter, .loopProbe, .currentSource].contains(kind)
+            && !kind.isSwitch && !kind.isVoltageSource
     }
 
     /// Records the simulator's present readings, as held for `dt` seconds

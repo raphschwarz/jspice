@@ -15,7 +15,8 @@ final class PartStressTests: XCTestCase {
             NetlistPart(kind: .diode, name: "D1", params: ["bv": 100], connections: ["anode": "GND", "cathode": "a"]),
         ]
         let circuit = try SchematicLayout.layout(parts)
-        let (stress, simulator) = PartStress.run(circuit, duration: 1e-3)
+        // (the capacitors straight across the source would have it take the smallest steps)
+        let (stress, simulator) = PartStress.run(circuit, duration: 1e-3, maxSteps: 2_000)
         XCTAssertFalse(simulator.isFailed, "\(simulator.problems)")
         let findings = Dictionary(uniqueKeysWithValues: stress.findings.map { ($0.part, $0) })
         XCTAssertEqual(try XCTUnwrap(findings["R1"]).load, 5.76, accuracy: 1e-3)
@@ -27,7 +28,7 @@ final class PartStressTests: XCTestCase {
         XCTAssertEqual(diode.load, 0.12, accuracy: 1e-3)
         XCTAssertEqual(stress.overstressed.map(\.part), ["R1", "C1"])
         XCTAssertEqual(stress.findings.first?.part, "R1", "the most loaded first")
-        // the hottest parts: the two resistors, 1.44 W each
+        // the hottest parts: the two resistors, 1.44 W each (the source delivers it)
         let hottest = stress.hottest(2)
         XCTAssertEqual(Set(hottest.map { circuit.elements[$0.index].name }), ["R1", "R2"])
         XCTAssertEqual(hottest[0].power, 1.44, accuracy: 1e-3)
