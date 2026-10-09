@@ -264,6 +264,16 @@ public final class CircuitSession {
                 "path": string("Or a file to read it from"),
              ]),
              run: { session, arguments in try session.importSpice(arguments) }),
+        Tool(name: "import_model",
+             description: "Imports a maker's SPICE model file (an op-amp's .lib or .mod from its maker's site, as downloaded): one of its subcircuits becomes a block in the block library, its pins named as the file names them, with the file's provenance (its name, SHA-256 and the comment lines it starts with, where makers give the part, revision and terms). A model with five pins is measured as an op-amp (pins in a model's usual order: +in, -in, V+, V-, out) at ±supply: input offset, supply current, open-loop gain, unity-gain frequency and phase margin, slew rate and output swing, to set beside its datasheet. Then use it as {\"kind\": \"block\", \"block\": \"name\", ...}.",
+             inputSchema: schema([
+                "path": string("The model file"),
+                "subcircuit": string("Which subcircuit (optional; the file's first)"),
+                "url": string("Where it was downloaded from, kept with it (optional)"),
+                "measure": ["type": "boolean", "description": "Measure it as an op-amp (default: when it has five pins)"],
+                "supply": ["type": "number", "description": "The supplies for measuring, ± volts (default 15)"],
+             ], required: ["path"]),
+             run: { session, arguments in try session.importModel(arguments) }),
         Tool(name: "export_spice",
              description: "The circuit as a SPICE deck for ngspice or LTspice, with JSpice's own device equations: its parts by net, .model lines, op-amps and tubes as behavioural sources, transformers as coupled inductors, blocks as subcircuits, and a .tran analysis. Parts with no SPICE element (chips, microcontrollers) are named in comments. Writes it to path if given.",
              inputSchema: schema(["path": string("File to write (optional)")]),
@@ -1659,6 +1669,45 @@ public final class CircuitSession {
         replace(imported, "Import SPICE Netlist")
         var result = describe()
         result["left_out"] = warnings
+        return result
+    }
+
+    func importModel(_ arguments: [String: Any]) throws -> Any {
+        guard let path = arguments["path"] as? String, !path.isEmpty else { throw ToolError("Give the model file as \"path\"") }
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        guard let data = FileManager.default.contents(atPath: url.path) else { throw ToolError("Can't read \(path)") }
+        let imported: (block: BlockDefinition, warnings: [String])
+        do {
+            imported = try MakerModels.block(from: data, file: url.lastPathComponent, subcircuit: arguments["subcircuit"] as? String,
+                                             url: arguments["url"] as? String, include: SpiceNetlist.fileIncluder(deck: url))
+        } catch {
+            throw ToolError("\(error)")
+        }
+        let block = imported.block
+        try BlockLibrary.save(block)
+        blocks[block.name] = block
+        let pins = block.source?.pins ?? block.terminalNames
+        var result: [String: Any] = [
+            "block": block.name, "pins": pins, "left_out": imported.warnings,
+            "source": ["file": block.source?.file ?? "", "sha256": block.source?.sha256 ?? "", "header": block.source?.header ?? []],
+        ]
+        if (arguments["measure"] as? Bool) ?? (pins.count == 5) {
+            let supply = (arguments["supply"] as? Double) ?? (arguments["supply"] as? Int).map(Double.init) ?? 15
+            do {
+                let f = try MakerModels.measureOpAmp(block, pins: pins, supply: supply)
+                var figures: [String: Any] = [
+                    "supply": supply, "offset_v": f.offset, "supply_current_a": f.supplyCurrent, "open_loop_gain_db": f.openLoopGain,
+                    "swing_high_v": f.swingHigh, "swing_low_v": f.swingLow, "summary": f.lines,
+                ]
+                if let v = f.unityGain { figures["unity_gain_hz"] = v }
+                if let v = f.phaseMargin { figures["phase_margin_deg"] = v }
+                if let v = f.slewRise { figures["slew_rise_v_per_us"] = v / 1e6 }
+                if let v = f.slewFall { figures["slew_fall_v_per_us"] = v / 1e6 }
+                result["figures"] = figures
+            } catch {
+                result["figures_error"] = "\(error)"
+            }
+        }
         return result
     }
 

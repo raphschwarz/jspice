@@ -986,6 +986,9 @@ public enum SpiceNetlist {
                 // the port's net, by the part on it
                 return node(NetlistExtractor.netlist(from: block.circuit).first { $0.id == element.id }?.connections["net"] ?? port.name)
             }
+            if let source = block.source {
+                subcircuits.append("* \(block.name): from \(source.file), SHA-256 \(source.sha256)")
+            }
             subcircuits.append(".subckt \(unique) \(pins.joined(separator: " "))")
             subcircuits += inner.lines + inner.models
             subcircuits.append(".ends \(unique)")

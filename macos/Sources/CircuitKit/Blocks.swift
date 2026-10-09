@@ -7,6 +7,8 @@ import Foundation
 public struct BlockDefinition: Codable, Hashable, Sendable {
     public var name: String
     public var circuit: Circuit
+    /// The maker's model file it was made from, if it was
+    public var source: ModelSource?
 
     public init(name: String, circuit: Circuit) {
         self.name = name

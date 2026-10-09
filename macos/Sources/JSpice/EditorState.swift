@@ -369,6 +369,55 @@ final class EditorState: ObservableObject {
         }
     }
 
+    /// Imports a subcircuit of a maker's model file into the block library with the file's provenance (File ▸ Import
+    /// Maker's Model); an op-amp's (five pins, in a model's usual order) figures are measured, to be set beside its
+    /// datasheet's
+    func importMakerModel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ["lib", "mod", "cir", "sub", "inc", "sp", "spi", "spice", "ckt", "txt"]
+            .compactMap { UTType(filenameExtension: $0) } + [.plainText]
+        panel.message = "Choose a maker's SPICE model file (.lib, .mod, .cir): one of its subcircuits becomes a block in the library"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            guard let text = MakerModels.text(of: data) else { throw MakerModels.ImportError.unreadable }
+            let subcircuits = MakerModels.subcircuits(in: text)
+            guard let first = subcircuits.first else { throw MakerModels.ImportError.noSubcircuit }
+            var chosen = first.name
+            if subcircuits.count > 1 {
+                let alert = NSAlert()
+                alert.messageText = "Which subcircuit?"
+                alert.informativeText = "\(url.lastPathComponent) defines \(subcircuits.count) subcircuits."
+                let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 360, height: 26))
+                popup.addItems(withTitles: subcircuits.map { "\($0.name) (\($0.pins.joined(separator: " ")))" })
+                alert.accessoryView = popup
+                alert.addButton(withTitle: "Import")
+                alert.addButton(withTitle: "Cancel")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                chosen = subcircuits[popup.indexOfSelectedItem].name
+            }
+            let (block, warnings) = try MakerModels.block(from: data, file: url.lastPathComponent, subcircuit: chosen,
+                                                           include: SpiceNetlist.fileIncluder(deck: url))
+            try BlockLibrary.save(block)
+            reloadBlockLibrary()
+            var paragraphs = ["\(block.name) is in the library's Blocks, its pins \((block.source?.pins ?? []).joined(separator: ", "))."]
+            if let header = block.source?.header, !header.isEmpty { paragraphs.append(header.prefix(6).joined(separator: "\n")) }
+            if let pins = block.source?.pins, pins.count == 5, let figures = try? MakerModels.measureOpAmp(block, pins: pins) {
+                paragraphs.append("Measured as an op-amp at ±15 V, to set beside its datasheet:\n" + figures.lines.joined(separator: "\n"))
+            }
+            if !warnings.isEmpty { paragraphs.append("Left out:\n" + warnings.prefix(8).joined(separator: "\n")) }
+            let alert = NSAlert()
+            alert.messageText = "Imported \(block.name)"
+            alert.informativeText = paragraphs.joined(separator: "\n\n")
+            alert.runModal()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "That model can't be imported"
+            alert.informativeText = "\(error)"
+            alert.runModal()
+        }
+    }
+
     /// Writes the circuit as a SPICE deck (File ▸ Export SPICE Netlist)
     func exportSpice() {
         let save = NSSavePanel()

@@ -104,6 +104,8 @@ struct CircuitCommands: Commands {
             Divider()
             Button("Import SPICE Netlist…") { editor?.importSpice() }
                 .disabled(editor == nil)
+            Button("Import Maker's Model…") { editor?.importMakerModel() }
+                .disabled(editor == nil)
             Button("Import Schematic from Image or PDF…") { editor?.importSchematic() }
                 .disabled(editor == nil)
             Button("Forget Anthropic API Key") { APIKeyStore.remove() }
