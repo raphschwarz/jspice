@@ -48,6 +48,10 @@ public protocol Microcontroller: AnyObject {
     var watchedPins: [Int] { get set }
     /// The changes to the watched pins' driven levels logged since the last call, in order
     func takePinEvents() -> [PinEvent]
+    /// Called with each change to a watched pin as it is logged, while the chip runs: a part that answers within a
+    /// transfer (an ADC's DOUT, an I²C target's acknowledge) follows the chip's pins with it and sets `pinVoltages`
+    /// for the chip to read at once. A released I²C line is logged as high (the bus is pulled up).
+    var onPinEvent: ((PinEvent) -> Void)? { get set }
 
     /// Runs whole instructions until at least `count` more cycles have passed
     func run(cycles count: Int)

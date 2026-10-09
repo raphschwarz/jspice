@@ -4,7 +4,7 @@ import Foundation
 extension Examples {
     static let chipExamples: [Example] = [tubeScreamer, rat, mc1496Ring, sa612Ring, diodeRing, frequencyShifter, xr2206Generator,
                                           nortonAmplifier, shiftRegisterSequencer, clockedChorus, multiTapEcho, fv1Reverb, beltonReverb,
-                                          optoTremolo]
+                                          optoTremolo, micAGC, rmsCompressor, trueBypass, arduinoDualDAC, arduinoADCToDAC, picoI2S]
 
     private static func part(_ kind: ElementKind, _ name: String, _ params: [String: Double] = [:], _ connections: [String: String])
         -> NetlistPart {
@@ -410,4 +410,116 @@ extension Examples {
             r("RS", 4700, "gtr", "out"),
             part(.speaker, "SPK1", ["fullScale": 0.15], ["plus": "out", "minus": "GND"]),
         ], scopes: [("SPK1", .voltage), ("LFO", .voltage)]))
+
+    // MARK: - Dynamics, switching and converters
+
+    /// A voice through the SSM2166: its preamp, compressor and gate
+    static let micAGC = Example(
+        id: "ssm2166-agc", title: "SSM2166 mic preamp with compression (sound)",
+        summary: "A dynamic mic into an SSM2166: its preamp (×10) feeds a VCA steered by its RMS detector. Above the rotation point (100 mV RMS out of the preamp) every 3 dB louder comes out 1 dB louder, so loud and soft words come out closer in level; below the gate (2 mV) the VCA closes a dB for each dB, hushing the hiss between words. Compare the mic and the output on the scope, and turn up RATIO in the inspector. Turn on sound.",
+        symbol: "mic.badge.plus",
+        circuit: drawn([
+            part(.microphone, "MIC1", Examples.model(.microphone, "Dynamic vocal mic"), ["gnd": "GND", "hot": "mic", "cold": "GND"]),
+            part(.agcPreamp, "U1", Examples.model(.agcPreamp, "SSM2166"), ["in": "mic", "gnd": "GND", "out": "out"]),
+            c("C1", 10e-6, "out", "spk"),
+            r("RL", 10_000, "spk", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 1], ["plus": "spk", "minus": "GND"]),
+            part(.probe, "MIC", [:], ["plus": "mic", "minus": "GND"]),
+        ], scopes: [("MIC", .voltage), ("SPK1", .voltage)]))
+
+    /// A feed-forward compressor from a THAT4301: its RMS detector steers its VCA, through a divider that sets the ratio
+    static let rmsCompressor = Example(
+        id: "that4301-compressor", title: "THAT4301 compressor (sound)",
+        summary: "THAT's Analog Engine as a feed-forward compressor, the dbx way. The spare op-amp amplifies the guitar by 8 (18 dB) into the RMS detector, so its output crosses 0 V when the guitar is at about 100 mV RMS (the rotation point), moving 6.1 mV for each dB. A divider passes three quarters of that to the VCA's EC− (−6.1 mV per dB), so for every 4 dB the guitar rises above the rotation point the VCA takes 3 dB away: 4:1. Below it the VCA adds gain in the same way. Turn on sound and change RA and RB for other ratios.",
+        symbol: "gauge.with.dots.needle.33percent",
+        circuit: drawn([
+            part(.dcVoltage, "VP", ["voltage": 15], ["plus": "+15V", "minus": "GND"]),
+            guitar(level: 0.4),
+            part(.analogEngine, "U1", Examples.model(.analogEngine, "THAT4301"),
+                 ["in": "gtr", "ec": "ec", "out": "out", "rmsIn": "side", "rmsOut": "rms", "oaMinus": "fb", "oaPlus": "gtr", "oaOut": "side"]),
+            r("RF", 70_000, "side", "fb"),
+            r("RG", 10_000, "fb", "GND"),
+            r("RA", 25_000, "rms", "ec"),
+            r("RB", 75_000, "ec", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 1], ["plus": "out", "minus": "GND"]),
+            part(.probe, "EC", [:], ["plus": "ec", "minus": "GND"]),
+        ], scopes: [("GTR", .voltage), ("SPK1", .voltage), ("EC", .voltage)]))
+
+    /// A 3PDT footswitch wired for true bypass around a boost, its third pole lighting the LED
+    static let trueBypass = Example(
+        id: "true-bypass", title: "3PDT true bypass (sound)",
+        summary: "The footswitch of most pedals: three poles, two throws. Bypassed, pole 1 and pole 2 join the input jack straight to the output jack, and the effect's input and output are cut off from both. Pressed in, pole 1 sends the guitar into the effect (an op-amp gain of 11 with two 1N4148s clipping in its feedback), pole 2 takes the output from it, and pole 3 grounds the LED's cathode so it lights. Click the footswitch to switch the effect in and out. Turn on sound.",
+        symbol: "power.circle",
+        circuit: drawn(pedalSupply(divider: 10_000, filter: 47e-6) + [
+            guitar(),
+            part(.footswitch, "SW1", [:], ["c1": "gtr", "a1": "bypass", "b1": "fxsend", "c2": "out", "a2": "bypass", "b2": "fxreturn",
+                                          "c3": "ledk", "a3": "ledoff", "b3": "GND"]),
+            c("C1", 100e-9, "fxsend", "fxin"),
+            r("RBIAS", 1_000_000, "fxin", "vref"),
+            r("RPD1", 1_000_000, "fxsend", "GND"),
+            pedalOpAmp("U1", "TL072", swing: 3.5, plus: "fxin", minus: "fb", out: "fxo"),
+            r("RF", 100_000, "fxo", "fb"),
+            diode("D1", "1N4148", anode: "fxo", cathode: "fb"),
+            diode("D2", "1N4148", anode: "fb", cathode: "fxo"),
+            r("RG", 10_000, "fb", "g"),
+            c("CG", 1e-6, "g", "vref"),
+            c("C2", 1e-6, "fxo", "fxreturn"),
+            r("RPD2", 100_000, "fxreturn", "GND"),
+            r("RLED", 4700, "+9V", "leda"),
+            part(.led, "LED1", ["color": 2], ["anode": "leda", "cathode": "ledk"]),
+            r("RL", 100_000, "out", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 1], ["plus": "out", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage)]))
+
+    /// Two control voltages from an MCP4822, written by an Arduino over SPI
+    static let arduinoDualDAC = Example(
+        id: "arduino-mcp4822", title: "Arduino: two LFOs from an MCP4822",
+        summary: "An Arduino Uno computes a sine and a triangle, both at 2 Hz, and writes them to the two halves of an MCP4822 over SPI at 8 MHz: bit 15 of each word picks output A or B, and the chip's own 2.048 V reference sets the scale, so each swings between about 0.02 and 2 V. Control voltages for a synth, from one chip.",
+        symbol: "waveform.path",
+        circuit: drawn([
+            part(.dcVoltage, "V1", ["voltage": 5], ["plus": "+5V", "minus": "GND"]),
+            Examples.arduino(code: ArduinoSketches.mcp4822Code, firmware: ArduinoSketches.mcp4822Firmware,
+                             connections: ["d10": "cs", "d13": "sck", "d11": "sdi"]),
+            part(.dualDac, "U2", Examples.model(.dualDac, "MCP4822"),
+                 ["cs": "cs", "sck": "sck", "sdi": "sdi", "ldac": "GND", "outA": "a", "outB": "b"]),
+            r("RA", 10_000, "a", "GND"),
+            r("RB", 10_000, "b", "GND"),
+            part(.probe, "OUTA", [:], ["plus": "a", "minus": "GND"]),
+            part(.probe, "OUTB", [:], ["plus": "b", "minus": "GND"]),
+        ], scopes: [("OUTA", .voltage), ("OUTB", .voltage)]))
+
+    /// An ADC read over SPI and a DAC written over I²C: the DAC follows the knob
+    static let arduinoADCToDAC = Example(
+        id: "arduino-mcp3008-mcp4725", title: "Arduino: SPI ADC to I²C DAC",
+        summary: "An Arduino Uno reads the knob on CH0 of an MCP3008 over SPI (a start bit, then single-ended channel 0; the 10-bit code comes back in the next two bytes, the ADC answering bit by bit as the clock runs) and writes four times the code to an MCP4725 over I²C at 400 kHz (address 0x60; the DAC acknowledges each byte by holding SDA low). Both run on 5 V, so the DAC's output follows the knob. The readings go to the serial monitor. Turn the pot.",
+        symbol: "arrow.left.arrow.right",
+        circuit: drawn([
+            part(.dcVoltage, "V1", ["voltage": 5], ["plus": "+5V", "minus": "GND"]),
+            part(.potentiometer, "POT", ["resistance": 10_000, "position": 0.6], ["a": "GND", "b": "+5V", "wiper": "knob"]),
+            Examples.arduino(code: ArduinoSketches.adcDacCode, firmware: ArduinoSketches.adcDacFirmware,
+                             connections: ["d10": "cs", "d13": "sck", "d11": "mosi", "d12": "miso", "a4": "sda", "a5": "scl"]),
+            part(.spiAdc, "U2", Examples.model(.spiAdc, "MCP3008"),
+                 ["cs": "cs", "clk": "sck", "din": "mosi", "dout": "miso", "vref": "+5V", "ch0": "knob", "ch1": "GND", "ch2": "GND",
+                  "ch3": "GND", "ch4": "GND", "ch5": "GND", "ch6": "GND", "ch7": "GND"]),
+            r("RSDA", 4700, "+5V", "sda"),
+            r("RSCL", 4700, "+5V", "scl"),
+            part(.i2cDac, "U3", Examples.model(.i2cDac, "MCP4725"), ["scl": "scl", "sda": "sda", "a0": "GND", "out": "dac"]),
+            r("RL", 10_000, "dac", "GND"),
+            part(.probe, "DAC", [:], ["plus": "dac", "minus": "GND"]),
+        ], scopes: [("POT", .voltage), ("DAC", .voltage)]))
+
+    /// A sine from a Pico's PIO into a PCM5102 over I²S
+    static let picoI2S = Example(
+        id: "pico-pcm5102", title: "Pico: I²S audio DAC (sound)",
+        summary: "A Raspberry Pi Pico plays a 440 Hz sine through a PCM5102 audio DAC. The I2S library's PIO program clocks the bits out (BCK on GP20, LRCK on GP21, data on GP22: a 32-bit frame, 16 bits each for left and right, about 21 900 frames a second) and the sketch keeps its FIFO full. The DAC reads each bit on BCK's rising edge, the word for each channel starting one BCK after LRCK changes, and puts it out at up to 2.1 V RMS about ground. Turn on sound.",
+        symbol: "hifispeaker",
+        circuit: drawn([
+            Examples.pico(code: PicoSketches.i2sCode, firmware: PicoSketches.i2sFirmware,
+                          connections: ["gp20": "bck", "gp21": "lrck", "gp22": "din"]),
+            part(.i2sDac, "U2", Examples.model(.i2sDac, "PCM5102"), ["bck": "bck", "din": "din", "lrck": "lrck", "outL": "left", "outR": "right"]),
+            r("RL", 10_000, "left", "GND"),
+            r("RR", 10_000, "right", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 2], ["plus": "left", "minus": "GND"]),
+            part(.probe, "RIGHT", [:], ["plus": "right", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage)]))
 }

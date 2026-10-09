@@ -33,7 +33,7 @@ enum SymbolIcons {
             element = Element(kind: kind, a: .zero, b: GridPoint(2, 0))
             (a, b, unit) = (CGPoint(x: 7, y: 11), CGPoint(x: 16, y: 11), 4.5)
         case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
-             .logicGate, .levelDetector, .springReverb:
+             .logicGate, .levelDetector, .springReverb, .agcPreamp:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 5, y: 11), CGPoint(x: 29, y: 11), 5.5)
         case .ota, .vactrol, .transformer:
@@ -42,8 +42,8 @@ enum SymbolIcons {
         case .timer555:
             element = Element(kind: kind, a: .zero, b: GridPoint(0, 5))
             (a, b, unit) = (CGPoint(x: 17, y: -0.5), CGPoint(x: 17, y: 22), 4.5)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac,
-             .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .toneControl, .barGraphDriver,
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
+             .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch, .toneControl, .barGraphDriver,
              .balancedCable:
             let length = CGFloat(kind.chipPackage?.length ?? 13)
             element = Element(kind: kind, a: .zero, b: GridPoint(0, Int(length)))
@@ -75,7 +75,7 @@ enum SymbolIcons {
         case .potentiometer, .analogSwitch:
             posts = [a, b, CGPoint(x: (a.x + b.x) / 2, y: 2)]
         case .ota, .timer555, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
-             .analogSelector, .pll, .dac, .block:
+             .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .block:
             // the element's own terminal layout, scaled into the icon
             posts = element.posts.map { CGPoint(x: a.x + CGFloat($0.x) * unit, y: a.y + CGFloat($0.y) * unit) }
         default:

@@ -56,12 +56,15 @@ public enum SchematicLayout {
     /// The audio chips' pins on one side of their box (inputs on the second side), and the modules' inputs and output
     private static func audioSides(second: Bool) -> [ElementKind: [String]] {
         var result: [ElementKind: [String]] = [:]
+        // (and the converters', drawn the same way)
+        let converters: Set<ElementKind> = [.dualDac, .spiAdc, .i2cDac, .i2sDac]
         for kind in ElementKind.allCases {
-            guard let package = kind.audioChipPackage else { continue }
+            guard let package = kind.audioChipPackage ?? (converters.contains(kind) ? kind.chipPackage : nil) else { continue }
             result[kind] = zip(package.terminalNames, package.pinPlaces).filter { $0.1.second == second }.map(\.0)
         }
         result[.levelDetector] = second ? ["in", "ref"] : ["out"]
         result[.springReverb] = second ? ["in", "gnd"] : ["out"]
+        result[.agcPreamp] = second ? ["in", "gnd"] : ["out"]
         return result
     }
 
@@ -104,7 +107,7 @@ public enum SchematicLayout {
                                             .keyboardGate]
     static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf,
                                                .envelope, .vca,
-                                               .sampleHold, .divider, .logicGate, .levelDetector, .springReverb]
+                                               .sampleHold, .divider, .logicGate, .levelDetector, .springReverb, .agcPreamp]
 
     static func isRailName(_ name: String) -> Bool {
         let s = name.uppercased().replacingOccurrences(of: " ", with: "")
@@ -134,13 +137,13 @@ public enum SchematicLayout {
         case .nmos, .pmos, .npn, .pnp, .njfet: return frame(1...2, -1...1)
         case .triode, .pentode: return frame(0...2, -1...1)
         case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
-             .logicGate, .levelDetector, .springReverb:
+             .logicGate, .levelDetector, .springReverb, .agcPreamp:
             return frame(0...3, -2...2)
         case _ where e.kind.audioChipPackage != nil:
             return frame(0...(e.chipPackage?.length ?? 3), -2...2)
         case .vactrol, .transformer: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac,
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
              .block:
             return frame(0...(e.chipPackage?.length ?? 13), -2...2)
         default:
@@ -578,7 +581,7 @@ public enum SchematicLayout {
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
                     case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
-                         .analogSelector, .pll, .dac, .block:
+                         .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .block:
                         // analog inputs (a logic chip's or a block's inputs) down the left, digital pins (its outputs) down
                         // the right
                         put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.package?.length ?? 13)))

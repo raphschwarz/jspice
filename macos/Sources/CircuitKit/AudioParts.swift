@@ -14,7 +14,7 @@ extension ElementKind {
         switch self {
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator, .tappedTransformer,
-             .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .reverbBrick:
+             .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .reverbBrick, .analogEngine:
             return true
         default:
             return false
@@ -89,6 +89,14 @@ extension ElementKind {
         case .reverbBrick:
             return ChipPackage(name: "BTDR-2H", terminalNames: ["in", "gnd", "out1", "out2"], pinLabels: ["IN", "GND", "OUT 1", "OUT 2"],
                                pinPlaces: [second(0), second(2), first(0), first(1)], length: 2)
+        case .analogEngine:
+            return ChipPackage(name: "THAT4301", terminalNames: ["in", "ec", "out", "rmsIn", "rmsOut", "oaMinus", "oaPlus", "oaOut"],
+                               pinLabels: ["VCA IN", "EC−", "VCA OUT", "RMS IN", "RMS OUT", "OA −IN", "OA +IN", "OA OUT"],
+                               pinPlaces: [second(0), second(1), first(0), second(3), first(3), second(5), second(6), first(5)], length: 6)
+        case .footswitch:
+            return ChipPackage(name: "3PDT", terminalNames: ["c1", "a1", "b1", "c2", "a2", "b2", "c3", "a3", "b3"],
+                               pinLabels: ["1 COM", "1 BYPASS", "1 EFFECT", "2 COM", "2 BYPASS", "2 EFFECT", "3 COM", "3 BYPASS", "3 EFFECT"],
+                               pinPlaces: [second(0), first(0), first(1), second(2), first(2), first(3), second(4), first(4), first(5)], length: 5)
         case .tappedTransformer:
             return ChipPackage(name: "CT", terminalNames: ["a1", "a2", "b1", "ct", "b2"], pinLabels: ["A1", "A2", "B1", "CT", "B2"],
                                pinPlaces: [second(0), second(2), first(0), first(1), first(2)], length: 2)
@@ -239,6 +247,20 @@ extension ElementKind {
                 .choice("program", "Program (S0–S2)", EffectsProcessor.programs, default: 6),
                 ParamSpec("supply", "Supply: the POT inputs read from 0 V to it", unit: "V", default: 3.3, range: 3...3.6, log: false),
             ]
+        case .agcPreamp:
+            return [
+                ParamSpec("gain", "Preamp gain", unit: "", default: 10, range: 1...100),
+                ParamSpec("ratio", "Compression ratio above the rotation point", unit: "", default: 3, range: 1...15),
+                ParamSpec("rotation", "Rotation point (RMS out of the preamp)", unit: "V", default: 0.1, range: 0.01...1),
+                ParamSpec("gate", "Noise gate threshold (RMS out of the preamp)", unit: "V", default: 0.002, range: 1e-4...0.1),
+                ParamSpec("averaging", "Detector averaging time", unit: "s", default: 0.01, range: 1e-3...1),
+                ParamSpec("limit", "Output swing", unit: "V", default: 2, range: 0.5...5, log: false),
+            ]
+        case .analogEngine:
+            return [
+                ParamSpec("supply", "Supply (±)", unit: "V", default: 15, range: 5...18, log: false),
+                ParamSpec("averaging", "RMS detector's time constant (its timing capacitor)", unit: "s", default: 0.035, range: 1e-3...1),
+            ]
         case .reverbBrick:
             return [
                 ParamSpec("decay", "Decay time (−60 dB)", unit: "s", default: 2.5, range: 0.5...6),
@@ -299,6 +321,18 @@ extension ElementKind {
             return [
                 PartModel(name: "BTDR-2H", summary: "Belton reverb brick (Accutronics): a spring reverb's sound from delay chips, wet only, on 5 V; the brick of most reverb pedals",
                           values: ["decay": 2.5, "level": 0.5]),
+            ]
+        case .agcPreamp:
+            return [
+                PartModel(name: "SSM2166", summary: "Mic preamp with a VCA, an RMS detector and a gain computer: compression from 1:1 to 15:1 above an adjustable rotation point and a noise gate below an adjustable threshold, on one 5 V supply (its output rides at half the supply; here about 0 V)",
+                          values: ["gain": 10, "ratio": 3, "rotation": 0.1, "gate": 0.002, "averaging": 0.01, "limit": 2]),
+                PartModel(name: "SSM2167", summary: "Its 3 V sibling with a fixed preamp: ratio and gate set as on the SSM2166, a smaller swing",
+                          values: ["gain": 5, "ratio": 3, "rotation": 0.1, "gate": 0.002, "averaging": 0.01, "limit": 1]),
+            ]
+        case .analogEngine:
+            return [
+                PartModel(name: "THAT4301", summary: "THAT's Analog Engine: a 2180-type VCA (−6.1 mV per dB at EC−), a 2252-type RMS detector (+6.1 mV per dB, 0 V at 0.775 V RMS) and a spare op-amp: compressors, limiters and gates",
+                          values: ["supply": 15, "averaging": 0.035]),
             ]
         case .nortonAmp:
             return [
@@ -937,6 +971,16 @@ extension PartExpansion {
                                "dispersion": spring.3])
                 resistor(spring.1, spring.0, 100, "RO\(k + 1)")
             }
+        case .analogEngine where p.count == 8:
+            // its VCA, its RMS detector (against ground) and its spare op-amp
+            let (input, ec, out, rmsIn, rmsOut, oaMinus, oaPlus, oaOut) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])
+            let supply = param("supply")
+            let g = node()
+            ground(g)
+            threeTerminal(.vca, input, ec, out, "VCA", Examples.model(.vca, "THAT2180").merging(["limit": max(supply - 1.5, 1)]) { $1 })
+            threeTerminal(.levelDetector, rmsIn, g, rmsOut, "RMS",
+                          Examples.model(.levelDetector, "THAT2252").merging(["attack": param("averaging"), "release": param("averaging")]) { $1 })
+            opAmp(minus: oaMinus, plus: oaPlus, out: oaOut, "OA", amplifier(supply: supply, gbw: 5e6, slew: 5))
         case .tappedTransformer where p.count == 5:
             // winding A's resistance and leakage, its magnetising inductance, and two ideal cores on it, each driving
             // half the tapped winding (with half its resistance), the halves joined at the tap

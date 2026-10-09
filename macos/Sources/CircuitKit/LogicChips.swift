@@ -56,6 +56,21 @@ extension ElementKind {
             return ChipPackage(name: "CD4046", terminalNames: ["signal", "comparator", "vco_in", "inhibit", "vco_out", "pc1", "pc2"],
                                pinLabels: ["SIG", "COMP", "VCO IN", "INH", "VCO", "PC1", "PC2"],
                                pinPlaces: [second(0), second(1), second(2), second(3), first(0), first(1), first(2)], length: 3)
+        case .dualDac:
+            return ChipPackage(name: "MCP4822", terminalNames: ["cs", "sck", "sdi", "ldac", "outA", "outB"],
+                               pinLabels: ["CS", "SCK", "SDI", "LDAC", "VOUT A", "VOUT B"],
+                               pinPlaces: [second(0), second(1), second(2), second(3), first(0), first(1)], length: 3)
+        case .spiAdc:
+            return ChipPackage(name: "MCP3008", terminalNames: ["cs", "clk", "din", "dout", "vref"] + (0...7).map { "ch\($0)" },
+                               pinLabels: ["CS", "CLK", "DIN", "DOUT", "VREF"] + (0...7).map { "CH\($0)" },
+                               pinPlaces: [first(3), first(2), first(1), first(0), first(5)] + (0...7).map(second), length: 7)
+        case .i2cDac:
+            return ChipPackage(name: "MCP4725", terminalNames: ["scl", "sda", "a0", "out"], pinLabels: ["SCL", "SDA", "A0", "VOUT"],
+                               pinPlaces: [second(0), second(1), second(2), first(0)], length: 2)
+        case .i2sDac:
+            return ChipPackage(name: "PCM5102", terminalNames: ["bck", "din", "lrck", "outL", "outR"],
+                               pinLabels: ["BCK", "DIN", "LRCK", "OUT L", "OUT R"],
+                               pinPlaces: [second(0), second(1), second(2), first(0), first(1)], length: 2)
         case .analogSelector:
             return ChipPackage(name: "CD4053", terminalNames: ["x0", "x1", "select", "inhibit", "x"],
                                pinLabels: ["X0", "X1", "SEL", "INH", "X"],
@@ -69,10 +84,15 @@ extension ElementKind {
     /// state changes when an input crosses one, and their outputs drive towards the hidden supply or ground.
     public var isLogic: Bool {
         switch self {
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac: return true
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac,
+             .dualDac, .spiAdc, .i2cDac, .i2sDac: return true
         default: return false
         }
     }
+
+    /// Converters a microcontroller talks to that answer within a transfer (an ADC's DOUT, an I²C target's
+    /// acknowledge): they follow the chip's pins as it runs, and what they drive back reaches it at once
+    public var isBusDevice: Bool { self == .spiAdc || self == .i2cDac }
 
     /// The terminals a logic part reads as logic inputs, as indices into its terminals
     var logicInputs: [Int] {
@@ -85,7 +105,8 @@ extension ElementKind {
         case .analogMux: return [8, 9, 10, 11]
         case .analogSelector: return [2, 3]
         case .pll: return [0, 1, 3]
-        case .dac: return [0, 1, 2, 3]
+        case .dac, .dualDac: return [0, 1, 2, 3]
+        case .spiAdc, .i2cDac, .i2sDac: return [0, 1, 2]
         default: return []
         }
     }
@@ -206,6 +227,78 @@ enum Logic {
                 state.bits = 0
             }
             if !level(3) { state.count = Int(state.latch) }
+        case .dualDac:
+            // CS, SCK, SDI, LDAC: as the MCP4921, but bit 15 picks the channel (0 A, 1 B), each with its own registers:
+            // A's in the low half of the input and output registers, B's in the high half
+            if fell(0) {
+                state.shift = 0
+                state.bits = 0
+            }
+            if !level(0) && rose(1) && state.bits < 16 {
+                state.shift = state.shift << 1 | (level(2) ? 1 : 0)
+                state.bits += 1
+            }
+            if rose(0) {
+                if state.bits == 16 {
+                    let word = state.shift & 0xFFFF
+                    state.latch = word & 0x8000 == 0 ? state.latch & 0xFFFF_0000 | word : state.latch & 0xFFFF | word << 16
+                }
+                state.bits = 0
+            }
+            if !level(3) { state.count = Int(state.latch) }
+        case .spiAdc:
+            // CS, CLK, DIN: with CS low, DIN is read on each rising edge of CLK. After a start bit (the first high) come
+            // SGL/DIFF and the channel, D2–D0; the input is sampled as D0 comes in (the circuit puts the code in `latch`
+            // while `phase` asks for it). On the falling edges after the next rising one DOUT gives a null bit, then the
+            // code's ten bits, MSB first, then zeros. `bits` counts rising edges from the start bit (0 waiting for it),
+            // `count` is DOUT's level.
+            if level(0) {
+                state.bits = 0
+                state.shift = 0
+                state.count = 0
+            } else {
+                if rose(1) {
+                    if state.bits == 0 {
+                        if level(2) { state.bits = 1 }
+                    } else {
+                        state.bits += 1
+                        if state.bits <= 5 { state.shift = state.shift << 1 | (level(2) ? 1 : 0) }
+                        if state.bits == 5 { state.phase = 1 }
+                    }
+                }
+                if fell(1) && state.bits >= 6 {
+                    let index = state.bits - 6
+                    state.count = index >= 1 && index <= 10 && state.latch & (1 << UInt32(10 - index)) != 0 ? 1 : 0
+                }
+            }
+        case .i2cDac:
+            state = i2cTarget(old, inputs: inputs)
+        case .i2sDac:
+            // BCK, DIN, LRCK (I²S): DIN is read on each rising edge of BCK, MSB first, a word for each half of LRCK's
+            // cycle (low the left channel, high the right), starting one BCK after LRCK changes: so the first bit read
+            // after a change ends the other channel's word, which then goes out, kept left-justified in 32 bits (the
+            // left in `latch`, the right in `count`); `phase` is the channel being read (1 right)
+            if rose(0) {
+                let bit: UInt32 = level(1) ? 1 : 0
+                let right = level(2)
+                let wasRight = old.phase >= 0.5
+                if right != wasRight {
+                    var word = old.shift
+                    var bits = old.bits
+                    if bits < 32 {
+                        word = word << 1 | bit
+                        bits += 1
+                    }
+                    let justified = bits >= 32 ? word : word << UInt32(32 - bits)
+                    if wasRight { state.count = Int(Int32(bitPattern: justified)) } else { state.latch = justified }
+                    state.shift = 0
+                    state.bits = 0
+                    state.phase = right ? 1 : 0
+                } else if old.bits < 32 {
+                    state.shift = old.shift << 1 | bit
+                    state.bits = old.bits + 1
+                }
+            }
         case .pll:
             // phase comparator 2: a rising edge of the signal pumps up (or ends pumping down), one of the comparator
             // input pumps down (or ends pumping up), so the output stays off once the two are in phase
@@ -256,6 +349,106 @@ enum Logic {
         let gain = word & 0x2000 != 0 ? 1.0 : 2.0
         return min(max(reference * Double(word & 0xFFF) / 4096 * gain, 0), supply)
     }
+
+    /// An I²C target's bit-level state: `bits` counted in the byte (9 during the acknowledge clock), `shift` the byte,
+    /// `count` the output register (code | power-down bits << 12), and in `latch` the transaction: the byte number
+    /// (bits 0–7), whether it was addressed (8), whether it is holding SDA low (9), whether a START began it (10), the
+    /// write-DAC command rather than fast mode (11), and the data bytes so far (16–31)
+    static let i2cAddressed: UInt32 = 1 << 8, i2cAcknowledging: UInt32 = 1 << 9, i2cActive: UInt32 = 1 << 10, i2cWriteCommand: UInt32 = 1 << 11
+
+    /// Whether an I²C target holds SDA low
+    static func acknowledging(_ state: LogicState) -> Bool { state.latch & i2cAcknowledging != 0 }
+
+    /// An MCP4725 on SCL, SDA and A0: answers at 0x60 + A0 (the MCP4725A0's address, its A2 and A1 0). START is SDA
+    /// falling while SCL is high, STOP SDA rising while SCL is high; between them each byte is read on SCL's rising
+    /// edges, MSB first, and acknowledged by holding SDA low through the ninth clock if it is the address written to, or
+    /// a byte after it. Fast mode (0 0 PD1 PD0 D11–D8, then D7–D0, repeated) and the write-DAC command (0 1 0 x x PD1 PD0
+    /// x, D11–D4, D3–D0 x x x x; or 0 1 1 for DAC and EEPROM) set the output register. SDA as the bus has it: low while
+    /// it acknowledges, whatever the master does.
+    private static func i2cTarget(_ old: LogicState, inputs: UInt32) -> LogicState {
+        var state = old
+        state.inputs = inputs
+        let holding = old.latch & i2cAcknowledging != 0
+        let sclWas = old.inputs & 1 != 0, scl = inputs & 1 != 0
+        let sdaWas = old.inputs & 2 != 0 && !holding, sda = inputs & 2 != 0 && !holding
+        if sclWas && scl && sdaWas != sda {
+            if !sda {
+                // START (or a repeated one): the address comes next
+                state.latch = i2cActive
+                state.bits = 0
+                state.shift = 0
+            } else {
+                state.latch &= ~(i2cActive | i2cAcknowledging)
+            }
+            return state
+        }
+        guard old.latch & i2cActive != 0 else { return state }
+        if !sclWas && scl && state.bits < 8 {
+            state.shift = state.shift << 1 | (sda ? 1 : 0)
+            state.bits += 1
+        } else if sclWas && !scl {
+            if state.bits == 8 {
+                // the byte is in: acknowledge it, or let the transaction go
+                let byte = state.shift & 0xFF
+                let index = state.latch & 0xFF
+                var latch = state.latch & ~UInt32(0xFF) | (index + 1) & 0xFF
+                if index == 0 {
+                    let address = UInt32(0x60) | (inputs & 4 != 0 ? 1 : 0)
+                    guard byte >> 1 == address && byte & 1 == 0 else {
+                        state.latch = 0
+                        return state
+                    }
+                    latch |= i2cAddressed
+                } else {
+                    // data bytes: the first says which command; the output register takes the code when it is whole
+                    let data = latch >> 16
+                    if index == 1 {
+                        if byte >> 6 == 0 {
+                            latch = latch & ~i2cWriteCommand & 0xFFFF | byte << 16
+                        } else {
+                            latch = latch | i2cWriteCommand
+                            latch = latch & 0xFFFF | byte << 16
+                        }
+                    } else if latch & i2cWriteCommand == 0 {
+                        // fast mode: pairs of bytes, the first in `data`
+                        if index % 2 == 1 {
+                            latch = latch & 0xFFFF | byte << 16
+                        } else {
+                            state.count = Int((data >> 4 & 0x3) << 12 | (data & 0xF) << 8 | byte)
+                        }
+                    } else if index == 2 {
+                        latch = latch & 0xFFFF | (data << 8 | byte) << 16
+                    } else if index == 3 {
+                        let command = data >> 8
+                        state.count = Int((command >> 1 & 0x3) << 12 | (data & 0xFF) << 4 | byte >> 4)
+                    }
+                }
+                state.latch = latch | i2cAcknowledging
+                state.bits = 9
+            } else if state.bits == 9 {
+                // the acknowledge clock is over: let SDA go, ready for the next byte
+                state.latch &= ~i2cAcknowledging
+                state.bits = 0
+                state.shift = 0
+            }
+        }
+        return state
+    }
+
+    /// An MCP4725's output for its output register: the supply times the code over 4096, or 0 V powered down
+    static func i2cDacOutput(_ register: Int, supply: Double) -> Double {
+        guard register >> 12 & 0x3 == 0 else { return 0 }
+        return supply * Double(register & 0xFFF) / 4096
+    }
+
+    /// An MCP4822 channel's output (0 A, 1 B) for its output registers: its 2.048 V reference times the code over 4096,
+    /// times two unless the GA bit is set
+    static func dualDacOutput(_ registers: Int, channel: Int, supply: Double) -> Double {
+        dacOutput(registers >> (16 * channel) & 0xFFFF, reference: 2.048, supply: supply)
+    }
+
+    /// A PCM5102's output for a left-justified 32-bit sample: 2.1 V RMS at full scale, about ground
+    static func i2sOutput(_ sample: Int32) -> Double { Double(sample) / 2_147_483_648 * 2.1 * 2.squareRoot() }
 
     /// The channel a multiplexer or selector connects to its common terminal, or nil while inhibited
     static func channel(_ kind: ElementKind, _ state: LogicState) -> Int? {

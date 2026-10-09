@@ -21,7 +21,7 @@ public struct MIDIMapping: Codable, Hashable, Sendable {
     }
 
     /// The kinds of part a controller can move
-    public static let mappable: Set<ElementKind> = [.potentiometer, .toggleSwitch, .pushButton]
+    public static let mappable: Set<ElementKind> = [.potentiometer, .toggleSwitch, .pushButton, .footswitch]
 
     /// Whether a message on `channel` from `controller` is this mapping's
     public func matches(controller: Int, channel: Int) -> Bool {
@@ -77,7 +77,7 @@ extension Circuit {
         case .potentiometer:
             guard element[param: "position"] != level else { return false }
             element[param: "position"] = level
-        case .toggleSwitch, .pushButton:
+        case .toggleSwitch, .pushButton, .footswitch:
             let on = level >= 64.0 / 127
             guard element.closed != on else { return false }
             element.closed = on

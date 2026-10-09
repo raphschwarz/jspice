@@ -73,12 +73,18 @@ def build(sketch_path, out):
     with open(cpp, 'w') as f:
         f.write('#include <Arduino.h>\n#line 1 "sketch.ino"\n' + source[:first] + '\n'.join(protos) +
                 f'\n#line {line} "sketch.ino"\n' + source[first:])
+    # the libraries the sketch includes, and those their own headers include in turn (I2S needs AudioBufferManager)
     extra, library_sources = [], []
-    for name in re.findall(r'#include\s*[<"](\w+)\.h[>"]', source):
+    wanted, seen = re.findall(r'#include\s*[<"](\w+)\.h[>"]', source), set()
+    while wanted:
+        name = wanted.pop(0)
         folder = os.path.join(CORE, 'libraries', name, 'src')
-        if os.path.isdir(folder):
-            extra.append('-I' + folder)
-            library_sources += sources(folder)
+        if name in seen or not os.path.isdir(folder): continue
+        seen.add(name)
+        extra.append('-I' + folder)
+        library_sources += sources(folder)
+        for header in glob.glob(folder + '/*.h'):
+            wanted += re.findall(r'#include\s*[<"](\w+)\.h[>"]', open(header, errors='replace').read())
     archive = core_archive(os.path.join(os.path.dirname(os.path.abspath(out)), 'pico-core-cache'))
     objs = []
     for k, s in enumerate([cpp] + library_sources):

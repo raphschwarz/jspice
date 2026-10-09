@@ -75,7 +75,7 @@ public final class CircuitProcessor {
             switch element.kind {
             case .potentiometer:
                 return Control(name: name, value: element[param: "position"], isSwitch: false, part: part, inner: inner)
-            case .toggleSwitch, .pushButton:
+            case .toggleSwitch, .pushButton, .footswitch:
                 return Control(name: name, value: element.closed ? 1 : 0, isSwitch: true, part: part, inner: inner)
             default:
                 return nil

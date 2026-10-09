@@ -18,6 +18,7 @@ public final class Pico: Microcontroller {
         /// The watched pins by GPIO, the changes to their driven levels, and when the present run started
         var watched: [Int: Int] = [:]
         var events: [PinEvent] = []
+        var onEvent: ((PinEvent) -> Void)?
         var runStart = 0.0
 
         init(firmware: [UInt8]) {
@@ -35,10 +36,14 @@ public final class Pico: Microcontroller {
                     switch state {
                     case .high: high = true
                     case .low: high = false
+                    // an I²C line let go: the bus is pulled up
+                    case _ where self.chip.gpio[gpio].functionSelect == RPGPIOPin.functionI2C: high = true
                     default: return
                     }
                     let cycle = Int((self.chip.clock.nanos - self.runStart) / RP2040.cycleNanos)
-                    self.events.append(PinEvent(cycle: cycle, pin: watchedPin, high: high))
+                    let event = PinEvent(cycle: cycle, pin: watchedPin, high: high)
+                    self.events.append(event)
+                    self.onEvent?(event)
                 }
             }
             // VBUS present (GP24), and the ADC's own inputs: VSYS/3 (5 V from USB) and the temperature sensor at 27 °C
@@ -112,6 +117,11 @@ public final class Pico: Microcontroller {
     public func takePinEvents() -> [PinEvent] {
         defer { system.events.removeAll(keepingCapacity: true) }
         return system.events
+    }
+
+    public var onPinEvent: ((PinEvent) -> Void)? {
+        get { system.onEvent }
+        set { system.onEvent = newValue }
     }
 
     public func run(cycles count: Int) {

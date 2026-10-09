@@ -291,6 +291,15 @@ public enum Breadboard {
         case .dac:
             return Package(title: "MCP4921", pins: 8, units: [["cs": 2, "sck": 3, "sdi": 4, "ldac": 5, "vref": 6, "out": 8]],
                            supplies: [(1, "VDD", .volts(max(p("supply"), 2.7))), (7, "AVSS", .ground)])
+        case .dualDac:
+            return Package(title: "MCP4822", pins: 8, units: [["cs": 2, "sck": 3, "sdi": 4, "ldac": 5, "outB": 6, "outA": 8]],
+                           supplies: [(1, "VDD", .volts(max(p("supply"), 2.7))), (7, "VSS", .ground)],
+                           labels: [1: "VDD", 2: "CS", 3: "SCK", 4: "SDI", 5: "LDAC", 6: "VOUT B", 7: "VSS", 8: "VOUT A"])
+        case .spiAdc:
+            return Package(title: "MCP3008", pins: 16,
+                           units: [(0...7).reduce(into: ["cs": 10, "din": 11, "dout": 12, "clk": 13, "vref": 15]) { $0["ch\($1)"] = $1 + 1 }],
+                           supplies: [(9, "DGND", .ground), (14, "AGND", .ground), (16, "VDD", .volts(max(p("supply"), 2.7)))],
+                           labels: [9: "DGND", 10: "CS", 11: "DIN", 12: "DOUT", 13: "CLK", 14: "AGND", 15: "VREF", 16: "VDD"])
         case .multiplier:
             if model == "MPY634" {
                 return Package(title: "MPY634", pins: 14, units: [["x": 1, "y": 6, "out": 12]],
@@ -921,6 +930,11 @@ public enum Breadboard {
             return "\(model): wire it by the pinout in its datasheet, with its BBD"
         case .effectsProcessor: return "FV-1: surface-mount, on a module board with its crystal and EEPROM socket"
         case .reverbBrick: return "Belton reverb brick, on its six pins (5 V supply)"
+        case .i2cDac: return "MCP4725 breakout board (I²C), on 5 V"
+        case .i2sDac: return "PCM5102 I²S DAC board, on 3.3 V"
+        case .agcPreamp: return "SSM2166: surface-mount, on an adapter board, on 5 V"
+        case .analogEngine: return "THAT4301: surface-mount, on an adapter board, on ±15 V"
+        case .footswitch: return "3PDT footswitch, in the enclosure, on its nine lugs"
         case .opAmp:
             let model = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? "Op-amp"
             return model == "TPA6120" ? "TPA6120 headphone amp: surface-mount, on a breakout board" : "\(model) power amp, on a heat sink, wired by leads"

@@ -325,22 +325,40 @@ public enum SketchBuilder {
         libraries(usedBy: source, in: toolchain.core.appendingPathComponent("libraries"))
     }
 
-    /// The libraries in `folder` (each one's sources in <name>/src) whose headers the sketch includes
+    /// The libraries in `folder` (each one's sources in <name>/src) whose headers the sketch includes, and those their
+    /// own headers include in turn (arduino-pico's I2S needs its AudioBufferManager)
     static func libraries(usedBy source: String, in folder: URL) -> [URL] {
-        let pattern = try? NSRegularExpression(pattern: #"#\s*include\s*[<"]([^>"]+)\.h[>"]"#)
-        let range = NSRange(source.startIndex..., in: source)
-        let headers = Set((pattern?.matches(in: source, range: range) ?? []).compactMap { match -> String? in
-            Range(match.range(at: 1), in: source).map { String(source[$0]) }
-        })
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
+        var headers = includedHeaders(source)
+        var found = Set<String>()
         var result: [URL] = []
-        for name in names.sorted() {
-            let src = folder.appendingPathComponent(name).appendingPathComponent("src")
-            if headers.contains(where: { FileManager.default.fileExists(atPath: src.appendingPathComponent($0 + ".h").path) }) {
+        var added = true
+        while added {
+            added = false
+            for name in names.sorted() where !found.contains(name) {
+                let src = folder.appendingPathComponent(name).appendingPathComponent("src")
+                guard headers.contains(where: { FileManager.default.fileExists(atPath: src.appendingPathComponent($0 + ".h").path) })
+                else { continue }
+                found.insert(name)
                 result.append(src)
+                added = true
+                for file in (try? FileManager.default.contentsOfDirectory(atPath: src.path)) ?? [] where file.hasSuffix(".h") {
+                    if let text = try? String(contentsOf: src.appendingPathComponent(file), encoding: .utf8) {
+                        headers.formUnion(includedHeaders(text))
+                    }
+                }
             }
         }
         return result
+    }
+
+    /// The headers a source includes, without their ".h"
+    private static func includedHeaders(_ source: String) -> Set<String> {
+        let pattern = try? NSRegularExpression(pattern: #"#\s*include\s*[<"]([^>"]+)\.h[>"]"#)
+        let range = NSRange(source.startIndex..., in: source)
+        return Set((pattern?.matches(in: source, range: range) ?? []).compactMap { match -> String? in
+            Range(match.range(at: 1), in: source).map { String(source[$0]) }
+        })
     }
 
     static func sources(in folder: URL) -> [URL] {

@@ -76,8 +76,11 @@ struct Topology {
         // net labels with the same name are one node; "GND" or "0" is ground
         var labels: [String: Int] = [:]
         for (i, element) in elements.enumerated() {
-            if element.isConductor {
-                nodes.union(elementPoints[i][0], elementPoints[i][1])
+            let joined = element.joinedTerminals
+            if !joined.isEmpty {
+                for (p, q) in joined where p < elementPoints[i].count && q < elementPoints[i].count {
+                    nodes.union(elementPoints[i][p], elementPoints[i][q])
+                }
             } else if element.kind == .ground || (element.kind == .netLabel && Self.isGroundName(element.name)) {
                 nodes.union(groundSentinel, elementPoints[i][0])
                 isGroundPoint[elementPoints[i][0]] = true
@@ -152,13 +155,15 @@ struct Topology {
     private mutating func buildFlowOrder(_ elements: [Element]) {
         var forest = UnionFind(count: points.count)
         var adjacency = [[(point: Int, element: Int)]](repeating: [], count: points.count)
-        for (i, element) in elements.enumerated() where element.isConductor {
-            let p = elementPoints[i][0]
-            let q = elementPoints[i][1]
-            if forest.find(p) == forest.find(q) { continue }
-            forest.union(p, q)
-            adjacency[p].append((q, i))
-            adjacency[q].append((p, i))
+        for (i, element) in elements.enumerated() {
+            for (a, b) in element.joinedTerminals where a < elementPoints[i].count && b < elementPoints[i].count {
+                let p = elementPoints[i][a]
+                let q = elementPoints[i][b]
+                if forest.find(p) == forest.find(q) { continue }
+                forest.union(p, q)
+                adjacency[p].append((q, i))
+                adjacency[q].append((p, i))
+            }
         }
 
         var visited = [Bool](repeating: false, count: points.count)

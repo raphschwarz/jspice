@@ -388,16 +388,29 @@ public final class AVR: Microcontroller {
 
     private func logWatchedPins(at cycle: Int) {
         for k in watchedPins.indices {
-            let level = drivenLevel(watchedPins[k])
+            let level = eventLevel(watchedPins[k])
             guard level != watchedLevels[k] else { continue }
             watchedLevels[k] = level
-            if let level { pinEvents.append(PinEvent(cycle: cycle - runStart, pin: watchedPins[k], high: level)) }
+            guard let level else { continue }
+            let event = PinEvent(cycle: cycle - runStart, pin: watchedPins[k], high: level)
+            pinEvents.append(event)
+            onPinEvent?(event)
         }
     }
 
+    /// What a watched pin shows the parts wired to it: the level it drives, or high for an I²C line the TWI lets go
+    /// (the bus is pulled up)
+    private func eventLevel(_ index: Int) -> Bool? {
+        if let level = drivenLevel(index) { return level }
+        if let twi, twi.enabled, index == twi.spec.sda || index == twi.spec.scl { return true }
+        return nil
+    }
+
+    public var onPinEvent: ((PinEvent) -> Void)?
+
     public var watchedPins: [Int] = [] {
         didSet {
-            watchedLevels = watchedPins.map { drivenLevel($0) }
+            watchedLevels = watchedPins.map { eventLevel($0) }
             timerDrivesWatchedPin = watchedPinDrivenByTimer()
             pinRegisters = watchedPins.isEmpty ? [] : findPinRegisters()
         }

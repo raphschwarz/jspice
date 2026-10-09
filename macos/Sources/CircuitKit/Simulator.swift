@@ -214,6 +214,10 @@ public final class Simulator {
     /// For each chip, its pins that logic parts' inputs are wired to, and those inputs (the part and the input's bit):
     /// what the chip does on these pins is replayed into the parts as it happened, change by change
     private var chipWatches: [Int: [Int: [(element: Int, bit: Int)]]] = [:]
+    /// Likewise for the converters that answer within a transfer (`isBusDevice`): they follow the chip's pins as it
+    /// runs. And for each of those, the chips' pins on the line it drives back (an ADC's DOUT, an I²C target's SDA).
+    private var busWatches: [Int: [Int: [(element: Int, bit: Int)]]] = [:]
+    private var busLines: [Int: [(chip: Int, pin: Int)]] = [:]
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
     var digitalState: [Bool] = []
     /// What each logic part remembers: its inputs' levels, its count
@@ -436,8 +440,8 @@ public final class Simulator {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
-                 .sampleHold, .divider, .levelDetector, .springReverb, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter, .shiftRegister, .pll, .dac, .effectsProcessor: return true
+                 .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
+                 .binaryCounter, .shiftRegister, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .effectsProcessor: return true
             default: return false
             }
         }
@@ -1375,7 +1379,7 @@ public final class Simulator {
                 add(matrix, m, row, plus, 1)
                 add(matrix, m, row, minus, -1)
             case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
-                 .levelDetector, .springReverb:
+                 .levelDetector, .springReverb, .agcPreamp:
                 // output: a voltage source to ground, whose voltage the nonlinear stage (or the delay line, or the chip's
                 // state) sets
                 if element.kind == .springReverb {
@@ -1411,9 +1415,22 @@ public final class Simulator {
             case .dac:
                 // the output: driven to its voltage through its output resistance
                 if nodes.count > 5 { stampConductance(matrix, m, nodes[5], 0, constants[i].outputConductance) }
-            case .effectsProcessor:
+            case .effectsProcessor, .dualDac:
                 // both outputs likewise
                 for k in [4, 5] where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
+            case .i2sDac:
+                for k in [3, 4] where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
+            case .i2cDac:
+                if nodes.count > 3 { stampConductance(matrix, m, nodes[3], 0, constants[i].outputConductance) }
+                // SDA pulled low while it acknowledges
+                if Logic.acknowledging(logicStates[i]), nodes.count > 1 {
+                    stampConductance(matrix, m, nodes[1], 0, constants[i].outputConductance)
+                }
+            case .spiAdc:
+                // DOUT driven while CS is low, and let go otherwise
+                if logicStates[i].inputs & 1 == 0, nodes.count > 3 {
+                    stampConductance(matrix, m, nodes[3], 0, constants[i].outputConductance)
+                }
             case .analogMux, .analogSelector:
                 // the channel the select inputs pick, connected to the common terminal
                 if let channel = Logic.channel(element.kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
@@ -1561,6 +1578,22 @@ public final class Simulator {
                 guard nodes.count > 5 else { continue }
                 let output = Logic.dacOutput(logicStates[i].count, reference: voltage(nodes[4]), supply: c.supply)
                 stampCurrent(&rhs, 0, nodes[5], output * c.outputConductance)
+            case .dualDac:
+                guard nodes.count > 5 else { continue }
+                for channel in 0...1 {
+                    let output = Logic.dualDacOutput(logicStates[i].count, channel: channel, supply: c.supply)
+                    stampCurrent(&rhs, 0, nodes[4 + channel], output * c.outputConductance)
+                }
+            case .i2sDac:
+                guard nodes.count > 4 else { continue }
+                stampCurrent(&rhs, 0, nodes[3], Logic.i2sOutput(Int32(bitPattern: logicStates[i].latch)) * c.outputConductance)
+                stampCurrent(&rhs, 0, nodes[4], Logic.i2sOutput(Int32(truncatingIfNeeded: logicStates[i].count)) * c.outputConductance)
+            case .i2cDac:
+                guard nodes.count > 3 else { continue }
+                stampCurrent(&rhs, 0, nodes[3], Logic.i2cDacOutput(logicStates[i].count, supply: c.supply) * c.outputConductance)
+            case .spiAdc:
+                guard nodes.count > 3, logicStates[i].inputs & 1 == 0, logicStates[i].count != 0 else { continue }
+                stampCurrent(&rhs, 0, nodes[3], c.supply * c.outputConductance)
             case .effectsProcessor:
                 guard nodes.count > 5, let processor = effectsProcessors[i] else { continue }
                 stampCurrent(&rhs, 0, nodes[4], processor.left * c.outputConductance)
@@ -1586,7 +1619,7 @@ public final class Simulator {
                 stampCurrent(&rhs, 0, nodes[1], Self.echoReference / c.value)
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = moduleStates[i].output }
-            case .comparator, .vco, .vcf, .envelope, .sampleHold, .divider, .levelDetector, .springReverb:
+            case .comparator, .vco, .vcf, .envelope, .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = moduleStates[i].output }
             default:
@@ -1755,6 +1788,13 @@ public final class Simulator {
             c.threshold = max(p("unity"), 1e-3)
             c.limit = max(p("limit"), 0.1)
             c.offset = p("cvOffset")
+        case .agcPreamp:
+            c.gain = max(p("gain"), 0)
+            c.value = max(p("ratio"), 1)
+            c.threshold = max(p("rotation"), 1e-6)
+            c.low = max(p("gate"), 1e-9)
+            c.tau = max(p("averaging"), 1e-6)
+            c.limit = max(p("limit"), 0.01)
         case .levelDetector:
             c.value = Self.choice(p("mode"), 0...3)
             c.tau = max(p("attack"), 0)
@@ -1818,7 +1858,7 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac:
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac:
             c.supply = max(p("supply"), 0.1)
             c.upper = p("upper") * c.supply
             c.lower = min(p("lower"), p("upper")) * c.supply
@@ -2597,6 +2637,12 @@ public final class Simulator {
                 let gainSlope = exponential ? (raw < 2 ? gain * log(10) * c.gain / 20 : 0) : (in1 > 0 && raw < 100 ? 1 / c.threshold : 0)
                 passes(nodes[0], .delay(gain: gain * (1 - t * t), time: 0, cutoff: 0, poles: 0))
                 passes(nodes[1], .delay(gain: in0 * (1 - t * t) * gainSlope, time: 0, cutoff: 0, poles: 0))
+            case .agcPreamp:
+                // the preamp and the VCA at the gain the detector has set
+                let t = moduleStates[i].output / c.limit
+                let gain = c.gain * moduleStates[i].s1 * (1 - t * t)
+                passes(nodes[0], .delay(gain: gain, time: 0, cutoff: 0, poles: 0))
+                passes(nodes[1], .delay(gain: -gain, time: 0, cutoff: 0, poles: 0))
             case .sampleHold where c.value >= 0.5 && moduleStates[i].high:
                 passes(nodes[0], .delay(gain: 1, time: 0, cutoff: 0, poles: 0))
             case .delayLine where c.duty >= 0.5:
@@ -2708,16 +2754,52 @@ public final class Simulator {
             if high { inputs |= mask } else { inputs &= ~mask }
         }
         guard inputs != old.inputs else { return false }
-        let next = Logic.next(kind, old, inputs: inputs, function: Int(c.value))
-        logicStates[i] = next
+        let next = advanceLogic(i, old, inputs: inputs)
         if kind == .analogMux || kind == .analogSelector {
-            guard Logic.channel(kind, next) != Logic.channel(kind, old) else { return false }
-            // the switches are in the base matrix
-            matrixIsCurrent = false
-            return true
+            return Logic.channel(kind, next) != Logic.channel(kind, old)
         }
         let function = Int(c.value)
         return Logic.outputs(kind, next, function: function) != Logic.outputs(kind, old, function: function) || next.count != old.count
+            || (kind == .i2sDac && next.latch != old.latch)
+    }
+
+    /// Moves a logic part on to new input levels: its state, an ADC's sample when it takes one (of the circuit as it
+    /// was at the last step), and a fresh matrix when what it switches into the base matrix changed (a multiplexer's
+    /// channel, an ADC's DOUT driven or let go, an I²C target holding SDA)
+    @discardableResult
+    private func advanceLogic(_ i: Int, _ old: LogicState, inputs: UInt32) -> LogicState {
+        let kind = kinds[i]
+        var next = Logic.next(kind, old, inputs: inputs, function: Int(constants[i].value))
+        switch kind {
+        case .analogMux, .analogSelector:
+            if Logic.channel(kind, next) != Logic.channel(kind, old) { matrixIsCurrent = false }
+        case .spiAdc:
+            if next.phase >= 0.5 {
+                next.phase = 0
+                next.latch = adcCode(i, configuration: next.shift)
+            }
+            if (next.inputs ^ old.inputs) & 1 != 0 { matrixIsCurrent = false }
+        case .i2cDac:
+            if Logic.acknowledging(next) != Logic.acknowledging(old) { matrixIsCurrent = false }
+        default:
+            break
+        }
+        logicStates[i] = next
+        return next
+    }
+
+    /// An MCP3008's conversion: SGL/DIFF and D2–D0 pick the input (single-ended against ground, or a pair: CH2k and
+    /// CH2k+1, either way round), read against VREF as 1024 steps
+    private func adcCode(_ i: Int, configuration: UInt32) -> UInt32 {
+        let nodes = topology.elementNodes[i]
+        guard nodes.count >= 13 else { return 0 }
+        let channel = Int(configuration & 0x7)
+        let reference = voltage(nodes[4])
+        let plus = voltage(nodes[5 + channel])
+        let minus = configuration & 0x8 != 0 ? 0 : voltage(nodes[5 + (channel ^ 1)])
+        guard reference > 1e-6 else { return 0 }
+        let code = ((plus - minus) / reference * 1024).rounded(.down)
+        return UInt32(min(max(code, 0), 1023))
     }
 
     // MARK: - After each step
@@ -2816,7 +2898,7 @@ public final class Simulator {
                     capacitorVoltage[i] = nextNoise(i)
                     memristorStates[i] = time + Self.noiseSampleTime - timeStep / 2
                 }
-            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .levelDetector, .springReverb:
+            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp:
                 updateModule(i, nodes, parameters)
             case .vuMeter:
                 updateMeter(i, nodes, parameters)
@@ -2961,7 +3043,10 @@ public final class Simulator {
             let budget = timeStep * chip.clock + (chipCycleCarry[i] ?? 0)
             let whole = max(Int(budget), 0)
             let start = chip.cycles
+            // the bus devices wired to it follow its pins as it runs, and answer within the run
+            if busWatches[i] != nil { chip.onPinEvent = { [unowned self] event in self.busEvent(i, event) } }
             if whole > 0 { chip.run(cycles: whole) }
+            chip.onPinEvent = nil
             // the last instruction may run past the budget: the next step has that much less
             chipCycleCarry[i] = budget - Double(chip.cycles - start)
             let states = chip.pinStates
@@ -2974,31 +3059,70 @@ public final class Simulator {
     /// Finds the logic parts' inputs wired to chips' pins, and has the chips log those pins
     private func watchChipPins() {
         chipWatches = [:]
+        busWatches = [:]
+        busLines = [:]
         for i in chipIndices {
             guard let chip = chips[i], i < topology.elementNodes.count else { continue }
             let chipNodes = topology.elementNodes[i]
             var byPin: [Int: [(element: Int, bit: Int)]] = [:]
+            var busByPin: [Int: [(element: Int, bit: Int)]] = [:]
             for j in kinds.indices where kinds[j].isLogic && j < topology.elementNodes.count {
                 let nodes = topology.elementNodes[j]
+                let bus = kinds[j].isBusDevice
                 for (bit, terminal) in kinds[j].logicInputs.enumerated() where terminal < nodes.count && nodes[terminal] > 0 {
                     for (pin, node) in chipNodes.enumerated() where node == nodes[terminal] {
-                        byPin[pin, default: []].append((j, bit))
+                        if bus { busByPin[pin, default: []].append((j, bit)) } else { byPin[pin, default: []].append((j, bit)) }
                     }
                 }
+                // the line a bus device drives back: an ADC's DOUT, an I²C target's SDA
+                let line = kinds[j] == .spiAdc ? 3 : 1
+                if bus, line < nodes.count, nodes[line] > 0 {
+                    for (pin, node) in chipNodes.enumerated() where node == nodes[line] { busLines[j, default: []].append((i, pin)) }
+                }
             }
-            chip.watchedPins = byPin.keys.sorted()
+            chip.watchedPins = Set(byPin.keys).union(busByPin.keys).sorted()
             if !byPin.isEmpty { chipWatches[i] = byPin }
+            if !busByPin.isEmpty { busWatches[i] = busByPin }
+        }
+    }
+
+    /// A watched pin changing as a chip runs, for the bus devices that follow it: they move on at once, and what they
+    /// drive back on the chip's pins (an ADC's DOUT bit, an I²C target's acknowledge) is what the chip reads from then
+    private func busEvent(_ chipIndex: Int, _ event: PinEvent) {
+        guard let targets = busWatches[chipIndex]?[event.pin] else { return }
+        for target in targets {
+            let old = logicStates[target.element]
+            let mask = UInt32(1) << UInt32(target.bit)
+            let inputs = event.high ? old.inputs | mask : old.inputs & ~mask
+            guard inputs != old.inputs else { continue }
+            let next = advanceLogic(target.element, old, inputs: inputs)
+            for line in busLines[target.element] ?? [] {
+                guard let chip = chips[line.chip], line.pin < chip.pinVoltages.count else { continue }
+                let volts: Double
+                switch kinds[target.element] {
+                case .spiAdc:
+                    // DOUT while CS is low; let go, it stays as the circuit last had it
+                    guard next.inputs & 1 == 0 else { continue }
+                    volts = next.count != 0 ? chip.supply : 0
+                default:
+                    // SDA held low while it acknowledges, else pulled up
+                    volts = Logic.acknowledging(next) ? 0 : chip.supply
+                }
+                if chip.pinVoltages[line.pin] != volts { chip.pinVoltages[line.pin] = volts }
+            }
         }
     }
 
     /// Plays what the chips did on the watched pins during their run into the logic parts wired to them, in the order
     /// it happened: an SPI word clocked out within one step reaches a DAC bit by bit
     private func replayPinEvents() {
-        guard !chipWatches.isEmpty else { return }
+        guard !chipWatches.isEmpty || !busWatches.isEmpty else { return }
         var events: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
-        for (i, _) in chipWatches {
-            guard let chip = chips[i] else { continue }
-            for event in chip.takePinEvents() {
+        for (i, chip) in chips where chipWatches[i] != nil || busWatches[i] != nil {
+            // (the bus devices had theirs as the chip ran)
+            let taken = chip.takePinEvents()
+            guard chipWatches[i] != nil else { continue }
+            for event in taken {
                 events.append((Double(event.cycle) / chip.clock, events.count, i, event))
             }
         }
@@ -3009,12 +3133,7 @@ public final class Simulator {
                 let mask = UInt32(1) << UInt32(target.bit)
                 let inputs = event.high ? old.inputs | mask : old.inputs & ~mask
                 guard inputs != old.inputs else { continue }
-                let kind = kinds[target.element]
-                let next = Logic.next(kind, old, inputs: inputs, function: Int(constants[target.element].value))
-                logicStates[target.element] = next
-                if (kind == .analogMux || kind == .analogSelector) && Logic.channel(kind, next) != Logic.channel(kind, old) {
-                    matrixIsCurrent = false
-                }
+                advanceLogic(target.element, old, inputs: inputs)
             }
         }
     }
@@ -3104,6 +3223,22 @@ public final class Simulator {
         case .vca:
             let gain = c.value < 0.5 ? pow(10, min(c.gain * (in1 - c.offset) / 20, 40.0 / 20)) : min(max(in1, 0) / c.threshold, 100)
             s.output = c.limit * tanh(gain * in0 / c.limit)
+        case .agcPreamp:
+            // the preamp; an RMS detector on its output (the mean square smoothed over the averaging time); and the gain
+            // the VCA takes from it: none between the gate and the rotation point, falling by (1 − 1/ratio) dB for each
+            // dB above the rotation point, and below the gate by a dB for each dB (an expander, down to −60 dB)
+            let x = c.gain * (in0 - in1)
+            s.level += (x * x - s.level) * (1 - exp(-dt / c.tau))
+            let level = 20 * log10(max(s.level.squareRoot(), 1e-12) / c.threshold)
+            let gate = 20 * log10(c.low / c.threshold)
+            var db = 0.0
+            if level > 0 {
+                db = -(1 - 1 / c.value) * level
+            } else if level < gate {
+                db = max(level - gate, -60)
+            }
+            s.s1 = pow(10, db / 20)
+            s.output = c.limit * tanh(s.s1 * x / c.limit)
         case .levelDetector:
             // the input against its reference pin, smoothed: attack while it rises, release while it falls
             let x = in0 - in1
@@ -3305,6 +3440,22 @@ public final class Simulator {
                 total += kind == .logicGate ? flows[k] : max(flows[k], 0)
             }
             return (total, flows)
+        case .dualDac, .i2sDac, .i2cDac:
+            // into each analog output from its source behind the output resistance
+            var flows = [Double](repeating: 0, count: nodes.count)
+            let c = constants[i]
+            let state = logicStates[i]
+            let outputs: [(Int, Double)]
+            switch element.kind {
+            case .dualDac:
+                outputs = (0...1).map { (4 + $0, Logic.dualDacOutput(state.count, channel: $0, supply: c.supply)) }
+            case .i2sDac:
+                outputs = [(3, Logic.i2sOutput(Int32(bitPattern: state.latch))), (4, Logic.i2sOutput(Int32(truncatingIfNeeded: state.count)))]
+            default:
+                outputs = [(3, Logic.i2cDacOutput(state.count, supply: c.supply))]
+            }
+            for (k, target) in outputs where k < nodes.count { flows[k] = (target - v(nodes[k])) * c.outputConductance }
+            return (outputs.first.map { flows[$0.0] } ?? 0, flows)
         case .effectsProcessor:
             var flows = [Double](repeating: 0, count: nodes.count)
             guard nodes.count > 5, let processor = effectsProcessors[i] else { return (0, flows) }
