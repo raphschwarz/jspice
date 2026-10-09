@@ -355,6 +355,36 @@ final class AutomationTests: XCTestCase {
         XCTAssertThrowsError(try session.call("sweep", arguments: ["part": "C1", "parameter": "voltage", "values": [1], "measure": ["type": "op", "probes": ["V(out)"]]]))
     }
 
+    func testAnAgentCanImportAMakersModel() throws {
+        setenv("JSPICE_BLOCKS", FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path, 1)
+        defer { unsetenv("JSPICE_BLOCKS") }
+        // a test model (not a maker's): a single-pole op-amp
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("testamp-\(UUID().uuidString).lib")
+        try """
+        * TESTAMP - a test op-amp model, not a maker's
+        .subckt TESTAMP inp inn vcc vee out
+        G1 0 n1 VALUE={1m*max(min(V(inp,inn), 1.59155), -1.59155)}
+        R1 n1 0 100meg
+        C1 n1 0 1.59155n
+        E1 out 0 VALUE={max(min(V(n1), V(vcc)-1), V(vee)+1)}
+        .ends
+        """.write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let session = CircuitSession()
+        let result = try XCTUnwrap(session.call("import_model", arguments: ["path": file.path, "url": "https://example.com/testamp.lib"]) as? [String: Any])
+        XCTAssertEqual(result["block"] as? String, "TESTAMP")
+        XCTAssertEqual(result["pins"] as? [String], ["inp", "inn", "vcc", "vee", "out"])
+        let source = try XCTUnwrap(result["source"] as? [String: Any])
+        XCTAssertEqual((source["sha256"] as? String)?.count, 64)
+        XCTAssertEqual(source["header"] as? [String], ["TESTAMP - a test op-amp model, not a maker's"])
+        let figures = try XCTUnwrap(result["figures"] as? [String: Any], "\(result)")
+        XCTAssertEqual(figures["open_loop_gain_db"] as? Double ?? 0, 100, accuracy: 0.1)
+        XCTAssertEqual(figures["unity_gain_hz"] as? Double ?? 0, 1e5, accuracy: 1e3)
+        // in the library with its source, and usable as a block
+        XCTAssertEqual(BlockLibrary.block(named: "TESTAMP")?.source?.url, "https://example.com/testamp.lib")
+        XCTAssertNotNil(try session.call("list_blocks", arguments: [:]))
+    }
+
     func testAnAgentCanImportAndExportSpice() throws {
         let session = CircuitSession()
         let imported = try XCTUnwrap(session.call("import_spice", arguments: ["netlist": """
