@@ -10,7 +10,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 55
+    timeout-minutes: 45
     permissions:
       contents: write
     defaults:
@@ -96,7 +96,7 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --install-chip-support rp2040
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/pico-reference/sketches/kitchen.ino build/pico-kitchen.bin --board pico
       - name: Test the simulation engine
-        timeout-minutes: 32
+        timeout-minutes: 25
         # optimised, as the app runs it: audio-rate tests take minutes in a debug build
         env:
           JSPICE_REQUIRE_TOOLCHAIN: '1'

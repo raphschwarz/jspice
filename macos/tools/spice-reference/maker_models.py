@@ -181,16 +181,24 @@ def measure(model, subckt, pins, supply=15.0, load=10e3, slew_gain=1, order=None
     data = os.path.join(folder, 'tr.txt')
     period = 1e-4
     pulse = 'PULSE(5 -5 %g 1n 1n %g %g)' % (period / 2, period / 2 - 1e-9, period)
-    control = ('.options reltol=1e-3 abstol=1e-12 vntol=1e-6\n.tran %g %g 0 %g\n.control\nrun\nwrdata %s v(%s) v(out)\nquit\n.endc\n.end\n'
-               % (period / 20000, 2.5 * period, period / 2000, data, 'inp' if slew_gain > 0 else 'in'))
-    if slew_gain > 0:
-        run(bench('VI inp 0 %s' % pulse, True) + control, folder)
+    # (with Gear's rule where ngspice gives up with the trapezoidal one: the run must reach its end)
+    for method in ('', ' method=gear'):
+        control = ('.options reltol=1e-3 abstol=1e-12 vntol=1e-6%s\n.tran %g %g 0 %g\n.control\nrun\nwrdata %s v(%s) v(out)\n'
+                   'quit\n.endc\n.end\n' % (method, period / 20000, 2.5 * period, period / 2000, data, 'inp' if slew_gain > 0 else 'in'))
+        open(data, 'w').close()
+        if slew_gain > 0:
+            run(bench('VI inp 0 %s' % pulse, True) + control, folder)
+        else:
+            run(('inverting\n.include model.lib\nXU1 %s %s\nVP vcc 0 DC %g\nVN 0 vee DC %g\nRL out 0 %g\nVI in 0 %s\n'
+                 'R1 in inn 10k\nR2 inn out 10k\n%s') % (' '.join(nodes[q] for q in pins), subckt, supply, supply, load, pulse, opts)
+                + control, folder)
+        rows = [list(map(float, l.split())) for l in open(data) if l.strip()]
+        if rows and rows[-1][0] > 2.5 * period * 0.999:
+            break
     else:
-        run(('inverting\n.include model.lib\nXU1 %s %s\nVP vcc 0 DC %g\nVN 0 vee DC %g\nRL out 0 %g\nVI in 0 %s\n'
-             'R1 in inn 10k\nR2 inn out 10k\n%s') % (' '.join(nodes[q] for q in pins), subckt, supply, supply, load, pulse, opts)
-            + control, folder)
-    rows = [list(map(float, l.split())) for l in open(data) if l.strip()]
-    t = [r[0] for r in rows]; vin = [r[1] for r in rows]; vout = [r[3] for r in rows]
+        rows = None
+        print('// ngspice gives up stepping the slew test ("timestep too small"): no slew rate', file=sys.stderr)
+    t = [r[0] for r in rows or []]; vin = [r[1] for r in rows or []]; vout = [r[3] for r in rows or []]
 
     def crossing(values, level, rising, after):
         for k in range(1, len(values)):
@@ -198,20 +206,30 @@ def measure(model, subckt, pins, supply=15.0, load=10e3, slew_gain=1, order=None
                 return t[k - 1] + (level - values[k - 1]) / (values[k] - values[k - 1]) * (t[k] - t[k - 1])
     # the output's 10 % and 90 % crossings, looked for from a little before the input's edge (the output can jump at the
     # step's instant, through the inputs' clamp diodes)
-    slew = []
-    for rising in (True, False):
+    slew = [None, None]
+    for k, rising in enumerate((True, False)) if rows else ():
         e = crossing(vin, 0, rising if slew_gain > 0 else not rising, period)
         a = crossing(vout, -4 if rising else 4, rising, e - period / 100)
         b = crossing(vout, 4 if rising else -4, rising, a)
-        slew.append(8 / (b - a) / 1e6)
+        slew[k] = 8 / (b - a) / 1e6
     # swing, open loop
     swing = []
     for v in (0.1, -0.1):
         # in time, as a DC solution of a saturated output can take ngspice long: the input ramped to it, then held
         data = os.path.join(folder, 'sw.txt')
-        run(bench('VI inp 0 PWL(0 0 1m %g)' % v, False) + '.options reltol=1e-3 abstol=1e-12 vntol=1e-6\n.tran 1u 5m 0 10u\n'
-            '.control\nrun\nwrdata %s v(out)\nquit\n.endc\n.end\n' % data, folder)
-        rows = [list(map(float, l.split())) for l in open(data) if l.strip()]
+        # (where ngspice gives up with its trapezoidal rule, "timestep too small" as a maker's model's overload
+        # comparator chatters, it may run to the end with Gear's, or from an operating point with the input already
+        # there; the run must reach its end)
+        for source, method in (('PWL(0 0 1m %g)', ''), ('PWL(0 0 1m %g)', ' method=gear'), ('DC %g', ''),
+                               ('DC %g', ' method=gear')):
+            open(data, 'w').close()
+            run(bench('VI inp 0 ' + source % v, False) + '.options reltol=1e-3 abstol=1e-12 vntol=1e-6%s\n'
+                '.tran 1u 5m 0 10u\n.control\nrun\nwrdata %s v(out)\nquit\n.endc\n.end\n' % (method, data), folder)
+            rows = [list(map(float, l.split())) for l in open(data) if l.strip()]
+            if rows and rows[-1][0] > 5e-3 * 0.999:
+                break
+        else:
+            raise RuntimeError('ngspice could not run the open-loop swing to %g V' % v)
         swing.append(rows[-1][1])
     return dict(offset_mv=offset * 1e3, iq_ma=iq * 1e3, aol_db=gain, gbw_mhz=(gbw or 0) / 1e6, ugf_mhz=(ugf or 0) / 1e6, pm_deg=pm,
                 slew_rise=slew[0], slew_fall=slew[1], swing_high=swing[0], swing_low=swing[1])
@@ -229,6 +247,18 @@ MODELS = [
      '8ff414c678a7f8330b87504d7e0553de20ca87bdc713cecf81ab3448b4d7608f', 'OPAx134', 15, 2e3, 1),
     ('OPA1612', 'https://www.ti.com/lit/zip/SBOM396', 'OPA161x.LIB',
      'c86df5d4b2d26ec196c0a6158a61004a6747aec5440fcc2031674ad62a448ef7', 'OPA161x', 15, 2e3, -1),
+    ('RC4558', 'https://www.ti.com/lit/zip/SLOJ053', 'RC4558.301',
+     '6ff2f51ab04648973e87a854fc0a1ad0dc8ada7c9c3dcc6869c2ab64030246f6', 'RC4558', 15, 2e3, 1),
+    ('UA741', 'https://www.ti.com/lit/zip/SLOJ138', 'UA741.301',
+     '6fc707dc0f43edccf82c22ca3cf582f8fa3e65b3ceb8e73fc6caf6d8679b6f17', 'UA741', 15, 2e3, 1),
+    ('TL074', 'https://www.ti.com/lit/zip/SLOJ068', 'TL074.301',
+     'a5f384a32ed660490d7ad57b82ddad836dfcf3b462d9dd8987e8fd4de603b1f3', 'TL074', 15, 10e3, 1),
+    ('LM358', 'https://www.ti.com/lit/zip/SNOM268', 'lmx58_lm2904.lib',
+     '467a3e573420d1f5a21fab57b76be0e13073e854f609a73459a191958e314726', 'LMX58_LM2904', 15, 2e3, 1),
+    ('OPA1656', 'https://www.ti.com/lit/zip/SBOMAW6', 'OPA1656.LIB',
+     '9847ed60c62e792ee6f1c84899278a3c11ce71a6d21804bdd88f51199f1ba055', 'OPA1656', 15, 2e3, -1),
+    ('OPA1642', 'https://www.ti.com/lit/zip/SBOM407', 'OPA164x.LIB',
+     'c3504c5bb927bd66e411e71a3b92e564cf4a6468d94cd6032724ec008938a16c', 'OPA164x', 15, 2e3, 1),
 ]
 
 # the catalog's names for the figures, and their datasheet units
