@@ -165,7 +165,8 @@ public enum SchematicCapture {
     static var catalog: String {
         ElementKind.allCases.filter { ![.block, .port, .probe, .wire].contains($0) }.map { kind in
             var line = "\(kind.rawValue) (\(kind.displayName)): terminals \(kind.terminalNames.joined(separator: ", "))"
-            let params = kind.params.map { spec in spec.unit.isEmpty ? spec.key : "\(spec.key) [\(spec.unit)]" }
+            // (a model card's other parameters left out: a drawing gives a part's name, not its card)
+            let params = kind.params.filter { !$0.advanced }.map { spec in spec.unit.isEmpty ? spec.key : "\(spec.key) [\(spec.unit)]" }
             if !params.isEmpty { line += "; params \(params.joined(separator: ", "))" }
             let models = kind.models.map(\.name)
             if !models.isEmpty { line += "; models \(models.joined(separator: ", "))" }

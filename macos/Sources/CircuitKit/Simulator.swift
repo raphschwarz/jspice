@@ -239,6 +239,13 @@ public final class Simulator {
     /// Each element's kind and parameter values, read once when the circuit is loaded
     private var kinds: [ElementKind] = []
     var constants: [Constants] = []
+    /// Each bipolar transistor's Gummel-Poon card at the circuit's temperature (an empty one for other parts)
+    private var bipolar: [GummelPoon] = []
+    /// The charges each part stores and integrates, by slot: a diode's junction; a transistor's base-emitter,
+    /// base-collector at the internal base, and base-collector at the external base
+    static let chargeSlots = 3
+    /// The conductance SPICE puts across every junction of a transistor (its gmin)
+    static let junctionGmin = 1e-12
     /// The elements each part of a step needs, so wires and resistors cost nothing once the base matrix is built
     private var nonlinearIndices: [Int] = []
     private var drivenIndices: [Int] = []
@@ -350,7 +357,6 @@ public final class Simulator {
     /// Junction shunts for gmin stepping, strongest first, ending without any
     static let steppedConductances: [Double] = [1e-2, 1e-4, 1e-6, 1e-8, 1e-10, 0]
     static let steppedIterations = 40
-    static let transistorSaturationCurrent = 1e-14
     /// Reverse current of a Zener diode at its breakdown voltage
     static let zenerKneeCurrent = 5e-3
     /// How long a noise source holds each sample, at least
@@ -386,8 +392,10 @@ public final class Simulator {
                 ci: capacitorCurrent[i], lv: inductorVoltage[i], li: inductorCurrent[i], lip: inductorCurrentPrevious[i],
                 lio: inductorCurrentOlder[i], m: memristorStates[i], l1: limitedVoltage[i],
                 l2: limitedVoltage2[i], l3: limitedVoltage3[i],
-                q: 2 * i + 1 < junctionCharge.count ? [junctionCharge[2 * i], junctionCharge[2 * i + 1],
-                                                       junctionChargePrevious[2 * i], junctionChargePrevious[2 * i + 1]] : [0, 0, 0, 0],
+                q: Self.chargeSlots * (i + 1) <= junctionCharge.count
+                    ? Array(junctionCharge[Self.chargeSlots * i ..< Self.chargeSlots * (i + 1)])
+                        + Array(junctionChargePrevious[Self.chargeSlots * i ..< Self.chargeSlots * (i + 1)])
+                    : [Double](repeating: 0, count: 2 * Self.chargeSlots),
                 digital: digitalState[i], logic: logicStates[i], module: moduleStates[i],
                 noise: noiseState[i], delay: delayHistory[i], brigade: bucketBrigades[i])
         }
@@ -408,9 +416,9 @@ public final class Simulator {
         topology = Topology(circuit: flat)
         nodeLists = NodeLists(topology.elementNodes)
         let count = flat.elements.count
-        junctionCharge = Array(repeating: 0, count: 2 * count)
-        junctionChargePrevious = Array(repeating: 0, count: 2 * count)
-        junctionCurrent = Array(repeating: 0, count: 2 * count)
+        junctionCharge = Array(repeating: 0, count: Self.chargeSlots * count)
+        junctionChargePrevious = Array(repeating: 0, count: Self.chargeSlots * count)
+        junctionCurrent = Array(repeating: 0, count: Self.chargeSlots * count)
         capacitorVoltage = Array(repeating: 0, count: count)
         capacitorVoltagePrevious = Array(repeating: 0, count: count)
         capacitorCurrent = Array(repeating: 0, count: count)
@@ -431,6 +439,7 @@ public final class Simulator {
         storedCurrents = Array(repeating: 0, count: count)
         kinds = flat.elements.map(\.kind)
         constants = flat.elements.map { makeConstants($0) }
+        bipolar = flat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
         func indices(_ include: (ElementKind) -> Bool) -> [Int] { kinds.indices.filter { include(kinds[$0]) } }
         nonlinearIndices = indices {
             switch $0 {
@@ -478,7 +487,7 @@ public final class Simulator {
             chipPinStates[i] = chips[i]?.pinStates
         }
         memristorIndices = indices { $0 == .memristor }
-        junctionIndices = kinds.indices.filter { constants[$0].cj0 > 0 || constants[$0].cj1 > 0 || constants[$0].transit > 0 }
+        junctionIndices = kinds.indices.filter { storesCharge($0) }
         audioClips = [:]
         for i in indices({ $0 == .audioInput }) {
             let clip = flat.elements[i].audio ?? AudioClip.guitarRiff
@@ -499,8 +508,10 @@ public final class Simulator {
                 limitedVoltage[i] = state.l1
                 limitedVoltage2[i] = state.l2
                 limitedVoltage3[i] = state.l3
-                (junctionCharge[2 * i], junctionCharge[2 * i + 1]) = (state.q[0], state.q[1])
-                (junctionChargePrevious[2 * i], junctionChargePrevious[2 * i + 1]) = (state.q[2], state.q[3])
+                for slot in 0..<Self.chargeSlots {
+                    junctionCharge[Self.chargeSlots * i + slot] = state.q[slot]
+                    junctionChargePrevious[Self.chargeSlots * i + slot] = state.q[Self.chargeSlots + slot]
+                }
                 digitalState[i] = state.digital
                 logicStates[i] = state.logic
                 moduleStates[i] = state.module
@@ -522,6 +533,14 @@ public final class Simulator {
         for (p, point) in topology.points.enumerated() {
             let node = topology.nodeOfPoint[p]
             if node > 0, let v = previousVoltages[point] { x[node - 1] = v }
+        }
+        // a transistor's internal nodes start where its terminals are
+        for i in kinds.indices where kinds[i].isBipolar {
+            let nodes = topology.elementNodes[i]
+            let n = Self.bipolarNodes({ nodes[$0] }, bipolar[i])
+            for (inner, outer) in [(n.bp, n.b), (n.cp, n.c), (n.ep, n.e)] where inner != outer && inner > 0 {
+                x[inner - 1] = outer > 0 ? x[outer - 1] : 0
+            }
         }
         hasNonlinear = !nonlinearIndices.isEmpty
         onlyQuasiLinear = hasNonlinear && nonlinearIndices.allSatisfy { kinds[$0] == .vca }
@@ -561,7 +580,7 @@ public final class Simulator {
         limitedVoltage[i] = 0
         limitedVoltage2[i] = 0
         limitedVoltage3[i] = 0
-        for k in [2 * i, 2 * i + 1] where k < junctionCharge.count {
+        for k in Self.chargeSlots * i ..< Self.chargeSlots * (i + 1) where k < junctionCharge.count {
             junctionCharge[k] = 0
             junctionChargePrevious[k] = 0
             junctionCurrent[k] = 0
@@ -737,12 +756,15 @@ public final class Simulator {
             same.params = old.params
             same.block = old.block
             if same != old { return false }
+            // (a transistor given a resistance, or losing one, gains or loses a node)
+            if new.internalNodeCount != old.internalNodeCount { return false }
         }
         circuit = newCircuit
         flat = newFlat
         setTemperature(newCircuit.settings.temperature)
         constants = newFlat.elements.map { makeConstants($0) }
-        junctionIndices = kinds.indices.filter { constants[$0].cj0 > 0 || constants[$0].cj1 > 0 || constants[$0].transit > 0 }
+        bipolar = newFlat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
+        junctionIndices = kinds.indices.filter { storesCharge($0) }
         for (i, chip) in chips { chip.supply = constants[i].supply }
         linkClocks()
         for (i, history) in delayHistory {
@@ -1373,6 +1395,14 @@ public final class Simulator {
                 add(matrix, m, row, nodes[3] - 1, -1)
                 add(matrix, m, row, nodes[0] - 1, -r)
                 add(matrix, m, row, nodes[1] - 1, r)
+            case .npn, .pnp:
+                // the resistances to the internal nodes (a base resistance that falls with the base current is stamped
+                // with the junctions, at each iteration)
+                let g = bipolar[i]
+                let n = Self.bipolarNodes({ nodes[$0] }, g)
+                if g.hasBaseNode && !g.baseModulated { stampConductance(matrix, m, n.b, n.bp, 1 / g.rb) }
+                if g.hasCollectorNode { stampConductance(matrix, m, n.c, n.cp, 1 / g.rc) }
+                if g.hasEmitterNode { stampConductance(matrix, m, n.e, n.ep, 1 / g.re) }
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
@@ -1745,13 +1775,6 @@ public final class Simulator {
         case .zener:
             c.value = abs(p("breakdown"))
             c.cj0 = max(p("cj0"), 0)
-        case .npn, .pnp:
-            c.beta = max(p("beta"), 1)
-            c.saturation = atTemperature(max(p("saturationCurrent"), 1e-20), emission: 1)
-            c.critical = vt * log(vt / (sqrt(2) * c.saturation))
-            (c.cj0, c.vj0, c.m0) = (max(p("cje"), 0), 0.75, 0.33)
-            (c.cj1, c.vj1, c.m1) = (max(p("cjc"), 0), 0.75, 0.33)
-            c.transit = max(p("tf"), 0)
         case .multiplier:
             c.gain = p("scale")
             c.limit = max(p("limit"), 0.1)
@@ -1951,21 +1974,35 @@ public final class Simulator {
         return (cj * f1 + cj / f2 * (f3 * (v - vf) + m / (2 * vj) * (v * v - vf * vf)), cj / f2 * (f3 + m * v / vj))
     }
 
-    /// The charge a part's junction (slot 0 or 1) holds at voltage `v` (in the part's own polarity) and its slope:
-    /// depletion charge, plus for a diode's junction and a transistor's base-emitter junction the charge its forward
-    /// current stores over the transit time
+    /// Whether a part stores charge that changes with its voltages: a junction's depletion charge or its stored charge
+    private func storesCharge(_ i: Int) -> Bool {
+        kinds[i].isBipolar ? bipolar[i].hasCharges : constants[i].cj0 > 0 || constants[i].cj1 > 0 || constants[i].transit > 0
+    }
+
+    /// A bipolar transistor's terminals, and where its junctions are: the internal nodes behind its resistances (after
+    /// its terminals in its nodes), or the terminals themselves
+    struct BipolarNodes {
+        let b, c, e, bp, cp, ep: Int
+    }
+
+    @inline(__always) static func bipolarNodes(_ node: (Int) -> Int, _ g: GummelPoon) -> BipolarNodes {
+        var next = 3
+        func inner(_ present: Bool, _ terminal: Int) -> Int {
+            guard present else { return node(terminal) }
+            next += 1
+            return node(next - 1)
+        }
+        let bp = inner(g.hasBaseNode, 0), cp = inner(g.hasCollectorNode, 1), ep = inner(g.hasEmitterNode, 2)
+        return BipolarNodes(b: node(0), c: node(1), e: node(2), bp: bp, cp: cp, ep: ep)
+    }
+
+    /// The charge a diode's junction holds at voltage `v` (in the part's own polarity) and its slope: depletion charge,
+    /// plus the charge its forward current stores over the transit time
     private func junctionChargeAndCapacitance(_ i: Int, slot: Int, _ v: Double) -> (charge: Double, capacitance: Double) {
         let c = constants[i]
         var (q, cap) = slot == 0 ? Self.depletion(v, cj: c.cj0, vj: c.vj0, m: c.m0) : Self.depletion(v, cj: c.cj1, vj: c.vj1, m: c.m1)
         if slot == 0 && c.transit > 0 {
-            let forward: (current: Double, conductance: Double)
-            switch kinds[i] {
-            case .npn, .pnp:
-                let e = exp(min(v / vt, 700))
-                forward = (c.saturation * (e - 1), c.saturation * e / vt)
-            default:
-                forward = diodeCurrent(v, saturation: c.saturation, nvt: c.nvt)
-            }
+            let forward = diodeCurrent(v, saturation: c.saturation, nvt: c.nvt)
             q += c.transit * forward.current
             cap += c.transit * forward.conductance
         }
@@ -1979,7 +2016,7 @@ public final class Simulator {
         guard !linearising else { return }
         let (q, cap) = junctionChargeAndCapacitance(i, slot: slot, v)
         guard cap > 0 || q != 0 else { return }
-        let k = 2 * i + slot
+        let k = Self.chargeSlots * i + slot
         let current = (a0 * q + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
         let g = a0 * cap / h
         stampConductance(matrix, m, plus, minus, g)
@@ -2049,26 +2086,6 @@ public final class Simulator {
         // the PMOS is an NMOS seen from the supply
         let p = branch(gate: c.supply - vin, drain: c.supply - vout)
         return (p.current - n.current, -p.dGate - n.dGate, -p.dDrain - n.dDrain)
-    }
-
-    struct BipolarModel {
-        /// Currents into the collector and the base
-        var ic, ib: Double
-        /// Their derivatives with respect to the base-emitter and base-collector voltages
-        var dicVbe, dicVbc, dibVbe, dibVbc: Double
-    }
-
-    /// Ebers-Moll transport model of an NPN transistor (a PNP is the same with all voltages and currents negated)
-    func bipolarCurrents(vbe: Double, vbc: Double, beta: Double, saturation: Double = Simulator.transistorSaturationCurrent) -> BipolarModel {
-        let reverseBeta = 1.0
-        let f = exp(min(vbe / vt, 700))
-        let r = exp(min(vbc / vt, 700))
-        let ic = saturation * (f - r) - saturation / reverseBeta * (r - 1)
-        let ib = saturation / beta * (f - 1) + saturation / reverseBeta * (r - 1)
-        return BipolarModel(
-            ic: ic, ib: ib,
-            dicVbe: saturation * f / vt, dicVbc: -saturation * r / vt - saturation / reverseBeta * r / vt,
-            dibVbe: saturation / beta * f / vt, dibVbc: saturation / reverseBeta * r / vt)
     }
 
     /// The op-amp's output for a differential input (plus the input offset), its slope, and the internal stage's voltage.
@@ -2148,6 +2165,84 @@ public final class Simulator {
         }
     }
 
+    /// A bipolar transistor's junctions, linearised at the present solution (limited as SPICE limits them): the
+    /// Gummel-Poon currents into its internal collector, base and emitter, and the charging of its stored charges, each
+    /// linear in the internal base-emitter and base-collector voltages and the external base to internal collector
+    /// voltage; and a base resistance that falls with the base current
+    private func stampBipolar(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
+        let p: Double = kinds[i] == .npn ? 1 : -1
+        let g = bipolar[i]
+        let n = Self.bipolarNodes({ nodes[$0] }, g)
+        // in the transistor's own polarity
+        let vbe = limitJunction(p * (voltage(n.bp) - voltage(n.ep)), old: limitedVoltage[i], nvt: vt, critical: g.critical)
+        let vbc = limitJunction(p * (voltage(n.bp) - voltage(n.cp)), old: limitedVoltage2[i], nvt: vt, critical: g.critical)
+        limitedVoltage[i] = vbe
+        limitedVoltage2[i] = vbc
+        let vbx = p * (voltage(n.b) - voltage(n.cp))
+        let r = g.currents(vbe: vbe, vbc: vbc, gmin: Self.junctionGmin)
+        // currents into the internal collector, base and emitter and the external base, with their slopes in vbe, vbc, vbx
+        typealias Flow = (i: Double, be: Double, bc: Double, bx: Double)
+        var cp: Flow = (r.cc, r.gm + r.go, -r.go - r.gmu, 0)
+        var bp: Flow = (r.cb, r.gpi, r.gmu, 0)
+        var ep: Flow = (-r.cc - r.cb, -(r.gm + r.go) - r.gpi, r.go, 0)
+        var bx: Flow = (0, 0, 0, 0)
+        if junctionConductance > 0 {
+            // gmin stepping's shunts across both junctions
+            let gs = junctionConductance
+            bp.i += gs * (vbe + vbc)
+            bp.be += gs
+            bp.bc += gs
+            cp.i -= gs * vbc
+            cp.bc -= gs
+            ep.i -= gs * vbe
+            ep.be -= gs
+        }
+        let charged = g.hasCharges && !linearising
+        if charged {
+            let q = g.charges(vbe: vbe, vbc: vbc, vbx: vbx, r)
+            let k = Self.chargeSlots * i
+            func flow(_ slot: Int, _ charge: Double) -> Double {
+                (a0 * charge + a1 * junctionCharge[k + slot] + a2 * junctionChargePrevious[k + slot]) / h
+            }
+            let s = a0 / h
+            // base-emitter: b' to e', moving with vbc too
+            let be = flow(0, q.qbe)
+            bp.i += be
+            bp.be += s * q.capbe
+            bp.bc += s * q.dqbeVbc
+            ep.i -= be
+            ep.be -= s * q.capbe
+            ep.bc -= s * q.dqbeVbc
+            // base-collector at the internal base: b' to c'
+            let bc = flow(1, q.qbc)
+            bp.i += bc
+            bp.bc += s * q.capbc
+            cp.i -= bc
+            cp.bc -= s * q.capbc
+            // and at the external base: b to c'
+            let xc = flow(2, q.qbx)
+            bx.i += xc
+            bx.bx += s * q.capbx
+            cp.i -= xc
+            cp.bx -= s * q.capbx
+        }
+        // currents and voltages flip sign for a PNP, slopes do not
+        func stampTerminal(_ node: Int, _ t: Flow) {
+            guard node > 0 else { return }
+            let row = node - 1
+            add(matrix, m, row, n.bp - 1, t.be + t.bc)
+            add(matrix, m, row, n.ep - 1, -t.be)
+            add(matrix, m, row, n.cp - 1, -t.bc - t.bx)
+            add(matrix, m, row, n.b - 1, t.bx)
+            rhs[row] -= p * t.i - t.be * p * vbe - t.bc * p * vbc - t.bx * p * vbx
+        }
+        stampTerminal(n.cp, cp)
+        stampTerminal(n.bp, bp)
+        stampTerminal(n.ep, ep)
+        if charged && g.cjcOuter > 0 { stampTerminal(n.b, bx) }
+        if g.baseModulated { stampConductance(matrix, m, n.b, n.bp, r.gx) }
+    }
+
     private func stampNonlinear(_ matrix: Entries, _ rhs: Entries, _ m: Int) {
         let lists = nodeLists
         for i in nonlinearIndices {
@@ -2186,41 +2281,7 @@ public final class Simulator {
                 if c.cj0 > 0 { stampJunctionCharge(matrix, rhs, m, i, slot: 0, nodes[0], nodes[1], polarity: 1, vd) }
 
             case .npn, .pnp:
-                let p: Double = kinds[i] == .npn ? 1 : -1
-                let (base, collector, emitter) = (nodes[0], nodes[1], nodes[2])
-                let critical = c.critical
-                // limit the junctions in the transistor's own polarity
-                let vbe = limitJunction(p * (voltage(base) - voltage(emitter)), old: limitedVoltage[i], nvt: vt, critical: critical)
-                let vbc = limitJunction(p * (voltage(base) - voltage(collector)), old: limitedVoltage2[i], nvt: vt, critical: critical)
-                limitedVoltage[i] = vbe
-                limitedVoltage2[i] = vbc
-                var model = bipolarCurrents(vbe: vbe, vbc: vbc, beta: c.beta, saturation: c.saturation)
-                if junctionConductance > 0 {
-                    // shunts across both junctions: base to emitter and base to collector
-                    let g = junctionConductance
-                    model.ib += g * (vbe + vbc)
-                    model.dibVbe += g
-                    model.dibVbc += g
-                    model.ic -= g * vbc
-                    model.dicVbc -= g
-                }
-                // real currents and junction voltages: currents and voltages flip sign for PNP, derivatives do not
-                let realVbe = p * vbe
-                let realVbc = p * vbc
-                func stampTerminal(_ node: Int, _ current: Double, _ gbe: Double, _ gbc: Double) {
-                    guard node > 0 else { return }
-                    // current into the device at this terminal, linear in vbe and vbc around the limited point
-                    let row = node - 1
-                    add(matrix, m, row, base - 1, gbe + gbc)
-                    add(matrix, m, row, emitter - 1, -gbe)
-                    add(matrix, m, row, collector - 1, -gbc)
-                    rhs[row] -= current - gbe * realVbe - gbc * realVbc
-                }
-                stampTerminal(collector, p * model.ic, model.dicVbe, model.dicVbc)
-                stampTerminal(base, p * model.ib, model.dibVbe, model.dibVbc)
-                stampTerminal(emitter, -p * (model.ic + model.ib), -(model.dicVbe + model.dibVbe), -(model.dicVbc + model.dibVbc))
-                if c.cj0 > 0 || c.transit > 0 { stampJunctionCharge(matrix, rhs, m, i, slot: 0, base, emitter, polarity: p, vbe) }
-                if c.cj1 > 0 { stampJunctionCharge(matrix, rhs, m, i, slot: 1, base, collector, polarity: p, vbc) }
+                stampBipolar(i, nodes, matrix, rhs, m)
 
             case .unbufferedInverter:
                 let (input, output) = (nodes[0], nodes[1])
@@ -2525,10 +2586,17 @@ public final class Simulator {
             case .zener:
                 current(name, 2 * q * abs(zenerCurrent(v(0) - v(1), breakdown: c.value).current), nodes[0], nodes[1])
             case .npn, .pnp:
+                // shot noise of the collector and base currents at the junctions, thermal noise of the resistances
                 let p: Double = kinds[i] == .npn ? 1 : -1
-                let model = bipolarCurrents(vbe: p * (v(0) - v(2)), vbc: p * (v(0) - v(1)), beta: c.beta, saturation: c.saturation)
-                current(name + " collector", 2 * q * abs(model.ic), nodes[1], nodes[2])
-                current(name + " base", 2 * q * abs(model.ib), nodes[0], nodes[2])
+                let g = bipolar[i]
+                let n = Self.bipolarNodes({ nodes[$0] }, g)
+                let r = g.currents(vbe: p * (voltage(n.bp) - voltage(n.ep)), vbc: p * (voltage(n.bp) - voltage(n.cp)),
+                                   gmin: Self.junctionGmin)
+                current(name + " collector", 2 * q * abs(r.cc), n.cp, n.ep)
+                current(name + " base", 2 * q * abs(r.cb), n.bp, n.ep)
+                if g.hasBaseNode { current(name + " base resistance", 4 * kT * r.gx, n.b, n.bp) }
+                if g.hasCollectorNode { current(name + " collector resistance", 4 * kT / g.rc, n.c, n.cp) }
+                if g.hasEmitterNode { current(name + " emitter resistance", 4 * kT / g.re, n.e, n.ep) }
             case .nmos, .pmos, .njfet:
                 var vgs = v(0) - v(2), vds = v(1) - v(2)
                 if c.polarity * vds < 0 {
@@ -2615,11 +2683,24 @@ public final class Simulator {
                 let capacitance = junctionChargeAndCapacitance(i, slot: 0, voltage(nodes[0]) - voltage(nodes[1])).capacitance
                 if capacitance > 0 { admittance(nodes[0], nodes[1], .capacitance(capacitance)) }
             case .npn, .pnp:
+                // the stored charges' capacitances at the operating point, and the base-emitter charge's dependence on
+                // vbc (a transcapacitance: current b' to e' with v(b') − v(c'))
                 let p: Double = kinds[i] == .npn ? 1 : -1
-                let be = junctionChargeAndCapacitance(i, slot: 0, p * (voltage(nodes[0]) - voltage(nodes[2]))).capacitance
-                let bc = junctionChargeAndCapacitance(i, slot: 1, p * (voltage(nodes[0]) - voltage(nodes[1]))).capacitance
-                if be > 0 { admittance(nodes[0], nodes[2], .capacitance(be)) }
-                if bc > 0 { admittance(nodes[0], nodes[1], .capacitance(bc)) }
+                let g = bipolar[i]
+                guard g.hasCharges else { continue }
+                let n = Self.bipolarNodes({ nodes[$0] }, g)
+                let vbe = p * (voltage(n.bp) - voltage(n.ep)), vbc = p * (voltage(n.bp) - voltage(n.cp))
+                let q = g.charges(vbe: vbe, vbc: vbc, vbx: p * (voltage(n.b) - voltage(n.cp)),
+                                  g.currents(vbe: vbe, vbc: vbc, gmin: Self.junctionGmin))
+                if q.capbe != 0 { admittance(n.bp, n.ep, .capacitance(q.capbe)) }
+                if q.capbc != 0 { admittance(n.bp, n.cp, .capacitance(q.capbc)) }
+                if q.capbx != 0 { admittance(n.b, n.cp, .capacitance(q.capbx)) }
+                if q.dqbeVbc != 0 {
+                    for (row, column, scale) in [(n.bp, n.bp, 1.0), (n.bp, n.cp, -1.0), (n.ep, n.bp, -1.0), (n.ep, n.cp, 1.0)]
+                    where row > 0 && column > 0 {
+                        entries.append(.init(row: row - 1, column: column - 1, scale: scale, transfer: .capacitance(q.dqbeVbc)))
+                    }
+                }
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 if row >= 0 { drives[i] = .row(row) }
             case .currentSource:
@@ -2683,8 +2764,9 @@ public final class Simulator {
             limitedVoltage[i] = v(0) - v(1)
         case .npn, .pnp:
             let p: Double = kinds[i] == .npn ? 1 : -1
-            limitedVoltage[i] = p * (v(0) - v(2))
-            limitedVoltage2[i] = p * (v(0) - v(1))
+            let n = Self.bipolarNodes({ nodes[$0] }, bipolar[i])
+            limitedVoltage[i] = p * (voltage(n.bp) - voltage(n.ep))
+            limitedVoltage2[i] = p * (voltage(n.bp) - voltage(n.cp))
         case .nmos, .pmos, .njfet:
             limitedVoltage[i] = v(0) - v(2)
             limitedVoltage2[i] = v(1) - v(2)
@@ -2816,19 +2898,26 @@ public final class Simulator {
         let lists = nodeLists
         for i in junctionIndices {
             let nodes = lists[i]
-            func commit(_ slot: Int, _ v: Double) {
-                let k = 2 * i + slot
-                let q = junctionChargeAndCapacitance(i, slot: slot, v).charge
+            func store(_ slot: Int, _ q: Double) {
+                let k = Self.chargeSlots * i + slot
                 junctionCurrent[k] = (a0 * q + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
                 junctionChargePrevious[k] = junctionCharge[k]
                 junctionCharge[k] = q
             }
+            func commit(_ slot: Int, _ v: Double) { store(slot, junctionChargeAndCapacitance(i, slot: slot, v).charge) }
             // at the junction voltages Newton-Raphson last stamped (the solution's, once it converged): a substep accepted
             // without converging leaves the solution at an unlimited iterate, where exp() would store a huge charge
             switch kinds[i] {
             case .npn, .pnp:
-                commit(0, limitedVoltage[i])
-                commit(1, limitedVoltage2[i])
+                let g = bipolar[i]
+                let n = Self.bipolarNodes({ nodes[$0] }, g)
+                let p: Double = kinds[i] == .npn ? 1 : -1
+                let (vbe, vbc) = (limitedVoltage[i], limitedVoltage2[i])
+                let q = g.charges(vbe: vbe, vbc: vbc, vbx: p * (voltage(n.b) - voltage(n.cp)),
+                                  g.currents(vbe: vbe, vbc: vbc, gmin: Self.junctionGmin))
+                store(0, q.qbe)
+                store(1, q.qbc)
+                store(2, q.qbx)
             case .diode, .led, .zener:
                 commit(0, limitedVoltage[i])
             default:
@@ -3360,9 +3449,11 @@ public final class Simulator {
             return twoTerminal(constants[i].value)
         case .diode, .led:
             let c = constants[i]
-            return twoTerminal(diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: c.saturation, nvt: c.nvt).current + junctionCurrent[2 * i])
+            return twoTerminal(diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: c.saturation, nvt: c.nvt).current
+                               + junctionCurrent[Self.chargeSlots * i])
         case .zener:
-            return twoTerminal(zenerCurrent(v(nodes[0]) - v(nodes[1]), breakdown: constants[i].value).current + junctionCurrent[2 * i])
+            return twoTerminal(zenerCurrent(v(nodes[0]) - v(nodes[1]), breakdown: constants[i].value).current
+                               + junctionCurrent[Self.chargeSlots * i])
         case .memristor:
             return twoTerminal((v(nodes[0]) - v(nodes[1])) * memristorConductance(i, state: memristorStates[i]))
         case .nmos, .pmos, .njfet:
@@ -3380,11 +3471,14 @@ public final class Simulator {
             return (current, [0, -current, current])
         case .npn, .pnp:
             let p: Double = element.kind == .npn ? 1 : -1
-            let model = bipolarCurrents(vbe: p * (v(nodes[0]) - v(nodes[2])), vbc: p * (v(nodes[0]) - v(nodes[1])),
-                                        beta: constants[i].beta, saturation: constants[i].saturation)
-            // with the junctions' charging currents: base to emitter, base to collector
-            let (be, bc) = (p * junctionCurrent[2 * i], p * junctionCurrent[2 * i + 1])
-            let (ic, ib) = (p * model.ic - bc, p * model.ib + be + bc)
+            let g = bipolar[i]
+            let n = Self.bipolarNodes({ nodes[$0] }, g)
+            let r = g.currents(vbe: p * (v(n.bp) - v(n.ep)), vbc: p * (v(n.bp) - v(n.cp)), gmin: Self.junctionGmin)
+            // with the stored charges' charging currents: base to emitter, base to collector inside and outside the
+            // base resistance
+            let k = Self.chargeSlots * i
+            let (be, bc, bx) = (p * junctionCurrent[k], p * junctionCurrent[k + 1], p * junctionCurrent[k + 2])
+            let (ic, ib) = (p * r.cc - bc - bx, p * r.cb + be + bc + bx)
             return (ic, [-ib, -ic, ic + ib])
         case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
              .levelDetector:

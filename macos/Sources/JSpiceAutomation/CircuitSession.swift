@@ -504,6 +504,8 @@ public final class CircuitSession {
                 var entry: [String: Any] = ["key": spec.key, "name": spec.name, "unit": spec.unit, "default": spec.defaultValue,
                                             "min": spec.range.lowerBound, "max": spec.range.upperBound]
                 if kind == .led && spec.key == "color" { entry["name"] = "Color: 0 red, 1 green, 2 blue, 3 yellow, 4 white" }
+                // one of a SPICE model card's parameters, usually set by choosing a model
+                if spec.advanced { entry["spice"] = true }
                 if !spec.choices.isEmpty {
                     let names = spec.choices.map { "\(SI.trimmed($0.value, digits: 3)) \($0.name)" }
                     entry["name"] = spec.name + ": " + names.joined(separator: ", ")

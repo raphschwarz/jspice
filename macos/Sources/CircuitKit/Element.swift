@@ -89,9 +89,11 @@ public struct ParamSpec: Sendable, Hashable {
     public let logarithmic: Bool
     /// The values this parameter can take, with their names, when it picks one of a few settings (a waveform)
     public let choices: [ParamChoice]
+    /// One of a SPICE model card's many parameters, which a manufacturer's model sets: kept out of the way
+    public let advanced: Bool
 
     public init(_ key: String, _ name: String, unit: String, default defaultValue: Double, range: ClosedRange<Double>, log: Bool = true,
-                choices: [ParamChoice] = []) {
+                choices: [ParamChoice] = [], advanced: Bool = false) {
         self.key = key
         self.name = name
         self.unit = unit
@@ -99,6 +101,7 @@ public struct ParamSpec: Sendable, Hashable {
         self.range = range
         self.logarithmic = log
         self.choices = choices
+        self.advanced = advanced
     }
 
     /// A parameter that picks one of the named settings, stored as 0, 1, 2…
@@ -580,12 +583,12 @@ extension ElementKind {
             ]
         case .npn, .pnp:
             return [
-                ParamSpec("beta", "Current gain", unit: "", default: 100, range: 5...1000),
-                ParamSpec("saturationCurrent", "Saturation current", unit: "A", default: 1e-14, range: 1e-17...1e-5),
-                ParamSpec("cje", "Base–emitter capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
-                ParamSpec("cjc", "Base–collector capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
-                ParamSpec("tf", "Forward transit time", unit: "s", default: 0, range: 0...1e-6, log: false),
-            ]
+                ParamSpec("beta", "Current gain (BF)", unit: "", default: 100, range: 5...1000),
+                ParamSpec("saturationCurrent", "Saturation current (IS)", unit: "A", default: 1e-14, range: 1e-17...1e-5),
+                ParamSpec("cje", "Base–emitter capacitance at 0 V (CJE)", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+                ParamSpec("cjc", "Base–collector capacitance at 0 V (CJC)", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+                ParamSpec("tf", "Forward transit time (TF)", unit: "s", default: 0, range: 0...1e-6, log: false),
+            ] + Self.gummelPoonParams
         case .multiplier:
             return [
                 ParamSpec("scale", "Scale (out = scale · x · y)", unit: "1/V", default: 0.1, range: 0.01...1),
@@ -921,6 +924,10 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     }
 
     /// A parameter value, falling back to the kind's default
+    /// Nodes of its own the part has, past its terminals: a bipolar transistor's internal base, collector and emitter,
+    /// behind its resistances
+    var internalNodeCount: Int { kind.isBipolar ? GummelPoon.internalNodes(self) : 0 }
+
     public subscript(param key: String) -> Double {
         get { params[key] ?? kind.params.first(where: { $0.key == key })?.defaultValue ?? 0 }
         set { params[key] = newValue }
@@ -1036,6 +1043,43 @@ public struct PartModel: Sendable, Hashable {
 }
 
 extension ElementKind {
+    /// The rest of a bipolar transistor's SPICE model card (the Gummel-Poon model): at their defaults, an Ebers-Moll
+    /// transistor with a reverse gain of 1
+    static let gummelPoonParams: [ParamSpec] = [
+        ParamSpec("nf", "Forward emission coefficient (NF)", unit: "", default: 1, range: 0.5...3, log: false, advanced: true),
+        ParamSpec("vaf", "Forward Early voltage (VAF, 0: none)", unit: "V", default: 0, range: 0...500, log: false, advanced: true),
+        ParamSpec("ikf", "Forward knee current (IKF, 0: none)", unit: "A", default: 0, range: 0...10, log: false, advanced: true),
+        ParamSpec("ise", "Base–emitter leakage current (ISE)", unit: "A", default: 0, range: 0...1e-6, log: false, advanced: true),
+        ParamSpec("ne", "Base–emitter leakage emission (NE)", unit: "", default: 1.5, range: 1...4, log: false, advanced: true),
+        ParamSpec("br", "Reverse current gain (BR)", unit: "", default: 1, range: 0.01...100, advanced: true),
+        ParamSpec("nr", "Reverse emission coefficient (NR)", unit: "", default: 1, range: 0.5...3, log: false, advanced: true),
+        ParamSpec("var", "Reverse Early voltage (VAR, 0: none)", unit: "V", default: 0, range: 0...500, log: false, advanced: true),
+        ParamSpec("ikr", "Reverse knee current (IKR, 0: none)", unit: "A", default: 0, range: 0...10, log: false, advanced: true),
+        ParamSpec("isc", "Base–collector leakage current (ISC)", unit: "A", default: 0, range: 0...1e-6, log: false, advanced: true),
+        ParamSpec("nc", "Base–collector leakage emission (NC)", unit: "", default: 2, range: 1...4, log: false, advanced: true),
+        ParamSpec("nkf", "High-injection exponent (NKF)", unit: "", default: 0.5, range: 0.1...1, log: false, advanced: true),
+        ParamSpec("rb", "Base resistance (RB)", unit: "Ω", default: 0, range: 0...1000, log: false, advanced: true),
+        ParamSpec("irb", "Current where the base resistance is halfway to RBM (IRB, 0: none)", unit: "A", default: 0, range: 0...1, log: false, advanced: true),
+        ParamSpec("rbm", "Base resistance at high current (RBM, 0: RB)", unit: "Ω", default: 0, range: 0...1000, log: false, advanced: true),
+        ParamSpec("re", "Emitter resistance (RE)", unit: "Ω", default: 0, range: 0...100, log: false, advanced: true),
+        ParamSpec("rc", "Collector resistance (RC)", unit: "Ω", default: 0, range: 0...100, log: false, advanced: true),
+        ParamSpec("vje", "Base–emitter junction potential (VJE)", unit: "V", default: 0.75, range: 0.3...1.2, log: false, advanced: true),
+        ParamSpec("mje", "Base–emitter grading (MJE)", unit: "", default: 0.33, range: 0.1...0.9, log: false, advanced: true),
+        ParamSpec("xtf", "Transit time bias coefficient (XTF)", unit: "", default: 0, range: 0...1000, log: false, advanced: true),
+        ParamSpec("vtf", "Transit time dependence on VBC (VTF, 0: none)", unit: "V", default: 0, range: 0...100, log: false, advanced: true),
+        ParamSpec("itf", "Transit time high-current knee (ITF)", unit: "A", default: 0, range: 0...10, log: false, advanced: true),
+        ParamSpec("vjc", "Base–collector junction potential (VJC)", unit: "V", default: 0.75, range: 0.3...1.2, log: false, advanced: true),
+        ParamSpec("mjc", "Base–collector grading (MJC)", unit: "", default: 0.33, range: 0.1...0.9, log: false, advanced: true),
+        ParamSpec("xcjc", "Fraction of CJC at the internal base (XCJC)", unit: "", default: 1, range: 0...1, log: false, advanced: true),
+        ParamSpec("tr", "Reverse transit time (TR)", unit: "s", default: 0, range: 0...1e-5, log: false, advanced: true),
+        ParamSpec("fc", "Forward-bias depletion coefficient (FC)", unit: "", default: 0.5, range: 0...0.95, log: false, advanced: true),
+        ParamSpec("xtb", "Gain temperature exponent (XTB)", unit: "", default: 0, range: 0...3, log: false, advanced: true),
+        ParamSpec("eg", "Band gap (EG)", unit: "eV", default: 1.11, range: 0.5...1.5, log: false, advanced: true),
+        ParamSpec("xti", "Saturation current temperature exponent (XTI)", unit: "", default: 3, range: 0...6, log: false, advanced: true),
+        ParamSpec("kf", "Flicker noise coefficient (KF)", unit: "", default: 0, range: 0...1e-12, log: false, advanced: true),
+        ParamSpec("af", "Flicker noise exponent (AF)", unit: "", default: 1, range: 0.5...2, log: false, advanced: true),
+    ]
+
     /// Real parts this symbol can behave like, chosen in the inspector; the first one matches the parameter defaults
     public var models: [PartModel] {
         switch self {

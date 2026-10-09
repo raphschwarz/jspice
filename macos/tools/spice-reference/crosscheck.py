@@ -9,6 +9,10 @@ is what SpiceCrossCheckTests compares JSpice with: so differences measure JSpice
 
 python3 crosscheck.py            # writes the fixture (needs ngspice)
 python3 crosscheck.py --ac       # small-signal: ngspice's operating point and .ac sweep, spice-ac-reference.json
+python3 crosscheck.py --devices  # devices at DC: ngspice's .dc sweeps of transistors' currents, spice-device-reference.json
+
+Bipolar transistors are written as their whole Gummel-Poon card, the model JSpice implements as ngspice does, so a
+manufacturer's card can be checked here as it is.
 """
 import json, math, os, re, subprocess, sys, tempfile
 
@@ -17,7 +21,10 @@ ROOT = os.path.normpath(os.path.join(HERE, '../..'))
 SOURCES = os.path.join(ROOT, 'Sources/CircuitKit')
 FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-reference.json')
 AC_FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-ac-reference.json')
+DEVICE_FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-device-reference.json')
 VT = 0.025852  # Simulator.thermalVoltage
+NOMINAL_KELVIN = 300.15  # Simulator.nominalKelvin
+KQ = 1.38064852e-23 / 1.6021766208e-19  # ngspice's k/q (const.h)
 LED_FORWARD = [1.9, 2.2, 3.0, 2.0, 3.0]  # LEDColor: red, green, blue, yellow, white
 
 # MARK: - Reading JSpice's sources
@@ -42,6 +49,18 @@ element = open(os.path.join(SOURCES, 'Element.swift')).read()
 params_body = element[element.index('public var params: [ParamSpec] {'):element.index('/// One component on the schematic')]
 DEFAULTS = {kind: {k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', text)}
             for kind, text in cases_of(params_body).items()}
+# a bipolar transistor's Gummel-Poon parameters are kept in a list of their own
+gp_body = element[element.index('static let gummelPoonParams'):]
+gp_body = gp_body[:gp_body.index('\n    ]\n')]
+GP_DEFAULTS = {k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', gp_body)}
+for kind in ('npn', 'pnp'): DEFAULTS[kind].update(GP_DEFAULTS)
+# GummelPoon.card: SPICE's names for JSpice's keys
+GP_CARD = [('IS', 'saturationCurrent'), ('BF', 'beta'), ('NF', 'nf'), ('VAF', 'vaf'), ('IKF', 'ikf'), ('ISE', 'ise'), ('NE', 'ne'),
+           ('BR', 'br'), ('NR', 'nr'), ('VAR', 'var'), ('IKR', 'ikr'), ('ISC', 'isc'), ('NC', 'nc'), ('NKF', 'nkf'),
+           ('RB', 'rb'), ('IRB', 'irb'), ('RBM', 'rbm'), ('RE', 're'), ('RC', 'rc'),
+           ('CJE', 'cje'), ('VJE', 'vje'), ('MJE', 'mje'), ('TF', 'tf'), ('XTF', 'xtf'), ('VTF', 'vtf'), ('ITF', 'itf'),
+           ('CJC', 'cjc'), ('VJC', 'vjc'), ('MJC', 'mjc'), ('XCJC', 'xcjc'), ('TR', 'tr'), ('FC', 'fc'),
+           ('XTB', 'xtb'), ('EG', 'eg'), ('XTI', 'xti'), ('KF', 'kf'), ('AF', 'af')]
 models_body = element[element.index('public var models: [PartModel] {'):]
 models_body = models_body[:models_body.index('\n    }\n')]
 MODELS = {}
@@ -82,6 +101,21 @@ def param(part, key):
 def net(name):
     return '0' if name in ('GND', '0') else 'n_' + re.sub(r'\W', '_', name)
 
+def temperature_options(temperature):
+    """ngspice's temperature and nominal temperature for JSpice's: JSpice's thermal voltage, 25.852 mV, is kT/q at its
+    nominal temperature, and a circuit's temperature scales it by kelvin / 300.15"""
+    nominal = VT / KQ
+    return '.options temp=%.9f tnom=%.9f' % (nominal * (NOMINAL_KELVIN + temperature - 27) / NOMINAL_KELVIN - 273.15, nominal - 273.15)
+
+def bipolar_card(p):
+    """A transistor's whole Gummel-Poon card (RBM left out at 0, which is RB)"""
+    words = []
+    for name, key in GP_CARD:
+        value = param(p, key)
+        if name == 'RBM' and value <= 0: continue
+        words.append('%s=%.12g' % (name, value))
+    return ' '.join(words)
+
 def spice_deck(parts, duration, probes, step, temperature=27):
     lines, models = spice_elements(parts, temperature=temperature)
     data = tempfile.mktemp(suffix='.txt')
@@ -92,10 +126,8 @@ def spice_deck(parts, duration, probes, step, temperature=27):
 
 def spice_elements(parts, ac_source=None, temperature=27):
     """The deck's options and element lines, and its models; `ac_source` is the source driven in an AC analysis"""
-    # JSpice's thermal voltage, 25.852 mV, is kT/q at 300.00 K: its nominal 27 °C
-    nominal = VT / 8.617333262e-5 - 273.15
     lines = ['* JSpice cross-check', '.options reltol=1e-6 abstol=1e-13 vntol=1e-8 gmin=1e-12 method=gear maxord=2 itl4=200',
-             '.options temp=%.4f tnom=%.4f' % (nominal + temperature - 27, nominal)]
+             temperature_options(temperature)]
     models = []
     for p in parts:
         k, n, c = p['kind'], p['name'], p['connections']
@@ -137,9 +169,7 @@ def spice_elements(parts, ac_source=None, temperature=27):
             models.append('.model D_%s D(%s CJO=%.12g VJ=1 M=0.5)' % (n, model, param(p, 'cj0')))
             lines.append('D%s %s %s D_%s' % (n, pin('anode'), pin('cathode'), n))
         elif k in ('npn', 'pnp'):
-            models.append('.model Q_%s %s(IS=%.12g BF=%.12g BR=1 CJE=%.12g VJE=0.75 MJE=0.33 CJC=%.12g VJC=0.75 MJC=0.33 TF=%.12g)' % (
-                n, k.upper(), max(param(p, 'saturationCurrent'), 1e-20), max(param(p, 'beta'), 1), param(p, 'cje'), param(p, 'cjc'),
-                param(p, 'tf')))
+            models.append('.model Q_%s %s(%s)' % (n, k.upper(), bipolar_card(p)))
             lines.append('Q%s %s %s %s Q_%s' % (n, pin('collector'), pin('base'), pin('emitter'), n))
         elif k in ('nmos', 'pmos'):
             threshold = param(p, 'threshold')
@@ -243,6 +273,20 @@ TL072 = MODELS[('opAmp', 'TL072')]
 TUBE_12AX7 = dict(mu=100, ex=1.4, kg1=1060, kp=600, kvb=300, rgi=2000, cgk=2.3e-12, cgp=2.4e-12, cpk=0.9e-12)
 TUBE_6L6GC = MODELS[('pentode', '6L6GC')]
 OUTPUT_TRANSFORMER = MODELS[('transformer', 'Output 8 kΩ : 8 Ω')]
+# Test cards using every Gummel-Poon parameter JSpice implements (made up to be realistic, not any maker's part): the
+# Early effect both ways, high-level injection, both leakage currents, a base resistance falling with the current,
+# collector and emitter resistances, transit times rising with the current and VBC, a split CJC and the temperature
+# exponents
+GP_NPN = dict(saturationCurrent=1.8e-14, beta=250, nf=1.005, vaf=60, ikf=0.08, ise=5e-15, ne=1.6, br=6, nr=1.01, var=25, ikr=0.05,
+              isc=4e-14, nc=1.3, rb=40, irb=1e-4, rbm=8, re=0.8, rc=1.5, cje=12e-12, vje=0.65, mje=0.35, tf=4e-10, xtf=20, vtf=3,
+              itf=0.5, cjc=4e-12, vjc=0.45, mjc=0.3, xcjc=0.6, tr=5e-8, fc=0.8, xtb=1.5)
+GP_PNP = dict(saturationCurrent=4e-14, beta=180, vaf=35, ikf=0.06, ise=2e-14, ne=1.7, br=4, var=15, isc=1e-13, nc=1.4, rb=60,
+              irb=2e-4, rbm=15, re=1.2, rc=2.5, cje=15e-12, vje=0.7, mje=0.37, tf=6e-10, xtf=10, vtf=4, itf=0.3, cjc=6e-12, vjc=0.5,
+              mjc=0.33, xcjc=0.5, tr=8e-8, fc=0.7, xtb=1.7)
+
+def with_transistor(parts, name, **params):
+    """The parts, with transistor `name` given these parameters instead of its own"""
+    return [dict(p, params=dict(params)) if p['name'] == name else p for p in parts]
 
 def triode_stage(amplitude):
     """A 12AX7 common-cathode stage, as in a guitar amp's first stage: 250 V through 100 kΩ, 1.5 kΩ and 22 µF at the
@@ -373,12 +417,36 @@ CASES = [
         P('resistor', 'R1', dict(a='out', b='GND'), resistance=1000)]),
     dict(id='overdrive', example='overdrive', note='the diode-clipper overdrive example (TL072, 1N4148s)', duration=0.02,
          probes=['amp', 'clip']),
+    dict(id='gp-common-emitter', note='the common-emitter amplifier with a whole Gummel-Poon card (test card)', duration=0.1,
+         probes=['col', 'base'], parts=None),
+    dict(id='gp-hot-common-emitter', note='that at 70 °C: XTB, the leakage and the junction potentials at temperature',
+         duration=0.1, probes=['col', 'base'], temperature=70, parts=None),
+    dict(id='gp-switch', note='a saturating NPN switch at 20 kHz: stored charge (TF, TR) holds it on after the drive goes',
+         duration=1.5e-4, probes=['col', 'base'], parts=[
+        P('dcVoltage', 'VCC', dict(plus='vcc', minus='GND'), voltage=9),
+        P('squareVoltage', 'VIN', dict(plus='in', minus='GND'), high=5, low=0, frequency=20_000, duty=0.5),
+        P('resistor', 'RB', dict(a='in', b='base'), resistance=4700),
+        P('resistor', 'RC', dict(a='vcc', b='col'), resistance=1000),
+        P('npn', 'Q1', dict(base='base', collector='col', emitter='GND'), **GP_NPN)]),
+    dict(id='gp-pnp', note='a PNP common-emitter stage with a whole Gummel-Poon card (test card), 30 mV at 1 kHz in',
+         duration=0.1, probes=['col', 'base'], parts=[
+        P('dcVoltage', 'VCC', dict(plus='vcc', minus='GND'), voltage=12),
+        P('resistor', 'RB1', dict(a='vcc', b='base'), resistance=10_000),
+        P('resistor', 'RB2', dict(a='base', b='GND'), resistance=47_000),
+        P('resistor', 'RE', dict(a='vcc', b='emi'), resistance=1000),
+        P('capacitor', 'CE', dict(a='emi', b='vcc'), capacitance=10e-6),
+        P('resistor', 'RC', dict(a='col', b='GND'), resistance=4700),
+        P('pnp', 'Q1', dict(base='base', collector='col', emitter='emi'), **GP_PNP),
+        P('acVoltage', 'VIN', dict(plus='sig', minus='GND'), amplitude=0.03, frequency=1000),
+        P('capacitor', 'CIN', dict(a='sig', b='base'), capacitance=1e-6)]),
 ]
 
 def case_parts(id):
     return next(c for c in CASES if c['id'] == id)['parts']
 
 next(c for c in CASES if c['id'] == 'hot-common-emitter')['parts'] = case_parts('common-emitter')
+for _id in ('gp-common-emitter', 'gp-hot-common-emitter'):
+    next(c for c in CASES if c['id'] == _id)['parts'] = with_transistor(case_parts('common-emitter'), 'Q1', **GP_NPN)
 
 # Small-signal (AC) analysis: ngspice's operating point and .ac sweep; JSpice settles the circuit with the driven
 # source's amplitude at zero and linearises it there
@@ -424,6 +492,11 @@ AC_CASES = [
          probes=['c2', 'out']),
     dict(id='overdrive', example='overdrive', note='the overdrive example below clipping', source='VIN', settle=0.5,
          probes=['amp', 'clip']),
+    dict(id='gp-common-emitter', note='the common-emitter amplifier with a whole Gummel-Poon card, out to 100 MHz: its base '
+         'resistance, split CJC and transit time', source='VIN', settle=0.3, probes=['col', 'base'], fstop=1e8,
+         parts=case_parts('gp-common-emitter')),
+    dict(id='gp-pnp', note='the PNP stage with a whole Gummel-Poon card, out to 100 MHz', source='VIN', settle=0.3,
+         probes=['col'], fstop=1e8, parts=case_parts('gp-pnp')),
 ]
 
 def run_ngspice_ac(parts, source, probes, fstart, fstop, per_decade):
@@ -456,6 +529,8 @@ NOISE_CASES = [
     dict(id='common-emitter-noise', note='the common-emitter amplifier: shot noise of its collector and base currents',
          source='VIN', settle=0.3, output='col', parts=None),
     dict(id='jfet-noise', note='the N-JFET stage: channel noise', source='VG', settle=0.001, output='drain', parts=None),
+    dict(id='gp-common-emitter-noise', note='the common-emitter amplifier with a whole Gummel-Poon card: shot noise, and the '
+         'thermal noise of its base, collector and emitter resistances', source='VIN', settle=0.3, output='col', parts=None),
     dict(id='diode-noise', note='a diode carrying 0.43 mA through 10 kΩ: its shot noise against the resistor\'s', source='V1',
          settle=0.001, output='a', parts=[
         P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=1, offset=5, frequency=1000),
@@ -502,6 +577,7 @@ def ac_main():
     noise = []
     for case in NOISE_CASES:
         parts = case['parts'] or (case_parts('common-emitter') if case['id'].startswith('common') else
+                                  case_parts('gp-common-emitter') if case['id'].startswith('gp-') else
                                   next(c for c in AC_CASES if c['id'] == 'jfet')['parts'])
         frequencies, density = run_ngspice_noise(parts, case['source'], case['output'], 10, 1e6, 5)
         part, terminal = next((p['name'], t) for p in parts for t, n in p['connections'].items() if n == case['output'])
@@ -511,6 +587,61 @@ def ac_main():
     json.dump(dict(generator='tools/spice-reference/crosscheck.py --ac', ngspice=subprocess.run(
         ['ngspice', '-v'], capture_output=True, text=True).stdout.split('\n')[1].strip(' *'), cases=out, noise=noise),
         open(AC_FIXTURE, 'w'), indent=1)
+
+# Devices at DC: a transistor between two sources, base-emitter and collector-emitter, one swept and the other held,
+# and the currents into its base and collector; ngspice's .dc with every node shunted by 1 TΩ to ground (JSpice's gmin)
+DEVICE_SWEEPS = [
+    dict(id='npn-vbe', note='test NPN card: currents against VBE at VCE 2 V (leakage, high injection, RB, RE)', kind='npn',
+         params=GP_NPN, swept='vbe', fixed=2, start=0.45, stop=0.95, step=0.025),
+    dict(id='npn-vce', note='test NPN card: currents against VCE at VBE 0.7 V, from reverse through saturation (BR, ISC, RC, VAF)',
+         kind='npn', params=GP_NPN, swept='vce', fixed=0.7, start=-2, stop=10, step=0.25),
+    dict(id='hot-npn-vbe', note='test NPN card at 70 °C: XTB, XTI and the leakage at temperature', kind='npn', params=GP_NPN,
+         swept='vbe', fixed=2, start=0.4, stop=0.9, step=0.025, temperature=70),
+    dict(id='pnp-vbe', note='test PNP card: currents against VBE at VCE -2 V', kind='pnp', params=GP_PNP, swept='vbe', fixed=-2,
+         start=-0.45, stop=-0.95, step=-0.025),
+    dict(id='pnp-vce', note='test PNP card: currents against VCE at VBE -0.7 V', kind='pnp', params=GP_PNP, swept='vce',
+         fixed=-0.7, start=2, stop=-10, step=-0.25),
+    dict(id='default-npn-vce', note='an NPN at JSpice\'s defaults (Ebers-Moll, BR 1): currents against VCE at VBE 0.65 V',
+         kind='npn', params={}, swept='vce', fixed=0.65, start=0, stop=10, step=0.25),
+]
+
+def run_ngspice_dc(sweep):
+    part = dict(kind=sweep['kind'], name='Q1', params=sweep['params'], connections={})
+    temperature = sweep.get('temperature', 27)
+    data = tempfile.mktemp(suffix='.txt')
+    held = 'VCE' if sweep['swept'] == 'vbe' else 'VBE'
+    deck = '\n'.join(['* JSpice device check',
+                      '.options reltol=1e-9 abstol=1e-18 vntol=1e-12 gmin=1e-12 rshunt=1e12 itl1=500 itl2=500',
+                      temperature_options(temperature),
+                      'VBE b 0 DC %.12g' % (sweep['fixed'] if held == 'VBE' else sweep['start']),
+                      'VCE c 0 DC %.12g' % (sweep['fixed'] if held == 'VCE' else sweep['start']),
+                      'Q1 c b 0 QT', '.model QT %s(%s)' % (sweep['kind'].upper(), bipolar_card(part)),
+                      '.control', 'dc %s %.12g %.12g %.12g' % (sweep['swept'].upper(), sweep['start'], sweep['stop'], sweep['step']),
+                      'wrdata %s i(VBE) i(VCE)' % data, 'quit', '.endc', '.end']) + '\n'
+    with tempfile.NamedTemporaryFile('w', suffix='.cir', delete=False) as f:
+        f.write(deck)
+    result = subprocess.run(['ngspice', '-b', f.name], capture_output=True, text=True, timeout=600)
+    if not os.path.exists(data):
+        sys.exit('ngspice failed:\n' + deck + result.stdout[-3000:] + result.stderr[-3000:])
+    rows = [list(map(float, line.split())) for line in open(data) if line.strip()]
+    os.unlink(data)
+    # a source's current runs into its + terminal: the transistor's is the opposite
+    return [row[0] for row in rows], [-row[1] for row in rows], [-row[3] for row in rows]
+
+def devices_main():
+    out = []
+    for sweep in DEVICE_SWEEPS:
+        voltages, base, collector = run_ngspice_dc(sweep)
+        entry = dict(id=sweep['id'], note=sweep['note'], kind=sweep['kind'], params=sweep['params'], swept=sweep['swept'],
+                     fixed=sweep['fixed'], voltages=[round(v, 9) for v in voltages],
+                     base=[float('%.12g' % i) for i in base], collector=[float('%.12g' % i) for i in collector])
+        if 'temperature' in sweep:
+            entry['temperature'] = sweep['temperature']
+        out.append(entry)
+        print('%-16s ic %.4g..%.4g A' % (sweep['id'], min(collector), max(collector)))
+    json.dump(dict(generator='tools/spice-reference/crosscheck.py --devices', ngspice=subprocess.run(
+        ['ngspice', '-v'], capture_output=True, text=True).stdout.split('\n')[1].strip(' *'), sweeps=out),
+        open(DEVICE_FIXTURE, 'w'), indent=1)
 
 def rising_crossings(time, values):
     level = (max(values) + min(values)) / 2
@@ -555,4 +686,9 @@ def main():
         open(FIXTURE, 'w'), indent=1)
 
 if __name__ == '__main__':
-    ac_main() if '--ac' in sys.argv else main()
+    if '--ac' in sys.argv:
+        ac_main()
+    elif '--devices' in sys.argv:
+        devices_main()
+    else:
+        main()

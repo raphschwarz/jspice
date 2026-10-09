@@ -247,10 +247,11 @@ public enum SpiceNetlist {
                     warnings.append("\(name): no model \(modelName)")
                     continue
                 }
-                let p = model.params
-                parts.append(NetlistPart(kind: model.type == "pnp" ? .pnp : .npn, name: name, params: [
-                    "beta": p["BF"] ?? 100, "saturationCurrent": p["IS"] ?? 1e-16, "cje": p["CJE"] ?? 0, "cjc": p["CJC"] ?? 0, "tf": p["TF"] ?? 0,
-                ], connections: ["collector": c, "base": b, "emitter": e]))
+                // the whole Gummel-Poon card
+                let (params, ignored) = GummelPoon.parameters(fromCard: model.params)
+                if !ignored.isEmpty { warnings.append("\(name): \(ignored.joined(separator: ", ")) of model \(modelName) left out") }
+                parts.append(NetlistPart(kind: model.type == "pnp" ? .pnp : .npn, name: name, params: params,
+                                         connections: ["collector": c, "base": b, "emitter": e]))
             case "m":
                 guard let d = node(1), let g = node(2), let s = node(3), words.count > 5, let model = models[words[5].lowercased()] else {
                     warnings.append("Can't read \(line)")
@@ -429,7 +430,7 @@ public enum SpiceNetlist {
                 lines.append("\(device("D", name)) \(n("anode")) \(n("cathode")) \(model)")
             case .npn, .pnp:
                 let model = "Q_" + device("Q", name)
-                models.append(".model \(model) \(part.kind == .npn ? "NPN" : "PNP")(IS=\(f(max(p("saturationCurrent"), 1e-20))) BF=\(f(max(p("beta"), 1))) BR=1 CJE=\(f(p("cje"))) VJE=0.75 MJE=0.33 CJC=\(f(p("cjc"))) VJC=0.75 MJC=0.33 TF=\(f(p("tf"))))")
+                models.append(".model \(model) \(part.kind == .npn ? "NPN" : "PNP")(\(GummelPoon.cardText(p, kind: part.kind)))")
                 lines.append("\(device("Q", name)) \(n("collector")) \(n("base")) \(n("emitter")) \(model)")
             case .nmos, .pmos:
                 let model = "M_" + device("M", name)

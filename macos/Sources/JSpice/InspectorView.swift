@@ -107,7 +107,7 @@ struct ElementInspector: View {
                 }
             } else if !element.kind.params.isEmpty {
                 Section("Properties") {
-                    ForEach(element.kind.params, id: \.key) { spec in
+                    ForEach(element.kind.params.filter { !$0.advanced }, id: \.key) { spec in
                         if spec.choices.isEmpty {
                             ParameterRow(editor: editor, elementID: element.id, spec: spec, value: element[param: spec.key])
                         } else {
@@ -122,6 +122,17 @@ struct ElementInspector: View {
                                     Text(formatParameter(element[param: spec.key], spec)).tag(element[param: spec.key])
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            if element.kind.params.contains(where: \.advanced) {
+                // the rest of the part's SPICE model card, which a manufacturer's model sets
+                Section {
+                    DisclosureGroup("SPICE Model Parameters") {
+                        ForEach(element.kind.params.filter(\.advanced), id: \.key) { spec in
+                            ParameterRow(editor: editor, elementID: element.id, spec: spec, value: element[param: spec.key])
                         }
                     }
                 }

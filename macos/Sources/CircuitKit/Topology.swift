@@ -44,7 +44,7 @@ struct Topology {
     /// Node of each point; node 0 is ground
     var nodeOfPoint: [Int] = []
     var nodeCount = 1
-    /// Per element, the node of each of its posts
+    /// Per element, the node of each of its posts, then of its internal nodes
     var elementNodes: [[Int]] = []
     /// Per element, the point index of each of its posts
     var elementPoints: [[Int]] = []
@@ -113,6 +113,14 @@ struct Topology {
         }
         nodeCount = nodeOfRoot.count
         elementNodes = elementPoints.map { $0.map { nodeOfPoint[$0] } }
+        // parts' nodes of their own (a transistor's internal base, collector and emitter behind its resistances), after
+        // the drawn ones and on no point: they follow its terminals in its nodes
+        for (i, element) in elements.enumerated() {
+            for _ in 0..<element.internalNodeCount {
+                elementNodes[i].append(nodeCount)
+                nodeCount += 1
+            }
+        }
 
         // voltage sources and op-amp outputs get a current unknown, unless they are shorted out
         sourceRow = Array(repeating: -1, count: elements.count)
