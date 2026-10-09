@@ -74,7 +74,7 @@ public enum SchematicLayout {
 
     static let inputs: [ElementKind: [String]] = [
         .opAmp: ["minus", "plus"], .ota: ["minus", "plus", "bias"], .timer555: ["trig", "thr", "dis", "ctrl", "reset"],
-        .schmittInverter: ["in"], .unbufferedInverter: ["in"], .npn: ["base"], .pnp: ["base"], .nmos: ["gate"], .pmos: ["gate"], .njfet: ["gate"],
+        .schmittInverter: ["in"], .unbufferedInverter: ["in"], .npn: ["base"], .pnp: ["base"], .nmos: ["gate"], .pmos: ["gate"], .njfet: ["gate"], .pjfet: ["gate"],
         .triode: ["grid"], .pentode: ["grid"], .transformer: ["p1", "p2"],
         .potentiometer: ["a", "b"], .analogSwitch: ["a", "control"], .multiplier: ["x", "y"], .delayLine: ["in", "ctrl"],
         .vactrol: ["anode"], .digitalDelay: ["in", "time"], .comparator: ["minus", "plus"], .vco: ["cv", "pw"], .vcf: ["in", "cv"], .envelope: ["gate", "trig"],
@@ -91,7 +91,7 @@ public enum SchematicLayout {
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .unbufferedInverter: ["out"],
         .npn: ["collector", "emitter"],
-        .pnp: ["collector", "emitter"], .nmos: ["drain", "source"], .pmos: ["drain", "source"], .njfet: ["drain", "source"],
+        .pnp: ["collector", "emitter"], .nmos: ["drain", "source"], .pmos: ["drain", "source"], .njfet: ["drain", "source"], .pjfet: ["drain", "source"],
         .triode: ["plate", "cathode"], .pentode: ["plate", "cathode"], .transformer: ["s1", "s2"],
         .potentiometer: ["wiper"], .analogSwitch: ["b"], .multiplier: ["out"], .delayLine: ["out"], .digitalDelay: ["out"], .vactrol: ["b"],
         .comparator: ["out"], .vco: ["out"], .vcf: ["out"], .envelope: ["out"], .vca: ["out"], .sampleHold: ["out"], .divider: ["out"],
@@ -134,7 +134,7 @@ public enum SchematicLayout {
         switch e.kind {
         case .ground: return [e.b]
         case .netLabel, .wire: return []
-        case .nmos, .pmos, .npn, .pnp, .njfet: return frame(1...2, -1...1)
+        case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet: return frame(1...2, -1...1)
         case .triode, .pentode: return frame(0...2, -1...1)
         case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
              .logicGate, .levelDetector, .springReverb, .agcPreamp:
@@ -574,7 +574,7 @@ public enum SchematicLayout {
                         }
                         let ay = via != nil ? vy + 1 : 0
                         put(p, GridPoint(x, ay), GridPoint(x + 4, ay), flipped: top == "plus")
-                    case .npn, .pnp, .nmos, .pmos, .njfet, .triode, .pentode:
+                    case .npn, .pnp, .nmos, .pmos, .njfet, .pjfet, .triode, .pentode:
                         put(p, GridPoint(x, vy), GridPoint(x + 2, vy))
                         width = 2
                     case .timer555:

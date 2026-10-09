@@ -426,6 +426,7 @@ public enum Breadboard {
         case (.njfet, "J113"): return ("J113", "DSG", nil)
         case (.njfet, "2SK30A"): return ("2SK30A", "SGD", nil)
         case (.njfet, _): return (model ?? "2N5457", "DSG", nil)
+        case (.pjfet, _): return ("P-JFET", "DSG", "Check the pinout on its datasheet: P-JFETs differ")
         case (.nmos, "BS170"): return ("BS170", "DGS", nil)
         case (.nmos, "2N7000"): return ("2N7000", "SGD", nil)
         case (.nmos, _): return ("2N7000", "SGD", "A small N-MOSFET stands in for the generic one")
@@ -666,7 +667,7 @@ public enum Breadboard {
             switch part.kind {
             case .resistor, .capacitor, .inductor, .diode, .zener, .led, .lamp, .toggleSwitch, .pushButton:
                 plan.twoLead.append(part)
-            case .npn, .pnp, .njfet, .nmos, .pmos, .potentiometer, .vactrol:
+            case .npn, .pnp, .njfet, .pjfet, .nmos, .pmos, .potentiometer, .vactrol:
                 plan.inline.append(part)
             case .wire, .ground, .netLabel, .port, .block, .probe:
                 break

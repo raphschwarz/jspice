@@ -56,6 +56,7 @@ struct SpiceJFET {
             return value.isFinite ? value : 0
         }
         self.vt = vt
+        polarity = element.kind == .pjfet ? -1 : 1
         let tnom = Simulator.nominalKelvin
         let boltzmann = 1.38064852e-23, charge = 1.6021766208e-19, reference = 300.15
         // the nominal card: the threshold and B set how BETA relates to IDSS

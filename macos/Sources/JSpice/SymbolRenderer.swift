@@ -76,7 +76,7 @@ enum SymbolRenderer {
     /// Length of the drawn body along the element, in grid units; the rest is leads
     static func bodyLength(_ kind: ElementKind) -> CGFloat {
         switch kind {
-        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
+        case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
              .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .digitalDelay,
              .port, .block, .triode, .pentode, .transformer, .behavioralSource,
@@ -110,7 +110,7 @@ enum SymbolRenderer {
             drawTransistor(element, at: a, b, unit: u, style: style, in: ctx)
         case .npn, .pnp:
             drawBipolar(element, at: a, b, unit: u, style: style, in: ctx)
-        case .njfet:
+        case .njfet, .pjfet:
             drawJFET(element, at: a, b, unit: u, style: style, in: ctx)
         case .triode, .pentode:
             drawTube(element, at: a, b, unit: u, style: style, in: ctx)
@@ -360,7 +360,7 @@ enum SymbolRenderer {
             path.move(to: CGPoint(x: x0 + 0.2 * u, y: 0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.2 * u, y: -0.2 * u))
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
-        case .wire, .ground, .netLabel, .port, .block, .behavioralSource, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
+        case .wire, .ground, .netLabel, .port, .block, .behavioralSource, .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
              .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .digitalDelay,
              .triode, .pentode, .transformer,
@@ -1053,9 +1053,11 @@ enum SymbolRenderer {
         let gate = CGMutablePath()
         gate.move(to: .zero)
         gate.addLine(to: CGPoint(x: barX, y: 0))
-        gate.move(to: CGPoint(x: barX - 0.38 * u, y: -0.17 * u))
-        gate.addLine(to: CGPoint(x: barX - 0.05 * u, y: 0))
-        gate.addLine(to: CGPoint(x: barX - 0.38 * u, y: 0.17 * u))
+        // the arrow points into the channel of an N-JFET, out of a P-JFET's
+        let (tip, tail): (CGFloat, CGFloat) = element.kind == .pjfet ? (0.38, 0.05) : (0.05, 0.38)
+        gate.move(to: CGPoint(x: barX - tail * u, y: -0.17 * u))
+        gate.addLine(to: CGPoint(x: barX - tip * u, y: 0))
+        gate.addLine(to: CGPoint(x: barX - tail * u, y: 0.17 * u))
         stroke(gate, width: style.lineWidth, from: gateColor, to: gateColor, start: 0, end: 1, length: L, in: ctx)
         let bar = CGMutablePath()
         bar.move(to: CGPoint(x: barX, y: -0.85 * u))
@@ -1402,7 +1404,7 @@ enum SymbolRenderer {
             let length = max(hypot(b.x - a.x, b.y - a.y), 1)
             let end = CGPoint(x: a.x + (b.x - a.x) / length * u, y: a.y + (b.y - a.y) / length * u)
             return [(a, end)]
-        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode:
+        case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode, .pentode:
             return posts.count >= 3 ? [(a, b), (posts[1], posts[2])] : [(a, b)]
         case .transformer:
             return posts.count == 4 ? [(posts[0], posts[1]), (posts[2], posts[3]), (a, b)] : [(a, b)]
@@ -1458,7 +1460,7 @@ enum SymbolRenderer {
             return nil
         case .toggleSwitch, .pushButton:
             return element.closed ? (a, b, nil) : nil
-        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode:
+        case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode, .pentode:
             return posts.count >= 3 ? (posts[1], posts[2], nil) : nil
         case .transformer:
             return nil

@@ -1642,7 +1642,10 @@ public final class CircuitSession {
 
     func importSpice(_ arguments: [String: Any]) throws -> Any {
         var text = arguments["netlist"] as? String ?? ""
+        // the files the deck includes, beside it (or, for a deck given as text, from the home folder)
+        var deck = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("deck.cir")
         if text.isEmpty, let path = arguments["path"] as? String, !path.isEmpty {
+            deck = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
             // LTspice writes its netlists in UTF-16 or Windows-1252, not always UTF-8
             guard let data = FileManager.default.contents(atPath: (path as NSString).expandingTildeInPath) else {
                 throw ToolError("Can't read \(path)")
@@ -1652,7 +1655,7 @@ public final class CircuitSession {
             text = decoded
         }
         guard !text.isEmpty else { throw ToolError("Give the netlist as \"netlist\" or a file as \"path\"") }
-        let (imported, warnings) = try SpiceNetlist.circuit(from: text)
+        let (imported, warnings) = try SpiceNetlist.circuit(from: text, include: SpiceNetlist.fileIncluder(deck: deck))
         replace(imported, "Import SPICE Netlist")
         var result = describe()
         result["left_out"] = warnings

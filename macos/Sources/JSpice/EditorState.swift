@@ -347,11 +347,11 @@ final class EditorState: ObservableObject {
     func importSpice() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = ["cir", "net", "sp", "spi", "spice", "ckt"].compactMap { UTType(filenameExtension: $0) } + [.plainText]
-        panel.message = "Choose a SPICE netlist: R, C, L, sources, diodes, transistors, coupled inductors and subcircuits are drawn"
+        panel.message = "Choose a SPICE netlist: R, C, L, sources, diodes, transistors, controlled sources, coupled inductors and subcircuits are drawn (with the model files it includes)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
-            let (imported, warnings) = try SpiceNetlist.circuit(from: text)
+            let (imported, warnings) = try SpiceNetlist.circuit(from: text, include: SpiceNetlist.fileIncluder(deck: url))
             edit("Import SPICE Netlist") { $0 = imported }
             selection = []
             requestFit()

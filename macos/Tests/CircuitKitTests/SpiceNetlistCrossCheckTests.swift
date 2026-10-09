@@ -2,8 +2,9 @@ import XCTest
 @testable import CircuitKit
 
 /// SPICE decks as written, imported: `crosscheck.py --netlists` runs each in ngspice as it is (controlled sources in every
-/// form, and a subcircuit of them: an op-amp macromodel), and JSpice imports the same text with `SpiceNetlist`, draws it,
-/// and simulates it at the step it picks with error control. Each probed net must follow ngspice's waveform.
+/// form, a subcircuit of them: an op-amp macromodel, and a library file of JFET-input op-amps with sections, includes and
+/// parameters), and JSpice imports the same text with `SpiceNetlist`, draws it, and simulates it at the step it picks
+/// with error control. Each probed net must follow ngspice's waveform.
 final class SpiceNetlistCrossCheckTests: XCTestCase {
     struct Reference: Decodable {
         let ngspice: String
@@ -17,6 +18,8 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
         let duration: Double
         let times: [Double]
         let probes: [Probe]
+        /// The files the deck includes, by the paths it names them with
+        let files: [String: String]?
     }
 
     struct Probe: Decodable {
@@ -54,7 +57,8 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
         let reference = try JSONDecoder().decode(Reference.self, from: Data(contentsOf: url))
         var report = ["Imported netlists against \(reference.ngspice) (largest difference, % of range):"]
         for test in reference.cases {
-            let (circuit, warnings) = try SpiceNetlist.circuit(from: test.netlist)
+            let files = test.files ?? [:]
+            let (circuit, warnings) = try SpiceNetlist.circuit(from: test.netlist, include: { path, _ in files[path].map { (path, $0) } })
             XCTAssertTrue(warnings.isEmpty, "\(test.id): \(warnings)")
             let probes = try test.probes.map { try terminal(on: $0.net, in: circuit) }
             let step = Pacing.suggest(for: circuit).timeStep

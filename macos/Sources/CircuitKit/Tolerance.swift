@@ -25,7 +25,7 @@ public struct Tolerances: Sendable, Equatable {
         case .capacitor: return [("capacitance", own ?? capacitors)]
         case .inductor, .transformer: return [("inductance", own ?? inductors)]
         case .npn, .pnp: return [("beta", own ?? transistorGain)]
-        case .njfet: return [("idss", own ?? fets), ("pinchOff", own ?? fets)]
+        case .njfet, .pjfet: return [("idss", own ?? fets), ("pinchOff", own ?? fets)]
         default: return []
         }
     }

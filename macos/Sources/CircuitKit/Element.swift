@@ -46,7 +46,7 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case wire, ground, netLabel, resistor, potentiometer, lamp, capacitor, inductor
     case dcVoltage, acVoltage, squareVoltage, noiseVoltage, currentSource, keyboardPitch, keyboardGate, audioInput
     case toggleSwitch, pushButton
-    case diode, zener, led, npn, pnp, nmos, pmos, njfet
+    case diode, zener, led, npn, pnp, nmos, pmos, njfet, pjfet
     case triode, pentode, transformer
     case opAmp, ota, multiplier, comparator
     case vco, vcf, envelope, vca, sampleHold, divider
@@ -189,6 +189,7 @@ extension ElementKind {
         case .nmos: return "NMOS Transistor"
         case .pmos: return "PMOS Transistor"
         case .njfet: return "N-JFET"
+        case .pjfet: return "P-JFET"
         case .triode: return "Triode"
         case .pentode: return "Pentode"
         case .transformer: return "Transformer"
@@ -279,7 +280,7 @@ extension ElementKind {
         case .toggleSwitch, .pushButton: return "S"
         case .diode, .zener: return "D"
         case .led: return "LED"
-        case .npn, .pnp, .njfet: return "Q"
+        case .npn, .pnp, .njfet, .pjfet: return "Q"
         case .nmos, .pmos: return "M"
         case .triode, .pentode: return "VT"
         case .transformer: return "T"
@@ -315,7 +316,7 @@ extension ElementKind {
         case .wire, .ground, .netLabel, .resistor, .potentiometer, .lamp, .capacitor, .inductor: return .basics
         case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate, .audioInput: return .sources
         case .toggleSwitch, .pushButton: return .switches
-        case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet: return .semiconductors
+        case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .pjfet: return .semiconductors
         case .triode, .pentode, .transformer: return .tubes
         case .opAmp, .ota, .multiplier, .comparator: return .amplifiers
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
@@ -365,7 +366,7 @@ extension ElementKind {
         case .pmos: return "p"
         case .opAmp: return "u"
         case .timer555: return "5"
-        case .njfet, .ota, .schmittInverter, .unbufferedInverter, .analogSwitch, .multiplier, .delayLine, .digitalDelay, .vactrol,
+        case .njfet, .pjfet, .ota, .schmittInverter, .unbufferedInverter, .analogSwitch, .multiplier, .delayLine, .digitalDelay, .vactrol,
              .triode, .pentode, .transformer:
             return nil
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return nil
@@ -426,7 +427,10 @@ extension ElementKind {
     }
 
     /// Three-terminal transistors drawn with their control terminal at `a` and their channel at `b`
-    public var isTransistor: Bool { self == .nmos || self == .pmos || self == .npn || self == .pnp || self == .njfet }
+    public var isTransistor: Bool { self == .nmos || self == .pmos || self == .npn || self == .pnp || isJFET }
+
+    /// Junction field-effect transistors, N- and P-channel
+    public var isJFET: Bool { self == .njfet || self == .pjfet }
 
     /// Vacuum tubes: drawn like a transistor (control grid at `a`, plate above `b` and cathode below it), in a glass
     /// envelope; a pentode's screen grid comes out at `b`
@@ -454,7 +458,7 @@ extension ElementKind {
     /// Length in grid units of parts whose size is fixed (their terminals sit at set places around the body)
     public var fixedLength: Int? {
         switch self {
-        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode: return 2
+        case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode, .pentode: return 2
         case .ota, .vactrol, .transformer: return 4
         case .timer555: return 5
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.length
@@ -474,7 +478,7 @@ extension ElementKind {
         case .diode, .zener, .led: return ["anode", "cathode"]
         case .probe, .speaker: return ["plus", "minus"]
         case .ammeter: return ["in", "out"]
-        case .nmos, .pmos, .njfet: return ["gate", "drain", "source"]
+        case .nmos, .pmos, .njfet, .pjfet: return ["gate", "drain", "source"]
         case .triode: return ["grid", "plate", "cathode"]
         case .pentode: return ["grid", "plate", "cathode", "screen"]
         case .transformer: return ["p1", "p2", "s1", "s2"]
@@ -558,7 +562,7 @@ extension ElementKind {
         switch self {
         case .ground: return GridPoint(0, 1)
         case .netLabel, .port: return GridPoint(1, 0)
-        case .nmos, .pmos, .npn, .pnp, .njfet, .triode, .pentode: return GridPoint(2, 0)
+        case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode, .pentode: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return GridPoint(0, board?.length ?? 13)
         case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return GridPoint(0, chipPackage?.length ?? 3)
@@ -768,7 +772,7 @@ extension ElementKind {
         case .analogMux, .analogSelector:
             return [ParamSpec("onResistance", "On resistance", unit: "Ω", default: 125, range: 1...10_000)]
                 + Array(Self.logicParams(upper: 0.52, lower: 0.48).dropLast())
-        case .njfet:
+        case .njfet, .pjfet:
             return [
                 ParamSpec("pinchOff", "Pinch-off voltage (VTO)", unit: "V", default: -1.5, range: -8...(-0.2), log: false),
                 ParamSpec("idss", "Drain current with the gate at the source (IDSS)", unit: "A", default: 3e-3, range: 1e-5...0.1),
@@ -967,7 +971,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     /// a diode's internal anode, and a JFET's or MOSFET's internal drain and source, behind their resistances
     var internalNodeCount: Int {
         kind.isBipolar ? GummelPoon.internalNodes(self) : kind.isDiode ? SpiceDiode.internalNodes(self)
-            : kind == .njfet ? SpiceJFET.internalNodes(self) : kind.isMOSFET ? SpiceMOSFET.internalNodes(self) : 0
+            : kind.isJFET ? SpiceJFET.internalNodes(self) : kind.isMOSFET ? SpiceMOSFET.internalNodes(self) : 0
     }
 
     public subscript(param key: String) -> Double {
@@ -1031,7 +1035,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         switch kind {
         case .ground, .netLabel, .port:
             return [a]
-        case .nmos, .pmos, .npn, .pnp, .njfet, .triode:
+        case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode:
             let t = transistorTerminals
             return [a, t.drain, t.source]
         case .pentode:
@@ -1554,6 +1558,8 @@ extension ElementKind {
                           values: ["threshold": 2.1, "beta": 0.05]),
                 PartModel(name: "BS170", summary: "Small N-MOSFET, 500 mA", values: ["threshold": 2.0, "beta": 0.12]),
             ]
+        case .pjfet:
+            return [PartModel(name: "Generic", summary: "A plain P-channel JFET", values: ["pinchOff": -1.5, "idss": 3e-3])]
         case .pmos:
             return [
                 PartModel(name: "Generic", summary: "A plain P-channel MOSFET", values: ["threshold": 1.5, "beta": 0.02]),

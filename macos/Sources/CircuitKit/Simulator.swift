@@ -472,12 +472,12 @@ public final class Simulator {
         constants = flat.elements.map { makeConstants($0) }
         bipolar = flat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
         diodes = flat.elements.map { $0.kind.isDiode ? SpiceDiode($0, kelvin: kelvin, vt: vt) : SpiceDiode() }
-        jfets = flat.elements.map { $0.kind == .njfet ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
+        jfets = flat.elements.map { $0.kind.isJFET ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
         mosfets = flat.elements.map { $0.kind.isMOSFET ? SpiceMOSFET($0, kelvin: kelvin, vt: vt) : SpiceMOSFET() }
         func indices(_ include: (ElementKind) -> Bool) -> [Int] { kinds.indices.filter { include(kinds[$0]) } }
         nonlinearIndices = indices {
             switch $0 {
-            case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch, .multiplier, .vactrol,
+            case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .pjfet, .opAmp, .ota, .analogSwitch, .multiplier, .vactrol,
                  .unbufferedInverter, .pll, .triode, .pentode, .vca, .behavioralSource: return true
             default: return false
             }
@@ -585,9 +585,9 @@ public final class Simulator {
                 x[inner - 1] = outer > 0 ? x[outer - 1] : 0
             }
         }
-        for i in kinds.indices where kinds[i] == .njfet || kinds[i].isMOSFET {
+        for i in kinds.indices where kinds[i].isJFET || kinds[i].isMOSFET {
             let nodes = topology.elementNodes[i]
-            let n = kinds[i] == .njfet ? Self.jfetNodes({ nodes[$0] }, jfets[i])
+            let n = kinds[i].isJFET ? Self.jfetNodes({ nodes[$0] }, jfets[i])
                 : Self.fetNodes({ nodes[$0] }, drain: mosfets[i].hasDrainNode, source: mosfets[i].hasSourceNode)
             for (inner, outer) in [(n.dp, n.d), (n.sp, n.s)] where inner != outer && inner > 0 {
                 x[inner - 1] = outer > 0 ? x[outer - 1] : 0
@@ -823,7 +823,7 @@ public final class Simulator {
         constants = newFlat.elements.map { makeConstants($0) }
         bipolar = newFlat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
         diodes = newFlat.elements.map { $0.kind.isDiode ? SpiceDiode($0, kelvin: kelvin, vt: vt) : SpiceDiode() }
-        jfets = newFlat.elements.map { $0.kind == .njfet ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
+        jfets = newFlat.elements.map { $0.kind.isJFET ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
         mosfets = newFlat.elements.map { $0.kind.isMOSFET ? SpiceMOSFET($0, kelvin: kelvin, vt: vt) : SpiceMOSFET() }
         compileBehaviors()
         junctionIndices = kinds.indices.filter { storesCharge($0) }
@@ -1484,7 +1484,7 @@ public final class Simulator {
                 if g.hasBaseNode && !g.baseModulated { stampConductance(matrix, m, n.b, n.bp, 1 / g.rb) }
                 if g.hasCollectorNode { stampConductance(matrix, m, n.c, n.cp, 1 / g.rc) }
                 if g.hasEmitterNode { stampConductance(matrix, m, n.e, n.ep, 1 / g.re) }
-            case .njfet:
+            case .njfet, .pjfet:
                 // the drain and source resistances to the internal nodes
                 let j = jfets[i]
                 let n = Self.jfetNodes({ nodes[$0] }, j)
@@ -2054,7 +2054,7 @@ public final class Simulator {
     private func storesCharge(_ i: Int) -> Bool {
         if kinds[i].isBipolar { return bipolar[i].hasCharges }
         if kinds[i].isDiode { return diodes[i].hasCharges }
-        if kinds[i] == .njfet { return jfets[i].hasCharges }
+        if kinds[i].isJFET { return jfets[i].hasCharges }
         if kinds[i].isMOSFET { return mosfets[i].hasCharges }
         return constants[i].cj0 > 0 || constants[i].cj1 > 0 || constants[i].transit > 0
     }
@@ -2722,7 +2722,7 @@ public final class Simulator {
             case .inductor:
                 stampSaturation(i, nodes, matrix, rhs, m)
 
-            case .njfet:
+            case .njfet, .pjfet:
                 stampJFET(i, nodes, matrix, rhs, m)
 
             case .unbufferedInverter:
@@ -3008,7 +3008,7 @@ public final class Simulator {
                 if g.hasBaseNode { current(name + " base resistance", 4 * kT * r.gx, n.b, n.bp) }
                 if g.hasCollectorNode { current(name + " collector resistance", 4 * kT / g.rc, n.c, n.cp) }
                 if g.hasEmitterNode { current(name + " emitter resistance", 4 * kT / g.re, n.e, n.ep) }
-            case .njfet:
+            case .njfet, .pjfet:
                 // the channel's thermal noise (from its transconductance, as in ngspice) and the resistances'
                 let j = jfets[i]
                 let n = Self.jfetNodes({ nodes[$0] }, j)
@@ -3131,7 +3131,7 @@ public final class Simulator {
                         entries.append(.init(row: row - 1, column: column - 1, scale: scale, transfer: .capacitance(q.dqbeVbc)))
                     }
                 }
-            case .njfet:
+            case .njfet, .pjfet:
                 // the gate's depletion capacitances at the operating point
                 let j = jfets[i]
                 guard j.hasCharges else { continue }
@@ -3222,7 +3222,7 @@ public final class Simulator {
             let n = Self.bipolarNodes({ nodes[$0] }, bipolar[i])
             limitedVoltage[i] = p * (voltage(n.bp) - voltage(n.ep))
             limitedVoltage2[i] = p * (voltage(n.bp) - voltage(n.cp))
-        case .njfet:
+        case .njfet, .pjfet:
             let j = jfets[i]
             let n = Self.jfetNodes({ nodes[$0] }, j)
             limitedVoltage[i] = j.polarity * (voltage(n.g) - voltage(n.sp))
@@ -3373,7 +3373,7 @@ public final class Simulator {
             body(2, q.qbx)
         case .diode, .led, .zener:
             body(0, junctionChargeAndCapacitance(i, slot: 0, limitedVoltage[i]).charge)
-        case .njfet:
+        case .njfet, .pjfet:
             let q = jfets[i].charges(vgs: limitedVoltage[i], vgd: limitedVoltage2[i])
             body(0, q.qgs)
             body(1, q.qgd)
@@ -3946,7 +3946,7 @@ public final class Simulator {
             var out = [Double](repeating: 0, count: nodes.count)
             if out.count >= 2 { (out[0], out[1]) = (-current, current) }
             return (current, out)
-        case .njfet:
+        case .njfet, .pjfet:
             let j = jfets[i]
             let n = Self.jfetNodes({ nodes[$0] }, j)
             let p = j.polarity

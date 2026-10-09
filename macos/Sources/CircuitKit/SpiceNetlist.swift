@@ -32,8 +32,27 @@ public enum SpiceNetlist {
         public var warnings: [String]
     }
 
-    /// The parts of a netlist (the first line is its title, as in SPICE). Nodes keep their names; 0 and GND are ground.
-    public static func parse(_ text: String) -> Import {
+    /// Reads a file a deck includes: its path as the deck writes it and the name of the file that includes it (nil
+    /// for the deck itself), to the file's name (for the files it includes in turn) and text, or nil when it can't
+    public typealias Includer = (_ path: String, _ from: String?) -> (name: String, text: String)?
+
+    /// An includer for a deck saved at `deck`: paths relative to the including file's folder, read as UTF-8, UTF-16 or
+    /// Windows-1252 (as LTspice and vendors write them)
+    public static func fileIncluder(deck: URL) -> Includer {
+        { path, from in
+            let base = from.map { URL(fileURLWithPath: $0).deletingLastPathComponent() } ?? deck.deletingLastPathComponent()
+            let expanded = (path as NSString).expandingTildeInPath
+            let url = expanded.hasPrefix("/") ? URL(fileURLWithPath: expanded) : base.appendingPathComponent(expanded)
+            guard let data = FileManager.default.contents(atPath: url.path) else { return nil }
+            guard let text = [String.Encoding.utf8, .utf16, .windowsCP1252].lazy.compactMap({ String(data: data, encoding: $0) }).first
+            else { return nil }
+            return (url.path, text)
+        }
+    }
+
+    /// A deck's lines without comments, each continuation joined to the line it continues (past comments and blank
+    /// lines; not to a deck's title)
+    static func logicalLines(_ text: String, titled: Bool) -> [String] {
         var lines: [String] = []
         for raw in text.replacingOccurrences(of: "\r", with: "").components(separatedBy: "\n") {
             // inline comments
@@ -42,20 +61,100 @@ public enum SpiceNetlist {
                 if let range = line.range(of: marker) { line = String(line[..<range.lowerBound]) }
             }
             line = line.trimmingCharacters(in: .whitespaces)
-            // a continuation joins the last line of the deck, past comments and blank lines (not the title)
-            if line.hasPrefix("+"), let k = lines.indices.last(where: { $0 > 0 && !lines[$0].isEmpty && !lines[$0].hasPrefix("*") }) {
+            let first = titled ? 1 : 0
+            if line.hasPrefix("+"), let k = lines.indices.last(where: { $0 >= first && !lines[$0].isEmpty && !lines[$0].hasPrefix("*") }) {
                 lines[k] += " " + line.dropFirst()
             } else {
                 lines.append(line)
             }
         }
+        return lines
+    }
+
+    /// The path a .include or .lib line names (in quotes or not) and the words after it
+    static func includePath(_ line: String) -> (path: String, rest: [String])? {
+        guard let space = line.firstIndex(where: { $0 == " " || $0 == "\t" }) else { return nil }
+        let after = line[space...].trimmingCharacters(in: .whitespaces)
+        guard let quote = after.first else { return nil }
+        if quote == "\"" || quote == "'", let close = after.dropFirst().firstIndex(of: quote) {
+            let path = String(after[after.index(after: after.startIndex)..<close])
+            return (path, tokens(String(after[after.index(after: close)...])))
+        }
+        let words = tokens(after)
+        return words.first.map { ($0, Array(words.dropFirst())) }
+    }
+
+    /// `lines` with each .include (and .lib of a file) replaced by the file's lines: the whole file, or for
+    /// `.lib file section` its lines from `.lib section` to `.endl`
+    static func expandIncludes(_ lines: [String], from: String?, include: Includer?, depth: Int,
+                               warnings: inout [String]) -> [String] {
+        var result: [String] = []
+        for line in lines {
+            let first = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).first?.lowercased() ?? ""
+            guard [".include", ".inc", ".lib"].contains(first), let named = includePath(line) else {
+                if first != ".endl" { result.append(line) }
+                continue
+            }
+            let (path, rest) = (named.path, named.rest)
+            guard let include else {
+                warnings.append("\(path): the files a deck includes are read only from a file, left out")
+                continue
+            }
+            guard depth < 10, let file = include(path, from) else {
+                // a library's own section heading (`.lib name`) is not a file
+                if !(first == ".lib" && rest.isEmpty) || depth == 0 { warnings.append("\(path): can't read it, left out") }
+                continue
+            }
+            var included = logicalLines(file.text, titled: false)
+            if first == ".lib", let section = rest.first?.lowercased() {
+                // the section's lines
+                var inside = false
+                included = included.filter { line in
+                    let words = tokens(line).map { $0.lowercased() }
+                    if words.first == ".lib", words.count == 2, !inside, words[1] == section {
+                        inside = true
+                        return false
+                    }
+                    if words.first == ".endl", inside {
+                        inside = false
+                        return false
+                    }
+                    return inside
+                }
+                if included.isEmpty { warnings.append("\(path): no section \(rest[0])") }
+            }
+            result += expandIncludes(included, from: file.name, include: include, depth: depth + 1, warnings: &warnings)
+        }
+        return result
+    }
+
+    /// A subcircuit: its pins, its lines, and its parameters' defaults (as written)
+    struct Subcircuit {
+        var pins: [String]
+        var lines: [String]
+        var defaults: [(name: String, value: String)]
+    }
+
+    /// The words of a subcircuit's heading or instance before its parameters, and its parameters (after PARAMS: or
+    /// as the first name=value)
+    static func splitParameters(_ line: String) -> (words: [String], assignments: [(name: String, value: String)]) {
+        let cleaned = line.replacingOccurrences(of: #"(?i)(^|\s)params:"#, with: " ", options: .regularExpression)
+        guard let start = cleaned.range(of: #"[^\s=]+\s*="#, options: .regularExpression) else { return (tokens(cleaned), []) }
+        return (tokens(String(cleaned[..<start.lowerBound])), assignments(String(cleaned[start.lowerBound...])))
+    }
+
+    /// The parts of a netlist (the first line is its title, as in SPICE). Nodes keep their names; 0 and GND are ground.
+    /// The files it includes (.include, .lib) are read with `include`.
+    public static func parse(_ text: String, include: Includer? = nil) -> Import {
+        var lines = logicalLines(text, titled: true)
         let title = lines.first.map { $0.hasPrefix("*") ? String($0.dropFirst()).trimmingCharacters(in: .whitespaces) : $0 } ?? ""
         var warnings: [String] = []
+        lines = [title] + expandIncludes(Array(lines.dropFirst()), from: nil, include: include, depth: 0, warnings: &warnings)
         var models: [String: (type: String, params: [String: Double])] = [:]
-        // subcircuits: their pins and lines
-        var subcircuits: [String: (pins: [String], lines: [String])] = [:]
+        // subcircuits: their pins, lines and parameters
+        var subcircuits: [String: Subcircuit] = [:]
         var top: [String] = []
-        var open: (name: String, pins: [String], lines: [String])?
+        var open: (name: String, sub: Subcircuit)?
         // ngspice's interactive commands, between .control and .endc, are not part of the circuit
         var control = false
         // .param's constants, each worked out from those before it
@@ -76,17 +175,21 @@ public enum SpiceNetlist {
                 if let paren = type.firstIndex(of: "(") { type = String(type[..<paren]) }
                 for word in words.dropFirst(3) where word.contains("=") {
                     let pair = word.split(separator: "=", maxSplits: 1).map(String.init)
-                    if pair.count == 2, let v = value(pair[1]) { params[pair[0].uppercased()] = v }
+                    if pair.count == 2, let v = evaluate(pair[1], parameters) { params[pair[0].uppercased()] = v }
                 }
                 models[words[1].lowercased()] = (type, params)
             } else if first == ".subckt", words.count >= 2 {
-                open = (words[1].lowercased(), Array(words.dropFirst(2)).filter { !$0.contains("=") }, [])
+                let (heading, defaults) = splitParameters(line)
+                open = (words[1].lowercased(), Subcircuit(pins: Array(heading.dropFirst(2)), lines: [], defaults: defaults))
             } else if first == ".ends" {
-                if let sub = open { subcircuits[sub.name] = (sub.pins, sub.lines) }
+                if let sub = open { subcircuits[sub.name] = sub.sub }
                 open = nil
             } else if first == ".end" {
                 break
-            } else if first == ".param" && open == nil {
+            } else if first == ".param" && open != nil {
+                // a subcircuit's own constants, worked out for each instance
+                open?.sub.lines.append(line)
+            } else if first == ".param" {
                 for assignment in Self.assignments(String(line.dropFirst(6))) {
                     if let v = Self.evaluate(assignment.value, parameters) {
                         parameters[assignment.name.lowercased()] = v
@@ -95,9 +198,9 @@ public enum SpiceNetlist {
                     }
                 }
             } else if first.hasPrefix(".") {
-                if [".include", ".lib", ".param", ".func"].contains(first) { warnings.append("\(words[0]) is not followed: \(line)") }
+                if [".func", ".global"].contains(first) { warnings.append("\(words[0]) is not followed: \(line)") }
             } else if open != nil {
-                open?.lines.append(line)
+                open?.sub.lines.append(line)
             } else {
                 top.append(line)
             }
@@ -109,8 +212,8 @@ public enum SpiceNetlist {
     }
 
     /// The parsed netlist drawn as a circuit
-    public static func circuit(from text: String) throws -> (circuit: Circuit, warnings: [String]) {
-        let imported = parse(text)
+    public static func circuit(from text: String, include: Includer? = nil) throws -> (circuit: Circuit, warnings: [String]) {
+        let imported = parse(text, include: include)
         guard !imported.parts.isEmpty else { throw NetlistError.empty }
         return (try SchematicLayout.layout(imported.parts), imported.warnings)
     }
@@ -125,8 +228,9 @@ public enum SpiceNetlist {
         var current = ""
         var depth = 0
         for ch in cleaned {
-            if ch == "(" { depth += 1 }
-            if ch == ")" { depth = max(0, depth - 1) }
+            // a {expression} is one word, spaces and all
+            if ch == "(" || ch == "{" { depth += 1 }
+            if ch == ")" || ch == "}" { depth = max(0, depth - 1) }
             if (ch == " " || ch == "\t") && depth == 0 {
                 if !current.isEmpty { words.append(current) }
                 current = ""
@@ -267,6 +371,24 @@ public enum SpiceNetlist {
         return (SpiceExpression.polynomial(dimensions: 1, coefficients: [0, gain], inputs: [.current(rest[0])]), voltage)
     }
 
+    /// A card for `area` parallel devices, as ngspice scales one by an instance's area (and its M): the currents and
+    /// capacitances in `times` grow with it and the resistances in `over` shrink, after the card's aliases are read
+    static func scaled(_ card: [String: Double], area: Double, times: Set<String>, over: Set<String>,
+                       aliases: [String: String]) -> [String: Double] {
+        guard area != 1, area > 0 else { return card }
+        var result: [String: Double] = [:]
+        for (name, value) in card {
+            let key = aliases[name] ?? name
+            result[key] = times.contains(key) ? value * area : over.contains(key) ? value / area : value
+        }
+        return result
+    }
+
+    static let diodeArea: (times: Set<String>, over: Set<String>) = (["IS", "ISR", "IKF", "IKR", "CJO"], ["RS"])
+    static let bipolarArea: (times: Set<String>, over: Set<String>) = (
+        ["IS", "ISE", "ISC", "ISS", "IKF", "IKR", "IRB", "ITF", "CJE", "CJC", "CJS"], ["RB", "RBM", "RC", "RE"])
+    static let jfetArea: (times: Set<String>, over: Set<String>) = (["BETA", "IS", "CGS", "CGD"], ["RD", "RS"])
+
     /// Node names as first spelled: SPICE does not tell "Out" from "OUT"
     private final class Spellings {
         private var first: [String: String] = [:]
@@ -292,7 +414,7 @@ public enum SpiceNetlist {
     }
 
     private static func elements(_ lines: [String], models: [String: (type: String, params: [String: Double])],
-                                 subcircuits: [String: (pins: [String], lines: [String])], cache: inout [String: BlockDefinition],
+                                 subcircuits: [String: Subcircuit], cache: inout [String: BlockDefinition],
                                  warnings: inout [String], depth: Int, prefix: String = "", spellings: Spellings,
                                  parameters: [String: Double] = [:]) -> [NetlistPart] {
         var parts: [NetlistPart] = []
@@ -308,6 +430,11 @@ public enum SpiceNetlist {
             func keyword(_ key: String) -> Double? {
                 words.first { $0.lowercased().hasPrefix(key.lowercased() + "=") }
                     .flatMap { Self.evaluate(String($0.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[1]), parameters) }
+            }
+            /// A semiconductor's area: a number after its model's name (word `k`), times AREA= and M=
+            func area(after k: Int) -> Double {
+                let positional = k < words.count && !words[k].contains("=") ? number(k) : nil
+                return (positional ?? keyword("area") ?? 1) * (keyword("m") ?? 1)
             }
             switch letter {
             case "r", "c", "l":
@@ -364,7 +491,8 @@ public enum SpiceNetlist {
             case "d":
                 guard let anode = node(1), let cathode = node(2) else { continue }
                 let model = words.count > 3 ? models[words[3].lowercased()] : nil
-                let card = model?.params ?? [:]
+                let card = Self.scaled(model?.params ?? [:], area: area(after: 4), times: Self.diodeArea.times,
+                                       over: Self.diodeArea.over, aliases: SpiceDiode.aliases)
                 // the whole card; drawn as a Zener when it breaks down below 40 V (a rectifier's BV is its rating)
                 let kind: ElementKind = (card["BV"].map { abs($0) < 40 } ?? false) ? .zener : .diode
                 let (params, ignored) = SpiceDiode.parameters(fromCard: card, kind: kind)
@@ -378,8 +506,11 @@ public enum SpiceNetlist {
                     warnings.append("\(name): no model \(modelName)")
                     continue
                 }
-                // the whole Gummel-Poon card
-                let (params, ignored) = GummelPoon.parameters(fromCard: model.params)
+                // the whole Gummel-Poon card, for the transistor's area
+                let modelIndex = modelName == words[4] ? 4 : 5
+                let card = Self.scaled(model.params, area: area(after: modelIndex + 1), times: Self.bipolarArea.times,
+                                       over: Self.bipolarArea.over, aliases: GummelPoon.aliases)
+                let (params, ignored) = GummelPoon.parameters(fromCard: card)
                 if !ignored.isEmpty { warnings.append("\(name): \(ignored.joined(separator: ", ")) of model \(modelName) left out") }
                 parts.append(NetlistPart(kind: model.type == "pnp" ? .pnp : .npn, name: name, params: params,
                                          connections: ["collector": c, "base": b, "emitter": e]))
@@ -407,14 +538,17 @@ public enum SpiceNetlist {
                     warnings.append("Can't read \(line)")
                     continue
                 }
-                guard model.type == "njf" else {
-                    warnings.append("\(name): only N-channel JFETs")
+                guard model.type == "njf" || model.type == "pjf" else {
+                    warnings.append("\(name): model \(words[4]) is not a JFET's (NJF or PJF)")
                     continue
                 }
-                // the whole card
-                let (params, ignored) = SpiceJFET.parameters(fromCard: model.params)
+                // the whole card, for the transistor's area
+                let card = Self.scaled(model.params, area: area(after: 5), times: Self.jfetArea.times, over: Self.jfetArea.over,
+                                       aliases: SpiceJFET.aliases)
+                let (params, ignored) = SpiceJFET.parameters(fromCard: card)
                 if !ignored.isEmpty { warnings.append("\(name): \(ignored.joined(separator: ", ")) of model \(words[4]) left out") }
-                parts.append(NetlistPart(kind: .njfet, name: name, params: params, connections: ["drain": d, "gate": g, "source": s]))
+                parts.append(NetlistPart(kind: model.type == "pjf" ? .pjfet : .njfet, name: name, params: params,
+                                         connections: ["drain": d, "gate": g, "source": s]))
             case "k":
                 guard words.count >= 4, let k = number(3) else { continue }
                 couplings.append((words[1].lowercased(), words[2].lowercased(), k))
@@ -452,32 +586,69 @@ public enum SpiceNetlist {
                     warnings.append("\(name): \(error), left out")
                 }
             case "x":
-                guard words.count >= 2 else { continue }
-                let subName = words[words.count - 1].lowercased()
+                // X name nodes… subcircuit [PARAMS:] name=value…
+                let (heading, overrides) = Self.splitParameters(line)
+                guard heading.count >= 2 else { continue }
+                let subName = heading[heading.count - 1].lowercased()
                 guard let sub = subcircuits[subName] else {
-                    warnings.append("\(name): no subcircuit \(words[words.count - 1])")
+                    warnings.append("\(name): no subcircuit \(heading[heading.count - 1])")
                     continue
                 }
                 guard depth < 8 else { continue }
+                // the subcircuit's constants for this instance: what it is given (worked out where it is placed), its
+                // defaults for the rest, then its own .param lines
+                var inner = parameters
+                var own: [String] = []
+                for (key, text) in overrides {
+                    guard let v = Self.evaluate(text, parameters) else {
+                        warnings.append("\(name): can't work out \(key)=\(text)")
+                        continue
+                    }
+                    inner[key.lowercased()] = v
+                    own.append(key.lowercased())
+                }
+                for (key, text) in sub.defaults where !own.contains(key.lowercased()) {
+                    guard let v = Self.evaluate(text, inner) else {
+                        warnings.append("\(name): can't work out \(key)=\(text) of \(heading[heading.count - 1])")
+                        continue
+                    }
+                    inner[key.lowercased()] = v
+                    own.append(key.lowercased())
+                }
+                for paramLine in sub.lines where paramLine.lowercased().hasPrefix(".param") {
+                    for assignment in Self.assignments(String(paramLine.dropFirst(6))) {
+                        guard let v = Self.evaluate(assignment.value, inner) else {
+                            warnings.append("\(name): can't work out .param \(assignment.name)=\(assignment.value)")
+                            continue
+                        }
+                        inner[assignment.name.lowercased()] = v
+                        own.append(assignment.name.lowercased())
+                    }
+                }
+                // one block for each different set of its constants
+                let key = subName + own.sorted().map { "|\($0)=\(inner[$0] ?? 0)" }.joined()
                 let block: BlockDefinition
-                if let made = cache[subName] {
+                if let made = cache[key] {
                     block = made
                 } else {
                     // a subcircuit's nodes are its own: spelled as it spells them
                     let inside = Spellings()
-                    var inner = elements(sub.lines, models: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings,
-                                         depth: depth + 1, spellings: inside, parameters: parameters)
+                    var drawn = elements(sub.lines.filter { !$0.hasPrefix(".") }, models: models, subcircuits: subcircuits,
+                                         cache: &cache, warnings: &warnings, depth: depth + 1, spellings: inside, parameters: inner)
                     for pin in sub.pins {
-                        inner.append(NetlistPart(kind: .port, name: pin, connections: ["net": net(pin, "", inside)]))
+                        drawn.append(NetlistPart(kind: .port, name: pin, connections: ["net": net(pin, "", inside)]))
                     }
-                    guard let drawn = try? SchematicLayout.layout(inner) else {
+                    guard let laid = try? SchematicLayout.layout(drawn) else {
                         warnings.append("\(name): subcircuit \(subName) can't be drawn")
                         continue
                     }
-                    block = drawn.asBlock(named: words[words.count - 1])
-                    cache[subName] = block
+                    block = laid.asBlock(named: heading[heading.count - 1])
+                    cache[key] = block
                 }
-                let nodes = words.dropFirst().dropLast()
+                let nodes = heading.dropFirst().dropLast()
+                if nodes.count != sub.pins.count {
+                    warnings.append("\(name): \(nodes.count) nodes for the \(sub.pins.count) pins of \(heading[heading.count - 1])")
+                }
                 var part = NetlistPart(kind: .block, name: name)
                 part.block = block
                 // pins by name: the block's ports are named after the subcircuit's pins
@@ -598,9 +769,9 @@ public enum SpiceNetlist {
                 let model = "M_" + device("M", name)
                 models.append(".model \(model) \(part.kind == .nmos ? "NMOS" : "PMOS")(\(SpiceMOSFET.cardText(p, kind: part.kind)))")
                 lines.append("\(device("M", name)) \(n("drain")) \(n("gate")) \(n("source")) \(n("source")) \(model) L=1 W=1")
-            case .njfet:
+            case .njfet, .pjfet:
                 let model = "J_" + device("J", name)
-                models.append(".model \(model) NJF(\(SpiceJFET.cardText(p, kind: part.kind)))")
+                models.append(".model \(model) \(part.kind == .njfet ? "NJF" : "PJF")(\(SpiceJFET.cardText(p, kind: part.kind)))")
                 lines.append("\(device("J", name)) \(n("drain")) \(n("gate")) \(n("source")) \(model)")
             case .behavioralSource:
                 // the expression with its pins' nets, and the sources it reads by their names in the deck

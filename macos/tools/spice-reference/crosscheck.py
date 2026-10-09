@@ -70,7 +70,8 @@ for kind in ('nmos', 'pmos'):
 # and a JFET's
 jfet_body = element[element.index('static let jfetCardParams'):]
 jfet_body = jfet_body[:jfet_body.index('\n    ]\n')]
-DEFAULTS['njfet'].update({k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', jfet_body)})
+for kind in ('njfet', 'pjfet'):
+    DEFAULTS[kind].update({k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', jfet_body)})
 # GummelPoon.card: SPICE's names for JSpice's keys
 GP_CARD = [('IS', 'saturationCurrent'), ('BF', 'beta'), ('NF', 'nf'), ('VAF', 'vaf'), ('IKF', 'ikf'), ('ISE', 'ise'), ('NE', 'ne'),
            ('BR', 'br'), ('NR', 'nr'), ('VAR', 'var'), ('IKR', 'ikr'), ('ISC', 'isc'), ('NC', 'nc'), ('NKF', 'nkf'),
@@ -239,8 +240,8 @@ def spice_elements(parts, ac_source=None, temperature=27):
         elif k in ('nmos', 'pmos'):
             models.append('.model M_%s %s(%s)' % (n, k.upper(), mosfet_card(p, k)))
             lines.append('M%s %s %s %s %s M_%s L=1 W=1' % (n, pin('drain'), pin('gate'), pin('source'), pin('source'), n))
-        elif k == 'njfet':
-            models.append('.model J_%s NJF(%s)' % (n, jfet_card(p)))
+        elif k in ('njfet', 'pjfet'):
+            models.append('.model J_%s %s(%s)' % (n, 'NJF' if k == 'njfet' else 'PJF', jfet_card(p)))
             lines.append('J%s %s %s %s J_%s' % (n, pin('drain'), pin('gate'), pin('source'), n))
         elif k == 'opAmp':
             gain, limit, gbw = max(param(p, 'gain'), 1), max(param(p, 'limit'), 0.01), param(p, 'gbw')
@@ -774,6 +775,10 @@ DEVICE_SWEEPS = [
          'into saturation (LAMBDA, RD)', kind='njfet', params=TEST_JFET, swept='vds', fixed=-0.6, start=-3, stop=12, step=0.25),
     dict(id='hot-jfet-vgs', note='test JFET card at 70 °C (TCV, BEX, XTI)', kind='njfet', params=TEST_JFET, swept='vgs', fixed=5,
          start=-2.2, stop=0.7, step=0.05, temperature=70),
+    dict(id='pjfet-vgs', note='the test JFET card as P-channel: currents against VGS at VDS -5 V, from cut-off to the gate '
+         'conducting', kind='pjfet', params=TEST_JFET, swept='vgs', fixed=-5, start=2.2, stop=-0.8, step=-0.05),
+    dict(id='pjfet-vds', note='the test JFET card as P-channel: currents against VDS at VGS 0.6 V, from inverse mode into '
+         'saturation', kind='pjfet', params=TEST_JFET, swept='vds', fixed=0.6, start=3, stop=-12, step=-0.25),
     dict(id='nmos-vgs', note='test NMOS card: currents against VGS at VDS 5 V, through the threshold (RS)', kind='nmos',
          params=TEST_NMOS, swept='vgs', fixed=5, start=0, stop=6, step=0.1),
     dict(id='nmos-vds', note='test NMOS card: currents against VDS at VGS 3.5 V, from the body diode and inverse mode (GAMMA) '
@@ -810,10 +815,11 @@ def run_ngspice_dc(sweep):
         return [row[0] for row in rows], [-row[1] for row in rows], None
     temperature = sweep.get('temperature', 27)
     data = tempfile.mktemp(suffix='.txt')
-    if sweep['kind'] in ('njfet', 'nmos', 'pmos'):
+    if sweep['kind'] in ('njfet', 'pjfet', 'nmos', 'pmos'):
         # a JFET or MOSFET between two sources, gate-source and drain-source: the currents into its gate and drain
         held = 'VDS' if sweep['swept'] == 'vgs' else 'VGS'
-        device = ['J1 d g 0 JT', '.model JT NJF(%s)' % jfet_card(part)] if sweep['kind'] == 'njfet' else \
+        jfet = 'NJF' if sweep['kind'] == 'njfet' else 'PJF'
+        device = ['J1 d g 0 JT', '.model JT %s(%s)' % (jfet, jfet_card(part))] if sweep['kind'] in ('njfet', 'pjfet') else \
             ['M1 d g 0 0 MT L=1 W=1', '.model MT %s(%s)' % (sweep['kind'].upper(), mosfet_card(part, sweep['kind']))]
         deck = '\n'.join(['* JSpice device check',
                           '.options reltol=1e-9 abstol=1e-18 vntol=1e-12 gmin=1e-12 rshunt=1e12 itl1=500 itl2=500',
@@ -858,7 +864,7 @@ def devices_main():
                      fixed=sweep['fixed'], voltages=[round(v, 9) for v in voltages])
         if collector is None:
             entry['anode'] = [float('%.12g' % i) for i in base]
-        elif sweep['kind'] in ('njfet', 'nmos', 'pmos'):
+        elif sweep['kind'] in ('njfet', 'pjfet', 'nmos', 'pmos'):
             entry.update(gate=[float('%.12g' % i) for i in base], drain=[float('%.12g' % i) for i in collector])
         else:
             entry.update(base=[float('%.12g' % i) for i in base], collector=[float('%.12g' % i) for i in collector])
@@ -934,20 +940,75 @@ R2 inv out 47k
 RL out 0 2k
 X1 0 inv vcc vee out OPX
 '''),
+    dict(id='jfet-opamp-library', note='two JFET-input op-amps from a library file (.lib with sections, a .include within it), '
+         'one given PARAMS:, its P-JFETs, a diode and a transistor with area factors',
+         duration=3e-3, probes=['out', 'out2', 'dk', 'e3'], files={
+             'opamps.lib': """* a test library (not a vendor's): sections, a subcircuit with parameters
+.lib other
+.subckt JOPA a b
+R1 a b 1
+.ends
+.endl
+.lib jfet
+.include parts.mod
+.subckt JOPA inp inn vcc vee out PARAMS: GM=1.9e-4 RO=50
+.param KB={120/RO}
+ISS vcc 10 DC 200u
+J1 11 inn 10 JX 2
+J2 12 inp 10 JX 2
+RD1 11 vee 3k
+RD2 12 vee 3k
+GA n6 0 11 12 {GM}
+R2 n6 0 100k
+CC n6 n7 30p
+GB n7 0 n6 0 {KB}
+RO2 n7 0 {RO}
+BOUT out 0 V=max(min(V(n7), V(vcc)-1.5), V(vee)+1.5)
+.model JX PJF(IS=15e-12 BETA=135e-6 VTO=-1 LAMBDA=0.01 CGS=3p CGD=1p RD=10 RS=10)
+.ends
+.endl
+""",
+             'parts.mod': """* models for the test library
+.model QB NPN(IS=2e-15 BF=150 VAF=90 RB=50 RE=0.5 CJE=5p CJC=3p)
+.model DCLAMP D(IS=1e-14 RS=5 CJO=2p N=1.2)
+"""}, netlist="""JFET-input op-amps from a library
+.lib opamps.lib jfet
+.param rf=22k
+VCC vcc 0 DC 15
+VEE vee 0 DC -15
+VIN in 0 SIN(0 0.4 1k)
+R1 in inv 10k
+R2 inv out {rf}
+RL out 0 2k
+X1 0 inv vcc vee out JOPA PARAMS: GM=3e-4
+R3 out f1 4.7k
+C3 f1 0 4.7n
+X2 f1 out2 vcc vee out2 JOPA
+RL2 out2 0 10k
+D1 out2 dk DCLAMP area=4
+R4 dk 0 3.3k
+Q1 vcc out2 e3 QB 3
+RE3 e3 vee 4.7k
+"""),
 ]
 
 def netlists_main():
     out = []
     for case in NETLIST_CASES:
-        data = tempfile.mktemp(suffix='.txt')
+        # the deck and the files it includes, side by side
+        folder = tempfile.mkdtemp()
+        for name, text in case.get('files', {}).items():
+            with open(os.path.join(folder, name), 'w') as f:
+                f.write(text)
+        data = os.path.join(folder, 'data.txt')
         step = case['duration'] / 500
         deck = case['netlist'] + '\n'.join([
             '.options reltol=1e-6 abstol=1e-13 vntol=1e-8 gmin=1e-12 method=gear maxord=2 itl4=200',
             '.tran %.6g %.12g 0 %.6g uic' % (step, case['duration'], step), '.control', 'run',
             'wrdata %s %s' % (data, ' '.join('v(%s)' % p for p in case['probes'])), 'quit', '.endc', '.end']) + '\n'
-        with tempfile.NamedTemporaryFile('w', suffix='.cir', delete=False) as f:
+        with open(os.path.join(folder, 'deck.cir'), 'w') as f:
             f.write(deck)
-        result = subprocess.run(['ngspice', '-b', f.name], capture_output=True, text=True, timeout=600)
+        result = subprocess.run(['ngspice', '-b', 'deck.cir'], capture_output=True, text=True, timeout=600, cwd=folder)
         if not os.path.exists(data):
             sys.exit('ngspice failed:\n' + deck + result.stdout[-3000:] + result.stderr[-3000:])
         rows = [list(map(float, line.split())) for line in open(data) if line.strip()]
@@ -955,6 +1016,8 @@ def netlists_main():
         time = [row[0] for row in rows]
         entry = dict(id=case['id'], note=case['note'], netlist=case['netlist'], duration=case['duration'],
                      times=[float('%.9g' % t) for t in time], probes=[])
+        if 'files' in case:
+            entry['files'] = case['files']
         for k, probe in enumerate(case['probes']):
             values = [row[2 * k + 1] for row in rows]
             entry['probes'].append(dict(net=probe, values=[float('%.7g' % v) for v in values]))
