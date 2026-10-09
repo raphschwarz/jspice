@@ -519,8 +519,11 @@ public final class AVR: Microcontroller {
     private func service() {
         let elapsed = cycles - servicedAt
         servicedAt = cycles
-        if elapsed > 0 {
-            for timer in timers where timer.prescale != 0 { timer.advance(elapsed) }
+        // (nothing below changes a timer's prescaler, so when each ticks next is known now)
+        var next = Int.max
+        for timer in timers where timer.prescale != 0 {
+            if elapsed > 0 { timer.advance(elapsed) }
+            next = min(next, cycles + timer.prescale - timer.accumulator)
         }
         for usart in usarts where usart.needsUpdate { usart.update() }
         if let done = adcDoneAt, cycles >= done { adcFinish() }
@@ -540,8 +543,6 @@ public final class AVR: Microcontroller {
                 if !watchedPins.isEmpty { logWatchedPins(at: at) }
             }
         }
-        var next = Int.max
-        for timer in timers where timer.prescale != 0 { next = min(next, cycles + timer.prescale - timer.accumulator) }
         for usart in usarts { next = min(next, usart.nextUpdate) }
         if let done = adcDoneAt { next = min(next, done) }
         if let spi { next = min(next, spi.nextEvent) }
@@ -664,6 +665,20 @@ public final class AVR: Microcontroller {
         if address < 0x20 || address >= ioEnd {
             if address < dataSize { d[address] = value }
             return
+        }
+        // the status register and the stack pointer are the core's own, written at every cli() and its restore and in
+        // function prologues: no peripheral reads them, so they need not be brought up to date (none is due to tick
+        // before `nextService` anyway)
+        switch address {
+        case AVR.SREG:
+            if value & AVR.flagI != 0 && d[AVR.SREG] & AVR.flagI == 0 { interruptDelay = enableDelay }
+            d[AVR.SREG] = value
+            return
+        case AVR.SPL, AVR.SPH:
+            d[address] = value
+            return
+        default:
+            break
         }
         peripheralsTouched()
         if address < pinRegisters.count && pinRegisters[address] { ioWritten = true }
