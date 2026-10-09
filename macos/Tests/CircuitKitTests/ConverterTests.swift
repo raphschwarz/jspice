@@ -176,7 +176,8 @@ final class ConverterTests: XCTestCase {
         let arduino = try index(circuit, "U1")
         var last = 0.0
         var serial = ""
-        run(circuit, dt: 1e-5, seconds: 0.08, from: 0.07) { _, simulator in
+        // (the sketch prints every 200 ms, the first time at 200 ms)
+        run(circuit, dt: 1e-5, seconds: 0.21, from: 0.2) { _, simulator in
             last = simulator.voltageAcross(dac)
             serial = String(decoding: simulator.chip(arduino)?.serialOutput ?? [], as: UTF8.self)
         }
@@ -304,7 +305,8 @@ final class ConverterTests: XCTestCase {
         let bypassed = try voltages(pressed: false)
         XCTAssertEqual(bypassed.bypass, 1, accuracy: 1e-9)
         XCTAssertEqual(bypassed.effect, 0, accuracy: 1e-9)
-        XCTAssertEqual(bypassed.led, 2.5, accuracy: 1e-9)
+        // (less what the 3PDT's contact resistance takes)
+        XCTAssertEqual(bypassed.led, 2.5, accuracy: 1e-6)
         let engaged = try voltages(pressed: true)
         XCTAssertEqual(engaged.bypass, 0, accuracy: 1e-9)
         XCTAssertEqual(engaged.effect, 1, accuracy: 1e-9)

@@ -386,6 +386,11 @@ public final class AVR: Microcontroller {
     /// Where the present run started, for the pin events' times
     private var runStart = 0
 
+    /// The TWI moving one line of an event before the other: logged at once, so the parts on the bus see them in order
+    func twiLinesMoved(at cycle: Int) {
+        if !watchedPins.isEmpty { logWatchedPins(at: cycle) }
+    }
+
     private func logWatchedPins(at cycle: Int) {
         for k in watchedPins.indices {
             let level = eventLevel(watchedPins[k])

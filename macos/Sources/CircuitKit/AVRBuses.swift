@@ -345,6 +345,8 @@ final class AVRTWI {
             case let .lines(sda, scl):
                 if let sda { sdaLow = sda }
                 if let scl { sclLow = scl }
+                // SDA moving as SCL falls: the parts on the bus see SCL low first, not a START or STOP
+                if stepIndex + 1 < steps.count, case .lines = steps[stepIndex + 1] { avr.twiLinesMoved(at: nextEvent) }
             case .wait:
                 stepIndex += 1
                 nextEvent = avr.cycles + halfPeriod
