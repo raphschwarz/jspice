@@ -113,10 +113,13 @@ public enum MakerModelCatalog {
                   DatasheetValue(.swingHigh, 13.5, .typical, "VOM, RL = 10 kΩ"),
                   DatasheetValue(.swingLow, -13.5, .typical, "VOM, RL = 10 kΩ"),
               ],
-              ngspice: [:],
+              ngspice: [.offset: 0.0109707, .supplyCurrent: 14.1941, .openLoopGain: 106.705, .gainBandwidth: 3.34616,
+                        .unityGain: 3.04148, .phaseMargin: 63.889, .slewRise: 12.8246, .slewFall: 13.1229, .swingHigh: 13.4302,
+                        .swingLow: -13.4302],
               notes: [
-                  "Models the original die: 3 MHz and 13 V/µs, where today's TL07xC is 5.25 MHz and 20 V/µs.",
-                  "Draws 14 mA from the supplies (its RP is 2.143 kΩ across them) where the datasheet gives 1.4 mA.",
+                  "It models the original die: 3.3 MHz and 13 V/µs, where today's TL07xC is 5.25 MHz and 20 V/µs (the datasheet keeps 3 MHz for the NS and PS packages and the TL07xM).",
+                  "It draws 14.2 mA from the supplies, ten times the datasheet's 1.4 mA: its RP is 2.143 kΩ across them.",
+                  "It has no input offset to speak of (11 µV), where the datasheet's typical is 3 mV.",
               ]),
         Model(part: "OPA1678", maker: "Texas Instruments",
               summary: "Low-noise audio dual op-amp (OPA167x): a Green-Williams-Lis macromodel",
@@ -135,7 +138,13 @@ public enum MakerModelCatalog {
                   DatasheetValue(.swingHigh, 14.2, .atLeast, "VO up to (V+) – 0.8 V"),
                   DatasheetValue(.swingLow, -14.2, .atMost, "VO down to (V–) + 0.8 V"),
               ],
-              ngspice: [:], notes: []),
+              ngspice: [.offset: 0.499397, .supplyCurrent: 2.00025, .openLoopGain: 119.708, .gainBandwidth: 17.4125,
+                        .unityGain: 23.2092, .phaseMargin: 73.4824, .slewRise: 7.88953, .slewFall: 7.88894, .swingHigh: 13.8804,
+                        .swingLow: -13.7006],
+              notes: [
+                  "Into 2 kΩ its output swings to 1.1 V from the positive supply and 1.3 V from the negative, where the datasheet's output range reaches 0.8 V from either.",
+                  "Its slew rate here is a follower's (7.9 V/µs); the datasheet gives 9 V/µs at a gain of −1.",
+              ]),
         Model(part: "OPA2134", maker: "Texas Instruments",
               summary: "FET-input audio dual op-amp (OPAx134): a Green-Williams-Lis macromodel",
               archive: URL(string: "https://www.ti.com/lit/zip/SBOM042")!, file: "OPAx134.LIB",
@@ -154,7 +163,10 @@ public enum MakerModelCatalog {
                   DatasheetValue(.swingHigh, 13.5, .atLeast, "VO, RL = 2 kΩ: (V+) – 1.5 V"),
                   DatasheetValue(.swingLow, -13.8, .atMost, "VO, RL = 2 kΩ: (V–) + 1.2 V"),
               ],
-              ngspice: [:], notes: []),
+              ngspice: [.offset: 0.500004, .supplyCurrent: 4.00027, .openLoopGain: 124.013, .gainBandwidth: 7.83183,
+                        .unityGain: 7.72596, .phaseMargin: 54.499, .slewRise: 19.8438, .slewFall: 19.8435, .swingHigh: 13.6955,
+                        .swingLow: -14.0681],
+              notes: ["Made from the 2015 datasheet (SBOS058A); its figures agree with the 2024 one's."]),
     ]
 
     public static func model(_ part: String) -> Model? {

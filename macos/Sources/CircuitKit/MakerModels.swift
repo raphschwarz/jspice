@@ -155,8 +155,9 @@ public enum MakerModels {
     }
 
     /// The op-amp `block`'s figures, its pins given in the usual order of a model: non-inverting input, inverting input,
-    /// positive supply, negative supply, output. Open-loop gain and phase are worked out from a follower's small-signal
-    /// response H as H / (1 − H), so the model is measured where it is biased as in use.
+    /// positive supply, negative supply, output. Open-loop gain and phase are measured as datasheets measure them, at a
+    /// fixed common-mode voltage: in an inverting stage of gain −1 with the + input grounded, the output over the −
+    /// input's small signal (a follower's response would fold the common-mode rejection in).
     public static func measureOpAmp(_ block: BlockDefinition, pins: [String], supply: Double = 15,
                                     load: Double = 10_000) throws -> OpAmpFigures {
         guard pins.count == 5 else { throw MeasurementError(description: "An op-amp has five pins: +in, −in, V+, V−, out") }
@@ -186,19 +187,37 @@ public enum MakerModels {
             NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": volts], connections: ["plus": "inp", "minus": "GND"])
         }
 
-        // a follower at rest: offset and supply current, then its small-signal response
+        // a follower at rest: offset and supply current
         let follower = try circuit(dc(0), follower: true)
         let vi = try index(follower, "VI"), rl = try index(follower, "RL"), vp = try index(follower, "VP")
         let rest = Simulator.settled(follower, holding: vi, duration: 0.01, maxSteps: 100_000)
         guard !rest.isFailed else { throw MeasurementError(description: "As a follower it fails: \(rest.problems.joined(separator: "; "))") }
         let offset = rest.terminalVoltage(rl, 0)
         let supplyCurrent = rest.current(vp)
-        let out = rest.nodes(of: rl)[0]
+
+        // an inverting stage of gain −1 at rest, and its small-signal response: the open-loop gain is the output over the
+        // − input
+        var u = NetlistPart(kind: .block, name: "U1")
+        u.block = block
+        u.connections = [pins[0]: "GND", pins[1]: "inn", pins[2]: "vcc", pins[3]: "vee", pins[4]: "out"]
+        let inverting = try SchematicLayout.layout([
+            u,
+            NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": 0], connections: ["plus": "in", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "in", "b": "inn"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "inn", "b": "out"]),
+            NetlistPart(kind: .dcVoltage, name: "VP", params: ["voltage": supply], connections: ["plus": "vcc", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": supply], connections: ["plus": "GND", "minus": "vee"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": load], connections: ["a": "out", "b": "GND"]),
+        ])
+        let source = try index(inverting, "VI"), r2 = try index(inverting, "R2")
+        let stage = Simulator.settled(inverting, holding: source, duration: 0.01, maxSteps: 100_000)
+        guard !stage.isFailed else { throw MeasurementError(description: "As an inverting stage it fails: \(stage.problems.joined(separator: "; "))") }
+        let (minus, out) = (stage.nodes(of: r2)[0], stage.nodes(of: r2)[1])
         let frequencies = (0...100).map { pow(10, -1 + Double($0) / 10) }
-        guard let model = rest.smallSignalModel(), let response = model.solve(input: vi, frequencies: frequencies) else {
+        guard let model = stage.smallSignalModel(), let response = model.solve(input: source, frequencies: frequencies) else {
             throw MeasurementError(description: "Its small-signal response can't be worked out")
         }
-        let openLoop = response.map { h in h[out] / (Complex(1) - h[out]) }
+        let openLoop = response.map { v in Complex(0) - v[out] / v[minus] }
         /// Where the gain falls through `level`, log-log between the two points either side, and the fraction between them
         func falls(through level: Double) -> (frequency: Double, k: Int, t: Double)? {
             for k in 1..<openLoop.count where openLoop[k - 1].magnitude >= level && openLoop[k].magnitude < level {
