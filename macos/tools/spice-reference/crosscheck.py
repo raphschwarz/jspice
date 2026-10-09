@@ -883,6 +883,13 @@ def devices_main():
 # Decks ngspice runs as they are and JSpice imports (SpiceNetlist) and runs: E, F, G, H and B sources in every form (gain,
 # POLY, VALUE, TABLE, V= and I=, .param constants), and a subcircuit of them (an op-amp macromodel after Boyle's, with
 # test values, not any maker's) whose F and H read a source inside it
+# PSpice's VSWITCH and ISWITCH: the resistance's logarithm a cubic of the control between its off and on values (as
+# SpiceNetlist.switchResistance writes it), for ngspice, which has neither
+def switch_resistance(control, on, off, ron, roff):
+    lm, lr = math.log(math.sqrt(ron * roff)), math.log(ron / roff)
+    x = '((max(min(%s,%.17g),%.17g)-(%.17g))/(%.17g))' % (control, max(on, off), min(on, off), (on + off) / 2, on - off)
+    return 'exp(%.17g+(%.17g)*(1.5*%s-2*%s*%s*%s))' % (lm, lr, x, x, x, x)
+
 NETLIST_CASES = [
     dict(id='controlled-sources', note='E, F, G, H (gain and POLY), B (V= and I=), TABLE and VALUE, driven by a 1 kHz sine',
          duration=2e-3, probes=['e1', 'g1', 'f1', 'h1', 'p2', 'b1', 'b2', 't3', 'v4'], netlist='''controlled sources
@@ -992,6 +999,42 @@ R4 dk 0 3.3k
 Q1 vcc out2 e3 QB 3
 RE3 e3 vee 4.7k
 """),
+    dict(id='switches', note='PSpice\'s smooth VSWITCH (a shunt to ground, swept through its band by a sine) and ISWITCH (read '
+         'from a source\'s current), and resistors with a model: R_NOISELESS and one scaling its value. ngspice has none of '
+         'them: its deck spells the switches\' resistance (PSpice\'s formula) as B sources',
+         duration=4e-3, probes=['a', 'c', 'd2'], netlist="""switches and model resistors
+VIN in 0 SIN(0 2 1k)
+VCTL ctl 0 SIN(0.6 0.8 500)
+R1 in a R_NOISELESS 1k
+S1 a 0 ctl 0 SMOD
+RL a 0 10k
+VSENSE in d DC 0
+RS d 0 RHALF 2k
+V2 b 0 DC 1
+W1 b c VSENSE WMOD
+RW c 0 2k
+CW c 0 100n
+R2 a d2 RHALF 4k
+C2 d2 0 47n
+.model R_NOISELESS RES(T_ABS=-273.15)
+.model RHALF RES(R=0.5)
+.model SMOD VSWITCH(RON=10 ROFF=1MEG VON=1 VOFF=0.2)
+.model WMOD ISWITCH(RON=50 ROFF=100k ION=1m IOFF=0.2m)
+""", ngspice="""switches and model resistors (ngspice: the switches as B sources)
+VIN in 0 SIN(0 2 1k)
+VCTL ctl 0 SIN(0.6 0.8 500)
+R1 in a 1k
+BS1 a 0 I=V(a,0)/%s
+RL a 0 10k
+VSENSE in d DC 0
+RS d 0 1k
+V2 b 0 DC 1
+BW1 b c I=V(b,c)/%s
+RW c 0 2k
+CW c 0 100n
+R2 a d2 2k
+C2 d2 0 47n
+""" % (switch_resistance('V(ctl,0)', 1, 0.2, 10, 1e6), switch_resistance('i(VSENSE)', 1e-3, 0.2e-3, 50, 100e3))),
 ]
 
 def netlists_main():
@@ -1004,7 +1047,8 @@ def netlists_main():
                 f.write(text)
         data = os.path.join(folder, 'data.txt')
         step = case['duration'] / 500
-        deck = case['netlist'] + '\n'.join([
+        # (the deck as ngspice can run it, when it differs)
+        deck = case.get('ngspice', case['netlist']) + '\n'.join([
             '.options reltol=1e-6 abstol=1e-13 vntol=1e-8 gmin=1e-12 method=gear maxord=2 itl4=200',
             '.tran %.6g %.12g 0 %.6g uic' % (step, case['duration'], step), '.control', 'run',
             'wrdata %s %s' % (data, ' '.join('v(%s)' % p for p in case['probes'])), 'quit', '.endc', '.end']) + '\n'

@@ -236,6 +236,68 @@ final class SpiceNetlistTests: XCTestCase {
         XCTAssertEqual(try p("J1", "rd"), 10, accuracy: 1e-9)
     }
 
+    /// Resistors with a model (PSpice's R_NOISELESS, a scale) and switches: VSWITCH and ISWITCH as behavioural sources,
+    /// SW read without hysteresis (with a warning)
+    func testSwitchesAndModelResistors() throws {
+        let imported = SpiceNetlist.parse("""
+        switches
+        V1 in 0 DC 1
+        R1 in a R_NOISELESS 1k
+        R2 a 0 RX 3k
+        S1 a 0 ctl 0 SMOD
+        VCTL ctl 0 DC 1
+        VS in d DC 0
+        RD d 0 1k
+        W1 in e VS WMOD
+        RE e 0 1k
+        S2 in f ctl 0 SABRUPT
+        RF f 0 1k
+        .model R_NOISELESS RES(T_ABS=-273.15)
+        .model RX RES(R=2)
+        .model SMOD VSWITCH(RON=10 ROFF=1MEG VON=1 VOFF=0)
+        .model WMOD ISWITCH(RON=1 ROFF=1MEG ION=1m IOFF=0)
+        .model SABRUPT SW(VT=0.5 VH=0.1 RON=1 ROFF=1e9)
+        """)
+        XCTAssertEqual(imported.warnings.count, 1, "\(imported.warnings)")
+        XCTAssertTrue(imported.warnings.first?.contains("without hysteresis") ?? false)
+        let r1 = try XCTUnwrap(imported.parts.first { $0.name == "R1" })
+        XCTAssertEqual(r1.params["resistance"], 1000)
+        XCTAssertEqual(r1.params["noiseless"], 1)
+        XCTAssertEqual(imported.parts.first { $0.name == "R2" }?.params["resistance"], 6000)
+        XCTAssertNil(imported.parts.first { $0.name == "R2" }?.params["noiseless"])
+        // VS stays a source (W reads its current), not an ammeter
+        XCTAssertEqual(imported.parts.first { $0.name == "VS" }?.kind, .dcVoltage)
+        for name in ["S1", "W1", "S2"] {
+            XCTAssertEqual(imported.parts.first { $0.name == name }?.kind, .behavioralSource, name)
+        }
+        // with the control at VON (and the current at ION) the switches are on: RON
+        let (circuit, _) = try SpiceNetlist.circuit(from: """
+        on
+        V1 in 0 DC 1
+        S1 in a ctl 0 SMOD
+        RA a 0 990
+        VCTL ctl 0 DC 1
+        VS in d DC 0
+        RD d 0 1k
+        W1 in e VS WMOD
+        RE e 0 999
+        .model SMOD VSWITCH(RON=10 ROFF=1MEG VON=1 VOFF=0)
+        .model WMOD ISWITCH(RON=1 ROFF=1MEG ION=1m IOFF=0)
+        """)
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-3)
+        for _ in 0..<3 { simulator.step() }
+        XCTAssertFalse(simulator.isFailed, "\(simulator.problems)")
+        func top(_ name: String) throws -> Double {
+            let k = try XCTUnwrap(circuit.elements.firstIndex { $0.name == name })
+            return circuit.elements[k].terminalNames.indices.map { simulator.terminalVoltage(k, $0) }.max() ?? 0
+        }
+        XCTAssertEqual(try top("RA"), 0.99, accuracy: 1e-6)
+        XCTAssertEqual(try top("RE"), 0.999, accuracy: 1e-6)
+        // a noiseless resistor is written for ngspice as one
+        XCTAssertTrue(SpiceNetlist.export(try SpiceNetlist.circuit(from: "n\nV1 a 0 DC 1\nR1 a 0 R_NOISELESS 1k\n.model R_NOISELESS RES(T_ABS=-273.15)").circuit)
+            .contains("R1 a 0 1000 noisy=0"))
+    }
+
     /// A P-JFET's card comes back as PJF with the same numbers
     func testPChannelJFETRoundTrip() throws {
         let text = """

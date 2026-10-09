@@ -295,8 +295,8 @@ public enum SpiceNetlist {
         return result
     }
 
-    /// The voltage sources a deck's controlled sources read the current of: F and H sources' controls and the I( ) of
-    /// expressions
+    /// The voltage sources a deck's controlled sources read the current of: F and H sources' and W switches' controls and
+    /// the I( ) of expressions
     static func sensedSources(_ lines: [String]) -> Set<String> {
         var result = Set<String>()
         let current = try? NSRegularExpression(pattern: #"\bi\(\s*([^),\s]+)\s*\)"#, options: .caseInsensitive)
@@ -307,7 +307,8 @@ public enum SpiceNetlist {
                     if let r = Range(match.range(at: 1), in: line) { result.insert(line[r].lowercased()) }
                 }
             }
-            guard letter == "f" || letter == "h" else { continue }
+            // F and H read a source's current, and so does a W switch
+            guard letter == "f" || letter == "h" || letter == "w" else { continue }
             let words = tokens(line)
             guard words.count > 3 else { continue }
             if words[3].lowercased() == "poly", words.count > 4, let n = Int(words[4]) {
@@ -398,6 +399,44 @@ public enum SpiceNetlist {
         return result
     }
 
+    /// A switch model's resistance as an expression of its control (`V(nc+,nc-)` or `I(vname)`): PSpice's VSWITCH and
+    /// ISWITCH (the resistance's logarithm a cubic between the off and on controls, as PSpice's reference gives it), and
+    /// ngspice's SW and CSW read the same way between VT-VH and VT+VH, without their hysteresis (with a warning)
+    static func switchResistance(model: (type: String, params: [String: Double]), control: String, name: String,
+                                 warnings: inout [String]) -> String? {
+        let p = model.params
+        var (on, off, ron, roff) = (1.0, 0.0, 1.0, 1e6)
+        switch model.type {
+        case "vswitch":
+            (on, off, ron, roff) = (p["VON"] ?? 1, p["VOFF"] ?? 0, p["RON"] ?? 1, p["ROFF"] ?? 1e6)
+        case "iswitch":
+            (on, off, ron, roff) = (p["ION"] ?? 1e-3, p["IOFF"] ?? 0, p["RON"] ?? 1, p["ROFF"] ?? 1e6)
+        case "sw", "csw":
+            let threshold = p[model.type == "sw" ? "VT" : "IT"] ?? 0
+            let hysteresis = abs(p[model.type == "sw" ? "VH" : "IH"] ?? 0)
+            // an abrupt switch (no hysteresis) changes over a millivolt (a microampere)
+            let half = hysteresis > 0 ? hysteresis : (model.type == "sw" ? 1e-3 : 1e-6)
+            (on, off, ron, roff) = (threshold + half, threshold - half, p["RON"] ?? 1, p["ROFF"] ?? 1e12)
+            warnings.append("\(name): \(model.type.uppercased()) switch read without hysteresis, changing over smoothly between \(off) and \(on)")
+        default:
+            warnings.append("\(name): model of type \(model.type) is not a switch's, left out")
+            return nil
+        }
+        guard on != off, ron > 0, roff > 0 else {
+            warnings.append("\(name): its switch model's on and off are the same, left out")
+            return nil
+        }
+        let lm = log((ron * roff).squareRoot()), lr = log(ron / roff)
+        let middle = (on + off) / 2, span = on - off
+        let f = format17
+        // x from -1/2 (off) to 1/2 (on); R = exp(Lm + Lr (3x/2 - 2x³))
+        let x = "((max(min(\(control),\(f(max(on, off)))),\(f(min(on, off))))-(\(f(middle))))/(\(f(span))))"
+        return "exp(\(f(lm))+(\(f(lr)))*(1.5*\(x)-2*\(x)*\(x)*\(x)))"
+    }
+
+    /// A number written to be read back exactly
+    static func format17(_ v: Double) -> String { String(format: "%.17g", v) }
+
     static let diodeArea: (times: Set<String>, over: Set<String>) = (["IS", "ISR", "IKF", "IKR", "CJO"], ["RS"])
     static let bipolarArea: (times: Set<String>, over: Set<String>) = (
         ["IS", "ISE", "ISC", "ISS", "IKF", "IKR", "IRB", "ITF", "CJE", "CJC", "CJS"], ["RB", "RBM", "RC", "RE"])
@@ -452,12 +491,23 @@ public enum SpiceNetlist {
             }
             switch letter {
             case "r", "c", "l":
-                guard let a = node(1), let b = node(2), let v = number(3) else {
+                // R n+ n- value, or PSpice's R n+ n- model value, the model's R (C, L) scaling the value
+                let model = words.count > 4 ? models[words[3].lowercased()] : nil
+                let card = model.flatMap { ["res", "r", "cap", "c", "ind", "l"].contains($0.type) ? $0.params : nil }
+                guard let a = node(1), let b = node(2), let given = number(card == nil ? 3 : 4) else {
                     warnings.append("Can't read \(line)")
                     continue
                 }
+                let v = given * (card?[String(letter).uppercased()] ?? 1)
+                if let card, card.keys.contains(where: { ["TC1", "TC2", "TCE", "VC1", "VC2", "IL1", "IL2"].contains($0) }) {
+                    warnings.append("\(name): its model's temperature and voltage coefficients are left out")
+                }
                 switch letter {
-                case "r": parts.append(NetlistPart(kind: .resistor, name: name, params: ["resistance": v], connections: ["a": a, "b": b]))
+                case "r":
+                    var params = ["resistance": v]
+                    // no thermal noise: a model at absolute zero (PSpice's R_NOISELESS) or ngspice's noisy=0
+                    if (card?["T_ABS"] ?? 0) <= -273 || keyword("noisy") == 0 { params["noiseless"] = 1 }
+                    parts.append(NetlistPart(kind: .resistor, name: name, params: params, connections: ["a": a, "b": b]))
                 case "c":
                     var params = ["capacitance": v]
                     if let ic = keyword("ic") { params["initialVoltage"] = ic }
@@ -598,6 +648,44 @@ public enum SpiceNetlist {
                     }
                     var part = NetlistPart(kind: .behavioralSource, name: name, params: ["mode": voltage ? 1 : 0], connections: connections)
                     part.code = expression.text { names[$0] ?? "0" }
+                    parts.append(part)
+                } catch {
+                    warnings.append("\(name): \(error), left out")
+                }
+            case "s", "w":
+                // S n+ n- nc+ nc- model (voltage-controlled), W n+ n- vname model (current-controlled)
+                let controlCount = letter == "s" ? 2 : 1
+                guard let plus = node(1), let minus = node(2), words.count > 3 + controlCount,
+                      let model = models[words[3 + controlCount].lowercased()] else {
+                    warnings.append("Can't read \(line)")
+                    continue
+                }
+                let control = letter == "s" ? "V(\(words[3]),\(words[4]))" : "I(\(words[3]))"
+                guard let resistance = Self.switchResistance(model: model, control: control, name: name, warnings: &warnings) else {
+                    continue
+                }
+                // a current from n+ to n- through the switch's resistance, as a behavioural source
+                let b = "B\(name) \(words[1]) \(words[2]) I={V(\(words[1]),\(words[2]))/(\(resistance))}"
+                do {
+                    let (expression, _) = try Self.controlledSource("b", tokens(b), b, parameters, functions)
+                    var pins: [String: String] = [:]
+                    var connections = ["plus": plus, "minus": minus]
+                    func pin(_ spiceNet: String) -> String {
+                        if Topology.isGroundName(spiceNet) { return "0" }
+                        if let known = pins[spiceNet.lowercased()] { return known }
+                        let made = "in\(pins.count + 1)"
+                        pins[spiceNet.lowercased()] = made
+                        connections[made] = net(spiceNet, prefix, spellings)
+                        return made
+                    }
+                    let text = expression.text { input in
+                        switch input {
+                        case let .voltage(a, b): return "V(" + pin(a) + (b.map { "," + pin($0) } ?? "") + ")"
+                        case let .current(source): return "I(\(source))"
+                        }
+                    }
+                    var part = NetlistPart(kind: .behavioralSource, name: name, params: ["mode": 0], connections: connections)
+                    part.code = text
                     parts.append(part)
                 } catch {
                     warnings.append("\(name): \(error), left out")
@@ -748,7 +836,8 @@ public enum SpiceNetlist {
             let name = part.name
             switch part.kind {
             case .resistor, .lamp:
-                lines.append("\(device("R", name)) \(n("a")) \(n("b")) \(f(max(p("resistance"), 1e-9)))")
+                lines.append("\(device("R", name)) \(n("a")) \(n("b")) \(f(max(p("resistance"), 1e-9)))"
+                             + (part.kind == .resistor && p("noiseless") >= 0.5 ? " noisy=0" : ""))
             case .potentiometer:
                 let total = max(p("resistance"), 1e-3)
                 var position = min(1, max(0, p("position")))

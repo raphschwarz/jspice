@@ -584,7 +584,12 @@ extension ElementKind {
              .reverbBrick, .analogEngine, .footswitch:
             return audioParams
         case .resistor:
-            return [ParamSpec("resistance", "Resistance", unit: "Ω", default: 1000, range: 1...10_000_000)]
+            return [
+                ParamSpec("resistance", "Resistance", unit: "Ω", default: 1000, range: 1...10_000_000),
+                // a macromodel's resistors that stand for no real resistor (PSpice's T_ABS=-273.15, ngspice's noisy=0)
+                ParamSpec("noiseless", "Thermal noise", unit: "", default: 0, range: 0...1, log: false,
+                          choices: [ParamChoice(name: "Noisy", value: 0), ParamChoice(name: "Noiseless", value: 1)], advanced: true),
+            ]
         case .potentiometer:
             return [
                 ParamSpec("resistance", "Resistance", unit: "Ω", default: 10_000, range: 10...10_000_000),

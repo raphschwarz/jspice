@@ -2985,7 +2985,8 @@ public final class Simulator {
             }
             switch kinds[i] {
             case .resistor, .lamp:
-                current(name, 4 * kT / max(element[param: "resistance"], 1e-9), nodes[0], nodes[1])
+                // (not a macromodel's noiseless resistor)
+                if element[param: "noiseless"] < 0.5 { current(name, 4 * kT / max(element[param: "resistance"], 1e-9), nodes[0], nodes[1]) }
             case .potentiometer:
                 let (upper, lower) = potentiometerResistances(element)
                 current(name + " (a side)", 4 * kT / upper, nodes[0], nodes[2])
