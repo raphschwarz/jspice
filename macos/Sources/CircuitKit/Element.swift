@@ -428,6 +428,7 @@ extension ElementKind {
     public var isBipolar: Bool { self == .npn || self == .pnp }
     /// A junction diode: a diode, a Zener diode or an LED (SPICE's diode)
     public var isDiode: Bool { self == .diode || self == .zener || self == .led }
+    public var isMOSFET: Bool { self == .nmos || self == .pmos }
 
     /// Parts whose terminals depend on a direction, which stay horizontal or vertical
     public var isAxisAligned: Bool {
@@ -846,9 +847,12 @@ extension ElementKind {
             ] + Self.diodeCardParams
         case .nmos, .pmos:
             return [
-                ParamSpec("threshold", "Threshold voltage", unit: "V", default: 1.5, range: 0.1...5, log: false),
-                ParamSpec("beta", "Beta", unit: "A/V²", default: 0.02, range: 1e-4...1),
-            ]
+                ParamSpec("threshold", "Threshold voltage (VTO)", unit: "V", default: 1.5, range: 0.1...5, log: false),
+                ParamSpec("beta", "Beta (KP × W / L)", unit: "A/V²", default: 0.02, range: 1e-4...1),
+                ParamSpec("lambda", "Channel-length modulation (LAMBDA)", unit: "1/V", default: 0.01, range: 0...0.2, log: false),
+                ParamSpec("cgs", "Gate-source overlap capacitance (CGSO × W)", unit: "F", default: 0, range: 0...1e-8, log: false),
+                ParamSpec("cgd", "Gate-drain overlap capacitance (CGDO × W)", unit: "F", default: 0, range: 0...1e-8, log: false),
+            ] + Self.mosfetCardParams
         case .memristor:
             return [
                 ParamSpec("ron", "On resistance", unit: "Ω", default: 1000, range: 1...10_000_000),
@@ -941,10 +945,10 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
 
     /// A parameter value, falling back to the kind's default
     /// Nodes of its own the part has, past its terminals: a bipolar transistor's internal base, collector and emitter,
-    /// a diode's internal anode, and a JFET's internal drain and source, behind their resistances
+    /// a diode's internal anode, and a JFET's or MOSFET's internal drain and source, behind their resistances
     var internalNodeCount: Int {
         kind.isBipolar ? GummelPoon.internalNodes(self) : kind.isDiode ? SpiceDiode.internalNodes(self)
-            : kind == .njfet ? SpiceJFET.internalNodes(self) : 0
+            : kind == .njfet ? SpiceJFET.internalNodes(self) : kind.isMOSFET ? SpiceMOSFET.internalNodes(self) : 0
     }
 
     public subscript(param key: String) -> Double {
@@ -1095,6 +1099,24 @@ extension ElementKind {
         ParamSpec("xtb", "Gain temperature exponent (XTB)", unit: "", default: 0, range: 0...3, log: false, advanced: true),
         ParamSpec("eg", "Band gap (EG)", unit: "eV", default: 1.11, range: 0.5...1.5, log: false, advanced: true),
         ParamSpec("xti", "Saturation current temperature exponent (XTI)", unit: "", default: 3, range: 0...6, log: false, advanced: true),
+        ParamSpec("kf", "Flicker noise coefficient (KF)", unit: "", default: 0, range: 0...1e-12, log: false, advanced: true),
+        ParamSpec("af", "Flicker noise exponent (AF)", unit: "", default: 1, range: 0.5...2, log: false, advanced: true),
+    ]
+
+    /// The rest of a MOSFET's SPICE model card (level 1)
+    static let mosfetCardParams: [ParamSpec] = [
+        ParamSpec("rd", "Drain resistance (RD)", unit: "Ω", default: 0, range: 0...100, log: false, advanced: true),
+        ParamSpec("rs", "Source resistance (RS)", unit: "Ω", default: 0, range: 0...100, log: false, advanced: true),
+        ParamSpec("saturationCurrent", "Bulk junction saturation current (IS)", unit: "A", default: 1e-14, range: 1e-18...1e-6, advanced: true),
+        ParamSpec("cbd", "Bulk-drain capacitance at 0 V (CBD)", unit: "F", default: 0, range: 0...1e-8, log: false, advanced: true),
+        ParamSpec("cbs", "Bulk-source capacitance at 0 V (CBS)", unit: "F", default: 0, range: 0...1e-8, log: false, advanced: true),
+        ParamSpec("pb", "Bulk junction potential (PB)", unit: "V", default: 0.8, range: 0.2...1.5, log: false, advanced: true),
+        ParamSpec("mj", "Bulk junction grading coefficient (MJ)", unit: "", default: 0.5, range: 0.1...0.9, log: false, advanced: true),
+        ParamSpec("fc", "Forward-bias depletion coefficient (FC)", unit: "", default: 0.5, range: 0...0.95, log: false, advanced: true),
+        ParamSpec("cgb", "Gate-bulk overlap capacitance (CGBO × L)", unit: "F", default: 0, range: 0...1e-8, log: false, advanced: true),
+        ParamSpec("cox", "Gate oxide capacitance, Meyer's model (from TOX, W and L)", unit: "F", default: 0, range: 0...1e-8, log: false, advanced: true),
+        ParamSpec("gamma", "Body effect (GAMMA)", unit: "√V", default: 0, range: 0...3, log: false, advanced: true),
+        ParamSpec("phi", "Surface potential (PHI)", unit: "V", default: 0.6, range: 0.2...1.2, log: false, advanced: true),
         ParamSpec("kf", "Flicker noise coefficient (KF)", unit: "", default: 0, range: 0...1e-12, log: false, advanced: true),
         ParamSpec("af", "Flicker noise exponent (AF)", unit: "", default: 1, range: 0.5...2, log: false, advanced: true),
     ]

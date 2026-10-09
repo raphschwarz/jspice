@@ -628,7 +628,7 @@ final class SynthPartTests: XCTestCase {
             let output = simulator.voltageAcross(simulator.circuit.index(of: loadID)!)
             if input < 0.1 {
                 XCTAssertEqual(biasPin, -13.8, accuracy: 0.05, "the bias pin sits two junctions above V−")
-                XCTAssertEqual(output / load, bias * tanh(input / (2 * 0.025852)), accuracy: bias * 1e-3)
+                XCTAssertEqual(output / load, bias * tanh(input / (2 * Simulator.thermalVoltage)), accuracy: bias * 1e-3)
             } else {
                 XCTAssertEqual(output, 13.5, accuracy: 0.2, "the output clamps below the supply")
             }

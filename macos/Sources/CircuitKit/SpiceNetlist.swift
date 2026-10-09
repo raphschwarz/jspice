@@ -254,12 +254,20 @@ public enum SpiceNetlist {
                     warnings.append("Can't read \(line)")
                     continue
                 }
-                let p = model.params
-                let ratio = (keyword("w") ?? 1) / max(keyword("l") ?? 1, 1e-12)
+                // the whole level-1 card, its process parameters worked out for this transistor's size (ngspice's default
+                // W and L are 100 µm)
                 let pmos = model.type == "pmos"
-                parts.append(NetlistPart(kind: pmos ? .pmos : .nmos, name: name, params: [
-                    "threshold": abs(p["VTO"] ?? 1.5), "beta": (p["KP"] ?? 2e-5) * ratio,
-                ], connections: ["drain": d, "gate": g, "source": s]))
+                if let level = model.params["LEVEL"], level != 1 {
+                    warnings.append("\(name): model \(words[5]) is level \(Int(level)), read as level 1")
+                }
+                if let bulk = node(4), bulk != s { warnings.append("\(name): its bulk is tied to its source") }
+                if let multiplier = keyword("m"), multiplier != 1 { warnings.append("\(name): M=\(multiplier) is left out") }
+                let (params, ignored) = SpiceMOSFET.parameters(
+                    fromCard: model.params, pmos: pmos, w: keyword("w") ?? 1e-4, l: keyword("l") ?? 1e-4, ad: keyword("ad") ?? 0,
+                    as: keyword("as") ?? 0, nrd: keyword("nrd") ?? 1, nrs: keyword("nrs") ?? 1)
+                if !ignored.isEmpty { warnings.append("\(name): \(ignored.joined(separator: ", ")) of model \(words[5]) left out") }
+                parts.append(NetlistPart(kind: pmos ? .pmos : .nmos, name: name, params: params,
+                                         connections: ["drain": d, "gate": g, "source": s]))
             case "j":
                 guard let d = node(1), let g = node(2), let s = node(3), words.count > 4, let model = models[words[4].lowercased()] else {
                     warnings.append("Can't read \(line)")
@@ -421,8 +429,7 @@ public enum SpiceNetlist {
                 lines.append("\(device("Q", name)) \(n("collector")) \(n("base")) \(n("emitter")) \(model)")
             case .nmos, .pmos:
                 let model = "M_" + device("M", name)
-                let threshold = p("threshold")
-                models.append(".model \(model) \(part.kind == .nmos ? "NMOS" : "PMOS")(LEVEL=1 VTO=\(f(part.kind == .nmos ? threshold : -threshold)) KP=\(f(p("beta"))) LAMBDA=0.01)")
+                models.append(".model \(model) \(part.kind == .nmos ? "NMOS" : "PMOS")(\(SpiceMOSFET.cardText(p, kind: part.kind)))")
                 lines.append("\(device("M", name)) \(n("drain")) \(n("gate")) \(n("source")) \(n("source")) \(model) L=1 W=1")
             case .njfet:
                 let model = "J_" + device("J", name)

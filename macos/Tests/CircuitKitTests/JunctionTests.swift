@@ -19,7 +19,7 @@ final class JunctionTests: XCTestCase {
     func testJunctionsDropLessWhenHot() throws {
         let nominal = try forwardVoltage(at: 27)
         // Is = 1e-14 A at 1 mA: kT/q ln(1e11)
-        XCTAssertEqual(nominal, 0.025852 * log(1e-3 / 1e-14), accuracy: 2e-3)
+        XCTAssertEqual(nominal, Simulator.thermalVoltage * log(1e-3 / 1e-14), accuracy: 2e-3)
         let hot = try forwardVoltage(at: 77)
         let cold = try forwardVoltage(at: -23)
         // about 1.8 mV less per degree hotter, as silicon does

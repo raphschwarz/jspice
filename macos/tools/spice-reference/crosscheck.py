@@ -22,9 +22,9 @@ SOURCES = os.path.join(ROOT, 'Sources/CircuitKit')
 FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-reference.json')
 AC_FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-ac-reference.json')
 DEVICE_FIXTURE = os.path.join(ROOT, 'Tests/CircuitKitTests/Fixtures/spice-device-reference.json')
-VT = 0.025852  # Simulator.thermalVoltage
-NOMINAL_KELVIN = 300.15  # Simulator.nominalKelvin
 KQ = 1.38064852e-23 / 1.6021766208e-19  # ngspice's k/q (const.h)
+NOMINAL_KELVIN = 300.15  # Simulator.nominalKelvin
+VT = KQ * NOMINAL_KELVIN  # Simulator.thermalVoltage: kT/q at 27 °C
 LED_FORWARD = [1.9, 2.2, 3.0, 2.0, 3.0]  # LEDColor: red, green, blue, yellow, white
 
 # MARK: - Reading JSpice's sources
@@ -59,6 +59,11 @@ diode_body = element[element.index('static let diodeCardParams'):]
 diode_body = diode_body[:diode_body.index('\n    ]\n')]
 DIODE_DEFAULTS = {k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', diode_body)}
 for kind in ('diode', 'zener', 'led'): DEFAULTS[kind].update(DIODE_DEFAULTS)
+# a MOSFET's
+mos_body = element[element.index('static let mosfetCardParams'):]
+mos_body = mos_body[:mos_body.index('\n    ]\n')]
+for kind in ('nmos', 'pmos'):
+    DEFAULTS[kind].update({k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', mos_body)})
 # and a JFET's
 jfet_body = element[element.index('static let jfetCardParams'):]
 jfet_body = jfet_body[:jfet_body.index('\n    ]\n')]
@@ -111,10 +116,8 @@ def net(name):
     return '0' if name in ('GND', '0') else 'n_' + re.sub(r'\W', '_', name)
 
 def temperature_options(temperature):
-    """ngspice's temperature and nominal temperature for JSpice's: JSpice's thermal voltage, 25.852 mV, is kT/q at its
-    nominal temperature, and a circuit's temperature scales it by kelvin / 300.15"""
-    nominal = VT / KQ
-    return '.options temp=%.9f tnom=%.9f' % (nominal * (NOMINAL_KELVIN + temperature - 27) / NOMINAL_KELVIN - 273.15, nominal - 273.15)
+    """ngspice at the circuit's temperature: JSpice's thermal voltage is kT/q with ngspice's constants, at 27 °C nominal"""
+    return '.options temp=%.12g tnom=27' % temperature
 
 def bipolar_card(p):
     """A transistor's whole Gummel-Poon card (RBM left out at 0, which is RB)"""
@@ -141,9 +144,7 @@ def diode_card(p, kind):
 
 def jfet_card(p):
     """A JFET's whole card (SpiceJFET.card): BETA from IDSS, with the gate at the source in saturation, and B's doping
-    tail; BETATCE in place of BEX when given. The coefficients per kelvin are scaled to ngspice's temperatures, which
-    temperature_options sets so that their ratio to the nominal one, not their difference, is JSpice's"""
-    per_kelvin = NOMINAL_KELVIN / (VT / KQ)
+    tail; BETATCE in place of BEX when given"""
     vto = min(param(p, 'pinchOff'), -0.01)
     b = param(p, 'b') if param(p, 'b') > 0 else 1
     b_factor = (1 - b) / (max(param(p, 'pb'), 0.01) - vto)
@@ -151,11 +152,24 @@ def jfet_card(p):
     words = ['VTO=%.12g' % vto, 'BETA=%.12g' % beta]
     for name, key in [('LAMBDA', 'lambda'), ('B', 'b'), ('RD', 'rd'), ('RS', 'rs'), ('IS', 'saturationCurrent'), ('CGS', 'cgs'),
                       ('CGD', 'cgd'), ('PB', 'pb'), ('FC', 'fc'), ('TCV', 'tcv'), ('XTI', 'xti'), ('EG', 'eg')]:
-        words.append('%s=%.12g' % (name, param(p, key) * (per_kelvin if name == 'TCV' else 1)))
+        words.append('%s=%.12g' % (name, param(p, key)))
     if param(p, 'betatce') != 0:
-        words.append('BETATCE=%.12g' % (param(p, 'betatce') * per_kelvin))
+        words.append('BETATCE=%.12g' % param(p, 'betatce'))
     else:
         words.append('BEX=%.12g' % param(p, 'bex'))
+    return ' '.join(words)
+
+def mosfet_card(p, kind):
+    """A MOSFET's whole level-1 card (SpiceMOSFET.cardText) for a transistor with W and L of 1 m: KP is its beta, the
+    overlap capacitances per metre its own, TOX its gate oxide's capacitance"""
+    t = -1 if kind == 'pmos' else 1
+    words = ['LEVEL=1', 'VTO=%.12g' % (t * param(p, 'threshold')), 'KP=%.12g' % param(p, 'beta')]
+    for name, key in [('LAMBDA', 'lambda'), ('GAMMA', 'gamma'), ('PHI', 'phi'), ('RD', 'rd'), ('RS', 'rs'),
+                      ('IS', 'saturationCurrent'), ('CBD', 'cbd'), ('CBS', 'cbs'), ('PB', 'pb'), ('MJ', 'mj'), ('FC', 'fc'),
+                      ('CGSO', 'cgs'), ('CGDO', 'cgd'), ('CGBO', 'cgb')]:
+        words.append('%s=%.12g' % (name, param(p, key)))
+    if param(p, 'cox') > 0:
+        words.append('TOX=%.12g' % (3.9 * 8.854214871e-12 / param(p, 'cox')))
     return ' '.join(words)
 
 def spice_deck(parts, duration, probes, step, temperature=27):
@@ -206,11 +220,8 @@ def spice_elements(parts, ac_source=None, temperature=27):
             models.append('.model Q_%s %s(%s)' % (n, k.upper(), bipolar_card(p)))
             lines.append('Q%s %s %s %s Q_%s' % (n, pin('collector'), pin('base'), pin('emitter'), n))
         elif k in ('nmos', 'pmos'):
-            threshold = param(p, 'threshold')
-            models.append('.model M_%s %s(LEVEL=1 VTO=%.12g KP=%.12g LAMBDA=0.01)' % (
-                n, k.upper(), threshold if k == 'nmos' else -threshold, param(p, 'beta')))
+            models.append('.model M_%s %s(%s)' % (n, k.upper(), mosfet_card(p, k)))
             lines.append('M%s %s %s %s %s M_%s L=1 W=1' % (n, pin('drain'), pin('gate'), pin('source'), pin('source'), n))
-            lines.append('R%s_leak %s %s 1e9' % (n, pin('drain'), pin('source')))
         elif k == 'njfet':
             models.append('.model J_%s NJF(%s)' % (n, jfet_card(p)))
             lines.append('J%s %s %s %s J_%s' % (n, pin('drain'), pin('gate'), pin('source'), n))
@@ -329,6 +340,14 @@ TEST_LED = dict(color=0, rs=4, cj0=20e-12, vj=1.8, m=0.35, ikr=1e-3, bv=5, ibv=1
 TEST_JFET = dict(pinchOff=-1.8, idss=6e-3, **{'lambda': 0.02}, b=0.85, rd=15, rs=8, saturationCurrent=2e-13, cgs=4e-12, cgd=1.5e-12,
                  pb=0.8, fc=0.6, tcv=2.5e-3, bex=-1.5, xti=3)
 
+# Test MOSFET cards using every level-1 parameter JSpice implements (made up, not any maker's): the body effect (which
+# shows in inverse mode, the bulk being the source), drain and source resistances, the bulk junctions' capacitances,
+# the overlaps and Meyer's gate capacitances
+TEST_NMOS = dict(threshold=2.1, beta=0.12, **{'lambda': 0.015}, rd=0.8, rs=0.5, saturationCurrent=2e-14, cbd=40e-12, cbs=20e-12,
+                 pb=0.75, mj=0.45, fc=0.5, cgs=30e-12, cgd=8e-12, cgb=2e-12, cox=60e-12, gamma=0.4, phi=0.65)
+TEST_PMOS = dict(threshold=1.8, beta=0.08, **{'lambda': 0.02}, rd=1.2, rs=0.8, saturationCurrent=5e-14, cbd=60e-12, cbs=30e-12,
+                 pb=0.8, mj=0.5, cgs=40e-12, cgd=12e-12, cox=80e-12, gamma=0.3, phi=0.6)
+
 def with_transistor(parts, name, **params):
     """The parts, with transistor `name` given these parameters instead of its own"""
     return [dict(p, params=dict(params)) if p['name'] == name else p for p in parts]
@@ -431,6 +450,13 @@ CASES = [
         P('resistor', 'RG', dict(a='in', b='gate'), resistance=47_000),
         P('resistor', 'RD', dict(a='vdd', b='drain'), resistance=3300),
         P('njfet', 'J1', dict(gate='gate', drain='drain', source='GND'), **TEST_JFET)]),
+    dict(id='mosfet-card', note='test NMOS card: a switch driven at 50 kHz through 1 kΩ, its gate charging through the Miller '
+         'plateau (Meyer, CGSO, CGDO, CBD, RD, RS)', duration=4e-5, probes=['drain', 'gate'], parts=[
+        P('dcVoltage', 'VDD', dict(plus='vdd', minus='GND'), voltage=12),
+        P('squareVoltage', 'VG', dict(plus='in', minus='GND'), high=5, low=0, frequency=50_000, duty=0.5),
+        P('resistor', 'RG', dict(a='in', b='gate'), resistance=1000),
+        P('resistor', 'RD', dict(a='vdd', b='drain'), resistance=1000),
+        P('nmos', 'M1', dict(gate='gate', drain='drain', source='GND'), **TEST_NMOS)]),
     dict(id='opamp-inverting', note='TL072 inverting amplifier, gain 10, 1 kHz', duration=0.004, probes=['out'], parts=[
         P('acVoltage', 'VIN', dict(plus='in', minus='GND'), amplitude=0.5, frequency=1000),
         P('resistor', 'R1', dict(a='in', b='inv'), resistance=10_000),
@@ -549,6 +575,16 @@ AC_CASES = [
         P('resistor', 'RS', dict(a='src', b='GND'), resistance=330),
         P('capacitor', 'CS', dict(a='src', b='GND'), capacitance=100e-6),
         P('njfet', 'J1', dict(gate='gate', drain='drain', source='src'), **TEST_JFET)]),
+    dict(id='mosfet-card', note='test NMOS card: common-source stage biased at 2.4 V, fed from 10 kΩ, out to 100 MHz (Meyer '
+         'and the overlaps, the Miller pole)', source='VIN', settle=0.3, probes=['drain'], fstop=1e8, parts=[
+        P('dcVoltage', 'VDD', dict(plus='vdd', minus='GND'), voltage=12),
+        P('acVoltage', 'VIN', dict(plus='sig', minus='GND'), amplitude=0.01, frequency=1000),
+        P('resistor', 'RSIG', dict(a='sig', b='in'), resistance=10_000),
+        P('capacitor', 'CIN', dict(a='in', b='gate'), capacitance=1e-6),
+        P('resistor', 'R1', dict(a='vdd', b='gate'), resistance=100_000),
+        P('resistor', 'R2', dict(a='gate', b='GND'), resistance=25_000),
+        P('resistor', 'RD', dict(a='vdd', b='drain'), resistance=1000),
+        P('nmos', 'M1', dict(gate='gate', drain='drain', source='GND'), **TEST_NMOS)]),
     dict(id='opamp-inverting', note='TL072 inverting amplifier, gain 10, out to its 3 MHz bandwidth', source='VIN', settle=0.001,
          probes=['out'], fstop=1e7, parts=list(case_parts('opamp-inverting'))),
     dict(id='sallen-key', note='TL072 Sallen-Key low-pass, 1.59 kHz, Q 0.5', source='VIN', settle=0.01, probes=['out'], parts=[
@@ -694,6 +730,17 @@ DEVICE_SWEEPS = [
          'into saturation (LAMBDA, RD)', kind='njfet', params=TEST_JFET, swept='vds', fixed=-0.6, start=-3, stop=12, step=0.25),
     dict(id='hot-jfet-vgs', note='test JFET card at 70 °C (TCV, BEX, XTI)', kind='njfet', params=TEST_JFET, swept='vgs', fixed=5,
          start=-2.2, stop=0.7, step=0.05, temperature=70),
+    dict(id='nmos-vgs', note='test NMOS card: currents against VGS at VDS 5 V, through the threshold (RS)', kind='nmos',
+         params=TEST_NMOS, swept='vgs', fixed=5, start=0, stop=6, step=0.1),
+    dict(id='nmos-vds', note='test NMOS card: currents against VDS at VGS 3.5 V, from the body diode and inverse mode (GAMMA) '
+         'through the linear region into saturation (LAMBDA, RD)', kind='nmos', params=TEST_NMOS, swept='vds', fixed=3.5,
+         start=-1.5, stop=10, step=0.25),
+    dict(id='hot-nmos-vgs', note='test NMOS card at 70 °C (KP, the threshold and IS at temperature)', kind='nmos',
+         params=TEST_NMOS, swept='vgs', fixed=5, start=0, stop=6, step=0.1, temperature=70),
+    dict(id='pmos-vds', note='test PMOS card: currents against VDS at VGS -3 V, from its body diode through saturation',
+         kind='pmos', params=TEST_PMOS, swept='vds', fixed=-3, start=1.5, stop=-10, step=-0.25),
+    dict(id='default-nmos-vds', note='an NMOS at JSpice\'s defaults: currents against VDS at VGS 2.5 V, from its body diode '
+         'conducting', kind='nmos', params={}, swept='vds', fixed=2.5, start=-0.6, stop=10, step=0.2),
     dict(id='default-jfet-vds', note='a JFET at JSpice\'s defaults: currents against VDS at VGS -0.5 V (inverse mode down to the '
          'gate-drain junction conducting)', kind='njfet', params={}, swept='vds', fixed=-0.5, start=-1.1, stop=10, step=0.1),
 ]
@@ -719,15 +766,17 @@ def run_ngspice_dc(sweep):
         return [row[0] for row in rows], [-row[1] for row in rows], None
     temperature = sweep.get('temperature', 27)
     data = tempfile.mktemp(suffix='.txt')
-    if sweep['kind'] == 'njfet':
-        # a JFET between two sources, gate-source and drain-source: the currents into its gate and drain
+    if sweep['kind'] in ('njfet', 'nmos', 'pmos'):
+        # a JFET or MOSFET between two sources, gate-source and drain-source: the currents into its gate and drain
         held = 'VDS' if sweep['swept'] == 'vgs' else 'VGS'
+        device = ['J1 d g 0 JT', '.model JT NJF(%s)' % jfet_card(part)] if sweep['kind'] == 'njfet' else \
+            ['M1 d g 0 0 MT L=1 W=1', '.model MT %s(%s)' % (sweep['kind'].upper(), mosfet_card(part, sweep['kind']))]
         deck = '\n'.join(['* JSpice device check',
                           '.options reltol=1e-9 abstol=1e-18 vntol=1e-12 gmin=1e-12 rshunt=1e12 itl1=500 itl2=500',
                           temperature_options(temperature),
                           'VGS g 0 DC %.12g' % (sweep['fixed'] if held == 'VGS' else sweep['start']),
                           'VDS d 0 DC %.12g' % (sweep['fixed'] if held == 'VDS' else sweep['start']),
-                          'J1 d g 0 JT', '.model JT NJF(%s)' % jfet_card(part),
+                          ] + device + [
                           '.control', 'dc %s %.12g %.12g %.12g' % (sweep['swept'].upper(), sweep['start'], sweep['stop'], sweep['step']),
                           'wrdata %s i(VGS) i(VDS)' % data, 'quit', '.endc', '.end']) + '\n'
         with tempfile.NamedTemporaryFile('w', suffix='.cir', delete=False) as f:
@@ -765,7 +814,7 @@ def devices_main():
                      fixed=sweep['fixed'], voltages=[round(v, 9) for v in voltages])
         if collector is None:
             entry['anode'] = [float('%.12g' % i) for i in base]
-        elif sweep['kind'] == 'njfet':
+        elif sweep['kind'] in ('njfet', 'nmos', 'pmos'):
             entry.update(gate=[float('%.12g' % i) for i in base], drain=[float('%.12g' % i) for i in collector])
         else:
             entry.update(base=[float('%.12g' % i) for i in base], collector=[float('%.12g' % i) for i in collector])

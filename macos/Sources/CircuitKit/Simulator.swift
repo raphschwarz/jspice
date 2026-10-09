@@ -246,9 +246,17 @@ public final class Simulator {
     private var diodes: [SpiceDiode] = []
     /// Each JFET's SPICE card at the circuit's temperature
     private var jfets: [SpiceJFET] = []
+    /// Each MOSFET's SPICE card at the circuit's temperature, and its gate voltages and half Meyer capacitances at the
+    /// last solution (SPICE integrates Meyer's capacitances over each step from both its ends)
+    private var mosfets: [SpiceMOSFET] = []
+    struct MeyerHistory: Equatable {
+        var vgs = 0.0, vgd = 0.0, vgb = 0.0
+        var gs = 0.0, gd = 0.0, gb = 0.0
+    }
+    private var meyerHistory: [MeyerHistory] = []
     /// The charges each part stores and integrates, by slot: a diode's junction; a transistor's base-emitter,
     /// base-collector at the internal base, and base-collector at the external base
-    static let chargeSlots = 3
+    static let chargeSlots = 5
     /// The conductance SPICE puts across every junction of a transistor (its gmin)
     static let junctionGmin = 1e-12
     /// The elements each part of a step needs, so wires and resistors cost nothing once the base matrix is built
@@ -352,10 +360,9 @@ public final class Simulator {
     private var limiting = false
     private var traces: [UUID: ScopeTrace] = [:]
 
-    /// The thermal voltage kT/q at the nominal temperature, 27 °C, which the parts' parameters are given at
-    /// The thermal voltage the parts' equations take at their nominal temperature (the SPICE cross-checks run ngspice at
-    /// the temperature that gives the same kT/q: tools/spice-reference)
-    static let thermalVoltage = 0.025852
+    /// The thermal voltage kT/q at the nominal temperature, 27 °C (300.15 K), which the parts' parameters are given at, with
+    /// ngspice's constants (const.h): what a manufacturer's card was fitted with
+    static let thermalVoltage = 1.38064852e-23 * 300.15 / 1.6021766208e-19
     static let nominalKelvin = 300.15
     static let gmin = 1e-12
     static let maxNewtonIterations = 80
@@ -378,6 +385,7 @@ public final class Simulator {
     private struct SavedState {
         var cv, cvp, cvo, ci, lv, li, lip, lio, m, l1, l2, l3: Double
         var q: [Double]
+        var meyer: MeyerHistory
         var digital: Bool
         var logic: LogicState
         var module: ModuleState
@@ -400,6 +408,7 @@ public final class Simulator {
                         + Array(junctionChargePrevious[Self.chargeSlots * i ..< Self.chargeSlots * (i + 1)])
                         + Array(junctionChargeOlder[Self.chargeSlots * i ..< Self.chargeSlots * (i + 1)])
                     : [Double](repeating: 0, count: 3 * Self.chargeSlots),
+                meyer: i < meyerHistory.count ? meyerHistory[i] : MeyerHistory(),
                 digital: digitalState[i], logic: logicStates[i], module: moduleStates[i],
                 noise: noiseState[i], delay: delayHistory[i], brigade: bucketBrigades[i])
         }
@@ -424,6 +433,7 @@ public final class Simulator {
         junctionChargePrevious = Array(repeating: 0, count: Self.chargeSlots * count)
         junctionChargeOlder = Array(repeating: 0, count: Self.chargeSlots * count)
         junctionCurrent = Array(repeating: 0, count: Self.chargeSlots * count)
+        meyerHistory = Array(repeating: MeyerHistory(), count: count)
         capacitorVoltage = Array(repeating: 0, count: count)
         capacitorVoltagePrevious = Array(repeating: 0, count: count)
         capacitorCurrent = Array(repeating: 0, count: count)
@@ -447,6 +457,7 @@ public final class Simulator {
         bipolar = flat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
         diodes = flat.elements.map { $0.kind.isDiode ? SpiceDiode($0, kelvin: kelvin, vt: vt) : SpiceDiode() }
         jfets = flat.elements.map { $0.kind == .njfet ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
+        mosfets = flat.elements.map { $0.kind.isMOSFET ? SpiceMOSFET($0, kelvin: kelvin, vt: vt) : SpiceMOSFET() }
         func indices(_ include: (ElementKind) -> Bool) -> [Int] { kinds.indices.filter { include(kinds[$0]) } }
         nonlinearIndices = indices {
             switch $0 {
@@ -520,6 +531,7 @@ public final class Simulator {
                     junctionChargePrevious[Self.chargeSlots * i + slot] = state.q[Self.chargeSlots + slot]
                     junctionChargeOlder[Self.chargeSlots * i + slot] = state.q[2 * Self.chargeSlots + slot]
                 }
+                meyerHistory[i] = state.meyer
                 digitalState[i] = state.digital
                 logicStates[i] = state.logic
                 moduleStates[i] = state.module
@@ -554,9 +566,10 @@ public final class Simulator {
                 x[inner - 1] = outer > 0 ? x[outer - 1] : 0
             }
         }
-        for i in kinds.indices where kinds[i] == .njfet {
+        for i in kinds.indices where kinds[i] == .njfet || kinds[i].isMOSFET {
             let nodes = topology.elementNodes[i]
-            let n = Self.jfetNodes({ nodes[$0] }, jfets[i])
+            let n = kinds[i] == .njfet ? Self.jfetNodes({ nodes[$0] }, jfets[i])
+                : Self.fetNodes({ nodes[$0] }, drain: mosfets[i].hasDrainNode, source: mosfets[i].hasSourceNode)
             for (inner, outer) in [(n.dp, n.d), (n.sp, n.s)] where inner != outer && inner > 0 {
                 x[inner - 1] = outer > 0 ? x[outer - 1] : 0
             }
@@ -605,6 +618,7 @@ public final class Simulator {
             junctionChargeOlder[k] = 0
             junctionCurrent[k] = 0
         }
+        if i < meyerHistory.count { meyerHistory[i] = MeyerHistory() }
         // a Schmitt inverter's input starts low, so its output starts high; a 555 decides from its trigger
         digitalState[i] = element.kind == .schmittInverter
         logicStates[i] = LogicState()
@@ -712,6 +726,7 @@ public final class Simulator {
         Self.adopt(&junctionCharge, other.junctionCharge)
         Self.adopt(&junctionChargePrevious, other.junctionChargePrevious)
         Self.adopt(&junctionChargeOlder, other.junctionChargeOlder)
+        Self.adopt(&meyerHistory, other.meyerHistory)
         Self.adopt(&junctionCurrent, other.junctionCurrent)
         Self.adopt(&digitalState, other.digitalState)
         if logicStates != other.logicStates { matrixIsCurrent = false }
@@ -788,6 +803,7 @@ public final class Simulator {
         bipolar = newFlat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
         diodes = newFlat.elements.map { $0.kind.isDiode ? SpiceDiode($0, kelvin: kelvin, vt: vt) : SpiceDiode() }
         jfets = newFlat.elements.map { $0.kind == .njfet ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
+        mosfets = newFlat.elements.map { $0.kind.isMOSFET ? SpiceMOSFET($0, kelvin: kelvin, vt: vt) : SpiceMOSFET() }
         junctionIndices = kinds.indices.filter { storesCharge($0) }
         for (i, chip) in chips { chip.supply = constants[i].supply }
         linkClocks()
@@ -991,11 +1007,10 @@ public final class Simulator {
         // and each junction's stored charge, as SPICE checks every charge: a charge in error by the current tolerance
         // over the substep is as much as a capacitor's voltage is allowed
         for i in junctionIndices {
-            let q = storedCharges(i, lists[i])
-            for (slot, x0) in [q.0, q.1, q.2].enumerated() where slot < Self.chargeSlots {
+            forEachStoredCharge(i, lists[i]) { slot, x0 in
                 let k = Self.chargeSlots * i + slot
                 let x1 = junctionCharge[k], x2 = junctionChargePrevious[k], x3 = junctionChargeOlder[k]
-                if x0 == 0 && x1 == 0 { continue }
+                if x0 == 0 && x1 == 0 { return }
                 let d01 = (x0 - x1) / h, d12 = (x1 - x2) / h1, d23 = (x2 - x3) / h2
                 let d3 = ((d01 - d12) / (h + h1) - (d12 - d23) / (h1 + h2)) / (h + h1 + h2)
                 let tolerance = Self.relativeTolerance * max(abs(x0), abs(x1)) + Self.currentTolerance * h
@@ -1450,6 +1465,11 @@ public final class Simulator {
                 let n = Self.jfetNodes({ nodes[$0] }, j)
                 if j.hasDrainNode { stampConductance(matrix, m, n.d, n.dp, 1 / j.rd) }
                 if j.hasSourceNode { stampConductance(matrix, m, n.s, n.sp, 1 / j.rs) }
+            case .nmos, .pmos:
+                let f = mosfets[i]
+                let n = Self.fetNodes({ nodes[$0] }, drain: f.hasDrainNode, source: f.hasSourceNode)
+                if f.hasDrainNode { stampConductance(matrix, m, n.d, n.dp, 1 / f.rd) }
+                if f.hasSourceNode { stampConductance(matrix, m, n.s, n.sp, 1 / f.rs) }
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
@@ -1894,8 +1914,6 @@ public final class Simulator {
             c.threshold = max(p("gamma"), 0.01)
             c.tau = max(p("attack"), 1e-6)
             c.highDrop = max(p("decay"), 1e-6)
-        case .nmos, .pmos:
-            (c.polarity, c.threshold, c.beta) = fetParameters(element)
         case .triode, .pentode:
             c.tube = TubeModel(mu: p("mu"), ex: p("ex"), kg1: p("kg1"), kg2: p("kg2"), kp: p("kp"), kvb: p("kvb"), rgi: p("rgi"))
         case .transformer:
@@ -2003,6 +2021,7 @@ public final class Simulator {
         if kinds[i].isBipolar { return bipolar[i].hasCharges }
         if kinds[i].isDiode { return diodes[i].hasCharges }
         if kinds[i] == .njfet { return jfets[i].hasCharges }
+        if kinds[i].isMOSFET { return mosfets[i].hasCharges }
         return constants[i].cj0 > 0 || constants[i].cj1 > 0 || constants[i].transit > 0
     }
 
@@ -2030,13 +2049,18 @@ public final class Simulator {
     }
 
     @inline(__always) static func jfetNodes(_ node: (Int) -> Int, _ j: SpiceJFET) -> JFETNodes {
+        fetNodes(node, drain: j.hasDrainNode, source: j.hasSourceNode)
+    }
+
+    /// A field-effect transistor's terminals (gate, drain, source) and its internal drain and source, if it has them
+    @inline(__always) static func fetNodes(_ node: (Int) -> Int, drain: Bool, source: Bool) -> JFETNodes {
         var next = 3
         func inner(_ present: Bool, _ terminal: Int) -> Int {
             guard present else { return node(terminal) }
             next += 1
             return node(next - 1)
         }
-        let dp = inner(j.hasDrainNode, 1), sp = inner(j.hasSourceNode, 2)
+        let dp = inner(drain, 1), sp = inner(source, 2)
         return JFETNodes(g: node(0), d: node(1), s: node(2), dp: dp, sp: sp)
     }
 
@@ -2117,6 +2141,18 @@ public final class Simulator {
             } else {
                 vnew = vtemp
             }
+        }
+        if vnew != new { limiting = true }
+        return vnew
+    }
+
+    /// A MOSFET's drain voltage limited as SPICE limits it (DEVlimvds)
+    private func limitVDS(_ new: Double, old: Double) -> Double {
+        var vnew = new
+        if old >= 3.5 {
+            vnew = new > old ? min(new, 3 * old + 2) : (new < 3.5 ? max(new, 2) : new)
+        } else {
+            vnew = new > old ? min(new, 4) : max(new, -0.5)
         }
         if vnew != new { limiting = true }
         return vnew
@@ -2231,16 +2267,6 @@ public final class Simulator {
         return (off + (on - off) * s, (on - off) * s * (1 - s) / width)
     }
 
-    /// Polarity, threshold and beta of a MOSFET
-    func fetParameters(_ element: Element) -> (polarity: Double, threshold: Double, beta: Double) {
-        switch element.kind {
-        case .pmos:
-            return (-1, element[param: "threshold"], element[param: "beta"])
-        default:
-            return (1, element[param: "threshold"], element[param: "beta"])
-        }
-    }
-
     /// A bipolar transistor's junctions, linearised at the present solution (limited as SPICE limits them): the
     /// Gummel-Poon currents into its internal collector, base and emitter, and the charging of its stored charges, each
     /// linear in the internal base-emitter and base-collector voltages and the external base to internal collector
@@ -2317,6 +2343,112 @@ public final class Simulator {
         stampTerminal(n.ep, ep)
         if charged && g.cjcOuter > 0 { stampTerminal(n.b, bx) }
         if g.baseModulated { stampConductance(matrix, m, n.b, n.bp, r.gx) }
+    }
+
+    /// A MOSFET's voltages in its own polarity (gate, internal drain and bulk to internal source) at the present
+    /// solution, limited as ngspice limits them from the last iteration's
+    private func mosfetVoltages(_ i: Int, _ n: JFETNodes) -> (vgs: Double, vds: Double, vbs: Double) {
+        let f = mosfets[i]
+        let t = f.type
+        var vgs = t * (voltage(n.g) - voltage(n.sp)), vds = t * (voltage(n.dp) - voltage(n.sp))
+        var vbs = t * (voltage(n.s) - voltage(n.sp))
+        let (oldGS, oldDS, oldBS) = (limitedVoltage[i], limitedVoltage2[i], limitedVoltage3[i])
+        var vgd = vgs - vds
+        let von = f.von(bulk: oldDS >= 0 ? oldBS : oldBS - oldDS)
+        if oldDS >= 0 {
+            vgs = limitFET(vgs, old: oldGS, vto: von)
+            vds = limitVDS(vgs - vgd, old: oldDS)
+            vgd = vgs - vds
+        } else {
+            vgd = limitFET(vgd, old: oldGS - oldDS, vto: von)
+            vds = -limitVDS(-(vgs - vgd), old: -oldDS)
+            vgs = vgd + vds
+        }
+        if vds >= 0 {
+            vbs = limitJunction(vbs, old: oldBS, nvt: f.vt, critical: f.critical)
+        } else {
+            vbs = limitJunction(vbs - vds, old: oldBS - oldDS, nvt: f.vt, critical: f.critical) + vds
+        }
+        return (vgs, vds, vbs)
+    }
+
+    /// A MOSFET's charges, by slot (bulk-drain, bulk-source, gate-source, gate-drain, gate-bulk), at `vgs`, `vds` and
+    /// `vbs`: the bulk junctions' depletion charges, and Meyer's gate charges carried on from the last solution with the
+    /// capacitance averaged over the step (as ngspice does); and the capacitances
+    private func mosfetCharges(_ i: Int, vgs: Double, vds: Double, vbs: Double, _ r: SpiceMOSFET.Currents)
+        -> (q: (Double, Double, Double, Double, Double), cap: (Double, Double, Double, Double, Double)) {
+        let f = mosfets[i]
+        let vgd = vgs - vds, vgb = vgs - vbs
+        let bulk = f.bulkCharges(vbd: vbs - vds, vbs: vbs)
+        let half = f.meyer(vgs: vgs, vgd: vgd, r)
+        let last = meyerHistory[i]
+        let k = Self.chargeSlots * i
+        let capgs = half.gs + last.gs + f.cgso, capgd = half.gd + last.gd + f.cgdo, capgb = half.gb + last.gb + f.cgbo
+        let q = (bulk.qbd, bulk.qbs, junctionCharge[k + 2] + capgs * (vgs - last.vgs),
+                 junctionCharge[k + 3] + capgd * (vgd - last.vgd), junctionCharge[k + 4] + capgb * (vgb - last.vgb))
+        return (q, (bulk.capbd, bulk.capbs, capgs, capgd, capgb))
+    }
+
+    /// A MOSFET's bulk junctions and channel (ngspice's mos1load.c), linearised at the present solution, and the charging
+    /// of its bulk and gate charges. Its bulk is its source terminal, outside the source resistance.
+    private func stampMOSFET(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
+        let f = mosfets[i]
+        let t = f.type
+        let n = Self.fetNodes({ nodes[$0] }, drain: f.hasDrainNode, source: f.hasSourceNode)
+        let (vgs, vds, vbs) = mosfetVoltages(i, n)
+        limitedVoltage[i] = vgs
+        limitedVoltage2[i] = vds
+        limitedVoltage3[i] = vbs
+        let vbd = vbs - vds, vgd = vgs - vds, vgb = vgs - vbs
+        let r = f.currents(vgs: vgs, vds: vds, vbs: vbs, gmin: Self.junctionGmin)
+        // gmin stepping's shunts across the bulk junctions
+        var (cbs, gbs) = (r.cbs + junctionConductance * vbs, r.gbs + junctionConductance)
+        var (cbd, gbd) = (r.cbd + junctionConductance * vbd, r.gbd + junctionConductance)
+        var (gcgs, gcgd, gcgb, ceqgs, ceqgd, ceqgb) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        if f.hasCharges && !linearising {
+            let (q, cap) = mosfetCharges(i, vgs: vgs, vds: vds, vbs: vbs, r)
+            let k = Self.chargeSlots * i
+            func flow(_ slot: Int, _ charge: Double) -> Double {
+                (a0 * charge + a1 * junctionCharge[k + slot] + a2 * junctionChargePrevious[k + slot]) / h
+            }
+            cbd += flow(0, q.0)
+            gbd += a0 * cap.0 / h
+            cbs += flow(1, q.1)
+            gbs += a0 * cap.1 / h
+            (gcgs, gcgd, gcgb) = (a0 * cap.2 / h, a0 * cap.3 / h, a0 * cap.4 / h)
+            ceqgs = flow(2, q.2) - gcgs * vgs
+            ceqgd = flow(3, q.3) - gcgd * vgd
+            ceqgb = flow(4, q.4) - gcgb * vgb
+        }
+        let (gm, gds, gmbs) = (r.gm, r.gds, r.gmbs)
+        let (xnrm, xrev): (Double, Double) = r.mode > 0 ? (1, 0) : (0, 1)
+        let ceqbs = t * (cbs - gbs * vbs), ceqbd = t * (cbd - gbd * vbd)
+        let cdreq = r.mode > 0 ? t * (r.cdrain - gds * vds - gm * vgs - gmbs * vbs)
+                               : -t * (r.cdrain + gds * vds - gm * vgd - gmbs * vbd)
+        func inject(_ node: Int, _ value: Double) { if node > 0 { rhs[node - 1] += value } }
+        inject(n.g, -t * (ceqgs + ceqgb + ceqgd))
+        inject(n.s, -(ceqbs + ceqbd - t * ceqgb))
+        inject(n.dp, ceqbd - cdreq + t * ceqgd)
+        inject(n.sp, cdreq + ceqbs + t * ceqgs)
+        let g = n.g - 1, b = n.s - 1, dp = n.dp - 1, sp = n.sp - 1
+        add(matrix, m, g, g, gcgd + gcgs + gcgb)
+        add(matrix, m, b, b, gbd + gbs + gcgb)
+        add(matrix, m, dp, dp, gds + gbd + xrev * (gm + gmbs) + gcgd)
+        add(matrix, m, sp, sp, gds + gbs + xnrm * (gm + gmbs) + gcgs)
+        add(matrix, m, g, b, -gcgb)
+        add(matrix, m, g, dp, -gcgd)
+        add(matrix, m, g, sp, -gcgs)
+        add(matrix, m, b, g, -gcgb)
+        add(matrix, m, b, dp, -gbd)
+        add(matrix, m, b, sp, -gbs)
+        add(matrix, m, dp, g, (xnrm - xrev) * gm - gcgd)
+        add(matrix, m, dp, b, -gbd + (xnrm - xrev) * gmbs)
+        add(matrix, m, dp, sp, -gds - xnrm * (gm + gmbs))
+        add(matrix, m, sp, g, -(xnrm - xrev) * gm - gcgs)
+        add(matrix, m, sp, b, -gbs - (xnrm - xrev) * gmbs)
+        add(matrix, m, sp, dp, -gds - xrev * (gm + gmbs))
+        // and a shunt from drain to source while gmin stepping
+        stampConductance(matrix, m, n.dp, n.sp, junctionConductance)
     }
 
     /// A JFET's gate junctions and channel (between its internal drain and source), linearised at the present solution
@@ -2476,40 +2608,7 @@ public final class Simulator {
                 stampConductance(matrix, m, grid, cathode, junctionConductance)
 
             case .nmos, .pmos:
-                let (polarity, threshold, beta) = (c.polarity, c.threshold, c.beta)
-                let gate = nodes[0]
-                var drain = nodes[1]
-                var source = nodes[2]
-                var vgs = voltage(gate) - voltage(source)
-                var vds = voltage(drain) - voltage(source)
-                // limit the gate voltage change per iteration
-                if abs(vgs - limitedVoltage[i]) > 0.5 || abs(vds - limitedVoltage2[i]) > 2 { limiting = true }
-                vgs = limitedVoltage[i] + max(-0.5, min(0.5, vgs - limitedVoltage[i]))
-                vds = limitedVoltage2[i] + max(-2, min(2, vds - limitedVoltage2[i]))
-                limitedVoltage[i] = vgs
-                limitedVoltage2[i] = vds
-                // the device is symmetric: the terminal at the lower potential (for NMOS) acts as the source
-                if polarity * vds < 0 {
-                    swap(&drain, &source)
-                    vgs = vgs - vds
-                    vds = -vds
-                }
-                let mosfetModel = mosfetCurrent(vgs: polarity * vgs, vds: polarity * vds, threshold: threshold, beta: beta)
-                var model = mosfetModel
-                // a shunt from drain to source while gmin stepping
-                model.gds += junctionConductance
-                let ids = polarity * mosfetModel.id + junctionConductance * vds
-                let equivalent = ids - model.gm * vgs - model.gds * vds
-                let d = drain - 1
-                let s = source - 1
-                let g = gate - 1
-                add(matrix, m, d, d, model.gds)
-                add(matrix, m, d, s, -model.gds - model.gm)
-                add(matrix, m, d, g, model.gm)
-                add(matrix, m, s, d, -model.gds)
-                add(matrix, m, s, s, model.gds + model.gm)
-                add(matrix, m, s, g, -model.gm)
-                stampCurrent(rhs, drain, source, equivalent)
+                stampMOSFET(i, nodes, matrix, rhs, m)
 
             case .opAmp:
                 let row = topology.sourceRow[i]
@@ -2727,13 +2826,15 @@ public final class Simulator {
                 if j.hasDrainNode { current(name + " drain resistance", 4 * kT / j.rd, n.d, n.dp) }
                 if j.hasSourceNode { current(name + " source resistance", 4 * kT / j.rs, n.s, n.sp) }
             case .nmos, .pmos:
-                var vgs = v(0) - v(2), vds = v(1) - v(2)
-                if c.polarity * vds < 0 {
-                    vgs -= vds
-                    vds = -vds
-                }
-                let gm = mosfetCurrent(vgs: c.polarity * vgs, vds: c.polarity * vds, threshold: c.threshold, beta: c.beta).gm
-                current(name, 8.0 / 3 * kT * abs(gm), nodes[1], nodes[2])
+                // the channel's thermal noise (from its transconductance, as in ngspice) and the resistances'
+                let f = mosfets[i]
+                let n = Self.fetNodes({ nodes[$0] }, drain: f.hasDrainNode, source: f.hasSourceNode)
+                let t = f.type
+                let r = f.currents(vgs: t * (voltage(n.g) - voltage(n.sp)), vds: t * (voltage(n.dp) - voltage(n.sp)),
+                                   vbs: t * (voltage(n.s) - voltage(n.sp)), gmin: Self.junctionGmin)
+                current(name, 8.0 / 3 * kT * abs(r.gm), n.dp, n.sp)
+                if f.hasDrainNode { current(name + " drain resistance", 4 * kT / f.rd, n.d, n.dp) }
+                if f.hasSourceNode { current(name + " source resistance", 4 * kT / f.rs, n.s, n.sp) }
             case .triode, .pentode:
                 let vgk = v(0) - v(2), vpk = v(1) - v(2)
                 let gm = kinds[i] == .pentode && nodes.count > 3
@@ -2839,6 +2940,21 @@ public final class Simulator {
                 let q = j.charges(vgs: j.polarity * (voltage(n.g) - voltage(n.sp)), vgd: j.polarity * (voltage(n.g) - voltage(n.dp)))
                 if q.capgs > 0 { admittance(n.g, n.sp, .capacitance(q.capgs)) }
                 if q.capgd > 0 { admittance(n.g, n.dp, .capacitance(q.capgd)) }
+            case .nmos, .pmos:
+                // the bulk junctions' capacitances and Meyer's (the whole of each at the operating point) with the overlaps
+                let f = mosfets[i]
+                guard f.hasCharges else { continue }
+                let n = Self.fetNodes({ nodes[$0] }, drain: f.hasDrainNode, source: f.hasSourceNode)
+                let t = f.type
+                let (vgs, vds, vbs) = (t * (voltage(n.g) - voltage(n.sp)), t * (voltage(n.dp) - voltage(n.sp)),
+                                       t * (voltage(n.s) - voltage(n.sp)))
+                let r = f.currents(vgs: vgs, vds: vds, vbs: vbs, gmin: Self.junctionGmin)
+                let bulk = f.bulkCharges(vbd: vbs - vds, vbs: vbs)
+                let half = f.meyer(vgs: vgs, vgd: vgs - vds, r)
+                for (a, b, c) in [(n.g, n.sp, 2 * half.gs + f.cgso), (n.g, n.dp, 2 * half.gd + f.cgdo), (n.g, n.s, 2 * half.gb + f.cgbo),
+                                  (n.s, n.dp, bulk.capbd), (n.s, n.sp, bulk.capbs)] where c > 0 {
+                    admittance(a, b, .capacitance(c))
+                }
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 if row >= 0 { drives[i] = .row(row) }
             case .currentSource:
@@ -2913,8 +3029,11 @@ public final class Simulator {
             limitedVoltage[i] = j.polarity * (voltage(n.g) - voltage(n.sp))
             limitedVoltage2[i] = j.polarity * (voltage(n.g) - voltage(n.dp))
         case .nmos, .pmos:
-            limitedVoltage[i] = v(0) - v(2)
-            limitedVoltage2[i] = v(1) - v(2)
+            let f = mosfets[i]
+            let n = Self.fetNodes({ nodes[$0] }, drain: f.hasDrainNode, source: f.hasSourceNode)
+            limitedVoltage[i] = f.type * (voltage(n.g) - voltage(n.sp))
+            limitedVoltage2[i] = f.type * (voltage(n.dp) - voltage(n.sp))
+            limitedVoltage3[i] = f.type * (voltage(n.s) - voltage(n.sp))
         case .triode, .pentode:
             limitedVoltage[i] = v(0) - v(2)
             limitedVoltage2[i] = v(1) - v(2)
@@ -3041,7 +3160,7 @@ public final class Simulator {
     /// The charges part `i` stores, by slot, at the junction voltages Newton-Raphson last stamped (the solution's, once
     /// it converged: a substep accepted without converging leaves the solution at an unlimited iterate, where exp() would
     /// store a huge charge)
-    private func storedCharges(_ i: Int, _ nodes: NodeList) -> (Double, Double, Double) {
+    @inline(__always) private func forEachStoredCharge(_ i: Int, _ nodes: NodeList, _ body: (Int, Double) -> Void) {
         switch kinds[i] {
         case .npn, .pnp:
             let g = bipolar[i]
@@ -3050,14 +3169,26 @@ public final class Simulator {
             let (vbe, vbc) = (limitedVoltage[i], limitedVoltage2[i])
             let q = g.charges(vbe: vbe, vbc: vbc, vbx: p * (voltage(n.b) - voltage(n.cp)),
                               g.currents(vbe: vbe, vbc: vbc, gmin: Self.junctionGmin))
-            return (q.qbe, q.qbc, q.qbx)
+            body(0, q.qbe)
+            body(1, q.qbc)
+            body(2, q.qbx)
         case .diode, .led, .zener:
-            return (junctionChargeAndCapacitance(i, slot: 0, limitedVoltage[i]).charge, 0, 0)
+            body(0, junctionChargeAndCapacitance(i, slot: 0, limitedVoltage[i]).charge)
         case .njfet:
             let q = jfets[i].charges(vgs: limitedVoltage[i], vgd: limitedVoltage2[i])
-            return (q.qgs, q.qgd, 0)
+            body(0, q.qgs)
+            body(1, q.qgd)
+        case .nmos, .pmos:
+            let (vgs, vds, vbs) = (limitedVoltage[i], limitedVoltage2[i], limitedVoltage3[i])
+            let r = mosfets[i].currents(vgs: vgs, vds: vds, vbs: vbs, gmin: Self.junctionGmin)
+            let q = mosfetCharges(i, vgs: vgs, vds: vds, vbs: vbs, r).q
+            body(0, q.0)
+            body(1, q.1)
+            body(2, q.2)
+            body(3, q.3)
+            body(4, q.4)
         default:
-            return (junctionChargeAndCapacitance(i, slot: 0, voltage(nodes[0]) - voltage(nodes[1])).charge, 0, 0)
+            body(0, junctionChargeAndCapacitance(i, slot: 0, voltage(nodes[0]) - voltage(nodes[1])).charge)
         }
     }
 
@@ -3065,13 +3196,20 @@ public final class Simulator {
     private func updateDynamicStates() {
         let lists = nodeLists
         for i in junctionIndices {
-            let q = storedCharges(i, lists[i])
-            for (slot, charge) in [q.0, q.1, q.2].enumerated() where slot < Self.chargeSlots {
+            // (each slot's charge is worked out from its own history alone, all before any is stored)
+            forEachStoredCharge(i, lists[i]) { slot, charge in
                 let k = Self.chargeSlots * i + slot
                 junctionCurrent[k] = (a0 * charge + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
                 junctionChargeOlder[k] = junctionChargePrevious[k]
                 junctionChargePrevious[k] = junctionCharge[k]
                 junctionCharge[k] = charge
+            }
+            if kinds[i].isMOSFET {
+                // the gate voltages and half capacitances the next step's Meyer charges start from
+                let (vgs, vds, vbs) = (limitedVoltage[i], limitedVoltage2[i], limitedVoltage3[i])
+                let half = mosfets[i].meyer(vgs: vgs, vgd: vgs - vds,
+                                            mosfets[i].currents(vgs: vgs, vds: vds, vbs: vbs, gmin: Self.junctionGmin))
+                meyerHistory[i] = MeyerHistory(vgs: vgs, vgd: vgs - vds, vgb: vgs - vbs, gs: half.gs, gd: half.gd, gb: half.gb)
             }
         }
         for i in dynamicIndices {
@@ -3614,18 +3752,19 @@ public final class Simulator {
             let drain = p * r.cdrain - gd
             return (drain, [-(gs + gd), -drain, gs + gd + drain])
         case .nmos, .pmos:
-            let (polarity, threshold, beta) = (constants[i].polarity, constants[i].threshold, constants[i].beta)
-            var vgs = v(nodes[0]) - v(nodes[2])
-            var vds = v(nodes[1]) - v(nodes[2])
-            var sign = 1.0
-            if polarity * vds < 0 {
-                vgs -= vds
-                vds = -vds
-                sign = -1
-            }
-            let model = mosfetCurrent(vgs: polarity * vgs, vds: polarity * vds, threshold: threshold, beta: beta)
-            let current = sign * polarity * model.id
-            return (current, [0, -current, current])
+            let f = mosfets[i]
+            let n = Self.fetNodes({ nodes[$0] }, drain: f.hasDrainNode, source: f.hasSourceNode)
+            let t = f.type
+            let r = f.currents(vgs: t * (v(n.g) - v(n.sp)), vds: t * (v(n.dp) - v(n.sp)), vbs: t * (v(n.s) - v(n.sp)),
+                               gmin: Self.junctionGmin)
+            // with the stored charges' charging currents: bulk to drain and to source, gate to source, drain and bulk
+            let k = Self.chargeSlots * i
+            let (cbd, cbs) = (r.cbd + junctionCurrent[k], r.cbs + junctionCurrent[k + 1])
+            let (igs, igd, igb) = (junctionCurrent[k + 2], junctionCurrent[k + 3], junctionCurrent[k + 4])
+            // into the gate, the drain, and the source with the bulk
+            let gate = t * (igs + igd + igb)
+            let drain = t * (r.mode * r.cdrain - cbd - igd)
+            return (drain, [-gate, -drain, gate + drain])
         case .npn, .pnp:
             let p: Double = element.kind == .npn ? 1 : -1
             let g = bipolar[i]

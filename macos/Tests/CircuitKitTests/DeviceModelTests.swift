@@ -5,7 +5,8 @@ import XCTest
 /// of a transistor's two sources (base or gate to emitter or source, collector or drain to emitter or source) while the
 /// other holds, and records the currents into its base and collector (gate and drain), or sweeps the voltage across a
 /// diode and records its current; JSpice solves each point here. Both solve the same equations (Gummel-Poon's, SPICE's
-/// diode's and JFET's) to convergence, so they agree to a few parts per million: what is left is how far each converges.
+/// diode's, JFET's and level-1 MOSFET's) to convergence, so they agree to a few parts per million: what is left is how far
+/// each converges.
 final class DeviceModelTests: XCTestCase {
     struct Reference: Decodable {
         let ngspice: String
@@ -40,7 +41,8 @@ final class DeviceModelTests: XCTestCase {
     /// The currents into the transistor's base and collector (gate and drain) with the sources at `vbe` and `vce`
     private func currents(_ sweep: Sweep, vbe: Double, vce: Double) throws -> (base: Double, collector: Double) {
         let kind = try XCTUnwrap(ElementKind(rawValue: sweep.kind))
-        let terminals = kind == .njfet ? ["gate": "b", "drain": "c", "source": "GND"] : ["base": "b", "collector": "c", "emitter": "GND"]
+        let fet = kind == .njfet || kind.isMOSFET
+        let terminals = fet ? ["gate": "b", "drain": "c", "source": "GND"] : ["base": "b", "collector": "c", "emitter": "GND"]
         var circuit = try SchematicLayout.layout([
             NetlistPart(kind: .dcVoltage, name: "VBE", params: ["voltage": vbe], connections: ["plus": "b", "minus": "GND"]),
             NetlistPart(kind: .dcVoltage, name: "VCE", params: ["voltage": vce], connections: ["plus": "c", "minus": "GND"]),
@@ -91,7 +93,7 @@ final class DeviceModelTests: XCTestCase {
                 table.append("  " + sweep.id.padding(toLength: 18, withPad: " ", startingAt: 0) + String(format: "anode %8.3f ppm", worst * 1e6))
                 continue
             }
-            let jfet = sweep.kind == ElementKind.njfet.rawValue
+            let jfet = ["njfet", "nmos", "pmos"].contains(sweep.kind)
             let base = try XCTUnwrap(jfet ? sweep.gate : sweep.base), collector = try XCTUnwrap(jfet ? sweep.drain : sweep.collector)
             let (control, output) = jfet ? ("gate", "drain") : ("base", "collector")
             var worstBase = 0.0, worstCollector = 0.0

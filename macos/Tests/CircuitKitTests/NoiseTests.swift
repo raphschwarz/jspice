@@ -69,7 +69,7 @@ final class NoiseTests: XCTestCase {
         let node = simulator.nodes(of: try XCTUnwrap(circuit.elements.firstIndex { $0.name == "C1" }))[0]
         let frequencies = FrequencySweep.logarithmic(from: 1, to: 1e10, pointsPerDecade: 200)
         let result = try XCTUnwrap(model.noise(plus: node, minus: 0, input: source, sources: simulator.noiseSources(), frequencies: frequencies))
-        let kT = 1.602176634e-19 * 0.025852
+        let kT = 1.602176634e-19 * Simulator.thermalVoltage
         XCTAssertEqual(result.total, (kT / 1e-9).squareRoot(), accuracy: 0.01 * (kT / 1e-9).squareRoot())
         XCTAssertEqual(result.contributions.first?.label, "R1")
         // in the passband the input-referred noise is the resistor's own, √(4kTR)
