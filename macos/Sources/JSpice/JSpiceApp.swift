@@ -106,6 +106,12 @@ struct CircuitCommands: Commands {
                 .disabled(editor == nil)
             Button("Import Maker's Model…") { editor?.importMakerModel() }
                 .disabled(editor == nil)
+            Menu("Download Maker's Model") {
+                ForEach(MakerModelCatalog.models) { model in
+                    Button("\(model.part) — \(model.maker)") { editor?.downloadMakerModel(model) }
+                }
+            }
+            .disabled(editor == nil)
             Button("Import Schematic from Image or PDF…") { editor?.importSchematic() }
                 .disabled(editor == nil)
             Button("Forget Anthropic API Key") { APIKeyStore.remove() }

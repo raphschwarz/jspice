@@ -268,12 +268,23 @@ public final class CircuitSession {
              description: "Imports a maker's SPICE model file (an op-amp's .lib or .mod from its maker's site, as downloaded): one of its subcircuits becomes a block in the block library, its pins named as the file names them, with the file's provenance (its name, SHA-256 and the comment lines it starts with, where makers give the part, revision and terms). A model with five pins is measured as an op-amp (pins in a model's usual order: +in, -in, V+, V-, out) at ±supply: input offset, supply current, open-loop gain, unity-gain frequency and phase margin, slew rate and output swing, to set beside its datasheet. Then use it as {\"kind\": \"block\", \"block\": \"name\", ...}.",
              inputSchema: schema([
                 "path": string("The model file"),
+                "part": string("Or a part JSpice knows where to download from its maker (list_maker_models), instead of a file"),
                 "subcircuit": string("Which subcircuit (optional; the file's first)"),
                 "url": string("Where it was downloaded from, kept with it (optional)"),
                 "measure": ["type": "boolean", "description": "Measure it as an op-amp (default: when it has five pins)"],
                 "supply": ["type": "number", "description": "The supplies for measuring, ± volts (default 15)"],
-             ], required: ["path"]),
+             ]),
              run: { session, arguments in try session.importModel(arguments) }),
+        Tool(name: "list_maker_models",
+             description: "The parts whose models JSpice knows where to download from their makers, with each file's revision and SHA-256, the datasheet its figures are checked against, and what the model is known to get wrong. Import one with import_model {\"part\": ...}.",
+             inputSchema: schema([:]),
+             run: { _, _ in
+                 MakerModelCatalog.models.map { m -> [String: Any] in
+                     ["part": m.part, "maker": m.maker, "summary": m.summary, "archive": m.archive.absoluteString, "file": m.file,
+                      "sha256": m.sha256, "revision": m.revision, "datasheet": m.datasheet, "datasheet_url": m.datasheetURL.absoluteString,
+                      "notes": m.notes]
+                 }
+             }),
         Tool(name: "export_spice",
              description: "The circuit as a SPICE deck for ngspice or LTspice, with JSpice's own device equations: its parts by net, .model lines, op-amps and tubes as behavioural sources, transformers as coupled inductors, blocks as subcircuits, and a .tran analysis. Parts with no SPICE element (chips, microcontrollers) are named in comments. Writes it to path if given.",
              inputSchema: schema(["path": string("File to write (optional)")]),
@@ -1673,15 +1684,25 @@ public final class CircuitSession {
     }
 
     func importModel(_ arguments: [String: Any]) throws -> Any {
-        guard let path = arguments["path"] as? String, !path.isEmpty else { throw ToolError("Give the model file as \"path\"") }
-        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        guard let data = FileManager.default.contents(atPath: url.path) else { throw ToolError("Can't read \(path)") }
         let imported: (block: BlockDefinition, warnings: [String])
-        do {
-            imported = try MakerModels.block(from: data, file: url.lastPathComponent, subcircuit: arguments["subcircuit"] as? String,
-                                             url: arguments["url"] as? String, include: SpiceNetlist.fileIncluder(deck: url))
-        } catch {
-            throw ToolError("\(error)")
+        var known: MakerModelCatalog.Model?
+        if let part = arguments["part"] as? String, !part.isEmpty {
+            // from its maker
+            guard let model = MakerModelCatalog.model(part) else {
+                throw ToolError("JSpice doesn't know where to download \(part); it knows \(MakerModelCatalog.models.map(\.part).joined(separator: ", "))")
+            }
+            known = model
+            do { imported = try MakerModelCatalog.download(model) } catch { throw ToolError("\(error)") }
+        } else {
+            guard let path = arguments["path"] as? String, !path.isEmpty else { throw ToolError("Give the model file as \"path\", or a \"part\"") }
+            let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            guard let data = FileManager.default.contents(atPath: url.path) else { throw ToolError("Can't read \(path)") }
+            do {
+                imported = try MakerModels.block(from: data, file: url.lastPathComponent, subcircuit: arguments["subcircuit"] as? String,
+                                                 url: arguments["url"] as? String, include: SpiceNetlist.fileIncluder(deck: url))
+            } catch {
+                throw ToolError("\(error)")
+            }
         }
         let block = imported.block
         try BlockLibrary.save(block)
@@ -1692,17 +1713,23 @@ public final class CircuitSession {
             "source": ["file": block.source?.file ?? "", "sha256": block.source?.sha256 ?? "", "header": block.source?.header ?? []],
         ]
         if (arguments["measure"] as? Bool) ?? (pins.count == 5) {
-            let supply = (arguments["supply"] as? Double) ?? (arguments["supply"] as? Int).map(Double.init) ?? 15
+            let supply = (arguments["supply"] as? Double) ?? (arguments["supply"] as? Int).map(Double.init) ?? known?.supply ?? 15
             do {
-                let f = try MakerModels.measureOpAmp(block, pins: pins, supply: supply)
+                let f = try MakerModels.measureOpAmp(block, pins: pins, supply: supply, load: known?.load ?? 10_000)
                 var figures: [String: Any] = [
                     "supply": supply, "offset_v": f.offset, "supply_current_a": f.supplyCurrent, "open_loop_gain_db": f.openLoopGain,
                     "swing_high_v": f.swingHigh, "swing_low_v": f.swingLow, "summary": f.lines,
                 ]
+                if let v = f.gainBandwidth { figures["gain_bandwidth_hz"] = v }
                 if let v = f.unityGain { figures["unity_gain_hz"] = v }
                 if let v = f.phaseMargin { figures["phase_margin_deg"] = v }
                 if let v = f.slewRise { figures["slew_rise_v_per_us"] = v / 1e6 }
                 if let v = f.slewFall { figures["slew_fall_v_per_us"] = v / 1e6 }
+                if let known {
+                    figures["datasheet"] = known.datasheet
+                    figures["compared"] = MakerModelCatalog.comparison(known, f)
+                    result["notes"] = known.notes
+                }
                 result["figures"] = figures
             } catch {
                 result["figures_error"] = "\(error)"

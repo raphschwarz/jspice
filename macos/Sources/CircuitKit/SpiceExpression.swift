@@ -445,12 +445,13 @@ public struct SpiceExpression: Hashable, Sendable {
         }
         private mutating func parseOr() throws -> Node {
             var a = try parseAnd()
-            while take("||") { a = .binary(.or, a, try parseAnd()) }
+            // PSpice writes a single | and & too
+            while take("||") || take("|") { a = .binary(.or, a, try parseAnd()) }
             return a
         }
         private mutating func parseAnd() throws -> Node {
             var a = try parseComparison()
-            while take("&&") { a = .binary(.and, a, try parseComparison()) }
+            while take("&&") || take("&") { a = .binary(.and, a, try parseComparison()) }
             return a
         }
         private mutating func parseComparison() throws -> Node {

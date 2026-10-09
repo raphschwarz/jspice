@@ -54,7 +54,8 @@ public enum SpiceNetlist {
     /// lines; not to a deck's title)
     static func logicalLines(_ text: String, titled: Bool) -> [String] {
         var lines: [String] = []
-        for raw in text.replacingOccurrences(of: "\r", with: "").components(separatedBy: "\n") {
+        // (DOS's end-of-file mark, which old model files end with, is not text)
+        for raw in text.replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\u{1A}", with: "").components(separatedBy: "\n") {
             // inline comments
             var line = raw
             for marker in [";", "$ "] {
@@ -128,11 +129,27 @@ public enum SpiceNetlist {
         return result
     }
 
-    /// A subcircuit: its pins, its lines, and its parameters' defaults (as written)
+    /// A subcircuit: its pins, its lines, its parameters' defaults, and the .model lines inside it (as written)
     struct Subcircuit {
         var pins: [String]
         var lines: [String]
         var defaults: [(name: String, value: String)]
+        var models: [String]
+    }
+
+    /// A .model line's name (lower case), type and parameters: "NPN(IS=1e-14 BF=100)" or "NPN IS=1e-14 BF=100"
+    static func model(_ line: String, _ parameters: [String: Double],
+                      _ functions: [String: SpiceExpression.UserFunction]) -> (name: String, type: String, params: [String: Double])? {
+        let words = tokens(line)
+        guard words.count >= 3 else { return nil }
+        var type = words[2].lowercased()
+        if let paren = type.firstIndex(of: "(") { type = String(type[..<paren]) }
+        var params: [String: Double] = [:]
+        for word in words.dropFirst(3) where word.contains("=") {
+            let pair = word.split(separator: "=", maxSplits: 1).map(String.init)
+            if pair.count == 2, let v = evaluate(pair[1], parameters, functions) { params[pair[0].uppercased()] = v }
+        }
+        return (words[1].lowercased(), type, params)
     }
 
     /// The words of a subcircuit's heading or instance before its parameters, and its parameters (after PARAMS: or
@@ -169,19 +186,14 @@ public enum SpiceNetlist {
             }
             if first == ".control" {
                 control = true
-            } else if first == ".model", words.count >= 3 {
-                var type = words[2].lowercased()
-                var params: [String: Double] = [:]
-                // "NPN(IS=1e-14 BF=100)" or "NPN IS=1e-14 BF=100"
-                if let paren = type.firstIndex(of: "(") { type = String(type[..<paren]) }
-                for word in words.dropFirst(3) where word.contains("=") {
-                    let pair = word.split(separator: "=", maxSplits: 1).map(String.init)
-                    if pair.count == 2, let v = evaluate(pair[1], parameters, functions) { params[pair[0].uppercased()] = v }
-                }
-                models[words[1].lowercased()] = (type, params)
+            } else if first == ".model" && open != nil {
+                // a subcircuit's own model, worked out for each instance (with its parameters), as PSpice scopes it
+                open?.sub.models.append(line)
+            } else if first == ".model", let card = Self.model(line, parameters, functions) {
+                models[card.name] = (card.type, card.params)
             } else if first == ".subckt", words.count >= 2 {
                 let (heading, defaults) = splitParameters(line)
-                open = (words[1].lowercased(), Subcircuit(pins: Array(heading.dropFirst(2)), lines: [], defaults: defaults))
+                open = (words[1].lowercased(), Subcircuit(pins: Array(heading.dropFirst(2)), lines: [], defaults: defaults, models: []))
             } else if first == ".ends" {
                 if let sub = open { subcircuits[sub.name] = sub.sub }
                 open = nil
@@ -219,7 +231,7 @@ public enum SpiceNetlist {
             }
         }
         var cache: [String: BlockDefinition] = [:]
-        let parts = elements(top, models: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings, depth: 0,
+        let parts = elements(top, models: models, globalModels: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings, depth: 0,
                              spellings: Spellings(), parameters: parameters, functions: functions)
         return Import(title: title, parts: parts, warnings: warnings)
     }
@@ -467,6 +479,7 @@ public enum SpiceNetlist {
     }
 
     private static func elements(_ lines: [String], models: [String: (type: String, params: [String: Double])],
+                                 globalModels: [String: (type: String, params: [String: Double])]? = nil,
                                  subcircuits: [String: Subcircuit], cache: inout [String: BlockDefinition],
                                  warnings: inout [String], depth: Int, prefix: String = "", spellings: Spellings,
                                  parameters: [String: Double] = [:], functions: [String: SpiceExpression.UserFunction] = [:]) -> [NetlistPart] {
@@ -730,6 +743,12 @@ public enum SpiceNetlist {
                         own.append(assignment.name.lowercased())
                     }
                 }
+                // the deck's models and the subcircuit's own (which win), its own worked out with its constants
+                let globals = globalModels ?? models
+                var scope = globals
+                for modelLine in sub.models {
+                    if let card = Self.model(modelLine, inner, functions) { scope[card.name] = (card.type, card.params) }
+                }
                 // one block for each different set of its constants
                 let key = subName + own.sorted().map { "|\($0)=\(inner[$0] ?? 0)" }.joined()
                 let block: BlockDefinition
@@ -738,7 +757,7 @@ public enum SpiceNetlist {
                 } else {
                     // a subcircuit's nodes are its own: spelled as it spells them
                     let inside = Spellings()
-                    var drawn = elements(sub.lines.filter { !$0.hasPrefix(".") }, models: models, subcircuits: subcircuits,
+                    var drawn = elements(sub.lines.filter { !$0.hasPrefix(".") }, models: scope, globalModels: globals, subcircuits: subcircuits,
                                          cache: &cache, warnings: &warnings, depth: depth + 1, spellings: inside, parameters: inner,
                                          functions: functions)
                     for pin in sub.pins {

@@ -66,6 +66,8 @@ final class MakerModelsTests: XCTestCase {
         // 100 dB less the pole's 0.043 dB at 0.1 Hz
         XCTAssertEqual(f.openLoopGain, 100 - 10 * log10(1.01), accuracy: 0.01)
         XCTAssertEqual(try XCTUnwrap(f.unityGain), 1e5, accuracy: 1e3)
+        // 40 dB at 1 kHz: 100 kHz
+        XCTAssertEqual(try XCTUnwrap(f.gainBandwidth), 1e5, accuracy: 1e3)
         XCTAssertEqual(try XCTUnwrap(f.phaseMargin), 90, accuracy: 0.5)
         // slew limited to 1 V/µs up to 3.41 V, then the last 0.59 V to 90 % in an exponential: 8 V in 8.148 µs
         XCTAssertEqual(try XCTUnwrap(f.slewRise) / 1e6, 0.9818, accuracy: 0.01)

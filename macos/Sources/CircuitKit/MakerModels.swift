@@ -112,21 +112,25 @@ public enum MakerModels {
 
     // MARK: - An op-amp's figures
 
-    /// What a datasheet gives for an op-amp, measured on its model with the supplies at ± the supply voltage, at 27 °C
+    /// What a datasheet gives for an op-amp, measured on its model with the supplies at ± the supply voltage and the
+    /// output loaded (10 kΩ unless given), at 27 °C
     public struct OpAmpFigures: Sendable, Equatable {
         /// The output of a follower with its input at 0 V: the model's input offset voltage
         public var offset: Double
-        /// From the positive supply, the output at 0 V into 10 kΩ
+        /// From the positive supply, the output at 0 V
         public var supplyCurrent: Double
         /// Open-loop gain at 0.1 Hz (dB)
         public var openLoopGain: Double
+        /// Gain-bandwidth product as datasheets give it: the frequency at which the open-loop gain falls to 40 dB, times
+        /// 100 (Hz), where the gain falls at 20 dB a decade
+        public var gainBandwidth: Double?
         /// Where the open-loop gain falls to 1 (Hz), and the phase margin there (degrees)
         public var unityGain: Double?
         public var phaseMargin: Double?
         /// A follower's 10 V step through 10 % to 90 %, rising and falling (V/s)
         public var slewRise: Double?
         public var slewFall: Double?
-        /// The output driven to each side open loop, into 10 kΩ
+        /// The output driven to each side open loop
         public var swingHigh: Double
         public var swingLow: Double
 
@@ -137,10 +141,11 @@ public enum MakerModels {
                 "Input offset voltage: " + SI.format(offset, unit: "V"),
                 "Supply current: " + SI.format(supplyCurrent, unit: "A"),
                 String(format: "Open-loop gain (0.1 Hz): %.1f dB", openLoopGain),
+                "Gain-bandwidth product (at 40 dB): " + (gainBandwidth.map { SI.format($0, unit: "Hz") } ?? "—"),
                 "Unity-gain frequency: " + (unityGain.map { SI.format($0, unit: "Hz") } ?? "—")
                     + (phaseMargin.map { String(format: ", phase margin %.0f°", $0) } ?? ""),
                 "Slew rate (10 V step, 10–90 %): " + slew(slewRise) + " rising, " + slew(slewFall) + " falling",
-                String(format: "Output swing into 10 kΩ: %+.2f V to %+.2f V", swingHigh, swingLow),
+                String(format: "Output swing: %+.2f V to %+.2f V", swingHigh, swingLow),
             ]
         }
     }
@@ -152,9 +157,9 @@ public enum MakerModels {
     /// The op-amp `block`'s figures, its pins given in the usual order of a model: non-inverting input, inverting input,
     /// positive supply, negative supply, output. Open-loop gain and phase are worked out from a follower's small-signal
     /// response H as H / (1 − H), so the model is measured where it is biased as in use.
-    public static func measureOpAmp(_ block: BlockDefinition, pins: [String], supply: Double = 15) throws -> OpAmpFigures {
+    public static func measureOpAmp(_ block: BlockDefinition, pins: [String], supply: Double = 15,
+                                    load: Double = 10_000) throws -> OpAmpFigures {
         guard pins.count == 5 else { throw MeasurementError(description: "An op-amp has five pins: +in, −in, V+, V−, out") }
-        let load = 10_000.0
         /// The op-amp with its supplies and load, `input` at its + input, its − input at its output or grounded
         func circuit(_ input: NetlistPart, follower: Bool) throws -> Circuit {
             var u = NetlistPart(kind: .block, name: "U1")
@@ -194,6 +199,16 @@ public enum MakerModels {
             throw MeasurementError(description: "Its small-signal response can't be worked out")
         }
         let openLoop = response.map { h in h[out] / (Complex(1) - h[out]) }
+        /// Where the gain falls through `level`, log-log between the two points either side, and the fraction between them
+        func falls(through level: Double) -> (frequency: Double, k: Int, t: Double)? {
+            for k in 1..<openLoop.count where openLoop[k - 1].magnitude >= level && openLoop[k].magnitude < level {
+                let (a, b) = (log(openLoop[k - 1].magnitude / level), log(openLoop[k].magnitude / level))
+                let t = a / (a - b)
+                return (exp(log(frequencies[k - 1]) + t * (log(frequencies[k]) - log(frequencies[k - 1]))), k, t)
+            }
+            return nil
+        }
+        let gainBandwidth = falls(through: 100).map { 100 * $0.frequency }
         var unityGain: Double?, phaseMargin: Double?
         for k in 1..<openLoop.count where openLoop[k - 1].magnitude >= 1 && openLoop[k].magnitude < 1 {
             // log-log between the two points
@@ -256,7 +271,8 @@ public enum MakerModels {
             return s.terminalVoltage(try index(c, "RL"), 0)
         }
         return OpAmpFigures(offset: offset, supplyCurrent: supplyCurrent,
-                            openLoopGain: 20 * log10(openLoop[0].magnitude), unityGain: unityGain, phaseMargin: phaseMargin,
+                            openLoopGain: 20 * log10(openLoop[0].magnitude), gainBandwidth: gainBandwidth,
+                            unityGain: unityGain, phaseMargin: phaseMargin,
                             slewRise: slewRise, slewFall: slewFall, swingHigh: try swing(0.1), swingLow: try swing(-0.1))
     }
 }

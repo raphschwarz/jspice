@@ -108,6 +108,9 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
         XCTAssertEqual(try value("{gain * 2}", parameters: ["GAIN": 3]), 6)
         XCTAssertEqual(try value("limit(5, 2, -1)"), 2)
         XCTAssertEqual(try value("1 < 2 && 3 > 4 ? 10 : 20"), 20)
+        // PSpice's single | and &
+        XCTAssertEqual(try value("if(1 > 2 | 3 > 2, 1, 0)"), 1)
+        XCTAssertEqual(try value("if(1 < 2 & 3 > 4, 1, 0)"), 0)
         XCTAssertEqual(try value("table(0.25, 0, 0, 0.5, 1, 1, 1.2)"), 0.5)
         let e = try SpiceExpression(parsing: "V(a)*V(a,b) + 2*tanh(I(VX)) + pwr(V(a), 1.5)")
         XCTAssertEqual(e.inputs, [.voltage("a", nil), .voltage("a", "b"), .current("VX")])

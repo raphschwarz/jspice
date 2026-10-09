@@ -299,6 +299,42 @@ final class SpiceNetlistTests: XCTestCase {
             .contains("R1 a 0 1000 noisy=0"))
     }
 
+    /// A .model inside a subcircuit is the subcircuit's own, as PSpice scopes it (makers' files define the same name in
+    /// several subcircuits, differently), worked out with the instance's parameters; DOS's end-of-file mark is not text
+    func testModelsInsideASubcircuitAreItsOwn() throws {
+        let imported = SpiceNetlist.parse("""
+        scoped models
+        .subckt SA a b
+        D1 a b DX
+        .model DX D(IS=1e-12)
+        .ends
+        .subckt SB a b
+        D1 a b DX
+        .model DX D(IS=1e-15)
+        .ends
+        .subckt SC a b PARAMS: ISX=2e-14
+        D1 a b DY
+        .model DY D(IS={ISX})
+        .ends
+        X1 p 0 SA
+        X2 p 0 SB
+        X3 p 0 SC PARAMS: ISX=5e-14
+        D9 p 0 DX
+        .model DX D(IS=1e-9)
+        \u{1A}
+        """)
+        XCTAssertTrue(imported.warnings.isEmpty, "\(imported.warnings)")
+        func saturation(_ name: String) -> Double? {
+            let part = imported.parts.first { $0.name == name }
+            if part?.kind == .diode { return part?.params["saturationCurrent"] }
+            return part?.block?.circuit.elements.first { $0.kind == .diode }?.params["saturationCurrent"]
+        }
+        XCTAssertEqual(saturation("X1"), 1e-12)
+        XCTAssertEqual(saturation("X2"), 1e-15)
+        XCTAssertEqual(saturation("X3"), 5e-14)
+        XCTAssertEqual(saturation("D9"), 1e-9, "the deck's own")
+    }
+
     /// A P-JFET's card comes back as PJF with the same numbers
     func testPChannelJFETRoundTrip() throws {
         let text = """

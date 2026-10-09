@@ -100,6 +100,8 @@ jobs:
         # optimised, as the app runs it: audio-rate tests take minutes in a debug build
         env:
           JSPICE_REQUIRE_TOOLCHAIN: '1'
+          # download the makers' models of MakerModelCatalog and check them against ngspice's figures
+          JSPICE_MAKER_MODELS: '1'
         run: swift test -c release -Xswiftc -enable-testing
       - name: Interaction test (draws a circuit with synthesized mouse events)
         if: hashFiles('macos/scripts/bundle.sh') != ''

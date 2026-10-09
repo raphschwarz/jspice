@@ -418,6 +418,38 @@ final class EditorState: ObservableObject {
         }
     }
 
+    /// Downloads a part's model from its maker (File ▸ Download Maker's Model), saves it in the block library and shows
+    /// its figures beside its datasheet's
+    func downloadMakerModel(_ model: MakerModelCatalog.Model) {
+        Task.detached(priority: .userInitiated) {
+            var paragraphs: [String] = []
+            var failure: String?
+            do {
+                let (block, warnings) = try MakerModelCatalog.download(model)
+                try BlockLibrary.save(block)
+                paragraphs.append("\(model.part) from \(model.maker), \(model.revision), is in the library's Blocks, its pins \((block.source?.pins ?? []).joined(separator: ", ")).")
+                if let pins = block.source?.pins,
+                   let figures = try? MakerModels.measureOpAmp(block, pins: pins, supply: model.supply, load: model.load) {
+                    paragraphs.append("Measured at ±\(Int(model.supply)) V into \(SI.format(model.load, unit: "Ω")), beside \(model.datasheet):\n"
+                                      + MakerModelCatalog.comparison(model, figures).joined(separator: "\n"))
+                }
+                if !model.notes.isEmpty { paragraphs.append(model.notes.joined(separator: "\n")) }
+                if !warnings.isEmpty { paragraphs.append("Left out:\n" + warnings.prefix(8).joined(separator: "\n")) }
+            } catch {
+                failure = "\(error)"
+            }
+            let title = failure == nil ? "Downloaded \(model.part)" : "\(model.part) can't be downloaded"
+            let text = failure ?? paragraphs.joined(separator: "\n\n")
+            await MainActor.run {
+                self.reloadBlockLibrary()
+                let alert = NSAlert()
+                alert.messageText = title
+                alert.informativeText = text
+                alert.runModal()
+            }
+        }
+    }
+
     /// Writes the circuit as a SPICE deck (File ▸ Export SPICE Netlist)
     func exportSpice() {
         let save = NSSavePanel()
