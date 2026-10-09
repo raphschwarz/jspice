@@ -263,6 +263,10 @@ public final class Simulator {
         var expression: SpiceExpression
         var inputs: [BehaviorInput]
         var voltage: Bool
+        /// An affine expression (a gain, POLY of the first degree): stamped once in the base matrix with its constant
+        /// slopes, its value at zero inputs on the right-hand side, and kept out of Newton-Raphson's nonlinear block
+        var linear = false
+        var offset = 0.0
     }
     private var behaviors: [Behavior?] = []
     /// What reading the behavioural sources' expressions found wrong
@@ -293,6 +297,11 @@ public final class Simulator {
     private var plan: SparsePlan?
     /// Plans made since the start
     public private(set) var plans = 0
+    /// The equations' shape, for profiling: unknowns, those in the nonlinear block (factored at every iteration), and
+    /// the pivot orders kept for it
+    public var planShape: (unknowns: Int, nonlinear: Int, orders: Int) {
+        (topology.matrixSize, plan?.block.count ?? 0, plan?.orderCount ?? 0)
+    }
     /// Set when the plan no longer fits (a stamp fell outside it, or a pivot became too small): planned again next
     private var needsPlan = false
     /// Matrix positions (row × size + column) stamped outside the plan, and unknowns Newton-Raphson stamped outside its
@@ -524,6 +533,11 @@ public final class Simulator {
         }
         memristorIndices = indices { $0 == .memristor }
         compileBehaviors()
+        // affine behavioural sources (a maker's model has dozens of gains) are linear: in the base matrix, their offsets
+        // on the right-hand side, out of the nonlinear block
+        let linearBehaviors = Set(kinds.indices.filter { kinds[$0] == .behavioralSource && behaviors[$0]?.linear == true })
+        nonlinearIndices.removeAll { linearBehaviors.contains($0) }
+        drivenIndices += linearBehaviors.sorted()
         junctionIndices = kinds.indices.filter { storesCharge($0) }
         audioClips = [:]
         for i in indices({ $0 == .audioInput }) {
@@ -1450,6 +1464,8 @@ public final class Simulator {
             switch element.kind {
             case .resistor, .lamp:
                 stampConductance(matrix, m, nodes[0], nodes[1], 1 / max(element[param: "resistance"], 1e-9))
+            case .behavioralSource:
+                stampLinearBehavior(i, nodes, matrix, m)
             case .potentiometer:
                 let (upper, lower) = potentiometerResistances(element)
                 stampConductance(matrix, m, nodes[0], nodes[2], 1 / upper)
@@ -1750,6 +1766,15 @@ public final class Simulator {
             case .comparator, .vco, .vcf, .envelope, .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = moduleStates[i].output }
+            case .behavioralSource:
+                // a linear one's value at zero inputs
+                guard i < behaviors.count, let b = behaviors[i], b.linear, b.offset != 0, b.offset.isFinite else { break }
+                if b.voltage {
+                    let row = topology.sourceRow[i]
+                    if row >= 0 { rhs[row] += b.offset }
+                } else {
+                    stampCurrent(&rhs, nodes[0], nodes[1], b.offset)
+                }
             default:
                 break
             }
@@ -2610,7 +2635,13 @@ public final class Simulator {
                 }
             }
             widest = max(widest, inputs.count)
-            behaviors[i] = Behavior(expression: expression, inputs: inputs, voltage: element[param: "mode"] >= 0.5)
+            var behavior = Behavior(expression: expression, inputs: inputs, voltage: element[param: "mode"] >= 0.5)
+            if expression.isAffine {
+                let zeros = [Double](repeating: 0, count: max(inputs.count, 1))
+                behavior.linear = true
+                behavior.offset = zeros.withUnsafeBufferPointer { expression.value($0.baseAddress!, time: 0, celsius: kelvin - 273.15) }
+            }
+            behaviors[i] = behavior
         }
         behaviorValues = [Double](repeating: 0, count: max(widest, 1))
     }
@@ -2664,6 +2695,40 @@ public final class Simulator {
             } else if equivalent.isFinite {
                 stampCurrent(rhs, nodes[0], nodes[1], equivalent)
             }
+        }
+    }
+
+    /// A linear behavioural source's constant slopes, into the base matrix (as `stampBehavior` stamps them at every
+    /// iteration for one that is not linear): a voltage across + and − on its own row, or a current from + to −
+    private func stampLinearBehavior(_ i: Int, _ nodes: [Int], _ matrix: Entries, _ m: Int) {
+        guard i < behaviors.count, let b = behaviors[i], b.linear, nodes.count >= 2 else { return }
+        let plus = nodes[0] - 1, minus = nodes[1] - 1
+        let row = topology.sourceRow[i]
+        for (k, input) in b.inputs.enumerated() {
+            guard k < b.expression.slopes.count, case let .constant(slope) = b.expression.slopes[k], slope != 0, slope.isFinite else { continue }
+            if b.voltage {
+                guard row >= 0 else { continue }
+                if input.row >= 0 {
+                    add(matrix, m, row, input.row, -slope * input.sign)
+                } else {
+                    add(matrix, m, row, input.plus - 1, -slope)
+                    add(matrix, m, row, input.minus - 1, slope)
+                }
+            } else if input.row >= 0 {
+                add(matrix, m, plus, input.row, slope * input.sign)
+                add(matrix, m, minus, input.row, -slope * input.sign)
+            } else {
+                add(matrix, m, plus, input.plus - 1, slope)
+                add(matrix, m, plus, input.minus - 1, -slope)
+                add(matrix, m, minus, input.plus - 1, -slope)
+                add(matrix, m, minus, input.minus - 1, slope)
+            }
+        }
+        if b.voltage && row >= 0 {
+            add(matrix, m, plus, row, -1)
+            add(matrix, m, minus, row, 1)
+            add(matrix, m, row, plus, 1)
+            add(matrix, m, row, minus, -1)
         }
     }
 

@@ -40,6 +40,19 @@ final class MakerModelCatalogTests: XCTestCase {
             }
             XCTAssertTrue(imported.warnings.isEmpty, "\(model.part): \(imported.warnings)")
             let pins = try XCTUnwrap(imported.block.source?.pins)
+            // what a step costs: a follower at rest, 200 steps of 1 µs
+            let follower = try MakerModels.bench(imported.block, pins: pins, supply: model.supply, load: model.load,
+                                                  input: NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": 0],
+                                                                     connections: ["plus": "inp", "minus": "GND"]), follower: true)
+            let probe = Simulator(circuit: follower, timeStep: 1e-6)
+            let clock = Date()
+            for _ in 0..<200 where !probe.isFailed { probe.step() }
+            let shape = probe.planShape
+            progress(String(format: "%@: %.2f ms a step; %ld unknowns, %ld in the nonlinear block, %ld pivot orders, %ld plans; "
+                            + "%.1f Newton iterations, %.1f substeps (%ld rejected) a step, %ld convergence failures",
+                            model.part, Date().timeIntervalSince(clock) * 1e3 / 200, shape.unknowns, shape.nonlinear, shape.orders,
+                            probe.plans, Double(probe.newtonIterations) / 200, Double(probe.substeps) / 200, probe.rejectedSubsteps,
+                            probe.convergenceFailures))
             let started = Date()
             progress("\(model.part): imported (\(imported.block.circuit.elements.count) parts), measuring")
             let figures = try MakerModels.measureOpAmp(imported.block, pins: pins, supply: model.supply, load: model.load)

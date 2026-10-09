@@ -150,6 +150,25 @@ public enum MakerModels {
         }
     }
 
+    /// The op-amp `block` with its supplies at ± `supply` and `load` on its output, `input` at its + input, its − input
+    /// at its output (a follower) or grounded through a 0 V source
+    static func bench(_ block: BlockDefinition, pins: [String], supply: Double, load: Double, input: NetlistPart,
+                      follower: Bool) throws -> Circuit {
+        var u = NetlistPart(kind: .block, name: "U1")
+        u.block = block
+        u.connections = [pins[0]: "inp", pins[1]: follower ? "out" : "inn", pins[2]: "vcc", pins[3]: "vee", pins[4]: "out"]
+        var parts = [
+            u, input,
+            NetlistPart(kind: .dcVoltage, name: "VP", params: ["voltage": supply], connections: ["plus": "vcc", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": supply], connections: ["plus": "GND", "minus": "vee"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": load], connections: ["a": "out", "b": "GND"]),
+        ]
+        if !follower {
+            parts.append(NetlistPart(kind: .dcVoltage, name: "VM", params: ["voltage": 0], connections: ["plus": "inn", "minus": "GND"]))
+        }
+        return try SchematicLayout.layout(parts)
+    }
+
     /// Steps to settle each test circuit in: long steps reach the operating point as surely (the step's error control
     /// shortens them while anything moves), and a maker's model has hundreds of nodes
     static let settlingSteps = 2_000
@@ -165,21 +184,8 @@ public enum MakerModels {
     public static func measureOpAmp(_ block: BlockDefinition, pins: [String], supply: Double = 15,
                                     load: Double = 10_000) throws -> OpAmpFigures {
         guard pins.count == 5 else { throw MeasurementError(description: "An op-amp has five pins: +in, −in, V+, V−, out") }
-        /// The op-amp with its supplies and load, `input` at its + input, its − input at its output or grounded
         func circuit(_ input: NetlistPart, follower: Bool) throws -> Circuit {
-            var u = NetlistPart(kind: .block, name: "U1")
-            u.block = block
-            u.connections = [pins[0]: "inp", pins[1]: follower ? "out" : "inn", pins[2]: "vcc", pins[3]: "vee", pins[4]: "out"]
-            var parts = [
-                u, input,
-                NetlistPart(kind: .dcVoltage, name: "VP", params: ["voltage": supply], connections: ["plus": "vcc", "minus": "GND"]),
-                NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": supply], connections: ["plus": "GND", "minus": "vee"]),
-                NetlistPart(kind: .resistor, name: "RL", params: ["resistance": load], connections: ["a": "out", "b": "GND"]),
-            ]
-            if !follower {
-                parts.append(NetlistPart(kind: .dcVoltage, name: "VM", params: ["voltage": 0], connections: ["plus": "inn", "minus": "GND"]))
-            }
-            return try SchematicLayout.layout(parts)
+            try bench(block, pins: pins, supply: supply, load: load, input: input, follower: follower)
         }
         func index(_ c: Circuit, _ name: String) throws -> Int {
             guard let k = c.elements.firstIndex(where: { $0.name == name }) else {
@@ -287,16 +293,24 @@ public enum MakerModels {
             }
         }
 
-        // open loop, driven to each side
-        func swing(_ volts: Double) throws -> Double {
-            let c = try circuit(dc(volts), follower: false)
-            let s = Simulator.settled(c, holding: try index(c, "VI"), duration: 0.01, maxSteps: Self.settlingSteps)
-            guard !s.isFailed else { throw MeasurementError(description: "Driven open loop it fails: \(s.problems.joined(separator: "; "))") }
-            return s.terminalVoltage(try index(c, "RL"), 0)
+        // open loop, from rest, its input rising as a quarter of a sine to ±0.1 V over 2.5 ms: the output driven to each
+        // side gently (a step at long steps throws a maker's model's clamps into a fight)
+        func swing(_ sign: Double) throws -> Double {
+            let sine = NetlistPart(kind: .acVoltage, name: "VI", params: ["offset": 0, "amplitude": sign * 0.1, "frequency": 100],
+                                   connections: ["plus": "inp", "minus": "GND"])
+            let open = try circuit(sine, follower: false)
+            let output = try index(open, "RL")
+            let driven = Simulator(circuit: open, timeStep: 2e-6)
+            while driven.time < 0.0025 && !driven.isFailed { driven.step() }
+            guard !driven.isFailed else {
+                throw MeasurementError(description: "Driven open loop it fails: \(driven.problems.joined(separator: "; "))")
+            }
+            return driven.terminalVoltage(output, 0)
         }
+        let (swingHigh, swingLow) = (try swing(1), try swing(-1))
         return OpAmpFigures(offset: offset, supplyCurrent: supplyCurrent,
                             openLoopGain: 20 * log10(openLoop[0].magnitude), gainBandwidth: gainBandwidth,
                             unityGain: unityGain, phaseMargin: phaseMargin,
-                            slewRise: slewRise, slewFall: slewFall, swingHigh: try swing(0.1), swingLow: try swing(-0.1))
+                            slewRise: slewRise, slewFall: slewFall, swingHigh: swingHigh, swingLow: swingLow)
     }
 }

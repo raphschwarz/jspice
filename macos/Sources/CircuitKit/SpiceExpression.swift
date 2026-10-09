@@ -71,6 +71,31 @@ public struct SpiceExpression: Hashable, Sendable {
         }
     }
 
+    /// Whether the value is a constant plus constant multiples of the inputs, the same at every moment: its slopes are
+    /// constants and nothing in it jumps (a comparison, a condition, a table, u, sgn, floor or ceil, whose slopes are 0
+    /// or piecewise) or moves with the time. A controlled source of a gain is; a limit is not.
+    public var isAffine: Bool {
+        guard slopes.allSatisfy({ if case .constant = $0 { return true } else { return false } }) else { return false }
+        func smooth(_ n: Node) -> Bool {
+            switch n {
+            case .constant, .input, .temperature: return true
+            case .time, .not, .conditional, .table, .tableSlope: return false
+            case let .negate(a): return smooth(a)
+            case let .binary(op, a, b):
+                switch op {
+                case .add, .subtract, .multiply, .divide, .power: return smooth(a) && smooth(b)
+                default: return false
+                }
+            case let .call(f, args):
+                switch f {
+                case .u, .uramp, .sgn, .floor, .ceil, .abs, .min, .max, .limit: return false
+                default: return args.allSatisfy(smooth)
+                }
+            }
+        }
+        return smooth(root)
+    }
+
     /// Parses SPICE's syntax (`{` `}` around it are left out); names in `parameters` are constants, and a call of one
     /// of `functions` is its body with the call's arguments in place of its own
     public init(parsing text: String, parameters: [String: Double] = [:], functions: [String: UserFunction] = [:]) throws {
