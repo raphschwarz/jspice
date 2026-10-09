@@ -76,6 +76,8 @@ public final class Simulator {
     private var sequenceOwnsKeyboard = false
 
     var topology = Topology()
+    /// The elements' nodes again, in one block, for the loops that run at every iteration
+    private var nodeLists = NodeLists()
     /// Unknowns: node voltages 1..<nodeCount, then source and op-amp output currents
     var x: [Double] = []
 
@@ -404,6 +406,7 @@ public final class Simulator {
         flat = newCircuit.flattened()
         setTemperature(newCircuit.settings.temperature)
         topology = Topology(circuit: flat)
+        nodeLists = NodeLists(topology.elementNodes)
         let count = flat.elements.count
         junctionCharge = Array(repeating: 0, count: 2 * count)
         junctionChargePrevious = Array(repeating: 0, count: 2 * count)
@@ -916,8 +919,9 @@ public final class Simulator {
         // third divided difference
         let scale = h * h * (h + h1) * (h + h1) / (2 * h + h1)
         var worst = 0.0
+        let lists = nodeLists
         for i in reactiveIndices {
-            let nodes = topology.elementNodes[i]
+            let nodes = lists[i]
             let v = voltage(nodes[0]) - voltage(nodes[1])
             let x0, x1, x2, x3, absolute: Double
             if kinds[i] == .capacitor {
@@ -1546,8 +1550,9 @@ public final class Simulator {
         } else {
             for k in 0..<m { rhs[k] = 0 }
         }
+        let lists = nodeLists
         for i in drivenIndices {
-            let nodes = topology.elementNodes[i]
+            let nodes = lists[i]
             let c = constants[i]
             switch kinds[i] {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
@@ -2144,8 +2149,9 @@ public final class Simulator {
     }
 
     private func stampNonlinear(_ matrix: Entries, _ rhs: Entries, _ m: Int) {
+        let lists = nodeLists
         for i in nonlinearIndices {
-            let nodes = topology.elementNodes[i]
+            let nodes = lists[i]
             let c = constants[i]
             switch kinds[i] {
             case .diode, .led:
@@ -2807,8 +2813,9 @@ public final class Simulator {
 
     /// After each substep: the state of capacitors, inductors, op-amps' internal stages, vactrols and memristors
     private func updateDynamicStates() {
+        let lists = nodeLists
         for i in junctionIndices {
-            let nodes = topology.elementNodes[i]
+            let nodes = lists[i]
             func commit(_ slot: Int, _ v: Double) {
                 let k = 2 * i + slot
                 let q = junctionChargeAndCapacitance(i, slot: slot, v).charge
@@ -2829,7 +2836,7 @@ public final class Simulator {
             }
         }
         for i in dynamicIndices {
-            let nodes = topology.elementNodes[i]
+            let nodes = lists[i]
             let parameters = constants[i]
             switch kinds[i] {
             case .capacitor:

@@ -483,3 +483,44 @@ final class SparsePlan {
         }
     }
 }
+
+/// Every element's nodes in one block: the loops that run at every Newton-Raphson iteration read an element's without
+/// retaining an array of its own (taken into a local first, so the block itself is retained once per loop)
+final class NodeLists {
+    private let block: UnsafeMutablePointer<Int>
+    private let starts: UnsafeMutablePointer<Int>
+
+    init(_ lists: [[Int]] = []) {
+        starts = .allocate(capacity: lists.count + 1)
+        block = .allocate(capacity: max(lists.reduce(0) { $0 + $1.count }, 1))
+        var at = 0
+        for (i, list) in lists.enumerated() {
+            starts[i] = at
+            for node in list {
+                block[at] = node
+                at += 1
+            }
+        }
+        starts[lists.count] = at
+    }
+
+    deinit {
+        block.deallocate()
+        starts.deallocate()
+    }
+
+    @inline(__always) subscript(_ i: Int) -> NodeList {
+        NodeList(base: block + starts[i], count: starts[i + 1] - starts[i])
+    }
+}
+
+/// One element's nodes, as `NodeLists` gives them
+struct NodeList {
+    let base: UnsafeMutablePointer<Int>
+    let count: Int
+
+    @inline(__always) subscript(_ k: Int) -> Int {
+        assert(k >= 0 && k < count, "terminal \(k) of \(count)")
+        return base[k]
+    }
+}
