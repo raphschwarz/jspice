@@ -124,5 +124,16 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
             // 1 + 2 (0.5) + 3 (−2) + 4 (0.25) + 5 (0.5)(−2) + 6 (4)
             XCTAssertEqual(poly.value(p.baseAddress!), 16, accuracy: 1e-12)
         }
+        // .func: a call is the function's body with the call's arguments in place of its own
+        let functions = ["sq": SpiceExpression.UserFunction(arguments: ["x"], body: "{x*x}"),
+                         "clip": SpiceExpression.UserFunction(arguments: ["x", "lo", "hi"], body: "max(min(x, hi), lo)")]
+        let user = try SpiceExpression(parsing: "sq(V(a) - 1) + clip(2*V(a), 0, 1)", functions: functions)
+        XCTAssertEqual(user.inputs, [.voltage("a", nil)])
+        [0.25].withUnsafeBufferPointer { p in
+            // (0.25 − 1)² + 0.5, and its slope 2 (0.25 − 1) + 2
+            XCTAssertEqual(user.value(p.baseAddress!), 1.0625, accuracy: 1e-12)
+            XCTAssertEqual(user.slope(0, p.baseAddress!), 0.5, accuracy: 1e-12)
+        }
+        XCTAssertThrowsError(try SpiceExpression(parsing: "sq(1, 2)", functions: functions))
     }
 }

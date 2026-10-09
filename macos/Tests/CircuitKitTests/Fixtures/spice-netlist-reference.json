@@ -8558,7 +8558,7 @@
   },
   {
    "id": "jfet-opamp-library",
-   "note": "two JFET-input op-amps from a library file (.lib with sections, a .include within it), one given PARAMS:, its P-JFETs, a diode and a transistor with area factors",
+   "note": "two JFET-input op-amps from a library file (.lib with sections, a .include within it), one given PARAMS:, a .func limiting the output, P-JFETs, a diode and a transistor with area factors",
    "netlist": "JFET-input op-amps from a library\n.lib opamps.lib jfet\n.param rf=22k\nVCC vcc 0 DC 15\nVEE vee 0 DC -15\nVIN in 0 SIN(0 0.4 1k)\nR1 in inv 10k\nR2 inv out {rf}\nRL out 0 2k\nX1 0 inv vcc vee out JOPA PARAMS: GM=3e-4\nR3 out f1 4.7k\nC3 f1 0 4.7n\nX2 f1 out2 vcc vee out2 JOPA\nRL2 out2 0 10k\nD1 out2 dk DCLAMP area=4\nR4 dk 0 3.3k\nQ1 vcc out2 e3 QB 3\nRE3 e3 vee 4.7k\n",
    "duration": 0.003,
    "times": [
@@ -13256,7 +13256,7 @@
     }
    ],
    "files": {
-    "opamps.lib": "* a test library (not a vendor's): sections, a subcircuit with parameters\n.lib other\n.subckt JOPA a b\nR1 a b 1\n.ends\n.endl\n.lib jfet\n.include parts.mod\n.subckt JOPA inp inn vcc vee out PARAMS: GM=1.9e-4 RO=50\n.param KB={120/RO}\nISS vcc 10 DC 200u\nJ1 11 inn 10 JX 2\nJ2 12 inp 10 JX 2\nRD1 11 vee 3k\nRD2 12 vee 3k\nGA n6 0 11 12 {GM}\nR2 n6 0 100k\nCC n6 n7 30p\nGB n7 0 n6 0 {KB}\nRO2 n7 0 {RO}\nBOUT out 0 V=max(min(V(n7), V(vcc)-1.5), V(vee)+1.5)\n.model JX PJF(IS=15e-12 BETA=135e-6 VTO=-1 LAMBDA=0.01 CGS=3p CGD=1p RD=10 RS=10)\n.ends\n.endl\n",
+    "opamps.lib": "* a test library (not a vendor's): sections, a subcircuit with parameters\n.lib other\n.subckt JOPA a b\nR1 a b 1\n.ends\n.endl\n.lib jfet\n.include parts.mod\n.subckt JOPA inp inn vcc vee out PARAMS: GM=1.9e-4 RO=50\n.param KB={120/RO}\n.func clip(x, lo, hi) {max(min(x, hi), lo)}\nISS vcc 10 DC 200u\nJ1 11 inn 10 JX 2\nJ2 12 inp 10 JX 2\nRD1 11 vee 3k\nRD2 12 vee 3k\nGA n6 0 11 12 {GM}\nR2 n6 0 100k\nCC n6 n7 30p\nGB n7 0 n6 0 {KB}\nRO2 n7 0 {RO}\nBOUT out 0 V=clip(V(n7), V(vee)+1.5, V(vcc)-1.5)\n.model JX PJF(IS=15e-12 BETA=135e-6 VTO=-1 LAMBDA=0.01 CGS=3p CGD=1p RD=10 RS=10)\n.ends\n.endl\n",
     "parts.mod": "* models for the test library\n.model QB NPN(IS=2e-15 BF=150 VAF=90 RB=50 RE=0.5 CJE=5p CJC=3p)\n.model DCLAMP D(IS=1e-14 RS=5 CJO=2p N=1.2)\n"
    }
   }

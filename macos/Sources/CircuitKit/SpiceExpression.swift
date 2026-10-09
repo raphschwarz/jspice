@@ -60,9 +60,21 @@ public struct SpiceExpression: Hashable, Sendable {
         slopes = inputs.indices.map { Self.fold(Self.derivative(of: root, in: $0)) }
     }
 
-    /// Parses SPICE's syntax (`{` `}` around it are left out); names in `parameters` are constants
-    public init(parsing text: String, parameters: [String: Double] = [:]) throws {
-        var parser = Parser(text, parameters: parameters)
+    /// A function of a deck's `.func`: its arguments' names and its body, which a call is worked out as
+    public struct UserFunction: Sendable {
+        public var arguments: [String]
+        public var body: String
+
+        public init(arguments: [String], body: String) {
+            self.arguments = arguments.map { $0.lowercased() }
+            self.body = body
+        }
+    }
+
+    /// Parses SPICE's syntax (`{` `}` around it are left out); names in `parameters` are constants, and a call of one
+    /// of `functions` is its body with the call's arguments in place of its own
+    public init(parsing text: String, parameters: [String: Double] = [:], functions: [String: UserFunction] = [:]) throws {
+        var parser = Parser(text, parameters: parameters, functions: functions)
         let root = try parser.parseExpression()
         guard parser.atEnd else { throw ParseError.unexpected("text", at: parser.rest) }
         self.init(root: root, inputs: parser.inputs)
@@ -378,15 +390,22 @@ public struct SpiceExpression: Hashable, Sendable {
         private let characters: [Character]
         private var position = 0
         private let parameters: [String: Double]
+        private let functions: [String: UserFunction]
+        /// A user function's arguments while its body is read, and how deep in calls of them it is
+        private var bound: [String: Node] = [:]
+        private var depth = 0
         private(set) var inputs: [Input] = []
 
-        init(_ text: String, parameters: [String: Double]) {
+        init(_ text: String, parameters: [String: Double], functions: [String: UserFunction] = [:]) {
             var t = text.trimmingCharacters(in: .whitespaces)
             if t.hasPrefix("{") && t.hasSuffix("}") { t = String(t.dropFirst().dropLast()) }
             characters = Array(t.replacingOccurrences(of: "**", with: "^"))
             var lowered: [String: Double] = [:]
             for (k, v) in parameters { lowered[k.lowercased()] = v }
             self.parameters = lowered
+            var named: [String: UserFunction] = [:]
+            for (k, f) in functions { named[k.lowercased()] = f }
+            self.functions = named
         }
 
         var atEnd: Bool {
@@ -510,12 +529,26 @@ public struct SpiceExpression: Hashable, Sendable {
                 if lower == "table" && args.count >= 3 && args.count % 2 == 1 {
                     return try table(args[0], Array(args.dropFirst()))
                 }
+                if let f = functions[lower] {
+                    // the body, read with this call's arguments for the function's own, its inputs added to these
+                    guard args.count == f.arguments.count else { throw ParseError.unexpected("arguments of \(name)", at: rest) }
+                    guard depth < 20 else { throw ParseError.unexpected("calls of \(name) within themselves", at: rest) }
+                    var body = Parser(f.body, parameters: parameters, functions: functions)
+                    body.inputs = inputs
+                    body.depth = depth + 1
+                    body.bound = Dictionary(zip(f.arguments, args), uniquingKeysWith: { a, _ in a })
+                    let node = try body.parseExpression()
+                    guard body.atEnd else { throw ParseError.unexpected("text", at: body.rest) }
+                    inputs = body.inputs
+                    return node
+                }
                 let aliases: [String: Function] = ["sign": .sgn, "stp": .u, "int": .floor, "log": .ln, "ln": .ln]
                 guard let f = Function(rawValue: lower) ?? aliases[lower] else { throw ParseError.unknown("function \(name)") }
                 let needed: [Function: Int] = [.min: 2, .max: 2, .pow: 2, .pwr: 2, .pwrs: 2, .atan2: 2, .limit: 3]
                 guard args.count == (needed[f] ?? 1) else { throw ParseError.unexpected("arguments of \(name)", at: rest) }
                 return .call(f, args)
             }
+            if let node = bound[lower] { return node }
             switch lower {
             case "time": return .time
             case "temper", "temp": return .temperature

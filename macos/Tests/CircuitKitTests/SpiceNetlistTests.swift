@@ -110,7 +110,8 @@ final class SpiceNetlistTests: XCTestCase {
     func testSubcircuitParameters() throws {
         let text = """
         dividers with parameters
-        .param big=20k
+        .func twice(x) {2*x}
+        .param big={twice(10k)}
         .subckt DIV top mid PARAMS: R=1k RATIO=1
         .param RLOW={R*RATIO}
         R1 top mid {R}

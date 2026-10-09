@@ -941,7 +941,7 @@ RL out 0 2k
 X1 0 inv vcc vee out OPX
 '''),
     dict(id='jfet-opamp-library', note='two JFET-input op-amps from a library file (.lib with sections, a .include within it), '
-         'one given PARAMS:, its P-JFETs, a diode and a transistor with area factors',
+         'one given PARAMS:, a .func limiting the output, P-JFETs, a diode and a transistor with area factors',
          duration=3e-3, probes=['out', 'out2', 'dk', 'e3'], files={
              'opamps.lib': """* a test library (not a vendor's): sections, a subcircuit with parameters
 .lib other
@@ -953,6 +953,7 @@ R1 a b 1
 .include parts.mod
 .subckt JOPA inp inn vcc vee out PARAMS: GM=1.9e-4 RO=50
 .param KB={120/RO}
+.func clip(x, lo, hi) {max(min(x, hi), lo)}
 ISS vcc 10 DC 200u
 J1 11 inn 10 JX 2
 J2 12 inp 10 JX 2
@@ -963,7 +964,7 @@ R2 n6 0 100k
 CC n6 n7 30p
 GB n7 0 n6 0 {KB}
 RO2 n7 0 {RO}
-BOUT out 0 V=max(min(V(n7), V(vcc)-1.5), V(vee)+1.5)
+BOUT out 0 V=clip(V(n7), V(vee)+1.5, V(vcc)-1.5)
 .model JX PJF(IS=15e-12 BETA=135e-6 VTO=-1 LAMBDA=0.01 CGS=3p CGD=1p RD=10 RS=10)
 .ends
 .endl

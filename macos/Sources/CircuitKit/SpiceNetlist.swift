@@ -157,8 +157,9 @@ public enum SpiceNetlist {
         var open: (name: String, sub: Subcircuit)?
         // ngspice's interactive commands, between .control and .endc, are not part of the circuit
         var control = false
-        // .param's constants, each worked out from those before it
+        // .param's constants, each worked out from those before it, and .func's functions
         var parameters: [String: Double] = [:]
+        var functions: [String: SpiceExpression.UserFunction] = [:]
         for line in lines.dropFirst() where !line.isEmpty && !line.hasPrefix("*") {
             let words = tokens(line)
             guard let first = words.first?.lowercased() else { continue }
@@ -175,7 +176,7 @@ public enum SpiceNetlist {
                 if let paren = type.firstIndex(of: "(") { type = String(type[..<paren]) }
                 for word in words.dropFirst(3) where word.contains("=") {
                     let pair = word.split(separator: "=", maxSplits: 1).map(String.init)
-                    if pair.count == 2, let v = evaluate(pair[1], parameters) { params[pair[0].uppercased()] = v }
+                    if pair.count == 2, let v = evaluate(pair[1], parameters, functions) { params[pair[0].uppercased()] = v }
                 }
                 models[words[1].lowercased()] = (type, params)
             } else if first == ".subckt", words.count >= 2 {
@@ -186,19 +187,31 @@ public enum SpiceNetlist {
                 open = nil
             } else if first == ".end" {
                 break
+            } else if first == ".func" {
+                // .func name(a, b) {body}, or = body
+                let pattern = #"^\.func\s+(\w+)\s*\(([^)]*)\)\s*=?\s*(.+)$"#
+                guard let match = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+                    .firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                      let name = Range(match.range(at: 1), in: line), let arguments = Range(match.range(at: 2), in: line),
+                      let body = Range(match.range(at: 3), in: line) else {
+                    warnings.append("Can't read \(line)")
+                    continue
+                }
+                let names = line[arguments].split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init)
+                functions[line[name].lowercased()] = SpiceExpression.UserFunction(arguments: names, body: String(line[body]))
             } else if first == ".param" && open != nil {
                 // a subcircuit's own constants, worked out for each instance
                 open?.sub.lines.append(line)
             } else if first == ".param" {
                 for assignment in Self.assignments(String(line.dropFirst(6))) {
-                    if let v = Self.evaluate(assignment.value, parameters) {
+                    if let v = Self.evaluate(assignment.value, parameters, functions) {
                         parameters[assignment.name.lowercased()] = v
                     } else {
                         warnings.append(".param \(assignment.name): can't work out \(assignment.value)")
                     }
                 }
             } else if first.hasPrefix(".") {
-                if [".func", ".global"].contains(first) { warnings.append("\(words[0]) is not followed: \(line)") }
+                if first == ".global" { warnings.append("\(words[0]) is not followed: \(line)") }
             } else if open != nil {
                 open?.sub.lines.append(line)
             } else {
@@ -207,7 +220,7 @@ public enum SpiceNetlist {
         }
         var cache: [String: BlockDefinition] = [:]
         let parts = elements(top, models: models, subcircuits: subcircuits, cache: &cache, warnings: &warnings, depth: 0,
-                             spellings: Spellings(), parameters: parameters)
+                             spellings: Spellings(), parameters: parameters, functions: functions)
         return Import(title: title, parts: parts, warnings: warnings)
     }
 
@@ -251,11 +264,11 @@ public enum SpiceNetlist {
     }
 
     /// A number or a `{expression}` of .param's constants
-    static func evaluate(_ text: String, _ parameters: [String: Double]) -> Double? {
+    static func evaluate(_ text: String, _ parameters: [String: Double], _ functions: [String: SpiceExpression.UserFunction] = [:]) -> Double? {
         if let v = value(text) { return v }
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("{") || trimmed.hasPrefix("(") || parameters[trimmed.lowercased()] != nil else { return nil }
-        return (try? SpiceExpression(parsing: trimmed, parameters: parameters))?.constantValue
+        return (try? SpiceExpression(parsing: trimmed, parameters: parameters, functions: functions))?.constantValue
     }
 
     /// `name=value` pairs, a value in braces kept whole
@@ -309,7 +322,8 @@ public enum SpiceNetlist {
     /// A controlled source's expression in terms of SPICE's net and source names, and whether it sets a voltage: E and G
     /// (gain or transconductance, POLY, VALUE, TABLE), F and H (gain or transresistance, POLY), B (V= or I=)
     static func controlledSource(_ letter: Character, _ words: [String], _ line: String,
-                                 _ parameters: [String: Double]) throws -> (SpiceExpression, Bool) {
+                                 _ parameters: [String: Double],
+                                 _ functions: [String: SpiceExpression.UserFunction] = [:]) throws -> (SpiceExpression, Bool) {
         let voltage: Bool
         switch letter {
         case "e", "h": voltage = true
@@ -321,23 +335,23 @@ public enum SpiceNetlist {
             }
             let kind = line[match].trimmingCharacters(in: .whitespaces).dropLast().trimmingCharacters(in: .whitespaces).last
             let text = String(line[match.upperBound...])
-            return (try SpiceExpression(parsing: text, parameters: parameters), kind == "V" || kind == "v")
+            return (try SpiceExpression(parsing: text, parameters: parameters, functions: functions), kind == "V" || kind == "v")
         }
         // (a pair of nets in parentheses leaves an empty word before it)
         let rest = words.dropFirst(3).filter { !$0.isEmpty }
         guard let first = rest.first else { throw SpiceExpression.ParseError.unexpected("end", at: line) }
         let head = first.lowercased()
         if let range = line.range(of: #"\bVALUE\s*=\s*"#, options: [.regularExpression, .caseInsensitive]) {
-            return (try SpiceExpression(parsing: String(line[range.upperBound...]), parameters: parameters), voltage)
+            return (try SpiceExpression(parsing: String(line[range.upperBound...]), parameters: parameters, functions: functions), voltage)
         }
         if head == "table" || head.hasPrefix("table{") {
             // TABLE {expression} = (x, y) (x, y) …
             guard let open = line.firstIndex(of: "{"), let close = line[open...].firstIndex(of: "}") else {
                 throw SpiceExpression.ParseError.unexpected("TABLE without {expression}", at: line)
             }
-            let argument = try SpiceExpression(parsing: String(line[open...close]), parameters: parameters)
+            let argument = try SpiceExpression(parsing: String(line[open...close]), parameters: parameters, functions: functions)
             let numbers = line[line.index(after: close)...].split(whereSeparator: { " ,()=\t".contains($0) })
-                .compactMap { evaluate(String($0), parameters) }
+                .compactMap { evaluate(String($0), parameters, functions) }
             guard numbers.count >= 2 else { throw SpiceExpression.ParseError.unexpected("TABLE points", at: line) }
             let xs = stride(from: 0, to: numbers.count - 1, by: 2).map { numbers[$0] }
             let ys = stride(from: 1, to: numbers.count, by: 2).map { numbers[$0] }
@@ -355,17 +369,17 @@ public enum SpiceNetlist {
             let inputs: [SpiceExpression.Input] = controlledByVoltage
                 ? stride(from: 0, to: controls, by: 2).map { .voltage(names[$0], names[$0 + 1]) }
                 : names.map { .current($0) }
-            let coefficients = rest[(2 + controls)...].compactMap { evaluate($0, parameters) }
+            let coefficients = rest[(2 + controls)...].compactMap { evaluate($0, parameters, functions) }
             return (SpiceExpression.polynomial(dimensions: n, coefficients: coefficients, inputs: inputs), voltage)
         }
         // linear: E/G n+ n- nc+ nc- gain; F/H n+ n- vname gain
         if controlledByVoltage {
-            guard rest.count >= 3, let gain = evaluate(rest[2], parameters) else {
+            guard rest.count >= 3, let gain = evaluate(rest[2], parameters, functions) else {
                 throw SpiceExpression.ParseError.unexpected("gain", at: line)
             }
             return (SpiceExpression.polynomial(dimensions: 1, coefficients: [0, gain], inputs: [.voltage(rest[0], rest[1])]), voltage)
         }
-        guard rest.count >= 2, let gain = evaluate(rest[1], parameters) else {
+        guard rest.count >= 2, let gain = evaluate(rest[1], parameters, functions) else {
             throw SpiceExpression.ParseError.unexpected("gain", at: line)
         }
         return (SpiceExpression.polynomial(dimensions: 1, coefficients: [0, gain], inputs: [.current(rest[0])]), voltage)
@@ -416,7 +430,7 @@ public enum SpiceNetlist {
     private static func elements(_ lines: [String], models: [String: (type: String, params: [String: Double])],
                                  subcircuits: [String: Subcircuit], cache: inout [String: BlockDefinition],
                                  warnings: inout [String], depth: Int, prefix: String = "", spellings: Spellings,
-                                 parameters: [String: Double] = [:]) -> [NetlistPart] {
+                                 parameters: [String: Double] = [:], functions: [String: SpiceExpression.UserFunction] = [:]) -> [NetlistPart] {
         var parts: [NetlistPart] = []
         // voltage sources whose current a controlled source reads: kept as sources (a 0 V one is otherwise an ammeter)
         let sensed = Self.sensedSources(lines)
@@ -426,10 +440,10 @@ public enum SpiceNetlist {
             let words = tokens(line)
             guard let name = words.first, let letter = name.lowercased().first else { continue }
             func node(_ k: Int) -> String? { k < words.count ? net(words[k], prefix, spellings) : nil }
-            func number(_ k: Int) -> Double? { k < words.count ? Self.evaluate(words[k], parameters) : nil }
+            func number(_ k: Int) -> Double? { k < words.count ? Self.evaluate(words[k], parameters, functions) : nil }
             func keyword(_ key: String) -> Double? {
                 words.first { $0.lowercased().hasPrefix(key.lowercased() + "=") }
-                    .flatMap { Self.evaluate(String($0.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[1]), parameters) }
+                    .flatMap { Self.evaluate(String($0.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[1]), parameters, functions) }
             }
             /// A semiconductor's area: a number after its model's name (word `k`), times AREA= and M=
             func area(after k: Int) -> Double {
@@ -558,7 +572,7 @@ public enum SpiceNetlist {
                     continue
                 }
                 do {
-                    let (expression, voltage) = try Self.controlledSource(letter, words, line, parameters)
+                    let (expression, voltage) = try Self.controlledSource(letter, words, line, parameters, functions)
                     // each net the expression reads on a sense pin of its own
                     var pins: [String: String] = [:]
                     var connections = ["plus": plus, "minus": minus]
@@ -600,7 +614,7 @@ public enum SpiceNetlist {
                 var inner = parameters
                 var own: [String] = []
                 for (key, text) in overrides {
-                    guard let v = Self.evaluate(text, parameters) else {
+                    guard let v = Self.evaluate(text, parameters, functions) else {
                         warnings.append("\(name): can't work out \(key)=\(text)")
                         continue
                     }
@@ -608,7 +622,7 @@ public enum SpiceNetlist {
                     own.append(key.lowercased())
                 }
                 for (key, text) in sub.defaults where !own.contains(key.lowercased()) {
-                    guard let v = Self.evaluate(text, inner) else {
+                    guard let v = Self.evaluate(text, inner, functions) else {
                         warnings.append("\(name): can't work out \(key)=\(text) of \(heading[heading.count - 1])")
                         continue
                     }
@@ -617,7 +631,7 @@ public enum SpiceNetlist {
                 }
                 for paramLine in sub.lines where paramLine.lowercased().hasPrefix(".param") {
                     for assignment in Self.assignments(String(paramLine.dropFirst(6))) {
-                        guard let v = Self.evaluate(assignment.value, inner) else {
+                        guard let v = Self.evaluate(assignment.value, inner, functions) else {
                             warnings.append("\(name): can't work out .param \(assignment.name)=\(assignment.value)")
                             continue
                         }
@@ -634,7 +648,8 @@ public enum SpiceNetlist {
                     // a subcircuit's nodes are its own: spelled as it spells them
                     let inside = Spellings()
                     var drawn = elements(sub.lines.filter { !$0.hasPrefix(".") }, models: models, subcircuits: subcircuits,
-                                         cache: &cache, warnings: &warnings, depth: depth + 1, spellings: inside, parameters: inner)
+                                         cache: &cache, warnings: &warnings, depth: depth + 1, spellings: inside, parameters: inner,
+                                         functions: functions)
                     for pin in sub.pins {
                         drawn.append(NetlistPart(kind: .port, name: pin, connections: ["net": net(pin, "", inside)]))
                     }
