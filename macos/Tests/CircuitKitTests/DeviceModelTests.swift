@@ -2,10 +2,10 @@ import XCTest
 @testable import CircuitKit
 
 /// Transistors and diodes at DC against ngspice running the same `.model` cards. `crosscheck.py --devices` sweeps one
-/// of a transistor's two sources (base to emitter, or collector to emitter) while the other holds, and records the
-/// currents into its base and collector, or sweeps the voltage across a diode and records its current; JSpice solves each
-/// point here. Both solve the same equations (Gummel-Poon's, SPICE's diode's) to convergence, so they agree to a few
-/// parts per million: what is left is how far each converges.
+/// of a transistor's two sources (base or gate to emitter or source, collector or drain to emitter or source) while the
+/// other holds, and records the currents into its base and collector (gate and drain), or sweeps the voltage across a
+/// diode and records its current; JSpice solves each point here. Both solve the same equations (Gummel-Poon's, SPICE's
+/// diode's and JFET's) to convergence, so they agree to a few parts per million: what is left is how far each converges.
 final class DeviceModelTests: XCTestCase {
     struct Reference: Decodable {
         let ngspice: String
@@ -17,13 +17,16 @@ final class DeviceModelTests: XCTestCase {
         let note: String
         let kind: String
         let params: [String: Double]
-        /// "vbe" or "vce": the source swept through `voltages`, the other held at `fixed`; "vd" across a diode
+        /// "vbe" or "vce" ("vgs" or "vds"): the source swept through `voltages`, the other held at `fixed`; "vd" across
+        /// a diode
         let swept: String
         let fixed: Double
         let voltages: [Double]
-        /// The currents into the transistor's base and collector, or into the diode's anode
+        /// The currents into the transistor's base and collector (a JFET's gate and drain), or into the diode's anode
         let base: [Double]?
         let collector: [Double]?
+        let gate: [Double]?
+        let drain: [Double]?
         let anode: [Double]?
         /// °C, when not the parts' nominal 27 °C
         let temperature: Double?
@@ -34,15 +37,16 @@ final class DeviceModelTests: XCTestCase {
     static let relative = 1e-5
     static let absolute = 5e-12
 
-    /// The currents into the transistor's base and collector with the sources at `vbe` and `vce`
+    /// The currents into the transistor's base and collector (gate and drain) with the sources at `vbe` and `vce`
     private func currents(_ sweep: Sweep, vbe: Double, vce: Double) throws -> (base: Double, collector: Double) {
         let kind = try XCTUnwrap(ElementKind(rawValue: sweep.kind))
+        let terminals = kind == .njfet ? ["gate": "b", "drain": "c", "source": "GND"] : ["base": "b", "collector": "c", "emitter": "GND"]
         var circuit = try SchematicLayout.layout([
             NetlistPart(kind: .dcVoltage, name: "VBE", params: ["voltage": vbe], connections: ["plus": "vb", "minus": "GND"]),
             NetlistPart(kind: .ammeter, name: "AB", params: [:], connections: ["in": "vb", "out": "b"]),
             NetlistPart(kind: .dcVoltage, name: "VCE", params: ["voltage": vce], connections: ["plus": "vc", "minus": "GND"]),
             NetlistPart(kind: .ammeter, name: "AC", params: [:], connections: ["in": "vc", "out": "c"]),
-            NetlistPart(kind: kind, name: "Q1", params: sweep.params, connections: ["base": "b", "collector": "c", "emitter": "GND"]),
+            NetlistPart(kind: kind, name: "Q1", params: sweep.params, connections: terminals),
         ])
         if let temperature = sweep.temperature { circuit.settings.temperature = temperature }
         func index(_ name: String) throws -> Int { try XCTUnwrap(circuit.elements.firstIndex { $0.name == name }, name) }
@@ -85,17 +89,20 @@ final class DeviceModelTests: XCTestCase {
                 table.append("  " + sweep.id.padding(toLength: 18, withPad: " ", startingAt: 0) + String(format: "anode %8.3f ppm", worst * 1e6))
                 continue
             }
-            let base = try XCTUnwrap(sweep.base), collector = try XCTUnwrap(sweep.collector)
+            let jfet = sweep.kind == ElementKind.njfet.rawValue
+            let base = try XCTUnwrap(jfet ? sweep.gate : sweep.base), collector = try XCTUnwrap(jfet ? sweep.drain : sweep.collector)
+            let (control, output) = jfet ? ("gate", "drain") : ("base", "collector")
             var worstBase = 0.0, worstCollector = 0.0
             for (k, v) in sweep.voltages.enumerated() {
-                let (vbe, vce) = sweep.swept == "vbe" ? (v, sweep.fixed) : (sweep.fixed, v)
+                let (vbe, vce) = sweep.swept == "vbe" || sweep.swept == "vgs" ? (v, sweep.fixed) : (sweep.fixed, v)
                 let ours = try currents(sweep, vbe: vbe, vce: vce)
-                let at = "at VBE \(vbe) V, VCE \(vce) V (\(sweep.note))"
-                worstBase = max(worstBase, check(ours.base, base[k], "\(sweep.id): base current \(at)"))
-                worstCollector = max(worstCollector, check(ours.collector, collector[k], "\(sweep.id): collector current \(at)"))
+                let at = jfet ? "at VGS \(vbe) V, VDS \(vce) V (\(sweep.note))" : "at VBE \(vbe) V, VCE \(vce) V (\(sweep.note))"
+                worstBase = max(worstBase, check(ours.base, base[k], "\(sweep.id): \(control) current \(at)"))
+                worstCollector = max(worstCollector, check(ours.collector, collector[k], "\(sweep.id): \(output) current \(at)"))
             }
             table.append("  " + sweep.id.padding(toLength: 18, withPad: " ", startingAt: 0)
-                         + String(format: "base %8.3f ppm  collector %8.3f ppm", worstBase * 1e6, worstCollector * 1e6))
+                         + "\(control) " + String(format: "%8.3f ppm  ", worstBase * 1e6)
+                         + "\(output) " + String(format: "%8.3f ppm", worstCollector * 1e6))
         }
         print(table.joined(separator: "\n"))
     }

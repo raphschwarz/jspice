@@ -59,6 +59,10 @@ diode_body = element[element.index('static let diodeCardParams'):]
 diode_body = diode_body[:diode_body.index('\n    ]\n')]
 DIODE_DEFAULTS = {k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', diode_body)}
 for kind in ('diode', 'zener', 'led'): DEFAULTS[kind].update(DIODE_DEFAULTS)
+# and a JFET's
+jfet_body = element[element.index('static let jfetCardParams'):]
+jfet_body = jfet_body[:jfet_body.index('\n    ]\n')]
+DEFAULTS['njfet'].update({k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', jfet_body)})
 # GummelPoon.card: SPICE's names for JSpice's keys
 GP_CARD = [('IS', 'saturationCurrent'), ('BF', 'beta'), ('NF', 'nf'), ('VAF', 'vaf'), ('IKF', 'ikf'), ('ISE', 'ise'), ('NE', 'ne'),
            ('BR', 'br'), ('NR', 'nr'), ('VAR', 'var'), ('IKR', 'ikr'), ('ISC', 'isc'), ('NC', 'nc'), ('NKF', 'nkf'),
@@ -135,6 +139,25 @@ def diode_card(p, kind):
         words.append('%s=%.12g' % (name, abs(value)))
     return ' '.join(words)
 
+def jfet_card(p):
+    """A JFET's whole card (SpiceJFET.card): BETA from IDSS, with the gate at the source in saturation, and B's doping
+    tail; BETATCE in place of BEX when given. The coefficients per kelvin are scaled to ngspice's temperatures, which
+    temperature_options sets so that their ratio to the nominal one, not their difference, is JSpice's"""
+    per_kelvin = NOMINAL_KELVIN / (VT / KQ)
+    vto = min(param(p, 'pinchOff'), -0.01)
+    b = param(p, 'b') if param(p, 'b') > 0 else 1
+    b_factor = (1 - b) / (max(param(p, 'pb'), 0.01) - vto)
+    beta = max(param(p, 'idss'), 1e-12) / (vto * vto * (b - b_factor * vto))
+    words = ['VTO=%.12g' % vto, 'BETA=%.12g' % beta]
+    for name, key in [('LAMBDA', 'lambda'), ('B', 'b'), ('RD', 'rd'), ('RS', 'rs'), ('IS', 'saturationCurrent'), ('CGS', 'cgs'),
+                      ('CGD', 'cgd'), ('PB', 'pb'), ('FC', 'fc'), ('TCV', 'tcv'), ('XTI', 'xti'), ('EG', 'eg')]:
+        words.append('%s=%.12g' % (name, param(p, key) * (per_kelvin if name == 'TCV' else 1)))
+    if param(p, 'betatce') != 0:
+        words.append('BETATCE=%.12g' % (param(p, 'betatce') * per_kelvin))
+    else:
+        words.append('BEX=%.12g' % param(p, 'bex'))
+    return ' '.join(words)
+
 def spice_deck(parts, duration, probes, step, temperature=27):
     lines, models = spice_elements(parts, temperature=temperature)
     data = tempfile.mktemp(suffix='.txt')
@@ -189,10 +212,8 @@ def spice_elements(parts, ac_source=None, temperature=27):
             lines.append('M%s %s %s %s %s M_%s L=1 W=1' % (n, pin('drain'), pin('gate'), pin('source'), pin('source'), n))
             lines.append('R%s_leak %s %s 1e9' % (n, pin('drain'), pin('source')))
         elif k == 'njfet':
-            pinch = min(param(p, 'pinchOff'), -0.01)
-            models.append('.model J_%s NJF(VTO=%.12g BETA=%.12g LAMBDA=0.01 IS=1e-30)' % (n, pinch, max(param(p, 'idss'), 1e-9) / pinch ** 2))
+            models.append('.model J_%s NJF(%s)' % (n, jfet_card(p)))
             lines.append('J%s %s %s %s J_%s' % (n, pin('drain'), pin('gate'), pin('source'), n))
-            lines.append('R%s_leak %s %s 1e9' % (n, pin('drain'), pin('source')))
         elif k == 'opAmp':
             gain, limit, gbw = max(param(p, 'gain'), 1), max(param(p, 'limit'), 0.01), param(p, 'gbw')
             slew, offset = param(p, 'slewRate') * 1e6, param(p, 'offset')
@@ -303,6 +324,11 @@ TEST_DIODE = dict(saturationCurrent=4e-9, emission=1.9, rs=0.6, cj0=4e-12, vj=0.
 TEST_ZENER = dict(breakdown=6.2, saturationCurrent=2e-15, emission=1.05, rs=2, cj0=90e-12, vj=0.75, m=0.33, ibv=5e-3, nbv=1.8)
 TEST_LED = dict(color=0, rs=4, cj0=20e-12, vj=1.8, m=0.35, ikr=1e-3, bv=5, ibv=1e-5)
 
+# A test JFET card using every parameter JSpice implements (made up, not any maker's): B's doping tail, drain and source
+# resistances, gate capacitances and the temperature coefficients
+TEST_JFET = dict(pinchOff=-1.8, idss=6e-3, **{'lambda': 0.02}, b=0.85, rd=15, rs=8, saturationCurrent=2e-13, cgs=4e-12, cgd=1.5e-12,
+                 pb=0.8, fc=0.6, tcv=2.5e-3, bex=-1.5, xti=3)
+
 def with_transistor(parts, name, **params):
     """The parts, with transistor `name` given these parameters instead of its own"""
     return [dict(p, params=dict(params)) if p['name'] == name else p for p in parts]
@@ -398,6 +424,13 @@ CASES = [
         P('acVoltage', 'VG', dict(plus='gate', minus='GND'), amplitude=0.5, offset=-0.75, frequency=1000),
         P('resistor', 'RD', dict(a='vdd', b='drain'), resistance=2200),
         P('njfet', 'J1', dict(gate='gate', drain='drain', source='GND'))]),
+    dict(id='jfet-card', note='test JFET card: common-source stage driven at 20 kHz through 47 kΩ, from cut-off into gate '
+         'conduction (B, RD, RS, IS, CGS, CGD)', duration=2e-4, probes=['drain', 'gate'], parts=[
+        P('dcVoltage', 'VDD', dict(plus='vdd', minus='GND'), voltage=12),
+        P('acVoltage', 'VG', dict(plus='in', minus='GND'), amplitude=1.4, offset=-0.7, frequency=20_000),
+        P('resistor', 'RG', dict(a='in', b='gate'), resistance=47_000),
+        P('resistor', 'RD', dict(a='vdd', b='drain'), resistance=3300),
+        P('njfet', 'J1', dict(gate='gate', drain='drain', source='GND'), **TEST_JFET)]),
     dict(id='opamp-inverting', note='TL072 inverting amplifier, gain 10, 1 kHz', duration=0.004, probes=['out'], parts=[
         P('acVoltage', 'VIN', dict(plus='in', minus='GND'), amplitude=0.5, frequency=1000),
         P('resistor', 'R1', dict(a='in', b='inv'), resistance=10_000),
@@ -507,6 +540,15 @@ AC_CASES = [
         P('resistor', 'RL', dict(a='drain', b='out'), resistance=1000),
         P('capacitor', 'CL', dict(a='out', b='GND'), capacitance=10e-9),
         P('njfet', 'J1', dict(gate='gate', drain='drain', source='GND'))]),
+    dict(id='jfet-card', note='test JFET card: self-biased common-source stage fed from 100 kΩ, the Miller pole of CGD',
+         source='VIN', settle=0.01, probes=['drain'], fstop=1e8, parts=[
+        P('dcVoltage', 'VDD', dict(plus='vdd', minus='GND'), voltage=12),
+        P('acVoltage', 'VIN', dict(plus='in', minus='GND'), amplitude=0.1, frequency=1000),
+        P('resistor', 'RG', dict(a='in', b='gate'), resistance=100_000),
+        P('resistor', 'RD', dict(a='vdd', b='drain'), resistance=2200),
+        P('resistor', 'RS', dict(a='src', b='GND'), resistance=330),
+        P('capacitor', 'CS', dict(a='src', b='GND'), capacitance=100e-6),
+        P('njfet', 'J1', dict(gate='gate', drain='drain', source='src'), **TEST_JFET)]),
     dict(id='opamp-inverting', note='TL072 inverting amplifier, gain 10, out to its 3 MHz bandwidth', source='VIN', settle=0.001,
          probes=['out'], fstop=1e7, parts=list(case_parts('opamp-inverting'))),
     dict(id='sallen-key', note='TL072 Sallen-Key low-pass, 1.59 kHz, Q 0.5', source='VIN', settle=0.01, probes=['out'], parts=[
@@ -645,6 +687,14 @@ DEVICE_SWEEPS = [
          kind='led', params=TEST_LED, swept='vd', fixed=0, start=-6, stop=2.4, step=0.1),
     dict(id='default-npn-vce', note='an NPN at JSpice\'s defaults (Ebers-Moll, BR 1): currents against VCE at VBE 0.65 V',
          kind='npn', params={}, swept='vce', fixed=0.65, start=0, stop=10, step=0.25),
+    dict(id='jfet-vgs', note='test JFET card: currents against VGS at VDS 5 V, from cut-off to the gate conducting (B, RS, IS)',
+         kind='njfet', params=TEST_JFET, swept='vgs', fixed=5, start=-2.2, stop=0.8, step=0.05),
+    dict(id='jfet-vds', note='test JFET card: currents against VDS at VGS -0.6 V, from inverse mode through the linear region '
+         'into saturation (LAMBDA, RD)', kind='njfet', params=TEST_JFET, swept='vds', fixed=-0.6, start=-3, stop=12, step=0.25),
+    dict(id='hot-jfet-vgs', note='test JFET card at 70 °C (TCV, BEX, XTI)', kind='njfet', params=TEST_JFET, swept='vgs', fixed=5,
+         start=-2.2, stop=0.7, step=0.05, temperature=70),
+    dict(id='default-jfet-vds', note='a JFET at JSpice\'s defaults: currents against VDS at VGS -0.5 V (inverse mode down to the '
+         'gate-drain junction conducting)', kind='njfet', params={}, swept='vds', fixed=-0.5, start=-1.1, stop=10, step=0.1),
 ]
 
 def run_ngspice_dc(sweep):
@@ -668,6 +718,25 @@ def run_ngspice_dc(sweep):
         return [row[0] for row in rows], [-row[1] for row in rows], None
     temperature = sweep.get('temperature', 27)
     data = tempfile.mktemp(suffix='.txt')
+    if sweep['kind'] == 'njfet':
+        # a JFET between two sources, gate-source and drain-source: the currents into its gate and drain
+        held = 'VDS' if sweep['swept'] == 'vgs' else 'VGS'
+        deck = '\n'.join(['* JSpice device check',
+                          '.options reltol=1e-9 abstol=1e-18 vntol=1e-12 gmin=1e-12 rshunt=1e12 itl1=500 itl2=500',
+                          temperature_options(temperature),
+                          'VGS g 0 DC %.12g' % (sweep['fixed'] if held == 'VGS' else sweep['start']),
+                          'VDS d 0 DC %.12g' % (sweep['fixed'] if held == 'VDS' else sweep['start']),
+                          'J1 d g 0 JT', '.model JT NJF(%s)' % jfet_card(part),
+                          '.control', 'dc %s %.12g %.12g %.12g' % (sweep['swept'].upper(), sweep['start'], sweep['stop'], sweep['step']),
+                          'wrdata %s i(VGS) i(VDS)' % data, 'quit', '.endc', '.end']) + '\n'
+        with tempfile.NamedTemporaryFile('w', suffix='.cir', delete=False) as f:
+            f.write(deck)
+        result = subprocess.run(['ngspice', '-b', f.name], capture_output=True, text=True, timeout=600)
+        if not os.path.exists(data):
+            sys.exit('ngspice failed:\n' + deck + result.stdout[-3000:] + result.stderr[-3000:])
+        rows = [list(map(float, line.split())) for line in open(data) if line.strip()]
+        os.unlink(data)
+        return [row[0] for row in rows], [-row[1] for row in rows], [-row[3] for row in rows]
     held = 'VCE' if sweep['swept'] == 'vbe' else 'VBE'
     deck = '\n'.join(['* JSpice device check',
                       '.options reltol=1e-9 abstol=1e-18 vntol=1e-12 gmin=1e-12 rshunt=1e12 itl1=500 itl2=500',
@@ -695,6 +764,8 @@ def devices_main():
                      fixed=sweep['fixed'], voltages=[round(v, 9) for v in voltages])
         if collector is None:
             entry['anode'] = [float('%.12g' % i) for i in base]
+        elif sweep['kind'] == 'njfet':
+            entry.update(gate=[float('%.12g' % i) for i in base], drain=[float('%.12g' % i) for i in collector])
         else:
             entry.update(base=[float('%.12g' % i) for i in base], collector=[float('%.12g' % i) for i in collector])
         if 'temperature' in sweep:

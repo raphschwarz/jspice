@@ -243,6 +243,8 @@ public final class Simulator {
     private var bipolar: [GummelPoon] = []
     /// Each diode's, Zener diode's and LED's SPICE card at the circuit's temperature
     private var diodes: [SpiceDiode] = []
+    /// Each JFET's SPICE card at the circuit's temperature
+    private var jfets: [SpiceJFET] = []
     /// The charges each part stores and integrates, by slot: a diode's junction; a transistor's base-emitter,
     /// base-collector at the internal base, and base-collector at the external base
     static let chargeSlots = 3
@@ -441,6 +443,7 @@ public final class Simulator {
         constants = flat.elements.map { makeConstants($0) }
         bipolar = flat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
         diodes = flat.elements.map { $0.kind.isDiode ? SpiceDiode($0, kelvin: kelvin, vt: vt) : SpiceDiode() }
+        jfets = flat.elements.map { $0.kind == .njfet ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
         func indices(_ include: (ElementKind) -> Bool) -> [Int] { kinds.indices.filter { include(kinds[$0]) } }
         nonlinearIndices = indices {
             switch $0 {
@@ -544,6 +547,13 @@ public final class Simulator {
             let nodes = topology.elementNodes[i]
             let n = Self.bipolarNodes({ nodes[$0] }, bipolar[i])
             for (inner, outer) in [(n.bp, n.b), (n.cp, n.c), (n.ep, n.e)] where inner != outer && inner > 0 {
+                x[inner - 1] = outer > 0 ? x[outer - 1] : 0
+            }
+        }
+        for i in kinds.indices where kinds[i] == .njfet {
+            let nodes = topology.elementNodes[i]
+            let n = Self.jfetNodes({ nodes[$0] }, jfets[i])
+            for (inner, outer) in [(n.dp, n.d), (n.sp, n.s)] where inner != outer && inner > 0 {
                 x[inner - 1] = outer > 0 ? x[outer - 1] : 0
             }
         }
@@ -770,6 +780,7 @@ public final class Simulator {
         constants = newFlat.elements.map { makeConstants($0) }
         bipolar = newFlat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
         diodes = newFlat.elements.map { $0.kind.isDiode ? SpiceDiode($0, kelvin: kelvin, vt: vt) : SpiceDiode() }
+        jfets = newFlat.elements.map { $0.kind == .njfet ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
         junctionIndices = kinds.indices.filter { storesCharge($0) }
         for (i, chip) in chips { chip.supply = constants[i].supply }
         linkClocks()
@@ -1412,6 +1423,12 @@ public final class Simulator {
                 if g.hasBaseNode && !g.baseModulated { stampConductance(matrix, m, n.b, n.bp, 1 / g.rb) }
                 if g.hasCollectorNode { stampConductance(matrix, m, n.c, n.cp, 1 / g.rc) }
                 if g.hasEmitterNode { stampConductance(matrix, m, n.e, n.ep, 1 / g.re) }
+            case .njfet:
+                // the drain and source resistances to the internal nodes
+                let j = jfets[i]
+                let n = Self.jfetNodes({ nodes[$0] }, j)
+                if j.hasDrainNode { stampConductance(matrix, m, n.d, n.dp, 1 / j.rd) }
+                if j.hasSourceNode { stampConductance(matrix, m, n.s, n.sp, 1 / j.rs) }
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
@@ -1856,7 +1873,7 @@ public final class Simulator {
             c.threshold = max(p("gamma"), 0.01)
             c.tau = max(p("attack"), 1e-6)
             c.highDrop = max(p("decay"), 1e-6)
-        case .nmos, .pmos, .njfet:
+        case .nmos, .pmos:
             (c.polarity, c.threshold, c.beta) = fetParameters(element)
         case .triode, .pentode:
             c.tube = TubeModel(mu: p("mu"), ex: p("ex"), kg1: p("kg1"), kg2: p("kg2"), kp: p("kp"), kvb: p("kvb"), rgi: p("rgi"))
@@ -1964,6 +1981,7 @@ public final class Simulator {
     private func storesCharge(_ i: Int) -> Bool {
         if kinds[i].isBipolar { return bipolar[i].hasCharges }
         if kinds[i].isDiode { return diodes[i].hasCharges }
+        if kinds[i] == .njfet { return jfets[i].hasCharges }
         return constants[i].cj0 > 0 || constants[i].cj1 > 0 || constants[i].transit > 0
     }
 
@@ -1982,6 +2000,23 @@ public final class Simulator {
         }
         let bp = inner(g.hasBaseNode, 0), cp = inner(g.hasCollectorNode, 1), ep = inner(g.hasEmitterNode, 2)
         return BipolarNodes(b: node(0), c: node(1), e: node(2), bp: bp, cp: cp, ep: ep)
+    }
+
+    /// A JFET's terminals, and where its channel ends: the internal drain and source behind its resistances (after its
+    /// three terminals, in that order), or the terminals themselves
+    struct JFETNodes {
+        let g, d, s, dp, sp: Int
+    }
+
+    @inline(__always) static func jfetNodes(_ node: (Int) -> Int, _ j: SpiceJFET) -> JFETNodes {
+        var next = 3
+        func inner(_ present: Bool, _ terminal: Int) -> Int {
+            guard present else { return node(terminal) }
+            next += 1
+            return node(next - 1)
+        }
+        let dp = inner(j.hasDrainNode, 1), sp = inner(j.hasSourceNode, 2)
+        return JFETNodes(g: node(0), d: node(1), s: node(2), dp: dp, sp: sp)
     }
 
     /// The charge a junction holds at voltage `v` (in the part's own polarity) and its slope: depletion charge, plus
@@ -2024,6 +2059,46 @@ public final class Simulator {
             return argument > 0 ? old + nvt * log(argument) : critical
         }
         return nvt * log(new / nvt)
+    }
+
+    /// A field-effect transistor's gate voltage limited as SPICE limits it (DEVfetlim): steps that would carry it far
+    /// past the threshold `vto` in one iteration are cut back
+    private func limitFET(_ new: Double, old: Double, vto: Double) -> Double {
+        var vnew = new
+        let vtsthi = abs(2 * (old - vto)) + 2
+        let vtstlo = abs(old - vto) + 1
+        let vtox = vto + 3.5
+        let delv = new - old
+        if old >= vto {
+            if old >= vtox {
+                if delv <= 0 {
+                    // going off
+                    if vnew >= vtox {
+                        if -delv > vtstlo { vnew = old - vtstlo }
+                    } else {
+                        vnew = max(vnew, vto + 2)
+                    }
+                } else if delv >= vtsthi {
+                    // staying on
+                    vnew = old + vtsthi
+                }
+            } else {
+                // the middle region
+                vnew = delv <= 0 ? max(vnew, vto - 0.5) : min(vnew, vto + 4)
+            }
+        } else if delv <= 0 {
+            // off
+            if -delv > vtsthi { vnew = old - vtsthi }
+        } else {
+            let vtemp = vto + 0.5
+            if vnew <= vtemp {
+                if delv > vtstlo { vnew = old + vtstlo }
+            } else {
+                vnew = vtemp
+            }
+        }
+        if vnew != new { limiting = true }
+        return vnew
     }
 
     /// Current and conductance of a junction, with a tiny leak in parallel. The current must include the leak whenever the
@@ -2135,13 +2210,9 @@ public final class Simulator {
         return (off + (on - off) * s, (on - off) * s * (1 - s) / width)
     }
 
-    /// Polarity, threshold and beta of a field-effect transistor (a JFET is a depletion device with threshold at its
-    /// pinch-off voltage and beta = 2 IDSS / Vp²)
+    /// Polarity, threshold and beta of a MOSFET
     func fetParameters(_ element: Element) -> (polarity: Double, threshold: Double, beta: Double) {
         switch element.kind {
-        case .njfet:
-            let pinchOff = min(element[param: "pinchOff"], -0.01)
-            return (1, pinchOff, 2 * max(element[param: "idss"], 1e-9) / (pinchOff * pinchOff))
         case .pmos:
             return (-1, element[param: "threshold"], element[param: "beta"])
         default:
@@ -2227,6 +2298,50 @@ public final class Simulator {
         if g.baseModulated { stampConductance(matrix, m, n.b, n.bp, r.gx) }
     }
 
+    /// A JFET's gate junctions and channel (between its internal drain and source), linearised at the present solution
+    /// with SPICE's limiting, and the charging of its gate charges
+    private func stampJFET(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
+        let j = jfets[i]
+        let p = j.polarity
+        let n = Self.jfetNodes({ nodes[$0] }, j)
+        // in the transistor's own polarity
+        var vgs = p * (voltage(n.g) - voltage(n.sp))
+        var vgd = p * (voltage(n.g) - voltage(n.dp))
+        vgs = limitJunction(vgs, old: limitedVoltage[i], nvt: j.vt, critical: j.critical)
+        vgd = limitJunction(vgd, old: limitedVoltage2[i], nvt: j.vt, critical: j.critical)
+        vgs = limitFET(vgs, old: limitedVoltage[i], vto: j.threshold)
+        vgd = limitFET(vgd, old: limitedVoltage2[i], vto: j.threshold)
+        limitedVoltage[i] = vgs
+        limitedVoltage2[i] = vgd
+        let vds = vgs - vgd
+        let r = j.currents(vgs: vgs, vgd: vgd, gmin: Self.junctionGmin)
+        // the gate-source and gate-drain branches, with gmin stepping's shunts across them
+        var (cgs, ggs) = (r.cg - r.cgd + junctionConductance * vgs, r.ggs + junctionConductance)
+        var (cgd, ggd) = (r.cgd + junctionConductance * vgd, r.ggd + junctionConductance)
+        if j.hasCharges && !linearising {
+            let q = j.charges(vgs: vgs, vgd: vgd)
+            let k = Self.chargeSlots * i
+            cgs += (a0 * q.qgs + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
+            ggs += a0 * q.capgs / h
+            cgd += (a0 * q.qgd + a1 * junctionCharge[k + 1] + a2 * junctionChargePrevious[k + 1]) / h
+            ggd += a0 * q.capgd / h
+        }
+        stampConductance(matrix, m, n.g, n.sp, ggs)
+        stampCurrent(rhs, n.g, n.sp, p * (cgs - ggs * vgs))
+        stampConductance(matrix, m, n.g, n.dp, ggd)
+        stampCurrent(rhs, n.g, n.dp, p * (cgd - ggd * vgd))
+        // the channel, internal drain to internal source: cdrain(vgs, vds)
+        let (gm, gds) = (r.gm, r.gds)
+        let d = n.dp - 1, s = n.sp - 1, g = n.g - 1
+        add(matrix, m, d, d, gds)
+        add(matrix, m, d, s, -gds - gm)
+        add(matrix, m, d, g, gm)
+        add(matrix, m, s, d, -gds)
+        add(matrix, m, s, s, gds + gm)
+        add(matrix, m, s, g, -gm)
+        stampCurrent(rhs, n.dp, n.sp, p * (r.cdrain - gds * vds - gm * vgs))
+    }
+
     /// A diode's junction (inside its series resistance), linearised at the present solution and limited as SPICE limits
     /// it, with the charging of its stored charge
     private func stampDiode(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
@@ -2261,6 +2376,9 @@ public final class Simulator {
 
             case .npn, .pnp:
                 stampBipolar(i, nodes, matrix, rhs, m)
+
+            case .njfet:
+                stampJFET(i, nodes, matrix, rhs, m)
 
             case .unbufferedInverter:
                 let (input, output) = (nodes[0], nodes[1])
@@ -2336,7 +2454,7 @@ public final class Simulator {
                 stampConductance(matrix, m, plate, cathode, junctionConductance)
                 stampConductance(matrix, m, grid, cathode, junctionConductance)
 
-            case .nmos, .pmos, .njfet:
+            case .nmos, .pmos:
                 let (polarity, threshold, beta) = (c.polarity, c.threshold, c.beta)
                 let gate = nodes[0]
                 var drain = nodes[1]
@@ -2578,7 +2696,16 @@ public final class Simulator {
                 if g.hasBaseNode { current(name + " base resistance", 4 * kT * r.gx, n.b, n.bp) }
                 if g.hasCollectorNode { current(name + " collector resistance", 4 * kT / g.rc, n.c, n.cp) }
                 if g.hasEmitterNode { current(name + " emitter resistance", 4 * kT / g.re, n.e, n.ep) }
-            case .nmos, .pmos, .njfet:
+            case .njfet:
+                // the channel's thermal noise (from its transconductance, as in ngspice) and the resistances'
+                let j = jfets[i]
+                let n = Self.jfetNodes({ nodes[$0] }, j)
+                let r = j.currents(vgs: j.polarity * (voltage(n.g) - voltage(n.sp)), vgd: j.polarity * (voltage(n.g) - voltage(n.dp)),
+                                   gmin: Self.junctionGmin)
+                current(name, 8.0 / 3 * kT * abs(r.gm), n.dp, n.sp)
+                if j.hasDrainNode { current(name + " drain resistance", 4 * kT / j.rd, n.d, n.dp) }
+                if j.hasSourceNode { current(name + " source resistance", 4 * kT / j.rs, n.s, n.sp) }
+            case .nmos, .pmos:
                 var vgs = v(0) - v(2), vds = v(1) - v(2)
                 if c.polarity * vds < 0 {
                     vgs -= vds
@@ -2683,6 +2810,14 @@ public final class Simulator {
                         entries.append(.init(row: row - 1, column: column - 1, scale: scale, transfer: .capacitance(q.dqbeVbc)))
                     }
                 }
+            case .njfet:
+                // the gate's depletion capacitances at the operating point
+                let j = jfets[i]
+                guard j.hasCharges else { continue }
+                let n = Self.jfetNodes({ nodes[$0] }, j)
+                let q = j.charges(vgs: j.polarity * (voltage(n.g) - voltage(n.sp)), vgd: j.polarity * (voltage(n.g) - voltage(n.dp)))
+                if q.capgs > 0 { admittance(n.g, n.sp, .capacitance(q.capgs)) }
+                if q.capgd > 0 { admittance(n.g, n.dp, .capacitance(q.capgd)) }
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 if row >= 0 { drives[i] = .row(row) }
             case .currentSource:
@@ -2751,7 +2886,12 @@ public final class Simulator {
             let n = Self.bipolarNodes({ nodes[$0] }, bipolar[i])
             limitedVoltage[i] = p * (voltage(n.bp) - voltage(n.ep))
             limitedVoltage2[i] = p * (voltage(n.bp) - voltage(n.cp))
-        case .nmos, .pmos, .njfet:
+        case .njfet:
+            let j = jfets[i]
+            let n = Self.jfetNodes({ nodes[$0] }, j)
+            limitedVoltage[i] = j.polarity * (voltage(n.g) - voltage(n.sp))
+            limitedVoltage2[i] = j.polarity * (voltage(n.g) - voltage(n.dp))
+        case .nmos, .pmos:
             limitedVoltage[i] = v(0) - v(2)
             limitedVoltage2[i] = v(1) - v(2)
         case .triode, .pentode:
@@ -2904,6 +3044,10 @@ public final class Simulator {
                 store(2, q.qbx)
             case .diode, .led, .zener:
                 commit(0, limitedVoltage[i])
+            case .njfet:
+                let q = jfets[i].charges(vgs: limitedVoltage[i], vgd: limitedVoltage2[i])
+                store(0, q.qgs)
+                store(1, q.qgd)
             default:
                 commit(0, voltage(nodes[0]) - voltage(nodes[1]))
             }
@@ -3437,7 +3581,17 @@ public final class Simulator {
             return twoTerminal(d.current(v(anode) - v(nodes[1]), gmin: Self.junctionGmin).current + junctionCurrent[Self.chargeSlots * i])
         case .memristor:
             return twoTerminal((v(nodes[0]) - v(nodes[1])) * memristorConductance(i, state: memristorStates[i]))
-        case .nmos, .pmos, .njfet:
+        case .njfet:
+            let j = jfets[i]
+            let n = Self.jfetNodes({ nodes[$0] }, j)
+            let p = j.polarity
+            let r = j.currents(vgs: p * (v(n.g) - v(n.sp)), vgd: p * (v(n.g) - v(n.dp)), gmin: Self.junctionGmin)
+            // with the gate charges' charging currents, gate to source and gate to drain
+            let k = Self.chargeSlots * i
+            let (gs, gd) = (p * (r.cg - r.cgd + junctionCurrent[k]), p * (r.cgd + junctionCurrent[k + 1]))
+            let drain = p * r.cdrain - gd
+            return (drain, [-(gs + gd), -drain, gs + gd + drain])
+        case .nmos, .pmos:
             let (polarity, threshold, beta) = (constants[i].polarity, constants[i].threshold, constants[i].beta)
             var vgs = v(nodes[0]) - v(nodes[2])
             var vds = v(nodes[1]) - v(nodes[2])

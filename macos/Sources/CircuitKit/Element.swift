@@ -761,9 +761,12 @@ extension ElementKind {
                 + Array(Self.logicParams(upper: 0.52, lower: 0.48).dropLast())
         case .njfet:
             return [
-                ParamSpec("pinchOff", "Pinch-off voltage", unit: "V", default: -1.5, range: -8...(-0.2), log: false),
-                ParamSpec("idss", "Saturation current (IDSS)", unit: "A", default: 3e-3, range: 1e-5...0.1),
-            ]
+                ParamSpec("pinchOff", "Pinch-off voltage (VTO)", unit: "V", default: -1.5, range: -8...(-0.2), log: false),
+                ParamSpec("idss", "Drain current with the gate at the source (IDSS)", unit: "A", default: 3e-3, range: 1e-5...0.1),
+                ParamSpec("lambda", "Channel-length modulation (LAMBDA)", unit: "1/V", default: 0.01, range: 0...0.2, log: false),
+                ParamSpec("cgs", "Gate-source capacitance at 0 V (CGS)", unit: "F", default: 0, range: 0...1e-10, log: false),
+                ParamSpec("cgd", "Gate-drain capacitance at 0 V (CGD)", unit: "F", default: 0, range: 0...1e-10, log: false),
+            ] + Self.jfetCardParams
         case .triode:
             return Self.tubeParams(mu: 100, ex: 1.4, kg1: 1060, kg2: nil, kp: 600, kvb: 300, rgi: 2000, cgk: 2.3e-12, cgp: 2.4e-12, cpk: 0.9e-12)
         case .pentode:
@@ -938,9 +941,10 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
 
     /// A parameter value, falling back to the kind's default
     /// Nodes of its own the part has, past its terminals: a bipolar transistor's internal base, collector and emitter,
-    /// and a diode's internal anode, behind their resistances
+    /// a diode's internal anode, and a JFET's internal drain and source, behind their resistances
     var internalNodeCount: Int {
-        kind.isBipolar ? GummelPoon.internalNodes(self) : kind.isDiode ? SpiceDiode.internalNodes(self) : 0
+        kind.isBipolar ? GummelPoon.internalNodes(self) : kind.isDiode ? SpiceDiode.internalNodes(self)
+            : kind == .njfet ? SpiceJFET.internalNodes(self) : 0
     }
 
     public subscript(param key: String) -> Double {
@@ -1091,6 +1095,23 @@ extension ElementKind {
         ParamSpec("xtb", "Gain temperature exponent (XTB)", unit: "", default: 0, range: 0...3, log: false, advanced: true),
         ParamSpec("eg", "Band gap (EG)", unit: "eV", default: 1.11, range: 0.5...1.5, log: false, advanced: true),
         ParamSpec("xti", "Saturation current temperature exponent (XTI)", unit: "", default: 3, range: 0...6, log: false, advanced: true),
+        ParamSpec("kf", "Flicker noise coefficient (KF)", unit: "", default: 0, range: 0...1e-12, log: false, advanced: true),
+        ParamSpec("af", "Flicker noise exponent (AF)", unit: "", default: 1, range: 0.5...2, log: false, advanced: true),
+    ]
+
+    /// The rest of a JFET's SPICE model card
+    static let jfetCardParams: [ParamSpec] = [
+        ParamSpec("rd", "Drain resistance (RD)", unit: "Ω", default: 0, range: 0...1000, log: false, advanced: true),
+        ParamSpec("rs", "Source resistance (RS)", unit: "Ω", default: 0, range: 0...1000, log: false, advanced: true),
+        ParamSpec("saturationCurrent", "Gate saturation current (IS)", unit: "A", default: 1e-14, range: 1e-18...1e-6, advanced: true),
+        ParamSpec("b", "Doping tail parameter (B)", unit: "", default: 1, range: 0.1...2, log: false, advanced: true),
+        ParamSpec("pb", "Gate junction potential (PB)", unit: "V", default: 1, range: 0.2...1.5, log: false, advanced: true),
+        ParamSpec("fc", "Forward-bias depletion coefficient (FC)", unit: "", default: 0.5, range: 0...0.95, log: false, advanced: true),
+        ParamSpec("tcv", "Threshold temperature coefficient (TCV)", unit: "V/K", default: 0, range: -0.01...0.01, log: false, advanced: true),
+        ParamSpec("bex", "Transconductance temperature exponent (BEX)", unit: "", default: 0, range: -3...3, log: false, advanced: true),
+        ParamSpec("betatce", "Transconductance temperature coefficient (BETATCE)", unit: "%/K", default: 0, range: -2...2, log: false, advanced: true),
+        ParamSpec("xti", "Gate saturation current temperature exponent (XTI)", unit: "", default: 0, range: 0...6, log: false, advanced: true),
+        ParamSpec("eg", "Band gap (EG)", unit: "eV", default: 1.11, range: 0.5...3.5, log: false, advanced: true),
         ParamSpec("kf", "Flicker noise coefficient (KF)", unit: "", default: 0, range: 0...1e-12, log: false, advanced: true),
         ParamSpec("af", "Flicker noise exponent (AF)", unit: "", default: 1, range: 0.5...2, log: false, advanced: true),
     ]

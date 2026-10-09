@@ -269,10 +269,10 @@ public enum SpiceNetlist {
                     warnings.append("\(name): only N-channel JFETs")
                     continue
                 }
-                let pinchOff = min(model.params["VTO"] ?? -2, -0.01)
-                let beta = model.params["BETA"] ?? 1e-4
-                parts.append(NetlistPart(kind: .njfet, name: name, params: ["pinchOff": pinchOff, "idss": beta * pinchOff * pinchOff],
-                                         connections: ["drain": d, "gate": g, "source": s]))
+                // the whole card
+                let (params, ignored) = SpiceJFET.parameters(fromCard: model.params)
+                if !ignored.isEmpty { warnings.append("\(name): \(ignored.joined(separator: ", ")) of model \(words[4]) left out") }
+                parts.append(NetlistPart(kind: .njfet, name: name, params: params, connections: ["drain": d, "gate": g, "source": s]))
             case "k":
                 guard words.count >= 4, let k = number(3) else { continue }
                 couplings.append((words[1].lowercased(), words[2].lowercased(), k))
@@ -426,8 +426,7 @@ public enum SpiceNetlist {
                 lines.append("\(device("M", name)) \(n("drain")) \(n("gate")) \(n("source")) \(n("source")) \(model) L=1 W=1")
             case .njfet:
                 let model = "J_" + device("J", name)
-                let pinch = min(p("pinchOff"), -0.01)
-                models.append(".model \(model) NJF(VTO=\(f(pinch)) BETA=\(f(max(p("idss"), 1e-9) / (pinch * pinch))) LAMBDA=0.01 IS=1e-30)")
+                models.append(".model \(model) NJF(\(SpiceJFET.cardText(p, kind: part.kind)))")
                 lines.append("\(device("J", name)) \(n("drain")) \(n("gate")) \(n("source")) \(model)")
             case .opAmp:
                 // JSpice's op-amp: an integrator with a pole at the gain-bandwidth, slew limited, ahead of a smooth limit
