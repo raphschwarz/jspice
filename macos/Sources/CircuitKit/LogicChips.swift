@@ -20,6 +20,10 @@ extension Board {
 }
 
 extension ElementKind {
+    /// Whether the part has a `chipPackage`, without building one (it is read as a circuit runs)
+    public var hasChipPackage: Bool { Self.packagedKinds.contains(self) }
+    private static let packagedKinds = Set(allCases.filter { $0.chipPackage != nil })
+
     /// How the part is drawn and where its pins are, for parts drawn as a box with pins down its sides
     public var chipPackage: ChipPackage? {
         if let board { return board.chipPackage }

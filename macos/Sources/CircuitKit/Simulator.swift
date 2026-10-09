@@ -3575,7 +3575,7 @@ public final class Simulator {
     public func voltageAcross(_ index: Int) -> Double {
         guard index < topology.elementNodes.count, index < kinds.count, x.count == topology.matrixSize else { return 0 }
         let kind = kinds[index]
-        if kind.isMicrocontroller || kind.chipPackage != nil { return constants[index].supply }
+        if kind.isMicrocontroller || kind.hasChipPackage { return constants[index].supply }
         guard let (plus, minus) = acrossNodes(index) else { return 0 }
         return voltage(plus) - voltage(minus)
     }
@@ -3591,7 +3591,7 @@ public final class Simulator {
         if kind == .transformer { return nodes.count == 4 ? (nodes[2], nodes[3]) : nil }
         if kind == .ota || kind.drivesOutput { return (nodes[2], 0) }
         if kind == .timer555 { return (nodes[2], nodes[0]) }
-        if kind.isMicrocontroller || kind.chipPackage != nil || kind == .block { return nil }
+        if kind.isMicrocontroller || kind.hasChipPackage || kind == .block { return nil }
         if kind == .schmittInverter || kind == .unbufferedInverter { return (nodes[1], 0) }
         if kind == .logicGate { return (nodes[2], 0) }
         return kind.isVoltageSource ? (nodes[1], nodes[0]) : (nodes[0], nodes[1])

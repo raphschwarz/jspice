@@ -75,6 +75,12 @@ jobs:
           sample $! 3 -file build/profile-i2s.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-i2s.txt | head -45
+          # and for an Arduino fading an LED
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 arduino-fade > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-avr.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-avr.txt | head -45
       - name: Chip support (installs Arduino's AVR toolchain as the app does, compiles a sketch)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 10
