@@ -338,6 +338,24 @@ final class SpiceNetlistTests: XCTestCase {
         XCTAssertEqual(saturation("D9"), 1e-9, "the deck's own")
     }
 
+    /// A netlist too big to route (a maker's model has hundreds of parts) is drawn with labels, connected all the same
+    func testABigNetlistIsDrawnWithLabels() throws {
+        var deck = "a ladder of 101 resistors\nV1 n0 0 DC 1\n"
+        for k in 1...100 { deck += "R\(k) n\(k - 1) n\(k) 1k\n" }
+        deck += "R101 n100 0 1k\n"
+        let started = Date()
+        let (circuit, warnings) = try SpiceNetlist.circuit(from: deck)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 20, "drawn in seconds")
+        XCTAssertTrue(warnings.isEmpty, "\(warnings)")
+        XCTAssertTrue(circuit.elements.contains { $0.kind == .netLabel })
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-3)
+        simulator.step()
+        // the voltage at n50, between R50 and R51: 51 of 101 equal resistors below it
+        let r51 = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "R51" })
+        let voltages = simulator.terminalVoltages(r51)
+        XCTAssertEqual(voltages.max() ?? 0, 51.0 / 101, accuracy: 1e-6)
+    }
+
     /// A P-JFET's card comes back as PJF with the same numbers
     func testPChannelJFETRoundTrip() throws {
         let text = """

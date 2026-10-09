@@ -8,9 +8,15 @@ import Foundation
 /// other nets' pins, crosses other wires only at right angles, and prefers few bends. A net the router cannot draw falls
 /// back to labels, so the connections are always right.
 public enum SchematicLayout {
-    /// Lays out `input` as a new circuit. Parts keep their ids when the netlist gives them.
+    /// Parts beyond which nets are drawn as labels, not routed: the maze router searches the whole drawing for each net,
+    /// and a maker's op-amp model of two hundred parts would take it minutes
+    public static let routingLimit = 80
+
+    /// Lays out `input` as a new circuit. Parts keep their ids when the netlist gives them. A netlist of more than
+    /// `routingLimit` parts has its signal nets drawn as labels at their pins.
     public static func layout(_ input: [NetlistPart]) throws -> Circuit {
         let engine = try Engine(input)
+        engine.labelsOnly = input.count > routingLimit
         engine.place()
         engine.route()
         return engine.circuit()
@@ -258,6 +264,8 @@ public enum SchematicLayout {
     }
 
     private final class Engine {
+        /// Signal nets as labels at their pins, not routed
+        var labelsOnly = false
         var parts: [Part] = []
         var ground = Set<String>()
         var rails = Set<String>()
@@ -871,6 +879,15 @@ public enum SchematicLayout {
             let box = (minX: (all.map(\.x).min() ?? 0) - 4, minY: (all.map(\.y).min() ?? 0) - 4,
                        maxX: (all.map(\.x).max() ?? 0) + 4, maxY: (all.map(\.y).max() ?? 0) + 4)
             for net in signalNets {
+                if labelsOnly {
+                    // a label at each pin, named after the net
+                    for point in Set(pinsOf[net] ?? []) {
+                        wires[point] = (net, .vertex)
+                        let d = pinDirection[point] ?? GridPoint(1, 0)
+                        extra.append(Element(kind: .netLabel, name: net, a: point, b: point + d))
+                    }
+                    continue
+                }
                 let points = Array(Set(pinsOf[net] ?? [])).sorted { ($0.x, $0.y) < ($1.x, $1.y) }
                 guard let first = points.first else { continue }
                 var tree: Set<GridPoint> = [first]
