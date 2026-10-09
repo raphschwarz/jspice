@@ -308,6 +308,19 @@ public enum Breadboard {
                            supplies: [(4, "GND", .ground), (6, "VS", .volts(p("supply")))],
                            labels: [1: "GAIN", 2: "−IN", 3: "+IN", 4: "GND", 5: "VOUT", 6: "VS", 7: "BYPASS", 8: "GAIN"],
                            note: "A 100 µF capacitor from VS to GND right at the chip keeps it from oscillating")
+        case .balancedModulator:
+            return Package(title: model ?? "MC1496", pins: 14,
+                           units: [["sigPlus": 1, "gain1": 2, "gain2": 3, "sigMinus": 4, "bias": 5, "outPlus": 6, "carPlus": 8,
+                                    "carMinus": 10, "outMinus": 12]],
+                           supplies: [(14, "V−", .volts(-p("supply")))],
+                           labels: [1: "SIG+", 2: "GAIN", 3: "GAIN", 4: "SIG−", 5: "BIAS", 6: "OUT+", 7: "NC", 8: "CAR+", 9: "NC",
+                                    10: "CAR−", 11: "NC", 12: "OUT−", 13: "NC", 14: "V−"])
+        case .mixerOscillator:
+            return Package(title: model ?? "SA612", pins: 8,
+                           units: [["inA": 1, "inB": 2, "outA": 4, "outB": 5, "oscBase": 6, "oscEmitter": 7]],
+                           supplies: [(3, "GND", .ground), (8, "VCC", .volts(p("supply")))],
+                           labels: [1: "IN A", 2: "IN B", 3: "GND", 4: "OUT A", 5: "OUT B", 6: "OSC B", 7: "OSC E", 8: "VCC"],
+                           note: "Decouple VCC (pin 8) with 100 nF right at the chip")
         case .compander:
             return Package(title: model ?? "NE570", pins: 16,
                            units: [["rectCap": 1, "rectIn": 2, "gainIn": 3, "invIn": 5, "r3": 6, "out": 7],
@@ -851,6 +864,7 @@ public enum Breadboard {
         case .balancedCable: return "XLR cable"
         case .vuMeter: return "VU meter (a panel meter)"
         case .springReverb: return "Spring reverb tank, on its two RCA leads"
+        case .tappedTransformer: return "Centre-tapped transformer, on its leads"
         case .opAmp:
             let model = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? "Op-amp"
             return model == "TPA6120" ? "TPA6120 headphone amp: surface-mount, on a breakout board" : "\(model) power amp, on a heat sink, wired by leads"

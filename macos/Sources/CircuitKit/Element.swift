@@ -59,6 +59,8 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     /// Audio parts: microphones and a pickup, preamp, line and power amp chips, dynamics, tone, metering, a reverb tank
     case microphone, electretMic, pickup, instrumentationAmp, lineReceiver, lineDriver, audioPowerAmp, compander, toneControl
     case levelDetector, springReverb, barGraphDriver, balancedCable, vuMeter
+    /// Ring modulators and mixers, and a centre-tapped transformer for diode ring modulators
+    case balancedModulator, mixerOscillator, tappedTransformer
     /// A block (a circuit used as one part) and the ports that are its pins
     case port, block
 
@@ -214,6 +216,9 @@ extension ElementKind {
         case .lineDriver: return "Balanced Line Driver"
         case .audioPowerAmp: return "LM386 Power Amp"
         case .compander: return "Compander"
+        case .balancedModulator: return "Balanced Modulator"
+        case .mixerOscillator: return "Mixer-Oscillator"
+        case .tappedTransformer: return "Centre-Tapped Transformer"
         case .toneControl: return "Tone Control"
         case .levelDetector: return "Level Detector"
         case .springReverb: return "Spring Reverb Tank"
@@ -260,7 +265,8 @@ extension ElementKind {
         case .microphone, .electretMic: return "MIC"
         case .pickup: return "PU"
         case .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .levelDetector,
-             .barGraphDriver: return "U"
+             .barGraphDriver, .balancedModulator, .mixerOscillator: return "U"
+        case .tappedTransformer: return "T"
         case .springReverb: return "RT"
         case .balancedCable: return "CBL"
         case .vuMeter: return "M"
@@ -285,7 +291,8 @@ extension ElementKind {
         case .memristor: return .memristors
         case .probe, .ammeter, .speaker, .vuMeter: return .instruments
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
-             .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable: return .audio
+             .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator,
+             .tappedTransformer: return .audio
         case .port, .block: return .blocks
         }
     }
@@ -327,7 +334,8 @@ extension ElementKind {
         case .ammeter: return "x"
         case .speaker, .port, .block: return nil
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
-             .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter: return nil
+             .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator,
+             .mixerOscillator, .tappedTransformer: return nil
         }
     }
 
@@ -520,7 +528,8 @@ extension ElementKind {
         case .speaker:
             return [ParamSpec("fullScale", "Full-scale voltage", unit: "V", default: 5, range: 0.1...50)] + ElementKind.loudspeakerParams
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
-             .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter:
+             .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator,
+             .mixerOscillator, .tappedTransformer:
             return audioParams
         case .resistor:
             return [ParamSpec("resistance", "Resistance", unit: "Ω", default: 1000, range: 1...10_000_000)]

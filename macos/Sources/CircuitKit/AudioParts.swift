@@ -13,7 +13,7 @@ extension ElementKind {
     public var isExpandedPart: Bool {
         switch self {
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
-             .toneControl, .barGraphDriver, .balancedCable:
+             .toneControl, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator, .tappedTransformer:
             return true
         default:
             return false
@@ -57,6 +57,19 @@ extension ElementKind {
             return ChipPackage(name: "LM3915", terminalNames: ["sig", "rlo", "rhi", "refOut", "refAdj"] + (1...10).map { "led\($0)" },
                                pinLabels: ["SIG", "RLO", "RHI", "REF OUT", "REF ADJ"] + (1...10).map { "LED\($0)" },
                                pinPlaces: (0...4).map(second) + (1...10).map { first(10 - $0) }, length: 9)
+        case .balancedModulator:
+            return ChipPackage(name: "MC1496", terminalNames: ["sigPlus", "sigMinus", "carPlus", "carMinus", "bias", "gain1", "gain2",
+                                                               "outPlus", "outMinus"],
+                               pinLabels: ["SIG+", "SIG−", "CAR+", "CAR−", "BIAS", "GAIN", "GAIN", "OUT+", "OUT−"],
+                               pinPlaces: [second(0), second(1), second(2), second(3), second(4), first(3), first(4), first(0), first(1)],
+                               length: 5)
+        case .mixerOscillator:
+            return ChipPackage(name: "SA612", terminalNames: ["inA", "inB", "oscBase", "oscEmitter", "outA", "outB"],
+                               pinLabels: ["IN A", "IN B", "OSC B", "OSC E", "OUT A", "OUT B"],
+                               pinPlaces: [second(0), second(1), second(2), second(3), first(0), first(1)], length: 4)
+        case .tappedTransformer:
+            return ChipPackage(name: "CT", terminalNames: ["a1", "a2", "b1", "ct", "b2"], pinLabels: ["A1", "A2", "B1", "CT", "B2"],
+                               pinPlaces: [second(0), second(2), first(0), first(1), first(2)], length: 2)
         case .balancedCable:
             return ChipPackage(name: "XLR", terminalNames: ["gnd1", "hot1", "cold1", "gnd2", "hot2", "cold2"],
                                pinLabels: ["1 GND", "2 HOT", "3 COLD", "1 GND", "2 HOT", "3 COLD"],
@@ -170,6 +183,24 @@ extension ElementKind {
                 .choice("mode", "Ballistics", ["VU (300 ms)", "Peak programme meter"]),
                 ParamSpec("reference", "RMS level for 0 dB", unit: "V", default: 1.228, range: 0.01...10),
             ]
+        case .balancedModulator:
+            return [
+                ParamSpec("supply", "Negative supply (pin 14)", unit: "V", default: 8, range: 3...15, log: false),
+                ParamSpec("beta", "Its transistors' current gain", unit: "", default: 100, range: 20...500),
+            ]
+        case .mixerOscillator:
+            return [
+                ParamSpec("supply", "Supply (pin 8)", unit: "V", default: 6, range: 4.5...8, log: false),
+                ParamSpec("tail", "Mixer current", unit: "A", default: 1e-3, range: 1e-4...5e-3),
+            ]
+        case .tappedTransformer:
+            return [
+                ParamSpec("inductance", "Inductance of winding A", unit: "H", default: 1.5, range: 1e-3...100),
+                ParamSpec("ratio", "Turns of the whole tapped winding ÷ winding A", unit: "", default: 1, range: 0.01...100),
+                ParamSpec("coupling", "Coupling (1: no leakage)", unit: "", default: 0.995, range: 0.5...1, log: false),
+                ParamSpec("ra", "Winding A resistance", unit: "Ω", default: 40, range: 0...100_000, log: false),
+                ParamSpec("rb", "Tapped winding resistance (whole)", unit: "Ω", default: 40, range: 0...100_000, log: false),
+            ]
         default:
             return []
         }
@@ -177,6 +208,23 @@ extension ElementKind {
 
     var audioModels: [PartModel] {
         switch self {
+        case .balancedModulator:
+            return [
+                PartModel(name: "MC1496", summary: "Balanced modulator: a Gilbert cell, the classic ring modulator chip (the LM1496 is the same). Bias it with about 1 mA into pin 5",
+                          values: ["supply": 8, "beta": 100]),
+            ]
+        case .mixerOscillator:
+            return [
+                PartModel(name: "SA612", summary: "Double-balanced mixer with its own oscillator (the NE602 and NE612): 1.5 kΩ inputs and outputs, on 4.5 to 8 V",
+                          values: ["supply": 6, "tail": 1e-3]),
+            ]
+        case .tappedTransformer:
+            return [
+                PartModel(name: "600 Ω : 600 Ω CT", summary: "A small audio transformer, its secondary centre-tapped: the diode ring modulator's",
+                          values: ["inductance": 1.5, "ratio": 1, "coupling": 0.995, "ra": 40, "rb": 40]),
+                PartModel(name: "10 kΩ : 10 kΩ CT", summary: "A high-impedance interstage transformer with a centre tap: phase splitting",
+                          values: ["inductance": 25, "ratio": 1, "coupling": 0.995, "ra": 500, "rb": 500]),
+            ]
         case .microphone:
             return [
                 PartModel(name: "Dynamic vocal mic", summary: "A moving-coil stage mic (SM58 type): about 10 mV peaks from a voice, 300 Ω",
@@ -399,6 +447,23 @@ struct PartExpansion {
         add(.wire, posts[0], gate, suffix + "g")
         add(.wire, posts[1], drain, suffix + "d")
         add(.wire, posts[2], source, suffix + "s")
+    }
+
+    mutating func npn(base: GridPoint, collector: GridPoint, emitter: GridPoint, _ suffix: String, _ params: [String: Double]) {
+        let a = place()
+        let part = add(.npn, a, a + GridPoint(2, 0), suffix, params)
+        let posts = part.posts
+        add(.wire, posts[0], base, suffix + "b")
+        add(.wire, posts[1], collector, suffix + "c")
+        add(.wire, posts[2], emitter, suffix + "e")
+    }
+
+    /// An ideal transformer core (the voltage across s1–s2 `ratio` times that across p1–p2), wired to the given points
+    mutating func core(_ p1: GridPoint, _ p2: GridPoint, _ s1: GridPoint, _ s2: GridPoint, ratio: Double, _ suffix: String) {
+        let a = place()
+        let part = add(.transformer, a, a + GridPoint(4, 0), suffix, ["core": 1, "ratio": ratio])
+        let posts = part.posts
+        for (k, point) in [p1, p2, s1, s2].enumerated() where k < posts.count { add(.wire, posts[k], point, suffix + "w\(k)") }
     }
 
     /// The sound the part plays: an audio input between `minus` and `plus` with the part's clip and settings
@@ -626,6 +691,78 @@ extension PartExpansion {
                                                "frequency": param("frequency")])
             resistor(gnd1, gnd2, r / 2, "RS")
             capacitor(hot2, cold2, 100e-12 * length, "C")
+        case .balancedModulator where p.count == 9:
+            // the MC1496's Gilbert cell, transistor by transistor: the signal pair Q5–Q6 (its emitters at the gain pins,
+            // a resistor between them setting its gain), each fed by a current source mirrored from the bias pin (a
+            // diode and 500 Ω to V− like theirs), and the carrier's quad Q1–Q4 switching their currents between the
+            // outputs. The outputs need load resistors to a positive supply.
+            let (sigPlus, sigMinus, carPlus, carMinus, bias, gain1, gain2, outPlus, outMinus) =
+                (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8])
+            let (g, vee, c5, c6, ed, e7, e8) = (node(), node(), node(), node(), node(), node(), node())
+            ground(g)
+            add(.dcVoltage, vee, g, "VEE", ["voltage": param("supply")])
+            let q = ["beta": param("beta"), "saturationCurrent": 1e-15, "cje": 0.5e-12, "cjc": 0.3e-12, "tf": 0.3e-9]
+            npn(base: bias, collector: bias, emitter: ed, "QD", q)
+            resistor(ed, vee, 500, "RD")
+            npn(base: bias, collector: gain1, emitter: e7, "Q7", q)
+            resistor(e7, vee, 500, "R7")
+            npn(base: bias, collector: gain2, emitter: e8, "Q8", q)
+            resistor(e8, vee, 500, "R8")
+            npn(base: sigPlus, collector: c5, emitter: gain1, "Q5", q)
+            npn(base: sigMinus, collector: c6, emitter: gain2, "Q6", q)
+            npn(base: carPlus, collector: outPlus, emitter: c5, "Q1", q)
+            npn(base: carMinus, collector: outMinus, emitter: c5, "Q2", q)
+            npn(base: carMinus, collector: outPlus, emitter: c6, "Q3", q)
+            npn(base: carPlus, collector: outMinus, emitter: c6, "Q4", q)
+        case .mixerOscillator where p.count == 6:
+            // the SA612: its inputs biased at 1.6 V through 1.5 kΩ each into the signal pair (100 Ω of degeneration each,
+            // a current source below), its outputs 1.5 kΩ each from the supply; the oscillator transistor's base at pin 6
+            // (biased through 20 kΩ), its emitter at pin 7 with 0.25 mA below it, drives one side of the switching quad
+            // against a matched transistor's emitter, so a carrier on pin 6 (or a crystal or LC tank across pins 6 and 7)
+            // switches the mixer
+            let (inA, inB, oscBase, oscEmitter, outA, outB) = (p[0], p[1], p[2], p[3], p[4], p[5])
+            let (g, vcc, vin, vosc, reference, ea, eb, tail, ca, cb) = (node(), node(), node(), node(), node(), node(), node(),
+                                                                        node(), node(), node())
+            ground(g)
+            let supply = param("supply")
+            add(.dcVoltage, g, vcc, "VCC", ["voltage": supply])
+            add(.dcVoltage, g, vin, "VIN", ["voltage": 1.6])
+            add(.dcVoltage, g, vosc, "VOSC", ["voltage": min(4, supply - 0.8)])
+            let q = ["beta": 120, "saturationCurrent": 1e-15, "cje": 0.3e-12, "cjc": 0.2e-12, "tf": 0.1e-9]
+            resistor(inA, vin, 1500, "RA")
+            resistor(inB, vin, 1500, "RB")
+            npn(base: inA, collector: ca, emitter: ea, "Q5", q)
+            npn(base: inB, collector: cb, emitter: eb, "Q6", q)
+            resistor(ea, tail, 100, "REA")
+            resistor(eb, tail, 100, "REB")
+            add(.currentSource, tail, g, "IT", ["current": param("tail")])
+            resistor(oscBase, vosc, 20_000, "RO")
+            npn(base: oscBase, collector: vcc, emitter: oscEmitter, "QO", q)
+            add(.currentSource, oscEmitter, g, "IO", ["current": 0.25e-3])
+            npn(base: vosc, collector: vcc, emitter: reference, "QR", q)
+            add(.currentSource, reference, g, "IR", ["current": 0.25e-3])
+            npn(base: oscEmitter, collector: outA, emitter: ca, "Q1", q)
+            npn(base: reference, collector: outB, emitter: ca, "Q2", q)
+            npn(base: reference, collector: outA, emitter: cb, "Q3", q)
+            npn(base: oscEmitter, collector: outB, emitter: cb, "Q4", q)
+            resistor(vcc, outA, 1500, "RLA")
+            resistor(vcc, outB, 1500, "RLB")
+        case .tappedTransformer where p.count == 5:
+            // winding A's resistance and leakage, its magnetising inductance, and two ideal cores on it, each driving
+            // half the tapped winding (with half its resistance), the halves joined at the tap
+            let (a1, a2, b1, ct, b2) = (p[0], p[1], p[2], p[3], p[4])
+            let k = min(max(param("coupling"), 0.01), 1)
+            let la = max(param("inductance"), 1e-12)
+            let half = max(param("ratio"), 1e-6) / 2 / k
+            let (x, y, s1, s2) = (node(), node(), node(), node())
+            resistor(a1, x, max(param("ra"), 1e-6), "RA")
+            let leakage = (1 - k * k) * la
+            if leakage > 1e-9 * la { inductor(x, y, leakage, "LLEAK") } else { add(.wire, x, y, "LLEAK") }
+            inductor(y, a2, k * k * la, "LM")
+            core(y, a2, s1, ct, ratio: half, "CORE1")
+            core(y, a2, ct, s2, ratio: half, "CORE2")
+            resistor(s1, b1, max(param("rb") / 2, 1e-6), "RB1")
+            resistor(s2, b2, max(param("rb") / 2, 1e-6), "RB2")
         case .speaker where p.count == 2:
             // the voice coil (Re, Le) and the cone's resonance seen from it: Res, Lces and Cmes in parallel
             let (plus, minus) = (p[0], p[1])

@@ -2,7 +2,7 @@ import Foundation
 
 /// Examples for the pedal op-amps, ring modulators and the other chips added with them
 extension Examples {
-    static let chipExamples: [Example] = [tubeScreamer, rat]
+    static let chipExamples: [Example] = [tubeScreamer, rat, mc1496Ring, sa612Ring, diodeRing, frequencyShifter]
 
     private static func part(_ kind: ElementKind, _ name: String, _ params: [String: Double] = [:], _ connections: [String: String])
         -> NetlistPart {
@@ -109,4 +109,131 @@ extension Examples {
             part(.potentiometer, "VOLUME", ["resistance": 100_000, "position": 0.7, "taper": 1], ["a": "o1", "b": "GND", "wiper": "out"]),
             part(.speaker, "SPK1", ["fullScale": 1], ["plus": "out", "minus": "GND"]),
         ], scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
+
+    // MARK: - Ring modulators
+
+    /// The MC1496 as a ring modulator, biased as in its datasheet: about 1 mA into pin 5, the signal pair's inputs at
+    /// ground, the carrier's at +6 V, 3.9 kΩ loads to +12 V, and a difference amplifier taking the two outputs apart
+    static let mc1496Ring = Example(
+        id: "mc1496-ring", title: "Ring modulator: MC1496 (sound)",
+        summary: "A guitar riff times a 440 Hz carrier in an MC1496, built transistor by transistor (its Gilbert cell, current sources and bias mirror). 6.8 kΩ from pin 5 sets about 1 mA in each half, 1 kΩ between pins 2 and 3 its gain; the carrier switches the quad at +6 V. Only the sum and difference frequencies come out: a metallic, bell-like sound. Turn on sound; change the carrier's frequency in the inspector.",
+        symbol: "multiply.circle",
+        circuit: drawn([
+            part(.dcVoltage, "VP", ["voltage": 12], ["plus": "+12V", "minus": "GND"]),
+            guitar(),
+            c("C1", 1e-6, "gtr", "sp"),
+            r("R1", 1000, "sp", "GND"),
+            r("R2", 1000, "sm", "GND"),
+            part(.balancedModulator, "U1", Examples.model(.balancedModulator, "MC1496"),
+                 ["sigPlus": "sp", "sigMinus": "sm", "carPlus": "cp", "carMinus": "cm", "bias": "b5", "gain1": "g1", "gain2": "g2",
+                  "outPlus": "op", "outMinus": "om"]),
+            r("RE", 1000, "g1", "g2"),
+            r("RB", 6800, "b5", "GND"),
+            r("R3", 10_000, "+12V", "cb"),
+            r("R4", 10_000, "cb", "GND"),
+            c("C2", 10e-6, "cb", "GND"),
+            r("R5", 1000, "cp", "cb"),
+            r("R6", 1000, "cm", "cb"),
+            part(.acVoltage, "CARRIER", ["amplitude": 0.3, "frequency": 440], ["plus": "car", "minus": "GND"]),
+            c("C3", 100e-9, "car", "cp"),
+            r("RL1", 3900, "+12V", "op"),
+            r("RL2", 3900, "+12V", "om"),
+            r("R7", 10_000, "om", "pp"),
+            r("R8", 10_000, "pp", "GND"),
+            r("R9", 10_000, "op", "nn"),
+            r("R10", 10_000, "out", "nn"),
+            part(.opAmp, "U2", Examples.model(.opAmp, "TL072"), ["plus": "pp", "minus": "nn", "out": "out"]),
+            part(.speaker, "SPK1", ["fullScale": 2], ["plus": "out", "minus": "GND"]),
+        ], scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
+
+    /// The SA612 as a ring modulator: the guitar on one input (the other held at AC ground), a carrier on the
+    /// oscillator's base instead of a crystal
+    static let sa612Ring = Example(
+        id: "sa612-ring", title: "Ring modulator: SA612 (sound)",
+        summary: "The SA612 mixer, made for radios, as a ring modulator: a guitar riff into IN A (IN B held at AC ground by 100 nF), a 300 Hz carrier on the oscillator's base (pin 6) where a crystal would go. Its inputs and outputs have 1.5 kΩ inside; the outputs sit near 5 V, so they are coupled out with capacitors. Turn on sound.",
+        symbol: "dot.radiowaves.left.and.right",
+        circuit: drawn([
+            guitar(),
+            c("C1", 100e-9, "gtr", "ia"),
+            c("C2", 100e-9, "ib", "GND"),
+            part(.acVoltage, "CARRIER", ["amplitude": 0.2, "frequency": 300], ["plus": "car", "minus": "GND"]),
+            c("C3", 100e-9, "car", "ob"),
+            part(.mixerOscillator, "U1", Examples.model(.mixerOscillator, "SA612"),
+                 ["inA": "ia", "inB": "ib", "oscBase": "ob", "oscEmitter": "oe", "outA": "oa", "outB": "obb"]),
+            r("RE", 10_000, "oe", "GND"),
+            c("C4", 10e-6, "oa", "out"),
+            r("R1", 10_000, "out", "GND"),
+            c("C5", 10e-6, "obb", "outb"),
+            r("R2", 10_000, "outb", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 1], ["plus": "out", "minus": "GND"]),
+        ], scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
+
+    /// The classic passive ring modulator: four germanium diodes in a ring between two centre-tapped transformers, the
+    /// carrier between the taps
+    static let diodeRing = Example(
+        id: "diode-ring", title: "Diode ring modulator (sound)",
+        summary: "The ring modulator of the first synthesizers and of the Daleks: four OA90 germanium diodes in a ring between two centre-tapped transformers. A 300 Hz carrier into the input transformer's tap switches the diodes in pairs, so the guitar reaches the output transformer one way round, then the other: the guitar times a square wave. Turn on sound; raise the carrier until it is louder than the guitar.",
+        symbol: "circle.circle",
+        circuit: drawn([
+            guitar(level: 0.3),
+            r("R1", 100, "gtr", "ta"),
+            part(.tappedTransformer, "T1", Examples.model(.tappedTransformer, "600 Ω : 600 Ω CT"),
+                 ["a1": "ta", "a2": "GND", "b1": "ra", "ct": "ct1", "b2": "rc"]),
+            part(.acVoltage, "CARRIER", ["amplitude": 1, "frequency": 300], ["plus": "c0", "minus": "GND"]),
+            r("R2", 100, "c0", "ct1"),
+            diode("D1", "OA90", anode: "ra", cathode: "rb"),
+            diode("D2", "OA90", anode: "rb", cathode: "rc"),
+            diode("D3", "OA90", anode: "rc", cathode: "rd"),
+            diode("D4", "OA90", anode: "rd", cathode: "ra"),
+            part(.tappedTransformer, "T2", Examples.model(.tappedTransformer, "600 Ω : 600 Ω CT"),
+                 ["a1": "out", "a2": "GND", "b1": "rb", "ct": "GND", "b2": "rd"]),
+            r("RL", 600, "out", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 0.3], ["plus": "out", "minus": "GND"]),
+        ], scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
+
+    /// A first-order all-pass stage on one op-amp: unity gain, its phase falling from 0 to −180° about 1 / (2π R C)
+    private static func allPass(_ name: String, _ ohms: Double, input: String, output: String) -> [NetlistPart] {
+        [
+            r(name + "A", 10_000, input, name + "n"),
+            r(name + "F", 10_000, output, name + "n"),
+            r(name + "R", ohms, input, name + "p"),
+            c(name + "C", 10e-9, name + "p", "GND"),
+            part(.opAmp, name, Examples.model(.opAmp, "TL074"), ["plus": name + "p", "minus": name + "n", "out": output]),
+        ]
+    }
+
+    /// Bode's frequency shifter: two chains of all-pass stages whose outputs stay 90° apart over the audio band (within
+    /// a degree from 40 Hz to 8 kHz), each multiplied by one of a quadrature pair of carriers, and the products subtracted:
+    /// every frequency moves up by the carrier's, not in proportion as a pitch shift would
+    static let frequencyShifter = Example(
+        id: "frequency-shifter", title: "Bode frequency shifter (sound)",
+        summary: "Every frequency of a guitar riff moved up by 30 Hz: two chains of four all-pass stages (TL074s, 10 nF with 261k, 41.2k, 7.32k and 825 Ω, and with 1M, 102k, 17.4k and 3.01k) keep their outputs 90° apart, within a degree from 40 Hz to 8 kHz. Two AD633s multiply them by a cosine and a sine at 30 Hz, and their difference keeps only the sum frequencies (their sum would keep the differences). Harmonics no longer line up: the guitar turns bell-like and detuned. Turn on sound; try a carrier of 2 Hz for a slow, phaser-like swirl.",
+        symbol: "waveform.path",
+        circuit: drawn(frequencyShifterParts(), scopes: [("GTR", .voltage), ("SPK1", .voltage)]))
+
+    private static func frequencyShifterParts() -> [NetlistPart] {
+        var parts: [NetlistPart] = [guitar(), r("RIN", 10_000, "gtr", "in"), r("RIN2", 100_000, "in", "GND")]
+        // the two chains: the first ends at "i" (in phase), the second at "q" (90° behind)
+        for (chain, ohms, end) in [("UA", [261_000.0, 41_200, 7320, 825], "i"), ("UB", [1e6, 102_000, 17_400, 3010], "q")] {
+            var input = "in"
+            for (k, value) in ohms.enumerated() {
+                let output = k == ohms.count - 1 ? end : chain.lowercased() + "\(k + 1)"
+                parts += allPass(chain + "\(k + 1)", value, input: input, output: output)
+                input = output
+            }
+        }
+        parts += [
+            part(.acVoltage, "COS", ["amplitude": 10, "frequency": 30, "phase": 90], ["plus": "cos", "minus": "GND"]),
+            part(.acVoltage, "SIN", ["amplitude": 10, "frequency": 30], ["plus": "sin", "minus": "GND"]),
+            part(.multiplier, "X1", Examples.model(.multiplier, "AD633"), ["x": "i", "y": "cos", "out": "pi"]),
+            part(.multiplier, "X2", Examples.model(.multiplier, "AD633"), ["x": "q", "y": "sin", "out": "pq"]),
+            r("RD1", 10_000, "pi", "dp"),
+            r("RD2", 10_000, "dp", "GND"),
+            r("RD3", 10_000, "pq", "dn"),
+            r("RD4", 10_000, "out", "dn"),
+            part(.opAmp, "UD", Examples.model(.opAmp, "TL072"), ["plus": "dp", "minus": "dn", "out": "out"]),
+            part(.speaker, "SPK1", ["fullScale": 0.3], ["plus": "out", "minus": "GND"]),
+        ]
+        return parts
+    }
 }
