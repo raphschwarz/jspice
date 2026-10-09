@@ -336,9 +336,10 @@ final class RP2040 {
             let cycles = core.executeInstruction()
             clock.tick(Double(cycles) * RP2040.cycleNanos)
             if pio0.running || pio1.running {
+                // only once an instruction is due: the busy processor would otherwise visit them after its every one
                 let now = clock.nanos
-                if pio0.running { pio0.run(until: now) }
-                if pio1.running { pio1.run(until: now) }
+                if pio0.running && now >= pio0.nextDue { pio0.run(until: now) }
+                if pio1.running && now >= pio1.nextDue { pio1.run(until: now) }
             }
         }
     }

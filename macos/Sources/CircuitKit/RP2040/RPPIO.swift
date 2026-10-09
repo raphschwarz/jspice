@@ -562,6 +562,10 @@ final class RPPIO: RPPeripheral {
 
     /// Whether any state machine runs
     private(set) var running = false
+    /// No state machine has an instruction due before this, in simulated nanoseconds: the chip runs the block only once
+    /// it is reached. A waiting machine is not counted; whatever can wake or retime one (a register written, the RX FIFO
+    /// read, an IRQ, a pin it waits on) sets it back to 0.
+    var nextDue = 0.0
 
     var intRaw: UInt32 {
         var result = (irq & 0xF) << 8
@@ -576,6 +580,7 @@ final class RPPIO: RPPeripheral {
     private var irq1IntStatus: UInt32 { (intRaw & irq1IntEnable) | irq1IntForce }
 
     override func readUint32(_ offset: UInt32) -> UInt32 {
+        if offset >= 0x020 && offset <= 0x02C { nextDue = 0 }
         if offset >= 0xC8 && offset <= 0x124 {
             let machine = Int(offset - 0xC8) / 0x18
             return machines[machine].readUint32(offset - 0xC8 - UInt32(machine) * 0x18)
@@ -608,6 +613,7 @@ final class RPPIO: RPPeripheral {
     }
 
     override func writeUint32(_ offset: UInt32, _ value: UInt32) {
+        nextDue = 0
         if offset >= 0x48 && offset <= 0xC4 {
             instructions[Int(offset - 0x48) >> 2] = value & 0xFFFF
             return
@@ -675,6 +681,7 @@ final class RPPIO: RPPeripheral {
 
     func irqUpdated() {
         for machine in machines { machine.checkWait() }
+        nextDue = 0
         checkInterrupts()
     }
 
@@ -688,7 +695,14 @@ final class RPPIO: RPPeripheral {
 
     /// Runs the state machines up to `now` (nanoseconds)
     func run(until now: Double) {
-        for machine in machines where machine.enabled { machine.run(until: now) }
+        // (a machine woken during the run, by another's IRQ, sets it back to 0)
+        nextDue = .infinity
+        var due = Double.infinity
+        for machine in machines where machine.enabled {
+            machine.run(until: now)
+            if !machine.waiting { due = min(due, machine.nextNanos) }
+        }
+        nextDue = min(nextDue, due)
         checkChangedPins()
     }
 }

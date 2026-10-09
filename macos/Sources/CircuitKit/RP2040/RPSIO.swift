@@ -121,6 +121,7 @@ final class RPGPIOPin {
             for machine in pio.machines where machine.enabled && machine.waiting && machine.waitType == .pin
                 && machine.waitIndex == index {
                 machine.checkWait()
+                pio.nextDue = 0
             }
         }
     }
