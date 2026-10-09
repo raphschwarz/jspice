@@ -182,17 +182,28 @@ public enum MakerModels {
     /// fixed common-mode voltage: in an inverting stage of gain −1 with the + input grounded, the output over the −
     /// input's small signal (a follower's response would fold the common-mode rejection in).
     public static func measureOpAmp(_ block: BlockDefinition, pins: [String], supply: Double = 15,
-                                    load: Double = 10_000, slewGain: Double = 1,
+                                    load: Double = 10_000, slewGain: Double = 1, stageBudget: TimeInterval? = nil,
                                     report: ((String) -> Void)? = nil) throws -> OpAmpFigures {
         guard pins.count == 5 else { throw MeasurementError(description: "An op-amp has five pins: +in, −in, V+, V−, out") }
         let started = Date()
         /// What each stage cost, for `report`
         func done(_ stage: String, _ simulator: Simulator) {
             guard let report else { return }
-            report(String(format: "%@ done at %.1f s: %ld steps of %ld substeps (%ld rejected), %ld Newton iterations, "
-                       + "%ld convergence failures, %ld plans (%.2f s)", stage, Date().timeIntervalSince(started),
+            report(String(format: "%@ %@ at %.1f s: %ld steps of %ld substeps (%ld rejected), %ld Newton iterations "
+                       + "(%ld damped), %ld convergence failures, %ld plans (%.2f s)", stage,
+                       simulator.stopRequested ? "STOPPED" : "done", Date().timeIntervalSince(started),
                        Int((simulator.time / simulator.timeStep).rounded()), simulator.substeps, simulator.rejectedSubsteps,
-                       simulator.newtonIterations, simulator.convergenceFailures, simulator.plans, simulator.planningSeconds))
+                       simulator.newtonIterations, simulator.dampedIterations, simulator.convergenceFailures, simulator.plans,
+                       simulator.planningSeconds))
+        }
+        /// Steps `simulator` while `going` holds, giving up when the stage has taken `stageBudget`
+        func run(_ simulator: Simulator, while going: () -> Bool, each: () -> Void = {}) {
+            let stageStarted = Date()
+            while going() && !simulator.isFailed {
+                if let stageBudget, Date().timeIntervalSince(stageStarted) > stageBudget { simulator.stopRequested = true }
+                simulator.step()
+                each()
+            }
         }
         func circuit(_ input: NetlistPart, follower: Bool) throws -> Circuit {
             try bench(block, pins: pins, supply: supply, load: load, input: input, follower: follower)
@@ -210,11 +221,11 @@ public enum MakerModels {
         // a follower at rest: offset and supply current
         let follower = try circuit(dc(0), follower: true)
         let vi = try index(follower, "VI"), rl = try index(follower, "RL"), vp = try index(follower, "VP")
-        let rest = Simulator.settled(follower, holding: vi, duration: 0.01, maxSteps: Self.settlingSteps)
+        let rest = Simulator.settled(follower, holding: vi, duration: 0.01, maxSteps: Self.settlingSteps, budget: stageBudget)
+        done("follower at rest", rest)
         guard !rest.isFailed else { throw MeasurementError(description: "As a follower it fails: \(rest.problems.joined(separator: "; "))") }
         let offset = rest.terminalVoltage(rl, 0)
         let supplyCurrent = rest.current(vp)
-        done("follower at rest", rest)
 
         /// An inverting stage of gain −1 (10 kΩ in, 10 kΩ back) with its + input grounded, `input` (VI) driving it
         func invertingStage(_ input: NetlistPart) throws -> Circuit {
@@ -235,9 +246,9 @@ public enum MakerModels {
         let inverting = try invertingStage(NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": 0],
                                                        connections: ["plus": "in", "minus": "GND"]))
         let source = try index(inverting, "VI"), r2 = try index(inverting, "R2")
-        let stage = Simulator.settled(inverting, holding: source, duration: 0.01, maxSteps: Self.settlingSteps)
-        guard !stage.isFailed else { throw MeasurementError(description: "As an inverting stage it fails: \(stage.problems.joined(separator: "; "))") }
+        let stage = Simulator.settled(inverting, holding: source, duration: 0.01, maxSteps: Self.settlingSteps, budget: stageBudget)
         done("inverting stage at rest", stage)
+        guard !stage.isFailed else { throw MeasurementError(description: "As an inverting stage it fails: \(stage.problems.joined(separator: "; "))") }
         let (minus, out) = (stage.nodes(of: r2)[0], stage.nodes(of: r2)[1])
         let frequencies = (0...100).map { pow(10, -1 + Double($0) / 10) }
         guard let model = stage.smallSignalModel(), let response = model.solve(input: source, frequencies: frequencies) else {
@@ -282,13 +293,13 @@ public enum MakerModels {
             // (a slewing edge is straight: its 10 % and 90 % crossings come out of a few points on it exactly)
             let simulator = Simulator(circuit: c, timeStep: period / 4_000)
             var times: [Double] = [], ins: [Double] = [], outs: [Double] = []
-            while simulator.time < 2 * period && !simulator.isFailed {
-                simulator.step()
+            run(simulator, while: { simulator.time < 2 * period }) {
                 times.append(simulator.time)
                 ins.append(simulator.terminalVoltage(input, 1))  // (its plus terminal)
                 outs.append(simulator.terminalVoltage(output, 0))
             }
             done(String(format: "slewing at %g Hz", frequency), simulator)
+            if simulator.stopRequested { break }
             guard !simulator.isFailed else { continue }
             /// The time `values` cross `level` going the way `rising` says, after `start`
             func crossing(_ values: [Double], _ level: Double, rising: Bool, after start: Double) -> Double? {
@@ -323,7 +334,7 @@ public enum MakerModels {
             let open = try circuit(sine, follower: false)
             let output = try index(open, "RL")
             let driven = Simulator(circuit: open, timeStep: 2e-6)
-            while driven.time < 0.0025 && !driven.isFailed { driven.step() }
+            run(driven, while: { driven.time < 0.0025 })
             done(sign > 0 ? "swinging high" : "swinging low", driven)
             guard !driven.isFailed else {
                 throw MeasurementError(description: "Driven open loop it fails: \(driven.problems.joined(separator: "; "))")

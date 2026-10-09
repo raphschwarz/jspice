@@ -34,8 +34,9 @@ public final class Simulator {
     /// Substeps solved and kept, and solved and thrown away for a finer one, since the start
     public private(set) var substeps = 0
     public private(set) var rejectedSubsteps = 0
-    /// Newton-Raphson iterations since the start, each one a solve of the stamped equations
+    /// Newton-Raphson iterations since the start, each one a solve of the stamped equations, and those of them damped
     public private(set) var newtonIterations = 0
+    public private(set) var dampedIterations = 0
     /// Set (from any thread) to make a step that is taking too long give up: the simulation fails at its next substep
     /// or iteration
     public var stopRequested = false
@@ -347,6 +348,8 @@ public final class Simulator {
     private var predictionRatio = 1.0
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
     private var savedX: [Double] = []
+    /// The iterate a damped Newton-Raphson iteration moves from
+    private var dampFrom: [Double] = []
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
     private var savedLimited3: [Double] = []
@@ -1143,6 +1146,13 @@ public final class Simulator {
     /// would only confirm it is not needed.
     static let newtonTolerance = 1e-6
 
+    /// Newton-Raphson is damped once this many iterations have not converged and an iteration's step is not at least
+    /// half the one before (without a junction's limiting, which shortens steps by itself): around the sharp corner of a
+    /// TABLE, IF, LIMIT or clamp (a maker's model's output stage in saturation), the full step can jump from one side of
+    /// the corner to the other and back for ever. Each such iteration halves the step taken (to a sixty-fourth at most),
+    /// and each one that contracts doubles it back.
+    static let dampingAfter = 8
+
     /// Newton-Raphson from the present `x`; true when it converged.
     ///
     /// Each iteration starts from the base's values, whose linear block is already factored (and with it what the
@@ -1156,6 +1166,8 @@ public final class Simulator {
         var iteration = 0
         var plansMade = 0
         var converged = false
+        var lastChange = Double.infinity
+        var damping = 1.0
         while iteration < iterations {
             if stopRequested {
                 Self.copy(savedX, into: &x)
@@ -1204,6 +1216,11 @@ public final class Simulator {
                 fail()
                 return false
             }
+            let damped = damping < 1
+            if damped {
+                Self.copy(x, into: &dampFrom)
+                dampedIterations += 1
+            }
             let change = values.withUnsafeBufferPointer { v -> Double in
                 workVector.withUnsafeMutableBufferPointer { b -> Double in
                     order.forward(v.baseAddress!, b.baseAddress!)
@@ -1219,6 +1236,19 @@ public final class Simulator {
                 converged = true
                 break
             }
+            if damped {
+                // only the nonlinear block's unknowns moved (the linear block's follow from them at the end)
+                let lambda = damping
+                x.withUnsafeMutableBufferPointer { x in
+                    dampFrom.withUnsafeBufferPointer { from in
+                        for u in plan.block { x[u] = from[u] + lambda * (x[u] - from[u]) }
+                    }
+                }
+            }
+            if iteration >= Self.dampingAfter && !limiting {
+                damping = change > 0.5 * lastChange ? max(damping / 2, 1.0 / 64) : min(damping * 2, 1)
+            }
+            lastChange = change
         }
         // the linear block's unknowns, from the nonlinear block's (its rows of the right-hand side are as forwarded)
         guard let plan, valuesVersion == baseVersion else { return converged }

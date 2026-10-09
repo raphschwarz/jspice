@@ -390,9 +390,10 @@ extension Simulator {
 
     /// A simulator that has run the circuit from rest until it settles, for small-signal analysis around where it comes
     /// to rest: the source at `holding` (the one a sweep will drive) is held still (see `quiet`). The run lasts
-    /// `duration`, by default five times the circuit's slowest time constant, in at most `maxSteps` steps.
+    /// `duration`, by default five times the circuit's slowest time constant, in at most `maxSteps` steps; given up on
+    /// (the simulation failed) once it has taken `budget` seconds.
     public static func settled(_ circuit: Circuit, holding source: Int?, duration: Double? = nil,
-                               maxSteps: Int = 1_000_000) -> Simulator {
+                               maxSteps: Int = 1_000_000, budget: TimeInterval? = nil) -> Simulator {
         let held = Self.quiet(circuit, holding: source)
         let estimate = Self.settling(held)
         let length = max(duration ?? estimate.duration, 0)
@@ -400,7 +401,11 @@ extension Simulator {
         if length / timeStep > Double(maxSteps) { timeStep = length / Double(maxSteps) }
         let simulator = Simulator(circuit: held, timeStep: timeStep)
         let steps = max(10, Int((length / timeStep).rounded(.up)))
-        for _ in 0..<steps where !simulator.isFailed { simulator.step() }
+        let started = Date()
+        for _ in 0..<steps where !simulator.isFailed {
+            if let budget, Date().timeIntervalSince(started) > budget { simulator.stopRequested = true }
+            simulator.step()
+        }
         return simulator
     }
 }
