@@ -446,8 +446,11 @@ public enum SpiceNetlist {
                 let gain = max(p("gain"), 1), limit = max(p("limit"), 0.01), gbw = p("gbw"), slew = p("slewRate") * 1e6
                 let b = device("B", name)
                 let vd = "(V(\(n("plus")))-V(\(n("minus")))+\(f(p("offset"))))"
+                // a single-supply op-amp swings about its midpoint
+                let mid = p("midpoint")
                 if gbw <= 0 {
-                    lines.append("\(b) \(n("out")) 0 V=\(f(limit))*tanh(\(f(gain))*\(vd)/\(f(limit)))")
+                    lines.append(mid == 0 ? "\(b) \(n("out")) 0 V=\(f(limit))*tanh(\(f(gain))*\(vd)/\(f(limit)))"
+                                          : "\(b) \(n("out")) 0 V=\(f(mid))+\(f(limit))*tanh((\(f(gain))*\(vd)-\(f(mid)))/\(f(limit)))")
                 } else {
                     let w = 2 * Double.pi * gbw
                     let stage = "\(b)_stage"
@@ -455,7 +458,8 @@ public enum SpiceNetlist {
                     lines.append("\(b)_drive 0 \(stage) I=\(drive)")
                     lines.append("C_\(stage) \(stage) 0 1 IC=0")
                     lines.append("R_\(stage) \(stage) 0 \(f(gain / w))")
-                    lines.append("\(b) \(n("out")) 0 V=\(f(limit))*tanh(V(\(stage))/\(f(limit)))")
+                    lines.append(mid == 0 ? "\(b) \(n("out")) 0 V=\(f(limit))*tanh(V(\(stage))/\(f(limit)))"
+                                          : "\(b) \(n("out")) 0 V=\(f(mid))+\(f(limit))*tanh((V(\(stage))-\(f(mid)))/\(f(limit)))")
                 }
             case .triode, .pentode:
                 let b = device("B", name)
@@ -489,7 +493,13 @@ public enum SpiceNetlist {
                 let sub = subcircuit(block)
                 let pins = block.terminalNames.map { n($0) }.joined(separator: " ")
                 lines.append("X_\(device("X", name)) \(pins) \(sub)")
-            case .wire, .ground, .netLabel, .port, .probe, .speaker:
+            case _ where part.kind.isExpandedPart:
+                // the small circuit the part is simulated as, as a subcircuit
+                guard let block = PartExpansion.block(for: part) else { return }
+                let sub = subcircuit(block)
+                let pins = block.terminalNames.map { n($0) }.joined(separator: " ")
+                lines.append("X_\(device("X", name)) \(pins) \(sub)")
+            case .wire, .ground, .netLabel, .port, .probe, .speaker, .vuMeter:
                 break
             default:
                 lines.append("* \(name): a \(part.kind.displayName) has no SPICE equivalent here, left out")

@@ -157,13 +157,17 @@ struct ElementInspector: View {
                 }
             }
 
-            if element.kind == .audioInput && element[param: "input"] < 0.5 {
+            if element.kind.playsClip && element[param: "input"] < 0.5 {
+                // microphones play a voice unless given a sound; the audio input and the pickup, the guitar riff
+                let voice = element.kind == .microphone || element.kind == .electretMic
                 Section("Sound") {
-                    let clip = element.audio ?? AudioClip.guitarRiff
+                    let clip = element.audio ?? (voice ? AudioClip.speech : AudioClip.guitarRiff)
                     LabeledContent(clip.name, value: String(format: "%.1f s", clip.duration))
                     Button("Choose Sound File…", systemImage: "waveform") { editor.chooseSound(for: element.id) }
                     if element.audio != nil {
-                        Button("Use the Guitar Riff", systemImage: "guitars") { editor.useGuitarRiff(for: element.id) }
+                        Button(voice ? "Use the Voice" : "Use the Guitar Riff", systemImage: voice ? "mouth" : "guitars") {
+                            editor.useGuitarRiff(for: element.id)
+                        }
                     }
                 }
             }

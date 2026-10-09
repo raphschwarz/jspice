@@ -23,6 +23,7 @@ extension ElementKind {
     /// How the part is drawn and where its pins are, for parts drawn as a box with pins down its sides
     public var chipPackage: ChipPackage? {
         if let board { return board.chipPackage }
+        if let package = audioChipPackage { return package }
         // inputs down the second side, outputs (and a multiplexer's common terminal and select inputs) down the first
         func first(_ offset: Int) -> Board.PinPlace { Board.PinPlace(second: false, offset: offset) }
         func second(_ offset: Int) -> Board.PinPlace { Board.PinPlace(second: true, offset: offset) }

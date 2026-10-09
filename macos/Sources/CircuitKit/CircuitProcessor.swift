@@ -43,7 +43,7 @@ public final class CircuitProcessor {
         // every audio input part plays the host's sound
         func live(_ elements: inout [Element]) {
             for i in elements.indices {
-                if elements[i].kind == .audioInput { elements[i][param: "input"] = 1 }
+                if elements[i].kind.playsClip { elements[i][param: "input"] = 1 }
                 if var block = elements[i].block {
                     live(&block.circuit.elements)
                     elements[i].block = block

@@ -79,7 +79,9 @@ extension Circuit {
     /// the block's name, a dot and their own ("X1.R2"). Net labels inside a block are its own (two copies of a block
     /// do not join at a label inside them), except ground.
     public func flattened(expandingModels: Bool = true) -> Circuit {
-        guard elements.contains(where: { ($0.kind == .block && $0.block != nil) || (expandingModels && ($0.kind.isTube || $0.kind == .transformer)) }) else {
+        guard elements.contains(where: {
+            ($0.kind == .block && $0.block != nil) || (expandingModels && ($0.kind.isTube || $0.kind == .transformer || $0.expandsIntoParts))
+        }) else {
             return self
         }
         var result = self
@@ -170,6 +172,10 @@ extension Circuit {
                     let farads = owner[param: key]
                     if farads > 0 { part(owner, 10 + role, .capacitor, pins[from], pins[to], key.uppercased(), ["capacitance": farads]) }
                 }
+            case _ where owner.expandsIntoParts:
+                // microphones, the audio chips, a balanced cable, a loudspeaker (see `PartExpansion`)
+                copies += 1
+                added += PartExpansion.parts(of: owner, copy: copies).filter { !present.contains($0.id) }
             default:
                 continue
             }

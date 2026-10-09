@@ -30,6 +30,7 @@ public enum ElementCategory: String, CaseIterable, Sendable, Identifiable {
     case semiconductors = "Semiconductors"
     case tubes = "Tubes & Transformers"
     case amplifiers = "Amplifiers"
+    case audio = "Audio"
     case synth = "Synth Chips"
     case microcontrollers = "Microcontrollers"
     case timersAndLogic = "Timers & Logic"
@@ -55,6 +56,9 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case delayLine, digitalDelay, vactrol
     case memristor
     case probe, ammeter, speaker
+    /// Audio parts: microphones and a pickup, preamp, line and power amp chips, dynamics, tone, metering, a reverb tank
+    case microphone, electretMic, pickup, instrumentationAmp, lineReceiver, lineDriver, audioPowerAmp, compander, toneControl
+    case levelDetector, springReverb, barGraphDriver, balancedCable, vuMeter
     /// A block (a circuit used as one part) and the ports that are its pins
     case port, block
 
@@ -202,6 +206,20 @@ extension ElementKind {
         case .probe: return "Voltage Probe"
         case .ammeter: return "Ammeter"
         case .speaker: return "Speaker"
+        case .microphone: return "Microphone"
+        case .electretMic: return "Electret Mic Capsule"
+        case .pickup: return "Guitar Pickup"
+        case .instrumentationAmp: return "Mic Preamp (In-Amp)"
+        case .lineReceiver: return "Balanced Line Receiver"
+        case .lineDriver: return "Balanced Line Driver"
+        case .audioPowerAmp: return "LM386 Power Amp"
+        case .compander: return "Compander"
+        case .toneControl: return "Tone Control"
+        case .levelDetector: return "Level Detector"
+        case .springReverb: return "Spring Reverb Tank"
+        case .barGraphDriver: return "LED Bar-Graph Driver"
+        case .balancedCable: return "Balanced Cable"
+        case .vuMeter: return "VU Meter"
         case .port: return "Port"
         case .block: return "Block"
         }
@@ -239,6 +257,13 @@ extension ElementKind {
         case .probe: return "P"
         case .ammeter: return "A"
         case .speaker: return "SPK"
+        case .microphone, .electretMic: return "MIC"
+        case .pickup: return "PU"
+        case .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .levelDetector,
+             .barGraphDriver: return "U"
+        case .springReverb: return "RT"
+        case .balancedCable: return "CBL"
+        case .vuMeter: return "M"
         case .port: return "PORT"
         case .block: return "X"
         }
@@ -258,7 +283,9 @@ extension ElementKind {
         case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return .timersAndLogic
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
         case .memristor: return .memristors
-        case .probe, .ammeter, .speaker: return .instruments
+        case .probe, .ammeter, .speaker, .vuMeter: return .instruments
+        case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
+             .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable: return .audio
         case .port, .block: return .blocks
         }
     }
@@ -299,6 +326,8 @@ extension ElementKind {
         case .probe: return "o"
         case .ammeter: return "x"
         case .speaker, .port, .block: return nil
+        case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
+             .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter: return nil
         }
     }
 
@@ -358,7 +387,7 @@ extension ElementKind {
     public var isAxisAligned: Bool {
         isTransistor || self == .opAmp || self == .ota || self == .potentiometer || self == .timer555 || self == .analogSwitch
             || self == .multiplier || self == .delayLine || self == .vactrol || isModule || self == .comparator || isMicrocontroller
-            || isLogic || self == .block || isTube || self == .transformer
+            || isLogic || self == .block || isTube || self == .transformer || audioChipPackage != nil
     }
 
     /// Parts offered in the library and the quick-add palette: a block is placed from the blocks the user has saved
@@ -375,7 +404,7 @@ extension ElementKind {
         case .timer555: return 5
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.length
         case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return chipPackage?.length
-        default: return nil
+        default: return audioChipPackage?.length
         }
     }
 
@@ -415,7 +444,12 @@ extension ElementKind {
         case .schmittInverter, .unbufferedInverter: return ["in", "out"]
         case .logicGate: return ["in1", "in2", "out"]
         case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return chipPackage?.terminalNames ?? []
-        default: return ["a", "b"]
+        case .electretMic: return ["out", "gnd"]
+        case .pickup: return ["hot", "gnd"]
+        case .vuMeter: return ["plus", "minus"]
+        case .levelDetector: return ["in", "ref", "out"]
+        case .springReverb: return ["in", "gnd", "out"]
+        default: return audioChipPackage?.terminalNames ?? ["a", "b"]
         }
     }
 
@@ -439,7 +473,7 @@ extension ElementKind {
     /// phase, an envelope's stage, a held sample), with two inputs either side of `a` and the output at `b`
     public var isModule: Bool {
         switch self {
-        case .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return true
+        case .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .levelDetector, .springReverb: return true
         default: return false
         }
     }
@@ -473,7 +507,7 @@ extension ElementKind {
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040: return GridPoint(0, board?.length ?? 13)
         case .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac: return GridPoint(0, chipPackage?.length ?? 3)
-        default: return GridPoint(4, 0)
+        default: return audioChipPackage.map { GridPoint(0, $0.length) } ?? GridPoint(4, 0)
         }
     }
 
@@ -484,7 +518,10 @@ extension ElementKind {
         case .port:
             return [.choice("side", "Side of the block", ["Where it is drawn", "Left (input)", "Right (output)"])]
         case .speaker:
-            return [ParamSpec("fullScale", "Full-scale voltage", unit: "V", default: 5, range: 0.1...50)]
+            return [ParamSpec("fullScale", "Full-scale voltage", unit: "V", default: 5, range: 0.1...50)] + ElementKind.loudspeakerParams
+        case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
+             .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter:
+            return audioParams
         case .resistor:
             return [ParamSpec("resistance", "Resistance", unit: "Ω", default: 1000, range: 1...10_000_000)]
         case .potentiometer:
@@ -543,6 +580,8 @@ extension ElementKind {
                 ParamSpec("dbPerVolt", "Exponential: dB per volt", unit: "dB/V", default: -30.3, range: -100...100, log: false),
                 ParamSpec("unity", "Linear: control for unity gain", unit: "V", default: 5, range: 0.5...12, log: false),
                 ParamSpec("limit", "Output swing", unit: "V", default: 12, range: 1...15, log: false),
+                ParamSpec("cvOffset", "Control offset (the control voltage for unity gain, exponential)", unit: "V", default: 0,
+                          range: -10...10, log: false),
             ]
         case .sampleHold:
             return [
@@ -588,6 +627,7 @@ extension ElementKind {
                 ParamSpec("gbw", "Gain-bandwidth", unit: "Hz", default: 1e9, range: 1e4...1e10),
                 ParamSpec("offset", "Input offset", unit: "V", default: 1e-6, range: -0.01...0.01, log: false),
                 ParamSpec("noise", "Input noise voltage", unit: "V/√Hz", default: 0, range: 0...1e-6, log: false),
+                ParamSpec("midpoint", "Middle of the output swing (a single supply's half)", unit: "V", default: 0, range: -25...25, log: false),
             ]
         case .ota:
             return [
@@ -890,7 +930,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         case .potentiometer, .analogSwitch:
             return [a, b, wiper]
         case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
-             .logicGate:
+             .logicGate, .levelDetector, .springReverb:
             return [a - perpendicular, a + perpendicular, b]
         case .vactrol, .transformer:
             return [a - perpendicular, a + perpendicular, b - perpendicular, b + perpendicular]
@@ -902,7 +942,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
              .block:
             return packagePins
         default:
-            return [a, b]
+            return kind.audioChipPackage != nil ? packagePins : [a, b]
         }
     }
 
@@ -943,6 +983,22 @@ extension ElementKind {
                           values: ["gain": 1e5, "limit": 13, "slewRate": 9, "gbw": 10e6, "offset": 0.5e-3, "noise": 5e-9]),
                 PartModel(name: "LM741", summary: "The classic: 0.5 V/µs, 1 MHz",
                           values: ["gain": 2e5, "limit": 13, "slewRate": 0.5, "gbw": 1e6, "offset": 1e-3, "noise": 20e-9]),
+                PartModel(name: "NE5534", summary: "The single low-noise audio op-amp: 3.5 nV/√Hz, 13 V/µs, 10 MHz",
+                          values: ["gain": 1e5, "limit": 13, "slewRate": 13, "gbw": 10e6, "offset": 0.5e-3, "noise": 3.5e-9]),
+                PartModel(name: "OPA1612", summary: "Very low noise and distortion: 1.1 nV/√Hz, 27 V/µs, 40 MHz (dual)",
+                          values: ["gain": 3e6, "limit": 13.5, "slewRate": 27, "gbw": 40e6, "offset": 0.1e-3, "noise": 1.1e-9]),
+                PartModel(name: "LM4562", summary: "Audiophile dual: 2.7 nV/√Hz, 20 V/µs, 55 MHz",
+                          values: ["gain": 1e7, "limit": 13.5, "slewRate": 20, "gbw": 55e6, "offset": 0.1e-3, "noise": 2.7e-9]),
+                PartModel(name: "NJM4556", summary: "Headphone driver dual: 70 mA out, 3 V/µs, 8 MHz",
+                          values: ["gain": 1e5, "limit": 13, "slewRate": 3, "gbw": 8e6, "offset": 0.5e-3, "noise": 8e-9]),
+                PartModel(name: "TPA6120", summary: "Current-feedback headphone amp: 1300 V/µs, very wide band (SMD only)",
+                          values: ["gain": 1e5, "limit": 13, "slewRate": 1300, "gbw": 250e6, "offset": 1e-3, "noise": 2.9e-9]),
+                PartModel(name: "TDA2030", summary: "14 W power amp on ±16 V (Pentawatt, on a heat sink): 8 V/µs",
+                          values: ["gain": 3e4, "limit": 14, "slewRate": 8, "gbw": 3e6, "offset": 2e-3, "noise": 10e-9]),
+                PartModel(name: "LM1875", summary: "20 W power amp on ±25 V (TO-220, on a heat sink): 8 V/µs",
+                          values: ["gain": 3e4, "limit": 23, "slewRate": 8, "gbw": 5.5e6, "offset": 1e-3, "noise": 3e-9]),
+                PartModel(name: "LM3886", summary: "68 W Overture power amp on ±35 V (on a heat sink): 19 V/µs",
+                          values: ["gain": 5e5, "limit": 32, "slewRate": 19, "gbw": 8e6, "offset": 1e-3, "noise": 2e-9]),
             ]
         case .ota:
             return [
@@ -1139,6 +1195,8 @@ extension ElementKind {
                           values: ["response": 0, "dbPerVolt": -30.3]),
                 PartModel(name: "Linear", summary: "Gain in proportion to the control: unity at 5 V, silent at 0 V and below",
                           values: ["response": 1, "unity": 5]),
+                PartModel(name: "THAT2180", summary: "Blackmer VCA for compressors and faders: −6.1 mV per dB at its EC− control",
+                          values: ["response": 0, "dbPerVolt": -163.9]),
             ]
         case .sampleHold:
             return [
@@ -1205,8 +1263,10 @@ extension ElementKind {
                 PartModel(name: "J201", summary: "Low pinch-off, for phasers and VCAs", values: ["pinchOff": -0.8, "idss": 0.6e-3]),
                 PartModel(name: "2N3819", summary: "Higher current", values: ["pinchOff": -3, "idss": 10e-3]),
             ]
+        case .speaker:
+            return ElementKind.loudspeakerModels
         default:
-            return []
+            return audioModels
         }
     }
 }

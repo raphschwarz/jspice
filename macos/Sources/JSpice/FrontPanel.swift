@@ -20,7 +20,7 @@ struct FrontPanel: View {
         var id: UUID { blockID.map { UUID.inBlock($0, part: element.id) } ?? element.id }
     }
 
-    private static let shown: Set<ElementKind> = [.potentiometer, .toggleSwitch, .pushButton, .led, .speaker]
+    private static let shown: Set<ElementKind> = [.potentiometer, .toggleSwitch, .pushButton, .led, .speaker, .vuMeter]
     private static let playable: Set<ElementKind> = [.potentiometer, .toggleSwitch, .pushButton]
 
     /// The parts that appear on the panel: controls and lamps left to right as on the schematic (those inside a block
@@ -35,7 +35,7 @@ struct FrontPanel: View {
                                         place: GridPoint(min(block.a.x, block.b.x), min(block.a.y, block.b.y))))
             }
         }
-        func key(_ c: Control) -> (Int, Int, Int) { (c.element.kind == .speaker ? 1 : 0, c.place.x, c.place.y) }
+        func key(_ c: Control) -> (Int, Int, Int) { (c.element.kind == .speaker || c.element.kind == .vuMeter ? 1 : 0, c.place.x, c.place.y) }
         return controls.sorted { key($0) < key($1) }
     }
 
@@ -128,6 +128,8 @@ struct FrontPanel: View {
         case .led:
             PanelLamp(simulation: editor.simulation, elementID: control.id,
                       color: LEDColor(rawValue: Int(element[param: "color"])) ?? .red)
+        case .vuMeter:
+            PanelVUMeter(simulation: editor.simulation, elementID: control.id)
         default:
             LevelMeter(simulation: editor.simulation)
         }
@@ -459,5 +461,44 @@ private struct RegularPolygon: Shape {
         }
         path.closeSubpath()
         return path
+    }
+}
+
+/// A VU meter's face: the scale from −20 to +3 dB, red above 0, and the needle where the simulation's reading puts it
+private struct PanelVUMeter: View {
+    @ObservedObject var simulation: SimulationController
+    let elementID: UUID
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !simulation.isRunning)) { _ in
+            let index = simulation.simulator.flatIndex(of: elementID)
+            let reading = index.map { simulation.simulator.meterReading($0) } ?? -60
+            Canvas { context, size in
+                let pivot = CGPoint(x: size.width / 2, y: size.height * 0.92)
+                let radius = size.height * 0.78
+                // −20 dB at the left end of the arc, +3 dB at the right
+                func angle(_ db: Double) -> Double { -.pi * 0.78 + .pi * 0.56 * (min(max(db, -20), 3) + 20) / 23 }
+                func point(_ db: Double, _ r: CGFloat) -> CGPoint {
+                    CGPoint(x: pivot.x + cos(angle(db)) * r, y: pivot.y + sin(angle(db)) * r)
+                }
+                context.fill(Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 6), with: .color(Color(red: 0.96, green: 0.9, blue: 0.72)))
+                for db in [-20.0, -10, -7, -5, -3, -2, -1, 0, 1, 2, 3] {
+                    var tick = Path()
+                    tick.move(to: point(db, radius))
+                    tick.addLine(to: point(db, radius * (db == 0 || db == -20 ? 0.84 : 0.9)))
+                    context.stroke(tick, with: .color(db > 0 ? .red : .black), lineWidth: 1.2)
+                }
+                var red = Path()
+                red.addArc(center: pivot, radius: radius, startAngle: .radians(angle(0)), endAngle: .radians(angle(3)), clockwise: false)
+                context.stroke(red, with: .color(.red), lineWidth: 3)
+                var needle = Path()
+                needle.move(to: pivot)
+                needle.addLine(to: point(reading, radius * 1.02))
+                context.stroke(needle, with: .color(.black), lineWidth: 1.5)
+                context.draw(Text("VU").font(.system(size: 9, weight: .semibold)).foregroundStyle(.black),
+                             at: CGPoint(x: size.width / 2, y: size.height * 0.55))
+            }
+            .frame(width: 96, height: 60)
+        }
     }
 }

@@ -110,6 +110,8 @@ public final class Simulator {
     var noiseState: [UInt64] = []
     /// What went into each delay line, one value per step, oldest overwritten first
     private var delayHistory: [Int: DelayHistory] = [:]
+    /// Spring reverb tanks' springs, by element index
+    private var springTanks: [Int: SpringTank] = [:]
 
     struct DelayHistory {
         var values: [Double]
@@ -361,13 +363,13 @@ public final class Simulator {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
-                 .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
+                 .sampleHold, .divider, .levelDetector, .springReverb, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
                  .binaryCounter, .pll, .dac: return true
             default: return false
             }
         }
         statefulIndices = indices {
-            [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage, .vactrol].contains($0)
+            [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage, .vactrol, .vuMeter].contains($0)
                 || $0.isModule || $0 == .comparator
         }
         dynamicIndices = statefulIndices.filter { [.capacitor, .inductor, .opAmp, .memristor, .vactrol].contains(kinds[$0]) }
@@ -375,6 +377,7 @@ public final class Simulator {
         reactiveIndices = indices { $0 == .capacitor || $0 == .inductor }
         stepIndices = statefulIndices.filter { !dynamicIndices.contains($0) }
         delayHistory = [:]
+        springTanks = [:]
         digitalIndices = indices { $0.isDigital }
         chipIndices = indices { $0.isMicrocontroller }
         chips = [:]
@@ -539,8 +542,10 @@ public final class Simulator {
             timeStep = other.timeStep
             matrixIsCurrent = false
             delayHistory = other.delayHistory
+            springTanks = other.springTanks
         } else if delays {
             delayHistory = other.delayHistory
+            springTanks = other.springTanks
         }
         if digitalState != other.digitalState { matrixIsCurrent = false }
         Self.adopt(&x, other.x)
@@ -596,6 +601,7 @@ public final class Simulator {
         problems = topology.problems
         for trace in traces.values { trace.clear() }
         delayHistory = [:]
+        springTanks = [:]
         // 555s start low again, and their state is part of the base matrix; so do the chips' pins
         for (i, chip) in chips {
             chip.reset()
@@ -1030,9 +1036,14 @@ public final class Simulator {
                 add(&matrix, m, minus, row, 1)
                 add(&matrix, m, row, plus, 1)
                 add(&matrix, m, row, minus, -1)
-            case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+            case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
+                 .levelDetector, .springReverb:
                 // output: a voltage source to ground, whose voltage the nonlinear stage (or the delay line, or the chip's
                 // state) sets
+                if element.kind == .springReverb {
+                    // the tank's input coil
+                    stampConductance(&matrix, m, nodes[0], nodes[1], constants[i].onConductance)
+                }
                 if element.kind == .digitalDelay {
                     // an echo chip's pin 6: its internal reference behind its internal resistance
                     stampConductance(&matrix, m, nodes[1], 0, 1 / constants[i].value)
@@ -1219,7 +1230,7 @@ public final class Simulator {
                 stampCurrent(&rhs, 0, nodes[1], Self.echoReference / c.value)
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = moduleStates[i].output }
-            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .levelDetector, .springReverb:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = moduleStates[i].output }
             default:
@@ -1287,6 +1298,8 @@ public final class Simulator {
         var cj0 = 0.0, vj0 = 1.0, m0 = 0.5, cj1 = 0.0, vj1 = 0.75, m1 = 0.33, transit = 0.0
         // an op-amp's input noise voltage, V/√Hz
         var noiseDensity = 0.0
+        /// an op-amp's middle of its swing (half a single supply)
+        var midpoint = 0.0
     }
 
     /// A parameter that picks a setting, as a whole number within `range` (typed or scripted values can be anything)
@@ -1380,6 +1393,22 @@ public final class Simulator {
             c.gain = p("dbPerVolt")
             c.threshold = max(p("unity"), 1e-3)
             c.limit = max(p("limit"), 0.1)
+            c.offset = p("cvOffset")
+        case .levelDetector:
+            c.value = Self.choice(p("mode"), 0...3)
+            c.tau = max(p("attack"), 0)
+            c.voff = max(p("release"), 0)
+            c.gain = p("scale")
+            c.threshold = max(p("reference"), 1e-9)
+        case .springReverb:
+            c.value = max(p("decay"), 0.05)
+            c.tau = min(max(p("delay"), 0.002), 0.2)
+            c.gain = p("gain")
+            c.onConductance = 1 / max(p("inputResistance"), 0.1)
+            c.duty = min(max(p("dispersion"), 0), 0.95)
+        case .vuMeter:
+            c.value = Self.choice(p("mode"), 0...1)
+            c.threshold = max(p("reference"), 1e-9)
         case .sampleHold:
             c.value = Self.choice(p("mode"), 0...1)
             c.slew = max(p("droop"), 0)
@@ -1409,6 +1438,7 @@ public final class Simulator {
             c.gbw = p("gbw")
             c.slew = p("slewRate") * 1e6
             c.noiseDensity = max(p("noise"), 0)
+            c.midpoint = p("midpoint")
         case .ota:
             // the bias input: one or two junctions down to the negative supply, 1 mA at 0.6 V per junction
             let drops = min(max(p("biasDrop").rounded(), 1), 2)
@@ -1641,9 +1671,11 @@ public final class Simulator {
         let gain = c.gain
         let limit = c.limit
         let gbw = c.gbw
+        // the output swings `limit` either side of its midpoint (0, or half a single supply)
+        let mid = c.midpoint
         guard gbw > 0 else {
-            let t = tanh(gain * vd / limit)
-            return (limit * t, gain * (1 - t * t), limit * t)
+            let t = tanh((gain * vd - mid) / limit)
+            return (mid + limit * t, gain * (1 - t * t), mid + limit * t)
         }
         let w = 2 * Double.pi * gbw
         let tau = gain / w
@@ -1658,8 +1690,8 @@ public final class Simulator {
         }
         // BDF2 for d(internal)/dt = drive - internal / tau
         let stage = (drive - (a1 * capacitorVoltage[i] + a2 * capacitorVoltagePrevious[i]) / h) / denominator
-        let t = tanh(stage / limit)
-        return (limit * t, (1 - t * t) * driveSlope / denominator, stage)
+        let t = tanh((stage - mid) / limit)
+        return (mid + limit * t, (1 - t * t) * driveSlope / denominator, stage)
     }
 
     /// Input voltage beyond which an op-amp's output is no longer in its linear range within one step
@@ -2172,7 +2204,7 @@ public final class Simulator {
             case .vca:
                 let (in0, in1) = (voltage(nodes[0]), voltage(nodes[1]))
                 let exponential = c.value < 0.5
-                let raw = exponential ? c.gain * in1 / 20 : max(in1, 0) / c.threshold
+                let raw = exponential ? c.gain * (in1 - c.offset) / 20 : max(in1, 0) / c.threshold
                 let gain = exponential ? pow(10, min(raw, 40.0 / 20)) : min(raw, 100)
                 let t = tanh(gain * in0 / c.limit)
                 let gainSlope = exponential ? (raw < 2 ? gain * log(10) * c.gain / 20 : 0) : (in1 > 0 && raw < 100 ? 1 / c.threshold : 0)
@@ -2350,7 +2382,7 @@ public final class Simulator {
                 // the internal stage cannot wind up far beyond the output swing
                 let bound = 3 * parameters.limit
                 capacitorVoltagePrevious[i] = capacitorVoltage[i]
-                capacitorVoltage[i] = min(bound, max(-bound, stage))
+                capacitorVoltage[i] = min(parameters.midpoint + bound, max(parameters.midpoint - bound, stage))
             case .memristor:
                 // threshold switching: the state relaxes towards "on" above the on threshold and towards "off" below
                 // minus the off threshold, with the given switching time
@@ -2391,8 +2423,10 @@ public final class Simulator {
                     capacitorVoltage[i] = nextNoise(i)
                     memristorStates[i] = time + Self.noiseSampleTime - timeStep / 2
                 }
-            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .levelDetector, .springReverb:
                 updateModule(i, nodes, parameters)
+            case .vuMeter:
+                updateMeter(i, nodes, parameters)
             case .delayLine:
                 if delayHistory[i] == nil { delayHistory[i] = DelayHistory(capacity: delayCapacity(i, timeStep: timeStep)) }
                 delayHistory[i]?.append(voltage(nodes[0]))
@@ -2404,6 +2438,29 @@ public final class Simulator {
                 break
             }
         }
+    }
+
+    /// A VU meter's needle: the rectified voltage across it smoothed so a steady tone reads in 300 ms (VU), or its peaks
+    /// held, rising in 10 ms and falling 20 dB in 1.5 s (a peak programme meter). Kept as the RMS level of a sine.
+    private func updateMeter(_ i: Int, _ nodes: [Int], _ c: Constants) {
+        guard nodes.count == 2 else { return }
+        var s = moduleStates[i]
+        // a sine's rectified average is 0.9 of its RMS
+        let level = abs(voltage(nodes[0]) - voltage(nodes[1])) / 0.9003
+        if c.value < 0.5 {
+            s.level += (level - s.level) * (1 - exp(-timeStep / 0.065))
+        } else if level > s.level {
+            s.level += (level - s.level) * (1 - exp(-timeStep / 0.01))
+        } else {
+            s.level *= exp(-timeStep / 0.65)
+        }
+        moduleStates[i] = s
+    }
+
+    /// A VU meter's reading, in dB about its reference (0 dB at the reference RMS level); −60 dB at most below it
+    public func meterReading(_ index: Int) -> Double {
+        guard index < kinds.count, kinds[index] == .vuMeter, index < moduleStates.count else { return -60 }
+        return max(20 * log10(max(moduleStates[index].level, 1e-12) / constants[index].threshold), -60)
     }
 
     /// An echo chip's longest delay
@@ -2617,8 +2674,38 @@ public final class Simulator {
             }
             s.output = c.high * s.level
         case .vca:
-            let gain = c.value < 0.5 ? pow(10, min(c.gain * in1 / 20, 40.0 / 20)) : min(max(in1, 0) / c.threshold, 100)
+            let gain = c.value < 0.5 ? pow(10, min(c.gain * (in1 - c.offset) / 20, 40.0 / 20)) : min(max(in1, 0) / c.threshold, 100)
             s.output = c.limit * tanh(gain * in0 / c.limit)
+        case .levelDetector:
+            // the input against its reference pin, smoothed: attack while it rises, release while it falls
+            let x = in0 - in1
+            func smooth(_ target: Double) {
+                let tau = target > s.level ? c.tau : c.voff
+                s.level = tau > 0 ? s.level + (target - s.level) * (1 - exp(-dt / tau)) : target
+            }
+            switch Int(c.value) {
+            case 0:
+                // mean square, then its root in dB about the reference, so many millivolts per dB
+                smooth(x * x)
+                s.output = c.gain * 20 * log10(max(s.level.squareRoot(), 1e-6) / c.threshold)
+            case 1:
+                smooth(abs(x))
+                s.output = s.level
+            case 2:
+                if abs(x) > s.level {
+                    s.level = c.tau > 0 ? s.level + (abs(x) - s.level) * (1 - exp(-dt / c.tau)) : abs(x)
+                } else {
+                    s.level *= c.voff > 0 ? exp(-dt / c.voff) : 0
+                }
+                s.output = s.level
+            default:
+                s.output = abs(x)
+            }
+        case .springReverb:
+            // the input coil's voltage drives the springs; the output coil gives back what arrives
+            // (worked on in place: copying the springs out and back would copy their delay lines at every step)
+            let out = springTanks[i, default: SpringTank()].process(in0 - in1, dt: dt, decay: c.value, delay: c.tau, dispersion: c.duty)
+            s.output = c.gain * out
         case .sampleHold:
             let was = s.high
             s.high = Self.logicHigh(in1, was: was)
@@ -2726,10 +2813,16 @@ public final class Simulator {
             let (be, bc) = (p * junctionCurrent[2 * i], p * junctionCurrent[2 * i + 1])
             let (ic, ib) = (p * model.ic - bc, p * model.ib + be + bc)
             return (ic, [-ib, -ic, ic + ib])
-        case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
+             .levelDetector:
             let row = topology.sourceRow[i]
             let current = row >= 0 && row < x.count ? x[row] : 0
             return (current, [0, 0, current])
+        case .springReverb:
+            let row = topology.sourceRow[i]
+            let current = row >= 0 && row < x.count ? x[row] : 0
+            let coil = (v(nodes[0]) - v(nodes[1])) * constants[i].onConductance
+            return (current, [-coil, coil, current])
         case .triode, .pentode:
             let tube = constants[i].tube
             let vgk = v(nodes[0]) - v(nodes[2])

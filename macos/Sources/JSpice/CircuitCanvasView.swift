@@ -179,7 +179,12 @@ final class CircuitCanvasView: NSView {
                 : voltages.map { palette.color(forVoltage: $0, scale: voltageScale) }
             var style = SymbolStyle(lineWidth: lineWidth, terminalColors: colors, fill: palette.neutral, accent: accent)
             if live {
-                style.brightness = element.kind == .analogSwitch ? simulator.switchConduction(index) : simulator.brightness(index)
+                switch element.kind {
+                case .analogSwitch: style.brightness = simulator.switchConduction(index)
+                // the needle, from −20 dB at the left to +3 dB at the right
+                case .vuMeter: style.brightness = (simulator.meterReading(index) + 20) / 23
+                default: style.brightness = simulator.brightness(index)
+                }
                 style.memristorState = simulator.memristorState(index)
             }
             if element.kind == .probe { style.fill = palette.text }
@@ -315,6 +320,15 @@ final class CircuitCanvasView: NSView {
         case .noiseVoltage: return "Noise " + SI.format(element[param: "amplitude"], unit: "V")
         case .audioInput:
             return element[param: "input"] >= 0.5 ? "Live in" : (element.audio?.name ?? AudioClip.guitarRiff.name)
+        case .microphone, .electretMic, .pickup:
+            let sound = element[param: "input"] >= 0.5 ? "live in"
+                : (element.audio?.name ?? (element.kind == .pickup ? AudioClip.guitarRiff : AudioClip.speech).name).lowercased()
+            return (element.model?.name ?? element.kind.displayName) + " · " + sound
+        case .vuMeter:
+            return live ? String(format: "%+.1f dB", simulator.meterReading(index)) : (element.model?.name ?? "VU")
+        case .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .levelDetector, .springReverb,
+             .barGraphDriver, .balancedCable:
+            return element.model?.name ?? "Custom"
         case .memristor:
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
         case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch, .njfet, .multiplier, .delayLine,
@@ -997,9 +1011,11 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     switch kind {
     case .memristor: return [.voltage, .current, .resistance, .power]
     case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
-    case .probe, .netLabel, .speaker: return [.voltage]
+    case .probe, .netLabel, .speaker, .vuMeter, .electretMic, .pickup: return [.voltage]
     case .ground, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux,
-         .analogSelector, .pll, .dac: return []
+         .analogSelector, .pll, .dac, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
+         .toneControl, .barGraphDriver, .balancedCable: return []
+    case .levelDetector, .springReverb: return [.voltage]
     case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .multiplier, .comparator, .delayLine, .digitalDelay, .vco,
          .vcf, .envelope,
          .vca, .sampleHold,

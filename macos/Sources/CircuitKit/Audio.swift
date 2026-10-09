@@ -41,6 +41,67 @@ public struct AudioClip: Codable, Hashable, Sendable {
         self.init(name: name, sampleRate: decoded.sampleRate, samples: decoded.samples)
     }
 
+    /// A voice to try microphones with: vowels sung by formant synthesis (a glottal pulse train through the mouth's
+    /// three resonances), with an "s" between phrases, about four seconds at 48 kHz, the same every time
+    public static let speech: AudioClip = {
+        let rate = 48_000.0
+        // (start, length in seconds, formants F1-F3 in Hz, or nil for an "s"), at a speaking pitch that rises and falls
+        let sounds: [(Double, Double, [Double]?)] = [
+            (0.05, 0.32, [730, 1090, 2440]), (0.37, 0.28, [270, 2290, 3010]), (0.65, 0.34, [570, 840, 2410]),
+            (1.05, 0.16, nil), (1.25, 0.30, [530, 1840, 2480]), (1.55, 0.32, [300, 870, 2240]), (1.87, 0.40, [730, 1090, 2440]),
+            (2.45, 0.18, nil), (2.68, 0.28, [270, 2290, 3010]), (2.96, 0.30, [660, 1720, 2410]), (3.26, 0.45, [570, 840, 2410]),
+        ]
+        let total = Int(rate * 3.8)
+        var out = [Double](repeating: 0, count: total)
+        var seed: UInt64 = 0x9E3779B97F4A7C15
+        func noise() -> Double {
+            seed ^= seed << 13
+            seed ^= seed >> 7
+            seed ^= seed << 17
+            return Double(seed >> 11) / Double(1 << 53) * 2 - 1
+        }
+        /// A two-pole resonator's coefficients at `f` Hz with bandwidth `b` Hz
+        func resonator(_ f: Double, _ b: Double) -> (Double, Double, Double) {
+            let r = exp(-Double.pi * b / rate)
+            let a1 = 2 * r * cos(2 * Double.pi * f / rate), a2 = -r * r
+            return (1 - a1 - a2, a1, a2)
+        }
+        for (start, length, formants) in sounds {
+            let first = Int(start * rate), count = Int(length * rate)
+            var states = [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]
+            var phase = 0.0
+            let widths: [Double] = formants == nil ? [840, 1200, 1680] : [70, 100, 140]
+            let centres: [Double] = formants ?? [4500, 6500, 8000]
+            let filters = (0..<3).map { resonator(centres[$0], widths[$0]) }
+            for k in 0..<count where first + k < total {
+                let t = Double(k) / Double(count)
+                // a short rise and fall, as a syllable has
+                let envelope = min(1, t * 12) * min(1, (1 - t) * 6)
+                let excitation: Double
+                if formants == nil {
+                    excitation = noise() * 0.6
+                } else {
+                    let pitch = 120 + 25 * sin(2 * Double.pi * (start + t * length) / 3.8 * 2)
+                    phase += pitch / rate
+                    if phase >= 1 { phase -= 1 }
+                    // the glottis: a pulse that opens slowly and closes fast
+                    excitation = (phase < 0.6 ? sin(Double.pi * phase / 0.6) : 0) - 0.38
+                }
+                var sum = 0.0
+                let weights: [Double] = [1, 0.6, 0.35]
+                for j in 0..<3 {
+                    let (gain, a1, a2) = filters[j]
+                    let y = gain * excitation + a1 * states[j].0 + a2 * states[j].1
+                    states[j] = (y, states[j].0)
+                    sum += y * weights[j]
+                }
+                out[first + k] += sum * envelope
+            }
+        }
+        let peak = max(out.map(abs).max() ?? 1, 1e-9)
+        return AudioClip(name: "Speech", sampleRate: rate, samples: out.map { Float(0.9 * $0 / peak) })
+    }()
+
     /// A guitar riff to try circuits with: plucked strings (Karplus-Strong), a few notes then a chord, about four
     /// seconds at 48 kHz, peaking near full scale, the same every time
     public static let guitarRiff: AudioClip = {

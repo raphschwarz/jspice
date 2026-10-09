@@ -33,7 +33,7 @@ enum SymbolIcons {
             element = Element(kind: kind, a: .zero, b: GridPoint(2, 0))
             (a, b, unit) = (CGPoint(x: 7, y: 11), CGPoint(x: 16, y: 11), 4.5)
         case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
-             .logicGate:
+             .logicGate, .levelDetector, .springReverb:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 5, y: 11), CGPoint(x: 29, y: 11), 5.5)
         case .ota, .vactrol, .transformer:
@@ -42,7 +42,9 @@ enum SymbolIcons {
         case .timer555:
             element = Element(kind: kind, a: .zero, b: GridPoint(0, 5))
             (a, b, unit) = (CGPoint(x: 17, y: -0.5), CGPoint(x: 17, y: 22), 4.5)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,
+             .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .barGraphDriver,
+             .balancedCable:
             let length = CGFloat(kind.chipPackage?.length ?? 13)
             element = Element(kind: kind, a: .zero, b: GridPoint(0, Int(length)))
             unit = min(19.6 / length, 4.4)

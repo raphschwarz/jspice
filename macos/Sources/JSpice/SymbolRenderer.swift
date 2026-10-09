@@ -79,8 +79,11 @@ enum SymbolRenderer {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
              .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac, .digitalDelay,
-             .port, .block, .triode, .pentode, .transformer:
+             .port, .block, .triode, .pentode, .transformer,
+             .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .levelDetector,
+             .springReverb, .barGraphDriver, .balancedCable:
             return 0
+        case .electretMic, .pickup, .vuMeter: return 1.4
         case .schmittInverter, .unbufferedInverter: return 1.8
         case .analogSwitch: return 1.6
         case .resistor, .potentiometer, .inductor: return 2
@@ -115,8 +118,14 @@ enum SymbolRenderer {
             drawTransformer(element, at: a, b, unit: u, style: style, in: ctx)
         case .opAmp, .ota, .comparator:
             drawOpAmp(element, posts: posts, at: a, b, unit: u, style: style, in: ctx)
-        case .multiplier, .delayLine, .digitalDelay, .vactrol, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .multiplier, .delayLine, .digitalDelay, .vactrol, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .levelDetector,
+             .springReverb:
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
+        case .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .barGraphDriver,
+             .balancedCable:
+            if let package = element.kind.chipPackage {
+                drawChip(package, title: element.model?.name ?? package.name, led: false, posts: posts, at: a, b, unit: u, style: style, in: ctx)
+            }
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac:
@@ -192,7 +201,8 @@ enum SymbolRenderer {
             let inner = body - 0.35 * u
             ctx.setFillColor(style.accent.withAlpha(0.28).cgColor)
             ctx.fill(CGRect(x: c - h, y: -0.3 * u, width: max(0, inner * CGFloat(style.memristorState)), height: 0.6 * u))
-        case .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .probe, .ammeter, .keyboardPitch, .keyboardGate:
+        case .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .probe, .ammeter, .keyboardPitch, .keyboardGate,
+             .electretMic, .vuMeter:
             ctx.setFillColor(style.fill.withAlpha(style.fill.a * 0.08).cgColor)
             ctx.fillEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
         default:
@@ -294,6 +304,26 @@ enum SymbolRenderer {
             addPlus(to: path, at: CGPoint(x: c - h - 0.35 * u, y: -0.65 * u), size: 0.16 * u)
         case .ammeter:
             path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
+        case .electretMic:
+            // a capsule: a circle with its diaphragm across the front
+            path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
+            path.move(to: CGPoint(x: c - h * 0.45, y: -h * 0.85))
+            path.addLine(to: CGPoint(x: c - h * 0.45, y: h * 0.85))
+        case .pickup:
+            // a bobbin with its six pole pieces
+            path.addRoundedRect(in: CGRect(x: c - h, y: -0.32 * u, width: body, height: 0.64 * u), cornerWidth: 0.2 * u, cornerHeight: 0.2 * u)
+            for k in 0..<6 {
+                let x = c - h + body * (CGFloat(k) + 0.5) / 6
+                path.addEllipse(in: CGRect(x: x - 0.06 * u, y: -0.06 * u, width: 0.12 * u, height: 0.12 * u))
+            }
+        case .vuMeter:
+            // a meter face: its scale, and the needle where the reading puts it
+            path.addEllipse(in: CGRect(x: c - h, y: -h, width: body, height: body))
+            let pivot = CGPoint(x: c, y: h * 0.55)
+            path.addArc(center: pivot, radius: h * 1.1, startAngle: -.pi * 0.78, endAngle: -.pi * 0.22, clockwise: false)
+            let angle = -.pi * 0.78 + .pi * 0.56 * CGFloat(min(max(style.brightness, 0), 1))
+            path.move(to: pivot)
+            path.addLine(to: CGPoint(x: pivot.x + cos(angle) * h * 1.2, y: pivot.y + sin(angle) * h * 1.2))
         case .speaker:
             // magnet and cone, opening to one side of the leads
             path.addRect(CGRect(x: c - h, y: -0.3 * u, width: 0.5 * u, height: 0.6 * u))
@@ -333,7 +363,9 @@ enum SymbolRenderer {
         case .wire, .ground, .netLabel, .port, .block, .nmos, .pmos, .npn, .pnp, .njfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
              .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac, .digitalDelay,
-             .triode, .pentode, .transformer:
+             .triode, .pentode, .transformer,
+             .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .levelDetector,
+             .springReverb, .barGraphDriver, .balancedCable:
             break
         }
 
@@ -699,7 +731,7 @@ enum SymbolRenderer {
             body.addLine(to: CGPoint(x: cx + k, y: k))
             body.move(to: CGPoint(x: cx - k, y: k))
             body.addLine(to: CGPoint(x: cx + k, y: -k))
-        case .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .levelDetector, .springReverb:
             let left = min(0.6 * u, L * 0.15)
             let right = max(left + u, L - 0.6 * u)
             line([CGPoint(x: 0, y: -u), CGPoint(x: left, y: -u)], colors[0])
@@ -796,6 +828,21 @@ enum SymbolRenderer {
         case .vcf:
             // flat, a small resonant bump, then a steep fall
             polyline([p(0, 0.6), p(0.4, 0.6), p(0.52, 0.85), p(0.6, 0.6), p(0.85, 0), p(1, 0)])
+        case .levelDetector:
+            // a rectified wave, and the level it settles to
+            var points: [CGPoint] = []
+            for k in 0...20 {
+                let t = CGFloat(k) / 20
+                points.append(p(t * 0.6, abs(sin(3 * .pi * t)) * 0.9))
+            }
+            polyline(points)
+            polyline([p(0.65, 0.6), p(1, 0.6)])
+        case .springReverb:
+            // a spring
+            var points: [CGPoint] = [p(0, 0.5)]
+            for k in 0..<8 { points.append(p((CGFloat(k) + 0.5) / 8, k % 2 == 0 ? 1 : 0)) }
+            points.append(p(1, 0.5))
+            polyline(points)
         case .envelope:
             polyline([p(0, 0), p(0.15, 1), p(0.35, 0.55), p(0.75, 0.55), p(1, 0)])
         case .vca:
@@ -1360,7 +1407,7 @@ enum SymbolRenderer {
         case .transformer:
             return posts.count == 4 ? [(posts[0], posts[1]), (posts[2], posts[3]), (a, b)] : [(a, b)]
         case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
-             .logicGate:
+             .logicGate, .levelDetector, .springReverb:
             return posts.count == 3 ? [(posts[0], posts[1]), (a, b)] : [(a, b)]
         case .vactrol:
             return posts.count == 4 ? [(posts[0], posts[1]), (posts[2], posts[3]), (a, b)] : [(a, b)]
@@ -1368,7 +1415,8 @@ enum SymbolRenderer {
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,
-             .block:
+             .block, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl,
+             .barGraphDriver, .balancedCable:
             guard let package = element.chipPackage, let box = chipBox(package, posts: posts, at: a, b, unit: u) else {
                 return [(a, b)]
             }
@@ -1433,7 +1481,8 @@ enum SymbolRenderer {
             guard length > 0 else { return nil }
             let start = min(length, gateOutputStart(length: length, unit: u))
             return (CGPoint(x: a.x + (b.x - a.x) * start / length, y: a.y + (b.y - a.y) * start / length), b, nil)
-        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider:
+        case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
+             .levelDetector, .springReverb:
             // the output lead, from the triangle's tip
             let length = hypot(b.x - a.x, b.y - a.y)
             guard length > 0 else { return nil }

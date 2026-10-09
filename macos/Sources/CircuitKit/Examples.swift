@@ -45,7 +45,7 @@ public enum Examples {
         cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz, echo, blocks,
         ringModulator, chorus, fuzz, guitarFuzz, tubeAmp, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, arduinoDAC, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
-    ]
+    ] + audioExamples
 
     /// A circuit drawn from a netlist by the tidy layout, with scopes on the named parts
     static func drawn(_ parts: [NetlistPart], scopes: [(String, Quantity)]) -> Circuit {

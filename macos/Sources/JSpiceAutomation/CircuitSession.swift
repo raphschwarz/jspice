@@ -1022,7 +1022,8 @@ public final class CircuitSession {
             let probes = try specs.map(probe)
             // every signal source held still: the operating point is where the circuit rests
             var still = circuit
-            for i in still.elements.indices where [.acVoltage, .squareVoltage, .noiseVoltage, .audioInput].contains(still.elements[i].kind) {
+            for i in still.elements.indices where [.acVoltage, .squareVoltage, .noiseVoltage, .balancedCable].contains(still.elements[i].kind)
+                || still.elements[i].kind.playsClip {
                 still = Simulator.quiet(still, holding: i)
             }
             let simulator = Simulator.settled(still, holding: nil, duration: settle)

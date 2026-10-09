@@ -53,6 +53,18 @@ public enum SchematicLayout {
         zip(board.terminalNames, board.pinPlaces).filter { $0.1.second == second }.map(\.0)
     }
 
+    /// The audio chips' pins on one side of their box (inputs on the second side), and the modules' inputs and output
+    private static func audioSides(second: Bool) -> [ElementKind: [String]] {
+        var result: [ElementKind: [String]] = [:]
+        for kind in ElementKind.allCases {
+            guard let package = kind.audioChipPackage else { continue }
+            result[kind] = zip(package.terminalNames, package.pinPlaces).filter { $0.1.second == second }.map(\.0)
+        }
+        result[.levelDetector] = second ? ["in", "ref"] : ["out"]
+        result[.springReverb] = second ? ["in", "gnd"] : ["out"]
+        return result
+    }
+
     private static func names(_ kind: ElementKind, _ terminals: [Int]) -> [String] {
         terminals.map { kind.terminalNames[$0] }
     }
@@ -71,7 +83,7 @@ public enum SchematicLayout {
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicInputs),
         .analogMux: names(.analogMux, Array(0...11)), .analogSelector: ["x0", "x1", "select", "inhibit"],
         .pll: ["signal", "comparator", "vco_in", "inhibit"], .dac: ["cs", "sck", "sdi", "ldac", "vref"],
-    ]
+    ].merging(audioSides(second: true)) { $1 }
     static let outputs: [ElementKind: [String]] = [
         .opAmp: ["out"], .ota: ["out"], .timer555: ["out"], .schmittInverter: ["out"], .unbufferedInverter: ["out"],
         .npn: ["collector", "emitter"],
@@ -85,12 +97,12 @@ public enum SchematicLayout {
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicOutputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicOutputs), .analogMux: ["x"], .analogSelector: ["x"],
         .pll: ["vco_out", "pc1", "pc2"], .dac: ["out"],
-    ]
+    ].merging(audioSides(second: false)) { $1 }
     static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .keyboardPitch,
                                             .keyboardGate]
     static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf,
                                                .envelope, .vca,
-                                               .sampleHold, .divider, .logicGate]
+                                               .sampleHold, .divider, .logicGate, .levelDetector, .springReverb]
 
     static func isRailName(_ name: String) -> Bool {
         let s = name.uppercased().replacingOccurrences(of: " ", with: "")
@@ -120,8 +132,10 @@ public enum SchematicLayout {
         case .nmos, .pmos, .npn, .pnp, .njfet: return frame(1...2, -1...1)
         case .triode, .pentode: return frame(0...2, -1...1)
         case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
-             .logicGate:
+             .logicGate, .levelDetector, .springReverb:
             return frame(0...3, -2...2)
+        case _ where e.kind.audioChipPackage != nil:
+            return frame(0...(e.chipPackage?.length ?? 3), -2...2)
         case .vactrol, .transformer: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,

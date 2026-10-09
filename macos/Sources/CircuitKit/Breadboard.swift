@@ -162,8 +162,16 @@ public enum Breadboard {
                 return Package(title: "LM741", pins: 8, units: [["minus": 2, "plus": 3, "out": 6]],
                                supplies: [(4, "V−", .volts(-v)), (7, "V+", .volts(v))],
                                labels: [1: "NULL", 2: "−IN", 3: "+IN", 4: "V−", 5: "NULL", 6: "OUT", 7: "V+", 8: "NC"])
-            case "LM358", "NE5532", "TL072":
+            case "LM358", "NE5532", "TL072", "OPA1612", "LM4562", "NJM4556":
                 return dual(model!, plus: v, minus: -v)
+            case "NE5534":
+                return Package(title: "NE5534", pins: 8, units: [["minus": 2, "plus": 3, "out": 6]],
+                               supplies: [(4, "V−", .volts(-v)), (7, "V+", .volts(v))],
+                               labels: [1: "BAL", 2: "−IN", 3: "+IN", 4: "V−", 5: "COMP/BAL", 6: "OUT", 7: "V+", 8: "COMP"],
+                               note: "Stable from a gain of 3; for less, 22 pF from pin 5 to pin 8")
+            case "TDA2030", "LM1875", "LM3886", "TPA6120":
+                // power amps on heat sinks, and a surface-mount part: off the board
+                return nil
             default:
                 return dual("TL072", plus: v, minus: -v, note: "An ideal op-amp: a TL072 stands in for it")
             }
@@ -256,6 +264,43 @@ public enum Breadboard {
             return Package(title: "ATtiny85", pins: 8, units: [["pb5": 1, "pb3": 2, "pb4": 3, "pb0": 5, "pb1": 6, "pb2": 7]],
                            supplies: [(4, "GND", .ground), (8, "VCC", .volts(max(p("supply"), 1.8)))],
                            note: "Program it before it goes on the board (it runs the sketch uploaded in JSpice)")
+        case .instrumentationAmp:
+            // SSM2019, THAT1510 and 1512, and INA217 share this pinout
+            let v = p("supply")
+            return Package(title: model ?? "SSM2019", pins: 8, units: [["rg1": 1, "minus": 2, "plus": 3, "ref": 5, "out": 6, "rg2": 8]],
+                           supplies: [(4, "V−", .volts(-v)), (7, "V+", .volts(v))],
+                           labels: [1: "RG1", 2: "−IN", 3: "+IN", 4: "V−", 5: "REF", 6: "OUT", 7: "V+", 8: "RG2"])
+        case .lineReceiver:
+            // INA134 and THAT1240/1246 share this pinout
+            let v = p("supply")
+            return Package(title: model ?? "INA134", pins: 8, units: [["ref": 1, "minus": 2, "plus": 3, "out": 6]],
+                           supplies: [(4, "V−", .volts(-v)), (7, "V+", .volts(v))],
+                           labels: [1: "REF", 2: "−IN", 3: "+IN", 4: "V−", 5: "SENSE", 6: "OUT", 7: "V+", 8: "NC"],
+                           note: "Join SENSE (pin 5) to OUT (pin 6) with a short wire")
+        case .audioPowerAmp:
+            return Package(title: "LM386", pins: 8, units: [["gain1": 1, "minus": 2, "plus": 3, "out": 5, "bypass": 7, "gain8": 8]],
+                           supplies: [(4, "GND", .ground), (6, "VS", .volts(p("supply")))],
+                           labels: [1: "GAIN", 2: "−IN", 3: "+IN", 4: "GND", 5: "VOUT", 6: "VS", 7: "BYPASS", 8: "GAIN"],
+                           note: "A 100 µF capacitor from VS to GND right at the chip keeps it from oscillating")
+        case .compander:
+            return Package(title: model ?? "NE570", pins: 16,
+                           units: [["rectCap": 1, "rectIn": 2, "gainIn": 3, "invIn": 5, "r3": 6, "out": 7],
+                                   ["out": 10, "r3": 11, "invIn": 12, "gainIn": 14, "rectIn": 15, "rectCap": 16]],
+                           supplies: [(4, "GND", .ground), (13, "VCC", .volts(p("supply")))],
+                           labels: [1: "RECT CAP 1", 2: "RECT IN 1", 3: "ΔG IN 1", 4: "GND", 5: "INV IN 1", 6: "R3 1", 7: "OUT 1",
+                                    8: "THD TRIM 1", 9: "THD TRIM 2", 10: "OUT 2", 11: "R3 2", 12: "INV IN 2", 13: "VCC",
+                                    14: "ΔG IN 2", 15: "RECT IN 2", 16: "RECT CAP 2"],
+                           note: "Runs from one supply with its signal pins at 1.8 V: couple the signals in and out with capacitors")
+        case .barGraphDriver:
+            let title = ["LM3914", "LM3915", "LM3916"][min(max(Int(p("scale").rounded()), 0), 2)]
+            var leds: [String: Int] = ["led1": 1, "led10": 10]
+            for k in 2...9 { leds["led\(k)"] = 20 - k }
+            return Package(title: title, pins: 18, units: [leds.merging(["rlo": 4, "sig": 5, "rhi": 6, "refOut": 7, "refAdj": 8]) { $1 }],
+                           supplies: [(2, "V−", .ground), (3, "V+", .volts(p("supply"))), (9, "MODE", .volts(p("supply")))],
+                           labels: [1: "LED1", 2: "V−", 3: "V+", 4: "RLO", 5: "SIG", 6: "RHI", 7: "REF OUT", 8: "REF ADJ", 9: "MODE",
+                                    10: "LED10", 11: "LED9", 12: "LED8", 13: "LED7", 14: "LED6", 15: "LED5", 16: "LED4", 17: "LED3",
+                                    18: "LED2"],
+                           note: "MODE (pin 9) to V+ shows a bar; left open, a single dot. The LEDs need no resistors: the chip sets their current")
         default:
             return nil
         }
@@ -698,7 +743,8 @@ public enum Breadboard {
     /// Each net's DC voltage where the circuit rests, its signal sources held still
     static func netVoltages(_ circuit: Circuit, _ parts: [NetlistPart]) -> [String: Double] {
         var still = circuit
-        for i in still.elements.indices where [.acVoltage, .squareVoltage, .noiseVoltage, .audioInput].contains(still.elements[i].kind) {
+        for i in still.elements.indices where [.acVoltage, .squareVoltage, .noiseVoltage, .balancedCable].contains(still.elements[i].kind)
+            || still.elements[i].kind.playsClip {
             still = Simulator.quiet(still, holding: i)
         }
         // long enough for coupling capacitors to charge, without running microcontrollers for seconds
@@ -762,6 +808,18 @@ public enum Breadboard {
         case .dcVoltage: return "Power supply, \(SI.format(part.params["voltage"] ?? 0, unit: "V"))"
         case .atmega328p, .atmega2560, .rp2040: return (part.kind.board?.title ?? "Board") + ", wired by jumper leads"
         case .triode, .pentode, .transformer: return "\(part.kind.displayName): not for a breadboard (high voltage), on a turret board or chassis"
+        case .microphone: return "Microphone, on an XLR lead"
+        case .electretMic: return "Electret capsule, on its two leads"
+        case .pickup: return "Guitar (its pickup), plugged into an input jack"
+        case .balancedCable: return "XLR cable"
+        case .vuMeter: return "VU meter (a panel meter)"
+        case .springReverb: return "Spring reverb tank, on its two RCA leads"
+        case .opAmp:
+            let model = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? "Op-amp"
+            return model == "TPA6120" ? "TPA6120 headphone amp: surface-mount, on a breakout board" : "\(model) power amp, on a heat sink, wired by leads"
+        case .lineDriver, .toneControl, .levelDetector:
+            let model = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? part.kind.displayName
+            return "\(model): wire it by the pinout in its datasheet"
         default: return part.kind.displayName + ": a module wired to the board"
         }
     }

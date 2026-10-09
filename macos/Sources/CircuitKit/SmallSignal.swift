@@ -368,8 +368,10 @@ extension Simulator {
         switch quiet.elements[source].kind {
         case .acVoltage, .noiseVoltage:
             quiet.elements[source][param: "amplitude"] = 0
-        case .audioInput:
+        case .audioInput, .microphone, .electretMic, .pickup:
             quiet.elements[source][param: "level"] = 0
+        case .balancedCable:
+            quiet.elements[source][param: "hum"] = 0
         case .squareVoltage:
             quiet.elements[source][param: "high"] = quiet.elements[source][param: "low"]
         default:
