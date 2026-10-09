@@ -4,6 +4,10 @@ import XCTest
 /// The converters, bit by bit (an MCP4822 and an MCP3008 on SPI, an MCP4725 on I²C, a PCM5102 on I²S) and with the
 /// firmware of their examples; the SSM2166's compression and gate; the THAT4301's scales; the 3PDT footswitch
 final class ConverterTests: XCTestCase {
+    private static let sqrt2: Double = 2.0.squareRoot()
+    /// The PCM5102's full scale, peak
+    private static let i2sPeak: Double = 2.1 * ConverterTests.sqrt2
+
     private func part(_ kind: ElementKind, _ name: String, _ params: [String: Double] = [:], _ connections: [String: String]) -> NetlistPart {
         NetlistPart(kind: kind, name: name, params: params, connections: connections)
     }
@@ -135,7 +139,9 @@ final class ConverterTests: XCTestCase {
         func frame(_ left: UInt32, _ right: UInt32) {
             // LRCK changes on a falling edge, a BCK before each word's MSB: the last bit of the previous word is sent with
             // the new LRCK
-            let bits = (0..<16).map { left >> UInt32(15 - $0) & 1 } + (0..<16).map { right >> UInt32(15 - $0) & 1 }
+            var bits: [UInt32] = []
+            for k in 0..<16 { bits.append(left >> UInt32(15 - k) & 1) }
+            for k in 0..<16 { bits.append(right >> UInt32(15 - k) & 1) }
             for (k, bit) in bits.enumerated() {
                 let lr: UInt32 = (k + 1) % 32 >= 16 ? 4 : 0
                 let din: UInt32 = bit != 0 ? 2 : 0
@@ -144,8 +150,8 @@ final class ConverterTests: XCTestCase {
         }
         for _ in 0..<3 { frame(0x4000, 0xC000) }
         let state = drive(.i2sDac, levels)
-        XCTAssertEqual(Logic.i2sOutput(Int32(bitPattern: state.latch)), 0.5 * 2.1 * 2.squareRoot(), accuracy: 1e-6)
-        XCTAssertEqual(Logic.i2sOutput(Int32(truncatingIfNeeded: state.count)), -0.5 * 2.1 * 2.squareRoot(), accuracy: 1e-6)
+        XCTAssertEqual(Logic.i2sOutput(Int32(bitPattern: state.latch)), 0.5 * Self.i2sPeak, accuracy: 1e-6)
+        XCTAssertEqual(Logic.i2sOutput(Int32(truncatingIfNeeded: state.count)), -0.5 * Self.i2sPeak, accuracy: 1e-6)
     }
 
     /// Runs `circuit` for `seconds` at `dt`, calling `sample` with the time and the simulator from `from` on
@@ -176,7 +182,9 @@ final class ConverterTests: XCTestCase {
         }
         // the knob at 0.6: 3 V, read as 614 of 1024 and written as 2456 of 4096
         XCTAssertTrue(serial.contains("CH0: 614"), serial)
-        XCTAssertEqual(last, 5.0 * 2456 / 4096 * 10_000 / 10_010, accuracy: 0.01)
+        let code: Double = 2456
+        let divider: Double = 10_000.0 / 10_010.0
+        XCTAssertEqual(last, 5.0 * code / 4096 * divider, accuracy: 0.01)
     }
 
     func testArduinoWritesBothHalvesOfTheMCP4822() throws {
@@ -201,7 +209,7 @@ final class ConverterTests: XCTestCase {
         var crossings: [Double] = []
         var peak = 0.0
         var last = 0.0
-        run(circuit, dt: 1 / 48_000, seconds: 0.08, from: 0.03) { t, simulator in
+        run(circuit, dt: 1 / 48_000, seconds: 0.12, from: 0.06) { t, simulator in
             let v = simulator.voltageAcross(speaker)
             if last < 0 && v >= 0 { crossings.append(t) }
             last = v
@@ -212,7 +220,9 @@ final class ConverterTests: XCTestCase {
             XCTAssertEqual(Double(crossings.count - 1) / (final - first), 440, accuracy: 10)
         }
         // 16 000 of 32 768: about 1.45 V
-        XCTAssertEqual(peak, 16_000.0 / 32_768 * 2.1 * 2.squareRoot() * 10_000 / 10_100, accuracy: 0.1)
+        let fraction: Double = 16_000.0 / 32_768.0
+        let divider: Double = 10_000.0 / 10_100.0
+        XCTAssertEqual(peak, fraction * Self.i2sPeak * divider, accuracy: 0.1)
     }
 
     /// The SSM2166's output for a 1 kHz sine of `amplitude` into it, once its detector has settled
@@ -239,14 +249,14 @@ final class ConverterTests: XCTestCase {
         // between the gate and the rotation point: gain 10
         XCTAssertEqual(try agcOutput(amplitude: 0.005), 0.05, accuracy: 0.003)
         // 6 dB below the 2 mV gate (preamp out 1 mV RMS), the gain falls by 6 dB more
-        let quiet = try agcOutput(amplitude: 0.0001 * 2.squareRoot())
-        XCTAssertEqual(20 * log10(quiet / (0.001 * 2.squareRoot())), -6, accuracy: 0.5)
+        let quiet = try agcOutput(amplitude: 0.0001 * Self.sqrt2)
+        XCTAssertEqual(20 * log10(quiet / (0.001 * Self.sqrt2)), -6, accuracy: 0.5)
     }
 
     func testTHAT4301ScalesAre6Point1MillivoltsPerDB() throws {
         let circuit = try SchematicLayout.layout([
             part(.dcVoltage, "VP", ["voltage": 15], ["plus": "+15V", "minus": "GND"]),
-            part(.acVoltage, "VS", ["amplitude": 0.775 * 2.squareRoot() / 10, "frequency": 1000], ["plus": "in", "minus": "GND"]),
+            part(.acVoltage, "VS", ["amplitude": 0.775 * Self.sqrt2 / 10, "frequency": 1000], ["plus": "in", "minus": "GND"]),
             part(.dcVoltage, "VEC", ["voltage": 0.061], ["plus": "ec", "minus": "GND"]),
             part(.analogEngine, "U1", Examples.model(.analogEngine, "THAT4301"),
                  ["in": "in", "ec": "ec", "out": "out", "rmsIn": "in", "rmsOut": "rms", "oaMinus": "oo", "oaPlus": "GND", "oaOut": "oo"]),
@@ -263,7 +273,7 @@ final class ConverterTests: XCTestCase {
         }
         // −20 dB under 0.775 V RMS: the detector at −122 mV; EC− at 61 mV: −10 dB through the VCA
         XCTAssertEqual(level, -0.122, accuracy: 0.01)
-        XCTAssertEqual(20 * log10(peak / (0.0775 * 2.squareRoot())), -10, accuracy: 0.3)
+        XCTAssertEqual(20 * log10(peak / (0.0775 * Self.sqrt2)), -10, accuracy: 0.3)
     }
 
     func testFootswitchRoutesEachPoleToItsThrow() throws {
