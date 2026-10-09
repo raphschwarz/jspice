@@ -134,6 +134,7 @@ final class SpiceNetlistTests: XCTestCase {
         .param RLOW={R*RATIO}
         R1 top mid {R}
         R2 mid 0 {RLOW}
+        R3 mid 0 {1e6*PWR(RATIO, 2)}
         .ends
         V1 a 0 DC 3
         X1 a b DIV
@@ -146,17 +147,19 @@ final class SpiceNetlistTests: XCTestCase {
             let block = try XCTUnwrap(imported.parts.first { $0.name == name }?.block)
             return block.circuit.elements.filter { $0.kind == .resistor }.map { $0[param: "resistance"] }.sorted()
         }
-        XCTAssertEqual(try resistors("X1"), [1000, 1000])
-        XCTAssertEqual(try resistors("X2"), [20_000, 40_000])
-        XCTAssertEqual(try resistors("X3"), [1000, 1000])
+        // (R3: a function of two arguments in braces, the comma kept)
+        XCTAssertEqual(try resistors("X1"), [1000, 1000, 1e6])
+        XCTAssertEqual(try resistors("X2"), [20_000, 40_000, 4e6])
+        XCTAssertEqual(try resistors("X3"), [1000, 1000, 1e6])
         XCTAssertEqual(imported.parts.first { $0.name == "X2" }?.connections, ["top": "a", "mid": "c"])
         let (circuit, _) = try SpiceNetlist.circuit(from: text)
         let simulator = Simulator(circuit: circuit, timeStep: 1e-3)
         simulator.step()
         let x2 = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "X2" })
         let mid = try XCTUnwrap(circuit.elements[x2].terminalNames.firstIndex(of: "mid"))
-        // (to the 1e-12 S every node has to ground)
-        XCTAssertEqual(simulator.terminalVoltage(x2, mid), 2, accuracy: 1e-6)
+        // 20 kΩ over 40 kΩ and 4 MΩ in parallel (to the 1e-12 S every node has to ground)
+        let lower = 1 / (1 / 40_000.0 + 1 / 4e6)
+        XCTAssertEqual(simulator.terminalVoltage(x2, mid), 3 * lower / (20_000 + lower), accuracy: 1e-6)
     }
 
     /// .include and .lib read through the includer: a library's section alone, the files it includes in turn, and a

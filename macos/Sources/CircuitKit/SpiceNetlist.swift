@@ -245,7 +245,13 @@ public enum SpiceNetlist {
 
     /// Words of a line, with "(", ")" and "," as spaces except inside a source's function (kept as one word)
     static func tokens(_ line: String) -> [String] {
-        var cleaned = line.replacingOccurrences(of: ",", with: " ")
+        // commas separate as spaces do, except inside a {expression} (a function's arguments)
+        var braces = 0
+        var cleaned = String(line.map { ch -> Character in
+            if ch == "{" { braces += 1 }
+            if ch == "}" { braces = max(0, braces - 1) }
+            return ch == "," && braces == 0 ? " " : ch
+        })
         // "SIN (0 1 1k)" → "SIN(0 1 1k)", "IS = 1e-14" → "IS=1e-14"
         cleaned = cleaned.replacingOccurrences(of: #"\s*=\s*"#, with: "=", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: #"(\w)\s+\("#, with: "$1(", options: .regularExpression)
