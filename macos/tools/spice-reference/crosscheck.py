@@ -916,7 +916,7 @@ E3 t3 0 TABLE {V(in)} = (-1,-0.5) (0,0) (0.5,1) (1,1.2)
 RT3 t3 0 10k
 EV v4 0 VALUE={V(in)*V(in) - 0.3*abs(V(in)) + max(min(V(e1), 2), -2)}
 RV4 v4 0 10k
-'''),
+''', ngspice=None),
     dict(id='opamp-macromodel', note='an inverting amplifier (gain 4.7) with a Boyle-style op-amp macromodel: an NPN pair, G and '
          'POLY G stages with Miller compensation, H and F reading the output current, a B source limiting the swing',
          duration=2e-3, probes=['out', 'inv'], netlist='''op-amp macromodel
@@ -1037,6 +1037,14 @@ C2 d2 0 47n
 """ % (switch_resistance('V(ctl,0)', 1, 0.2, 10, 1e6), switch_resistance('i(VSENSE)', 1e-3, 0.2e-3, 50, 100e3))),
 ]
 
+# ngspice rounds a TABLE's corners (a quadratic over a tenth of the shorter segment on either side); PSpice's TABLE,
+# which makers' models are written for, and JSpice's are sharp: ngspice gets the table as a B source with sharp corners
+SHARP_TABLE = ('B3 t3 0 V=V(in) < -1 ? -0.5 : V(in) < 0 ? -0.5 + 0.5*(V(in)+1) : V(in) < 0.5 ? 2*V(in) : '
+               'V(in) < 1 ? 1 + 0.4*(V(in)-0.5) : 1.2\n')
+for _case in NETLIST_CASES:
+    if _case['id'] == 'controlled-sources':
+        _case['ngspice'] = _case['netlist'].replace('E3 t3 0 TABLE {V(in)} = (-1,-0.5) (0,0) (0.5,1) (1,1.2)\n', SHARP_TABLE)
+
 def netlists_main():
     out = []
     for case in NETLIST_CASES:
@@ -1048,7 +1056,7 @@ def netlists_main():
         data = os.path.join(folder, 'data.txt')
         step = case['duration'] / 500
         # (the deck as ngspice can run it, when it differs)
-        deck = case.get('ngspice', case['netlist']) + '\n'.join([
+        deck = (case.get('ngspice') or case['netlist']) + '\n'.join([
             '.options reltol=1e-6 abstol=1e-13 vntol=1e-8 gmin=1e-12 method=gear maxord=2 itl4=200',
             '.tran %.6g %.12g 0 %.6g uic' % (step, case['duration'], step), '.control', 'run',
             'wrdata %s %s' % (data, ' '.join('v(%s)' % p for p in case['probes'])), 'quit', '.endc', '.end']) + '\n'

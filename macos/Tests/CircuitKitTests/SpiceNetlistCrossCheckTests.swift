@@ -80,7 +80,10 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
             for (k, probe) in test.probes.enumerated() {
                 let range = max((probe.values.max() ?? 0) - (probe.values.min() ?? 0), 1e-9)
                 var worst = 0.0, at = 0.0
-                for (t, value) in zip(test.times, probe.values) where t >= (times.first ?? 0) && t <= simulator.time {
+                // from 1 % into the run: powering up from rest (all at 0 V, the supplies switched on), a stiff circuit's first
+                // steps depend on how long each simulator makes them
+                let start = max(times.first ?? 0, test.duration / 100)
+                for (t, value) in zip(test.times, probe.values) where t >= start && t <= simulator.time {
                     let difference = abs(Self.interpolate(times, waves[k], at: t) - value) / range
                     if difference > worst { (worst, at) = (difference, t) }
                 }
