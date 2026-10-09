@@ -62,8 +62,11 @@ def value(text):
 def translate(text):
     lines = []
     for raw in text.replace('\r', '').replace('\x1a', '').split('\n'):
-        if raw.startswith('+') and lines:
-            lines[-1] += ' ' + raw[1:]
+        # a + line continues the last line that is not blank or a comment, as PSpice reads it (TINA's files leave blank
+        # lines between a subcircuit's PARAMS: lines)
+        last = next((k for k in range(len(lines) - 1, -1, -1) if lines[k].strip() and not lines[k].startswith('*')), None)
+        if raw.startswith('+') and last is not None:
+            lines[last] += ' ' + raw[1:]
         else:
             lines.append(raw)
     out, models = [], {}
@@ -125,15 +128,18 @@ def run(deck, folder):
     return r.stdout + r.stderr
 
 
-def measure(model, subckt, pins, supply=15.0, load=10e3, slew_gain=1):
+def measure(model, subckt, pins, supply=15.0, load=10e3, slew_gain=1, order=None):
     folder = tempfile.mkdtemp()
     open(os.path.join(folder, 'model.lib'), 'w').write(translate(model))
     p, n = '_P', '_N'
-    pins = [re.sub(r'([+-])$', lambda m: p if m.group(1) == '+' else n, x) for x in pins]
+    rename = lambda names: [re.sub(r'([+-])$', lambda m: p if m.group(1) == '+' else n, x) for x in names]
+    # the subcircuit's pins in its own order, and as +in, -in, V+, V-, out
+    pins = rename(pins)
+    roles = rename(order) if order else pins
     opts = '.options reltol=1e-6 abstol=1e-13 vntol=1e-9 gmin=1e-12 itl1=1000 itl4=200\n'
 
     def bench(inp, follower, extra=''):
-        nodes = {pins[0]: 'inp', pins[1]: 'out' if follower else 'inn', pins[2]: 'vcc', pins[3]: 'vee', pins[4]: 'out'}
+        nodes = {roles[0]: 'inp', roles[1]: 'out' if follower else 'inn', roles[2]: 'vcc', roles[3]: 'vee', roles[4]: 'out'}
         x = 'XU1 ' + ' '.join(nodes[q] for q in pins) + ' ' + subckt
         return ('bench\n.include model.lib\n%s\nVP vcc 0 DC %g\nVN 0 vee DC %g\nRL out 0 %g\n%s\n%s%s%s' %
                 (x, supply, supply, load, inp, '' if follower else 'VM inn 0 DC 0\n', opts, extra))
@@ -144,7 +150,7 @@ def measure(model, subckt, pins, supply=15.0, load=10e3, slew_gain=1):
     iq = -float(re.search(r'i\(vp\) = ([-+0-9.e]+)', out, re.I).group(1))
     # an inverting stage of gain -1, the + input grounded: the open-loop gain is the output over the - input
     data = os.path.join(folder, 'ac.txt')
-    nodes = {pins[0]: '0', pins[1]: 'inn', pins[2]: 'vcc', pins[3]: 'vee', pins[4]: 'out'}
+    nodes = {roles[0]: '0', roles[1]: 'inn', roles[2]: 'vcc', roles[3]: 'vee', roles[4]: 'out'}
     deck = ('inverting\n.include model.lib\nXU1 %s %s\nVP vcc 0 DC %g\nVN 0 vee DC %g\nRL out 0 %g\nVI in 0 DC 0 AC 1\n'
             'R1 in inn 10k\nR2 inn out 10k\n%s.control\nset wr_singlescale\nop\nac dec 10 0.1 1e9\nwrdata %s v(out) v(inn)\n'
             'quit\n.endc\n.end\n') % (' '.join(nodes[q] for q in pins), subckt, supply, supply, load, opts, data)
@@ -212,7 +218,8 @@ def measure(model, subckt, pins, supply=15.0, load=10e3, slew_gain=1):
 
 
 
-# MakerModelCatalog.models: part, archive, file, SHA-256, subcircuit, supplies, load and the slew rate's gain
+# MakerModelCatalog.models: part, archive, file, SHA-256, subcircuit, supplies, load and the slew rate's gain, and the
+# subcircuit's pins for +in, -in, V+, V- and out where its own order is not that
 MODELS = [
     ('TL072', 'https://www.ti.com/lit/zip/SLOJ067', 'TL072.301',
      '74e89d558163615ac7a19f0c783101a6f8af77fb6d80bd3c20c6ab66426561cd', 'TL072', 15, 10e3, 1),
@@ -244,11 +251,11 @@ def download(archive, name, sha):
 
 if __name__ == '__main__':
     wanted = [a.lower() for a in sys.argv[1:]]
-    for part, archive, name, sha, subckt, supply, load, slew_gain in MODELS:
+    for part, archive, name, sha, subckt, supply, load, slew_gain, *order in MODELS:
         if wanted and part.lower() not in wanted:
             continue
         text = download(archive, name, sha)
         m = re.search(r'^\.SUBCKT\s+' + re.escape(subckt) + r'\s+(.*)$', text, re.I | re.M)
-        figures = measure(text, subckt, m.group(1).split()[:5], supply, load, slew_gain)
+        figures = measure(text, subckt, m.group(1).split()[:5], supply, load, slew_gain, order[0] if order else None)
         print('// %s' % part)
         print('ngspice: [' + ', '.join('.%s: %.6g' % (key, figures[k]) for key, k in SWIFT if figures.get(k) is not None) + '],')
