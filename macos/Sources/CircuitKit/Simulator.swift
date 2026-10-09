@@ -36,6 +36,8 @@ public final class Simulator {
     /// Substeps solved and kept, and solved and thrown away for a finer one, since the start
     public private(set) var substeps = 0
     public private(set) var rejectedSubsteps = 0
+    /// Newton-Raphson iterations since the start, each one a solve of the stamped equations
+    public private(set) var newtonIterations = 0
 
     /// What is being played on the keyboard: the note keyboard pitch sources put out and whether a key is held, which
     /// keyboard gate sources put out
@@ -846,6 +848,7 @@ public final class Simulator {
         if workMatrix.count != m * m { workMatrix = [Double](repeating: 0, count: m * m) }
         if workVector.count != m { workVector = [Double](repeating: 0, count: m) }
         for iteration in 0..<iterations {
+            newtonIterations += 1
             Self.copy(baseMatrix, into: &workMatrix)
             Self.copy(rhs, into: &workVector)
             stampCount = 0
@@ -3080,6 +3083,20 @@ public final class Simulator {
     }
 
     public var nodeCount: Int { topology.nodeCount }
+
+    /// The equations' size: unknowns, non-zero entries of the matrix as last built, entries of its factors (fill-in
+    /// included) as last planned, and the unknowns that nonlinear parts read or stamp
+    public var equationStatistics: (unknowns: Int, nonzeros: Int, factorEntries: Int, nonlinearUnknowns: Int) {
+        let m = topology.matrixSize
+        let nonzeros = baseMatrix.reduce(0) { $1 != 0 ? $0 + 1 : $0 }
+        let factorEntries = eliminationPlan.map { m + $0.rows.count + $0.columns.count } ?? 0
+        var touched = Set<Int>()
+        for i in nonlinearIndices + memristorIndices {
+            for node in topology.elementNodes[i] where node > 0 { touched.insert(node - 1) }
+            if topology.sourceRow[i] >= 0 { touched.insert(topology.sourceRow[i]) }
+        }
+        return (m, nonzeros, factorEntries, touched.count)
+    }
 
     /// The index of a part of the circuit as it is simulated: one of the circuit's own, or one inside a block (by its
     /// id there, `UUID.inBlock`)

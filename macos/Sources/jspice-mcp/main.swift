@@ -45,7 +45,10 @@ func benchmark(seconds: Double, ids: [String]) {
         let speed = String(format: "%6.1f", seconds / fastest)
         let name = id.padding(toLength: 18, withPad: " ", startingAt: 0)
         let notes = (simulator.isFailed ? " FAILED" : "") + (total.isFinite ? "" : " (not finite)")
-        print("\(name)\(perStep) µs/step \(speed)× real time  \(simulator.convergenceFailures) unconverged\(notes)")
+        let solves = String(format: "%5.2f", Double(simulator.newtonIterations) / Double(3 * steps))
+        let size = simulator.equationStatistics
+        print("\(name)\(perStep) µs/step \(speed)× real time  \(simulator.convergenceFailures) unconverged  \(solves) solves/step"
+              + "  n \(size.unknowns) nz \(size.nonzeros) lu \(size.factorEntries) nl \(size.nonlinearUnknowns)\(notes)")
     }
 }
 
