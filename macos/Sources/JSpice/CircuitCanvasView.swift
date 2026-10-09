@@ -326,7 +326,7 @@ final class CircuitCanvasView: NSView {
             return (element.model?.name ?? element.kind.displayName) + " · " + sound
         case .vuMeter:
             return live ? String(format: "%+.1f dB", simulator.meterReading(index)) : (element.model?.name ?? "VU")
-        case .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .toneControl, .levelDetector, .springReverb,
+        case .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .toneControl, .levelDetector, .springReverb,
              .barGraphDriver, .balancedCable:
             return element.model?.name ?? "Custom"
         case .memristor:
@@ -1013,7 +1013,7 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     case .wire, .toggleSwitch, .pushButton, .ammeter: return [.current]
     case .probe, .netLabel, .speaker, .vuMeter, .electretMic, .pickup: return [.voltage]
     case .ground, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
-         .analogSelector, .pll, .dac, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp,
+         .analogSelector, .pll, .dac, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick,
          .toneControl, .barGraphDriver, .balancedCable: return []
     case .levelDetector, .springReverb: return [.voltage]
     case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .multiplier, .comparator, .delayLine, .digitalDelay, .vco,

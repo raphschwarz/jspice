@@ -80,7 +80,7 @@ enum SymbolRenderer {
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
              .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .digitalDelay,
              .port, .block, .triode, .pentode, .transformer,
-             .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .toneControl, .levelDetector,
+             .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .toneControl, .levelDetector,
              .springReverb, .barGraphDriver, .balancedCable:
             return 0
         case .electretMic, .pickup, .vuMeter: return 1.4
@@ -121,7 +121,7 @@ enum SymbolRenderer {
         case .multiplier, .delayLine, .digitalDelay, .vactrol, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .levelDetector,
              .springReverb:
             drawBlock(element, at: a, b, unit: u, style: style, in: ctx)
-        case .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .toneControl, .barGraphDriver,
+        case .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .toneControl, .barGraphDriver,
              .balancedCable:
             if let package = element.kind.chipPackage {
                 drawChip(package, title: element.model?.name ?? package.name, led: false, posts: posts, at: a, b, unit: u, style: style, in: ctx)
@@ -364,7 +364,7 @@ enum SymbolRenderer {
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040,
              .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .digitalDelay,
              .triode, .pentode, .transformer,
-             .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .toneControl, .levelDetector,
+             .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .toneControl, .levelDetector,
              .springReverb, .barGraphDriver, .balancedCable:
             break
         }
@@ -1415,7 +1415,7 @@ enum SymbolRenderer {
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac,
-             .block, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .toneControl,
+             .block, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .toneControl,
              .barGraphDriver, .balancedCable:
             guard let package = element.chipPackage, let box = chipBox(package, posts: posts, at: a, b, unit: u) else {
                 return [(a, b)]

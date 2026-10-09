@@ -3,7 +3,8 @@ import Foundation
 /// Examples for the pedal op-amps, ring modulators and the other chips added with them
 extension Examples {
     static let chipExamples: [Example] = [tubeScreamer, rat, mc1496Ring, sa612Ring, diodeRing, frequencyShifter, xr2206Generator,
-                                          nortonAmplifier, shiftRegisterSequencer]
+                                          nortonAmplifier, shiftRegisterSequencer, clockedChorus, multiTapEcho, fv1Reverb, beltonReverb,
+                                          optoTremolo]
 
     private static func part(_ kind: ElementKind, _ name: String, _ params: [String: Double] = [:], _ connections: [String: String])
         -> NetlistPart {
@@ -301,4 +302,112 @@ extension Examples {
             part(.speaker, "SPK1", ["fullScale": 5], ["plus": "out", "minus": "GND"]),
             part(.probe, "CV", [:], ["plus": "cv", "minus": "GND"]),
         ], scopes: [("CV", .voltage), ("SPK1", .voltage)]))
+
+    // MARK: - Delays, reverbs and opto
+
+    /// A pot from GND to `supply`, its wiper a control voltage
+    private static func control(_ name: String, _ position: Double, supply: String, wiper: String) -> NetlistPart {
+        part(.potentiometer, name, ["resistance": 10_000, "position": position], ["a": "GND", "b": supply, "wiper": wiper])
+    }
+
+    /// A chorus as pedals build it: a bucket brigade clocked by a clock driver, its clock swept by an LFO
+    static let clockedChorus = Example(
+        id: "bbd-chorus-mn3102", title: "BBD chorus with its clock driver (sound)",
+        summary: "An MN3207 bucket brigade clocked from pin CP1 of an MN3102. The clock runs at about 1 / (2.2 R C): 56 kΩ from RX and 100 pF make 80 kHz, so the 1024 stages delay the guitar by 512 cycles, 6.4 ms. A 0.7 Hz LFO through 470 kΩ into RX sweeps the clock by a quarter either way, so the delay swings from about 5 to 8.5 ms, and mixed with the dry guitar the delayed copy shimmers. Low-pass filters before and after keep the clock's images out. The bucket brigade counts the driver's cycles exactly, whatever the step. Turn on sound.",
+        symbol: "water.waves",
+        circuit: drawn([
+            guitar(),
+            part(.acVoltage, "LFO", ["amplitude": 2, "frequency": 0.7], ["plus": "lfo", "minus": "GND"]),
+            r("RLFO", 470_000, "lfo", "rx"),
+            r("RT", 56_000, "rx", "GND"),
+            part(.bbdClock, "U1", Examples.model(.bbdClock, "MN3102"), ["rx": "rx", "cp1": "cp1", "cp2": "cp2", "vgg": "vgg"]),
+            r("RIN", 10_000, "gtr", "bin"),
+            c("CIN", 4.7e-9, "bin", "GND"),
+            part(.delayLine, "U2", Examples.model(.delayLine, "MN3207").merging(["clocking": 1]) { $1 },
+                 ["in": "bin", "ctrl": "cp1", "out": "bout"]),
+            r("RF1", 10_000, "bout", "f1"),
+            c("CF1", 4.7e-9, "f1", "GND"),
+            r("RF2", 10_000, "f1", "wet"),
+            c("CF2", 2.2e-9, "wet", "GND"),
+            r("RDRY", 20_000, "gtr", "mix"),
+            r("RWET", 20_000, "wet", "mix"),
+            r("RMIX", 20_000, "mix", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 0.15], ["plus": "mix", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage), ("LFO", .voltage)]))
+
+    /// Six echoes from one bucket brigade: the MN3011's taps, none a multiple of another
+    static let multiTapEcho = Example(
+        id: "mn3011-multitap", title: "MN3011 multi-tap echo (sound)",
+        summary: "An MN3011 clocked by an MN3101 at about 16.8 kHz (270 kΩ and 100 pF): its six outputs give the guitar back after 12, 20, 36, 51, 83 and 99 ms, at stages 396, 662, 1194, 1726, 2790 and 3328, spaced so that no echo lands on another's multiple, the way BBD reverbs and multi-head tape echoes blur into a room. The later taps are mixed in louder. A 3.4 kHz filter on the way in keeps the slow clock from aliasing, and another smooths the steps on the way out. Turn on sound.",
+        symbol: "repeat",
+        circuit: drawn([
+            guitar(),
+            r("RT", 270_000, "rx", "GND"),
+            part(.bbdClock, "U1", Examples.model(.bbdClock, "MN3101"), ["rx": "rx", "cp1": "cp1", "cp2": "cp2", "vgg": "vgg"]),
+            r("RIN", 10_000, "gtr", "bin"),
+            c("CIN", 4.7e-9, "bin", "GND"),
+            part(.multiTapDelay, "U2", Examples.model(.multiTapDelay, "MN3011"),
+                 ["in": "bin", "cp": "cp1", "out1": "t1", "out2": "t2", "out3": "t3", "out4": "t4", "out5": "t5", "out6": "t6"]),
+        ] + [(1, 68_000.0), (2, 56_000), (3, 47_000), (4, 39_000), (5, 33_000), (6, 27_000)].map { r("RTAP\($0.0)", $0.1, "t\($0.0)", "taps") } + [
+            r("RTAPS", 10_000, "taps", "GND"),
+            r("RF", 10_000, "taps", "wet"),
+            c("CF", 4.7e-9, "wet", "GND"),
+            r("RDRY", 22_000, "gtr", "mix"),
+            r("RWET", 10_000, "wet", "mix"),
+            r("RMIX", 22_000, "mix", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 0.12], ["plus": "mix", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage)]))
+
+    /// The FV-1's hall reverb, its three pots on 3.3 V
+    static let fv1Reverb = Example(
+        id: "fv1-reverb", title: "FV-1 reverb (sound)",
+        summary: "Spin's FV-1 running its Reverb 2 program (S0–S2 pick one of eight; choose another in the inspector): a hall-sized plate reverb, here rewritten after Dattorro, at 32.768 kHz. TIME on POT0 sets how long the tail rings (about 1 to 6 s), TONE on POT1 its brightness and LOW CUT on POT2 how thin it is; each pot is a 10 kΩ divider from 3.3 V. The chip's output is the reverb alone, mixed here with the dry guitar. Try program 0 (chorus and reverb) or 3 (pitch shift). Turn on sound.",
+        symbol: "building.columns",
+        circuit: drawn([
+            part(.dcVoltage, "V33", ["voltage": 3.3], ["plus": "+3V3", "minus": "GND"]),
+            guitar(),
+            part(.effectsProcessor, "U1", Examples.model(.effectsProcessor, "FV-1").merging(["program": 7]) { $1 },
+                 ["in": "gtr", "pot0": "p0", "pot1": "p1", "pot2": "p2", "outL": "left", "outR": "right"]),
+            control("TIME", 0.5, supply: "+3V3", wiper: "p0"),
+            control("TONE", 0.5, supply: "+3V3", wiper: "p1"),
+            control("LOWCUT", 0.2, supply: "+3V3", wiper: "p2"),
+            r("RDRY", 10_000, "gtr", "mix"),
+            r("RWET", 10_000, "left", "mix"),
+            r("RMIX", 10_000, "mix", "GND"),
+            r("RR", 10_000, "right", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 0.15], ["plus": "mix", "minus": "GND"]),
+            part(.probe, "RIGHT", [:], ["plus": "right", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage), ("RIGHT", .voltage)]))
+
+    /// A Belton brick's spring sound mixed back with the guitar
+    static let beltonReverb = Example(
+        id: "belton-reverb", title: "Belton brick reverb (sound)",
+        summary: "A Belton BTDR-2H reverb brick: a spring reverb's drip and splash made by delay chips, wet only, the way most reverb pedals get theirs. The guitar goes in through 1 µF; output 1 goes through the LEVEL pot and is mixed with the dry guitar. Its second output, a little different, is for stereo. Turn on sound and turn LEVEL.",
+        symbol: "wave.3.right",
+        circuit: drawn([
+            guitar(),
+            c("CIN", 1e-6, "gtr", "bin"),
+            r("RB", 100_000, "bin", "GND"),
+            part(.reverbBrick, "U1", Examples.model(.reverbBrick, "BTDR-2H"), ["in": "bin", "gnd": "GND", "out1": "o1", "out2": "o2"]),
+            part(.potentiometer, "LEVEL", ["resistance": 10_000, "position": 0.6, "taper": 1], ["a": "GND", "b": "o1", "wiper": "wet"]),
+            r("RO2", 10_000, "o2", "GND"),
+            r("RDRY", 10_000, "gtr", "mix"),
+            r("RWET", 10_000, "wet", "mix"),
+            r("RMIX", 10_000, "mix", "GND"),
+            part(.speaker, "SPK1", ["fullScale": 0.15], ["plus": "mix", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage)]))
+
+    /// A tremolo from a photo-FET: its channel shunts the guitar to ground as its LED is lit
+    static let optoTremolo = Example(
+        id: "h11f1-tremolo", title: "H11F1 opto tremolo (sound)",
+        summary: "An H11F1 photo-FET optocoupler as a voltage-controlled resistor: a 5 Hz LFO from 0 to 5 V lights its LED through 220 Ω, and its FET channel, about 150 Ω at 16 mA and hundreds of megohms dark, shunts the guitar after 4.7 kΩ. The level dips each time the LED lights: a choppy tremolo, as fast as the LFO since the FET follows the light within tens of microseconds (a vactrol's cell lags milliseconds). Turn on sound.",
+        symbol: "lightbulb.led.fill",
+        circuit: drawn([
+            guitar(),
+            part(.acVoltage, "LFO", ["amplitude": 2.5, "offset": 2.5, "frequency": 5], ["plus": "lfo", "minus": "GND"]),
+            r("RLED", 220, "lfo", "led"),
+            part(.vactrol, "U1", Examples.model(.vactrol, "H11F1"), ["anode": "led", "cathode": "GND", "a": "out", "b": "GND"]),
+            r("RS", 4700, "gtr", "out"),
+            part(.speaker, "SPK1", ["fullScale": 0.15], ["plus": "out", "minus": "GND"]),
+        ], scopes: [("SPK1", .voltage), ("LFO", .voltage)]))
 }

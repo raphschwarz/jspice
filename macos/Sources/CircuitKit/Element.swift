@@ -63,6 +63,9 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case balancedModulator, mixerOscillator, tappedTransformer
     /// Function generator chips (XR2206, ICL8038, LM566) and the LM3900 Norton amplifier
     case functionGenerator, nortonAmp
+    /// Bucket-brigade chips and digital reverbs: the MN3101 clock driver, the MN3011 multi-tap BBD, the FV-1 effects
+    /// processor and the Belton reverb brick
+    case bbdClock, multiTapDelay, effectsProcessor, reverbBrick
     /// A block (a circuit used as one part) and the ports that are its pins
     case port, block
 
@@ -224,6 +227,10 @@ extension ElementKind {
         case .tappedTransformer: return "Centre-Tapped Transformer"
         case .functionGenerator: return "Function Generator"
         case .nortonAmp: return "Norton Amplifier"
+        case .bbdClock: return "BBD Clock Driver"
+        case .multiTapDelay: return "Multi-Tap BBD"
+        case .effectsProcessor: return "Effects DSP"
+        case .reverbBrick: return "Reverb Brick"
         case .toneControl: return "Tone Control"
         case .levelDetector: return "Level Detector"
         case .springReverb: return "Spring Reverb Tank"
@@ -270,7 +277,8 @@ extension ElementKind {
         case .microphone, .electretMic: return "MIC"
         case .pickup: return "PU"
         case .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .levelDetector,
-             .barGraphDriver, .balancedModulator, .mixerOscillator, .functionGenerator, .nortonAmp: return "U"
+             .barGraphDriver, .balancedModulator, .mixerOscillator, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay,
+             .effectsProcessor, .reverbBrick: return "U"
         case .tappedTransformer: return "T"
         case .springReverb: return "RT"
         case .balancedCable: return "CBL"
@@ -300,6 +308,7 @@ extension ElementKind {
              .tappedTransformer: return .audio
         case .functionGenerator: return .synth
         case .nortonAmp: return .amplifiers
+        case .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick: return .effects
         case .port, .block: return .blocks
         }
     }
@@ -342,7 +351,8 @@ extension ElementKind {
         case .speaker, .port, .block: return nil
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator,
-             .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp: return nil
+             .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor,
+             .reverbBrick: return nil
         }
     }
 
@@ -536,7 +546,8 @@ extension ElementKind {
             return [ParamSpec("fullScale", "Full-scale voltage", unit: "V", default: 5, range: 0.1...50)] + ElementKind.loudspeakerParams
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator,
-             .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp:
+             .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor,
+             .reverbBrick:
             return audioParams
         case .resistor:
             return [ParamSpec("resistance", "Resistance", unit: "Ω", default: 1000, range: 1...10_000_000)]
@@ -619,6 +630,8 @@ extension ElementKind {
                 ParamSpec("clock", "Clock at 0 V", unit: "Hz", default: 40_000, range: 1000...200_000),
                 ParamSpec("clockPerVolt", "Clock per volt of control", unit: "Hz", default: 10_000, range: 0...100_000, log: false),
                 ParamSpec("gain", "Gain", unit: "", default: 1, range: 0...2, log: false),
+                .choice("clocking", "Clock", ["Its own, set by the control voltage",
+                                              "From its clock pin (an MN3101 or other clock driver on CTRL)"]),
             ]
         case .digitalDelay:
             return [
@@ -634,8 +647,8 @@ extension ElementKind {
                 ParamSpec("iref", "Reference LED current", unit: "A", default: 0.01, range: 1e-4...0.05),
                 ParamSpec("roff", "Dark resistance", unit: "Ω", default: 1e7, range: 1e4...1e9),
                 ParamSpec("gamma", "Slope (resistance vs. current)", unit: "", default: 0.75, range: 0.3...1.5, log: false),
-                ParamSpec("attack", "Attack time", unit: "s", default: 0.0025, range: 1e-4...1),
-                ParamSpec("decay", "Decay time", unit: "s", default: 0.035, range: 1e-3...10),
+                ParamSpec("attack", "Attack time", unit: "s", default: 0.0025, range: 1e-6...1),
+                ParamSpec("decay", "Decay time", unit: "s", default: 0.035, range: 1e-6...10),
             ]
         case .opAmp:
             return [
@@ -1233,10 +1246,11 @@ extension ElementKind {
             ]
         case .delayLine:
             return [
-                PartModel(name: "MN3207", summary: "1024-stage bucket brigade: chorus and flanger (12.8 ms at 40 kHz)",
+                PartModel(name: "MN3207", summary: "1024-stage bucket brigade: chorus and flanger (12.8 ms at 40 kHz); the MN3007 is its 15 V forerunner",
                           values: ["stages": 1024, "clock": 40_000]),
                 PartModel(name: "MN3008", summary: "2048 stages: longer chorus, short echo", values: ["stages": 2048, "clock": 40_000]),
-                PartModel(name: "MN3005", summary: "4096 stages: echo (102 ms at 20 kHz)", values: ["stages": 4096, "clock": 20_000]),
+                PartModel(name: "MN3005", summary: "4096 stages: echo (102 ms at 20 kHz); the MN3205 is its 9 V version",
+                          values: ["stages": 4096, "clock": 20_000]),
             ]
         case .comparator:
             return [
@@ -1297,6 +1311,8 @@ extension ElementKind {
                           values: ["ron": 1500, "iref": 0.01, "roff": 1e7, "gamma": 0.75, "attack": 0.0025, "decay": 0.035]),
                 PartModel(name: "NSL-32", summary: "Slow release: compressors and opto tremolo",
                           values: ["ron": 500, "iref": 0.02, "roff": 5e5, "gamma": 0.8, "attack": 0.005, "decay": 0.25]),
+                PartModel(name: "H11F1", summary: "Photo-FET optocoupler: a FET channel instead of a cell, under 200 Ω at 16 mA, very linear for small signals and fast (tens of µs); 6-pin DIP",
+                          values: ["ron": 150, "iref": 0.016, "roff": 3e8, "gamma": 1, "attack": 2.5e-5, "decay": 2.5e-5]),
             ]
         case .triode:
             func tube(_ name: String, _ summary: String, _ mu: Double, _ ex: Double, _ kg1: Double, _ kp: Double,

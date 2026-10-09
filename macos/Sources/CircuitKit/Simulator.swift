@@ -112,6 +112,48 @@ public final class Simulator {
     private var delayHistory: [Int: DelayHistory] = [:]
     /// Spring reverb tanks' springs, by element index
     private var springTanks: [Int: SpringTank] = [:]
+    /// Bucket brigades clocked from their clock pin, by element index, and for those an oscillator drives (a clock
+    /// driver's), that oscillator
+    private var bucketBrigades: [Int: BucketBrigade] = [:]
+    private var clockSources: [Int: Int] = [:]
+    /// Effects processors' programs and their delay memories, by element index
+    private var effectsProcessors: [Int: EffectsProcessor] = [:]
+
+    /// A bucket brigade clocked from its clock pin: a sample of its input taken at each clock cycle and moved one bucket
+    /// along at each (two stages: the delay is its stages over twice the clock), the sample reaching the end held until
+    /// the next cycle
+    struct BucketBrigade {
+        var buckets: [Double]
+        var position = 0
+        /// What the last end of the line gave over the last step (the samples reaching it then, averaged)
+        var output = 0.0
+        /// The input at the last step, for the samples taken between steps
+        var lastInput = 0.0
+        /// The cycles its oscillator had run at the last step, or (clocked by a voltage) whether the clock was high
+        var cycles = 0.0
+        var clockHigh = false
+        /// Clock cycles a second, smoothed over a millisecond
+        var rate = 0.0
+
+        init(stages: Double) { buckets = Array(repeating: 0, count: Self.count(stages)) }
+
+        static func count(_ stages: Double) -> Int { max(Int(stages / 2), 1) }
+
+        /// `ticks` clock cycles over a step in which the input went from `from` to `to`
+        mutating func clock(_ ticks: Int, from: Double, to: Double) {
+            guard ticks > 0 else { return }
+            let n = buckets.count
+            // more cycles than buckets in a step: the earlier samples would be out again within it
+            let count = min(ticks, 2 * n)
+            var sum = 0.0
+            for k in 0..<count {
+                sum += buckets[position]
+                buckets[position] = from + (to - from) * Double(k + 1) / Double(count)
+                position = position + 1 == n ? 0 : position + 1
+            }
+            output = sum / Double(count)
+        }
+    }
 
     struct DelayHistory {
         var values: [Double]
@@ -326,6 +368,7 @@ public final class Simulator {
         var module: ModuleState
         var noise: UInt64
         var delay: DelayHistory?
+        var brigade: BucketBrigade?
     }
 
     /// Switches to a changed circuit, keeping the state (charge, current, memristor state) of elements that remain
@@ -340,7 +383,7 @@ public final class Simulator {
                 q: 2 * i + 1 < junctionCharge.count ? [junctionCharge[2 * i], junctionCharge[2 * i + 1],
                                                        junctionChargePrevious[2 * i], junctionChargePrevious[2 * i + 1]] : [0, 0, 0, 0],
                 digital: digitalState[i], logic: logicStates[i], module: moduleStates[i],
-                noise: noiseState[i], delay: delayHistory[i])
+                noise: noiseState[i], delay: delayHistory[i], brigade: bucketBrigades[i])
         }
         // chips keep running through edits that leave their firmware alone
         var previousChips: [UUID: (firmware: Data?, chip: Microcontroller, carry: Double)] = [:]
@@ -394,12 +437,12 @@ public final class Simulator {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .levelDetector, .springReverb, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter, .shiftRegister, .pll, .dac: return true
+                 .binaryCounter, .shiftRegister, .pll, .dac, .effectsProcessor: return true
             default: return false
             }
         }
         statefulIndices = indices {
-            [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage, .vactrol, .vuMeter].contains($0)
+            [.capacitor, .inductor, .opAmp, .memristor, .keyboardPitch, .noiseVoltage, .vactrol, .vuMeter, .effectsProcessor].contains($0)
                 || $0.isModule || $0 == .comparator
         }
         dynamicIndices = statefulIndices.filter { [.capacitor, .inductor, .opAmp, .memristor, .vactrol].contains(kinds[$0]) }
@@ -408,6 +451,8 @@ public final class Simulator {
         stepIndices = statefulIndices.filter { !dynamicIndices.contains($0) }
         delayHistory = [:]
         springTanks = [:]
+        bucketBrigades = [:]
+        effectsProcessors = [:]
         digitalIndices = indices { $0.isDigital }
         chipIndices = indices { $0.isMicrocontroller }
         chips = [:]
@@ -458,6 +503,10 @@ public final class Simulator {
                     let capacity = delayCapacity(i, timeStep: timeStep)
                     delayHistory[i] = delay.values.count == capacity ? delay : delay.resampled(stepRatio: 1, capacity: capacity)
                 }
+                if let brigade = state.brigade, element.kind == .delayLine,
+                   brigade.buckets.count == BucketBrigade.count(constants[i].value) {
+                    bucketBrigades[i] = brigade
+                }
             } else {
                 initialiseState(i)
             }
@@ -471,6 +520,7 @@ public final class Simulator {
         onlyQuasiLinear = hasNonlinear && nonlinearIndices.allSatisfy { kinds[$0] == .vca }
         hasDigital = !digitalIndices.isEmpty
         hasMemristor = !memristorIndices.isEmpty
+        linkClocks()
         // the equations' shape may have changed: plan afresh
         predictorReady = false
         plan = nil
@@ -517,6 +567,8 @@ public final class Simulator {
         // each noise source has its own sequence, the same every run
         noiseState[i] = 0x9E37_79B9_7F4A_7C15 &* UInt64(i + 1) | 1
         delayHistory[i] = nil
+        bucketBrigades[i] = nil
+        effectsProcessors[i] = nil
         // a comparator starts low, a divider at the start of its count (output high)
         var module = ModuleState()
         switch element.kind {
@@ -587,9 +639,13 @@ public final class Simulator {
             matrixIsCurrent = false
             delayHistory = other.delayHistory
             springTanks = other.springTanks
+            bucketBrigades = other.bucketBrigades
+            effectsProcessors = other.effectsProcessors
         } else if delays {
             delayHistory = other.delayHistory
             springTanks = other.springTanks
+            bucketBrigades = other.bucketBrigades
+            effectsProcessors = other.effectsProcessors
         }
         if digitalState != other.digitalState { matrixIsCurrent = false }
         Self.adopt(&x, other.x)
@@ -646,6 +702,8 @@ public final class Simulator {
         for trace in traces.values { trace.clear() }
         delayHistory = [:]
         springTanks = [:]
+        bucketBrigades = [:]
+        effectsProcessors = [:]
         // 555s start low again, and their state is part of the base matrix; so do the chips' pins
         for (i, chip) in chips {
             chip.reset()
@@ -679,6 +737,7 @@ public final class Simulator {
         constants = newFlat.elements.map { makeConstants($0) }
         junctionIndices = kinds.indices.filter { constants[$0].cj0 > 0 || constants[$0].cj1 > 0 || constants[$0].transit > 0 }
         for (i, chip) in chips { chip.supply = constants[i].supply }
+        linkClocks()
         for (i, history) in delayHistory {
             let capacity = delayCapacity(i, timeStep: timeStep)
             if history.values.count != capacity { delayHistory[i] = history.resampled(stepRatio: 1, capacity: capacity) }
@@ -692,6 +751,33 @@ public final class Simulator {
             if x.contains(where: { !$0.isFinite }) { x = [Double](repeating: 0, count: topology.matrixSize) }
         }
         return true
+    }
+
+    /// Finds the oscillator clocking each bucket brigade clocked from its clock pin: one whose output is the clock pin,
+    /// or a voltage source's other end from it (a clock driver's square wave lifted to swing from 0 V). Such a bucket
+    /// brigade counts the oscillator's cycles however long the steps are; any other clock it sees by its edges.
+    private func linkClocks() {
+        clockSources = [:]
+        var oscillators: [Int: Int] = [:]
+        for i in kinds.indices where kinds[i] == .vco {
+            let nodes = topology.elementNodes[i]
+            if nodes.count == 3, nodes[2] > 0 { oscillators[nodes[2]] = i }
+        }
+        for i in kinds.indices where kinds[i] == .delayLine && constants[i].duty >= 0.5 {
+            let nodes = topology.elementNodes[i]
+            guard nodes.count == 3, nodes[1] > 0 else { continue }
+            let clock = nodes[1]
+            if let source = oscillators[clock] {
+                clockSources[i] = source
+                continue
+            }
+            for k in kinds.indices where kinds[k] == .dcVoltage {
+                let ends = topology.elementNodes[k]
+                guard ends.count == 2 else { continue }
+                if ends[0] == clock, let source = oscillators[ends[1]] { clockSources[i] = source; break }
+                if ends[1] == clock, let source = oscillators[ends[0]] { clockSources[i] = source; break }
+            }
+        }
     }
 
     /// Steps of history a delay line keeps: enough for the slowest clock its control is likely to set
@@ -1325,6 +1411,9 @@ public final class Simulator {
             case .dac:
                 // the output: driven to its voltage through its output resistance
                 if nodes.count > 5 { stampConductance(matrix, m, nodes[5], 0, constants[i].outputConductance) }
+            case .effectsProcessor:
+                // both outputs likewise
+                for k in [4, 5] where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
             case .analogMux, .analogSelector:
                 // the channel the select inputs pick, connected to the common terminal
                 if let channel = Logic.channel(element.kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
@@ -1472,6 +1561,10 @@ public final class Simulator {
                 guard nodes.count > 5 else { continue }
                 let output = Logic.dacOutput(logicStates[i].count, reference: voltage(nodes[4]), supply: c.supply)
                 stampCurrent(&rhs, 0, nodes[5], output * c.outputConductance)
+            case .effectsProcessor:
+                guard nodes.count > 5, let processor = effectsProcessors[i] else { continue }
+                stampCurrent(&rhs, 0, nodes[4], processor.left * c.outputConductance)
+                stampCurrent(&rhs, 0, nodes[5], processor.right * c.outputConductance)
             case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
                 let kind = kinds[i]
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where high {
@@ -1506,6 +1599,7 @@ public final class Simulator {
     /// the clock, which the control voltage raises or lowers
     private func delayedOutput(_ i: Int) -> Double {
         let c = constants[i]
+        if c.duty >= 0.5 { return c.gain * (bucketBrigades[i]?.output ?? 0) }
         guard let history = delayHistory[i] else { return 0 }
         let clock = max(c.frequency + c.slew * voltage(topology.elementNodes[i][1]), c.frequency * 0.05, 100)
         let delay = c.value / (2 * clock)
@@ -1628,6 +1722,7 @@ public final class Simulator {
             c.frequency = max(p("clock"), 1)
             c.slew = p("clockPerVolt")
             c.gain = p("gain")
+            c.duty = Self.choice(p("clocking"), 0...1)
         case .digitalDelay:
             c.slew = max(p("delayPerKilohm"), 1e-6)
             c.value = max(p("shortest"), 1e-3) / c.slew * 1000
@@ -1733,6 +1828,10 @@ public final class Simulator {
             if element.kind == .shiftRegister { c.value = Self.choice(p("type"), 0...1) }
             c.frequency = max(p("fMin"), 0)
             c.high = max(p("fMax"), c.frequency)
+        case .effectsProcessor:
+            c.value = Self.choice(p("program"), 0...7)
+            c.supply = max(p("supply"), 0.1)
+            c.outputConductance = 1 / 100
         case .unbufferedInverter:
             c.supply = p("supply")
             c.threshold = p("threshold")
@@ -2500,6 +2599,12 @@ public final class Simulator {
                 passes(nodes[1], .delay(gain: in0 * (1 - t * t) * gainSlope, time: 0, cutoff: 0, poles: 0))
             case .sampleHold where c.value >= 0.5 && moduleStates[i].high:
                 passes(nodes[0], .delay(gain: 1, time: 0, cutoff: 0, poles: 0))
+            case .delayLine where c.duty >= 0.5:
+                // clocked from its pin: delayed by its buckets at the rate its clock was running (silent without one)
+                let rate = bucketBrigades[i]?.rate ?? 0
+                if rate > 1 {
+                    passes(nodes[0], .delay(gain: c.gain, time: Double(BucketBrigade.count(c.value)) / rate, cutoff: 0, poles: 0))
+                }
             case .delayLine:
                 let clock = max(c.frequency + c.slew * voltage(nodes[1]), c.frequency * 0.05, 100)
                 passes(nodes[0], .delay(gain: c.gain, time: c.value / (2 * clock), cutoff: 0, poles: 0))
@@ -2715,6 +2820,14 @@ public final class Simulator {
                 updateModule(i, nodes, parameters)
             case .vuMeter:
                 updateMeter(i, nodes, parameters)
+            case .delayLine where parameters.duty >= 0.5:
+                clockBucketBrigade(i, nodes, parameters)
+            case .effectsProcessor where nodes.count == 6:
+                var processor = effectsProcessors[i] ?? EffectsProcessor(program: Int(parameters.value))
+                if processor.program != Int(parameters.value) { processor = EffectsProcessor(program: Int(parameters.value)) }
+                processor.step(input: voltage(nodes[0]), pot0: voltage(nodes[1]), pot1: voltage(nodes[2]), pot2: voltage(nodes[3]),
+                               supply: parameters.supply, dt: timeStep)
+                effectsProcessors[i] = processor
             case .delayLine:
                 if delayHistory[i] == nil { delayHistory[i] = DelayHistory(capacity: delayCapacity(i, timeStep: timeStep)) }
                 delayHistory[i]?.append(voltage(nodes[0]))
@@ -2726,6 +2839,28 @@ public final class Simulator {
                 break
             }
         }
+    }
+
+    /// A bucket brigade clocked from its clock pin, over the last step: as many samples in and out as its clock ran
+    /// cycles (counted from the oscillator driving it, else from the rising edges it saw)
+    private func clockBucketBrigade(_ i: Int, _ nodes: [Int], _ c: Constants) {
+        var brigade = bucketBrigades[i] ?? BucketBrigade(stages: c.value)
+        if brigade.buckets.count != BucketBrigade.count(c.value) { brigade = BucketBrigade(stages: c.value) }
+        let input = voltage(nodes[0])
+        var ticks = 0
+        if let source = clockSources[i], source < moduleStates.count {
+            let total = moduleStates[source].s1
+            ticks = max(Int(total.rounded(.down) - brigade.cycles.rounded(.down)), 0)
+            brigade.cycles = total
+        } else {
+            let high = Self.logicHigh(voltage(nodes[1]), was: brigade.clockHigh)
+            if high && !brigade.clockHigh { ticks = 1 }
+            brigade.clockHigh = high
+        }
+        brigade.clock(ticks, from: brigade.lastInput, to: input)
+        brigade.lastInput = input
+        brigade.rate += (Double(ticks) / timeStep - brigade.rate) * (1 - exp(-timeStep / 1e-3))
+        bucketBrigades[i] = brigade
     }
 
     /// A VU meter's needle: the rectified voltage across it smoothed so a steady tone reads in 300 ms (VU), or its peaks
@@ -2920,6 +3055,8 @@ public final class Simulator {
             let linear = c.duty >= 0.5
             let wanted = linear ? c.gain * (in0 - in1) : c.frequency * pow(2, min(max(in0, -16), 16))
             let frequency = min(max(wanted, 0), 0.45 / dt)
+            // the cycles run, uncapped: a bucket brigade it clocks counts them
+            s.s1 += max(wanted, 0) * dt
             let increment = frequency * dt
             var phase = s.level + increment
             phase -= phase.rounded(.down)
@@ -3168,6 +3305,13 @@ public final class Simulator {
                 total += kind == .logicGate ? flows[k] : max(flows[k], 0)
             }
             return (total, flows)
+        case .effectsProcessor:
+            var flows = [Double](repeating: 0, count: nodes.count)
+            guard nodes.count > 5, let processor = effectsProcessors[i] else { return (0, flows) }
+            let g = constants[i].outputConductance
+            flows[4] = (processor.left - v(nodes[4])) * g
+            flows[5] = (processor.right - v(nodes[5])) * g
+            return (flows[4], flows)
         case .dac:
             var flows = [Double](repeating: 0, count: nodes.count)
             guard nodes.count > 5 else { return (0, flows) }

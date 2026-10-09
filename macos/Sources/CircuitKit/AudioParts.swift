@@ -14,7 +14,7 @@ extension ElementKind {
         switch self {
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator, .tappedTransformer,
-             .functionGenerator, .nortonAmp:
+             .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .reverbBrick:
             return true
         default:
             return false
@@ -75,6 +75,20 @@ extension ElementKind {
         case .nortonAmp:
             return ChipPackage(name: "LM3900", terminalNames: ["minus", "plus", "out"], pinLabels: ["−IN", "+IN", "OUT"],
                                pinPlaces: [second(0), second(1), first(0)], length: 2)
+        case .bbdClock:
+            return ChipPackage(name: "MN3101", terminalNames: ["rx", "cp1", "cp2", "vgg"], pinLabels: ["RX", "CP1", "CP2", "VGG"],
+                               pinPlaces: [second(0), first(0), first(1), first(2)], length: 2)
+        case .multiTapDelay:
+            return ChipPackage(name: "MN3011", terminalNames: ["in", "cp"] + (1...6).map { "out\($0)" },
+                               pinLabels: ["IN", "CP"] + (1...6).map { "OUT\($0)" },
+                               pinPlaces: [second(0), second(1)] + (0...5).map(first), length: 5)
+        case .effectsProcessor:
+            return ChipPackage(name: "FV-1", terminalNames: ["in", "pot0", "pot1", "pot2", "outL", "outR"],
+                               pinLabels: ["IN", "POT0", "POT1", "POT2", "OUT L", "OUT R"],
+                               pinPlaces: [second(0), second(1), second(2), second(3), first(0), first(1)], length: 3)
+        case .reverbBrick:
+            return ChipPackage(name: "BTDR-2H", terminalNames: ["in", "gnd", "out1", "out2"], pinLabels: ["IN", "GND", "OUT 1", "OUT 2"],
+                               pinPlaces: [second(0), second(2), first(0), first(1)], length: 2)
         case .tappedTransformer:
             return ChipPackage(name: "CT", terminalNames: ["a1", "a2", "b1", "ct", "b2"], pinLabels: ["A1", "A2", "B1", "CT", "B2"],
                                pinPlaces: [second(0), second(2), first(0), first(1), first(2)], length: 2)
@@ -213,6 +227,23 @@ extension ElementKind {
             ]
         case .nortonAmp:
             return [ParamSpec("supply", "Supply", unit: "V", default: 15, range: 4...32, log: false)]
+        case .bbdClock:
+            return [
+                ParamSpec("supply", "Supply (VDD): the clocks swing from 0 V to it", unit: "V", default: 15, range: 4...18, log: false),
+                ParamSpec("capacitance", "Timing capacitor (CX)", unit: "F", default: 100e-12, range: 10e-12...10e-9),
+            ]
+        case .multiTapDelay:
+            return [ParamSpec("gain", "Gain", unit: "", default: 1, range: 0...2, log: false)]
+        case .effectsProcessor:
+            return [
+                .choice("program", "Program (S0–S2)", EffectsProcessor.programs, default: 6),
+                ParamSpec("supply", "Supply: the POT inputs read from 0 V to it", unit: "V", default: 3.3, range: 3...3.6, log: false),
+            ]
+        case .reverbBrick:
+            return [
+                ParamSpec("decay", "Decay time (−60 dB)", unit: "s", default: 2.5, range: 0.5...6),
+                ParamSpec("level", "Output for each volt in", unit: "", default: 0.5, range: 0.05...2),
+            ]
         case .tappedTransformer:
             return [
                 ParamSpec("inductance", "Inductance of winding A", unit: "H", default: 1.5, range: 1e-3...100),
@@ -246,6 +277,28 @@ extension ElementKind {
                           values: ["family": 1]),
                 PartModel(name: "LM566", summary: "VCO: triangle and square at 2 (V+ − CONTROL) / (R C V+), R from TIMING (pin 6) to V+",
                           values: ["family": 2]),
+            ]
+        case .bbdClock:
+            return [
+                PartModel(name: "MN3101", summary: "Two-phase clock driver for the MN3000 bucket brigades (MN3005, MN3007, MN3008, MN3011): CP1 and CP2 in antiphase at about 1 / (2.2 R C), R from RX to ground (an LFO through a resistor into RX sweeps it), and VGG at 14/15 of the supply",
+                          values: ["supply": 15]),
+                PartModel(name: "MN3102", summary: "The MN3101 for the 9 V MN3200 bucket brigades (MN3205, MN3207): the clock driver of most chorus and delay pedals",
+                          values: ["supply": 9]),
+            ]
+        case .multiTapDelay:
+            return [
+                PartModel(name: "MN3011", summary: "3328-stage bucket brigade with six outputs, at 396, 662, 1194, 1726, 2790 and 3328 stages: no delay a multiple of another, for BBD reverbs and multi-head echoes. Clock it from an MN3101",
+                          values: ["gain": 1]),
+            ]
+        case .effectsProcessor:
+            return [
+                PartModel(name: "FV-1", summary: "Spin's effects DSP: eight programs in ROM (reverbs, chorus, flanger, tremolo, pitch), three pots, stereo out, at 32.768 kHz on 3.3 V. Its programs here are rewritten, not Spin's code",
+                          values: ["supply": 3.3]),
+            ]
+        case .reverbBrick:
+            return [
+                PartModel(name: "BTDR-2H", summary: "Belton reverb brick (Accutronics): a spring reverb's sound from delay chips, wet only, on 5 V; the brick of most reverb pedals",
+                          values: ["decay": 2.5, "level": 0.5]),
             ]
         case .nortonAmp:
             return [
@@ -849,6 +902,41 @@ extension PartExpansion {
             capacitor(minus, gain, 470e-12, "CC")
             npn(base: gain, collector: vcc, emitter: out, "Q4", q)
             add(.currentSource, out, g, "IOUT", ["current": 1.3e-3])
+        case .bbdClock where p.count == 4:
+            // the clock: two oscillators in step on the current drawn from RX (held at 1 V behind 1 kΩ), in proportion
+            // to it as an RC oscillator's frequency goes with 1 / R, so f = 1 / (2.2 C (R + 1 kΩ)); their square waves
+            // lifted to swing from 0 V to VDD, CP2 the inverse of CP1. A bucket brigade clocked from either counts the
+            // oscillator's cycles exactly, however coarse the steps.
+            let (rx, cp1, cp2, vgg) = (p[0], p[1], p[2], p[3])
+            let supply = param("supply")
+            let c = max(param("capacitance"), 1e-15)
+            let (g, ref, sq1, sq2) = (node(), node(), node(), node())
+            ground(g)
+            add(.dcVoltage, g, ref, "VREF", ["voltage": 1])
+            resistor(ref, rx, 1000, "RINT")
+            let hzPerVolt = 1 / (2.2 * c * 1000)
+            threeTerminal(.vco, ref, rx, sq1, "OSC1", ["waveform": 2, "amplitude": supply / 2, "response": 1, "hzPerVolt": hzPerVolt])
+            threeTerminal(.vco, ref, rx, sq2, "OSC2", ["waveform": 2, "amplitude": -supply / 2, "response": 1, "hzPerVolt": hzPerVolt])
+            add(.dcVoltage, sq1, cp1, "VCP1", ["voltage": supply / 2])
+            add(.dcVoltage, sq2, cp2, "VCP2", ["voltage": supply / 2])
+            add(.dcVoltage, g, vgg, "VGG", ["voltage": supply * 14 / 15])
+        case .multiTapDelay where p.count == 8:
+            // six bucket brigades on the same input and clock, one per output, each as long as its tap is far along
+            let taps: [Double] = [396, 662, 1194, 1726, 2790, 3328]
+            for (k, stages) in taps.enumerated() {
+                threeTerminal(.delayLine, p[0], p[1], p[2 + k], "BBD\(k + 1)", ["stages": stages, "clocking": 1, "gain": param("gain")])
+            }
+        case .reverbBrick where p.count == 4:
+            // two springs' sound, a little different for each output, driven from the input against GND
+            let (input, gnd, out1, out2) = (p[0], p[1], p[2], p[3])
+            let (o1, o2) = (node(), node())
+            let springs: [(GridPoint, GridPoint, Double, Double)] = [(out1, o1, 0.0335, 0.62), (out2, o2, 0.0291, 0.55)]
+            for (k, spring) in springs.enumerated() {
+                threeTerminal(.springReverb, input, gnd, spring.1, "SPRING\(k + 1)",
+                              ["decay": param("decay"), "delay": spring.2, "gain": param("level"), "inputResistance": 20_000,
+                               "dispersion": spring.3])
+                resistor(spring.1, spring.0, 100, "RO\(k + 1)")
+            }
         case .tappedTransformer where p.count == 5:
             // winding A's resistance and leakage, its magnetising inductance, and two ideal cores on it, each driving
             // half the tapped winding (with half its resistance), the halves joined at the tap

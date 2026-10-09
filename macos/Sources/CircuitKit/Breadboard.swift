@@ -345,6 +345,11 @@ public enum Breadboard {
                                         9: "FSK", 10: "BIAS", 11: "SYNC OUT", 12: "GND", 13: "WAVE", 14: "WAVE", 15: "SYM", 16: "SYM"],
                                note: "The timing capacitor between pins 5 and 6; 200 Ω from pin 13 to 14 for a sine (open for a triangle); about 60 mV of peak per kΩ from pin 3 to ground; 1 µF from pin 10 to ground; 10 kΩ from pin 11 (open collector) to VCC")
             }
+        case .vactrol where model == "H11F1":
+            // an optocoupler in a 6-pin DIP: the LED on 1 and 2, the FET's channel between 4 and 6
+            return Package(title: "H11F1", pins: 6, units: [["anode": 1, "cathode": 2, "a": 4, "b": 6]], supplies: [],
+                           labels: [1: "ANODE", 2: "CATHODE", 3: "NC", 4: "OUT", 5: "NC", 6: "OUT"],
+                           note: "Leave pins 3 and 5 unconnected")
         case .nortonAmp:
             return Package(title: "LM3900", pins: 14,
                            units: [["plus": 1, "minus": 6, "out": 5], ["plus": 2, "minus": 3, "out": 4], ["plus": 13, "minus": 8, "out": 9],
@@ -911,6 +916,11 @@ public enum Breadboard {
         case .vuMeter: return "VU meter (a panel meter)"
         case .springReverb: return "Spring reverb tank, on its two RCA leads"
         case .tappedTransformer: return "Centre-tapped transformer, on its leads"
+        case .bbdClock, .multiTapDelay:
+            let model = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? part.kind.displayName
+            return "\(model): wire it by the pinout in its datasheet, with its BBD"
+        case .effectsProcessor: return "FV-1: surface-mount, on a module board with its crystal and EEPROM socket"
+        case .reverbBrick: return "Belton reverb brick, on its six pins (5 V supply)"
         case .opAmp:
             let model = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? "Op-amp"
             return model == "TPA6120" ? "TPA6120 headphone amp: surface-mount, on a breakout board" : "\(model) power amp, on a heat sink, wired by leads"
