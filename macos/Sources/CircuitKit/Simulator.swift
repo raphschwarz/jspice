@@ -1009,6 +1009,12 @@ public final class Simulator {
         }
     }
 
+    /// Newton-Raphson has converged when an iteration moves the solution by less than this (relative above 1 V or 1 A,
+    /// absolute below) without limiting a junction: it converges quadratically, so the solution is then within about
+    /// the square of that of the answer (a junction's curvature, about 20 per volt, times 10⁻¹²). The iteration that
+    /// would only confirm it is not needed.
+    static let newtonTolerance = 1e-6
+
     /// Newton-Raphson from the present `x`; true when it converged.
     ///
     /// Each iteration starts from the base's values, whose linear block is already factored (and with it what the
@@ -1039,7 +1045,10 @@ public final class Simulator {
                 Self.copy(baseValues, into: &values)
                 valuesVersion = baseVersion
             } else {
-                Self.copyTail(baseValues, into: &values, from: plan.tailStart)
+                // only the nonlinear block's structure and what elimination writes can have changed
+                values.withUnsafeMutableBufferPointer { v in
+                    baseValues.withUnsafeBufferPointer { plan.restoreChanging(v.baseAddress!, from: $0.baseAddress!) }
+                }
             }
             Self.copy(rhsForwarded, into: &workVector)
             limiting = false
@@ -1073,7 +1082,7 @@ public final class Simulator {
                 fail()
                 return false
             }
-            if !hasNonlinear || (onlyQuasiLinear && predictedSolve) || (iteration > 1 && change < 1e-9 && !limiting) {
+            if !hasNonlinear || (onlyQuasiLinear && predictedSolve) || (change < Self.newtonTolerance && !limiting) {
                 converged = true
                 break
             }
@@ -1109,7 +1118,8 @@ public final class Simulator {
 
     private func beginSparseStamping(_ plan: SparsePlan, floor: Int) {
         sparseStamping = true
-        slotMap = plan.slots
+        // Newton-Raphson's stamps (into the nonlinear block) only within its structure
+        slotMap = floor > 0 ? plan.stampSlots : plan.slots
         stampFloor = floor
         stampSize = plan.n
         stampMissed = false
@@ -1123,15 +1133,6 @@ public final class Simulator {
         if stampFloor > 0 && stampSize > 0 {
             extraNonlinear.insert(index / stampSize)
             extraNonlinear.insert(index % stampSize)
-        }
-    }
-
-    /// Copies `source[start...]` over `target[start...]`, arrays of the same size
-    @inline(__always) private static func copyTail(_ source: [Double], into target: inout [Double], from start: Int) {
-        let count = source.count - start
-        guard count > 0, target.count == source.count else { return }
-        target.withUnsafeMutableBufferPointer { target in
-            source.withUnsafeBufferPointer { (target.baseAddress! + start).update(from: $0.baseAddress! + start, count: count) }
         }
     }
 
@@ -2905,7 +2906,8 @@ public final class Simulator {
             case .delayLine where parameters.duty >= 0.5:
                 clockBucketBrigade(i, nodes, parameters)
             case .effectsProcessor where nodes.count == 6:
-                var processor = effectsProcessors[i] ?? EffectsProcessor(program: Int(parameters.value))
+                // taken out while it runs: a copy left behind would make the first write copy its delay memory
+                var processor = effectsProcessors.removeValue(forKey: i) ?? EffectsProcessor(program: Int(parameters.value))
                 if processor.program != Int(parameters.value) { processor = EffectsProcessor(program: Int(parameters.value)) }
                 processor.step(input: voltage(nodes[0]), pot0: voltage(nodes[1]), pot1: voltage(nodes[2]), pot2: voltage(nodes[3]),
                                supply: parameters.supply, dt: timeStep)
@@ -2926,7 +2928,8 @@ public final class Simulator {
     /// A bucket brigade clocked from its clock pin, over the last step: as many samples in and out as its clock ran
     /// cycles (counted from the oscillator driving it, else from the rising edges it saw)
     private func clockBucketBrigade(_ i: Int, _ nodes: [Int], _ c: Constants) {
-        var brigade = bucketBrigades[i] ?? BucketBrigade(stages: c.value)
+        // taken out while it runs: a copy left behind would make the first write copy its buckets
+        var brigade = bucketBrigades.removeValue(forKey: i) ?? BucketBrigade(stages: c.value)
         if brigade.buckets.count != BucketBrigade.count(c.value) { brigade = BucketBrigade(stages: c.value) }
         let input = voltage(nodes[0])
         var ticks = 0

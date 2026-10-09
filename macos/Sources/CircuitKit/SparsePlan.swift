@@ -13,6 +13,8 @@ final class EliminationProgram {
     let lStart, uStart, opStart: UnsafeMutablePointer<Int32>
     let lRow, lSlot, uColumn, uSlot, target: UnsafeMutablePointer<Int32>
     let opCount: Int
+    /// The most entries right of a pivot
+    private let widest: Int
 
     /// The relative size a pivot must keep, against the largest entry below it, for the program to be replayed: far
     /// below the threshold it was chosen with (`SparsePlan.threshold`), so a program lasts while values move
@@ -61,6 +63,7 @@ final class EliminationProgram {
         lStart[steps] = Int32(l)
         uStart[steps] = Int32(u)
         opStart[steps] = Int32(op)
+        widest = right.map(\.count).max() ?? 0
     }
 
     deinit {
@@ -69,8 +72,18 @@ final class EliminationProgram {
         }
     }
 
+    /// The slots elimination writes: the entries below each pivot, and those it updates (the fill-in among them)
+    var writtenSlots: [Int32] {
+        Array(UnsafeBufferPointer(start: lSlot, count: Int(lStart[steps]))) + Array(UnsafeBufferPointer(start: target, count: opCount))
+    }
+
     /// Eliminates in `values`, in place; -1 when done, or the step whose pivot has become too small to use
     func factor(_ values: UnsafeMutablePointer<Double>) -> Int {
+        withUnsafeTemporaryAllocation(of: Double.self, capacity: max(widest, 1)) { row in factor(values, row: row.baseAddress!) }
+    }
+
+    /// The elimination, each pivot row's entries read once into `row` for all the rows below it
+    private func factor(_ values: UnsafeMutablePointer<Double>, row: UnsafeMutablePointer<Double>) -> Int {
         var k = 0
         while k < steps {
             let pivot = values[Int(diagonal[k])]
@@ -85,6 +98,12 @@ final class EliminationProgram {
             // (written so that a pivot that is not a number fails too)
             guard size >= 1e-14 && size >= Self.replayThreshold * largest else { return k }
             let u0 = Int(uStart[k]), u1 = Int(uStart[k + 1])
+            let width = u1 - u0
+            var i = 0
+            while i < width {
+                row[i] = values[Int(uSlot[u0 + i])]
+                i += 1
+            }
             var t = Int(opStart[k])
             j = l0
             while j < l1 {
@@ -92,14 +111,14 @@ final class EliminationProgram {
                 let factor = values[slot] / pivot
                 values[slot] = factor
                 if factor != 0 {
-                    var i = u0
-                    while i < u1 {
-                        values[Int(target[t])] -= factor * values[Int(uSlot[i])]
+                    i = 0
+                    while i < width {
+                        values[Int(target[t])] -= factor * row[i]
                         i += 1
                         t += 1
                     }
                 } else {
-                    t += u1 - u0
+                    t += width
                 }
                 j += 1
             }
@@ -176,6 +195,9 @@ final class SparsePlan {
     let structure: [Bool]
     /// The slot of each entry (row × n + column), -1 outside the plan
     let slots: UnsafeMutablePointer<Int32>
+    /// The same for Newton-Raphson's stamps, but -1 for the nonlinear block's entries outside its structure too: a
+    /// stamp there means a new plan, so an iteration only ever changes the structure and what elimination writes
+    let stampSlots: UnsafeMutablePointer<Int32>
     /// The nonlinear block's unknowns, in the order of its rows and columns in the values
     let block: [Int]
     /// Entries of the nonlinear block that can be non-zero once the linear block is eliminated (row-major, local)
@@ -184,6 +206,10 @@ final class SparsePlan {
     let linear: EliminationProgram
     /// Pivot orders for the nonlinear block, the last one used first
     private(set) var orders: [EliminationProgram]
+    /// The nonlinear block's slots its pivot orders write, and with its structure, all an iteration can change (the
+    /// rest keeps the base matrix's values)
+    private(set) var writtenSlots: [Int32] = []
+    private(set) var changingSlots: [Int32] = []
 
     /// The relative size, against the largest entry below it in its column, a pivot must have to be chosen
     static let threshold = 0.1
@@ -220,6 +246,12 @@ final class SparsePlan {
         self.leading = n - s
         self.block = block
         self.blockStructure = blockStructure
+        let stampSlots = UnsafeMutablePointer<Int32>.allocate(capacity: n * n)
+        stampSlots.update(from: slots, count: n * n)
+        for (i, r) in block.enumerated() {
+            for (j, c) in block.enumerated() where !blockStructure[i * s + j] { stampSlots[r * n + c] = -1 }
+        }
+        self.stampSlots = stampSlots
         linear = EliminationProgram(pivots: linearPivots, below: below, right: right) { slots[$0 * n + $1] }
         orders = []
         if s == 0 {
@@ -227,9 +259,24 @@ final class SparsePlan {
         } else if let first = makeOrder(blockValues) {
             orders = [first]
         }
+        noteSlots(of: orders)
     }
 
-    deinit { slots.deallocate() }
+    deinit {
+        slots.deallocate()
+        stampSlots.deallocate()
+    }
+
+    /// Adds what `programs` write to the slots an iteration can change
+    private func noteSlots(of programs: [EliminationProgram]) {
+        var written = Set(writtenSlots)
+        for program in programs { written.formUnion(program.writtenSlots) }
+        writtenSlots = written.sorted()
+        let s = block.count
+        var changing = written
+        for i in 0..<(s * s) where blockStructure[i] { changing.insert(Int32(tailStart + i)) }
+        changingSlots = changing.sorted()
+    }
 
     // MARK: - Planning
 
@@ -398,19 +445,29 @@ final class SparsePlan {
     func factorBlock(_ values: UnsafeMutablePointer<Double>, scratch: UnsafeMutablePointer<Double>) -> EliminationProgram? {
         let count = entryCount - tailStart
         if count == 0 { return orders.first }
-        let tail = values + tailStart
-        scratch.update(from: tail, count: count)
+        // only what elimination writes changes: that much is kept to go back to
+        let written = writtenSlots
+        let saved = written.count
+        written.withUnsafeBufferPointer { slots in
+            for k in 0..<saved { scratch[k] = values[Int(slots[k])] }
+        }
+        func restore() {
+            written.withUnsafeBufferPointer { slots in
+                for k in 0..<saved { values[Int(slots[k])] = scratch[k] }
+            }
+        }
         for (index, order) in orders.enumerated() {
-            if index > 0 { tail.update(from: scratch, count: count) }
+            if index > 0 { restore() }
             if order.factor(values) < 0 {
                 if index > 0 { orders.insert(orders.remove(at: index), at: 0) }
                 return order
             }
         }
-        tail.update(from: scratch, count: count)
-        guard let made = makeOrder(Array(UnsafeBufferPointer(start: scratch, count: count))) else { return nil }
+        restore()
+        guard let made = makeOrder(Array(UnsafeBufferPointer(start: values + tailStart, count: count))) else { return nil }
         orders.insert(made, at: 0)
         if orders.count > Self.maxOrders { orders.removeLast() }
+        noteSlots(of: [made])
         // made for these very values, it suits them (unless they are on the edge of singular)
         guard made.factor(values) < 0 else { return nil }
         return made
@@ -418,4 +475,11 @@ final class SparsePlan {
 
     /// Pivot orders made for the nonlinear block so far, at most `maxOrders` kept
     var orderCount: Int { orders.count }
+
+    /// Puts the base matrix's values back where an iteration can have changed them
+    func restoreChanging(_ values: UnsafeMutablePointer<Double>, from base: UnsafePointer<Double>) {
+        changingSlots.withUnsafeBufferPointer { slots in
+            for slot in slots { values[Int(slot)] = base[Int(slot)] }
+        }
+    }
 }

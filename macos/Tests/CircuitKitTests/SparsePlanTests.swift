@@ -172,7 +172,33 @@ final class SparsePlanTests: XCTestCase {
                 let rhs = zip(b, restamp.rhs).map { $0 + $1 }
                 XCTAssertLessThan(residual(full, x, rhs, n), 1e-9, "trial \(trial) iteration \(iteration)")
             }
+            // as Newton-Raphson does it: one array, only what an iteration can change put back from the base before
+            // each restamp (the stamps all within the block's structure)
+            var reused = base
+            for iteration in 0..<6 {
+                let restamp = stamps(s, scale: pow(10, Double.random(in: -6...0, using: &g)), using: &g)
+                reused.withUnsafeMutableBufferPointer { v in
+                    base.withUnsafeBufferPointer { plan.restoreChanging(v.baseAddress!, from: $0.baseAddress!) }
+                }
+                for i in 0..<(n * n) where restamp.matrix[i] != 0 {
+                    XCTAssertGreaterThanOrEqual(Int(plan.stampSlots[i]), plan.tailStart)
+                    reused[Int(plan.stampSlots[i])] += restamp.matrix[i]
+                }
+                var y = forwarded
+                for i in 0..<n { y[i] += restamp.rhs[i] }
+                let x = try solve(plan, &reused, y, linearFactored: true)
+                let full = zip(s.matrix, restamp.matrix).map { $0 + $1 }
+                let rhs = zip(b, restamp.rhs).map { $0 + $1 }
+                XCTAssertLessThan(residual(full, x, rhs, n), 1e-9, "trial \(trial) reused iteration \(iteration)")
+            }
             XCTAssertLessThanOrEqual(plan.orderCount, SparsePlan.maxOrders)
+            // a stamp into the block outside its structure has no slot to land in: it asks for a new plan
+            let s2 = plan.block.count
+            for (i, r) in plan.block.enumerated() {
+                for (j, c) in plan.block.enumerated() where !plan.blockStructure[i * s2 + j] {
+                    XCTAssertEqual(plan.stampSlots[r * n + c], -1)
+                }
+            }
         }
     }
 
