@@ -156,24 +156,44 @@ public enum Breadboard {
         let cmos = p("supply")
         switch part.kind {
         case .opAmp:
-            let v = rails(p("limit"))
+            // split supplies of ± the swing and a bit, or for an op-amp swinging about a single supply's half (a pedal's
+            // 4.5 V), that supply and ground
+            let middle = p("midpoint")
+            let (v, low) = middle > 0.5 ? ((2 * middle).rounded(), 0.0) : (rails(p("limit")), -rails(p("limit")))
+            let negative: Supply = low == 0 ? .ground : .volts(low)
             switch model {
             case "LM741":
                 return Package(title: "LM741", pins: 8, units: [["minus": 2, "plus": 3, "out": 6]],
-                               supplies: [(4, "V−", .volts(-v)), (7, "V+", .volts(v))],
+                               supplies: [(4, "V−", negative), (7, "V+", .volts(v))],
                                labels: [1: "NULL", 2: "−IN", 3: "+IN", 4: "V−", 5: "NULL", 6: "OUT", 7: "V+", 8: "NC"])
-            case "LM358", "NE5532", "TL072", "OPA1612", "LM4562", "NJM4556":
-                return dual(model!, plus: v, minus: -v)
+            case "LM358", "NE5532", "TL072", "OPA1612", "LM4562", "NJM4556", "JRC4558", "OPA2134", "LM833":
+                return dual(model!, plus: v, minus: low)
+            case "TL074", "TL064":
+                return Package(title: model!, pins: 14,
+                               units: [[1, 2, 3], [7, 6, 5], [8, 9, 10], [14, 13, 12]].map { ["out": $0[0], "minus": $0[1], "plus": $0[2]] },
+                               supplies: [(4, "V+", .volts(v)), (11, "V−", negative)],
+                               labels: [1: "OUT A", 2: "−IN A", 3: "+IN A", 4: "V+", 5: "+IN B", 6: "−IN B", 7: "OUT B",
+                                        8: "OUT C", 9: "−IN C", 10: "+IN C", 11: "V−", 12: "+IN D", 13: "−IN D", 14: "OUT D"])
+            case "LM308":
+                return Package(title: "LM308", pins: 8, units: [["minus": 2, "plus": 3, "out": 6]],
+                               supplies: [(4, "V−", negative), (7, "V+", .volts(v))],
+                               labels: [1: "COMP", 2: "−IN", 3: "+IN", 4: "V−", 5: "NC", 6: "OUT", 7: "V+", 8: "COMP"],
+                               note: "30 pF from pin 1 to pin 8 sets its speed (the RAT's value); without it, it oscillates")
+            case "CA3130", "CA3140":
+                return Package(title: model!, pins: 8, units: [["minus": 2, "plus": 3, "out": 6]],
+                               supplies: [(4, "V−", negative), (7, "V+", .volts(v))],
+                               labels: [1: "NULL", 2: "−IN", 3: "+IN", 4: "V−", 5: "NULL", 6: "OUT", 7: "V+", 8: "STROBE"],
+                               note: model == "CA3130" ? "47 pF from pin 1 to pin 8 compensates it for unity gain; CMOS: handle with care" : nil)
             case "NE5534":
                 return Package(title: "NE5534", pins: 8, units: [["minus": 2, "plus": 3, "out": 6]],
-                               supplies: [(4, "V−", .volts(-v)), (7, "V+", .volts(v))],
+                               supplies: [(4, "V−", negative), (7, "V+", .volts(v))],
                                labels: [1: "BAL", 2: "−IN", 3: "+IN", 4: "V−", 5: "COMP/BAL", 6: "OUT", 7: "V+", 8: "COMP"],
                                note: "Stable from a gain of 3; for less, 22 pF from pin 5 to pin 8")
             case "TDA2030", "LM1875", "LM3886", "TPA6120":
                 // power amps on heat sinks, and a surface-mount part: off the board
                 return nil
             default:
-                return dual("TL072", plus: v, minus: -v, note: "An ideal op-amp: a TL072 stands in for it")
+                return dual("TL072", plus: v, minus: low, note: "An ideal op-amp: a TL072 stands in for it")
             }
         case .comparator:
             if model == "LM311" {
@@ -257,6 +277,12 @@ public enum Breadboard {
             return Package(title: "MCP4921", pins: 8, units: [["cs": 2, "sck": 3, "sdi": 4, "ldac": 5, "vref": 6, "out": 8]],
                            supplies: [(1, "VDD", .volts(max(p("supply"), 2.7))), (7, "AVSS", .ground)])
         case .multiplier:
+            if model == "MPY634" {
+                return Package(title: "MPY634", pins: 14, units: [["x": 1, "y": 6, "out": 12]],
+                               supplies: [(8, "−VS", .volts(-15)), (14, "+VS", .volts(15))], grounded: [2, 7, 11],
+                               labels: [1: "X1", 2: "X2", 6: "Y1", 7: "Y2", 8: "−VS", 11: "Z2", 12: "OUT", 13: "Z1", 14: "+VS"],
+                               note: "Join Z1 (pin 13) to OUT (pin 12) for out = x · y / 10 V; leave the scale-factor pin open")
+            }
             return Package(title: "AD633", pins: 8, units: [["x": 1, "y": 3, "out": 7]],
                            supplies: [(5, "−VS", .volts(-15)), (8, "+VS", .volts(15))], grounded: [2, 4, 6],
                            labels: [1: "X1", 2: "X2", 3: "Y1", 4: "Y2", 5: "−VS", 6: "Z", 7: "W", 8: "+VS"])
@@ -313,13 +339,24 @@ public enum Breadboard {
         case (.npn, "BC547C"): return ("BC547C", "CBE", nil)
         case (.npn, "2N5088"): return ("2N5088", "EBC", "Some makers' 2N5088 run C B E: check yours")
         case (.npn, "BC108"): return ("BC108", "EBC", "Metal can: seen from below, the tab is next to the emitter; bend the legs into a line")
+        case (.npn, "2N5089"): return ("2N5089", "EBC", nil)
+        case (.npn, "MPSA18"): return ("MPSA18", "EBC", nil)
+        case (.npn, "2N2222"): return ("PN2222A", "EBC", "The plastic 2N2222 (PN2222A); the metal-can 2N2222A runs E B C round its tab")
+        case (.npn, "BC549C"): return ("BC549C", "CBE", nil)
         case (.npn, _): return (model == "2N3904" ? "2N3904" : "2N3904 (or any small NPN)", "EBC", nil)
         case (.pnp, "AC128"): return ("AC128", "EBC", "Germanium, metal can: the dot marks the collector; check with a meter")
+        case (.pnp, "NKT275"), (.pnp, "OC44"):
+            return (model!, "EBC", "Germanium: the red dot marks the collector; check each with a meter, they vary")
         case (.pnp, _): return (model == "2N3906" ? "2N3906" : "2N3906 (or any small PNP)", "EBC", nil)
         case (.njfet, "2N3819"): return ("2N3819", "SGD", nil)
         case (.njfet, "J201"): return ("J201", "DSG", nil)
+        case (.njfet, "J113"): return ("J113", "DSG", nil)
+        case (.njfet, "2SK30A"): return ("2SK30A", "SGD", nil)
         case (.njfet, _): return (model ?? "2N5457", "DSG", nil)
+        case (.nmos, "BS170"): return ("BS170", "DGS", nil)
+        case (.nmos, "2N7000"): return ("2N7000", "SGD", nil)
         case (.nmos, _): return ("2N7000", "SGD", "A small N-MOSFET stands in for the generic one")
+        case (.pmos, "BS250"): return ("BS250", "DGS", nil)
         default: return ("BS250", "DGS", "A small P-MOSFET stands in for the generic one; check its pinout")
         }
     }

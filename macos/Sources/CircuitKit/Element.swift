@@ -999,10 +999,26 @@ extension ElementKind {
                           values: ["gain": 3e4, "limit": 23, "slewRate": 8, "gbw": 5.5e6, "offset": 1e-3, "noise": 3e-9]),
                 PartModel(name: "LM3886", summary: "68 W Overture power amp on ±35 V (on a heat sink): 19 V/µs",
                           values: ["gain": 5e5, "limit": 32, "slewRate": 19, "gbw": 8e6, "offset": 1e-3, "noise": 2e-9]),
+                PartModel(name: "JRC4558", summary: "Dual, the Tube Screamer's chip: bipolar, 1.7 V/µs, 3 MHz, a warm early roll-off",
+                          values: ["gain": 1e5, "limit": 13, "slewRate": 1.7, "gbw": 3e6, "offset": 0.5e-3, "noise": 8e-9]),
+                PartModel(name: "LM308", summary: "Single, the ProCo RAT's chip: with 30 pF from pin 1 to 8 it slews at 0.3 V/µs, which is the RAT's grit",
+                          values: ["gain": 3e5, "limit": 13, "slewRate": 0.3, "gbw": 1e6, "offset": 2e-3, "noise": 35e-9]),
+                PartModel(name: "CA3130", summary: "Single CMOS op-amp, rail to rail on a single supply up to 16 V: fuzzes and synth envelopes",
+                          values: ["gain": 3.2e5, "limit": 7, "slewRate": 10, "gbw": 15e6, "offset": 8e-3, "noise": 40e-9]),
+                PartModel(name: "CA3140", summary: "Single MOSFET-input op-amp: near-zero input current, 9 V/µs, 4.5 MHz",
+                          values: ["gain": 1e5, "limit": 13, "slewRate": 9, "gbw": 4.5e6, "offset": 5e-3, "noise": 40e-9]),
+                PartModel(name: "TL074", summary: "Quad TL072: four JFET op-amps in one package, for filters and mixers",
+                          values: ["gain": 2e5, "limit": 13.5, "slewRate": 13, "gbw": 3e6, "offset": 3e-3, "noise": 18e-9]),
+                PartModel(name: "TL064", summary: "Low-power quad JFET op-amp: 0.2 mA each, 3.5 V/µs, 1 MHz",
+                          values: ["gain": 6e3, "limit": 13.5, "slewRate": 3.5, "gbw": 1e6, "offset": 3e-3, "noise": 42e-9]),
+                PartModel(name: "OPA2134", summary: "Dual audio FET-input op-amp: 8 nV/√Hz, 20 V/µs, 8 MHz, very low distortion",
+                          values: ["gain": 1e6, "limit": 13.5, "slewRate": 20, "gbw": 8e6, "offset": 0.5e-3, "noise": 8e-9]),
+                PartModel(name: "LM833", summary: "Dual low-noise audio op-amp: 4.5 nV/√Hz, 7 V/µs, 15 MHz",
+                          values: ["gain": 3e5, "limit": 13.5, "slewRate": 7, "gbw": 15e6, "offset": 0.3e-3, "noise": 4.5e-9]),
             ]
         case .ota:
             return [
-                PartModel(name: "LM13700", summary: "One half of the dual OTA; bias pin two junctions above V−",
+                PartModel(name: "LM13700", summary: "One half of the dual OTA; bias pin two junctions above V− (the NE5517 and LM13600 behave the same)",
                           values: ["supply": 15, "biasDrop": 2, "headroom": 1.5]),
                 PartModel(name: "CA3080", summary: "The original OTA; bias pin one junction above V−",
                           values: ["supply": 15, "biasDrop": 1, "headroom": 1.5]),
@@ -1123,7 +1139,7 @@ extension ElementKind {
             return [
                 PartModel(name: "Generic silicon", summary: "An ideal silicon junction",
                           values: ["saturationCurrent": 1e-14, "emission": 1, "cj0": 1e-12, "tt": 0]),
-                PartModel(name: "1N4148", summary: "Small-signal switching diode: the usual clipping diode",
+                PartModel(name: "1N4148", summary: "Small-signal switching diode: the usual clipping diode (the 1N914 is the same)",
                           values: ["saturationCurrent": 2.52e-9, "emission": 1.752, "cj0": 4e-12, "tt": 20e-9]),
                 PartModel(name: "1N4001", summary: "Rectifier: slow to let go of its stored charge",
                           values: ["saturationCurrent": 14.1e-9, "emission": 1.984, "cj0": 25.9e-12, "tt": 5.7e-6]),
@@ -1131,6 +1147,10 @@ extension ElementKind {
                           values: ["saturationCurrent": 2.6e-6, "emission": 1.6, "cj0": 0.5e-12, "tt": 0]),
                 PartModel(name: "BAT41", summary: "Schottky: low forward voltage, no stored charge",
                           values: ["saturationCurrent": 2.8e-8, "emission": 1.06, "cj0": 2e-12, "tt": 0]),
+                PartModel(name: "1N5817", summary: "Schottky rectifier, 1 A: about 0.18 V at 1 mA; reverse-polarity protection and soft clipping",
+                          values: ["saturationCurrent": 1e-6, "emission": 1.0, "cj0": 110e-12, "tt": 0]),
+                PartModel(name: "OA90", summary: "Germanium point-contact: the softest, lowest clipping (vintage fuzz and ring modulators)",
+                          values: ["saturationCurrent": 1e-6, "emission": 1.5, "cj0": 1e-12, "tt": 0]),
             ]
         case .npn:
             return [
@@ -1144,6 +1164,14 @@ extension ElementKind {
                           values: ["beta": 800, "saturationCurrent": 2e-14, "cje": 6e-12, "cjc": 4e-12, "tf": 450e-12]),
                 PartModel(name: "BC108", summary: "Silicon Fuzz Face",
                           values: ["beta": 300, "saturationCurrent": 1.8e-14, "cje": 12e-12, "cjc": 5e-12, "tf": 500e-12]),
+                PartModel(name: "2N5089", summary: "The highest-gain small NPN: boosts, fuzzes, the Big Muff's cousins",
+                          values: ["beta": 1000, "saturationCurrent": 3e-14, "cje": 6e-12, "cjc": 3.5e-12, "tf": 450e-12]),
+                PartModel(name: "MPSA18", summary: "Very high gain, low noise: clean boosts (the LPB-1) and preamps",
+                          values: ["beta": 900, "saturationCurrent": 3.3e-14, "cje": 7e-12, "cjc": 3e-12, "tf": 1e-9]),
+                PartModel(name: "2N2222", summary: "Switching and general purpose, more current (600 mA): drivers, the Big Muff",
+                          values: ["beta": 200, "saturationCurrent": 1.43e-14, "cje": 22e-12, "cjc": 7.3e-12, "tf": 411e-12]),
+                PartModel(name: "BC549C", summary: "The low-noise BC547C: first stages of preamps",
+                          values: ["beta": 520, "saturationCurrent": 2.4e-14, "cje": 11.5e-12, "cjc": 5.25e-12, "tf": 410e-12]),
             ]
         case .pnp:
             return [
@@ -1153,11 +1181,17 @@ extension ElementKind {
                           values: ["beta": 200, "saturationCurrent": 1.4e-15, "cje": 8e-12, "cjc": 4.5e-12, "tf": 510e-12]),
                 PartModel(name: "AC128", summary: "Germanium: the original Fuzz Face, slow (about 1 MHz)",
                           values: ["beta": 90, "saturationCurrent": 5e-8, "cje": 60e-12, "cjc": 30e-12, "tf": 150e-9]),
+                PartModel(name: "NKT275", summary: "Germanium: the 1966 Fuzz Face, gain about 80, leaky (bias it by ear)",
+                          values: ["beta": 80, "saturationCurrent": 1e-7, "cje": 50e-12, "cjc": 25e-12, "tf": 100e-9]),
+                PartModel(name: "OC44", summary: "Germanium, faster (15 MHz): the Tone Bender MkI",
+                          values: ["beta": 100, "saturationCurrent": 3e-7, "cje": 15e-12, "cjc": 10e-12, "tf": 10e-9]),
             ]
         case .multiplier:
             return [
                 PartModel(name: "AD633", summary: "Four-quadrant multiplier: out = x · y / 10 V, for ring modulators and VCAs",
                           values: ["scale": 0.1, "limit": 11]),
+                PartModel(name: "MPY634", summary: "Precision four-quadrant multiplier: out = x · y / 10 V, more accurate and ten times faster (10 MHz)",
+                          values: ["scale": 0.1, "limit": 12]),
             ]
         case .delayLine:
             return [
@@ -1191,7 +1225,7 @@ extension ElementKind {
             ]
         case .vca:
             return [
-                PartModel(name: "SSM2164", summary: "One cell of the quad exponential VCA: −33 mV per dB, unity gain at 0 V",
+                PartModel(name: "SSM2164", summary: "One cell of the quad exponential VCA: −33 mV per dB, unity gain at 0 V (the V2164 is its clone)",
                           values: ["response": 0, "dbPerVolt": -30.3]),
                 PartModel(name: "Linear", summary: "Gain in proportion to the control: unity at 5 V, silent at 0 V and below",
                           values: ["response": 1, "unity": 5]),
@@ -1262,6 +1296,21 @@ extension ElementKind {
                 PartModel(name: "2N5457", summary: "General purpose", values: ["pinchOff": -1.5, "idss": 3e-3]),
                 PartModel(name: "J201", summary: "Low pinch-off, for phasers and VCAs", values: ["pinchOff": -0.8, "idss": 0.6e-3]),
                 PartModel(name: "2N3819", summary: "Higher current", values: ["pinchOff": -3, "idss": 10e-3]),
+                PartModel(name: "J113", summary: "Switch and booster, low resistance when on", values: ["pinchOff": -1.2, "idss": 5e-3]),
+                PartModel(name: "2SK30A", summary: "Low-noise JFET of boosters and compressors (GR grade)", values: ["pinchOff": -0.8, "idss": 3.5e-3]),
+            ]
+        case .nmos:
+            return [
+                PartModel(name: "Generic", summary: "A plain N-channel MOSFET", values: ["threshold": 1.5, "beta": 0.02]),
+                PartModel(name: "2N7000", summary: "Small N-MOSFET, 200 mA: switches, LED drivers, MOSFET boosters",
+                          values: ["threshold": 2.1, "beta": 0.05]),
+                PartModel(name: "BS170", summary: "Small N-MOSFET, 500 mA", values: ["threshold": 2.0, "beta": 0.12]),
+            ]
+        case .pmos:
+            return [
+                PartModel(name: "Generic", summary: "A plain P-channel MOSFET", values: ["threshold": 1.5, "beta": 0.02]),
+                PartModel(name: "BS250", summary: "Small P-MOSFET, 250 mA: reverse-polarity protection, high-side switches",
+                          values: ["threshold": 2.4, "beta": 0.04]),
             ]
         case .speaker:
             return ElementKind.loudspeakerModels
