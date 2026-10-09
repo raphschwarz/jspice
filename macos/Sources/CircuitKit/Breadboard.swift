@@ -890,7 +890,9 @@ public enum Breadboard {
             if farads >= 1e-6 {
                 let a = part.connections["a"].flatMap { voltages[$0] } ?? 0, b = part.connections["b"].flatMap { voltages[$0] } ?? 0
                 let across = abs(a - b)
-                let rating = [6.3, 10, 16, 25, 35, 50, 63, 100, 160, 250, 400, 450].first { $0 >= across * 1.5 + 1 } ?? 450
+                // its own rating, or the next standard one above half as much again as it has across it
+                let rating = p("ratedVoltage") > 0 ? p("ratedVoltage")
+                    : [6.3, 10, 16, 25, 35, 50, 63, 100, 160, 250, 400, 450].first { $0 >= across * 1.5 + 1 } ?? 450
                 let note = across < 0.1 ? "No DC across it: either way round, or a non-polar (bipolar) electrolytic"
                     : "Electrolytic: + to the higher voltage, the stripe (−) to the lower"
                 return (.electrolytic, SI.format(farads, unit: "F") + " \(SI.trimmed(rating, digits: 3)) V", note)

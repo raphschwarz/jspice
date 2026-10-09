@@ -328,6 +328,10 @@ public final class CircuitSession {
              description: "The circuit as a SPICE deck for ngspice or LTspice, with JSpice's own device equations: its parts by net, .model lines, op-amps and tubes as behavioural sources, transformers as coupled inductors, blocks as subcircuits, and a .tran analysis. Parts with no SPICE element (chips, microcontrollers) are named in comments. Writes it to path if given.",
              inputSchema: schema(["path": string("File to write (optional)")]),
              run: { session, arguments in try session.exportSpice(arguments) }),
+        Tool(name: "export_kicad",
+             description: "The circuit as a KiCad netlist (KiCad 6 and later), to lay out a printed circuit board in KiCad's PCB editor (File > Import > Netlist): the parts as the breadboard has them, op-amps and gates packed into their chips with the supplies they need, each on a through-hole footprint from KiCad's libraries with its pads numbered as KiCad numbers them (transistors in their pinout's order, diodes' and LEDs' cathode on pad 1, electrolytics' + on the higher DC voltage); supplies, sources, speakers, switches and modules on pin headers. Returns the parts left for KiCad's footprint assignment. Writes it to path if given.",
+             inputSchema: schema(["path": string("File to write, usually ending .net (optional)")]),
+             run: { session, arguments in try session.exportKiCad(arguments) }),
         Tool(name: "capture_schematic",
              description: "Reads a schematic drawing (a PNG, JPEG, HEIC or TIFF photo or scan, or the first page of a PDF) into the circuit, replacing it: Claude reads the drawing, with its text labels found on the page as hints, and writes the netlist; JSpice builds it, sends back anything that does not build for another look, and draws it as a tidy schematic. Returns the circuit with the reader's notes and the parts it was unsure of: check those against the drawing. Needs ANTHROPIC_API_KEY in the server's environment. You can also read a drawing yourself and call build_circuit.",
              inputSchema: schema(["path": string("The drawing's file"),
@@ -1963,6 +1967,19 @@ public final class CircuitSession {
             return ["saved": file, "netlist": deck]
         }
         return ["netlist": deck]
+    }
+
+    func exportKiCad(_ arguments: [String: Any]) throws -> Any {
+        let export = KiCadNetlist.export(circuit)
+        var result: [String: Any] = ["components": export.components, "nets": export.nets, "unassigned_footprints": export.unassigned]
+        if let path = arguments["path"] as? String, !path.isEmpty {
+            let file = (path as NSString).expandingTildeInPath
+            do { try export.text.write(toFile: file, atomically: true, encoding: .utf8) } catch { throw ToolError("Can't write \(path)") }
+            result["saved"] = file
+        } else {
+            result["netlist"] = export.text
+        }
+        return result
     }
 
     func captureSchematic(_ arguments: [String: Any]) throws -> Any {

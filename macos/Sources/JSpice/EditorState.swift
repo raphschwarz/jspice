@@ -470,6 +470,30 @@ final class EditorState: ObservableObject {
         }
     }
 
+    /// Writes the circuit as a KiCad netlist, for a printed circuit board (File ▸ Export KiCad Netlist)
+    func exportKiCad() {
+        let save = NSSavePanel()
+        save.allowedContentTypes = [UTType(filenameExtension: "net") ?? .plainText]
+        let title = canvas?.window?.title ?? "Circuit"
+        save.nameFieldStringValue = title + ".net"
+        guard save.runModal() == .OK, let url = save.url else { return }
+        let export = KiCadNetlist.export(circuit, title: title)
+        do {
+            try export.text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "The netlist couldn't be written"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+            return
+        }
+        guard !export.unassigned.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = "Some parts need footprints"
+        alert.informativeText = "JSpice doesn't know a footprint for \(export.unassigned.joined(separator: ", ")). Assign them in KiCad's PCB editor after importing the netlist."
+        alert.runModal()
+    }
+
     /// Saves the circuit where the JSpice Audio Unit finds it, as a preset of its effect or instrument
     /// (File ▸ Export as Audio Unit)
     func exportAudioUnit() {

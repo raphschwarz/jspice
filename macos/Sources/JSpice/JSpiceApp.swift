@@ -117,6 +117,8 @@ struct CircuitCommands: Commands {
             Button("Forget Anthropic API Key") { APIKeyStore.remove() }
             Button("Export SPICE Netlist…") { editor?.exportSpice() }
                 .disabled(editor == nil)
+            Button("Export KiCad Netlist…") { editor?.exportKiCad() }
+                .disabled(editor == nil)
             Divider()
             Menu("Examples") {
                 ForEach(Examples.all) { example in
