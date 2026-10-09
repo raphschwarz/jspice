@@ -172,7 +172,7 @@ public enum KiCadNetlist {
         // each net with its pads, ground first, then by name
         var nodes: [String: [(ref: String, pad: String)]] = [:]
         for c in components {
-            for pin in c.pins where !pin.net.isEmpty { nodes[pin.net, default: []].append((c.ref, pin.pad)) }
+            for pin in c.pins where !pin.net.isEmpty { nodes[pin.net, default: []].append((ref: c.ref, pad: pin.pad)) }
         }
         let names = nodes.keys.sorted { a, b in
             let (ga, gb) = (Topology.isGroundName(a), Topology.isGroundName(b))
