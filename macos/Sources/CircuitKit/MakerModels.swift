@@ -182,13 +182,13 @@ public enum MakerModels {
     /// fixed common-mode voltage: in an inverting stage of gain −1 with the + input grounded, the output over the −
     /// input's small signal (a follower's response would fold the common-mode rejection in).
     public static func measureOpAmp(_ block: BlockDefinition, pins: [String], supply: Double = 15,
-                                    load: Double = 10_000, log: ((String) -> Void)? = nil) throws -> OpAmpFigures {
+                                    load: Double = 10_000, report: ((String) -> Void)? = nil) throws -> OpAmpFigures {
         guard pins.count == 5 else { throw MeasurementError(description: "An op-amp has five pins: +in, −in, V+, V−, out") }
         let started = Date()
-        /// What each stage cost, for `log`
+        /// What each stage cost, for `report`
         func done(_ stage: String, _ simulator: Simulator) {
-            guard let log else { return }
-            log(String(format: "%@ done at %.1f s: %ld steps of %ld substeps (%ld rejected), %ld Newton iterations, "
+            guard let report else { return }
+            report(String(format: "%@ done at %.1f s: %ld steps of %ld substeps (%ld rejected), %ld Newton iterations, "
                        + "%ld convergence failures, %ld plans (%.2f s)", stage, Date().timeIntervalSince(started),
                        Int((simulator.time / simulator.timeStep).rounded()), simulator.substeps, simulator.rejectedSubsteps,
                        simulator.newtonIterations, simulator.convergenceFailures, simulator.plans, simulator.planningSeconds))

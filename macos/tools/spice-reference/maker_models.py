@@ -211,6 +211,8 @@ MODELS = [
      'a4a2f63b714c799bd4ccbf52fa71922d2786f93fcdfcc10f0b11377194beef77', 'OPA167x', 15, 2e3),
     ('OPA2134', 'https://www.ti.com/lit/zip/SBOM042', 'OPAx134.LIB',
      '8ff414c678a7f8330b87504d7e0553de20ca87bdc713cecf81ab3448b4d7608f', 'OPAx134', 15, 2e3),
+    ('OPA1612', 'https://www.ti.com/lit/zip/SBOM396', 'OPA161x.LIB',
+     'c86df5d4b2d26ec196c0a6158a61004a6747aec5440fcc2031674ad62a448ef7', 'OPA161x', 15, 2e3),
 ]
 
 # the catalog's names for the figures, and their datasheet units
