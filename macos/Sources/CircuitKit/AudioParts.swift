@@ -519,17 +519,19 @@ extension PartExpansion {
             // 150 Ω + 1.35 kΩ from there through GAIN 1 to GAIN 8, gives 20 (200 with GAIN 1 and 8 bypassed)
             let (minus, plus, gain1, gain8, bypass, out) = (p[0], p[1], p[2], p[3], p[4], p[5])
             let supply = param("supply")
-            let (g, vs, dm, dp, f) = (node(), node(), node(), node(), node())
+            let (g, vs, half, dm, dp, f) = (node(), node(), node(), node(), node(), node())
             ground(g)
             add(.dcVoltage, g, vs, "VS", ["voltage": supply])
             resistor(vs, bypass, 15_000, "RB1")
             resistor(bypass, g, 15_000, "RB2")
+            // the difference stage refers to an internal half supply, so it does not pull BYPASS off half the supply
+            add(.dcVoltage, g, half, "VH", ["voltage": supply / 2])
             resistor(plus, g, 100_000, "RIN1")
             resistor(minus, g, 100_000, "RIN2")
             resistor(plus, dm, 100_000, "RD1")
             resistor(dm, gain8, 200_000, "RD2")
             resistor(minus, dp, 100_000, "RD3")
-            resistor(dp, bypass, 200_000, "RD4")
+            resistor(dp, half, 200_000, "RD4")
             let stage = ["gain": 1e6, "limit": max(supply / 2 - 0.3, 0.5), "gbw": 50e6, "slewRate": 0, "offset": 0, "noise": 0,
                          "midpoint": supply / 2]
             opAmp(minus: dm, plus: dp, out: gain8, "AD", stage)
