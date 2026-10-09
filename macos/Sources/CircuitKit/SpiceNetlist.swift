@@ -230,15 +230,12 @@ public enum SpiceNetlist {
             case "d":
                 guard let anode = node(1), let cathode = node(2) else { continue }
                 let model = words.count > 3 ? models[words[3].lowercased()] : nil
-                let p = model?.params ?? [:]
-                if let breakdown = p["BV"] {
-                    parts.append(NetlistPart(kind: .zener, name: name, params: ["breakdown": breakdown, "cj0": p["CJO"] ?? p["CJ0"] ?? 1e-12],
-                                             connections: ["anode": anode, "cathode": cathode]))
-                } else {
-                    parts.append(NetlistPart(kind: .diode, name: name, params: [
-                        "saturationCurrent": p["IS"] ?? 1e-14, "emission": p["N"] ?? 1, "cj0": p["CJO"] ?? p["CJ0"] ?? 0, "tt": p["TT"] ?? 0,
-                    ], connections: ["anode": anode, "cathode": cathode]))
-                }
+                let card = model?.params ?? [:]
+                // the whole card; drawn as a Zener when it breaks down below 40 V (a rectifier's BV is its rating)
+                let kind: ElementKind = (card["BV"].map { abs($0) < 40 } ?? false) ? .zener : .diode
+                let (params, ignored) = SpiceDiode.parameters(fromCard: card, kind: kind)
+                if !ignored.isEmpty { warnings.append("\(name): \(ignored.joined(separator: ", ")) of its model left out") }
+                parts.append(NetlistPart(kind: kind, name: name, params: params, connections: ["anode": anode, "cathode": cathode]))
             case "q":
                 guard let c = node(1), let b = node(2), let e = node(3), words.count > 4 else { continue }
                 // a fourth node (the substrate) may come before the model
@@ -416,17 +413,7 @@ public enum SpiceNetlist {
                 lines.append("\(device("V", name)) \(n("in")) \(n("out")) DC 0  ; ammeter")
             case .diode, .led, .zener:
                 let model = "D_" + device("D", name)
-                var params: String
-                switch part.kind {
-                case .led:
-                    let color = LEDColor(rawValue: Int(Simulator.choice(p("color"), 0...4))) ?? .red
-                    params = "IS=\(f(0.01 / exp(color.forwardVoltage / (2 * Simulator.thermalVoltage)))) N=2"
-                case .zener:
-                    params = "IS=1e-14 N=1 BV=\(f(abs(p("breakdown")))) IBV=5m"
-                default:
-                    params = "IS=\(f(max(p("saturationCurrent"), 1e-30))) N=\(f(max(p("emission"), 0.1))) TT=\(f(p("tt")))"
-                }
-                models.append(".model \(model) D(\(params) CJO=\(f(p("cj0"))) VJ=1 M=0.5)")
+                models.append(".model \(model) D(\(SpiceDiode.cardText(p, kind: part.kind)))")
                 lines.append("\(device("D", name)) \(n("anode")) \(n("cathode")) \(model)")
             case .npn, .pnp:
                 let model = "Q_" + device("Q", name)

@@ -54,6 +54,11 @@ gp_body = element[element.index('static let gummelPoonParams'):]
 gp_body = gp_body[:gp_body.index('\n    ]\n')]
 GP_DEFAULTS = {k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', gp_body)}
 for kind in ('npn', 'pnp'): DEFAULTS[kind].update(GP_DEFAULTS)
+# and a diode's, past the parameters of each kind
+diode_body = element[element.index('static let diodeCardParams'):]
+diode_body = diode_body[:diode_body.index('\n    ]\n')]
+DIODE_DEFAULTS = {k: number(v) for k, v in re.findall(r'ParamSpec\("(\w+)",\s*"[^"]*",[^\n]*?default: (-?[\d._eE+-]+)', diode_body)}
+for kind in ('diode', 'zener', 'led'): DEFAULTS[kind].update(DIODE_DEFAULTS)
 # GummelPoon.card: SPICE's names for JSpice's keys
 GP_CARD = [('IS', 'saturationCurrent'), ('BF', 'beta'), ('NF', 'nf'), ('VAF', 'vaf'), ('IKF', 'ikf'), ('ISE', 'ise'), ('NE', 'ne'),
            ('BR', 'br'), ('NR', 'nr'), ('VAR', 'var'), ('IKR', 'ikr'), ('ISC', 'isc'), ('NC', 'nc'), ('NKF', 'nkf'),
@@ -116,6 +121,20 @@ def bipolar_card(p):
         words.append('%s=%.12g' % (name, value))
     return ' '.join(words)
 
+def diode_card(p, kind):
+    """A diode's whole card (SpiceDiode.card): an LED's IS from its colour unless given, a Zener's BV its breakdown, BV,
+    NBV and the knees left out at 0 (none, N, none)"""
+    words = []
+    for name, key in [('IS', 'saturationCurrent'), ('N', 'emission'), ('RS', 'rs'), ('CJO', 'cj0'), ('VJ', 'vj'), ('M', 'm'),
+                      ('FC', 'fc'), ('TT', 'tt'), ('BV', 'breakdown' if kind == 'zener' else 'bv'), ('IBV', 'ibv'),
+                      ('NBV', 'nbv'), ('IKF', 'ikf'), ('IKR', 'ikr'), ('EG', 'eg'), ('XTI', 'xti')]:
+        value = param(p, key)
+        if name == 'IS' and kind == 'led' and value <= 0:
+            value = 0.01 / math.exp(LED_FORWARD[int(param(p, 'color'))] / (param(p, 'emission') * VT))
+        if name in ('BV', 'NBV', 'IKF', 'IKR', 'RS') and value <= 0: continue
+        words.append('%s=%.12g' % (name, abs(value)))
+    return ' '.join(words)
+
 def spice_deck(parts, duration, probes, step, temperature=27):
     lines, models = spice_elements(parts, temperature=temperature)
     data = tempfile.mktemp(suffix='.txt')
@@ -158,15 +177,7 @@ def spice_elements(parts, ac_source=None, temperature=27):
         elif k == 'currentSource':
             lines.append('I%s %s %s DC %.12g' % (n, pin('a'), pin('b'), param(p, 'current')))
         elif k in ('diode', 'led', 'zener'):
-            if k == 'led':
-                nvt = 2 * VT
-                model = 'IS=%.12g N=2' % (0.01 / math.exp(LED_FORWARD[int(param(p, 'color'))] / nvt))
-            elif k == 'zener':
-                model = 'IS=1e-14 N=1 BV=%.12g IBV=5e-3' % abs(param(p, 'breakdown'))
-            else:
-                model = 'IS=%.12g N=%.12g TT=%.12g' % (max(param(p, 'saturationCurrent'), 1e-30), max(param(p, 'emission'), 0.1),
-                                                      param(p, 'tt'))
-            models.append('.model D_%s D(%s CJO=%.12g VJ=1 M=0.5)' % (n, model, param(p, 'cj0')))
+            models.append('.model D_%s D(%s)' % (n, diode_card(p, k)))
             lines.append('D%s %s %s D_%s' % (n, pin('anode'), pin('cathode'), n))
         elif k in ('npn', 'pnp'):
             models.append('.model Q_%s %s(%s)' % (n, k.upper(), bipolar_card(p)))
@@ -283,6 +294,14 @@ GP_NPN = dict(saturationCurrent=1.8e-14, beta=250, nf=1.005, vaf=60, ikf=0.08, i
 GP_PNP = dict(saturationCurrent=4e-14, beta=180, vaf=35, ikf=0.06, ise=2e-14, ne=1.7, br=4, var=15, isc=1e-13, nc=1.4, rb=60,
               irb=2e-4, rbm=15, re=1.2, rc=2.5, cje=15e-12, vje=0.7, mje=0.37, tf=6e-10, xtf=10, vtf=4, itf=0.3, cjc=6e-12, vjc=0.5,
               mjc=0.33, xcjc=0.5, tr=8e-8, fc=0.7, xtb=1.7)
+
+# Test diode cards using every parameter JSpice implements (made up, not any maker's): a switching diode with a series
+# resistance, a high-injection knee, a 3 ns transit time and an 80 V breakdown; a 6.2 V Zener with its own breakdown
+# emission coefficient; a red LED with a series resistance
+TEST_DIODE = dict(saturationCurrent=4e-9, emission=1.9, rs=0.6, cj0=4e-12, vj=0.7, m=0.4, fc=0.6, tt=3e-9, bv=80, ibv=1e-6,
+                  ikf=0.05, xti=3.2, eg=1.11)
+TEST_ZENER = dict(breakdown=6.2, saturationCurrent=2e-15, emission=1.05, rs=2, cj0=90e-12, vj=0.75, m=0.33, ibv=5e-3, nbv=1.8)
+TEST_LED = dict(color=0, rs=4, cj0=20e-12, vj=1.8, m=0.35, ikr=1e-3, bv=5, ibv=1e-5)
 
 def with_transistor(parts, name, **params):
     """The parts, with transistor `name` given these parameters instead of its own"""
@@ -421,6 +440,19 @@ CASES = [
          probes=['col', 'base'], parts=None),
     dict(id='gp-hot-common-emitter', note='that at 70 °C: XTB, the leakage and the junction potentials at temperature',
          duration=0.1, probes=['col', 'base'], temperature=70, parts=None),
+    dict(id='card-rectifier', note='a test diode card (RS, IKF, TT, CJO with VJ, M and FC) rectifying 200 kHz: its stored '
+         'charge lets current back for a moment', duration=1.5e-5, probes=['out'], parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=5, frequency=200_000),
+        P('resistor', 'RS', dict(a='in', b='a'), resistance=50),
+        P('diode', 'D1', dict(anode='a', cathode='out'), **TEST_DIODE),
+        P('capacitor', 'C1', dict(a='out', b='GND'), capacitance=10e-9),
+        P('resistor', 'R1', dict(a='out', b='GND'), resistance=2000)]),
+    dict(id='card-zener', note='a test Zener card (RS, NBV, CJO) regulating 12 V with 6 V of ripple through 220 Ω', duration=0.04,
+         probes=['out'], parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=6, offset=12, frequency=100),
+        P('resistor', 'R1', dict(a='in', b='out'), resistance=220),
+        P('zener', 'D1', dict(anode='GND', cathode='out'), **TEST_ZENER),
+        P('resistor', 'R2', dict(a='out', b='GND'), resistance=1000)]),
     dict(id='gp-switch', note='a saturating NPN switch at 20 kHz: stored charge (TF, TR) holds it on after the drive goes',
          duration=1.5e-4, probes=['col', 'base'], parts=[
         P('dcVoltage', 'VCC', dict(plus='vcc', minus='GND'), voltage=9),
@@ -601,12 +633,39 @@ DEVICE_SWEEPS = [
          start=-0.45, stop=-0.95, step=-0.025),
     dict(id='pnp-vce', note='test PNP card: currents against VCE at VBE -0.7 V', kind='pnp', params=GP_PNP, swept='vce',
          fixed=-0.7, start=2, stop=-10, step=-0.25),
+    dict(id='diode-forward', note='test diode card: current against forward voltage (N, RS, IKF)', kind='diode', params=TEST_DIODE,
+         swept='vd', fixed=0, start=0.2, stop=1.6, step=0.05),
+    dict(id='diode-reverse', note='test diode card: reverse current into its 80 V breakdown', kind='diode', params=TEST_DIODE,
+         swept='vd', fixed=0, start=-82, stop=0, step=1),
+    dict(id='hot-diode-forward', note='test diode card at 70 °C (EG, XTI)', kind='diode', params=TEST_DIODE, swept='vd', fixed=0,
+         start=0.2, stop=1.4, step=0.05, temperature=70),
+    dict(id='zener-reverse', note='test Zener card: into breakdown at 6.2 V and on (NBV, RS)', kind='zener', params=TEST_ZENER,
+         swept='vd', fixed=0, start=-7.5, stop=0.9, step=0.1),
+    dict(id='led-forward', note='a red LED with a series resistance: forward current (and its 5 V breakdown, reverse knee)',
+         kind='led', params=TEST_LED, swept='vd', fixed=0, start=-6, stop=2.4, step=0.1),
     dict(id='default-npn-vce', note='an NPN at JSpice\'s defaults (Ebers-Moll, BR 1): currents against VCE at VBE 0.65 V',
          kind='npn', params={}, swept='vce', fixed=0.65, start=0, stop=10, step=0.25),
 ]
 
 def run_ngspice_dc(sweep):
     part = dict(kind=sweep['kind'], name='Q1', params=sweep['params'], connections={})
+    if sweep['kind'] in ('diode', 'zener', 'led'):
+        # a diode across one source: the current into its anode
+        data = tempfile.mktemp(suffix='.txt')
+        deck = '\n'.join(['* JSpice device check',
+                          '.options reltol=1e-9 abstol=1e-18 vntol=1e-12 gmin=1e-12 rshunt=1e12 itl1=500 itl2=500',
+                          temperature_options(sweep.get('temperature', 27)),
+                          'VD a 0 DC %.12g' % sweep['start'], 'D1 a 0 DT', '.model DT D(%s)' % diode_card(part, sweep['kind']),
+                          '.control', 'dc VD %.12g %.12g %.12g' % (sweep['start'], sweep['stop'], sweep['step']),
+                          'wrdata %s i(VD)' % data, 'quit', '.endc', '.end']) + '\n'
+        with tempfile.NamedTemporaryFile('w', suffix='.cir', delete=False) as f:
+            f.write(deck)
+        result = subprocess.run(['ngspice', '-b', f.name], capture_output=True, text=True, timeout=600)
+        if not os.path.exists(data):
+            sys.exit('ngspice failed:\n' + deck + result.stdout[-3000:] + result.stderr[-3000:])
+        rows = [list(map(float, line.split())) for line in open(data) if line.strip()]
+        os.unlink(data)
+        return [row[0] for row in rows], [-row[1] for row in rows], None
     temperature = sweep.get('temperature', 27)
     data = tempfile.mktemp(suffix='.txt')
     held = 'VCE' if sweep['swept'] == 'vbe' else 'VBE'
@@ -633,12 +692,16 @@ def devices_main():
     for sweep in DEVICE_SWEEPS:
         voltages, base, collector = run_ngspice_dc(sweep)
         entry = dict(id=sweep['id'], note=sweep['note'], kind=sweep['kind'], params=sweep['params'], swept=sweep['swept'],
-                     fixed=sweep['fixed'], voltages=[round(v, 9) for v in voltages],
-                     base=[float('%.12g' % i) for i in base], collector=[float('%.12g' % i) for i in collector])
+                     fixed=sweep['fixed'], voltages=[round(v, 9) for v in voltages])
+        if collector is None:
+            entry['anode'] = [float('%.12g' % i) for i in base]
+        else:
+            entry.update(base=[float('%.12g' % i) for i in base], collector=[float('%.12g' % i) for i in collector])
         if 'temperature' in sweep:
             entry['temperature'] = sweep['temperature']
         out.append(entry)
-        print('%-16s ic %.4g..%.4g A' % (sweep['id'], min(collector), max(collector)))
+        currents = collector if collector is not None else base
+        print('%-18s %.4g..%.4g A' % (sweep['id'], min(currents), max(currents)))
     json.dump(dict(generator='tools/spice-reference/crosscheck.py --devices', ngspice=subprocess.run(
         ['ngspice', '-v'], capture_output=True, text=True).stdout.split('\n')[1].strip(' *'), sweeps=out),
         open(DEVICE_FIXTURE, 'w'), indent=1)

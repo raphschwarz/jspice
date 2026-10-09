@@ -89,25 +89,29 @@ struct GummelPoon {
         kf = max(p("kf"), 0)
         af = p("af")
 
-        // depletion capacitances and potentials at temperature (bjttemp.c)
+        // depletion capacitances and potentials at temperature (ngspice-42's bjttemp.c: the potential at absolute zero
+        // from the nominal temperature's band gap, then out to the circuit's)
         let fact1 = tnom / reference, fact2 = kelvin / reference
-        let egfet = 1.16 - (7.02e-4 * kelvin * kelvin) / (kelvin + 1108)
-        let arg = -egfet / (2 * boltzmann * kelvin) + 1.1150877 / (boltzmann * (reference + reference))
-        let pbfact = -2 * vt * (1.5 * log(fact2) + charge * arg)
+        func pbfact(_ t: Double, _ thermal: Double) -> Double {
+            let egfet = 1.16 - (7.02e-4 * t * t) / (t + 1108)
+            let arg = -egfet / (2 * boltzmann * t) + 1.1150877 / (boltzmann * (reference + reference))
+            return -2 * thermal * (1.5 * log(t / reference) + charge * arg)
+        }
+        let pbfactT = pbfact(kelvin, vt), pbfactNominal = pbfact(tnom, Simulator.thermalVoltage)
         func atTemperature(_ cj: Double, _ vj: Double, _ m: Double) -> (cj: Double, vj: Double) {
             guard kelvin != tnom else { return (cj, vj) }
-            let pbo = (vj - pbfact) / fact1
+            let pbo = (vj - pbfactNominal) / fact1
             let gmaold = (vj - pbo) / pbo
             var cap = cj / (1 + m * (4e-4 * (tnom - reference) - gmaold))
-            let pot = fact2 * pbo + pbfact
+            let pot = fact2 * pbo + pbfactT
             let gmanew = (pot - pbo) / pbo
             cap *= 1 + m * (4e-4 * (kelvin - reference) - gmanew)
             return (cap, pot)
         }
-        let fc = min(max(p("fc"), 0), 0.95)
+        let fc = min(max(p("fc"), 0), 0.9999)
         let xfc = log(1 - fc)
-        mje = min(max(p("mje"), 0), 0.99)
-        mjc = min(max(p("mjc"), 0), 0.99)
+        mje = min(max(p("mje"), 0), 0.999)
+        mjc = min(max(p("mjc"), 0), 0.999)
         (cje, vje) = atTemperature(max(p("cje"), 0), max(p("vje"), 0.01), mje)
         let collector = atTemperature(max(p("cjc"), 0), max(p("vjc"), 0.01), mjc)
         vjc = collector.vj

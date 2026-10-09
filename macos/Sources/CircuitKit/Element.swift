@@ -426,6 +426,8 @@ extension ElementKind {
     public var isTube: Bool { self == .triode || self == .pentode }
 
     public var isBipolar: Bool { self == .npn || self == .pnp }
+    /// A junction diode: a diode, a Zener diode or an LED (SPICE's diode)
+    public var isDiode: Bool { self == .diode || self == .zener || self == .led }
 
     /// Parts whose terminals depend on a direction, which stay horizontal or vertical
     public var isAxisAligned: Bool {
@@ -578,9 +580,13 @@ extension ElementKind {
             ]
         case .zener:
             return [
-                ParamSpec("breakdown", "Breakdown voltage", unit: "V", default: 5.1, range: 1...50, log: false),
-                ParamSpec("cj0", "Junction capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
-            ]
+                ParamSpec("breakdown", "Breakdown voltage (BV)", unit: "V", default: 5.1, range: 1...50, log: false),
+                ParamSpec("cj0", "Junction capacitance at 0 V (CJO)", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+                ParamSpec("saturationCurrent", "Saturation current (IS)", unit: "A", default: 1e-14, range: 1e-18...1e-6, advanced: true),
+                ParamSpec("emission", "Emission coefficient (N)", unit: "", default: 1, range: 0.5...3, log: false, advanced: true),
+                ParamSpec("tt", "Transit time (TT)", unit: "s", default: 0, range: 0...1e-4, log: false, advanced: true),
+                ParamSpec("ibv", "Current at the breakdown voltage (IBV)", unit: "A", default: 5e-3, range: 1e-9...1, advanced: true),
+            ] + Self.diodeCardParams
         case .npn, .pnp:
             return [
                 ParamSpec("beta", "Current gain (BF)", unit: "", default: 100, range: 5...1000),
@@ -818,16 +824,23 @@ extension ElementKind {
             return [ParamSpec("high", "Gate voltage", unit: "V", default: 5, range: 1...15, log: false)]
         case .diode:
             return [
-                ParamSpec("saturationCurrent", "Saturation current", unit: "A", default: 1e-14, range: 1e-18...1e-6),
-                ParamSpec("emission", "Emission coefficient", unit: "", default: 1, range: 0.5...3, log: false),
-                ParamSpec("cj0", "Junction capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
-                ParamSpec("tt", "Transit time (stored charge)", unit: "s", default: 0, range: 0...1e-4, log: false),
-            ]
+                ParamSpec("saturationCurrent", "Saturation current (IS)", unit: "A", default: 1e-14, range: 1e-18...1e-6),
+                ParamSpec("emission", "Emission coefficient (N)", unit: "", default: 1, range: 0.5...3, log: false),
+                ParamSpec("cj0", "Junction capacitance at 0 V (CJO)", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+                ParamSpec("tt", "Transit time, stored charge (TT)", unit: "s", default: 0, range: 0...1e-4, log: false),
+                ParamSpec("bv", "Reverse breakdown voltage (BV, 0: none)", unit: "V", default: 0, range: 0...1000, log: false, advanced: true),
+                ParamSpec("ibv", "Current at the breakdown voltage (IBV)", unit: "A", default: 1e-3, range: 1e-12...1, advanced: true),
+            ] + Self.diodeCardParams
         case .led:
             return [
                 ParamSpec("color", "Color", unit: "", default: 0, range: 0...4, log: false),
-                ParamSpec("cj0", "Junction capacitance at 0 V", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
-            ]
+                ParamSpec("cj0", "Junction capacitance at 0 V (CJO)", unit: "F", default: 1e-12, range: 0...1e-9, log: false),
+                ParamSpec("saturationCurrent", "Saturation current (IS, 0: from the color)", unit: "A", default: 0, range: 0...1e-6, log: false, advanced: true),
+                ParamSpec("emission", "Emission coefficient (N)", unit: "", default: 2, range: 0.5...5, log: false, advanced: true),
+                ParamSpec("tt", "Transit time (TT)", unit: "s", default: 0, range: 0...1e-4, log: false, advanced: true),
+                ParamSpec("bv", "Reverse breakdown voltage (BV, 0: none)", unit: "V", default: 0, range: 0...100, log: false, advanced: true),
+                ParamSpec("ibv", "Current at the breakdown voltage (IBV)", unit: "A", default: 1e-3, range: 1e-12...1, advanced: true),
+            ] + Self.diodeCardParams
         case .nmos, .pmos:
             return [
                 ParamSpec("threshold", "Threshold voltage", unit: "V", default: 1.5, range: 0.1...5, log: false),
@@ -925,8 +938,10 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
 
     /// A parameter value, falling back to the kind's default
     /// Nodes of its own the part has, past its terminals: a bipolar transistor's internal base, collector and emitter,
-    /// behind its resistances
-    var internalNodeCount: Int { kind.isBipolar ? GummelPoon.internalNodes(self) : 0 }
+    /// and a diode's internal anode, behind their resistances
+    var internalNodeCount: Int {
+        kind.isBipolar ? GummelPoon.internalNodes(self) : kind.isDiode ? SpiceDiode.internalNodes(self) : 0
+    }
 
     public subscript(param key: String) -> Double {
         get { params[key] ?? kind.params.first(where: { $0.key == key })?.defaultValue ?? 0 }
@@ -1075,6 +1090,21 @@ extension ElementKind {
         ParamSpec("fc", "Forward-bias depletion coefficient (FC)", unit: "", default: 0.5, range: 0...0.95, log: false, advanced: true),
         ParamSpec("xtb", "Gain temperature exponent (XTB)", unit: "", default: 0, range: 0...3, log: false, advanced: true),
         ParamSpec("eg", "Band gap (EG)", unit: "eV", default: 1.11, range: 0.5...1.5, log: false, advanced: true),
+        ParamSpec("xti", "Saturation current temperature exponent (XTI)", unit: "", default: 3, range: 0...6, log: false, advanced: true),
+        ParamSpec("kf", "Flicker noise coefficient (KF)", unit: "", default: 0, range: 0...1e-12, log: false, advanced: true),
+        ParamSpec("af", "Flicker noise exponent (AF)", unit: "", default: 1, range: 0.5...2, log: false, advanced: true),
+    ]
+
+    /// The rest of a diode's SPICE model card (diodes, Zener diodes and LEDs alike)
+    static let diodeCardParams: [ParamSpec] = [
+        ParamSpec("rs", "Series resistance (RS)", unit: "Ω", default: 0, range: 0...100, log: false, advanced: true),
+        ParamSpec("vj", "Junction potential (VJ)", unit: "V", default: 1, range: 0.2...1.5, log: false, advanced: true),
+        ParamSpec("m", "Grading coefficient (M)", unit: "", default: 0.5, range: 0.1...0.9, log: false, advanced: true),
+        ParamSpec("fc", "Forward-bias depletion coefficient (FC)", unit: "", default: 0.5, range: 0...0.95, log: false, advanced: true),
+        ParamSpec("nbv", "Breakdown emission coefficient (NBV, 0: N)", unit: "", default: 0, range: 0...10, log: false, advanced: true),
+        ParamSpec("ikf", "Forward knee current (IKF, 0: none)", unit: "A", default: 0, range: 0...100, log: false, advanced: true),
+        ParamSpec("ikr", "Reverse knee current (IKR, 0: none)", unit: "A", default: 0, range: 0...100, log: false, advanced: true),
+        ParamSpec("eg", "Band gap (EG)", unit: "eV", default: 1.11, range: 0.5...3.5, log: false, advanced: true),
         ParamSpec("xti", "Saturation current temperature exponent (XTI)", unit: "", default: 3, range: 0...6, log: false, advanced: true),
         ParamSpec("kf", "Flicker noise coefficient (KF)", unit: "", default: 0, range: 0...1e-12, log: false, advanced: true),
         ParamSpec("af", "Flicker noise exponent (AF)", unit: "", default: 1, range: 0.5...2, log: false, advanced: true),

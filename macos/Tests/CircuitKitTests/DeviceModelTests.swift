@@ -1,10 +1,11 @@
 import XCTest
 @testable import CircuitKit
 
-/// Transistors at DC against ngspice running the same `.model` cards. `crosscheck.py --devices` sweeps one of a
-/// transistor's two sources (base to emitter, or collector to emitter) while the other holds, and records the currents
-/// into its base and collector; JSpice solves each point here. Both solve the same Gummel-Poon equations to convergence,
-/// so they agree to a few parts per million: what is left is how far each converges.
+/// Transistors and diodes at DC against ngspice running the same `.model` cards. `crosscheck.py --devices` sweeps one
+/// of a transistor's two sources (base to emitter, or collector to emitter) while the other holds, and records the
+/// currents into its base and collector, or sweeps the voltage across a diode and records its current; JSpice solves each
+/// point here. Both solve the same equations (Gummel-Poon's, SPICE's diode's) to convergence, so they agree to a few
+/// parts per million: what is left is how far each converges.
 final class DeviceModelTests: XCTestCase {
     struct Reference: Decodable {
         let ngspice: String
@@ -16,13 +17,14 @@ final class DeviceModelTests: XCTestCase {
         let note: String
         let kind: String
         let params: [String: Double]
-        /// "vbe" or "vce": the source swept through `voltages`, the other held at `fixed`
+        /// "vbe" or "vce": the source swept through `voltages`, the other held at `fixed`; "vd" across a diode
         let swept: String
         let fixed: Double
         let voltages: [Double]
-        /// The currents into the transistor's base and collector
-        let base: [Double]
-        let collector: [Double]
+        /// The currents into the transistor's base and collector, or into the diode's anode
+        let base: [Double]?
+        let collector: [Double]?
+        let anode: [Double]?
         /// °C, when not the parts' nominal 27 °C
         let temperature: Double?
     }
@@ -51,22 +53,46 @@ final class DeviceModelTests: XCTestCase {
         return (simulator.current(try index("AB")), simulator.current(try index("AC")))
     }
 
-    func testTransistorsMatchNgspiceAtDC() throws {
+    /// The current into a diode's anode with `vd` across it
+    private func current(_ sweep: Sweep, vd: Double) throws -> Double {
+        let kind = try XCTUnwrap(ElementKind(rawValue: sweep.kind))
+        var circuit = try SchematicLayout.layout([
+            NetlistPart(kind: .dcVoltage, name: "VD", params: ["voltage": vd], connections: ["plus": "va", "minus": "GND"]),
+            NetlistPart(kind: .ammeter, name: "AD", params: [:], connections: ["in": "va", "out": "a"]),
+            NetlistPart(kind: kind, name: "D1", params: sweep.params, connections: ["anode": "a", "cathode": "GND"]),
+        ])
+        if let temperature = sweep.temperature { circuit.settings.temperature = temperature }
+        let simulator = Simulator(circuit: circuit, timeStep: 1)
+        for _ in 0..<4 { simulator.step() }
+        XCTAssertFalse(simulator.isFailed, "\(sweep.id) at \(vd) V: \(simulator.problems)")
+        return simulator.current(try XCTUnwrap(circuit.elements.firstIndex { $0.name == "AD" }))
+    }
+
+    func testDevicesMatchNgspiceAtDC() throws {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "spice-device-reference", withExtension: "json", subdirectory: "Fixtures"))
         let reference = try JSONDecoder().decode(Reference.self, from: Data(contentsOf: url))
-        var table = ["Transistors at DC against \(reference.ngspice) (largest difference, parts per million of the current):"]
+        var table = ["Devices at DC against \(reference.ngspice) (largest difference, parts per million of the current):"]
+        func check(_ value: Double, _ expected: Double, _ what: String) -> Double {
+            XCTAssertEqual(value, expected, accuracy: Self.relative * abs(expected) + Self.absolute, what)
+            return abs(value - expected) / max(abs(expected), Self.absolute / Self.relative)
+        }
         for sweep in reference.sweeps {
+            if let anode = sweep.anode {
+                var worst = 0.0
+                for (k, v) in sweep.voltages.enumerated() {
+                    worst = max(worst, check(try current(sweep, vd: v), anode[k], "\(sweep.id): current at \(v) V (\(sweep.note))"))
+                }
+                table.append("  " + sweep.id.padding(toLength: 18, withPad: " ", startingAt: 0) + String(format: "anode %8.3f ppm", worst * 1e6))
+                continue
+            }
+            let base = try XCTUnwrap(sweep.base), collector = try XCTUnwrap(sweep.collector)
             var worstBase = 0.0, worstCollector = 0.0
             for (k, v) in sweep.voltages.enumerated() {
                 let (vbe, vce) = sweep.swept == "vbe" ? (v, sweep.fixed) : (sweep.fixed, v)
                 let ours = try currents(sweep, vbe: vbe, vce: vce)
-                for (name, value, expected) in [("base", ours.base, sweep.base[k]), ("collector", ours.collector, sweep.collector[k])] {
-                    let limit = Self.relative * abs(expected) + Self.absolute
-                    XCTAssertEqual(value, expected, accuracy: limit,
-                                   "\(sweep.id): \(name) current at VBE \(vbe) V, VCE \(vce) V (\(sweep.note))")
-                    let error = abs(value - expected) / max(abs(expected), Self.absolute / Self.relative)
-                    if name == "base" { worstBase = max(worstBase, error) } else { worstCollector = max(worstCollector, error) }
-                }
+                let at = "at VBE \(vbe) V, VCE \(vce) V (\(sweep.note))"
+                worstBase = max(worstBase, check(ours.base, base[k], "\(sweep.id): base current \(at)"))
+                worstCollector = max(worstCollector, check(ours.collector, collector[k], "\(sweep.id): collector current \(at)"))
             }
             table.append("  " + sweep.id.padding(toLength: 18, withPad: " ", startingAt: 0)
                          + String(format: "base %8.3f ppm  collector %8.3f ppm", worstBase * 1e6, worstCollector * 1e6))
@@ -103,6 +129,47 @@ final class DeviceModelTests: XCTestCase {
         for word in ["VAF=74.03", "BF=416.4", "IKF=0.06678", "RB=10", "RC=1", "TR=2.395e-07", "XTB=1.5", "BR=0.7371"] {
             XCTAssertTrue(deck.contains(word), "\(word) in \(deck)")
         }
+    }
+
+    /// A diode's card the same way: a rectifier's (BV at its rating) stays a diode, one breaking down below 40 V is
+    /// drawn as a Zener, and both export as the cards they were (a Zener's BV included at JSpice's default)
+    func testImportedDiodeCardKeepsEveryParameter() throws {
+        let text = """
+        diode cards
+        V1 in 0 SIN(0 10 1k)
+        R1 in a 1k
+        D1 a 0 DR
+        R2 in z 1k
+        D2 0 z DZ
+        .model DR D(IS=2.5n RS=0.6 N=1.8 CJO=4p M=0.33 VJ=0.7 TT=6n BV=100 IBV=100n IKF=0.1 EG=1.11 XTI=3 TCV=0)
+        .model DZ D(IS=1f N=1.1 RS=2 BV=5.1 IBV=5m NBV=1.5 CJO=50p ISR=1n)
+        .end
+        """
+        let imported = SpiceNetlist.parse(text)
+        let d1 = try XCTUnwrap(imported.parts.first { $0.name == "D1" })
+        XCTAssertEqual(d1.kind, .diode)
+        XCTAssertEqual(d1.params["rs"], 0.6)
+        XCTAssertEqual(d1.params["bv"], 100)
+        XCTAssertEqual(try XCTUnwrap(d1.params["ibv"]), 100e-9, accuracy: 1e-20)
+        XCTAssertEqual(d1.params["ikf"], 0.1)
+        XCTAssertEqual(d1.params["m"], 0.33)
+        let d2 = try XCTUnwrap(imported.parts.first { $0.name == "D2" })
+        XCTAssertEqual(d2.kind, .zener)
+        XCTAssertEqual(d2.params["breakdown"], 5.1)
+        XCTAssertEqual(d2.params["nbv"], 1.5)
+        XCTAssertTrue(imported.warnings.contains { $0.contains("D2") && $0.contains("ISR") }, "\(imported.warnings)")
+        XCTAssertFalse(imported.warnings.contains { $0.contains("D1") }, "TCV=0 makes no difference: \(imported.warnings)")
+        let (circuit, _) = try SpiceNetlist.circuit(from: text)
+        let deck = SpiceNetlist.export(circuit)
+        for word in ["RS=0.6", "BV=100", "IBV=1e-07", "IKF=0.1", "M=0.33", "VJ=0.7", "TT=6e-09", "BV=5.1", "IBV=0.005", "NBV=1.5"] {
+            XCTAssertTrue(deck.contains(word), "\(word) in \(deck)")
+        }
+        // a drawn Zener at its defaults keeps its breakdown voltage
+        let drawn = try SchematicLayout.layout([
+            NetlistPart(kind: .zener, name: "DZ1", params: [:], connections: ["anode": "GND", "cathode": "z"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 1000], connections: ["a": "z", "b": "GND"]),
+        ])
+        XCTAssertTrue(SpiceNetlist.export(drawn).contains("BV=5.1 IBV=0.005"), SpiceNetlist.export(drawn))
     }
 
     /// The internal nodes a transistor's resistances add: none at JSpice's defaults, one for each resistance given

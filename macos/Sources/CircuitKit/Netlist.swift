@@ -177,7 +177,11 @@ public enum NetlistExtractor {
     public static func netlist(from circuit: Circuit) -> [NetlistPart] {
         // the nodes alone, as the simulator finds them (a simulator would also set up every chip and clip)
         let topology = Topology(circuit: circuit.flattened())
-        func nodes(of index: Int) -> [Int] { index < topology.elementNodes.count ? topology.elementNodes[index] : [] }
+        // the drawn terminals' nodes (a part's internal nodes, as behind a transistor's resistances, come after them)
+        func nodes(of index: Int) -> ArraySlice<Int> {
+            guard index < topology.elementNodes.count else { return [] }
+            return topology.elementNodes[index].prefix(circuit.elements[index].terminalNames.count)
+        }
         let isPart: (Element) -> Bool = { ![.wire, .ground, .netLabel].contains($0.kind) }
         var names: [Int: String] = [0: "GND"]
         var taken: Set<String> = ["GND"]
