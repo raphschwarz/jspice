@@ -292,6 +292,9 @@ public final class Simulator {
     private var decisionX: [Double] = []
     /// The behavioural sources whose decisions are held
     private var decidingIndices: [Int] = []
+    /// Whether Newton-Raphson is damped when its steps stop shrinking: with nonlinear behavioural sources only (their
+    /// TABLE, IF, LIMIT and clamps have sharp corners); other parts converge as they always have
+    private var dampsNewton = false
     /// The time the present solve is for (a behavioural source's `time`)
     private var solveTime = 0.0
     /// The charges each part stores and integrates, by slot: a diode's junction; a transistor's base-emitter,
@@ -566,6 +569,7 @@ public final class Simulator {
         nonlinearIndices.removeAll { linearBehaviors.contains($0) }
         drivenIndices += linearBehaviors.sorted()
         decidingIndices = nonlinearIndices.filter { kinds[$0] == .behavioralSource && behaviors[$0]?.decides == true }
+        dampsNewton = nonlinearIndices.contains { kinds[$0] == .behavioralSource }
         junctionIndices = kinds.indices.filter { storesCharge($0) }
         audioClips = [:]
         for i in indices({ $0 == .audioInput }) {
@@ -1184,11 +1188,11 @@ public final class Simulator {
     /// would only confirm it is not needed.
     static let newtonTolerance = 1e-6
 
-    /// Newton-Raphson is damped once this many iterations have not converged and an iteration's step is not at least
-    /// half the one before (without a junction's limiting, which shortens steps by itself): around the sharp corner of a
-    /// TABLE, IF, LIMIT or clamp (a maker's model's output stage in saturation), the full step can jump from one side of
-    /// the corner to the other and back for ever. Each such iteration halves the step taken (to a sixty-fourth at most),
-    /// and each one that contracts doubles it back.
+    /// Newton-Raphson is damped, in a circuit with nonlinear behavioural sources, once this many iterations have not
+    /// converged and an iteration's step is not at least half the one before (without a junction's limiting, which
+    /// shortens steps by itself): around the sharp corner of a TABLE, IF, LIMIT or clamp (a maker's model's output
+    /// stage in saturation), the full step can jump from one side of the corner to the other and back for ever. Each
+    /// such iteration halves the step taken (to a sixty-fourth at most), and each one that contracts doubles it back.
     static let dampingAfter = 8
 
     /// How many times a solve is done again for behavioural sources' decisions that changed during it
@@ -1286,7 +1290,7 @@ public final class Simulator {
                     }
                 }
             }
-            if iteration >= Self.dampingAfter && !limiting {
+            if dampsNewton && iteration >= Self.dampingAfter && !limiting {
                 damping = change > 0.5 * lastChange ? max(damping / 2, 1.0 / 64) : min(damping * 2, 1)
             }
             lastChange = change
