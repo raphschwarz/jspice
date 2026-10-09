@@ -40,7 +40,7 @@ struct CircuitBuilder {
 public enum Examples {
     public static let all: [Example] = [
         ledSwitch, voltageDivider, rcCharging, lowPass, lcOscillator, rectifier, zenerRegulator, dimmer, blinker,
-        transistorSwitch, cmosInverter, opAmpAmplifier, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
+        transistorSwitch, cmosInverter, opAmpAmplifier, opAmpStability, lfo, vca, timerFlasher, schmittOscillator, sampleAndHold,
         beeper, tone, tremolo, keyboardVCO, monoSynth, filter, wind, voice, acid, chipVoice, randomNotes, comparatorPWM,
         cmosSequencer, babyTen, cmosDrone, pllOctave, cmosFuzz, echo, blocks,
         ringModulator, chorus, fuzz, guitarFuzz, tubeAmp, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, arduinoDAC, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
@@ -1151,6 +1151,29 @@ public enum Examples {
         b.scope(amplifier, .voltage)
         return Example(id: "opamp", title: "Op-amp amplifier", summary: "An inverting amplifier with a gain of −10. Raise the input past 1.5 V to see it clip.",
                        symbol: "triangle", circuit: b.circuit)
+    }()
+
+    /// A TL072 at a gain of 2 driving a cable's capacitance through 100 Ω, its feedback taken at the cable: the cable's
+    /// pole inside the loop leaves it about 6° of phase margin, so a square wave rings; a loop probe at its output
+    /// shows the loop's gain
+    static let opAmpStability: Example = {
+        let parts = [
+            NetlistPart(kind: .squareVoltage, name: "VIN", params: ["frequency": 1000, "high": 0.5, "low": -0.5, "duty": 0.5],
+                        connections: ["plus": "in", "minus": "GND"]),
+            NetlistPart(kind: .opAmp, name: "U1", params: model(.opAmp, "TL072"), connections: ["plus": "in", "minus": "fb", "out": "out"]),
+            NetlistPart(kind: .loopProbe, name: "LP1", connections: ["in": "out", "out": "drive"]),
+            NetlistPart(kind: .resistor, name: "RISO", params: ["resistance": 100], connections: ["a": "drive", "b": "cable"]),
+            NetlistPart(kind: .capacitor, name: "CABLE", params: ["capacitance": 100e-9], connections: ["a": "cable", "b": "GND"]),
+            NetlistPart(kind: .resistor, name: "RF", params: ["resistance": 10_000], connections: ["a": "cable", "b": "fb"]),
+            NetlistPart(kind: .resistor, name: "RG", params: ["resistance": 10_000], connections: ["a": "fb", "b": "GND"]),
+        ]
+        var circuit = drawn(parts, scopes: [("CABLE", .voltage)])
+        if let probe = circuit.elements.first(where: { $0.name == "LP1" }) {
+            circuit.scopes.append(ScopeSpec(elementID: probe.id, quantity: .voltage, plot: .frequencyResponse))
+        }
+        return Example(id: "opamp-stability", title: "Op-amp stability: driving a cable",
+                       summary: "A gain-of-2 TL072 drives 100 nF of cable through 100 Ω, its feedback from the cable: the loop probe shows about 6° of phase margin, and the square wave rings. Make CABLE 1 nF, or take RF from the op-amp's output, and watch the margin come back.",
+                       symbol: "waveform.path.ecg", circuit: circuit)
     }()
 
     static let lfo: Example = {

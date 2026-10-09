@@ -103,6 +103,23 @@ final class LoopGainTests: XCTestCase {
         XCTAssertNil(model.loopGain(probe: try index(c, "R1"), frequencies: [1000]))
     }
 
+    /// The example: a TL072 at a gain of 2 driving 100 nF through 100 Ω, its feedback from the cable, crosses over at
+    /// 154 kHz with 5.9° of margin (T = A(s) β / (1 + s (100 Ω ‖ 20 kΩ) C)); with 1 nF, 53° at 1.19 MHz
+    func testTheStabilityExampleHasLittleMargin() throws {
+        var circuit = try XCTUnwrap(Examples.all.first { $0.id == "opamp-stability" }).circuit
+        let frequencies = FrequencySweep.logarithmic(from: 1, to: 10e6, pointsPerDecade: 20)
+        for (capacitance, margin, crossover) in [(100e-9, 5.94, 154_100.0), (1e-9, 53.2, 1_194_800)] {
+            circuit.elements[try index(circuit, "CABLE")][param: "capacitance"] = capacitance
+            let simulator = Simulator.settled(circuit, holding: try index(circuit, "VIN"))
+            XCTAssertFalse(simulator.isFailed, "\(simulator.problems)")
+            let model = try XCTUnwrap(simulator.smallSignalModel())
+            let t = try XCTUnwrap(model.loopGain(probe: try index(circuit, "LP1"), frequencies: frequencies))
+            let margins = StabilityMargins(frequencies: frequencies, loopGain: t)
+            XCTAssertEqual(try XCTUnwrap(margins.phaseMargin), margin, accuracy: 0.3, "\(capacitance) F")
+            XCTAssertEqual(try XCTUnwrap(margins.crossover), crossover, accuracy: 0.01 * crossover, "\(capacitance) F")
+        }
+    }
+
     /// Margins of a loop with an AC-coupled band: |T| rises through 1 below its band (where T leads) and falls through 1
     /// above it (where it lags); each margin is measured from −1 the way its crossing approaches it
     func testMarginsOfABandPassLoop() {

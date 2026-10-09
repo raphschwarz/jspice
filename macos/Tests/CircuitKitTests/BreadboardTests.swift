@@ -10,7 +10,7 @@ final class BreadboardTests: XCTestCase {
             // every part is somewhere: on the board, in a package, or off it
             let placed = layout.placements.map { $0.name + " " + $0.title } + layout.offBoard.map(\.name)
             for element in example.circuit.flattened(expandingModels: false).elements
-                where ![.wire, .ground, .netLabel, .port, .block, .probe].contains(element.kind) {
+                where ![.wire, .ground, .netLabel, .port, .block, .probe, .loopProbe].contains(element.kind) {
                 XCTAssertTrue(placed.contains { $0.hasPrefix(element.name + " ") || $0 == element.name || $0.contains(element.name + ",") || $0.contains(element.name + ")") },
                               "\(example.id): \(element.name) is nowhere")
             }
