@@ -36,6 +36,9 @@ public final class Simulator {
     public private(set) var rejectedSubsteps = 0
     /// Newton-Raphson iterations since the start, each one a solve of the stamped equations
     public private(set) var newtonIterations = 0
+    /// Set (from any thread) to make a step that is taking too long give up: the simulation fails at its next substep
+    /// or iteration
+    public var stopRequested = false
 
     /// What is being played on the keyboard: the note keyboard pitch sources put out and whether a key is held, which
     /// keyboard gate sources put out
@@ -295,8 +298,13 @@ public final class Simulator {
     /// How the equations are factored (see `SparsePlan`): made at the first solve after the circuit changes shape, and
     /// again whenever it no longer fits
     private var plan: SparsePlan?
-    /// Plans made since the start
+    /// Plans made since the start, and the seconds spent making them
     public private(set) var plans = 0
+    public private(set) var planningSeconds = 0.0
+    /// Whether affine behavioural sources (gains, POLY of the first degree) are stamped as linear parts, out of the
+    /// nonlinear block; read when a circuit is loaded. Off, they are linearised at every iteration as any other: for
+    /// comparing the two.
+    public static var linearAffineSources = true
     /// The equations' shape, for profiling: unknowns, those in the nonlinear block (factored at every iteration), and
     /// the pivot orders kept for it
     public var planShape: (unknowns: Int, nonlinear: Int, orders: Int) {
@@ -945,6 +953,10 @@ public final class Simulator {
         let whole = 1 << Self.finestLevel
         var position = 0
         while position < whole {
+            if stopRequested {
+                fail()
+                return
+            }
             let level = substepLevel
             let units = whole >> level
             h = timeStep / Double(1 << level)
@@ -1145,6 +1157,11 @@ public final class Simulator {
         var plansMade = 0
         var converged = false
         while iteration < iterations {
+            if stopRequested {
+                Self.copy(savedX, into: &x)
+                fail()
+                return false
+            }
             if needsPlan {
                 // a stamp fell outside the plan or a pivot became too small: plan again, around the present solution
                 plansMade += 1
@@ -1387,6 +1404,8 @@ public final class Simulator {
     private func replan() -> Bool {
         let m = topology.matrixSize
         plans += 1
+        let started = DispatchTime.now().uptimeNanoseconds
+        defer { planningSeconds += Double(DispatchTime.now().uptimeNanoseconds - started) / 1e9 }
         needsPlan = false
         matrixIsCurrent = false
         baseCache.removeAll(keepingCapacity: true)
@@ -2636,7 +2655,7 @@ public final class Simulator {
             }
             widest = max(widest, inputs.count)
             var behavior = Behavior(expression: expression, inputs: inputs, voltage: element[param: "mode"] >= 0.5)
-            if expression.isAffine {
+            if Self.linearAffineSources && expression.isAffine {
                 let zeros = [Double](repeating: 0, count: max(inputs.count, 1))
                 behavior.linear = true
                 behavior.offset = zeros.withUnsafeBufferPointer { expression.value($0.baseAddress!, time: 0, celsius: kelvin - 273.15) }

@@ -182,8 +182,17 @@ public enum MakerModels {
     /// fixed common-mode voltage: in an inverting stage of gain −1 with the + input grounded, the output over the −
     /// input's small signal (a follower's response would fold the common-mode rejection in).
     public static func measureOpAmp(_ block: BlockDefinition, pins: [String], supply: Double = 15,
-                                    load: Double = 10_000) throws -> OpAmpFigures {
+                                    load: Double = 10_000, log: ((String) -> Void)? = nil) throws -> OpAmpFigures {
         guard pins.count == 5 else { throw MeasurementError(description: "An op-amp has five pins: +in, −in, V+, V−, out") }
+        let started = Date()
+        /// What each stage cost, for `log`
+        func done(_ stage: String, _ simulator: Simulator) {
+            guard let log else { return }
+            log(String(format: "%@ done at %.1f s: %ld steps of %ld substeps (%ld rejected), %ld Newton iterations, "
+                       + "%ld convergence failures, %ld plans (%.2f s)", stage, Date().timeIntervalSince(started),
+                       Int((simulator.time / simulator.timeStep).rounded()), simulator.substeps, simulator.rejectedSubsteps,
+                       simulator.newtonIterations, simulator.convergenceFailures, simulator.plans, simulator.planningSeconds))
+        }
         func circuit(_ input: NetlistPart, follower: Bool) throws -> Circuit {
             try bench(block, pins: pins, supply: supply, load: load, input: input, follower: follower)
         }
@@ -204,6 +213,7 @@ public enum MakerModels {
         guard !rest.isFailed else { throw MeasurementError(description: "As a follower it fails: \(rest.problems.joined(separator: "; "))") }
         let offset = rest.terminalVoltage(rl, 0)
         let supplyCurrent = rest.current(vp)
+        done("follower at rest", rest)
 
         // an inverting stage of gain −1 at rest, and its small-signal response: the open-loop gain is the output over the
         // − input
@@ -222,6 +232,7 @@ public enum MakerModels {
         let source = try index(inverting, "VI"), r2 = try index(inverting, "R2")
         let stage = Simulator.settled(inverting, holding: source, duration: 0.01, maxSteps: Self.settlingSteps)
         guard !stage.isFailed else { throw MeasurementError(description: "As an inverting stage it fails: \(stage.problems.joined(separator: "; "))") }
+        done("inverting stage at rest", stage)
         let (minus, out) = (stage.nodes(of: r2)[0], stage.nodes(of: r2)[1])
         let frequencies = (0...100).map { pow(10, -1 + Double($0) / 10) }
         guard let model = stage.smallSignalModel(), let response = model.solve(input: source, frequencies: frequencies) else {
@@ -270,6 +281,7 @@ public enum MakerModels {
                 ins.append(simulator.terminalVoltage(input, 1))  // (its plus terminal)
                 outs.append(simulator.terminalVoltage(output, 0))
             }
+            done(String(format: "slewing at %g Hz", frequency), simulator)
             guard !simulator.isFailed else { continue }
             /// The time `values` cross `level` going the way `rising` says, after `start`
             func crossing(_ values: [Double], _ level: Double, rising: Bool, after start: Double) -> Double? {
@@ -302,6 +314,7 @@ public enum MakerModels {
             let output = try index(open, "RL")
             let driven = Simulator(circuit: open, timeStep: 2e-6)
             while driven.time < 0.0025 && !driven.isFailed { driven.step() }
+            done(sign > 0 ? "swinging high" : "swinging low", driven)
             guard !driven.isFailed else {
                 throw MeasurementError(description: "Driven open loop it fails: \(driven.problems.joined(separator: "; "))")
             }

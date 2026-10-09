@@ -222,7 +222,7 @@ public enum MakerModelCatalog {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.setValue("Mozilla/5.0 (Macintosh) JSpice (a circuit simulator, fetching a maker's SPICE model)",
                          forHTTPHeaderField: "User-Agent")
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
             if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
                 result.error = URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: "HTTP \(status) from \(url.host ?? "")"])
             } else {
@@ -230,8 +230,13 @@ public enum MakerModelCatalog {
                 result.error = error
             }
             done.signal()
-        }.resume()
-        done.wait()
+        }
+        task.resume()
+        // the request's timeout is for a silence: a server that trickles is given up on after three times as long in all
+        guard done.wait(timeout: .now() + 3 * timeout) == .success else {
+            task.cancel()
+            throw URLError(.timedOut, userInfo: [NSLocalizedDescriptionKey: "\(url.host ?? "") took too long"])
+        }
         if let error = result.error { throw error }
         return result.data ?? Data()
     }
