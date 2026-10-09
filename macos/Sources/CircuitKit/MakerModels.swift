@@ -312,17 +312,30 @@ public enum MakerModels {
                 }
                 return nil
             }
-            // the edges after the first period, when the op-amp has powered up; the output's crossings looked for from a
-            // little before the input's (it can jump at the step's instant, through the inputs' clamp diodes)
+            /// The last time `values` cross `level` going the way `rising` says, after `start` and before `end`
+            func lastCrossing(_ values: [Double], _ level: Double, rising: Bool, after start: Double, before end: Double) -> Double? {
+                var last: Double?
+                for k in 1..<values.count where times[k] > start && times[k - 1] < end {
+                    let (a, b) = (values[k - 1], values[k])
+                    if rising ? (a < level && b >= level) : (a > level && b <= level) {
+                        last = times[k - 1] + (level - a) / (b - a) * (times[k] - times[k - 1])
+                    }
+                }
+                return last
+            }
+            // the edges after the first period, when the op-amp has powered up: the output's 90 % crossing after the
+            // input's edge, and its last 10 % crossing before that (the output can jump at the step's instant, through
+            // the inputs' clamp diodes or its input stage, and fall back before it slews: that is not the edge)
             let span = to - from
+            let early = period / 100
             if let edge = crossing(ins, 0, rising: !inverts, after: period),
-               let a = crossing(outs, from, rising: true, after: edge - period / 100),
-               let b = crossing(outs, to, rising: true, after: a), b < edge + period / 2 {
+               let b = crossing(outs, to, rising: true, after: edge - early),
+               let a = lastCrossing(outs, from, rising: true, after: edge - early, before: b), b < edge + period / 2 {
                 slewRise = span / (b - a)
             }
             if let edge = crossing(ins, 0, rising: inverts, after: period),
-               let a = crossing(outs, to, rising: false, after: edge - period / 100),
-               let b = crossing(outs, from, rising: false, after: a), b < edge + period / 2 {
+               let b = crossing(outs, from, rising: false, after: edge - early),
+               let a = lastCrossing(outs, to, rising: false, after: edge - early, before: b), b < edge + period / 2 {
                 slewFall = span / (b - a)
             }
         }

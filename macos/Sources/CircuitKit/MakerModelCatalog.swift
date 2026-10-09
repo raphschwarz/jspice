@@ -329,11 +329,9 @@ public enum MakerModelCatalog {
                   DatasheetValue(.swingLow, -14.65, .atMost, "VO, RL = 2 kΩ: (V–) + 0.35 V"),
               ],
               ngspice: [.offset: 0.999751, .supplyCurrent: 1.8005, .openLoopGain: 124.858, .gainBandwidth: 11.0162,
-                        .unityGain: 8.28937, .phaseMargin: 72.3371, .slewRise: 17.2789, .slewFall: 17.3112, .swingHigh: 14.7166,
+                        .unityGain: 8.28937, .phaseMargin: 72.3371, .slewRise: 20.0274, .slewFall: 20.0738, .swingHigh: 14.7166,
                         .swingLow: -14.6876],
-              notes: [
-                  "It slews 17.3 V/µs as a follower, where the datasheet's typical is 20 V/µs at G = 1.",
-              ]),
+              notes: []),
     ]
 
     public static func model(_ part: String) -> Model? {

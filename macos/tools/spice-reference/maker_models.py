@@ -204,13 +204,19 @@ def measure(model, subckt, pins, supply=15.0, load=10e3, slew_gain=1, order=None
         for k in range(1, len(values)):
             if t[k] > after and ((values[k - 1] < level <= values[k]) if rising else (values[k - 1] > level >= values[k])):
                 return t[k - 1] + (level - values[k - 1]) / (values[k] - values[k - 1]) * (t[k] - t[k - 1])
-    # the output's 10 % and 90 % crossings, looked for from a little before the input's edge (the output can jump at the
-    # step's instant, through the inputs' clamp diodes)
+    # the output's 90 % crossing after the input's edge, and its last 10 % crossing before that (the output can jump at
+    # the step's instant, through the inputs' clamp diodes or its input stage, and fall back before it slews)
+    def last_crossing(values, level, rising, after, before):
+        last = None
+        for k in range(1, len(values)):
+            if t[k] > after and t[k - 1] < before and ((values[k - 1] < level <= values[k]) if rising else (values[k - 1] > level >= values[k])):
+                last = t[k - 1] + (level - values[k - 1]) / (values[k] - values[k - 1]) * (t[k] - t[k - 1])
+        return last
     slew = [None, None]
     for k, rising in enumerate((True, False)) if rows else ():
         e = crossing(vin, 0, rising if slew_gain > 0 else not rising, period)
-        a = crossing(vout, -4 if rising else 4, rising, e - period / 100)
-        b = crossing(vout, 4 if rising else -4, rising, a)
+        b = crossing(vout, 4 if rising else -4, rising, e - period / 100)
+        a = last_crossing(vout, -4 if rising else 4, rising, e - period / 100, b)
         slew[k] = 8 / (b - a) / 1e6
     # swing, open loop
     swing = []
