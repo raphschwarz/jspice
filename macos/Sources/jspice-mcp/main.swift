@@ -50,7 +50,7 @@ func benchmark(seconds: Double, ids: [String]) {
         let size = simulator.equationStatistics
         print("\(name)\(perStep) µs/step \(speed)× real time  \(simulator.convergenceFailures) unconverged  \(solves) solves/step"
               + "  error \(error) dB"
-              + "  n \(size.unknowns) nz \(size.nonzeros) lu \(size.factorEntries) nl \(size.nonlinearUnknowns) plans \(simulator.plans)\(notes)")
+              + "  n \(size.unknowns) nz \(size.nonzeros) lu \(size.factorEntries) nl \(size.nonlinearUnknowns) plans \(simulator.plans) orders \(simulator.pivotOrders)\(notes)")
     }
 }
 

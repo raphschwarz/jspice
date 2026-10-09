@@ -84,6 +84,30 @@ final class SparsePlanTests: XCTestCase {
         return worst
     }
 
+    /// Factors the nonlinear block of `values` as the engine does, then solves for every unknown
+    func solve(_ plan: SparsePlan, _ values: inout [Double], _ forwarded: [Double], linearFactored: Bool) throws -> [Double] {
+        if !linearFactored {
+            XCTAssertEqual(values.withUnsafeMutableBufferPointer { plan.linear.factor($0.baseAddress!) }, -1)
+        }
+        var scratch = [Double](repeating: 0, count: max(plan.entryCount - plan.tailStart, 1))
+        let chosen = values.withUnsafeMutableBufferPointer { v in
+            scratch.withUnsafeMutableBufferPointer { plan.factorBlock(v.baseAddress!, scratch: $0.baseAddress!) }
+        }
+        let order = try XCTUnwrap(chosen)
+        var y = forwarded
+        var x = [Double](repeating: 0, count: plan.n)
+        values.withUnsafeBufferPointer { v in
+            y.withUnsafeMutableBufferPointer { y in
+                order.forward(v.baseAddress!, y.baseAddress!)
+                x.withUnsafeMutableBufferPointer { x in
+                    _ = order.back(v.baseAddress!, y.baseAddress!, x.baseAddress!)
+                    _ = plan.linear.back(v.baseAddress!, y.baseAddress!, x.baseAddress!)
+                }
+            }
+        }
+        return x
+    }
+
     func testLinearSystemsSolveFromTheirPlan() throws {
         var g = Generator(state: 1)
         for trial in 0..<40 {
@@ -93,19 +117,16 @@ final class SparsePlanTests: XCTestCase {
             XCTAssertEqual(plan.leading, s.n)
             var values = [Double](repeating: 0, count: plan.entryCount)
             for i in 0..<(s.n * s.n) where s.matrix[i] != 0 { values[Int(plan.slots[i])] += s.matrix[i] }
-            XCTAssertEqual(values.withUnsafeMutableBufferPointer { plan.factor($0.baseAddress!, from: 0, to: s.n) }, -1)
+            XCTAssertEqual(values.withUnsafeMutableBufferPointer { plan.linear.factor($0.baseAddress!) }, -1)
             let b = (0..<s.n).map { _ in Double.random(in: -1...1, using: &g) }
-            var y = b
-            var x = [Double](repeating: 0, count: s.n)
+            var forwarded = b
             values.withUnsafeBufferPointer { v in
-                y.withUnsafeMutableBufferPointer { y in
-                    plan.forward(v.baseAddress!, y.baseAddress!, from: 0, to: s.n)
-                    _ = x.withUnsafeMutableBufferPointer { plan.back(v.baseAddress!, y.baseAddress!, $0.baseAddress!, from: 0, to: s.n) }
-                }
+                forwarded.withUnsafeMutableBufferPointer { plan.linear.forward(v.baseAddress!, $0.baseAddress!) }
             }
+            let x = try solve(plan, &values, forwarded, linearFactored: true)
             XCTAssertLessThan(residual(s.matrix, x, b, s.n), 1e-9, "trial \(trial)")
             // never more operations than a dense elimination's (about n³/3)
-            XCTAssertLessThanOrEqual(plan.opCount, s.n * s.n * s.n / 3 + s.n, "trial \(trial)")
+            XCTAssertLessThanOrEqual(plan.linear.opCount, s.n * s.n * s.n / 3 + s.n, "trial \(trial)")
         }
     }
 
@@ -133,35 +154,60 @@ final class SparsePlanTests: XCTestCase {
             }
             var base = [Double](repeating: 0, count: plan.entryCount)
             for i in 0..<(n * n) where s.matrix[i] != 0 { base[Int(plan.slots[i])] += s.matrix[i] }
-            XCTAssertEqual(base.withUnsafeMutableBufferPointer { plan.factor($0.baseAddress!, from: 0, to: plan.leading) }, -1)
+            XCTAssertEqual(base.withUnsafeMutableBufferPointer { plan.linear.factor($0.baseAddress!) }, -1)
             let b = (0..<n).map { _ in Double.random(in: -1...1, using: &g) }
             var forwarded = b
             base.withUnsafeBufferPointer { v in
-                forwarded.withUnsafeMutableBufferPointer { plan.forward(v.baseAddress!, $0.baseAddress!, from: 0, to: plan.leading) }
+                forwarded.withUnsafeMutableBufferPointer { plan.linear.forward(v.baseAddress!, $0.baseAddress!) }
             }
-            for iteration in 0..<6 {
+            for iteration in 0..<8 {
+                // device values over six decades: pivot orders are reused or made as they need to be
                 let restamp = stamps(s, scale: pow(10, Double.random(in: -6...0, using: &g)), using: &g)
                 var values = base
                 for i in 0..<(n * n) where restamp.matrix[i] != 0 { values[Int(plan.slots[i])] += restamp.matrix[i] }
                 var y = forwarded
                 for i in 0..<n { y[i] += restamp.rhs[i] }
-                // a pivot that has become too small asks for a new plan, which the engine then makes
-                guard values.withUnsafeMutableBufferPointer({ plan.factor($0.baseAddress!, from: plan.leading, to: n) }) < 0 else { continue }
-                var x = [Double](repeating: 0, count: n)
-                values.withUnsafeBufferPointer { v in
-                    y.withUnsafeMutableBufferPointer { y in
-                        plan.forward(v.baseAddress!, y.baseAddress!, from: plan.leading, to: n)
-                        x.withUnsafeMutableBufferPointer { x in
-                            _ = plan.back(v.baseAddress!, y.baseAddress!, x.baseAddress!, from: plan.leading, to: n)
-                            _ = plan.back(v.baseAddress!, y.baseAddress!, x.baseAddress!, from: 0, to: plan.leading)
-                        }
-                    }
-                }
+                let x = try solve(plan, &values, y, linearFactored: true)
                 let full = zip(s.matrix, restamp.matrix).map { $0 + $1 }
                 let rhs = zip(b, restamp.rhs).map { $0 + $1 }
                 XCTAssertLessThan(residual(full, x, rhs, n), 1e-9, "trial \(trial) iteration \(iteration)")
             }
+            XCTAssertLessThanOrEqual(plan.orderCount, SparsePlan.maxOrders)
         }
+    }
+
+    func testAnOpAmpSwitchingBetweenItsLinearRangeAndSaturationReusesItsPivotOrders() throws {
+        // a non-inverting amplifier: + input (0) driven through 1 kΩ, − input (1) with 10 kΩ to ground and 90 kΩ to the
+        // output (2), the op-amp's row (3): v(out) − slope (v+ − v−) = 0, the slope a million in its linear range and
+        // nearly nothing when it saturates
+        let n = 4
+        func matrix(slope: Double) -> [Double] {
+            var a = [Double](repeating: 0, count: n * n)
+            a[0 * n + 0] = 1e-3
+            a[1 * n + 1] = 1e-4 + 1 / 90_000.0
+            a[1 * n + 2] = -1 / 90_000.0
+            a[2 * n + 1] = -1 / 90_000.0
+            a[2 * n + 2] = 1 / 90_000.0
+            a[2 * n + 3] = -1
+            a[3 * n + 2] = 1
+            a[3 * n + 0] = -slope
+            a[3 * n + 1] = slope
+            return a
+        }
+        var pattern = matrix(slope: 1).map { $0 != 0 }
+        for i in 0..<n { for j in 0..<n { pattern[i * n + j] = pattern[i * n + j] || (i == 3 && j < 3) } }
+        let plan = try XCTUnwrap(SparsePlan.make(matrix: matrix(slope: 1e6), pattern: pattern,
+                                                 nonlinear: [true, true, true, true], size: n))
+        let b = [1e-3, 0, 0, 0]
+        for (round, slope) in [1e6, 1e-9, 1e6, 1e-9, 1e6, 1e-9].enumerated() {
+            let a = matrix(slope: slope)
+            var values = [Double](repeating: 0, count: plan.entryCount)
+            for i in 0..<(n * n) where a[i] != 0 { values[Int(plan.slots[i])] += a[i] }
+            let x = try solve(plan, &values, b, linearFactored: false)
+            XCTAssertLessThan(residual(a, x, b, n), 1e-9, "round \(round)")
+        }
+        // at most one order for each state, made once and then switched between
+        XCTAssertLessThanOrEqual(plan.orderCount, 2)
     }
 
     func testVoltageSourceOnNonlinearNodesJoinsTheNonlinearBlock() throws {

@@ -218,8 +218,12 @@ public final class Simulator {
     /// Newton-Raphson's values (the base's, with the nonlinear block restamped and refactored) and right-hand side
     private var values: [Double] = []
     private var workVector: [Double] = []
-    /// The base matrix in the plan's slots, its linear block factored; its version, and the version `values` holds
+    /// The base matrix in the plan's slots, its linear block factored (and, without nonlinear parts, its nonlinear block
+    /// too, by `baseOrder`); its version, and the version `values` holds
     private var baseValues: [Double] = []
+    private var baseOrder: EliminationProgram?
+    /// The nonlinear block's values, kept while pivot orders are tried
+    private var blockScratch: [Double] = []
     private var baseVersion = 0
     private var valuesVersion = -1
     /// The right-hand side after the linear block's forward substitution
@@ -265,7 +269,7 @@ public final class Simulator {
     private var h = 1e-5
     private var a0 = 1.5, a1 = -2.0, a2 = 0.5
     /// Base matrices by substep level and the last one's, while the circuit stays the same
-    private var baseCache: [Int: (values: [Double], version: Int)] = [:]
+    private var baseCache: [Int: (values: [Double], version: Int, order: EliminationProgram?)] = [:]
     private var baseKey = -1
     private var baseVersionCount = 0
     /// What a substep changes, kept to go back to if it is thrown away
@@ -376,7 +380,7 @@ public final class Simulator {
         nonlinearIndices = indices {
             switch $0 {
             case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .opAmp, .ota, .analogSwitch, .multiplier, .vactrol,
-                 .unbufferedInverter, .pll, .triode, .pentode: return true
+                 .unbufferedInverter, .pll, .triode, .pentode, .vca: return true
             default: return false
             }
         }
@@ -469,6 +473,8 @@ public final class Simulator {
         extraNonlinear = []
         values = []
         baseValues = []
+        baseOrder = nil
+        blockScratch = []
         valuesVersion = -1
         matrixIsCurrent = false
         isFailed = false
@@ -853,13 +859,14 @@ public final class Simulator {
         buildRightHandSide(at: t)
         forwardRightHandSide()
         if !hasNonlinear && !hasMemristor {
-            guard let plan else { fail(); return false }
+            guard let plan, let order = baseOrder else { fail(); return false }
             if workVector.count != m { workVector = [Double](repeating: 0, count: m) }
             // into a scratch vector first: a failed solve must not leave non-finite voltages behind
-            let change = baseValues.withUnsafeBufferPointer { v in
-                rhsForwarded.withUnsafeBufferPointer { b in
-                    workVector.withUnsafeMutableBufferPointer { x in
-                        plan.back(v.baseAddress!, b.baseAddress!, x.baseAddress!, from: 0, to: plan.n)
+            let change = baseValues.withUnsafeBufferPointer { v -> Double in
+                rhsForwarded.withUnsafeBufferPointer { b -> Double in
+                    workVector.withUnsafeMutableBufferPointer { x -> Double in
+                        let block = order.back(v.baseAddress!, b.baseAddress!, x.baseAddress!)
+                        return block.isNaN ? .nan : plan.linear.back(v.baseAddress!, b.baseAddress!, x.baseAddress!)
                     }
                 }
             }
@@ -946,17 +953,21 @@ public final class Simulator {
                 needsPlan = true
                 continue
             }
-            let stuck = values.withUnsafeMutableBufferPointer { v -> Int in plan.factor(v.baseAddress!, from: plan.leading, to: plan.n) }
-            if stuck >= 0 {
-                needsPlan = true
-                continue
+            // the nonlinear block, by the first of the plan's pivot orders that suits its values (or a new one)
+            let blockCount = max(plan.entryCount - plan.tailStart, 1)
+            if blockScratch.count != blockCount { blockScratch = [Double](repeating: 0, count: blockCount) }
+            let chosen = values.withUnsafeMutableBufferPointer { v -> EliminationProgram? in
+                blockScratch.withUnsafeMutableBufferPointer { plan.factorBlock(v.baseAddress!, scratch: $0.baseAddress!) }
+            }
+            guard let order = chosen else {
+                Self.copy(savedX, into: &x)
+                fail()
+                return false
             }
             let change = values.withUnsafeBufferPointer { v -> Double in
                 workVector.withUnsafeMutableBufferPointer { b -> Double in
-                    plan.forward(v.baseAddress!, b.baseAddress!, from: plan.leading, to: plan.n)
-                    return x.withUnsafeMutableBufferPointer { x -> Double in
-                        plan.back(v.baseAddress!, b.baseAddress!, x.baseAddress!, from: plan.leading, to: plan.n)
-                    }
+                    order.forward(v.baseAddress!, b.baseAddress!)
+                    return x.withUnsafeMutableBufferPointer { x -> Double in order.back(v.baseAddress!, b.baseAddress!, x.baseAddress!) }
                 }
             }
             if change.isNaN {
@@ -971,11 +982,9 @@ public final class Simulator {
         }
         // the linear block's unknowns, from the nonlinear block's (its rows of the right-hand side are as forwarded)
         guard let plan, valuesVersion == baseVersion else { return converged }
-        let change = values.withUnsafeBufferPointer { v in
-            workVector.withUnsafeBufferPointer { b in
-                x.withUnsafeMutableBufferPointer { x in
-                    plan.back(v.baseAddress!, b.baseAddress!, x.baseAddress!, from: 0, to: plan.leading)
-                }
+        let change = values.withUnsafeBufferPointer { v -> Double in
+            workVector.withUnsafeBufferPointer { b -> Double in
+                x.withUnsafeMutableBufferPointer { x -> Double in plan.linear.back(v.baseAddress!, b.baseAddress!, x.baseAddress!) }
             }
         }
         if change.isNaN {
@@ -991,9 +1000,12 @@ public final class Simulator {
     private func forwardRightHandSide() {
         Self.copy(rhs, into: &rhsForwarded)
         guard let plan, baseValues.count == plan.entryCount else { return }
-        let end = hasNonlinear || hasMemristor ? plan.leading : plan.n
+        let order = hasNonlinear || hasMemristor ? nil : baseOrder
         baseValues.withUnsafeBufferPointer { v in
-            rhsForwarded.withUnsafeMutableBufferPointer { b in plan.forward(v.baseAddress!, b.baseAddress!, from: 0, to: end) }
+            rhsForwarded.withUnsafeMutableBufferPointer { b in
+                plan.linear.forward(v.baseAddress!, b.baseAddress!)
+                order?.forward(v.baseAddress!, b.baseAddress!)
+            }
         }
     }
 
@@ -1105,7 +1117,7 @@ public final class Simulator {
         if matrixIsCurrent {
             if key == baseKey { return }
             if let entry = baseCache[key] {
-                (baseValues, baseVersion) = (entry.values, entry.version)
+                (baseValues, baseVersion, baseOrder) = (entry.values, entry.version, entry.order)
                 baseKey = key
                 return
             }
@@ -1115,7 +1127,7 @@ public final class Simulator {
         buildBaseMatrix()
         guard !isFailed else { return }
         baseKey = key
-        baseCache[key] = (baseValues, baseVersion)
+        baseCache[key] = (baseValues, baseVersion, baseOrder)
     }
 
     /// The part of the matrix that only changes with the circuit or the substep, stamped into the plan's slots and its
@@ -1130,11 +1142,20 @@ public final class Simulator {
             beginSparseStamping(plan, floor: 0)
             fillBaseMatrix(&built, m)
             sparseStamping = false
-            if !stampMissed {
-                let end = hasNonlinear || hasMemristor ? plan.leading : plan.n
-                let stuck = built.withUnsafeMutableBufferPointer { plan.factor($0.baseAddress!, from: 0, to: end) }
-                if stuck < 0 {
+            if !stampMissed && built.withUnsafeMutableBufferPointer({ plan.linear.factor($0.baseAddress!) }) < 0 {
+                // without nonlinear parts the nonlinear block (unknowns the linear block could not pivot) is factored
+                // here too, once
+                var order: EliminationProgram?
+                if !hasNonlinear && !hasMemristor {
+                    let blockCount = max(plan.entryCount - plan.tailStart, 1)
+                    if blockScratch.count != blockCount { blockScratch = [Double](repeating: 0, count: blockCount) }
+                    order = built.withUnsafeMutableBufferPointer { v -> EliminationProgram? in
+                        blockScratch.withUnsafeMutableBufferPointer { plan.factorBlock(v.baseAddress!, scratch: $0.baseAddress!) }
+                    }
+                }
+                if hasNonlinear || hasMemristor || order != nil {
                     baseValues = built
+                    baseOrder = order
                     matrixIsCurrent = true
                     return
                 }
@@ -1452,7 +1473,7 @@ public final class Simulator {
                 stampCurrent(&rhs, 0, nodes[1], Self.echoReference / c.value)
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = moduleStates[i].output }
-            case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .levelDetector, .springReverb:
+            case .comparator, .vco, .vcf, .envelope, .sampleHold, .divider, .levelDetector, .springReverb:
                 let row = topology.sourceRow[i]
                 if row >= 0 { rhs[row] = moduleStates[i].output }
             default:
@@ -2242,6 +2263,27 @@ public final class Simulator {
                 add(matrix, m, row, nodes[0] - 1, -fx)
                 add(matrix, m, row, nodes[1] - 1, -fy)
                 rhs[row] += c.limit * t - fx * vx - fy * vy
+
+            case .vca:
+                // out = limit · tanh(gain · in / limit), the gain set by the control: solved with the circuit, so its
+                // output follows its input at once (a compressor's gain cell sits in an op-amp's feedback, where a
+                // sample's delay would make the loop ring), linearised in the input and the control. The small-signal
+                // model passes it on its own.
+                guard !linearising else { continue }
+                let row = topology.sourceRow[i]
+                guard row >= 0 else { continue }
+                let vin = voltage(nodes[0])
+                let vcv = voltage(nodes[1])
+                let exponential = c.value < 0.5
+                let raw = exponential ? c.gain * (vcv - c.offset) / 20 : max(vcv, 0) / c.threshold
+                let gain = exponential ? pow(10, min(raw, 40.0 / 20)) : min(raw, 100)
+                let gainSlope = exponential ? (raw < 2 ? gain * log(10) * c.gain / 20 : 0) : (vcv > 0 && raw < 100 ? 1 / c.threshold : 0)
+                let t = tanh(gain * vin / c.limit)
+                let fx = gain * (1 - t * t)
+                let fy = vin * (1 - t * t) * gainSlope
+                add(matrix, m, row, nodes[0] - 1, -fx)
+                add(matrix, m, row, nodes[1] - 1, -fy)
+                rhs[row] += c.limit * t - fx * vin - fy * vcv
 
             case .vactrol:
                 // the LED, like a diode, and the LDR, a resistance set by the light so far
@@ -3310,6 +3352,11 @@ public final class Simulator {
         guard let plan else { return (m, 0, 0, 0) }
         let nonzeros = plan.structure.reduce(0) { $1 ? $0 + 1 : $0 }
         return (m, nonzeros, plan.entryCount, plan.n - plan.leading)
+    }
+
+    /// Pivot orders the plan has for its nonlinear block (one for each state its parts have been seen in, up to a few)
+    public var pivotOrders: Int {
+        plan?.orderCount ?? 0
     }
 
     /// The index of a part of the circuit as it is simulated: one of the circuit's own, or one inside a block (by its
