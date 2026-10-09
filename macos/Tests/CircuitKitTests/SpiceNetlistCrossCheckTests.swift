@@ -61,11 +61,14 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
             let (circuit, warnings) = try SpiceNetlist.circuit(from: test.netlist, include: { path, _ in files[path].map { (path, $0) } })
             XCTAssertTrue(warnings.isEmpty, "\(test.id): \(warnings)")
             let probes = try test.probes.map { try terminal(on: $0.net, in: circuit) }
-            let step = Pacing.suggest(for: circuit).timeStep
+            // the step JSpice picks, at most a thousandth of the run: a TABLE's corners are not errors its step control sees,
+            // and straight lines across them between longer steps would be
+            let step = min(Pacing.suggest(for: circuit).timeStep, test.duration / 1000)
             let simulator = Simulator(circuit: circuit, timeStep: step)
             XCTAssertTrue(simulator.problems.isEmpty, "\(test.id): \(simulator.problems)")
-            var times: [Double] = [0]
-            var waves = probes.map { _ in [0.0] }
+            // the waveforms from the first step (before it, the circuit has not been solved)
+            var times: [Double] = []
+            var waves = probes.map { _ in [Double]() }
             while simulator.time < test.duration {
                 simulator.step()
                 if simulator.isFailed { break }
@@ -73,10 +76,11 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
                 for (k, probe) in probes.enumerated() { waves[k].append(simulator.terminalVoltage(probe.index, probe.terminal)) }
             }
             XCTAssertFalse(simulator.isFailed, "\(test.id) failed at \(simulator.time) s: \(simulator.problems)")
+            guard !times.isEmpty else { continue }
             for (k, probe) in test.probes.enumerated() {
                 let range = max((probe.values.max() ?? 0) - (probe.values.min() ?? 0), 1e-9)
                 var worst = 0.0, at = 0.0
-                for (t, value) in zip(test.times, probe.values) where t <= simulator.time {
+                for (t, value) in zip(test.times, probe.values) where t >= (times.first ?? 0) && t <= simulator.time {
                     let difference = abs(Self.interpolate(times, waves[k], at: t) - value) / range
                     if difference > worst { (worst, at) = (difference, t) }
                 }

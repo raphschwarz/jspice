@@ -230,7 +230,8 @@ def spice_elements(parts, ac_source=None, temperature=27):
             lines.append('V%s %s %s PULSE(%.12g %.12g 0 %.6g %.6g %.12g %.12g)' % (n, pin('plus'), pin('minus'),
                          param(p, 'low'), param(p, 'high'), edge, edge, param(p, 'duty') * period - edge, period))
         elif k == 'currentSource':
-            lines.append('I%s %s %s DC %.12g' % (n, pin('a'), pin('b'), param(p, 'current')))
+            # JSpice's current leaves its plus terminal: SPICE's n- (the current runs through the source from n+ to n-)
+            lines.append('I%s %s %s DC %.12g' % (n, pin('minus'), pin('plus'), param(p, 'current')))
         elif k in ('diode', 'led', 'zener'):
             models.append('.model D_%s D(%s)' % (n, diode_card(p, k)))
             lines.append('D%s %s %s D_%s' % (n, pin('anode'), pin('cathode'), n))

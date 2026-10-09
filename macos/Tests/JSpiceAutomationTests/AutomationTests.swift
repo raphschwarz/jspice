@@ -362,7 +362,7 @@ final class AutomationTests: XCTestCase {
         V1 in 0 DC 9
         R1 in out 10k
         R2 out 0 20k
-        G1 a 0 in 0 1m
+        T1 a 0 b 0 Z0=50 TD=1n
         .end
         """]) as? [String: Any])
         XCTAssertEqual((imported["parts"] as? [[String: Any]])?.count, 3)

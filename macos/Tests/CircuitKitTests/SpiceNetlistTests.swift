@@ -105,6 +105,24 @@ final class SpiceNetlistTests: XCTestCase {
         XCTAssertEqual(gain.magnitude, 1, accuracy: 1e-3)
     }
 
+    /// SPICE's current source drives its current through itself from n+ to n-: `I1 0 a 1m` pushes 1 mA into a, both ways
+    func testCurrentSourcesKeepSPICEsDirection() throws {
+        let text = """
+        current into a resistor
+        I1 0 a DC 1m
+        R1 a 0 1k
+        """
+        let (circuit, warnings) = try SpiceNetlist.circuit(from: text)
+        XCTAssertTrue(warnings.isEmpty, "\(warnings)")
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-3)
+        simulator.step()
+        let r1 = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "R1" })
+        let a = try XCTUnwrap(circuit.elements[r1].terminalNames.indices.max { simulator.terminalVoltage(r1, $0) < simulator.terminalVoltage(r1, $1) })
+        XCTAssertEqual(simulator.terminalVoltage(r1, a), 1, accuracy: 1e-9)
+        let deck = SpiceNetlist.export(circuit)
+        XCTAssertTrue(deck.contains("I1 0 a DC 0.001"), deck)
+    }
+
     /// A subcircuit's parameters: PARAMS: defaults, an instance's values, its own .param worked out from them, and a
     /// block for each different set
     func testSubcircuitParameters() throws {

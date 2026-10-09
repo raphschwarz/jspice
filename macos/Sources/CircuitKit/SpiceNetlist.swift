@@ -479,7 +479,10 @@ public enum SpiceNetlist {
                 }
                 if let first = rest.first, let v = value(first) { dc = v }
                 if letter == "i" {
-                    parts.append(NetlistPart(kind: .currentSource, name: name, params: ["current": dc], connections: ["a": plus, "b": minus]))
+                    // SPICE's current runs through the source from n+ to n-, out of n- into the circuit: JSpice's runs out of
+                    // its plus terminal
+                    parts.append(NetlistPart(kind: .currentSource, name: name, params: ["current": dc],
+                                             connections: ["minus": plus, "plus": minus]))
                 } else if let function, function.lowercased().hasPrefix("sin") {
                     let a = arguments(function)
                     var params = ["offset": a.count > 0 ? a[0] : 0, "amplitude": a.count > 1 ? a[1] : 0, "frequency": a.count > 2 ? a[2] : 1000]
@@ -653,8 +656,11 @@ public enum SpiceNetlist {
                     for pin in sub.pins {
                         drawn.append(NetlistPart(kind: .port, name: pin, connections: ["net": net(pin, "", inside)]))
                     }
-                    guard let laid = try? SchematicLayout.layout(drawn) else {
-                        warnings.append("\(name): subcircuit \(subName) can't be drawn")
+                    let laid: Circuit
+                    do {
+                        laid = try SchematicLayout.layout(drawn)
+                    } catch {
+                        warnings.append("\(name): subcircuit \(subName) can't be drawn: \(error)")
                         continue
                     }
                     block = laid.asBlock(named: heading[heading.count - 1])
@@ -767,7 +773,8 @@ public enum SpiceNetlist {
             case .audioInput, .keyboardPitch, .keyboardGate:
                 lines.append("\(device("V", name)) \(n("plus")) \(n("minus")) DC 0  ; \(part.kind.displayName): no SPICE equivalent, 0 V")
             case .currentSource:
-                lines.append("\(device("I", name)) \(n("a")) \(n("b")) DC \(f(p("current")))")
+                // out of the plus terminal: SPICE's n- (its current runs through the source from n+ to n-)
+                lines.append("\(device("I", name)) \(n("minus")) \(n("plus")) DC \(f(p("current")))")
             case .toggleSwitch, .pushButton:
                 lines.append("\(device("R", name)) \(n("a")) \(n("b")) \(part.closed ? "1m" : "1e12")  ; \(part.closed ? "closed" : "open") switch")
             case .ammeter:
