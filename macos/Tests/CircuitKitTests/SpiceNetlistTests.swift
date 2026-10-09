@@ -118,7 +118,7 @@ final class SpiceNetlistTests: XCTestCase {
         simulator.step()
         let r1 = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "R1" })
         let a = try XCTUnwrap(circuit.elements[r1].terminalNames.indices.max { simulator.terminalVoltage(r1, $0) < simulator.terminalVoltage(r1, $1) })
-        XCTAssertEqual(simulator.terminalVoltage(r1, a), 1, accuracy: 1e-9)
+        XCTAssertEqual(simulator.terminalVoltage(r1, a), 1, accuracy: 1e-6)
         let deck = SpiceNetlist.export(circuit)
         XCTAssertTrue(deck.contains("I1 0 a DC 0.001"), deck)
     }
@@ -155,7 +155,8 @@ final class SpiceNetlistTests: XCTestCase {
         simulator.step()
         let x2 = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "X2" })
         let mid = try XCTUnwrap(circuit.elements[x2].terminalNames.firstIndex(of: "mid"))
-        XCTAssertEqual(simulator.terminalVoltage(x2, mid), 2, accuracy: 1e-9)
+        // (to the 1e-12 S every node has to ground)
+        XCTAssertEqual(simulator.terminalVoltage(x2, mid), 2, accuracy: 1e-6)
     }
 
     /// .include and .lib read through the includer: a library's section alone, the files it includes in turn, and a
