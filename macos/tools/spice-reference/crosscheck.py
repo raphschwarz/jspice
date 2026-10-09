@@ -541,7 +541,7 @@ AC_CASES = [
         P('capacitor', 'CL', dict(a='out', b='GND'), capacitance=10e-9),
         P('njfet', 'J1', dict(gate='gate', drain='drain', source='GND'))]),
     dict(id='jfet-card', note='test JFET card: self-biased common-source stage fed from 100 kΩ, the Miller pole of CGD',
-         source='VIN', settle=0.01, probes=['drain'], fstop=1e8, parts=[
+         source='VIN', settle=0.2, probes=['drain'], fstop=1e8, parts=[
         P('dcVoltage', 'VDD', dict(plus='vdd', minus='GND'), voltage=12),
         P('acVoltage', 'VIN', dict(plus='in', minus='GND'), amplitude=0.1, frequency=1000),
         P('resistor', 'RG', dict(a='in', b='gate'), resistance=100_000),
@@ -663,7 +663,8 @@ def ac_main():
         open(AC_FIXTURE, 'w'), indent=1)
 
 # Devices at DC: a transistor between two sources, base-emitter and collector-emitter, one swept and the other held,
-# and the currents into its base and collector; ngspice's .dc with every node shunted by 1 TΩ to ground (JSpice's gmin)
+# and the currents the sources deliver into its base and collector; ngspice's .dc with every node, the device's internal
+# ones too, shunted by 1 TΩ to ground as JSpice's are (gmin), so the sources' currents include the same shunts
 DEVICE_SWEEPS = [
     dict(id='npn-vbe', note='test NPN card: currents against VBE at VCE 2 V (leakage, high injection, RB, RE)', kind='npn',
          params=GP_NPN, swept='vbe', fixed=2, start=0.45, stop=0.95, step=0.025),

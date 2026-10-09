@@ -855,7 +855,7 @@
    "id": "jfet-card",
    "note": "test JFET card: self-biased common-source stage fed from 100 k\u03a9, the Miller pole of CGD",
    "source": "VIN",
-   "settle": 0.01,
+   "settle": 0.2,
    "frequencies": [
     1.0,
     1.58489319,

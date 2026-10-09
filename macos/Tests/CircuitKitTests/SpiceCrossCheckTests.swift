@@ -159,10 +159,20 @@ final class SpiceCrossCheckTests: XCTestCase {
                                         ourPeriod ?? 0, period, settled.min() ?? 0, settled.max() ?? 0,
                                         reference.min() ?? 0, reference.max() ?? 0)
             } else {
+                var worst = (time: 0.0, value: 0.0, ours: 0.0...0.0)
                 for (t, value) in zip(test.times, probe.values) {
                     let ours = Self.band(times, waves[k], at: t, window: timeStep)
                     let distance = value < ours.lowerBound ? ours.lowerBound - value : max(0, value - ours.upperBound)
-                    deviation.waveform = max(deviation.waveform, distance / range)
+                    if distance / range > deviation.waveform {
+                        deviation.waveform = distance / range
+                        worst = (t, value, ours)
+                    }
+                }
+                // where a waveform is well off, where and how
+                if deviation.waveform > 0.02 {
+                    deviation.note = String(format: "worst at %.5g s: ngspice %.4g V, JSpice %.4g..%.4g V; %d substeps unconverged",
+                                            worst.time, worst.value, worst.ours.lowerBound, worst.ours.upperBound,
+                                            simulator.convergenceFailures)
                 }
             }
             result[probe.net] = deviation

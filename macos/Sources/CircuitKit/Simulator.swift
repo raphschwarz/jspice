@@ -97,11 +97,12 @@ public final class Simulator {
     var limitedVoltage: [Double] = []
     var limitedVoltage2: [Double] = []
     var limitedVoltage3: [Double] = []
-    /// The charge on each junction's capacitance, two slots a part (a diode's junction in the first; a transistor's
-    /// base-emitter junction in the first and base-collector in the second), at the last solution and the one before,
-    /// and the current it took to charge it over the last step
+    /// The charge each part stores, by slot (`chargeSlots` a part: a diode's junction in the first; a transistor's
+    /// base-emitter, base-collector and outer base-collector charges; a JFET's gate-source and gate-drain), at the last
+    /// solution and the two before (for the local error), and the current it took to charge over the last step
     var junctionCharge: [Double] = []
     var junctionChargePrevious: [Double] = []
+    var junctionChargeOlder: [Double] = []
     var junctionCurrent: [Double] = []
     /// The parts with junction capacitance or stored charge
     private var junctionIndices: [Int] = []
@@ -397,7 +398,8 @@ public final class Simulator {
                 q: Self.chargeSlots * (i + 1) <= junctionCharge.count
                     ? Array(junctionCharge[Self.chargeSlots * i ..< Self.chargeSlots * (i + 1)])
                         + Array(junctionChargePrevious[Self.chargeSlots * i ..< Self.chargeSlots * (i + 1)])
-                    : [Double](repeating: 0, count: 2 * Self.chargeSlots),
+                        + Array(junctionChargeOlder[Self.chargeSlots * i ..< Self.chargeSlots * (i + 1)])
+                    : [Double](repeating: 0, count: 3 * Self.chargeSlots),
                 digital: digitalState[i], logic: logicStates[i], module: moduleStates[i],
                 noise: noiseState[i], delay: delayHistory[i], brigade: bucketBrigades[i])
         }
@@ -420,6 +422,7 @@ public final class Simulator {
         let count = flat.elements.count
         junctionCharge = Array(repeating: 0, count: Self.chargeSlots * count)
         junctionChargePrevious = Array(repeating: 0, count: Self.chargeSlots * count)
+        junctionChargeOlder = Array(repeating: 0, count: Self.chargeSlots * count)
         junctionCurrent = Array(repeating: 0, count: Self.chargeSlots * count)
         capacitorVoltage = Array(repeating: 0, count: count)
         capacitorVoltagePrevious = Array(repeating: 0, count: count)
@@ -515,6 +518,7 @@ public final class Simulator {
                 for slot in 0..<Self.chargeSlots {
                     junctionCharge[Self.chargeSlots * i + slot] = state.q[slot]
                     junctionChargePrevious[Self.chargeSlots * i + slot] = state.q[Self.chargeSlots + slot]
+                    junctionChargeOlder[Self.chargeSlots * i + slot] = state.q[2 * Self.chargeSlots + slot]
                 }
                 digitalState[i] = state.digital
                 logicStates[i] = state.logic
@@ -598,6 +602,7 @@ public final class Simulator {
         for k in Self.chargeSlots * i ..< Self.chargeSlots * (i + 1) where k < junctionCharge.count {
             junctionCharge[k] = 0
             junctionChargePrevious[k] = 0
+            junctionChargeOlder[k] = 0
             junctionCurrent[k] = 0
         }
         // a Schmitt inverter's input starts low, so its output starts high; a 555 decides from its trigger
@@ -632,6 +637,7 @@ public final class Simulator {
         }
         // rebuild the history at the new step from the present slope (the junctions' charges as if still)
         junctionChargePrevious = junctionCharge
+        junctionChargeOlder = junctionCharge
         substepLevel = 0
         lastLevel = 0
         olderLevel = 0
@@ -705,6 +711,7 @@ public final class Simulator {
         Self.adopt(&limitedVoltage3, other.limitedVoltage3)
         Self.adopt(&junctionCharge, other.junctionCharge)
         Self.adopt(&junctionChargePrevious, other.junctionChargePrevious)
+        Self.adopt(&junctionChargeOlder, other.junctionChargeOlder)
         Self.adopt(&junctionCurrent, other.junctionCurrent)
         Self.adopt(&digitalState, other.digitalState)
         if logicStates != other.logicStates { matrixIsCurrent = false }
@@ -880,8 +887,8 @@ public final class Simulator {
             sequenceOwnsKeyboard = false
         }
         if !chips.isEmpty { runChips() }
-        // without capacitors, inductors or op-amp dynamics, smaller steps would only give the same answer again
-        let canSubdivide = !dynamicIndices.isEmpty
+        // without capacitors, inductors, stored charge or op-amp dynamics, smaller steps would only give the same answer again
+        let canSubdivide = !dynamicIndices.isEmpty || !junctionIndices.isEmpty
         if !canSubdivide { substepLevel = 0 }
         let whole = 1 << Self.finestLevel
         var position = 0
@@ -980,6 +987,20 @@ public final class Simulator {
             let d3 = ((d01 - d12) / (h + h1) - (d12 - d23) / (h1 + h2)) / (h + h1 + h2)
             let tolerance = Self.relativeTolerance * max(abs(x0), abs(x1)) + absolute
             worst = max(worst, scale * abs(d3) / tolerance)
+        }
+        // and each junction's stored charge, as SPICE checks every charge: a charge in error by the current tolerance
+        // over the substep is as much as a capacitor's voltage is allowed
+        for i in junctionIndices {
+            let q = storedCharges(i, lists[i])
+            for (slot, x0) in [q.0, q.1, q.2].enumerated() where slot < Self.chargeSlots {
+                let k = Self.chargeSlots * i + slot
+                let x1 = junctionCharge[k], x2 = junctionChargePrevious[k], x3 = junctionChargeOlder[k]
+                if x0 == 0 && x1 == 0 { continue }
+                let d01 = (x0 - x1) / h, d12 = (x1 - x2) / h1, d23 = (x2 - x3) / h2
+                let d3 = ((d01 - d12) / (h + h1) - (d12 - d23) / (h1 + h2)) / (h + h1 + h2)
+                let tolerance = Self.relativeTolerance * max(abs(x0), abs(x1)) + Self.currentTolerance * h
+                worst = max(worst, scale * abs(d3) / tolerance)
+            }
         }
         return worst
     }
@@ -3017,39 +3038,40 @@ public final class Simulator {
 
     // MARK: - After each step
 
+    /// The charges part `i` stores, by slot, at the junction voltages Newton-Raphson last stamped (the solution's, once
+    /// it converged: a substep accepted without converging leaves the solution at an unlimited iterate, where exp() would
+    /// store a huge charge)
+    private func storedCharges(_ i: Int, _ nodes: NodeList) -> (Double, Double, Double) {
+        switch kinds[i] {
+        case .npn, .pnp:
+            let g = bipolar[i]
+            let n = Self.bipolarNodes({ nodes[$0] }, g)
+            let p: Double = kinds[i] == .npn ? 1 : -1
+            let (vbe, vbc) = (limitedVoltage[i], limitedVoltage2[i])
+            let q = g.charges(vbe: vbe, vbc: vbc, vbx: p * (voltage(n.b) - voltage(n.cp)),
+                              g.currents(vbe: vbe, vbc: vbc, gmin: Self.junctionGmin))
+            return (q.qbe, q.qbc, q.qbx)
+        case .diode, .led, .zener:
+            return (junctionChargeAndCapacitance(i, slot: 0, limitedVoltage[i]).charge, 0, 0)
+        case .njfet:
+            let q = jfets[i].charges(vgs: limitedVoltage[i], vgd: limitedVoltage2[i])
+            return (q.qgs, q.qgd, 0)
+        default:
+            return (junctionChargeAndCapacitance(i, slot: 0, voltage(nodes[0]) - voltage(nodes[1])).charge, 0, 0)
+        }
+    }
+
     /// After each substep: the state of capacitors, inductors, op-amps' internal stages, vactrols and memristors
     private func updateDynamicStates() {
         let lists = nodeLists
         for i in junctionIndices {
-            let nodes = lists[i]
-            func store(_ slot: Int, _ q: Double) {
+            let q = storedCharges(i, lists[i])
+            for (slot, charge) in [q.0, q.1, q.2].enumerated() where slot < Self.chargeSlots {
                 let k = Self.chargeSlots * i + slot
-                junctionCurrent[k] = (a0 * q + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
+                junctionCurrent[k] = (a0 * charge + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
+                junctionChargeOlder[k] = junctionChargePrevious[k]
                 junctionChargePrevious[k] = junctionCharge[k]
-                junctionCharge[k] = q
-            }
-            func commit(_ slot: Int, _ v: Double) { store(slot, junctionChargeAndCapacitance(i, slot: slot, v).charge) }
-            // at the junction voltages Newton-Raphson last stamped (the solution's, once it converged): a substep accepted
-            // without converging leaves the solution at an unlimited iterate, where exp() would store a huge charge
-            switch kinds[i] {
-            case .npn, .pnp:
-                let g = bipolar[i]
-                let n = Self.bipolarNodes({ nodes[$0] }, g)
-                let p: Double = kinds[i] == .npn ? 1 : -1
-                let (vbe, vbc) = (limitedVoltage[i], limitedVoltage2[i])
-                let q = g.charges(vbe: vbe, vbc: vbc, vbx: p * (voltage(n.b) - voltage(n.cp)),
-                                  g.currents(vbe: vbe, vbc: vbc, gmin: Self.junctionGmin))
-                store(0, q.qbe)
-                store(1, q.qbc)
-                store(2, q.qbx)
-            case .diode, .led, .zener:
-                commit(0, limitedVoltage[i])
-            case .njfet:
-                let q = jfets[i].charges(vgs: limitedVoltage[i], vgd: limitedVoltage2[i])
-                store(0, q.qgs)
-                store(1, q.qgd)
-            default:
-                commit(0, voltage(nodes[0]) - voltage(nodes[1]))
+                junctionCharge[k] = charge
             }
         }
         for i in dynamicIndices {

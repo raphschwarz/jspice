@@ -42,10 +42,8 @@ final class DeviceModelTests: XCTestCase {
         let kind = try XCTUnwrap(ElementKind(rawValue: sweep.kind))
         let terminals = kind == .njfet ? ["gate": "b", "drain": "c", "source": "GND"] : ["base": "b", "collector": "c", "emitter": "GND"]
         var circuit = try SchematicLayout.layout([
-            NetlistPart(kind: .dcVoltage, name: "VBE", params: ["voltage": vbe], connections: ["plus": "vb", "minus": "GND"]),
-            NetlistPart(kind: .ammeter, name: "AB", params: [:], connections: ["in": "vb", "out": "b"]),
-            NetlistPart(kind: .dcVoltage, name: "VCE", params: ["voltage": vce], connections: ["plus": "vc", "minus": "GND"]),
-            NetlistPart(kind: .ammeter, name: "AC", params: [:], connections: ["in": "vc", "out": "c"]),
+            NetlistPart(kind: .dcVoltage, name: "VBE", params: ["voltage": vbe], connections: ["plus": "b", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "VCE", params: ["voltage": vce], connections: ["plus": "c", "minus": "GND"]),
             NetlistPart(kind: kind, name: "Q1", params: sweep.params, connections: terminals),
         ])
         if let temperature = sweep.temperature { circuit.settings.temperature = temperature }
@@ -53,23 +51,27 @@ final class DeviceModelTests: XCTestCase {
         // long steps: the stored charges stop charging within three, and what is left is the DC solution
         let simulator = Simulator(circuit: circuit, timeStep: 1)
         for _ in 0..<4 { simulator.step() }
-        XCTAssertFalse(simulator.isFailed, "\(sweep.id) at VBE \(vbe) V, VCE \(vce) V: \(simulator.problems)")
-        return (simulator.current(try index("AB")), simulator.current(try index("AC")))
+        let at = "\(sweep.id) at \(vbe) V, \(vce) V"
+        XCTAssertFalse(simulator.isFailed, "\(at): \(simulator.problems)")
+        // the transistor between the two sources (a source's current is what it delivers from its + terminal)
+        let q1 = try index("Q1")
+        XCTAssertEqual(simulator.terminalVoltage(q1, 0), vbe, accuracy: 1e-9, "\(at): control terminal")
+        XCTAssertEqual(simulator.terminalVoltage(q1, 1), vce, accuracy: 1e-9, "\(at): output terminal")
+        return (simulator.current(try index("VBE")), simulator.current(try index("VCE")))
     }
 
     /// The current into a diode's anode with `vd` across it
     private func current(_ sweep: Sweep, vd: Double) throws -> Double {
         let kind = try XCTUnwrap(ElementKind(rawValue: sweep.kind))
         var circuit = try SchematicLayout.layout([
-            NetlistPart(kind: .dcVoltage, name: "VD", params: ["voltage": vd], connections: ["plus": "va", "minus": "GND"]),
-            NetlistPart(kind: .ammeter, name: "AD", params: [:], connections: ["in": "va", "out": "a"]),
+            NetlistPart(kind: .dcVoltage, name: "VD", params: ["voltage": vd], connections: ["plus": "a", "minus": "GND"]),
             NetlistPart(kind: kind, name: "D1", params: sweep.params, connections: ["anode": "a", "cathode": "GND"]),
         ])
         if let temperature = sweep.temperature { circuit.settings.temperature = temperature }
         let simulator = Simulator(circuit: circuit, timeStep: 1)
         for _ in 0..<4 { simulator.step() }
         XCTAssertFalse(simulator.isFailed, "\(sweep.id) at \(vd) V: \(simulator.problems)")
-        return simulator.current(try XCTUnwrap(circuit.elements.firstIndex { $0.name == "AD" }))
+        return simulator.current(try XCTUnwrap(circuit.elements.firstIndex { $0.name == "VD" }))
     }
 
     func testDevicesMatchNgspiceAtDC() throws {
@@ -105,6 +107,31 @@ final class DeviceModelTests: XCTestCase {
                          + "\(output) " + String(format: "%8.3f ppm", worstCollector * 1e6))
         }
         print(table.joined(separator: "\n"))
+    }
+
+    /// An ammeter in series with each terminal of a transistor reads the current the terminal takes: the base's and
+    /// the collector's from their sources, the emitter's their sum
+    func testAmmetersReadATransistorsCurrents() throws {
+        let circuit = try SchematicLayout.layout([
+            NetlistPart(kind: .dcVoltage, name: "VCC", params: ["voltage": 9], connections: ["plus": "vcc", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "RB", params: ["resistance": 470_000], connections: ["a": "vcc", "b": "vb"]),
+            NetlistPart(kind: .ammeter, name: "AB", params: [:], connections: ["in": "vb", "out": "b"]),
+            NetlistPart(kind: .resistor, name: "RC", params: ["resistance": 2200], connections: ["a": "vcc", "b": "vc"]),
+            NetlistPart(kind: .ammeter, name: "AC", params: [:], connections: ["in": "vc", "out": "c"]),
+            NetlistPart(kind: .npn, name: "Q1", params: ["beta": 200], connections: ["base": "b", "collector": "c", "emitter": "e"]),
+            NetlistPart(kind: .ammeter, name: "AE", params: [:], connections: ["in": "e", "out": "GND"]),
+        ])
+        func index(_ name: String) throws -> Int { try XCTUnwrap(circuit.elements.firstIndex { $0.name == name }, name) }
+        let simulator = Simulator(circuit: circuit, timeStep: 1e-4)
+        for _ in 0..<20 { simulator.step() }
+        let q1 = try index("Q1")
+        let vb = simulator.terminalVoltage(q1, 0), vc = simulator.terminalVoltage(q1, 1)
+        let base = (9 - vb) / 470_000, collector = (9 - vc) / 2200
+        let readings = "AB \(simulator.current(try index("AB"))) A, AC \(simulator.current(try index("AC"))) A, AE "
+            + "\(simulator.current(try index("AE"))) A; through RB \(base) A, RC \(collector) A, Q1 \(simulator.current(q1)) A"
+        XCTAssertEqual(simulator.current(try index("AB")), base, accuracy: base * 1e-6, readings)
+        XCTAssertEqual(simulator.current(try index("AC")), collector, accuracy: collector * 1e-6, readings)
+        XCTAssertEqual(simulator.current(try index("AE")), base + collector, accuracy: collector * 1e-6, readings)
     }
 
     /// A manufacturer's card, read from a netlist, is the transistor it describes: every parameter JSpice models kept
