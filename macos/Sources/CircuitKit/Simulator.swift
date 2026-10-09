@@ -3964,7 +3964,7 @@ public final class Simulator {
                                gmin: Self.junctionGmin)
             // with the stored charges' charging currents: bulk to drain and to source, gate to source, drain and bulk
             let k = Self.chargeSlots * i
-            let (cbd, cbs) = (r.cbd + junctionCurrent[k], r.cbs + junctionCurrent[k + 1])
+            let cbd = r.cbd + junctionCurrent[k]
             let (igs, igd, igb) = (junctionCurrent[k + 2], junctionCurrent[k + 3], junctionCurrent[k + 4])
             // into the gate, the drain, and the source with the bulk
             let gate = t * (igs + igd + igb)

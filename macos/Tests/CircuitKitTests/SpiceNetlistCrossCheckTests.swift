@@ -107,7 +107,9 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
                 var up = x, down = x
                 up[k] += 1e-6
                 down[k] -= 1e-6
-                let numeric = (up.withUnsafeBufferPointer { e.value($0.baseAddress!) } - down.withUnsafeBufferPointer { e.value($0.baseAddress!) }) / 2e-6
+                let high: Double = up.withUnsafeBufferPointer { e.value($0.baseAddress!) }
+                let low: Double = down.withUnsafeBufferPointer { e.value($0.baseAddress!) }
+                let numeric = (high - low) / 2e-6
                 XCTAssertEqual(e.slope(k, p.baseAddress!), numeric, accuracy: 1e-6, "slope \(k)")
             }
         }
@@ -115,7 +117,8 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
         let poly = SpiceExpression.polynomial(dimensions: 2, coefficients: [1, 2, 3, 4, 5, 6],
                                               inputs: [.voltage("a", nil), .voltage("b", nil)])
         [0.5, -2.0].withUnsafeBufferPointer { p in
-            XCTAssertEqual(poly.value(p.baseAddress!), 1 + 2 * 0.5 + 3 * -2 + 4 * 0.25 + 5 * 0.5 * -2 + 6 * 4, accuracy: 1e-12)
+            // 1 + 2 (0.5) + 3 (−2) + 4 (0.25) + 5 (0.5)(−2) + 6 (4)
+            XCTAssertEqual(poly.value(p.baseAddress!), 16, accuracy: 1e-12)
         }
     }
 }

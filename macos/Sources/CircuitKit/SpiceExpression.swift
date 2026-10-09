@@ -277,7 +277,6 @@ public struct SpiceExpression: Hashable, Sendable {
             }
         case let .conditional(c, a, b): return .conditional(c, d(a), d(b))
         case let .table(a, xs, ys): return mul(.tableSlope(a, xs, ys), d(a))
-        case .tableSlope: return .constant(0)
         }
     }
 
