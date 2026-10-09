@@ -95,40 +95,6 @@ final class SweepTests: XCTestCase {
         }
     }
 
-    func testPlannedEliminationSolvesLikeAFreshOne() {
-        // sparse systems solved again and again with changing values, as Newton-Raphson does: the plan is replayed,
-        // and when an entry appears outside the plan or a pivot shrinks, elimination falls back and plans again
-        var generator = SystemRandomNumberGenerator()
-        func random() -> Double { Double.random(in: -1...1, using: &generator) }
-        for trial in 0..<60 {
-            let n = 2 + trial % 30
-            var pattern = [Bool](repeating: false, count: n * n)
-            for r in 0..<n {
-                pattern[r * n + r] = trial % 3 != 0 || r % 2 == 0
-                for _ in 0..<3 { pattern[r * n + Int.random(in: 0..<n, using: &generator)] = true }
-            }
-            let base = pattern.map { $0 ? random() : 0 }
-            var plan: EliminationPlan?
-            for iteration in 0..<20 {
-                var a = base.enumerated().map { $0.element * (1 + 0.05 * random()) }
-                if iteration % 7 == 3 { a[Int.random(in: 0..<(n * n), using: &generator)] += 1 }
-                if iteration % 5 == 4 { for i in a.indices where pattern[i] && Double.random(in: 0...1, using: &generator) < 0.2 { a[i] = 0 } }
-                let b = (0..<n).map { _ in random() }
-                var matrix = a
-                var x = b
-                guard LUSolver.solveInPlace(&matrix, &x, size: n, plan: &plan, changed: nil) else { continue }
-                var worst = 0.0
-                for r in 0..<n {
-                    var sum = -b[r]
-                    for c in 0..<n { sum += a[r * n + c] * x[c] }
-                    worst = max(worst, abs(sum))
-                }
-                let scale = max(1, x.map(abs).max() ?? 1)
-                XCTAssertLessThan(worst / scale, 1e-8, "trial \(trial) iteration \(iteration)")
-            }
-        }
-    }
-
     func testNoteNamesRejectWhatTheyCannotPlay() {
         XCTAssertEqual(NoteName.number("C4"), 60)
         XCTAssertEqual(NoteName.number("bb2"), 46)

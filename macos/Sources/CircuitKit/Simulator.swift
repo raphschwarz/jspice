@@ -14,8 +14,6 @@ public final class Simulator {
     /// makes on every write
     typealias Entries = UnsafeMutablePointer<Double>
 
-    deinit { stampLog.deallocate() }
-
     /// The circuit as it was loaded
     public private(set) var circuit: Circuit
     /// What is simulated: the circuit with each block's parts in its place (`Circuit.flattened`). Its elements start
@@ -206,27 +204,40 @@ public final class Simulator {
     /// Scopes with the index of the element each one shows
     private var recordedTraces: [(trace: ScopeTrace, index: Int)] = []
 
-    /// Newton-Raphson's matrix and right-hand side, reused from one iteration to the next
-    private var workMatrix: [Double] = []
+    /// How the equations are factored (see `SparsePlan`): made at the first solve after the circuit changes shape, and
+    /// again whenever it no longer fits
+    private var plan: SparsePlan?
+    /// Plans made since the start
+    public private(set) var plans = 0
+    /// Set when the plan no longer fits (a stamp fell outside it, or a pivot became too small): planned again next
+    private var needsPlan = false
+    /// Matrix positions (row × size + column) stamped outside the plan, and unknowns Newton-Raphson stamped outside its
+    /// nonlinear block, for the next plan to include
+    private var missedPositions: [Int] = []
+    private var extraNonlinear: Set<Int> = []
+    /// Newton-Raphson's values (the base's, with the nonlinear block restamped and refactored) and right-hand side
+    private var values: [Double] = []
     private var workVector: [Double] = []
-    /// The pivots and non-zero entries of the last elimination, replayed while the matrix keeps its pattern
-    private var eliminationPlan: EliminationPlan?
-    /// Matrix entries written by the stamps of the present Newton iteration (the base matrix and the stamps' own
-    /// values are the only things that change the pattern), and how many: more than the log holds means it overflowed
-    private var stampLog = UnsafeMutableBufferPointer<Int>(start: nil, count: 0)
-    private var stampCount = 0
-    private var loggingStamps = false
-    /// Counts base matrix rebuilds, and which one the elimination plan was last checked against
+    /// The base matrix in the plan's slots, its linear block factored; its version, and the version `values` holds
+    private var baseValues: [Double] = []
     private var baseVersion = 0
-    private var planBaseVersion = -1
+    private var valuesVersion = -1
+    /// The right-hand side after the linear block's forward substitution
+    private var rhsForwarded: [Double] = []
+    /// While stamping into the plan's slots: the slot map, the first slot a stamp may write (the base writes any, Newton-
+    /// Raphson only the nonlinear block's), and whether one fell outside
+    private var sparseStamping = false
+    private var slotMap = Simulator.noSlots
+    private var stampFloor = 0
+    private var stampSize = 0
+    private var stampMissed = false
+    private static let noSlots = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
     private var savedX: [Double] = []
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
     private var savedLimited3: [Double] = []
 
-    private var baseMatrix: [Double] = []
-    private var baseLU: LUSolver?
     private var matrixIsCurrent = false
     private var hasNonlinear = false
     private var hasMemristor = false
@@ -246,7 +257,7 @@ public final class Simulator {
     private var h = 1e-5
     private var a0 = 1.5, a1 = -2.0, a2 = 0.5
     /// Base matrices by substep level and the last one's, while the circuit stays the same
-    private var baseCache: [Int: (matrix: [Double], lu: LUSolver?, version: Int)] = [:]
+    private var baseCache: [Int: (values: [Double], version: Int)] = [:]
     private var baseKey = -1
     private var baseVersionCount = 0
     /// What a substep changes, kept to go back to if it is thrown away
@@ -442,6 +453,14 @@ public final class Simulator {
         hasNonlinear = !nonlinearIndices.isEmpty
         hasDigital = !digitalIndices.isEmpty
         hasMemristor = !memristorIndices.isEmpty
+        // the equations' shape may have changed: plan afresh
+        plan = nil
+        needsPlan = false
+        missedPositions = []
+        extraNonlinear = []
+        values = []
+        baseValues = []
+        valuesVersion = -1
         matrixIsCurrent = false
         isFailed = false
         problems = topology.problems
@@ -812,12 +831,19 @@ public final class Simulator {
         prepareBaseMatrix()
         if isFailed { return false }
         buildRightHandSide(at: t)
-        let rhs = self.rhs
+        forwardRightHandSide()
         if !hasNonlinear && !hasMemristor {
-            guard let lu = baseLU else { fail(); return false }
+            guard let plan else { fail(); return false }
+            if workVector.count != m { workVector = [Double](repeating: 0, count: m) }
             // into a scratch vector first: a failed solve must not leave non-finite voltages behind
-            lu.solve(rhs, into: &workVector)
-            if workVector.contains(where: { !$0.isFinite }) { fail(); return false }
+            let change = baseValues.withUnsafeBufferPointer { v in
+                rhsForwarded.withUnsafeBufferPointer { b in
+                    workVector.withUnsafeMutableBufferPointer { x in
+                        plan.back(v.baseAddress!, b.baseAddress!, x.baseAddress!, from: 0, to: plan.n)
+                    }
+                }
+            }
+            if change.isNaN { fail(); return false }
             Self.copy(workVector, into: &x)
             return true
         }
@@ -826,13 +852,13 @@ public final class Simulator {
         Self.copy(limitedVoltage2, into: &savedLimited2)
         Self.copy(limitedVoltage3, into: &savedLimited3)
         junctionConductance = 0
-        if newton(rhs, iterations: Self.maxNewtonIterations) || isFailed || !hasNonlinear { return !isFailed }
+        if newton(iterations: Self.maxNewtonIterations) || isFailed || !hasNonlinear { return !isFailed }
         let firstTry = (x, limitedVoltage, limitedVoltage2, limitedVoltage3)
         (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedX, savedLimited, savedLimited2, savedLimited3)
         var converged = false
         for conductance in Self.steppedConductances {
             junctionConductance = conductance
-            converged = newton(rhs, iterations: Self.steppedIterations)
+            converged = newton(iterations: Self.steppedIterations)
             if isFailed { break }
         }
         junctionConductance = 0
@@ -841,55 +867,125 @@ public final class Simulator {
         return converged && !isFailed
     }
 
-    /// Newton-Raphson from the present `x`; true when it converged
-    private func newton(_ rhs: [Double], iterations: Int) -> Bool {
+    /// Newton-Raphson from the present `x`; true when it converged.
+    ///
+    /// Each iteration starts from the base's values, whose linear block is already factored (and with it what the
+    /// linear block adds to the nonlinear one), restamps the nonlinear parts into the nonlinear block, factors that and
+    /// solves for its unknowns: the only ones the nonlinear parts depend on. The linear block's unknowns follow from
+    /// them once, at the end.
+    private func newton(iterations: Int) -> Bool {
         let m = topology.matrixSize
         for i in nonlinearIndices { opAmpCrossings[i] = 0 }
-        if workMatrix.count != m * m { workMatrix = [Double](repeating: 0, count: m * m) }
         if workVector.count != m { workVector = [Double](repeating: 0, count: m) }
-        for iteration in 0..<iterations {
-            newtonIterations += 1
-            Self.copy(baseMatrix, into: &workMatrix)
-            Self.copy(rhs, into: &workVector)
-            stampCount = 0
-            loggingStamps = true
-            stampMemristors(&workMatrix, m)
-            limiting = false
-            if hasNonlinear { stampNonlinear(&workMatrix, &workVector, m) }
-            loggingStamps = false
-            guard solveWorkMatrix(m) else { fail(); return false }
-            var change = 0.0
-            for k in 0..<m {
-                let next = workVector[k]
-                guard next.isFinite else { fail(); return false }
-                change = max(change, abs(next - x[k]) / (1 + abs(next)))
+        var iteration = 0
+        var plansMade = 0
+        var converged = false
+        while iteration < iterations {
+            if needsPlan {
+                // a stamp fell outside the plan or a pivot became too small: plan again, around the present solution
+                plansMade += 1
+                guard plansMade <= 4 else { break }
+                replan()
+                prepareBaseMatrix()
+                if isFailed { return false }
+                forwardRightHandSide()
             }
-            Self.copy(workVector, into: &x)
-            if !hasNonlinear { return true }
-            if iteration > 0 && change < 1e-9 && !limiting { return true }
+            guard let plan else { fail(); return false }
+            iteration += 1
+            newtonIterations += 1
+            if valuesVersion != baseVersion || values.count != baseValues.count {
+                Self.copy(baseValues, into: &values)
+                valuesVersion = baseVersion
+            } else {
+                Self.copyTail(baseValues, into: &values, from: plan.tailStart)
+            }
+            Self.copy(rhsForwarded, into: &workVector)
+            limiting = false
+            beginSparseStamping(plan, floor: plan.tailStart)
+            stampMemristors(&values, m)
+            if hasNonlinear { stampNonlinear(&values, &workVector, m) }
+            sparseStamping = false
+            if stampMissed {
+                needsPlan = true
+                continue
+            }
+            let stuck = values.withUnsafeMutableBufferPointer { v -> Int in plan.factor(v.baseAddress!, from: plan.leading, to: plan.n) }
+            if stuck >= 0 {
+                needsPlan = true
+                continue
+            }
+            let change = values.withUnsafeBufferPointer { v -> Double in
+                workVector.withUnsafeMutableBufferPointer { b -> Double in
+                    plan.forward(v.baseAddress!, b.baseAddress!, from: plan.leading, to: plan.n)
+                    return x.withUnsafeMutableBufferPointer { x -> Double in
+                        plan.back(v.baseAddress!, b.baseAddress!, x.baseAddress!, from: plan.leading, to: plan.n)
+                    }
+                }
+            }
+            if change.isNaN {
+                Self.copy(savedX, into: &x)
+                fail()
+                return false
+            }
+            if !hasNonlinear || (iteration > 1 && change < 1e-9 && !limiting) {
+                converged = true
+                break
+            }
         }
-        return false
+        // the linear block's unknowns, from the nonlinear block's (its rows of the right-hand side are as forwarded)
+        guard let plan, valuesVersion == baseVersion else { return converged }
+        let change = values.withUnsafeBufferPointer { v in
+            workVector.withUnsafeBufferPointer { b in
+                x.withUnsafeMutableBufferPointer { x in
+                    plan.back(v.baseAddress!, b.baseAddress!, x.baseAddress!, from: 0, to: plan.leading)
+                }
+            }
+        }
+        if change.isNaN {
+            Self.copy(savedX, into: &x)
+            fail()
+            return false
+        }
+        return converged
     }
 
-    /// Solves the stamped matrix in place, replaying the elimination plan when it still fits. Only the entries stamped
-    /// this iteration can have left the plan's pattern, as long as the base matrix is the one the plan was checked
-    /// against; otherwise the whole matrix is checked.
-    private func solveWorkMatrix(_ m: Int) -> Bool {
-        let solved: Bool
-        if stampCount > stampLog.count {
-            // more stamps than the log holds: check everything this time, and keep a longer log
-            stampLog.deallocate()
-            stampLog = .allocate(capacity: 2 * stampCount)
-            solved = LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan, changed: nil)
-        } else if planBaseVersion != baseVersion {
-            solved = LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan, changed: nil)
-        } else {
-            solved = LUSolver.solveInPlace(&workMatrix, &workVector, size: m, plan: &eliminationPlan,
-                                           changed: UnsafeBufferPointer(rebasing: stampLog[0..<stampCount]))
+    /// The linear block's forward substitution of the right-hand side, done once per solve (the nonlinear parts only
+    /// stamp the nonlinear block's rows); for a circuit without them, the whole forward substitution
+    private func forwardRightHandSide() {
+        Self.copy(rhs, into: &rhsForwarded)
+        guard let plan, baseValues.count == plan.entryCount else { return }
+        let end = hasNonlinear || hasMemristor ? plan.leading : plan.n
+        baseValues.withUnsafeBufferPointer { v in
+            rhsForwarded.withUnsafeMutableBufferPointer { b in plan.forward(v.baseAddress!, b.baseAddress!, from: 0, to: end) }
         }
-        // the plan now fits this base matrix: it was made from it, or checked against all of it
-        planBaseVersion = baseVersion
-        return solved
+    }
+
+    private func beginSparseStamping(_ plan: SparsePlan, floor: Int) {
+        sparseStamping = true
+        slotMap = plan.slots
+        stampFloor = floor
+        stampSize = plan.n
+        stampMissed = false
+    }
+
+    /// A stamp outside the plan: noted for the next plan, which includes the position (and, for Newton-Raphson's
+    /// stamps, puts its row and column in the nonlinear block)
+    @inline(never) private func missStamp(_ index: Int) {
+        stampMissed = true
+        missedPositions.append(index)
+        if stampFloor > 0 && stampSize > 0 {
+            extraNonlinear.insert(index / stampSize)
+            extraNonlinear.insert(index % stampSize)
+        }
+    }
+
+    /// Copies `source[start...]` over `target[start...]`, arrays of the same size
+    @inline(__always) private static func copyTail(_ source: [Double], into target: inout [Double], from start: Int) {
+        let count = source.count - start
+        guard count > 0, target.count == source.count else { return }
+        target.withUnsafeMutableBufferPointer { target in
+            source.withUnsafeBufferPointer { (target.baseAddress! + start).update(from: $0.baseAddress! + start, count: count) }
+        }
     }
 
     /// Copies element by element into an array of the same size, so the target keeps its storage
@@ -931,12 +1027,14 @@ public final class Simulator {
         }
     }
 
-    /// Adds to one matrix entry, noting where during Newton-Raphson's stamping (see `stampLog`)
+    /// Adds to one matrix entry, given as row × size + column: in a dense matrix, or while stamping sparse, in the plan's
+    /// slot for it (one it may write, or else noted as missed)
     @inline(__always) private func stamp(_ matrix: Entries, _ index: Int, _ value: Double) {
-        matrix[index] += value
-        if loggingStamps {
-            if stampCount < stampLog.count { stampLog[stampCount] = index }
-            stampCount += 1
+        if sparseStamping {
+            let slot = Int(slotMap[index])
+            if slot >= stampFloor { matrix[slot] += value } else { missStamp(index) }
+        } else {
+            matrix[index] += value
         }
     }
 
@@ -963,11 +1061,14 @@ public final class Simulator {
 
     /// Makes the base matrix the one for this substep's length: kept from the last time it had this length, or built
     private func prepareBaseMatrix() {
+        if plan == nil || needsPlan {
+            guard replan() else { return }
+        }
         let key = substepLevel << 4 | lastLevel
         if matrixIsCurrent {
             if key == baseKey { return }
             if let entry = baseCache[key] {
-                (baseMatrix, baseLU, baseVersion) = (entry.matrix, entry.lu, entry.version)
+                (baseValues, baseVersion) = (entry.values, entry.version)
                 baseKey = key
                 return
             }
@@ -975,45 +1076,127 @@ public final class Simulator {
             baseCache.removeAll(keepingCapacity: true)
         }
         buildBaseMatrix()
+        guard !isFailed else { return }
         baseKey = key
-        if !isFailed { baseCache[key] = (baseMatrix, baseLU, baseVersion) }
+        baseCache[key] = (baseValues, baseVersion)
     }
 
-    /// The part of the matrix that only changes with the circuit or the substep
+    /// The part of the matrix that only changes with the circuit or the substep, stamped into the plan's slots and its
+    /// linear block factored (all of it, for a circuit without nonlinear parts). Planned again if it no longer fits.
     private func buildBaseMatrix() {
-        baseVersionCount += 1
-        baseVersion = baseVersionCount
         let m = topology.matrixSize
-        baseMatrix = makeBaseMatrix()
-        matrixIsCurrent = true
-        if !hasNonlinear && !hasMemristor {
-            baseLU = LUSolver(matrix: baseMatrix, size: m)
-            if baseLU == nil { fail() }
-        } else {
-            baseLU = nil
+        for _ in 0..<4 {
+            guard let plan else { break }
+            baseVersionCount += 1
+            baseVersion = baseVersionCount
+            var built = [Double](repeating: 0, count: plan.entryCount)
+            beginSparseStamping(plan, floor: 0)
+            fillBaseMatrix(&built, m)
+            sparseStamping = false
+            if !stampMissed {
+                let end = hasNonlinear || hasMemristor ? plan.leading : plan.n
+                let stuck = built.withUnsafeMutableBufferPointer { plan.factor($0.baseAddress!, from: 0, to: end) }
+                if stuck < 0 {
+                    baseValues = built
+                    matrixIsCurrent = true
+                    return
+                }
+            }
+            guard replan() else { return }
         }
+        fail()
     }
 
-    /// The base matrix's entries; while linearising, without the capacitors and inductors
+    /// Plans the factoring afresh (see `SparsePlan`): from the base matrix and, with nonlinear parts, their stamps at the
+    /// present solution, so the pivots suit the values Newton-Raphson will meet. Every position an earlier plan had
+    /// stays in, so the pattern only grows. False (and the simulation fails) when the equations are singular.
+    @discardableResult
+    private func replan() -> Bool {
+        let m = topology.matrixSize
+        plans += 1
+        needsPlan = false
+        matrixIsCurrent = false
+        baseCache.removeAll(keepingCapacity: true)
+        baseKey = -1
+        valuesVersion = -1
+        guard m > 0 else { return true }
+        var matrix = makeBaseMatrix()
+        var pattern = matrix.map { $0 != 0 }
+        if let old = plan, old.n == m {
+            for i in 0..<(m * m) where old.structure[i] { pattern[i] = true }
+        }
+        for index in missedPositions where index >= 0 && index < m * m { pattern[index] = true }
+        missedPositions.removeAll()
+        var nonlinear = [Bool](repeating: false, count: m)
+        func unknowns(_ i: Int) -> [Int] {
+            var result = topology.elementNodes[i].filter { $0 > 0 }.map { $0 - 1 }
+            if topology.sourceRow[i] >= 0 { result.append(topology.sourceRow[i]) }
+            return result
+        }
+        // a nonlinear part stamps (and reads) only its own unknowns: they are the nonlinear block, each part's in full
+        for i in nonlinearIndices + memristorIndices {
+            let own = unknowns(i)
+            for a in own {
+                nonlinear[a] = true
+                for b in own { pattern[a * m + b] = true }
+            }
+        }
+        for u in extraNonlinear where u < m { nonlinear[u] = true }
+        // parts whose base stamps move with their state (a 555's output, a multiplexer's channel, a chip's pins): every
+        // position they can stamp, so switching does not need a new plan
+        for i in kinds.indices {
+            switch kinds[i] {
+            case .timer555, .analogMux, .analogSelector:
+                let own = unknowns(i)
+                for a in own { for b in own { pattern[a * m + b] = true } }
+            case .atmega328p, .atmega2560, .attiny85, .rp2040:
+                for a in unknowns(i) { pattern[a * m + a] = true }
+            default:
+                break
+            }
+        }
+        if hasNonlinear || hasMemristor {
+            let saved = (limitedVoltage, limitedVoltage2, limitedVoltage3, opAmpCrossings, limiting)
+            var scratch = [Double](repeating: 0, count: m)
+            stampMemristors(&matrix, m)
+            if hasNonlinear { stampNonlinear(&matrix, &scratch, m) }
+            (limitedVoltage, limitedVoltage2, limitedVoltage3, opAmpCrossings, limiting) = saved
+        }
+        guard let made = SparsePlan.make(matrix: matrix, pattern: pattern, nonlinear: nonlinear, size: m) else {
+            plan = nil
+            fail()
+            return false
+        }
+        plan = made
+        return true
+    }
+
+    /// The base matrix's entries, dense; while linearising, without the capacitors and inductors
     private func makeBaseMatrix() -> [Double] {
         let m = topology.matrixSize
         var matrix = [Double](repeating: 0, count: m * m)
+        fillBaseMatrix(&matrix, m)
+        return matrix
+    }
+
+    /// Stamps the base matrix's entries into `matrix`: dense, or the plan's slots while stamping sparse
+    private func fillBaseMatrix(_ matrix: Entries, _ m: Int) {
         for node in 1..<max(1, topology.nodeCount) {
-            matrix[(node - 1) * m + node - 1] += Self.gmin
+            stamp(matrix, (node - 1) * m + node - 1, Self.gmin)
         }
         for (i, element) in flat.elements.enumerated() {
             let nodes = topology.elementNodes[i]
             switch element.kind {
             case .resistor, .lamp:
-                stampConductance(&matrix, m, nodes[0], nodes[1], 1 / max(element[param: "resistance"], 1e-9))
+                stampConductance(matrix, m, nodes[0], nodes[1], 1 / max(element[param: "resistance"], 1e-9))
             case .potentiometer:
                 let (upper, lower) = potentiometerResistances(element)
-                stampConductance(&matrix, m, nodes[0], nodes[2], 1 / upper)
-                stampConductance(&matrix, m, nodes[2], nodes[1], 1 / lower)
+                stampConductance(matrix, m, nodes[0], nodes[2], 1 / upper)
+                stampConductance(matrix, m, nodes[2], nodes[1], 1 / lower)
             case .capacitor where !linearising:
-                stampConductance(&matrix, m, nodes[0], nodes[1], a0 * element[param: "capacitance"] / h)
+                stampConductance(matrix, m, nodes[0], nodes[1], a0 * element[param: "capacitance"] / h)
             case .inductor where !linearising:
-                stampConductance(&matrix, m, nodes[0], nodes[1], h / (a0 * max(element[param: "inductance"], 1e-15)))
+                stampConductance(matrix, m, nodes[0], nodes[1], h / (a0 * max(element[param: "inductance"], 1e-15)))
             case .transformer:
                 // an ideal transformer (a transformer part's core): the secondary is a voltage source of `ratio` times
                 // the primary's voltage, and the primary carries `ratio` times the secondary's current, so it passes
@@ -1021,65 +1204,65 @@ public final class Simulator {
                 let row = topology.sourceRow[i]
                 guard row >= 0, nodes.count == 4 else { continue }
                 let r = constants[i].value
-                add(&matrix, m, nodes[2] - 1, row, -1)
-                add(&matrix, m, nodes[3] - 1, row, 1)
-                add(&matrix, m, nodes[0] - 1, row, r)
-                add(&matrix, m, nodes[1] - 1, row, -r)
-                add(&matrix, m, row, nodes[2] - 1, 1)
-                add(&matrix, m, row, nodes[3] - 1, -1)
-                add(&matrix, m, row, nodes[0] - 1, -r)
-                add(&matrix, m, row, nodes[1] - 1, r)
+                add(matrix, m, nodes[2] - 1, row, -1)
+                add(matrix, m, nodes[3] - 1, row, 1)
+                add(matrix, m, nodes[0] - 1, row, r)
+                add(matrix, m, nodes[1] - 1, row, -r)
+                add(matrix, m, row, nodes[2] - 1, 1)
+                add(matrix, m, row, nodes[3] - 1, -1)
+                add(matrix, m, row, nodes[0] - 1, -r)
+                add(matrix, m, row, nodes[1] - 1, r)
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
                 let minus = nodes[0] - 1
                 let plus = nodes[1] - 1
                 // the source delivers its current out of the + terminal (b) and takes it back at the - terminal (a)
-                add(&matrix, m, plus, row, -1)
-                add(&matrix, m, minus, row, 1)
-                add(&matrix, m, row, plus, 1)
-                add(&matrix, m, row, minus, -1)
+                add(matrix, m, plus, row, -1)
+                add(matrix, m, minus, row, 1)
+                add(matrix, m, row, plus, 1)
+                add(matrix, m, row, minus, -1)
             case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
                  .levelDetector, .springReverb:
                 // output: a voltage source to ground, whose voltage the nonlinear stage (or the delay line, or the chip's
                 // state) sets
                 if element.kind == .springReverb {
                     // the tank's input coil
-                    stampConductance(&matrix, m, nodes[0], nodes[1], constants[i].onConductance)
+                    stampConductance(matrix, m, nodes[0], nodes[1], constants[i].onConductance)
                 }
                 if element.kind == .digitalDelay {
                     // an echo chip's pin 6: its internal reference behind its internal resistance
-                    stampConductance(&matrix, m, nodes[1], 0, 1 / constants[i].value)
+                    stampConductance(matrix, m, nodes[1], 0, 1 / constants[i].value)
                 }
                 let row = topology.sourceRow[i]
                 guard row >= 0 else { continue }
-                add(&matrix, m, nodes[2] - 1, row, -1)
-                add(&matrix, m, row, nodes[2] - 1, 1)
+                add(matrix, m, nodes[2] - 1, row, -1)
+                add(matrix, m, row, nodes[2] - 1, 1)
             case .timer555:
                 // pins: GND, TRIG, OUT, RESET, CTRL, THR, DIS, VCC. The internal divider sets CTRL to 2/3 of the supply
                 // (the trigger compares with half of CTRL); the output drives towards VCC or GND; DIS shorts to GND
                 // while the output is low
                 let (ground, output, control, discharge, supply) = (nodes[0], nodes[2], nodes[4], nodes[6], nodes[7])
-                stampConductance(&matrix, m, supply, control, 1 / 5000.0)
-                stampConductance(&matrix, m, control, ground, 1 / 10_000.0)
+                stampConductance(matrix, m, supply, control, 1 / 5000.0)
+                stampConductance(matrix, m, control, ground, 1 / 10_000.0)
                 let high = digitalState[i]
-                stampConductance(&matrix, m, output, high ? supply : ground, 1 / max(element[param: "outputResistance"], 0.1))
-                stampConductance(&matrix, m, discharge, ground, high ? 1e-9 : 1 / max(element[param: "dischargeResistance"], 0.1))
+                stampConductance(matrix, m, output, high ? supply : ground, 1 / max(element[param: "outputResistance"], 0.1))
+                stampConductance(matrix, m, discharge, ground, high ? 1e-9 : 1 / max(element[param: "dischargeResistance"], 0.1))
             case .schmittInverter:
                 // output drives towards the hidden supply or ground through its output resistance
-                stampConductance(&matrix, m, nodes[1], 0, 1 / max(element[param: "outputResistance"], 0.1))
+                stampConductance(matrix, m, nodes[1], 0, 1 / max(element[param: "outputResistance"], 0.1))
             case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .pll:
                 // each output likewise; the inputs draw nothing
                 for k in element.kind.logicOutputs where k < nodes.count {
-                    stampConductance(&matrix, m, nodes[k], 0, constants[i].outputConductance)
+                    stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance)
                 }
             case .dac:
                 // the output: driven to its voltage through its output resistance
-                if nodes.count > 5 { stampConductance(&matrix, m, nodes[5], 0, constants[i].outputConductance) }
+                if nodes.count > 5 { stampConductance(matrix, m, nodes[5], 0, constants[i].outputConductance) }
             case .analogMux, .analogSelector:
                 // the channel the select inputs pick, connected to the common terminal
                 if let channel = Logic.channel(element.kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
-                    stampConductance(&matrix, m, nodes[channel], common, constants[i].onConductance)
+                    stampConductance(matrix, m, nodes[channel], common, constants[i].onConductance)
                 }
             case .atmega328p, .atmega2560, .attiny85, .rp2040:
                 // each output pin drives towards the supply or ground through its resistance; a pull-up is a resistor
@@ -1088,8 +1271,8 @@ public final class Simulator {
                 let c = constants[i]
                 for (pin, state) in states.enumerated() where pin < nodes.count {
                     switch state {
-                    case .output: stampConductance(&matrix, m, nodes[pin], 0, c.outputConductance)
-                    case .input(pullUp: true), .inputPullDown: stampConductance(&matrix, m, nodes[pin], 0, c.onConductance)
+                    case .output: stampConductance(matrix, m, nodes[pin], 0, c.outputConductance)
+                    case .input(pullUp: true), .inputPullDown: stampConductance(matrix, m, nodes[pin], 0, c.onConductance)
                     case .input: break
                     }
                 }
@@ -1097,7 +1280,6 @@ public final class Simulator {
                 break
             }
         }
-        return matrix
     }
 
     func sourceVoltage(_ i: Int, at t: Double) -> Double {
@@ -1960,7 +2142,7 @@ public final class Simulator {
                 // v(out) = output + slope (vd' - vd), linearised around the present inputs
                 add(matrix, m, row, plus - 1, -slope)
                 add(matrix, m, row, minus - 1, slope)
-                rhs[row] = output - slope * vd
+                rhs[row] += output - slope * vd
 
             case .ota:
                 let (minus, plus, output, bias) = (nodes[0], nodes[1], nodes[2], nodes[3])
@@ -2022,7 +2204,7 @@ public final class Simulator {
                 let fy = c.gain * vx * slope
                 add(matrix, m, row, nodes[0] - 1, -fx)
                 add(matrix, m, row, nodes[1] - 1, -fy)
-                rhs[row] = c.limit * t - fx * vx - fy * vy
+                rhs[row] += c.limit * t - fx * vx - fy * vy
 
             case .vactrol:
                 // the LED, like a diode, and the LDR, a resistance set by the light so far
@@ -3084,18 +3266,13 @@ public final class Simulator {
 
     public var nodeCount: Int { topology.nodeCount }
 
-    /// The equations' size: unknowns, non-zero entries of the matrix as last built, entries of its factors (fill-in
-    /// included) as last planned, and the unknowns that nonlinear parts read or stamp
+    /// The equations' size: unknowns, entries that can be non-zero, entries of the factors (fill-in included), and the
+    /// unknowns in the nonlinear block, which Newton-Raphson refactors
     public var equationStatistics: (unknowns: Int, nonzeros: Int, factorEntries: Int, nonlinearUnknowns: Int) {
         let m = topology.matrixSize
-        let nonzeros = baseMatrix.reduce(0) { $1 != 0 ? $0 + 1 : $0 }
-        let factorEntries = eliminationPlan.map { m + $0.rows.count + $0.columns.count } ?? 0
-        var touched = Set<Int>()
-        for i in nonlinearIndices + memristorIndices {
-            for node in topology.elementNodes[i] where node > 0 { touched.insert(node - 1) }
-            if topology.sourceRow[i] >= 0 { touched.insert(topology.sourceRow[i]) }
-        }
-        return (m, nonzeros, factorEntries, touched.count)
+        guard let plan else { return (m, 0, 0, 0) }
+        let nonzeros = plan.structure.reduce(0) { $1 ? $0 + 1 : $0 }
+        return (m, nonzeros, plan.entryCount, plan.n - plan.leading)
     }
 
     /// The index of a part of the circuit as it is simulated: one of the circuit's own, or one inside a block (by its

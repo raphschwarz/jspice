@@ -48,7 +48,7 @@ func benchmark(seconds: Double, ids: [String]) {
         let solves = String(format: "%5.2f", Double(simulator.newtonIterations) / Double(3 * steps))
         let size = simulator.equationStatistics
         print("\(name)\(perStep) µs/step \(speed)× real time  \(simulator.convergenceFailures) unconverged  \(solves) solves/step"
-              + "  n \(size.unknowns) nz \(size.nonzeros) lu \(size.factorEntries) nl \(size.nonlinearUnknowns)\(notes)")
+              + "  n \(size.unknowns) nz \(size.nonzeros) lu \(size.factorEntries) nl \(size.nonlinearUnknowns) plans \(simulator.plans)\(notes)")
     }
 }
 

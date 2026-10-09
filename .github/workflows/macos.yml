@@ -69,23 +69,6 @@ jobs:
           sample $! 3 -file build/profile-pico.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-pico.txt | head -45
-      - name: "Speed A/B (temporary): before the sweep, after its engine fixes, and now, on one runner"
-        if: hashFiles('macos/scripts/bundle.sh') != ''
-        timeout-minutes: 25
-        run: |
-          ids="divider lowpass blinker fuzz acid voice arduino-blink pico-knob"
-          for sha in 7ec192f84de6a5c1b7794e3103b8c0c3bd37ff54 b0b948d247f6003756fd58dacbf5b22dc8ff5c5e; do
-            git fetch -q --depth=1 origin $sha
-            git worktree add -q ../../ab-$sha $sha
-            (cd ../../ab-$sha/macos && swift build -q -c release --product jspice-mcp)
-          done
-          swift build -q -c release --product jspice-mcp
-          for round in 1 2 3; do
-            for sha in 7ec192f84de6a5c1b7794e3103b8c0c3bd37ff54 b0b948d247f6003756fd58dacbf5b22dc8ff5c5e; do
-              echo "== ${sha:0:7}, round $round"; ../../ab-$sha/macos/.build/release/jspice-mcp --benchmark 0.25 $ids
-            done
-            echo "== HEAD, round $round"; .build/release/jspice-mcp --benchmark 0.25 $ids
-          done
       - name: Chip support (installs Arduino's AVR toolchain as the app does, compiles a sketch)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 10
