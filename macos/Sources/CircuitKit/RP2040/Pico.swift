@@ -15,8 +15,8 @@ public final class Pico: Microcontroller {
         var outbox: [UInt8] = []
         var levels = [Bool](repeating: false, count: 30)
         var pinsChanged = true
-        /// The watched pins by GPIO, the changes to their driven levels, and when the present run started
-        var watched: [Int: Int] = [:]
+        /// The watched pin at each GPIO (-1 for none), the changes to their driven levels, and when the present run started
+        var watched = [Int](repeating: -1, count: 30)
         var events: [PinEvent] = []
         var onEvent: ((PinEvent) -> Void)?
         var runStart = 0.0
@@ -31,7 +31,8 @@ public final class Pico: Microcontroller {
                 let gpio = pin.index
                 pin.onChange = { [unowned self] state in
                     self.pinsChanged = true
-                    guard let watchedPin = self.watched[gpio] else { return }
+                    let watchedPin = self.watched[gpio]
+                    guard watchedPin >= 0 else { return }
                     let high: Bool
                     switch state {
                     case .high: high = true
@@ -107,9 +108,9 @@ public final class Pico: Microcontroller {
     }
 
     public var watchedPins: [Int] {
-        get { system.watched.sorted { $0.key < $1.key }.map(\.value) }
+        get { system.watched.filter { $0 >= 0 } }
         set {
-            system.watched = [:]
+            system.watched = [Int](repeating: -1, count: 30)
             for pin in newValue where pin >= 0 && pin < Pico.gpioOfPin.count { system.watched[Pico.gpioOfPin[pin]] = pin }
         }
     }

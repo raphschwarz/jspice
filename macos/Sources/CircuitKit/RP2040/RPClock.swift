@@ -314,14 +314,15 @@ struct RPFIFO {
     private var buffer: [UInt32]
     private var start = 0
     private(set) var itemCount = 0
+    let size: Int
 
     init(_ size: Int) {
         buffer = [UInt32](repeating: 0, count: size)
+        self.size = size
     }
 
-    var size: Int { buffer.count }
     var empty: Bool { itemCount == 0 }
-    var full: Bool { itemCount == buffer.count }
+    var full: Bool { itemCount == size }
 
     mutating func push(_ value: UInt32) {
         guard itemCount < buffer.count else { return }

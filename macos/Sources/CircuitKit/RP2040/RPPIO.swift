@@ -586,14 +586,24 @@ final class RPPIO: RPPeripheral {
             return machines[machine].readUint32(offset - 0xC8 - UInt32(machine) * 0x18)
         }
         switch offset {
-        case 0x000: return machines.enumerated().reduce(0) { $0 | ($1.element.enabled ? 1 << UInt32($1.offset) : 0) }
-        case 0x004: return machines.reduce(0) { $0 | $1.fifoStat }
+        // (FSTAT is what a sketch polls while it keeps a FIFO full: plain loops)
+        case 0x000:
+            var enabled: UInt32 = 0
+            for k in machines.indices where machines[k].enabled { enabled |= 1 << UInt32(k) }
+            return enabled
+        case 0x004:
+            var status: UInt32 = 0
+            for k in machines.indices { status |= machines[k].fifoStat }
+            return status
         case 0x008: return fdebug
         case 0x00C:
-            return machines.enumerated().reduce(0) {
-                $0 | (UInt32($1.element.txFIFO.itemCount & 0xF) << UInt32($1.offset * 8))
-                    | (UInt32($1.element.rxFIFO.itemCount & 0xF) << UInt32($1.offset * 8 + 4))
+            var levels: UInt32 = 0
+            for k in machines.indices {
+                let machine = machines[k]
+                levels |= UInt32(machine.txFIFO.itemCount & 0xF) << UInt32(k * 8)
+                levels |= UInt32(machine.rxFIFO.itemCount & 0xF) << UInt32(k * 8 + 4)
             }
+            return levels
         case 0x020, 0x024, 0x028, 0x02C: return machines[Int(offset - 0x020) / 4].readFIFO()
         case 0x030: return irq
         case 0x034: return 0
@@ -690,7 +700,14 @@ final class RPPIO: RPPeripheral {
         guard changed != 0 else { return }
         oldPinDirections = pinDirections
         oldPinValues = pinValues
-        for (i, pin) in chip.gpio.enumerated() where changed & (1 << UInt32(i)) != 0 { pin.checkForUpdates() }
+        // only the pins that changed (a clock pin changes at every other instruction), lowest first
+        let gpio = chip.gpio
+        var bits = changed
+        while bits != 0 {
+            let i = bits.trailingZeroBitCount
+            bits &= bits - 1
+            if i < gpio.count { gpio[i].checkForUpdates() }
+        }
     }
 
     /// Runs the state machines up to `now` (nanoseconds)
