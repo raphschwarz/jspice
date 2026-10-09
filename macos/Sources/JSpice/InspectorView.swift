@@ -94,6 +94,10 @@ struct ElementInspector: View {
                 }
             }
 
+            if element.kind == .opAmp, let name = element.model?.name, let maker = MakerModelCatalog.model(forBuiltIn: name) {
+                MakerModelSection(editor: editor, element: element, model: maker)
+            }
+
             if element.kind == .led {
                 Section("Properties") {
                     Picker("Color", selection: Binding(
@@ -384,6 +388,45 @@ private struct StepField: View {
             text = parsed.map(NoteName.name) ?? ""
         } else {
             text = note.map(NoteName.name) ?? ""
+        }
+    }
+}
+
+/// An op-amp's maker's model: TI's own PSpice model of the part, run in place of JSpice's equations
+struct MakerModelSection: View {
+    @ObservedObject var editor: EditorState
+    let element: Element
+    let model: MakerModelCatalog.Model
+
+    static let supply = ParamSpec("supply", "Supply (±, 0 for automatic)", unit: "V", default: 0, range: 0...25, log: false)
+
+    var body: some View {
+        Section {
+            if editor.makerModelLoading.contains(element.id) {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Downloading \(model.part) from \(model.maker)…")
+                }
+            } else {
+                Toggle("\(model.maker)'s \(model.part) model", isOn: Binding(
+                    get: { element.runsMakerModel },
+                    set: { editor.useMakerModel(element.id, $0) }
+                ))
+            }
+            if element.runsMakerModel {
+                ParameterRow(editor: editor, elementID: element.id, spec: Self.supply, value: element[param: "supply"])
+                let rails = MakerModels.rails(midpoint: element[param: "midpoint"], supply: element[param: "supply"],
+                                              limit: element[param: "limit"])
+                LabeledContent("Supplies", value: SI.format(rails.positive, unit: "V") + " and " + SI.format(rails.negative, unit: "V"))
+            }
+        } header: {
+            Text("Maker's Model")
+        } footer: {
+            if element.runsMakerModel {
+                Text("\(model.revision), from \(model.archive.host ?? model.maker), on ideal supplies. Slower to simulate than JSpice's own model: the sound may not keep up.")
+            } else {
+                Text("Runs \(model.maker)'s own PSpice model of the \(model.part) in place of JSpice's equations: closer to the part, slower to simulate. Downloaded from \(model.maker) once.")
+            }
         }
     }
 }

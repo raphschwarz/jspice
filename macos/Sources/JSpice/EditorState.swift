@@ -18,6 +18,8 @@ final class EditorState: ObservableObject {
     @Published var tool: ElementKind?
     /// The block placed while the tool is `.block`
     @Published var blockToPlace: BlockDefinition?
+    /// Op-amps whose maker's models are being downloaded
+    @Published var makerModelLoading: Set<UUID> = []
     /// The blocks saved in the block library, read again when one is saved
     @Published private(set) var libraryBlocks: [BlockDefinition] = BlockLibrary.all()
     @Published var selection: Set<UUID> = []
@@ -608,11 +610,52 @@ final class EditorState: ObservableObject {
         if next != circuit { document.circuit = next }
     }
 
-    /// Makes a generic symbol behave like a real part: sets all of the model's parameters as one undo step
+    /// Makes a generic symbol behave like a real part: sets all of the model's parameters as one undo step (an op-amp
+    /// running another part's maker's model goes back to JSpice's own)
     func applyModel(_ id: UUID, _ model: PartModel) {
         edit("Use \(model.name)") { circuit in
             circuit.update(id) { element in
                 for (key, value) in model.values { element[param: key] = value }
+                if element.kind == .opAmp && element.block != nil {
+                    element.params["makerModel"] = nil
+                    element.block = nil
+                }
+            }
+        }
+    }
+
+    /// Runs an op-amp on its maker's model (`MakerModelCatalog`, downloaded from the maker once), or back on JSpice's own
+    func useMakerModel(_ id: UUID, _ on: Bool) {
+        guard let element = circuit.elements.first(where: { $0.id == id }), element.kind == .opAmp else { return }
+        guard on else {
+            edit("Use JSpice's Op-Amp Model") { circuit in
+                circuit.update(id) { element in
+                    element.params["makerModel"] = nil
+                    element.block = nil
+                }
+            }
+            return
+        }
+        guard let name = element.model?.name, let model = MakerModelCatalog.model(forBuiltIn: name) else { return }
+        makerModelLoading.insert(id)
+        Task.detached(priority: .userInitiated) {
+            let result = Result { try MakerModelCatalog.download(model).block }
+            await MainActor.run {
+                self.makerModelLoading.remove(id)
+                switch result {
+                case let .success(block):
+                    self.edit("Use \(model.maker)'s \(model.part) Model") { circuit in
+                        circuit.update(id) { element in
+                            element.block = block
+                            element[param: "makerModel"] = 1
+                        }
+                    }
+                case let .failure(error):
+                    let alert = NSAlert()
+                    alert.messageText = "\(model.part)'s model can't be downloaded from \(model.maker)"
+                    alert.informativeText = "\(error)"
+                    alert.runModal()
+                }
             }
         }
     }

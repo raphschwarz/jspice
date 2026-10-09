@@ -507,7 +507,9 @@ public final class Simulator {
         noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
         storedCurrents = Array(repeating: 0, count: count)
-        kinds = flat.elements.map(\.kind)
+        // an op-amp running its maker's model is that model's parts (see `Circuit.flattened`): its own equations are
+        // left out, as a block's are
+        kinds = flat.elements.map { $0.runsMakerModel ? .block : $0.kind }
         constants = flat.elements.map { makeConstants($0) }
         bipolar = flat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
         diodes = flat.elements.map { $0.kind.isDiode ? SpiceDiode($0, kelvin: kelvin, vt: vt) : SpiceDiode() }

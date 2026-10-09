@@ -979,6 +979,12 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             : kind.isJFET ? SpiceJFET.internalNodes(self) : kind.isMOSFET ? SpiceMOSFET.internalNodes(self) : 0
     }
 
+    /// An op-amp that runs its maker's model, the block it carries (`MakerModelCatalog`), in place of JSpice's own
+    /// equations: the block in its place, on ideal supplies (see `Circuit.flattened` and `MakerModels.rails`)
+    public var runsMakerModel: Bool {
+        kind == .opAmp && self[param: "makerModel"] >= 0.5 && block.flatMap(MakerModels.opAmpRoles) != nil
+    }
+
     public subscript(param key: String) -> Double {
         get { params[key] ?? kind.params.first(where: { $0.key == key })?.defaultValue ?? 0 }
         set { params[key] = newValue }
@@ -1234,6 +1240,12 @@ extension ElementKind {
                           values: ["gain": 1e6, "limit": 13.5, "slewRate": 20, "gbw": 8e6, "offset": 0.5e-3, "noise": 8e-9]),
                 PartModel(name: "LM833", summary: "Dual low-noise audio op-amp: 4.5 nV/√Hz, 7 V/µs, 15 MHz",
                           values: ["gain": 3e5, "limit": 13.5, "slewRate": 7, "gbw": 15e6, "offset": 0.3e-3, "noise": 4.5e-9]),
+                PartModel(name: "OPA1656", summary: "CMOS audio dual, rail to rail out: 4.3 nV/√Hz, 24 V/µs, 53 MHz, very low distortion",
+                          values: ["gain": 5e7, "limit": 14.75, "slewRate": 24, "gbw": 53e6, "offset": 0.5e-3, "noise": 4.3e-9]),
+                PartModel(name: "OPA1642", summary: "JFET-input audio dual: 5.1 nV/√Hz, 20 V/µs, 11 MHz",
+                          values: ["gain": 2e6, "limit": 14.65, "slewRate": 20, "gbw": 11e6, "offset": 1e-3, "noise": 5.1e-9]),
+                PartModel(name: "OPA1678", summary: "Low-noise audio dual on 2 mA: 4.5 nV/√Hz, 9 V/µs, 16 MHz",
+                          values: ["gain": 5e5, "limit": 14.2, "slewRate": 9, "gbw": 16e6, "offset": 0.5e-3, "noise": 4.5e-9]),
             ]
         case .ota:
             return [

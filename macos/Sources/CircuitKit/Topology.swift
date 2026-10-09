@@ -126,7 +126,8 @@ struct Topology {
         sourceRow = Array(repeating: -1, count: elements.count)
         var row = nodeCount - 1
         for (i, element) in elements.enumerated()
-        where element.kind.isVoltageSource || element.kind.drivesOutput || element.isTransformerCore || element.setsBehavioralVoltage {
+        where element.kind.isVoltageSource || (element.kind.drivesOutput && !element.runsMakerModel) || element.isTransformerCore
+            || element.setsBehavioralVoltage {
             let name = element.name.isEmpty ? element.kind.displayName : element.name
             if element.isTransformerCore {
                 // an ideal transformer with both windings shorted would leave its current undetermined

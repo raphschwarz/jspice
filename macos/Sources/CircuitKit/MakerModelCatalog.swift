@@ -338,6 +338,36 @@ public enum MakerModelCatalog {
         models.first { $0.part.lowercased() == part.lowercased() }
     }
 
+    /// The catalog's model for one of JSpice's own op-amp models (`ElementKind.models`): the same part, or the same
+    /// design from the catalog's maker (the LM741 a 741, TI's UA741; the JRC4558 a 4558, TI's RC4558)
+    public static func model(forBuiltIn name: String) -> Model? {
+        let sameDesign = ["LM741": "UA741", "JRC4558": "RC4558"]
+        return model(sameDesign[name.uppercased()] ?? name)
+    }
+
+    /// Where model files are kept once downloaded, so each is fetched from its maker once: one file each, named by its
+    /// SHA-256, in ~/Library/Application Support/JSpice/Maker Models (JSPICE_MAKER_CACHE overrides it). They stay on
+    /// this Mac: the makers' terms are theirs.
+    public static var cacheFolder: URL {
+        if let path = ProcessInfo.processInfo.environment["JSPICE_MAKER_CACHE"] { return URL(fileURLWithPath: path) }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".jspice")
+        return base.appendingPathComponent("JSpice/Maker Models")
+    }
+
+    /// The model's file, kept from an earlier download when it is the revision the catalog names, or else downloaded
+    /// from its maker (and kept)
+    static func file(_ model: Model, cached: Bool) throws -> Data {
+        let url = cacheFolder.appendingPathComponent(model.sha256 + "-" + model.file)
+        if cached, let data = try? Data(contentsOf: url), MakerModels.sha256(data) == model.sha256 { return data }
+        let data = try modelFile(model, fromArchive: try fetch(model.archive))
+        if cached {
+            try? FileManager.default.createDirectory(at: cacheFolder, withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+        return data
+    }
+
     public enum DownloadError: Error, CustomStringConvertible {
         case notFound(String)
         case revision(String, String)
@@ -406,10 +436,11 @@ public enum MakerModelCatalog {
         return result.data ?? Data()
     }
 
-    /// Downloads the model from its maker and imports it as a block named after the part, its source the maker's
-    /// archive (blocking until it is done: call it off the main thread in an app)
-    public static func download(_ model: Model, anyRevision: Bool = false) throws -> (block: BlockDefinition, warnings: [String]) {
-        let file = try modelFile(model, fromArchive: try fetch(model.archive), anyRevision: anyRevision)
+    /// Downloads the model from its maker (or takes it from `cacheFolder`, `cached`) and imports it as a block named
+    /// after the part, its source the maker's archive (blocking until it is done: call it off the main thread in an app)
+    public static func download(_ model: Model, anyRevision: Bool = false, cached: Bool = true) throws -> (block: BlockDefinition, warnings: [String]) {
+        let file = try anyRevision ? modelFile(model, fromArchive: fetch(model.archive), anyRevision: true)
+            : self.file(model, cached: cached)
         var imported = try MakerModels.block(from: file, file: model.file, subcircuit: model.subcircuit,
                                              url: model.archive.absoluteString)
         imported.block.name = model.part

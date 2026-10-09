@@ -150,6 +150,30 @@ public enum MakerModels {
         }
     }
 
+    /// An op-amp model's pins' roles (0 +in, 1 −in, 2 V+, 3 V−, 4 out), in the order of the block's pins, from the order
+    /// its file gives them (a model's usual order); nil for a block of other than five pins
+    public static func opAmpRoles(_ block: BlockDefinition) -> [Int]? {
+        guard let pins = block.source?.pins, pins.count == 5 else { return nil }
+        let ports = block.ports
+        guard ports.count == 5 else { return nil }
+        var roles: [Int] = []
+        for port in ports {
+            guard let k = pins.firstIndex(where: { $0.caseInsensitiveCompare(port.name) == .orderedSame }) else { return nil }
+            roles.append(k)
+        }
+        return Set(roles).count == 5 ? roles : nil
+    }
+
+    /// The supplies a maker's model runs on in place of a built-in op-amp: its middle (`midpoint`) ± `supply`; for a
+    /// supply of 0, as the breadboard supplies it: a single supply's 0 V and twice its middle (a pedal's 9 V), or ± its
+    /// output swing and a volt and a half, rounded (±15 V for a 13.5 V swing)
+    public static func rails(midpoint: Double, supply: Double, limit: Double) -> (positive: Double, negative: Double) {
+        if supply > 0 { return (midpoint + supply, midpoint - supply) }
+        if midpoint > 0.5 { return ((2 * midpoint).rounded(), 0) }
+        let s = (max(limit, 1) + 1.5).rounded()
+        return (s, -s)
+    }
+
     /// The op-amp `block` with its supplies at ± `supply` and `load` on its output, `input` at its + input, its − input
     /// at its output (a follower) or grounded through a 0 V source
     static func bench(_ block: BlockDefinition, pins: [String], supply: Double, load: Double, input: NetlistPart,

@@ -82,7 +82,8 @@ extension Circuit {
     /// do not join at a label inside them), except ground.
     public func flattened(expandingModels: Bool = true) -> Circuit {
         guard elements.contains(where: {
-            ($0.kind == .block && $0.block != nil) || (expandingModels && ($0.kind.isTube || $0.kind == .transformer || $0.expandsIntoParts))
+            ($0.kind == .block && $0.block != nil)
+                || (expandingModels && ($0.kind.isTube || $0.kind == .transformer || $0.expandsIntoParts || $0.runsMakerModel))
         }) else {
             return self
         }
@@ -90,12 +91,12 @@ extension Circuit {
         var copies = 0
         // flattening a circuit flattened already changes nothing: its blocks' parts are there (with these ids)
         let present = Set(elements.map(\.id))
-        func expand(_ instance: Element, depth: Int) {
-            guard depth < 8, let block = instance.block else { return }
+        /// `block`'s parts in `instance`'s place, its pins (in the block's pin order) wired to `pins`
+        func expand(_ instance: Element, _ block: BlockDefinition, pins: [GridPoint], depth: Int) {
+            guard depth < 8 else { return }
             if let first = block.circuit.elements.first, present.contains(UUID.combining(instance.id, first.id)) { return }
             copies += 1
             let offset = GridPoint(1_000_000 * copies, 1_000_000)
-            let pins = instance.posts
             var pinOfPort: [Int: Int] = [:]
             for (k, port) in block.ports.enumerated() { pinOfPort[port.index] = k }
             for (i, inner) in block.circuit.elements.enumerated() {
@@ -114,11 +115,38 @@ extension Circuit {
                     element.name = instance.name + "." + name
                 }
                 result.elements.append(element)
-                if element.kind == .block { expand(element, depth: depth + 1) }
+                if element.kind == .block, let inner = element.block { expand(element, inner, pins: element.posts, depth: depth + 1) }
             }
         }
-        for element in elements where element.kind == .block { expand(element, depth: 0) }
-        if expandingModels { result.expandModels() }
+        for element in elements where element.kind == .block {
+            if let block = element.block { expand(element, block, pins: element.posts, depth: 0) }
+        }
+        if expandingModels {
+            // an op-amp running its maker's model: the model in its place, on two ideal supplies from ground, drawn far
+            // below (the op-amp stays, its equations left out: see `Element.runsMakerModel`)
+            var supplies = 0
+            for opAmp in result.elements where opAmp.runsMakerModel {
+                guard let block = opAmp.block, let roles = MakerModels.opAmpRoles(block) else { continue }
+                supplies += 1
+                let rails = MakerModels.rails(midpoint: opAmp[param: "midpoint"], supply: opAmp[param: "supply"],
+                                              limit: opAmp[param: "limit"])
+                let ground = GridPoint(10 * supplies, 3_000_000)
+                let positive = ground + GridPoint(0, 2), negative = ground + GridPoint(0, 4)
+                func supplyPart(_ role: UInt8, _ kind: ElementKind, _ name: String, _ b: GridPoint, _ volts: Double?) {
+                    var part = Element(kind: kind, name: opAmp.name.isEmpty || name.isEmpty ? "" : opAmp.name + "." + name,
+                                       a: ground, b: b, params: volts.map { ["voltage": $0] } ?? [:])
+                    part.id = UUID.combining(opAmp.id, UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xA5, role)))
+                    if !present.contains(part.id) { result.elements.append(part) }
+                }
+                supplyPart(1, .ground, "", ground + GridPoint(1, 0), nil)
+                supplyPart(2, .dcVoltage, "VCC", positive, rails.positive)
+                supplyPart(3, .dcVoltage, "VEE", negative, rails.negative)
+                let posts = opAmp.posts
+                let targets = [posts[1], posts[0], positive, negative, posts[2]]
+                expand(opAmp, block, pins: roles.map { targets[$0] }, depth: 0)
+            }
+            result.expandModels()
+        }
         return result
     }
 

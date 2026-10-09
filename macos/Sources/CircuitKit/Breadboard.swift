@@ -166,7 +166,8 @@ public enum Breadboard {
                 return Package(title: "LM741", pins: 8, units: [["minus": 2, "plus": 3, "out": 6]],
                                supplies: [(4, "V−", negative), (7, "V+", .volts(v))],
                                labels: [1: "NULL", 2: "−IN", 3: "+IN", 4: "V−", 5: "NULL", 6: "OUT", 7: "V+", 8: "NC"])
-            case "LM358", "NE5532", "TL072", "OPA1612", "LM4562", "NJM4556", "JRC4558", "OPA2134", "LM833":
+            case "LM358", "NE5532", "TL072", "OPA1612", "LM4562", "NJM4556", "JRC4558", "OPA2134", "LM833", "OPA1656", "OPA1642",
+                 "OPA1678":
                 return dual(model!, plus: v, minus: low)
             case "TL074", "TL064":
                 return Package(title: model!, pins: 14,

@@ -99,6 +99,13 @@ public final class CircuitSession {
              description: "Makes a part behave like a real part (for example an op-amp as \"TL072\" or \"LM358\"), setting all of that model's parameters.",
              inputSchema: schema(["part": string("Part name"), "model": string("Model name from list_parts")], required: ["part", "model"]),
              run: { session, arguments in try session.setModel(arguments) }),
+        Tool(name: "use_maker_model",
+             description: "Runs an op-amp on its maker's own PSpice model in place of JSpice's equations: for one whose model (set_model) is in list_maker_models (TL072, TL074, LM358, OPA2134, OPA1612, OPA1642, OPA1656, OPA1678; LM741 runs TI's UA741, JRC4558 TI's RC4558). The file is downloaded from the maker once and kept. It runs on ideal supplies: ± supply about the op-amp's midpoint, or by default as the breadboard supplies it (± the swing and 1.5 V, or a single supply's 0 V and twice its midpoint). Closer to the part than JSpice's own model and slower to simulate. on false goes back to JSpice's own.",
+             inputSchema: schema(["part": string("The op-amp's name"),
+                                  "on": ["type": "boolean", "description": "Run the maker's model (default true)"],
+                                  "supply": ["type": "number", "description": "± volts about the op-amp's midpoint (optional; 0 for the default)"]],
+                                 required: ["part"]),
+             run: { session, arguments in try session.useMakerModel(arguments) }),
         Tool(name: "set_switch",
              description: "Opens or closes a switch or push button.",
              inputSchema: schema(["part": string("Part name"), "closed": ["type": "boolean"]], required: ["part", "closed"]),
@@ -276,11 +283,12 @@ public final class CircuitSession {
              ]),
              run: { session, arguments in try session.importModel(arguments) }),
         Tool(name: "list_maker_models",
-             description: "The parts whose models JSpice knows where to download from their makers, with each file's revision and SHA-256, the datasheet its figures are checked against, and what the model is known to get wrong. Import one with import_model {\"part\": ...}.",
+             description: "The parts whose models JSpice knows where to download from their makers, with each file's revision and SHA-256, the datasheet its figures are checked against, what the model is known to get wrong, and the built-in op-amp models that can run it (use_maker_model). Import one as a block with import_model {\"part\": ...}.",
              inputSchema: schema([:]),
              run: { _, _ in
                  MakerModelCatalog.models.map { m -> [String: Any] in
                      ["part": m.part, "maker": m.maker, "summary": m.summary, "archive": m.archive.absoluteString, "file": m.file,
+                      "built_in_models": ElementKind.opAmp.models.map(\.name).filter { MakerModelCatalog.model(forBuiltIn: $0)?.part == m.part },
                       "sha256": m.sha256, "revision": m.revision, "datasheet": m.datasheet, "datasheet_url": m.datasheetURL.absoluteString,
                       "notes": m.notes]
                  }
@@ -670,6 +678,35 @@ public final class CircuitSession {
             for (key, value) in values { circuit.elements[index][param: key] = value }
         }
         return ["part": circuit.elements[index].name, "model": circuit.elements[index].model?.name ?? "custom", "values": values]
+    }
+
+    func useMakerModel(_ arguments: [String: Any]) throws -> Any {
+        let index = try index(ofPart: try Self.text(arguments, "part"))
+        let element = circuit.elements[index]
+        guard element.kind == .opAmp else { throw ToolError("\(element.name) is not an op-amp") }
+        let on = (arguments["on"] as? Bool) ?? true
+        let supply = (arguments["supply"] as? Double) ?? (arguments["supply"] as? Int).map(Double.init)
+        guard on else {
+            change("Use JSpice's Op-Amp Model") { circuit in
+                circuit.elements[index].params["makerModel"] = nil
+                circuit.elements[index].block = nil
+            }
+            return ["part": element.name, "maker_model": false]
+        }
+        guard let name = element.model?.name, let model = MakerModelCatalog.model(forBuiltIn: name) else {
+            throw ToolError("\(element.name) is \(element.model?.name ?? "a custom op-amp"): no maker's model for it. Call set_model with one of "
+                            + MakerModelCatalog.models.map(\.part).joined(separator: ", ") + " first")
+        }
+        let block = try MakerModelCatalog.download(model).block
+        change("Use \(model.maker)'s \(model.part) Model") { circuit in
+            circuit.elements[index].block = block
+            circuit.elements[index][param: "makerModel"] = 1
+            if let supply { circuit.elements[index][param: "supply"] = max(supply, 0) }
+        }
+        let updated = circuit.elements[index]
+        let rails = MakerModels.rails(midpoint: updated[param: "midpoint"], supply: updated[param: "supply"], limit: updated[param: "limit"])
+        return ["part": updated.name, "maker_model": true, "model": model.part, "maker": model.maker, "revision": model.revision,
+                "sha256": model.sha256, "supplies_v": [rails.positive, rails.negative], "notes": model.notes]
     }
 
     // MARK: - Microcontrollers

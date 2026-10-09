@@ -103,7 +103,7 @@ final class MakerModelCatalogTests: XCTestCase {
             Self.progress("\(model.part): downloading \(model.archive)")
             let imported: (block: BlockDefinition, warnings: [String])
             do {
-                imported = try MakerModelCatalog.download(model)
+                imported = try MakerModelCatalog.download(model, cached: false)
             } catch let error as MakerModelCatalog.DownloadError {
                 XCTFail("\(model.part): \(error)")
                 continue
@@ -114,6 +114,27 @@ final class MakerModelCatalogTests: XCTestCase {
             XCTAssertTrue(imported.warnings.isEmpty, "\(model.part): \(imported.warnings)")
             Self.progress("\(model.part): imported (\(imported.block.circuit.elements.count) parts)")
             models.append((model, imported.block, try XCTUnwrap(imported.block.source?.pins)))
+        }
+
+        // a built-in TL072 running TI's model in its place: a gain of 2 on ±15 V (ngspice: 1.99995 V), and driven to its
+        // swing into the 20 kΩ of its feedback (ngspice: 13.4758 V), where JSpice's own TL072 swings to 13.5 V
+        if let tl072 = models.first(where: { $0.model.part == "TL072" }) {
+            for (volts, expected) in [(1.0, 1.99995), (10.0, 13.4758)] {
+                var u = NetlistPart(kind: .opAmp, name: "U1", params: ElementKind.opAmp.models.first { $0.name == "TL072" }?.values ?? [:],
+                                    connections: ["plus": "in", "minus": "fb", "out": "out"])
+                u.params["makerModel"] = 1
+                u.block = tl072.block
+                let circuit = try SchematicLayout.layout([
+                    u,
+                    NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": volts], connections: ["plus": "in", "minus": "GND"]),
+                    NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "out", "b": "fb"]),
+                    NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "fb", "b": "GND"]),
+                ])
+                let index = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "U1" })
+                let simulator = Simulator.settled(circuit, holding: nil, duration: 0.01, maxSteps: 2_000)
+                XCTAssertFalse(simulator.isFailed, "\(simulator.problems)")
+                XCTAssertEqual(simulator.terminalVoltages(index)[2], expected, accuracy: 0.002, "TL072 in place, \(volts) V in")
+            }
         }
 
         // what a step costs, with affine sources linearised at every iteration and stamped once as linear parts: the two

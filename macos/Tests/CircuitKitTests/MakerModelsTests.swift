@@ -54,6 +54,48 @@ final class MakerModelsTests: XCTestCase {
         XCTAssertTrue(deck.contains("from testamp.lib, SHA-256 \(source.sha256)"), deck)
     }
 
+    /// A built-in op-amp running a maker's model in its place: the model on two ideal supplies, the op-amp's own
+    /// equations left out, exported as the model's subcircuit
+    func testAnOpAmpRunsItsMakersModel() throws {
+        let (block, _) = try MakerModels.block(from: Data(Self.file.utf8), file: "testamp.lib")
+        XCTAssertEqual(Set(try XCTUnwrap(MakerModels.opAmpRoles(block))), Set(0..<5))
+        func stage(_ volts: Double, maker: Bool, supply: Double = 5) throws -> (circuit: Circuit, out: Double) {
+            var u = NetlistPart(kind: .opAmp, name: "U1", params: ["makerModel": maker ? 1 : 0, "supply": supply],
+                                connections: ["plus": "in", "minus": "fb", "out": "out"])
+            u.block = block
+            let circuit = try SchematicLayout.layout([
+                u,
+                NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": volts], connections: ["plus": "in", "minus": "GND"]),
+                NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "out", "b": "fb"]),
+                NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "fb", "b": "GND"]),
+            ])
+            let index = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "U1" })
+            let simulator = Simulator.settled(circuit, holding: nil, duration: 0.01)
+            XCTAssertFalse(simulator.isFailed, "\(simulator.problems)")
+            return (circuit, simulator.terminalVoltages(index)[2])
+        }
+        // a gain of 2, with the model's 1 mV of offset
+        let (circuit, out) = try stage(1, maker: true)
+        XCTAssertTrue(circuit.elements.first { $0.name == "U1" }?.runsMakerModel ?? false)
+        XCTAssertEqual(out, 2.002, accuracy: 1e-3)
+        let flat = circuit.flattened()
+        XCTAssertEqual(flat.elements.first { $0.name == "U1.VCC" }?[param: "voltage"], 5)
+        XCTAssertEqual(flat.elements.first { $0.name == "U1.VEE" }?[param: "voltage"], -5)
+        XCTAssertTrue(flat.elements.contains { $0.name == "U1.G1" }, "the model's parts are in the op-amp's place")
+        // driven past its supply: the model's output stops a volt short of its 5 V, where JSpice's own goes on to 6 V
+        XCTAssertEqual(try stage(3, maker: true).out, 4, accuracy: 1e-3)
+        XCTAssertEqual(try stage(3, maker: false).out, 6, accuracy: 1e-3)
+        // the supplies by default: ± the swing and a volt and a half, rounded, or a single supply (a pedal's 9 V)
+        XCTAssertEqual(MakerModels.rails(midpoint: 0, supply: 0, limit: 13.5).positive, 15)
+        XCTAssertEqual(MakerModels.rails(midpoint: 4.5, supply: 0, limit: 4).positive, 9)
+        XCTAssertEqual(MakerModels.rails(midpoint: 4.5, supply: 0, limit: 4).negative, 0)
+        // exported as the model's subcircuit on its supplies
+        let deck = SpiceNetlist.export(circuit)
+        XCTAssertTrue(deck.contains(".subckt TESTAMP"), deck)
+        XCTAssertTrue(deck.contains("V_X_U1_vcc X_U1_vcc 0 5"), deck)
+        XCTAssertTrue(deck.contains("X_X_U1 "), deck)
+    }
+
     func testAnOpAmpModelsFigures() throws {
         let (block, _) = try MakerModels.block(from: Data(Self.file.utf8), file: "testamp.lib")
         let pins = try XCTUnwrap(block.source?.pins)

@@ -923,6 +923,16 @@ public enum SpiceNetlist {
                     }
                 }
                 lines.append("\(device("B", name)) \(n("plus")) \(n("minus")) \(p("mode") >= 0.5 ? "V" : "I")={\(body)}")
+            case .opAmp where p("makerModel") >= 0.5 && part.block.flatMap(MakerModels.opAmpRoles) != nil:
+                // running its maker's model: the model's subcircuit, on two ideal supplies as JSpice runs it
+                guard let block = part.block, let roles = MakerModels.opAmpRoles(block) else { return }
+                let sub = subcircuit(block)
+                let rails = MakerModels.rails(midpoint: p("midpoint"), supply: p("supply"), limit: p("limit"))
+                let x = device("X", name)
+                lines.append("V_\(x)_vcc \(x)_vcc 0 \(f(rails.positive))")
+                lines.append("V_\(x)_vee \(x)_vee 0 \(f(rails.negative))")
+                let nets = [n("plus"), n("minus"), x + "_vcc", x + "_vee", n("out")]
+                lines.append("X_\(x) \(roles.map { nets[$0] }.joined(separator: " ")) \(sub)")
             case .opAmp:
                 // JSpice's op-amp: an integrator with a pole at the gain-bandwidth, slew limited, ahead of a smooth limit
                 let gain = max(p("gain"), 1), limit = max(p("limit"), 0.01), gbw = p("gbw"), slew = p("slewRate") * 1e6
