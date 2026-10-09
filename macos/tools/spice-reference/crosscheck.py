@@ -175,6 +175,16 @@ def mosfet_card(p, kind):
         words.append('TOX=%.12g' % (3.9 * 8.854214871e-12 / param(p, 'cox')))
     return ' '.join(words)
 
+def saturating_inductor(n, a, b, l0, isat, fraction):
+    """An inductor whose core saturates, as JSpice has it: the flux λ, the integral of its voltage (a 1 F capacitor
+    charged by it), and its current i(λ) = λ / Lsat − (1/Lsat − 1/L0) λsat tanh(λ / λsat)"""
+    lsat = l0 * min(max(fraction, 1e-6), 1)
+    saturation = l0 * isat
+    flux = 'n_%s_flux' % n
+    return ['G%s_flux 0 %s %s %s 1' % (n, flux, a, b), 'C%s_flux %s 0 1 IC=0' % (n, flux),
+            'B%s %s %s I=V(%s)/%.12g-%.12g*tanh(V(%s)/%.12g)' % (n, a, b, flux, lsat, (1 / lsat - 1 / l0) * saturation, flux,
+                                                             saturation)]
+
 def spice_deck(parts, duration, probes, step, temperature=27):
     lines, models = spice_elements(parts, temperature=temperature)
     data = tempfile.mktemp(suffix='.txt')
@@ -203,7 +213,11 @@ def spice_elements(parts, ac_source=None, temperature=27):
         elif k == 'capacitor':
             lines.append('C%s %s %s %.12g IC=%.12g' % (n, pin('a'), pin('b'), param(p, 'capacitance'), param(p, 'initialVoltage')))
         elif k == 'inductor':
-            lines.append('L%s %s %s %.12g IC=0' % (n, pin('a'), pin('b'), max(param(p, 'inductance'), 1e-15)))
+            if param(p, 'saturationCurrent') > 0:
+                lines += saturating_inductor(n, pin('a'), pin('b'), max(param(p, 'inductance'), 1e-15),
+                                             param(p, 'saturationCurrent'), param(p, 'saturatedFraction'))
+            else:
+                lines.append('L%s %s %s %.12g IC=0' % (n, pin('a'), pin('b'), max(param(p, 'inductance'), 1e-15)))
         elif k == 'dcVoltage':
             lines.append('V%s %s %s DC %.12g' % (n, pin('plus'), pin('minus'), param(p, 'voltage')))
         elif k == 'acVoltage':
@@ -266,6 +280,21 @@ def spice_elements(parts, ac_source=None, temperature=27):
             for key, a, b in (('cgk', g, ca), ('cgp', g, pl), ('cpk', pl, ca)):
                 if param(p, key) > 0:
                     lines.append('C%s_%s %s %s %.12g IC=0' % (n, key, a, b, param(p, key)))
+        elif k == 'transformer' and param(p, 'saturation') > 0:
+            # as JSpice draws it: the windings' resistances, the leakage inductance, the magnetising inductance (which
+            # saturates) and an ideal core, its secondary a voltage source of n / k times the primary's voltage and its
+            # primary drawing n / k times the secondary's current
+            lp, ratio, k_ = max(param(p, 'inductance'), 1e-12), param(p, 'ratio'), min(max(param(p, 'coupling'), 0.01), 1)
+            x, y, e = 'n_%s_x' % n, 'n_%s_y' % n, 'n_%s_e' % n
+            lines.append('R%s_p %s %s %.12g' % (n, pin('p1'), x, max(param(p, 'rp'), 1e-6)))
+            lines.append('L%s_leak %s %s %.12g IC=0' % (n, x, y, (1 - k_ * k_) * lp))
+            lm = k_ * k_ * lp
+            lines += saturating_inductor(n + '_m', y, pin('p2'), lm, param(p, 'saturation') / lm, param(p, 'saturatedFraction'))
+            sx = 'n_%s_sx' % n
+            lines.append('E%s_core %s %s %s %s %.12g' % (n, e, pin('s2'), y, pin('p2'), ratio / k_))
+            lines.append('V%s_sense %s %s DC 0' % (n, e, sx))
+            lines.append('F%s_core %s %s V%s_sense %.12g' % (n, y, pin('p2'), n, ratio / k_))
+            lines.append('R%s_s %s %s %.12g' % (n, sx, pin('s1'), max(param(p, 'rs'), 1e-6)))
         elif k == 'transformer':
             # two coupled inductors with their windings' resistances
             lp, ratio, coupling = max(param(p, 'inductance'), 1e-12), param(p, 'ratio'), min(max(param(p, 'coupling'), 0.01), 1)
@@ -460,6 +489,18 @@ CASES = [
         P('resistor', 'RG', dict(a='in', b='gate'), resistance=1000),
         P('resistor', 'RD', dict(a='vdd', b='drain'), resistance=1000),
         P('nmos', 'M1', dict(gate='gate', drain='drain', source='GND'), **TEST_NMOS)]),
+    dict(id='saturating-inductor', note='a 1 H inductor saturating at 20 mA, driven through 10 Ω by a 50 Hz sine whose flux '
+         'is half again its saturation: the current peaks sharply', duration=0.06, probes=['coil'], parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=10, frequency=50),
+        P('resistor', 'R1', dict(a='in', b='coil'), resistance=10),
+        P('inductor', 'L1', dict(a='coil', b='GND'), inductance=1, saturationCurrent=0.02, saturatedFraction=0.002)]),
+    dict(id='saturating-transformer', note='a mains transformer into a rectifier load, its core saturating near the peak of a '
+         '60 Hz primary voltage', duration=0.05, probes=['sec', 'pri'], parts=[
+        P('acVoltage', 'V1', dict(plus='in', minus='GND'), amplitude=170, frequency=60),
+        P('resistor', 'RS', dict(a='in', b='pri'), resistance=2),
+        P('transformer', 'T1', dict(p1='pri', p2='GND', s1='sec', s2='GND'), inductance=5, ratio=0.0521739, coupling=0.995,
+          rp=30, rs=0.5, saturation=0.5, saturatedFraction=0.01),
+        P('resistor', 'RL', dict(a='sec', b='GND'), resistance=100)]),
     dict(id='opamp-inverting', note='TL072 inverting amplifier, gain 10, 1 kHz', duration=0.004, probes=['out'], parts=[
         P('acVoltage', 'VIN', dict(plus='in', minus='GND'), amplitude=0.5, frequency=1000),
         P('resistor', 'R1', dict(a='in', b='inv'), resistance=10_000),

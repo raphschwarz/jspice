@@ -152,7 +152,13 @@ extension Circuit {
                 if rp > 0 { part(owner, 1, .resistor, pins[0], x, "Rp", ["resistance": rp]) } else { part(owner, 1, .wire, pins[0], x, "Rp") }
                 let leakage = (1 - k * k) * lp
                 if leakage > 1e-9 * lp { part(owner, 2, .inductor, x, y, "Lleak", ["inductance": leakage]) } else { part(owner, 2, .wire, x, y, "Lleak") }
-                part(owner, 3, .inductor, y, pins[1], "Lm", ["inductance": k * k * lp])
+                // the magnetising inductance carries the core's flux: it saturates at the core's volt-seconds
+                var magnetising = ["inductance": k * k * lp]
+                if owner[param: "saturation"] > 0 {
+                    magnetising["saturationCurrent"] = owner[param: "saturation"] / (k * k * lp)
+                    magnetising["saturatedFraction"] = owner[param: "saturatedFraction"]
+                }
+                part(owner, 3, .inductor, y, pins[1], "Lm", magnetising)
                 var core = Element(kind: .transformer, name: owner.name.isEmpty ? "" : owner.name + ".core",
                                    a: origin + GridPoint(10, 10), b: origin + GridPoint(14, 10),
                                    params: ["core": 1, "ratio": ratio / k])

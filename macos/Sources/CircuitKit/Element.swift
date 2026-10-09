@@ -787,6 +787,10 @@ extension ElementKind {
                 ParamSpec("coupling", "Coupling (1: no leakage)", unit: "", default: 0.998, range: 0.5...1, log: false),
                 ParamSpec("rp", "Primary winding resistance", unit: "Ω", default: 200, range: 0...100_000, log: false),
                 ParamSpec("rs", "Secondary winding resistance", unit: "Ω", default: 0.4, range: 0...100_000, log: false),
+                ParamSpec("saturation", "Core saturation: primary volt-seconds, Vpeak ÷ 2πf (0: never)", unit: "V·s", default: 0,
+                          range: 0...100, log: false),
+                ParamSpec("saturatedFraction", "Magnetising inductance left when saturated (fraction)", unit: "", default: 0.002,
+                          range: 1e-5...1, advanced: true),
             ]
         case .lamp:
             return [
@@ -799,7 +803,12 @@ extension ElementKind {
                 ParamSpec("initialVoltage", "Initial voltage", unit: "V", default: 0, range: -50...50, log: false),
             ]
         case .inductor:
-            return [ParamSpec("inductance", "Inductance", unit: "H", default: 1, range: 1e-9...100)]
+            return [
+                ParamSpec("inductance", "Inductance", unit: "H", default: 1, range: 1e-9...100),
+                ParamSpec("saturationCurrent", "Current where its core saturates (0: never)", unit: "A", default: 0, range: 0...100, log: false),
+                ParamSpec("saturatedFraction", "Inductance left when saturated (fraction)", unit: "", default: 0.002, range: 1e-5...1,
+                          advanced: true),
+            ]
         case .dcVoltage:
             return [ParamSpec("voltage", "Voltage", unit: "V", default: 5, range: -24...24, log: false)]
         case .acVoltage:
@@ -1051,6 +1060,9 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     public var extentPoints: [GridPoint] {
         posts.count > 2 ? posts + [a, b] : [a, b]
     }
+
+    /// An inductor whose core saturates (a nonlinear part: its current a function of its flux)
+    public var saturates: Bool { kind == .inductor && self[param: "saturationCurrent"] > 0 }
 
     /// A behavioural source that sets a voltage (it has a current unknown of its own, as a voltage source does)
     public var setsBehavioralVoltage: Bool { kind == .behavioralSource && self[param: "mode"] >= 0.5 }

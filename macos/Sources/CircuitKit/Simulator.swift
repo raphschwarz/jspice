@@ -482,6 +482,8 @@ public final class Simulator {
             default: return false
             }
         }
+        // inductors whose cores saturate are nonlinear too
+        nonlinearIndices += flat.elements.indices.filter { flat.elements[$0].saturates }
         drivenIndices = indices {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
@@ -678,7 +680,7 @@ public final class Simulator {
                 capacitorVoltagePrevious[i] = capacitorVoltage[i] - capacitorCurrent[i] * dt / c
                 capacitorVoltageOlder[i] = 2 * capacitorVoltagePrevious[i] - capacitorVoltage[i]
             } else if element.kind == .inductor {
-                let l = max(element[param: "inductance"], 1e-15)
+                let l = i < constants.count ? constants[i].value : max(element[param: "inductance"], 1e-15)
                 inductorCurrentPrevious[i] = inductorCurrent[i] - inductorVoltage[i] * dt / l
                 inductorCurrentOlder[i] = 2 * inductorCurrentPrevious[i] - inductorCurrent[i]
             } else if element.kind == .opAmp {
@@ -812,6 +814,8 @@ public final class Simulator {
             if same != old { return false }
             // (a transistor given a resistance, or losing one, gains or loses a node)
             if new.internalNodeCount != old.internalNodeCount { return false }
+            // (an inductor's core starting or ceasing to saturate makes it nonlinear, or linear)
+            if new.saturates != old.saturates { return false }
         }
         circuit = newCircuit
         flat = newFlat
@@ -1453,7 +1457,7 @@ public final class Simulator {
             case .capacitor where !linearising:
                 stampConductance(matrix, m, nodes[0], nodes[1], a0 * element[param: "capacitance"] / h)
             case .inductor where !linearising:
-                stampConductance(matrix, m, nodes[0], nodes[1], h / (a0 * max(element[param: "inductance"], 1e-15)))
+                stampConductance(matrix, m, nodes[0], nodes[1], h / (a0 * constants[i].value))
             case .transformer:
                 // an ideal transformer (a transformer part's core): the secondary is a voltage source of `ratio` times
                 // the primary's voltage, and the primary carries `ratio` times the secondary's current, so it passes
@@ -1828,7 +1832,16 @@ public final class Simulator {
         case .capacitor:
             c.value = p("capacitance")
         case .inductor:
-            c.value = max(p("inductance"), 1e-15)
+            let l0 = max(p("inductance"), 1e-15)
+            c.value = l0
+            if element.saturates {
+                // a saturating core: the inductor at its saturated inductance (its current, times that, is the flux), with
+                // the core's own current on top (see stampSaturation); its inductance unsaturated, and the flux it
+                // saturates at
+                c.value = l0 * min(max(p("saturatedFraction"), 1e-6), 1)
+                c.gain = l0
+                c.threshold = l0 * p("saturationCurrent")
+            }
         case .currentSource:
             c.value = p("current")
         case .dcVoltage:
@@ -2516,6 +2529,33 @@ public final class Simulator {
         stampCurrent(rhs, n.dp, n.sp, p * (r.cdrain - gds * vds - gm * vgs))
     }
 
+    /// The current a saturating core adds to its inductor at saturated inductance Lsat, as a function of the flux λ:
+    /// together i(λ) = λ / Lsat − (1/Lsat − 1/L0) λsat tanh(λ / λsat), so the inductance is L0 while the flux is small
+    /// and falls to Lsat past λsat; and its slope in the flux
+    func coreCurrent(_ i: Int, flux: Double) -> (current: Double, slope: Double) {
+        let c = constants[i]
+        let (lsat, l0, saturation) = (c.value, c.gain, max(c.threshold, 1e-30))
+        let t = tanh(flux / saturation)
+        let k = 1 / lsat - 1 / l0
+        return (-k * saturation * t, -k * (1 - t * t))
+    }
+
+    /// A saturating inductor's core, linearised at the present solution: its flux is the inductor's (at saturated
+    /// inductance) current times Lsat, which this substep's voltage sets through BDF2
+    private func stampSaturation(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
+        // (small-signal analysis takes the whole inductor's inductance at the operating point instead)
+        guard !linearising, i < constants.count else { return }
+        let lsat = constants[i].value
+        let v = voltage(nodes[0]) - voltage(nodes[1])
+        let g = h / (a0 * lsat)
+        let current = g * v - (a1 * inductorCurrent[i] + a2 * inductorCurrentPrevious[i]) / a0
+        let core = coreCurrent(i, flux: lsat * current)
+        // d(core current)/dv = d/dflux × lsat × g
+        let conductance = core.slope * lsat * g
+        stampConductance(matrix, m, nodes[0], nodes[1], conductance)
+        stampCurrent(rhs, nodes[0], nodes[1], core.current - conductance * v)
+    }
+
     /// Reads each behavioural source's expression, and finds what its inputs read: a voltage between its own pins (in1 …
     /// in8, + and −, or 0 for ground), or the current through a voltage source by name, looked for first beside the source
     /// (in the same block) and then anywhere
@@ -2678,6 +2718,9 @@ public final class Simulator {
 
             case .behavioralSource:
                 stampBehavior(i, nodes, matrix, rhs, m)
+
+            case .inductor:
+                stampSaturation(i, nodes, matrix, rhs, m)
 
             case .njfet:
                 stampJFET(i, nodes, matrix, rhs, m)
@@ -3057,7 +3100,14 @@ public final class Simulator {
             case .capacitor:
                 admittance(nodes[0], nodes[1], .capacitance(c.value))
             case .inductor:
-                admittance(nodes[0], nodes[1], .inductance(c.value))
+                if flat.elements[i].saturates {
+                    // the inductance at the operating point's flux: 1 / (di/dλ)
+                    let flux = c.value * inductorCurrent[i]
+                    let slope = 1 / c.value + coreCurrent(i, flux: flux).slope
+                    admittance(nodes[0], nodes[1], .inductance(1 / max(slope, 1e-30)))
+                } else {
+                    admittance(nodes[0], nodes[1], .inductance(c.value))
+                }
             case .diode, .led, .zener:
                 let anode = diodes[i].hasSeriesNode ? nodes[2] : nodes[0]
                 let capacitance = junctionChargeAndCapacitance(i, slot: 0, voltage(anode) - voltage(nodes[1])).capacitance
@@ -3878,7 +3928,8 @@ public final class Simulator {
         case .capacitor:
             return twoTerminal(capacitorCurrent[i])
         case .inductor:
-            return twoTerminal(inductorCurrent[i])
+            let saturating = element.saturates && i < constants.count
+            return twoTerminal(inductorCurrent[i] + (saturating ? coreCurrent(i, flux: constants[i].value * inductorCurrent[i]).current : 0))
         case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
             let row = topology.sourceRow[i]
             return twoTerminal(row >= 0 && row < x.count ? x[row] : 0)
