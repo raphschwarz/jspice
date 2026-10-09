@@ -3654,6 +3654,12 @@ public final class Simulator {
         return logicStates[index].count
     }
 
+    /// An SPI ADC's last conversion (0 to 1023)
+    public func adcReading(_ index: Int) -> Int {
+        guard index < kinds.count, index < logicStates.count, kinds[index] == .spiAdc else { return 0 }
+        return Int(logicStates[index].latch)
+    }
+
     /// 0 (open) to 1 (closed) for analog switches
     public func switchConduction(_ index: Int) -> Double {
         guard index < flat.elements.count, flat.elements[index].kind == .analogSwitch else { return 0 }

@@ -506,6 +506,27 @@ struct LiveReadings: View {
                     let word = simulator.logicCount(index)
                     reading("Code", word & 0x1000 == 0 ? "Shut down" : "\(word & 0xFFF) of 4095")
                     reading("Output voltage", SI.format(simulator.terminalVoltages(index).last ?? 0, unit: "V"))
+                } else if kind == .dualDac {
+                    let words = simulator.logicCount(index)
+                    let voltages = simulator.terminalVoltages(index)
+                    ForEach([0, 1], id: \.self) { channel in
+                        let word = words >> (16 * channel) & 0xFFFF
+                        let name = channel == 0 ? "A" : "B"
+                        reading("Code \(name)", word & 0x1000 == 0 ? "Shut down" : "\(word & 0xFFF) of 4095")
+                        reading("Output \(name)", SI.format(voltages.count > 4 + channel ? voltages[4 + channel] : 0, unit: "V"))
+                    }
+                } else if kind == .spiAdc {
+                    reading("Last conversion", "\(simulator.adcReading(index)) of 1023")
+                } else if kind == .i2cDac {
+                    let register = simulator.logicCount(index)
+                    reading("Code", register >> 12 & 0x3 != 0 ? "Powered down" : "\(register & 0xFFF) of 4095")
+                    reading("Output voltage", SI.format(simulator.terminalVoltages(index).last ?? 0, unit: "V"))
+                } else if kind == .i2sDac {
+                    let voltages = simulator.terminalVoltages(index)
+                    if voltages.count == 5 {
+                        reading("Left", SI.format(voltages[3], unit: "V"))
+                        reading("Right", SI.format(voltages[4], unit: "V"))
+                    }
                 } else if kind == .pll {
                     let outputs = simulator.logicOutputs(index)
                     reading("VCO", outputs.first == true ? "High" : "Low")
