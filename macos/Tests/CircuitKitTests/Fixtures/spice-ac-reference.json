@@ -1091,7 +1091,7 @@
    "id": "mosfet-card",
    "note": "test NMOS card: common-source stage biased at 2.4 V, fed from 10 k\u03a9, out to 100 MHz (Meyer and the overlaps, the Miller pole)",
    "source": "VIN",
-   "settle": 0.3,
+   "settle": 1.5,
    "frequencies": [
     1.0,
     1.58489319,

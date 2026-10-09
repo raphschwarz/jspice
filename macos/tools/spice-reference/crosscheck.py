@@ -576,7 +576,7 @@ AC_CASES = [
         P('capacitor', 'CS', dict(a='src', b='GND'), capacitance=100e-6),
         P('njfet', 'J1', dict(gate='gate', drain='drain', source='src'), **TEST_JFET)]),
     dict(id='mosfet-card', note='test NMOS card: common-source stage biased at 2.4 V, fed from 10 kΩ, out to 100 MHz (Meyer '
-         'and the overlaps, the Miller pole)', source='VIN', settle=0.3, probes=['drain'], fstop=1e8, parts=[
+         'and the overlaps, the Miller pole)', source='VIN', settle=1.5, probes=['drain'], fstop=1e8, parts=[
         P('dcVoltage', 'VDD', dict(plus='vdd', minus='GND'), voltage=12),
         P('acVoltage', 'VIN', dict(plus='sig', minus='GND'), amplitude=0.01, frequency=1000),
         P('resistor', 'RSIG', dict(a='sig', b='in'), resistance=10_000),
