@@ -25,6 +25,9 @@ public struct SpiceExpression: Hashable, Sendable {
         case table(Node, [Double], [Double])
         /// The slope of the line a table's argument is on (0 beyond the ends)
         case tableSlope(Node, [Double], [Double])
+        /// A condition that comes of differentiating a continuous function (min, max, limit, abs, uramp, a power's
+        /// sign): decided by the present inputs even while the expression's own decisions are held (see `value`)
+        case live(Node)
     }
 
     public enum Operator: String, Hashable, Sendable {
@@ -53,11 +56,35 @@ public struct SpiceExpression: Hashable, Sendable {
     public let inputs: [Input]
     /// The derivative of the expression in each input, in order
     public let slopes: [Node]
+    /// Whether the value jumps where a decision in it changes: a comparison, a condition (IF, ?:), a logical
+    /// operator, u, sgn, floor or ceil
+    public let decides: Bool
 
     public init(root: Node, inputs: [Input]) {
-        self.root = Self.fold(root)
+        let folded = Self.fold(root)
+        self.root = folded
         self.inputs = inputs
         slopes = inputs.indices.map { Self.fold(Self.derivative(of: root, in: $0)) }
+        decides = Self.hasDecision(folded)
+    }
+
+    private static func hasDecision(_ node: Node) -> Bool {
+        switch node {
+        case .constant, .input, .time, .temperature, .live: return false
+        case .not, .conditional: return true
+        case let .negate(a): return hasDecision(a)
+        case let .binary(op, a, b):
+            switch op {
+            case .add, .subtract, .multiply, .divide, .power: return hasDecision(a) || hasDecision(b)
+            default: return true
+            }
+        case let .call(f, args):
+            switch f {
+            case .u, .sgn, .floor, .ceil: return true
+            default: return args.contains(where: hasDecision)
+            }
+        case let .table(a, _, _), let .tableSlope(a, _, _): return hasDecision(a)
+        }
     }
 
     /// A function of a deck's `.func`: its arguments' names and its body, which a call is worked out as
@@ -79,7 +106,7 @@ public struct SpiceExpression: Hashable, Sendable {
         func smooth(_ n: Node) -> Bool {
             switch n {
             case .constant, .input, .temperature: return true
-            case .time, .not, .conditional, .table, .tableSlope: return false
+            case .time, .not, .conditional, .table, .tableSlope, .live: return false
             case let .negate(a): return smooth(a)
             case let .binary(op, a, b):
                 switch op {
@@ -136,14 +163,19 @@ public struct SpiceExpression: Hashable, Sendable {
 
     // MARK: Evaluation
 
-    /// The value, with `inputs` the values of the inputs in order
-    @inline(__always) public func value(_ inputs: UnsafePointer<Double>, time: Double = 0, celsius: Double = 27) -> Double {
-        Self.evaluate(root, inputs, time, celsius)
+    /// The value, with `inputs` the values of the inputs in order. Its decisions (comparisons, conditions, logical
+    /// operators, u, sgn, floor and ceil) are made with `deciding` in place of `inputs` when it is given: held at other
+    /// values, the expression is smooth in `inputs` (Newton-Raphson holds a maker's model's comparators at a substep's
+    /// start, so that it does not jump from one side of one to the other for ever).
+    @inline(__always) public func value(_ inputs: UnsafePointer<Double>, deciding: UnsafePointer<Double>? = nil,
+                                        time: Double = 0, celsius: Double = 27) -> Double {
+        Self.evaluate(root, inputs, deciding ?? inputs, time, celsius)
     }
 
-    /// The slope in input `k`
-    @inline(__always) public func slope(_ k: Int, _ inputs: UnsafePointer<Double>, time: Double = 0, celsius: Double = 27) -> Double {
-        Self.evaluate(slopes[k], inputs, time, celsius)
+    /// The slope in input `k`, decided as `value` decides
+    @inline(__always) public func slope(_ k: Int, _ inputs: UnsafePointer<Double>, deciding: UnsafePointer<Double>? = nil,
+                                        time: Double = 0, celsius: Double = 27) -> Double {
+        Self.evaluate(slopes[k], inputs, deciding ?? inputs, time, celsius)
     }
 
     /// The value with no inputs (a parameter's, or a constant element value's)
@@ -152,39 +184,57 @@ public struct SpiceExpression: Hashable, Sendable {
         return withUnsafePointer(to: 0.0) { value($0) }
     }
 
-    static func evaluate(_ node: Node, _ x: UnsafePointer<Double>, _ time: Double, _ celsius: Double) -> Double {
+    /// `node`'s value at inputs `x`, its decisions made at inputs `d` (the same as `x` but while decisions are held)
+    static func evaluate(_ node: Node, _ x: UnsafePointer<Double>, _ d: UnsafePointer<Double>, _ time: Double, _ celsius: Double) -> Double {
         switch node {
         case let .constant(c): return c
         case let .input(k): return x[k]
         case .time: return time
         case .temperature: return celsius
-        case let .negate(a): return -evaluate(a, x, time, celsius)
-        case let .not(a): return evaluate(a, x, time, celsius) != 0 ? 0 : 1
+        case let .negate(a): return -evaluate(a, x, d, time, celsius)
+        case let .not(a): return evaluate(a, d, d, time, celsius) != 0 ? 0 : 1
+        case let .live(a): return evaluate(a, x, x, time, celsius)
         case let .binary(op, a, b):
-            let u = evaluate(a, x, time, celsius)
-            // the logical operators look at their second operand only when they must
             switch op {
-            case .and: return u != 0 && evaluate(b, x, time, celsius) != 0 ? 1 : 0
-            case .or: return u != 0 || evaluate(b, x, time, celsius) != 0 ? 1 : 0
-            default: break
+            // the logical operators look at their second operand only when they must
+            case .and: return evaluate(a, d, d, time, celsius) != 0 && evaluate(b, d, d, time, celsius) != 0 ? 1 : 0
+            case .or: return evaluate(a, d, d, time, celsius) != 0 || evaluate(b, d, d, time, celsius) != 0 ? 1 : 0
+            case .less, .greater, .lessEqual, .greaterEqual, .equal, .notEqual:
+                let u = evaluate(a, d, d, time, celsius), v = evaluate(b, d, d, time, celsius)
+                switch op {
+                case .less: return u < v ? 1 : 0
+                case .greater: return u > v ? 1 : 0
+                case .lessEqual: return u <= v ? 1 : 0
+                case .greaterEqual: return u >= v ? 1 : 0
+                case .equal: return u == v ? 1 : 0
+                default: return u != v ? 1 : 0
+                }
+            case .add, .subtract, .multiply, .divide, .power:
+                break
             }
-            let v = evaluate(b, x, time, celsius)
+            let u = evaluate(a, x, d, time, celsius), v = evaluate(b, x, d, time, celsius)
             switch op {
             case .add: return u + v
             case .subtract: return u - v
             case .multiply: return u * v
             case .divide: return v == 0 ? (u == 0 ? 0 : u.sign == .minus ? -1e300 : 1e300) : u / v
             case .power: return pow(u, v)
-            case .less: return u < v ? 1 : 0
-            case .greater: return u > v ? 1 : 0
-            case .lessEqual: return u <= v ? 1 : 0
-            case .greaterEqual: return u >= v ? 1 : 0
-            case .equal: return u == v ? 1 : 0
-            case .notEqual: return u != v ? 1 : 0
-            case .and, .or: return 0
+            default: return 0
             }
         case let .call(f, args):
-            let a = evaluate(args[0], x, time, celsius)
+            switch f {
+            case .u, .sgn, .floor, .ceil:
+                let a = evaluate(args[0], d, d, time, celsius)
+                switch f {
+                case .u: return a > 0 ? 1 : 0
+                case .sgn: return a > 0 ? 1 : a < 0 ? -1 : 0
+                case .floor: return a.rounded(.down)
+                default: return a.rounded(.up)
+                }
+            default:
+                break
+            }
+            let a = evaluate(args[0], x, d, time, celsius)
             switch f {
             case .abs: return Swift.abs(a)
             case .sqrt: return a > 0 ? a.squareRoot() : 0
@@ -200,27 +250,31 @@ public struct SpiceExpression: Hashable, Sendable {
             case .sinh: return Foundation.sinh(Swift.min(Swift.max(a, -700), 700))
             case .cosh: return Foundation.cosh(Swift.min(Swift.max(a, -700), 700))
             case .tanh: return Foundation.tanh(a)
-            case .min: return Swift.min(a, evaluate(args[1], x, time, celsius))
-            case .max: return Swift.max(a, evaluate(args[1], x, time, celsius))
-            case .pow: return Foundation.pow(a, evaluate(args[1], x, time, celsius))
-            case .pwr: return Foundation.pow(Swift.abs(a), evaluate(args[1], x, time, celsius))
+            case .min: return Swift.min(a, evaluate(args[1], x, d, time, celsius))
+            case .max: return Swift.max(a, evaluate(args[1], x, d, time, celsius))
+            case .pow: return Foundation.pow(a, evaluate(args[1], x, d, time, celsius))
+            case .pwr: return Foundation.pow(Swift.abs(a), evaluate(args[1], x, d, time, celsius))
             case .pwrs:
-                let p = Foundation.pow(Swift.abs(a), evaluate(args[1], x, time, celsius))
+                let p = Foundation.pow(Swift.abs(a), evaluate(args[1], x, d, time, celsius))
                 return a < 0 ? -p : p
             case .limit:
-                let lo = evaluate(args[1], x, time, celsius), hi = evaluate(args[2], x, time, celsius)
+                let lo = evaluate(args[1], x, d, time, celsius), hi = evaluate(args[2], x, d, time, celsius)
                 return Swift.min(Swift.max(a, Swift.min(lo, hi)), Swift.max(lo, hi))
-            case .u: return a > 0 ? 1 : 0
             case .uramp: return a > 0 ? a : 0
-            case .sgn: return a > 0 ? 1 : a < 0 ? -1 : 0
-            case .floor: return a.rounded(.down)
-            case .ceil: return a.rounded(.up)
-            case .atan2: return Foundation.atan2(a, evaluate(args[1], x, time, celsius))
+            case .u, .sgn, .floor, .ceil: return 0
+            case .atan2: return Foundation.atan2(a, evaluate(args[1], x, d, time, celsius))
             }
         case let .conditional(c, a, b):
-            return evaluate(c, x, time, celsius) != 0 ? evaluate(a, x, time, celsius) : evaluate(b, x, time, celsius)
+            // a condition is a decision, made at `d`, unless it is a continuous function's slope's (live)
+            let condition: Double
+            if case let .live(inner) = c {
+                condition = evaluate(inner, x, x, time, celsius)
+            } else {
+                condition = evaluate(c, d, d, time, celsius)
+            }
+            return condition != 0 ? evaluate(a, x, d, time, celsius) : evaluate(b, x, d, time, celsius)
         case let .table(a, xs, ys):
-            let v = evaluate(a, x, time, celsius)
+            let v = evaluate(a, x, d, time, celsius)
             guard let first = xs.first, let last = xs.last else { return 0 }
             if v <= first { return ys[0] }
             if v >= last { return ys[ys.count - 1] }
@@ -231,7 +285,7 @@ public struct SpiceExpression: Hashable, Sendable {
             }
             return ys[lo] + (v - xs[lo]) / (xs[hi] - xs[lo]) * (ys[hi] - ys[lo])
         case let .tableSlope(a, xs, ys):
-            let v = evaluate(a, x, time, celsius)
+            let v = evaluate(a, x, d, time, celsius)
             guard xs.count > 1, v > xs[0], v < xs[xs.count - 1] else { return 0 }
             var lo = 0, hi = xs.count - 1
             while hi - lo > 1 {
@@ -244,7 +298,7 @@ public struct SpiceExpression: Hashable, Sendable {
 
     /// A node without inputs evaluated
     private static func constant(_ node: Node) -> Double {
-        withUnsafePointer(to: 0.0) { evaluate(node, $0, 0, 27) }
+        withUnsafePointer(to: 0.0) { evaluate(node, $0, $0, 0, 27) }
     }
 
     // MARK: Differentiation
@@ -257,7 +311,7 @@ public struct SpiceExpression: Hashable, Sendable {
         func div(_ a: Node, _ b: Node) -> Node { .binary(.divide, a, b) }
         func call(_ f: Function, _ args: Node...) -> Node { .call(f, args) }
         switch node {
-        case .constant, .time, .temperature, .not, .tableSlope: return .constant(0)
+        case .constant, .time, .temperature, .not, .tableSlope, .live: return .constant(0)
         case let .input(j): return .constant(j == k ? 1 : 0)
         case let .negate(a): return .negate(d(a))
         case let .binary(op, a, b):
@@ -277,7 +331,7 @@ public struct SpiceExpression: Hashable, Sendable {
         case let .call(f, args):
             let a = args[0], da = d(a)
             switch f {
-            case .abs: return mul(call(.sgn, a), da)
+            case .abs: return mul(.live(call(.sgn, a)), da)
             case .sqrt: return div(da, mul(.constant(2), node))
             case .exp: return mul(node, da)
             case .ln, .log: return div(da, a)
@@ -291,22 +345,22 @@ public struct SpiceExpression: Hashable, Sendable {
             case .sinh: return mul(call(.cosh, a), da)
             case .cosh: return mul(call(.sinh, a), da)
             case .tanh: return mul(sub(.constant(1), mul(node, node)), da)
-            case .min: return .conditional(.binary(.lessEqual, a, args[1]), da, d(args[1]))
-            case .max: return .conditional(.binary(.greaterEqual, a, args[1]), da, d(args[1]))
+            case .min: return .conditional(.live(.binary(.lessEqual, a, args[1])), da, d(args[1]))
+            case .max: return .conditional(.live(.binary(.greaterEqual, a, args[1])), da, d(args[1]))
             case .pow:
                 return derivative(of: .binary(.power, a, args[1]), in: k)
             case .pwr, .pwrs:
                 // |a|^b: b |a|^(b-1) sgn(a) a' (for pwrs, b |a|^(b-1) a'), plus the exponent's part
                 let b = args[1]
                 let base = mul(b, call(.pwr, a, sub(b, .constant(1))))
-                let first = f == .pwr ? mul(mul(base, call(.sgn, a)), da) : mul(base, da)
+                let first = f == .pwr ? mul(mul(base, .live(call(.sgn, a))), da) : mul(base, da)
                 return add(first, mul(mul(node, call(.ln, call(.abs, a))), d(b)))
             case .limit:
                 let lo = args[1], hi = args[2]
                 let low = call(.min, lo, hi), high = call(.max, lo, hi)
-                return .conditional(.binary(.less, a, low), d(.call(.min, [lo, hi])),
-                                    .conditional(.binary(.greater, a, high), d(.call(.max, [lo, hi])), da))
-            case .uramp: return mul(call(.u, a), da)
+                return .conditional(.live(.binary(.less, a, low)), d(.call(.min, [lo, hi])),
+                                    .conditional(.live(.binary(.greater, a, high)), d(.call(.max, [lo, hi])), da))
+            case .uramp: return mul(.live(call(.u, a)), da)
             case .u, .sgn, .floor, .ceil: return .constant(0)
             case .atan2:
                 let b = args[1]
@@ -369,6 +423,10 @@ public struct SpiceExpression: Hashable, Sendable {
             let fa = fold(a)
             if case .constant = fa { return .constant(constant(.tableSlope(fa, xs, ys))) }
             return .tableSlope(fa, xs, ys)
+        case let .live(a):
+            let fa = fold(a)
+            if case .constant = fa { return fa }
+            return .live(fa)
         default:
             return node
         }
@@ -404,6 +462,8 @@ public struct SpiceExpression: Hashable, Sendable {
                 return "table(" + write(a, 0) + "," + zip(xs, ys).map { String(format: "%.12g,%.12g", $0, $1) }.joined(separator: ",") + ")"
             case .tableSlope:
                 return "0"
+            case let .live(a):
+                return write(a, outer)
             }
         }
         return write(root, 0)

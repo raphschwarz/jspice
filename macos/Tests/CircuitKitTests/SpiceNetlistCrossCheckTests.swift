@@ -96,6 +96,56 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
         print(report.joined(separator: "\n"))
     }
 
+    /// Decisions held at other inputs (as Newton-Raphson holds them through a solve): the value takes the branch they
+    /// decide; the conditions that come of differentiating a continuous function (min here) follow the inputs themselves
+    func testDecisionsCanBeHeld() throws {
+        let e = try SpiceExpression(parsing: "if(V(a) > 0, 2*V(a), -V(a)) + min(V(a), 1)")
+        XCTAssertTrue(e.decides)
+        XCTAssertFalse(try SpiceExpression(parsing: "min(V(a), 1) + abs(V(a)) + limit(V(a), 0, 1)").decides)
+        XCTAssertTrue(try SpiceExpression(parsing: "u(V(a)) * 3").decides)
+        let at = [2.0], decided = [-1.0]
+        at.withUnsafeBufferPointer { x in
+            decided.withUnsafeBufferPointer { d in
+                XCTAssertEqual(e.value(x.baseAddress!), 5)
+                XCTAssertEqual(e.value(x.baseAddress!, deciding: d.baseAddress!), -1)
+                XCTAssertEqual(e.slope(0, x.baseAddress!), 2)
+                XCTAssertEqual(e.slope(0, x.baseAddress!, deciding: d.baseAddress!), -1, "min's slope is decided at 2, not -1")
+            }
+        }
+    }
+
+    /// A comparator with no state between its two sides (a current that charges a capacitor up to a threshold and
+    /// discharges it above): there is no solution at the threshold, and it chatters about it. Each solve holds the
+    /// comparator where it started and is done again a few times when it switches, so it neither fails to converge nor
+    /// halves its substeps down to nothing.
+    func testAComparatorChattersAboutItsThreshold() throws {
+        let (circuit, warnings) = try SpiceNetlist.circuit(from: """
+        chattering comparator
+        G1 0 c VALUE={IF(V(c) > 0.5, -1m, 1m)}
+        C1 c 0 1u
+        R1 c 0 1meg
+        .end
+        """)
+        XCTAssertTrue(warnings.isEmpty, "\(warnings)")
+        let capacitor = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "C1" })
+        let simulator = Simulator(circuit: circuit, timeStep: 10e-6)
+        let started = Date()
+        var highest = -Double.infinity, lowest = Double.infinity
+        while simulator.time < 2e-3 && !simulator.isFailed {
+            simulator.step()
+            let v = simulator.terminalVoltages(capacitor)[0]
+            if simulator.time > 1e-3 { (highest, lowest) = (max(highest, v), min(lowest, v)) }
+        }
+        XCTAssertFalse(simulator.isFailed, "\(simulator.problems)")
+        // 1 mA into 1 µF: 1 V/ms up to 0.5 V, then about it by at most a step's 10 mV
+        XCTAssertEqual(highest, 0.5, accuracy: 0.011)
+        XCTAssertEqual(lowest, 0.5, accuracy: 0.011)
+        XCTAssertEqual(simulator.convergenceFailures, 0)
+        XCTAssertGreaterThan(simulator.decisionSolves, 0)
+        XCTAssertLessThan(simulator.newtonIterations, 20_000)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
     /// The expression engine: SPICE's precedence, functions and POLY's order of coefficients, with exact slopes
     func testExpressions() throws {
         func value(_ text: String, _ inputs: [Double] = [], parameters: [String: Double] = [:]) throws -> Double {

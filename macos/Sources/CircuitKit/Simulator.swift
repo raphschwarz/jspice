@@ -37,6 +37,13 @@ public final class Simulator {
     /// Newton-Raphson iterations since the start, each one a solve of the stamped equations, and those of them damped
     public private(set) var newtonIterations = 0
     public private(set) var dampedIterations = 0
+    /// Solves done again because a behavioural source's decision (a comparator in a maker's model) changed during one,
+    /// and solves left as they were after `decisionRounds` of that (a comparator chattering about its threshold)
+    public private(set) var decisionSolves = 0
+    public private(set) var chatteringSolves = 0
+    /// Whether the last solve was left with a comparator chattering: its substep's error estimate means nothing (the
+    /// forcing jumps), so it is not refined for it
+    private var solveChattered = false
     /// Set (from any thread) to make a step that is taking too long give up: the simulation fails at its next substep
     /// or iteration
     public var stopRequested = false
@@ -271,11 +278,20 @@ public final class Simulator {
         /// slopes, its value at zero inputs on the right-hand side, and kept out of Newton-Raphson's nonlinear block
         var linear = false
         var offset = 0.0
+        /// Whether its value jumps where a decision in it changes (a comparison, IF, u, sgn…): Newton-Raphson holds its
+        /// decisions where the solve started (`decisionX`), and the solve is done again if they have changed by the end
+        var decides = false
     }
     private var behaviors: [Behavior?] = []
     /// What reading the behavioural sources' expressions found wrong
     private var behaviorProblems: [String] = []
     private var behaviorValues: [Double] = []
+    /// The inputs a behavioural source's decisions are made at, and the solution they are read from: held through a
+    /// solve, from where it started (see `solve`)
+    private var behaviorDecisions: [Double] = []
+    private var decisionX: [Double] = []
+    /// The behavioural sources whose decisions are held
+    private var decidingIndices: [Int] = []
     /// The time the present solve is for (a behavioural source's `time`)
     private var solveTime = 0.0
     /// The charges each part stores and integrates, by slot: a diode's junction; a transistor's base-emitter,
@@ -549,6 +565,7 @@ public final class Simulator {
         let linearBehaviors = Set(kinds.indices.filter { kinds[$0] == .behavioralSource && behaviors[$0]?.linear == true })
         nonlinearIndices.removeAll { linearBehaviors.contains($0) }
         drivenIndices += linearBehaviors.sorted()
+        decidingIndices = nonlinearIndices.filter { kinds[$0] == .behavioralSource && behaviors[$0]?.decides == true }
         junctionIndices = kinds.indices.filter { storesCharge($0) }
         audioClips = [:]
         for i in indices({ $0 == .audioInput }) {
@@ -618,6 +635,7 @@ public final class Simulator {
                 x[inner - 1] = outer > 0 ? x[outer - 1] : 0
             }
         }
+        decisionX = x
         hasNonlinear = !nonlinearIndices.isEmpty
         onlyQuasiLinear = hasNonlinear && nonlinearIndices.allSatisfy { kinds[$0] == .vca }
         hasDigital = !digitalIndices.isEmpty
@@ -992,7 +1010,7 @@ public final class Simulator {
                     if isFailed { return }
                 }
             }
-            let error = canSubdivide && errorControl && converged ? errorRatio() : 0
+            let error = canSubdivide && errorControl && converged && !solveChattered ? errorRatio() : 0
             if mayReject && (!converged || error > 1) {
                 Self.copy(rejectX, into: &x)
                 Self.copy(rejectLimited, into: &limitedVoltage)
@@ -1079,6 +1097,7 @@ public final class Simulator {
     /// solution, and the shunts are stepped down to nothing, each solution leading Newton to the next (gmin stepping).
     private func solve(at t: Double) -> Bool {
         solveTime = t
+        solveChattered = false
         let m = topology.matrixSize
         guard m > 0 else { return true }
         prepareBaseMatrix()
@@ -1105,6 +1124,8 @@ public final class Simulator {
         Self.copy(limitedVoltage, into: &savedLimited)
         Self.copy(limitedVoltage2, into: &savedLimited2)
         Self.copy(limitedVoltage3, into: &savedLimited3)
+        // behavioural sources' decisions held where the solve starts
+        if !decidingIndices.isEmpty { Self.copy(x, into: &decisionX) }
         junctionConductance = 0
         predictedSolve = predictNext
         if predictNext {
@@ -1113,11 +1134,28 @@ public final class Simulator {
             predictNext = false
             predict()
         }
-        if newton(iterations: Self.maxNewtonIterations) || isFailed || !hasNonlinear { return !isFailed }
+        var converged = newton(iterations: Self.maxNewtonIterations)
+        if converged && !isFailed && !decidingIndices.isEmpty {
+            // comparators that switched during the solve: solved again with their decisions made where it ended, until
+            // they stay (or, a comparator chattering about its threshold, as they are after a few rounds)
+            var rounds = 0
+            while rounds < Self.decisionRounds && decisionsMoved() {
+                rounds += 1
+                decisionSolves += 1
+                Self.copy(x, into: &decisionX)
+                converged = newton(iterations: Self.maxNewtonIterations)
+                if !converged || isFailed { break }
+            }
+            if converged && rounds == Self.decisionRounds {
+                chatteringSolves += 1
+                solveChattered = true
+            }
+        }
+        if converged || isFailed || !hasNonlinear { return !isFailed }
         predictedSolve = false
         let firstTry = (x, limitedVoltage, limitedVoltage2, limitedVoltage3)
         (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedX, savedLimited, savedLimited2, savedLimited3)
-        var converged = false
+        converged = false
         for conductance in Self.steppedConductances {
             junctionConductance = conductance
             converged = newton(iterations: Self.steppedIterations)
@@ -1152,6 +1190,9 @@ public final class Simulator {
     /// the corner to the other and back for ever. Each such iteration halves the step taken (to a sixty-fourth at most),
     /// and each one that contracts doubles it back.
     static let dampingAfter = 8
+
+    /// How many times a solve is done again for behavioural sources' decisions that changed during it
+    static let decisionRounds = 4
 
     /// Newton-Raphson from the present `x`; true when it converged.
     ///
@@ -2690,9 +2731,11 @@ public final class Simulator {
                 behavior.linear = true
                 behavior.offset = zeros.withUnsafeBufferPointer { expression.value($0.baseAddress!, time: 0, celsius: kelvin - 273.15) }
             }
+            behavior.decides = expression.decides
             behaviors[i] = behavior
         }
         behaviorValues = [Double](repeating: 0, count: max(widest, 1))
+        behaviorDecisions = behaviorValues
     }
 
     /// A behavioural source, linearised at the present solution with its expression's exact slopes: a voltage across + and
@@ -2700,18 +2743,21 @@ public final class Simulator {
     private func stampBehavior(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
         guard i < behaviors.count, let b = behaviors[i] else { return }
         let count = b.inputs.count
+        let holds = b.decides && decisionX.count == x.count
         for (k, input) in b.inputs.enumerated() {
             behaviorValues[k] = input.row >= 0 ? (input.row < x.count ? input.sign * x[input.row] : 0)
                 : voltage(input.plus) - voltage(input.minus)
+            if holds { behaviorDecisions[k] = decisionInput(input) }
         }
         let celsius = kelvin - 273.15
         let plus = nodes[0] - 1, minus = nodes[1] - 1
-        behaviorValues.withUnsafeBufferPointer { values in
+        behaviorValues.withUnsafeBufferPointer { values in behaviorDecisions.withUnsafeBufferPointer { decisions in
             let v = values.baseAddress!
-            var equivalent = b.expression.value(v, time: solveTime, celsius: celsius)
+            let d = holds ? decisions.baseAddress! : v
+            var equivalent = b.expression.value(v, deciding: d, time: solveTime, celsius: celsius)
             let row = topology.sourceRow[i]
             for k in 0..<count {
-                let slope = b.expression.slope(k, v, time: solveTime, celsius: celsius)
+                let slope = b.expression.slope(k, v, deciding: d, time: solveTime, celsius: celsius)
                 guard slope != 0 && slope.isFinite else { continue }
                 equivalent -= slope * v[k]
                 let input = b.inputs[k]
@@ -2744,7 +2790,35 @@ public final class Simulator {
             } else if equivalent.isFinite {
                 stampCurrent(rhs, nodes[0], nodes[1], equivalent)
             }
+        } }
+    }
+
+    /// A behavioural source's input at the solution its decisions are held at
+    @inline(__always) private func decisionInput(_ input: BehaviorInput) -> Double {
+        if input.row >= 0 { return input.row < decisionX.count ? input.sign * decisionX[input.row] : 0 }
+        let p = input.plus > 0 ? decisionX[input.plus - 1] : 0, n = input.minus > 0 ? decisionX[input.minus - 1] : 0
+        return p - n
+    }
+
+    /// Whether a behavioural source's value at the present solution changes with its decisions made there rather than
+    /// where they are held: a comparator in it has switched during the solve
+    private func decisionsMoved() -> Bool {
+        let celsius = kelvin - 273.15
+        for i in decidingIndices {
+            guard let b = behaviors[i] else { continue }
+            for (k, input) in b.inputs.enumerated() {
+                behaviorValues[k] = input.row >= 0 ? (input.row < x.count ? input.sign * x[input.row] : 0)
+                    : voltage(input.plus) - voltage(input.minus)
+                behaviorDecisions[k] = decisionInput(input)
+            }
+            let moved = behaviorValues.withUnsafeBufferPointer { values -> Bool in behaviorDecisions.withUnsafeBufferPointer { decisions -> Bool in
+                let held = b.expression.value(values.baseAddress!, deciding: decisions.baseAddress!, time: solveTime, celsius: celsius)
+                let now = b.expression.value(values.baseAddress!, time: solveTime, celsius: celsius)
+                return !(Swift.abs(held - now) <= 1e-9 * (1 + Swift.abs(now)))
+            } }
+            if moved { return true }
         }
+        return false
     }
 
     /// A linear behavioural source's constant slopes, into the base matrix (as `stampBehavior` stamps them at every
@@ -3177,6 +3251,8 @@ public final class Simulator {
         let saved = (limitedVoltage, limitedVoltage2, limitedVoltage3, limiting)
         linearising = true
         linearEntries = []
+        // behavioural sources decided at the operating point
+        if !decidingIndices.isEmpty { Self.copy(x, into: &decisionX) }
         var matrix = makeBaseMatrix()
         var scratch = [Double](repeating: 0, count: m)
         junctionConductance = 0

@@ -190,10 +190,11 @@ public enum MakerModels {
         func done(_ stage: String, _ simulator: Simulator) {
             guard let report else { return }
             report(String(format: "%@ %@ at %.1f s: %ld steps of %ld substeps (%ld rejected), %ld Newton iterations "
-                       + "(%ld damped), %ld convergence failures, %ld plans (%.2f s)", stage,
-                       simulator.stopRequested ? "STOPPED" : "done", Date().timeIntervalSince(started),
-                       Int((simulator.time / simulator.timeStep).rounded()), simulator.substeps, simulator.rejectedSubsteps,
-                       simulator.newtonIterations, simulator.dampedIterations, simulator.convergenceFailures, simulator.plans,
+                       + "(%ld damped), %ld solves again for comparators (%ld chattering), %ld convergence failures, "
+                       + "%ld plans (%.2f s)", stage, simulator.stopRequested ? "STOPPED" : "done",
+                       Date().timeIntervalSince(started), Int((simulator.time / simulator.timeStep).rounded()),
+                       simulator.substeps, simulator.rejectedSubsteps, simulator.newtonIterations, simulator.dampedIterations,
+                       simulator.decisionSolves, simulator.chatteringSolves, simulator.convergenceFailures, simulator.plans,
                        simulator.planningSeconds))
         }
         /// Steps `simulator` while `going` holds, giving up when the stage has taken `stageBudget`
