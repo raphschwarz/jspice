@@ -429,7 +429,8 @@ final class EditorState: ObservableObject {
                 try BlockLibrary.save(block)
                 paragraphs.append("\(model.part) from \(model.maker), \(model.revision), is in the library's Blocks, its pins \((block.source?.pins ?? []).joined(separator: ", ")).")
                 if let pins = block.source?.pins,
-                   let figures = try? MakerModels.measureOpAmp(block, pins: pins, supply: model.supply, load: model.load) {
+                   let figures = try? MakerModels.measureOpAmp(block, pins: pins, supply: model.supply, load: model.load,
+                                                              slewGain: model.slewGain) {
                     paragraphs.append("Measured at ±\(Int(model.supply)) V into \(SI.format(model.load, unit: "Ω")), beside \(model.datasheet):\n"
                                       + MakerModelCatalog.comparison(model, figures).joined(separator: "\n"))
                 }

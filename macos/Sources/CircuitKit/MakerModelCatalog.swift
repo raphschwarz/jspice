@@ -84,6 +84,8 @@ public enum MakerModelCatalog {
         /// The supplies (±) and load of the datasheet's table, to measure at
         public var supply: Double
         public var load: Double
+        /// The gain the datasheet measures the slew rate at: +1 (a follower) or −1 (an inverting stage)
+        public var slewGain: Double = 1
         /// The datasheet: its document (with revision), table, and address
         public var datasheet: String
         public var datasheetURL: URL
@@ -125,7 +127,7 @@ public enum MakerModelCatalog {
               summary: "Low-noise audio dual op-amp (OPA167x): a Green-Williams-Lis macromodel",
               archive: URL(string: "https://www.ti.com/lit/zip/SBOMAC3")!, file: "OPA167x.LIB",
               sha256: "a4a2f63b714c799bd4ccbf52fa71922d2786f93fcdfcc10f0b11377194beef77",
-              revision: "Final 1.7, 24 August 2022 (SBOMAC3E)", subcircuit: "OPA167x", supply: 15, load: 2_000,
+              revision: "Final 1.7, 24 August 2022 (SBOMAC3E)", subcircuit: "OPA167x", supply: 15, load: 2_000, slewGain: -1,
               datasheet: "SBOS855E (December 2022), table 6.7",
               datasheetURL: URL(string: "https://www.ti.com/lit/ds/symlink/opa1678.pdf")!,
               figures: [
@@ -139,11 +141,11 @@ public enum MakerModelCatalog {
                   DatasheetValue(.swingLow, -14.2, .atMost, "VO down to (V–) + 0.8 V"),
               ],
               ngspice: [.offset: 0.499397, .supplyCurrent: 2.00025, .openLoopGain: 119.708, .gainBandwidth: 17.4125,
-                        .unityGain: 23.2092, .phaseMargin: 73.4824, .slewRise: 7.88953, .slewFall: 7.88894, .swingHigh: 13.8804,
+                        .unityGain: 23.2092, .phaseMargin: 73.4824, .slewRise: 8.76035, .slewFall: 8.76027, .swingHigh: 13.8804,
                         .swingLow: -13.7006],
               notes: [
                   "Into 2 kΩ its output swings to 1.1 V from the positive supply and 1.3 V from the negative, where the datasheet's output range reaches 0.8 V from either.",
-                  "Its slew rate here is a follower's (7.9 V/µs); the datasheet gives 9 V/µs at a gain of −1.",
+                  "Its open-loop gain into 2 kΩ is 119.7 dB, where the datasheet's typical is 114 dB.",
               ]),
         Model(part: "OPA2134", maker: "Texas Instruments",
               summary: "FET-input audio dual op-amp (OPAx134): a Green-Williams-Lis macromodel",
@@ -167,6 +169,28 @@ public enum MakerModelCatalog {
                         .unityGain: 7.72596, .phaseMargin: 54.499, .slewRise: 19.8438, .slewFall: 19.8435, .swingHigh: 13.6955,
                         .swingLow: -14.0681],
               notes: ["Made from the 2015 datasheet (SBOS058A); its figures agree with the 2024 one's."]),
+        Model(part: "OPA1612", maker: "Texas Instruments",
+              summary: "Bipolar-input, very-low-noise audio dual op-amp (OPA161x): a Green-Williams-Lis macromodel",
+              archive: URL(string: "https://www.ti.com/lit/zip/SBOM396")!, file: "OPA161x.LIB",
+              sha256: "c86df5d4b2d26ec196c0a6158a61004a6747aec5440fcc2031674ad62a448ef7",
+              revision: "Final 1.5, 24 August 2022, made from datasheet SBOS450C", subcircuit: "OPA161x",
+              supply: 15, load: 2_000, slewGain: -1,
+              datasheet: "SBOS450C (August 2014), section 6.4",
+              datasheetURL: URL(string: "https://www.ti.com/lit/ds/symlink/opa1612.pdf")!,
+              figures: [
+                  DatasheetValue(.offset, 0.1, .typical, "VOS ±100 µV at ±15 V"),
+                  DatasheetValue(.supplyCurrent, 3.6, .typical, "IQ per channel"),
+                  DatasheetValue(.openLoopGain, 114, .typical, "AOL, RL = 2 kΩ, (V–) + 0.6 V ≤ VO ≤ (V+) – 0.6 V"),
+                  DatasheetValue(.gainBandwidth, 80, .typical, "GBW, G = 100"),
+                  DatasheetValue(.slewRise, 27, .typical, "SR, G = –1"),
+                  DatasheetValue(.slewFall, 27, .typical, "SR, G = –1"),
+                  DatasheetValue(.swingHigh, 14.4, .atLeast, "VOUT, RL = 2 kΩ: (V+) – 0.6 V"),
+                  DatasheetValue(.swingLow, -14.4, .atMost, "VOUT, RL = 2 kΩ: (V–) + 0.6 V"),
+              ],
+              ngspice: [.offset: 0.100022, .supplyCurrent: 3.60009, .openLoopGain: 112.872, .gainBandwidth: 91.5879,
+                        .unityGain: 57.2473, .phaseMargin: 94.2449, .slewRise: 27.1095, .slewFall: 27.0816, .swingHigh: 14.6804,
+                        .swingLow: -14.7004],
+              notes: ["Its gain-bandwidth product measures 92 MHz (100 times where the gain falls through 40 dB), against the datasheet's 80 MHz at a gain of 100."]),
     ]
 
     public static func model(_ part: String) -> Model? {

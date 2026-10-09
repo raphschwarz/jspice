@@ -125,7 +125,7 @@ def run(deck, folder):
     return r.stdout + r.stderr
 
 
-def measure(model, subckt, pins, supply=15.0, load=10e3):
+def measure(model, subckt, pins, supply=15.0, load=10e3, slew_gain=1):
     folder = tempfile.mkdtemp()
     open(os.path.join(folder, 'model.lib'), 'w').write(translate(model))
     p, n = '_P', '_N'
@@ -171,11 +171,18 @@ def measure(model, subckt, pins, supply=15.0, load=10e3):
             elif pa - pb > math.pi: pb += 2 * math.pi
             pm = 180 + math.degrees(pa + t * (pb - pa))
             break
-    # slew: 10 V steps at 10 kHz, as a follower
+    # slew: 10 V steps at 10 kHz, into a follower or the inverting stage as the datasheet measures (slew_gain +1 or -1)
     data = os.path.join(folder, 'tr.txt')
     period = 1e-4
-    run(bench('VI inp 0 PULSE(5 -5 %g 1n 1n %g %g)' % (period / 2, period / 2 - 1e-9, period), True) +
-        '.options reltol=1e-3 abstol=1e-12 vntol=1e-6\n.tran %g %g 0 %g\n.control\nrun\nwrdata %s v(inp) v(out)\nquit\n.endc\n.end\n' % (period / 20000, 2.5 * period, period / 2000, data), folder)
+    pulse = 'PULSE(5 -5 %g 1n 1n %g %g)' % (period / 2, period / 2 - 1e-9, period)
+    control = ('.options reltol=1e-3 abstol=1e-12 vntol=1e-6\n.tran %g %g 0 %g\n.control\nrun\nwrdata %s v(%s) v(out)\nquit\n.endc\n.end\n'
+               % (period / 20000, 2.5 * period, period / 2000, data, 'inp' if slew_gain > 0 else 'in'))
+    if slew_gain > 0:
+        run(bench('VI inp 0 %s' % pulse, True) + control, folder)
+    else:
+        run(('inverting\n.include model.lib\nXU1 %s %s\nVP vcc 0 DC %g\nVN 0 vee DC %g\nRL out 0 %g\nVI in 0 %s\n'
+             'R1 in inn 10k\nR2 inn out 10k\n%s') % (' '.join(nodes[q] for q in pins), subckt, supply, supply, load, pulse, opts)
+            + control, folder)
     rows = [list(map(float, l.split())) for l in open(data) if l.strip()]
     t = [r[0] for r in rows]; vin = [r[1] for r in rows]; vout = [r[3] for r in rows]
 
@@ -183,10 +190,12 @@ def measure(model, subckt, pins, supply=15.0, load=10e3):
         for k in range(1, len(values)):
             if t[k] > after and ((values[k - 1] < level <= values[k]) if rising else (values[k - 1] > level >= values[k])):
                 return t[k - 1] + (level - values[k - 1]) / (values[k] - values[k - 1]) * (t[k] - t[k - 1])
+    # the output's 10 % and 90 % crossings, looked for from a little before the input's edge (the output can jump at the
+    # step's instant, through the inputs' clamp diodes)
     slew = []
     for rising in (True, False):
-        e = crossing(vin, 0, rising, period)
-        a = crossing(vout, -4 if rising else 4, rising, e)
+        e = crossing(vin, 0, rising if slew_gain > 0 else not rising, period)
+        a = crossing(vout, -4 if rising else 4, rising, e - period / 100)
         b = crossing(vout, 4 if rising else -4, rising, a)
         slew.append(8 / (b - a) / 1e6)
     # swing, open loop
@@ -203,16 +212,16 @@ def measure(model, subckt, pins, supply=15.0, load=10e3):
 
 
 
-# MakerModelCatalog.models: part, archive, file, SHA-256, subcircuit, supplies and load
+# MakerModelCatalog.models: part, archive, file, SHA-256, subcircuit, supplies, load and the slew rate's gain
 MODELS = [
     ('TL072', 'https://www.ti.com/lit/zip/SLOJ067', 'TL072.301',
-     '74e89d558163615ac7a19f0c783101a6f8af77fb6d80bd3c20c6ab66426561cd', 'TL072', 15, 10e3),
+     '74e89d558163615ac7a19f0c783101a6f8af77fb6d80bd3c20c6ab66426561cd', 'TL072', 15, 10e3, 1),
     ('OPA1678', 'https://www.ti.com/lit/zip/SBOMAC3', 'OPA167x.LIB',
-     'a4a2f63b714c799bd4ccbf52fa71922d2786f93fcdfcc10f0b11377194beef77', 'OPA167x', 15, 2e3),
+     'a4a2f63b714c799bd4ccbf52fa71922d2786f93fcdfcc10f0b11377194beef77', 'OPA167x', 15, 2e3, -1),
     ('OPA2134', 'https://www.ti.com/lit/zip/SBOM042', 'OPAx134.LIB',
-     '8ff414c678a7f8330b87504d7e0553de20ca87bdc713cecf81ab3448b4d7608f', 'OPAx134', 15, 2e3),
+     '8ff414c678a7f8330b87504d7e0553de20ca87bdc713cecf81ab3448b4d7608f', 'OPAx134', 15, 2e3, 1),
     ('OPA1612', 'https://www.ti.com/lit/zip/SBOM396', 'OPA161x.LIB',
-     'c86df5d4b2d26ec196c0a6158a61004a6747aec5440fcc2031674ad62a448ef7', 'OPA161x', 15, 2e3),
+     'c86df5d4b2d26ec196c0a6158a61004a6747aec5440fcc2031674ad62a448ef7', 'OPA161x', 15, 2e3, -1),
 ]
 
 # the catalog's names for the figures, and their datasheet units
@@ -235,11 +244,11 @@ def download(archive, name, sha):
 
 if __name__ == '__main__':
     wanted = [a.lower() for a in sys.argv[1:]]
-    for part, archive, name, sha, subckt, supply, load in MODELS:
+    for part, archive, name, sha, subckt, supply, load, slew_gain in MODELS:
         if wanted and part.lower() not in wanted:
             continue
         text = download(archive, name, sha)
         m = re.search(r'^\.SUBCKT\s+' + re.escape(subckt) + r'\s+(.*)$', text, re.I | re.M)
-        figures = measure(text, subckt, m.group(1).split()[:5], supply, load)
+        figures = measure(text, subckt, m.group(1).split()[:5], supply, load, slew_gain)
         print('// %s' % part)
         print('ngspice: [' + ', '.join('.%s: %.6g' % (key, figures[k]) for key, k in SWIFT if figures.get(k) is not None) + '],')

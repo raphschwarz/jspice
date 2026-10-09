@@ -1715,7 +1715,8 @@ public final class CircuitSession {
         if (arguments["measure"] as? Bool) ?? (pins.count == 5) {
             let supply = (arguments["supply"] as? Double) ?? (arguments["supply"] as? Int).map(Double.init) ?? known?.supply ?? 15
             do {
-                let f = try MakerModels.measureOpAmp(block, pins: pins, supply: supply, load: known?.load ?? 10_000)
+                let f = try MakerModels.measureOpAmp(block, pins: pins, supply: supply, load: known?.load ?? 10_000,
+                                                     slewGain: known?.slewGain ?? 1)
                 var figures: [String: Any] = [
                     "supply": supply, "offset_v": f.offset, "supply_current_a": f.supplyCurrent, "open_loop_gain_db": f.openLoopGain,
                     "swing_high_v": f.swingHigh, "swing_low_v": f.swingLow, "summary": f.lines,

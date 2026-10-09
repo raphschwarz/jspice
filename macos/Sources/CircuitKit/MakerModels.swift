@@ -182,7 +182,8 @@ public enum MakerModels {
     /// fixed common-mode voltage: in an inverting stage of gain −1 with the + input grounded, the output over the −
     /// input's small signal (a follower's response would fold the common-mode rejection in).
     public static func measureOpAmp(_ block: BlockDefinition, pins: [String], supply: Double = 15,
-                                    load: Double = 10_000, report: ((String) -> Void)? = nil) throws -> OpAmpFigures {
+                                    load: Double = 10_000, slewGain: Double = 1,
+                                    report: ((String) -> Void)? = nil) throws -> OpAmpFigures {
         guard pins.count == 5 else { throw MeasurementError(description: "An op-amp has five pins: +in, −in, V+, V−, out") }
         let started = Date()
         /// What each stage cost, for `report`
@@ -215,20 +216,24 @@ public enum MakerModels {
         let supplyCurrent = rest.current(vp)
         done("follower at rest", rest)
 
-        // an inverting stage of gain −1 at rest, and its small-signal response: the open-loop gain is the output over the
-        // − input
-        var u = NetlistPart(kind: .block, name: "U1")
-        u.block = block
-        u.connections = [pins[0]: "GND", pins[1]: "inn", pins[2]: "vcc", pins[3]: "vee", pins[4]: "out"]
-        let inverting = try SchematicLayout.layout([
-            u,
-            NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": 0], connections: ["plus": "in", "minus": "GND"]),
-            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "in", "b": "inn"]),
-            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "inn", "b": "out"]),
-            NetlistPart(kind: .dcVoltage, name: "VP", params: ["voltage": supply], connections: ["plus": "vcc", "minus": "GND"]),
-            NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": supply], connections: ["plus": "GND", "minus": "vee"]),
-            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": load], connections: ["a": "out", "b": "GND"]),
-        ])
+        /// An inverting stage of gain −1 (10 kΩ in, 10 kΩ back) with its + input grounded, `input` (VI) driving it
+        func invertingStage(_ input: NetlistPart) throws -> Circuit {
+            var u = NetlistPart(kind: .block, name: "U1")
+            u.block = block
+            u.connections = [pins[0]: "GND", pins[1]: "inn", pins[2]: "vcc", pins[3]: "vee", pins[4]: "out"]
+            return try SchematicLayout.layout([
+                u, input,
+                NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 10_000], connections: ["a": "in", "b": "inn"]),
+                NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "inn", "b": "out"]),
+                NetlistPart(kind: .dcVoltage, name: "VP", params: ["voltage": supply], connections: ["plus": "vcc", "minus": "GND"]),
+                NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": supply], connections: ["plus": "GND", "minus": "vee"]),
+                NetlistPart(kind: .resistor, name: "RL", params: ["resistance": load], connections: ["a": "out", "b": "GND"]),
+            ])
+        }
+
+        // the inverting stage at rest, and its small-signal response: the open-loop gain is the output over the − input
+        let inverting = try invertingStage(NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": 0],
+                                                       connections: ["plus": "in", "minus": "GND"]))
         let source = try index(inverting, "VI"), r2 = try index(inverting, "R2")
         let stage = Simulator.settled(inverting, holding: source, duration: 0.01, maxSteps: Self.settlingSteps)
         guard !stage.isFailed else { throw MeasurementError(description: "As an inverting stage it fails: \(stage.problems.joined(separator: "; "))") }
@@ -261,15 +266,17 @@ public enum MakerModels {
             break
         }
 
-        // a follower's 10 V steps: slew rate through 10 % to 90 %, at the highest of 10 kHz, 1 kHz and 100 Hz at which
-        // the output gets there within half a period
+        // 10 V steps, into a follower or the inverting stage as the datasheet measures (`slewGain` +1 or −1): slew rate
+        // through 10 % to 90 % of the output's swing, at the highest of 10 kHz, 1 kHz and 100 Hz at which the output gets
+        // there within half a period
         var slewRise: Double?, slewFall: Double?
         let (low, high) = (-5.0, 5.0)
         let (from, to) = (low + 0.1 * (high - low), low + 0.9 * (high - low))
+        let inverts = slewGain < 0
         for frequency in [10_000.0, 1_000, 100] where slewRise == nil {
             let square = NetlistPart(kind: .squareVoltage, name: "VI", params: ["low": low, "high": high, "frequency": frequency, "duty": 0.5],
-                                     connections: ["plus": "inp", "minus": "GND"])
-            let c = try circuit(square, follower: true)
+                                     connections: ["plus": inverts ? "in" : "inp", "minus": "GND"])
+            let c = try inverts ? invertingStage(square) : circuit(square, follower: true)
             let input = try index(c, "VI"), output = try index(c, "RL")
             let period = 1 / frequency
             // (a slewing edge is straight: its 10 % and 90 % crossings come out of a few points on it exactly)
@@ -293,13 +300,16 @@ public enum MakerModels {
                 }
                 return nil
             }
-            // the edges after the first period, when the op-amp has powered up
+            // the edges after the first period, when the op-amp has powered up; the output's crossings looked for from a
+            // little before the input's (it can jump at the step's instant, through the inputs' clamp diodes)
             let span = to - from
-            if let edge = crossing(ins, 0, rising: true, after: period), let a = crossing(outs, from, rising: true, after: edge),
+            if let edge = crossing(ins, 0, rising: !inverts, after: period),
+               let a = crossing(outs, from, rising: true, after: edge - period / 100),
                let b = crossing(outs, to, rising: true, after: a), b < edge + period / 2 {
                 slewRise = span / (b - a)
             }
-            if let edge = crossing(ins, 0, rising: false, after: period), let a = crossing(outs, to, rising: false, after: edge),
+            if let edge = crossing(ins, 0, rising: inverts, after: period),
+               let a = crossing(outs, to, rising: false, after: edge - period / 100),
                let b = crossing(outs, from, rising: false, after: a), b < edge + period / 2 {
                 slewFall = span / (b - a)
             }

@@ -142,7 +142,8 @@ final class MakerModelCatalogTests: XCTestCase {
             { () -> (figures: MakerModels.OpAmpFigures?, error: String?, seconds: Double) in
                 let started = Date()
                 do {
-                    let figures = try MakerModels.measureOpAmp(m.block, pins: m.pins, supply: m.model.supply, load: m.model.load) {
+                    let figures = try MakerModels.measureOpAmp(m.block, pins: m.pins, supply: m.model.supply, load: m.model.load,
+                                                               slewGain: m.model.slewGain) {
                         Self.progress("\(m.model.part): \($0)")
                     }
                     return (figures, nil, Date().timeIntervalSince(started))
