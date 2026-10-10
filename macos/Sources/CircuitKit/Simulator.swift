@@ -649,14 +649,6 @@ public final class Simulator {
     static let chordRestSolves = 256
     /// Whether kept factors rest so (off, every iteration asks for them: for comparing the two)
     public static var restsChords = true
-    /// Whether, in a circuit of junctions (without nonlinear behavioural sources), the iterations after a solve's own
-    /// factoring take chord steps with its factors where that factoring's step (or the chord step since) moved the
-    /// solution by at most `looseChordChange`, however far the block's entries moved: a junction's slope moves by its
-    /// voltage's move over the thermal voltage (4% a millivolt), and the chord steps contract about as fast. Newton-
-    /// Raphson from a prediction that near converges at its next iteration, which then needs no factoring of its own.
-    /// (Off, only kept factors the entries have not left serve: for comparing the two.)
-    public static var chordsAfterSmallSteps = true
-    static let looseChordChange = 1e-3
     /// Whether a confirmation also takes a block whose changed entries balance at the solution (see `stampsUnchanged`),
     /// whether kept factors serve past changes in the columns of unknowns that hold still (see `keptFactorsSuit`), and
     /// whether a substep that can be halved gives up once Newton-Raphson stalls (see `stallsTolerated`): each off, for
@@ -1651,9 +1643,6 @@ public final class Simulator {
         var refactor = false
         var chordSteps = 0
         var stalls = 0
-        // whether the kept factors are this solve's own, and whether the last step taken with them was a loose one
-        var factoredHere = false
-        var looseStep = false
         // whether this solve snapshots its stamps to confirm an iteration without a solve: not for a while once they
         // have stopped finding it (a transistor's slopes move at every iteration, and its block never stamps as it was
         // solved)
@@ -1686,7 +1675,6 @@ public final class Simulator {
             damping = 1
             refactor = false
             chordSteps = 0
-            factoredHere = false
             solvedAsStamped = false
             stampMissed = false
             restartedSolves += 1
@@ -1804,18 +1792,10 @@ public final class Simulator {
             }
             let change: Double
             let mayChord = chording && !damped && !refactor
-            let loose = mayChord && factoredHere && Self.chordsAfterSmallSteps && !dampsNewton
-                && lastChange <= Self.looseChordChange && freshFactorsServe(plan)
-            let restoredBefore = restoredFactorings
-            looseStep = false
-            if mayChord && (loose || keptFactorsSuit(plan) || formerFactorsSuit(plan)) {
-                // the block is as it was when last factored, near enough (or it was factored at this solve, a step that
-                // moved little ago): a step solved with those factors from the present residual (the chord method)
-                // converges to the very same solution, without factoring
+            if mayChord && (keptFactorsSuit(plan) || formerFactorsSuit(plan)) {
+                // the block is as it was when last factored, near enough: a step solved with those factors from the
+                // present residual (the chord method) converges to the very same solution, without factoring
                 chordRate += (1 - chordRate) * 0.02
-                // (a former factoring taken up again is not this solve's)
-                if restoredFactorings != restoredBefore { factoredHere = false }
-                looseStep = loose
                 change = chordStep(plan)
                 reusedFactorings += 1
                 chordSteps += 1
@@ -1866,7 +1846,6 @@ public final class Simulator {
                     return false
                 }
                 if chording { keepFactors(plan, order) } else { keptOrder = nil }
-                factoredHere = chording
                 factorings += 1
                 chordSteps = 0
                 change = values.withUnsafeBufferPointer { v -> Double in
@@ -1898,8 +1877,7 @@ public final class Simulator {
                 converged = true
                 break
             }
-            // (a loose chord step leaves the block's own solution a little way off: the next iteration solves again)
-            solvedAsStamped = !damped && !limiting && !looseStep
+            solvedAsStamped = !damped && !limiting
             if damped {
                 // only the nonlinear block's unknowns moved (the linear block's follow from them at the end)
                 let lambda = damping
@@ -2192,13 +2170,6 @@ public final class Simulator {
                 }
             }
         }
-    }
-
-    /// Whether the kept factors were made for this plan, on this base matrix, from the slots the stamps reach now (see
-    /// `chordsAfterSmallSteps`; how far the entries moved is not asked)
-    private func freshFactorsServe(_ plan: SparsePlan) -> Bool {
-        keptPlan === plan && keptOrder != nil && !plan.block.isEmpty && keptBaseVersion == baseVersion && !stampedSlotsGrew
-            && keptValues.count == plan.entryCount
     }
 
     /// Keeps the block's entries as stamped, before factoring: the largest of each row (the base matrix's, worked out once
