@@ -424,6 +424,9 @@ public final class Simulator {
     /// solve, from where it started (see `solve`)
     private var behaviorDecisions = UnsafeMutablePointer<Double>.allocate(capacity: 1)
     private var decisionX: [Double] = []
+    /// A solve's rounds of decisions (see `solve`): the solutions each round's decisions were made at, and its solution
+    private var heldRounds: [[Double]] = []
+    private var solvedRounds: [[Double]] = []
     /// The behavioural sources whose decisions are held
     private var decidingIndices: [Int] = []
     /// Whether Newton-Raphson is damped when its steps stop shrinking: with nonlinear behavioural sources only (their
@@ -1393,8 +1396,33 @@ public final class Simulator {
         if converged && !isFailed && !decidingIndices.isEmpty {
             // comparators that switched during the solve: solved again with their decisions made where it ended, until
             // they stay (or, a comparator chattering about its threshold, as they are after a few rounds)
-            var rounds = 0
+            var rounds = 0, kept = 0, cycled = false
+            // each round's decisions (the solution they were made at) and the solution it found
+            func keepRound() {
+                if kept == heldRounds.count {
+                    heldRounds.append([])
+                    solvedRounds.append([])
+                }
+                Self.copy(decisionX, into: &heldRounds[kept])
+                Self.copy(x, into: &solvedRounds[kept])
+                kept += 1
+            }
             while rounds < Self.decisionRounds && decisionsMoved() {
+                // (the round just solved, kept only now that another may follow)
+                keepRound()
+                // decisions made where it ended that an earlier round was solved with: the comparators go round in a
+                // cycle (a maker's model's crossover detector, whose switching turns off the stage that switched it),
+                // and no round would settle them. That round's solution stands, solved again from itself (a step or
+                // two), its decisions as they were: they switch at the next substep, which starts from there.
+                if let k = (0..<kept - 1).first(where: { decisionsAgree(with: heldRounds[$0]) }) {
+                    trace?("   the decisions go round in a cycle: those of round \(k) again")
+                    Self.copy(heldRounds[k], into: &decisionX)
+                    Self.copy(solvedRounds[k], into: &x)
+                    cycled = true
+                    converged = newton(iterations: iterations)
+                    trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
+                    break
+                }
                 rounds += 1
                 decisionSolves += 1
                 Self.copy(x, into: &decisionX)
@@ -1404,7 +1432,7 @@ public final class Simulator {
                 trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
                 if !converged || isFailed { break }
             }
-            if converged && rounds == Self.decisionRounds {
+            if converged && (cycled || rounds == Self.decisionRounds) {
                 chatteringSolves += 1
                 solveChattered = true
             }
@@ -3778,6 +3806,34 @@ public final class Simulator {
         if input.row >= 0 { return input.row < decisionX.count ? input.sign * decisionX[input.row] : 0 }
         let p = input.plus > 0 ? decisionX[input.plus - 1] : 0, n = input.minus > 0 ? decisionX[input.minus - 1] : 0
         return p - n
+    }
+
+    /// Whether every behavioural source that holds its decisions has, at the present solution, the value it has with its
+    /// decisions made at `held` (an earlier round's): the decisions made here are that round's
+    private func decisionsAgree(with held: [Double]) -> Bool {
+        let celsius = kelvin - 273.15
+        for i in decidingIndices {
+            guard let b = behaviors[i] else { continue }
+            let v = behaviorValues, d = behaviorDecisions, r = behaviorRegisters
+            let count = b.inputCount, inputs = b.inputList
+            for k in 0..<count {
+                let input = inputs[k]
+                if input.row >= 0 {
+                    v[k] = input.row < x.count ? input.sign * x[input.row] : 0
+                    d[k] = input.row < held.count ? input.sign * held[input.row] : 0
+                } else {
+                    v[k] = voltage(input.plus) - voltage(input.minus)
+                    d[k] = (input.plus > 0 ? held[input.plus - 1] : 0) - (input.minus > 0 ? held[input.minus - 1] : 0)
+                }
+            }
+            let program = b.program
+            program.run(v, deciding: d, time: solveTime, celsius: celsius, into: r)
+            let then = r[program.value]
+            program.run(v, time: solveTime, celsius: celsius, into: r)
+            let now = r[program.value]
+            if !(Swift.abs(then - now) <= 1e-9 * (1 + Swift.abs(now))) { return false }
+        }
+        return true
     }
 
     /// Whether a behavioural source's value at the present solution changes with its decisions made there rather than

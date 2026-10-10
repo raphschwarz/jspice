@@ -146,6 +146,46 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 
+    /// A crossover detector as a maker's op-amp model has one: the sign of the output (through a fast RC) turns the
+    /// stage that drives it off while the sign changes over. At a step where the output crosses, no set of decisions
+    /// holds: the sign switches, which turns the stage off, which leaves the output where it was, which switches the
+    /// sign back, which turns the stage on. The rounds of decisions go round that cycle; it is seen when a round's
+    /// decisions are an earlier round's, and that round's solution stands (the switch then comes a substep later),
+    /// rather than solving on until Newton-Raphson gives up between the stage's two states and the substep is halved.
+    func testDecisionsGoingRoundInACycleKeepAnEarlierRound() throws {
+        let (circuit, warnings) = try SpiceNetlist.circuit(from: """
+        crossover detector
+        V1 in 0 SIN(0 1 1k)
+        G1 0 o VALUE={V(en)*1m*(V(in)-V(o))}
+        C1 o 0 1n
+        R3 o 0 1g
+        GZ 0 zc VALUE={SGN(V(o)+1m)}
+        R1 zc 0 1
+        C2 zc 0 2u
+        GE 0 en VALUE={IF(ABS(V(zc))<=0.9,0,1)}
+        R2 en 0 1
+        .end
+        """)
+        XCTAssertTrue(warnings.isEmpty, "\(warnings)")
+        let capacitor = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "C1" })
+        let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
+        simulator.errorControl = false
+        var steps = 0, worst = 0.0
+        while simulator.time < 4e-3 && !simulator.isFailed {
+            simulator.step()
+            steps += 1
+            // the output follows the input (1 µs behind), but for a step or two at each crossing (6.3 mV/µs there)
+            let input = sin(2 * Double.pi * 1000 * simulator.time)
+            if simulator.time > 0.5e-3 { worst = max(worst, abs(simulator.terminalVoltages(capacitor)[0] - input)) }
+        }
+        XCTAssertFalse(simulator.isFailed, "\(simulator.problems)")
+        XCTAssertEqual(simulator.convergenceFailures, 0)
+        XCTAssertGreaterThan(simulator.chatteringSolves, 0, "no crossing went round a cycle")
+        XCTAssertLessThan(worst, 0.3)
+        XCTAssertLessThan(simulator.rejectedSubsteps, steps / 10, "substeps halved at crossings")
+        XCTAssertLessThan(Double(simulator.newtonIterations) / Double(steps), 6)
+    }
+
     /// The expression engine: SPICE's precedence, functions and POLY's order of coefficients, with exact slopes
     func testExpressions() throws {
         func value(_ text: String, _ inputs: [Double] = [], parameters: [String: Double] = [:]) throws -> Double {
