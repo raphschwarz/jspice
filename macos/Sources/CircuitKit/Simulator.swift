@@ -1423,9 +1423,13 @@ public final class Simulator {
             if guessesMade {
                 guessesMade = false
                 if converged && lineGuess.count == x.count {
+                    // (the unknowns it guessed: the nonlinear block's)
                     let (line, parabola, nearer) = (lineGuess, parabolaGuess, parabolaNearer)
+                    let block = plan.flatMap { $0.n == x.count ? $0.block : nil } ?? Array(0..<x.count)
                     x.withUnsafeBufferPointer { x in
-                        for k in 0..<x.count { nearer[k] = abs(parabola[k] - x[k]) < abs(line[k] - x[k]) }
+                        block.withUnsafeBufferPointer { block in
+                            for k in block { nearer[k] = abs(parabola[k] - x[k]) < abs(line[k] - x[k]) }
+                        }
                     }
                 }
             }
@@ -1643,7 +1647,8 @@ public final class Simulator {
         let ratio = predictionRatio
         guard olderX.count == x.count, ratio.isFinite, ratio > 0 else { return }
         let block = plan.flatMap { $0.n == x.count ? $0.block : nil }
-        if Self.choosesPredictor && quadraticReady && oldestX.count == x.count {
+        // (a maker's model's piecewise-linear sources take the same iterations from either guess)
+        if Self.choosesPredictor && !dampsNewton && quadraticReady && oldestX.count == x.count {
             let r = ratio
             let s = Double(1 << lastLevel) / Double(1 << olderLevel)
             let w0 = (r + 1) * (r + 1 + s) / (1 + s), w1 = -r * (r + 1 + s) / s, w2 = r * (r + 1) / ((1 + s) * s)
@@ -3029,16 +3034,15 @@ public final class Simulator {
         let lists = nodeLists
         for i in drivenIndices {
             let nodes = lists[i]
-            let c = constants[i]
             switch kinds[i] {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 let row = topology.sourceRow[i]
                 if row >= 0 { r[row] = sourceVoltage(i, at: t) }
             case .currentSource:
-                stampCurrent(r, nodes[0], nodes[1], c.value)
+                stampCurrent(r, nodes[0], nodes[1], constants[i].value)
             case .capacitor:
                 // BDF2: i(n+1) = C/h (a0 v(n+1) + a1 v(n) + a2 v(n-1))
-                let history = -c.value / h * (a1 * capacitorVoltage[i] + a2 * capacitorVoltagePrevious[i])
+                let history = -constants[i].value / h * (a1 * capacitorVoltage[i] + a2 * capacitorVoltagePrevious[i])
                 stampCurrent(r, nodes[0], nodes[1], -history)
             case .inductor:
                 // BDF2: i(n+1) = h / (a0 L) v(n+1) - (a1 i(n) + a2 i(n-1)) / a0
@@ -3047,50 +3051,50 @@ public final class Simulator {
             case .timer555:
                 if digitalState[i] {
                     // high: VCC minus the output stage's drop
-                    stampCurrent(r, nodes[2], nodes[7], c.outputConductance * c.highDrop)
+                    stampCurrent(r, nodes[2], nodes[7], constants[i].outputConductance * constants[i].highDrop)
                 } else {
                     // low: 0.1 V above GND
-                    stampCurrent(r, nodes[0], nodes[2], c.outputConductance * 0.1)
+                    stampCurrent(r, nodes[0], nodes[2], constants[i].outputConductance * 0.1)
                 }
             case .schmittInverter:
                 if digitalState[i] {
-                    stampCurrent(r, 0, nodes[1], c.supply * c.outputConductance)
+                    stampCurrent(r, 0, nodes[1], constants[i].supply * constants[i].outputConductance)
                 }
             case .dac:
                 guard nodes.count > 5 else { continue }
-                let output = Logic.dacOutput(logicStates[i].count, reference: voltage(nodes[4]), supply: c.supply)
-                stampCurrent(r, 0, nodes[5], output * c.outputConductance)
+                let output = Logic.dacOutput(logicStates[i].count, reference: voltage(nodes[4]), supply: constants[i].supply)
+                stampCurrent(r, 0, nodes[5], output * constants[i].outputConductance)
             case .dualDac:
                 guard nodes.count > 5 else { continue }
                 for channel in 0...1 {
-                    let output = Logic.dualDacOutput(logicStates[i].count, channel: channel, supply: c.supply)
-                    stampCurrent(r, 0, nodes[4 + channel], output * c.outputConductance)
+                    let output = Logic.dualDacOutput(logicStates[i].count, channel: channel, supply: constants[i].supply)
+                    stampCurrent(r, 0, nodes[4 + channel], output * constants[i].outputConductance)
                 }
             case .i2sDac:
                 guard nodes.count > 4 else { continue }
-                stampCurrent(r, 0, nodes[3], Logic.i2sOutput(Int32(bitPattern: logicStates[i].latch)) * c.outputConductance)
-                stampCurrent(r, 0, nodes[4], Logic.i2sOutput(Int32(truncatingIfNeeded: logicStates[i].count)) * c.outputConductance)
+                stampCurrent(r, 0, nodes[3], Logic.i2sOutput(Int32(bitPattern: logicStates[i].latch)) * constants[i].outputConductance)
+                stampCurrent(r, 0, nodes[4], Logic.i2sOutput(Int32(truncatingIfNeeded: logicStates[i].count)) * constants[i].outputConductance)
             case .i2cDac:
                 guard nodes.count > 3 else { continue }
-                stampCurrent(r, 0, nodes[3], Logic.i2cDacOutput(logicStates[i].count, supply: c.supply) * c.outputConductance)
+                stampCurrent(r, 0, nodes[3], Logic.i2cDacOutput(logicStates[i].count, supply: constants[i].supply) * constants[i].outputConductance)
             case .spiAdc:
                 guard nodes.count > 3, logicStates[i].inputs & 1 == 0, logicStates[i].count != 0 else { continue }
-                stampCurrent(r, 0, nodes[3], c.supply * c.outputConductance)
+                stampCurrent(r, 0, nodes[3], constants[i].supply * constants[i].outputConductance)
             case .effectsProcessor:
                 guard nodes.count > 5, let processor = effectsProcessors[i] else { continue }
-                stampCurrent(r, 0, nodes[4], processor.left * c.outputConductance)
-                stampCurrent(r, 0, nodes[5], processor.right * c.outputConductance)
+                stampCurrent(r, 0, nodes[4], processor.left * constants[i].outputConductance)
+                stampCurrent(r, 0, nodes[5], processor.right * constants[i].outputConductance)
             case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
                 let kind = kinds[i]
-                for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where high {
-                    stampCurrent(r, 0, nodes[k], c.supply * c.outputConductance)
+                for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(constants[i].value))) where high {
+                    stampCurrent(r, 0, nodes[k], constants[i].supply * constants[i].outputConductance)
                 }
             case .atmega328p, .atmega2560, .attiny85, .rp2040:
                 guard let states = chipPinStates[i] else { continue }
                 for (pin, state) in states.enumerated() where pin < nodes.count {
                     switch state {
-                    case .output(high: true): stampCurrent(r, 0, nodes[pin], c.supply * c.outputConductance)
-                    case .input(pullUp: true): stampCurrent(r, 0, nodes[pin], c.supply * c.onConductance)
+                    case .output(high: true): stampCurrent(r, 0, nodes[pin], constants[i].supply * constants[i].outputConductance)
+                    case .input(pullUp: true): stampCurrent(r, 0, nodes[pin], constants[i].supply * constants[i].onConductance)
                     default: break
                     }
                 }
@@ -3098,7 +3102,7 @@ public final class Simulator {
                 let row = topology.sourceRow[i]
                 if row >= 0 { r[row] = delayedOutput(i) }
             case .digitalDelay:
-                stampCurrent(r, 0, nodes[1], Self.echoReference / c.value)
+                stampCurrent(r, 0, nodes[1], Self.echoReference / constants[i].value)
                 let row = topology.sourceRow[i]
                 if row >= 0 { r[row] = moduleStates[i].output }
             case .comparator, .vco, .vcf, .envelope, .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp:
