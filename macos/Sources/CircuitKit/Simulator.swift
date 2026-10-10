@@ -150,10 +150,12 @@ public final class Simulator {
     var inductorCurrentOlder: [Double] = []
     var memristorStates: [Double] = []
     /// Newton limiting: the junction voltages last used for linearisation (diode; base-emitter and base-collector;
-    /// gate-source and drain-source)
-    var limitedVoltage: [Double] = []
-    var limitedVoltage2: [Double] = []
-    var limitedVoltage3: [Double] = []
+    /// gate-source and drain-source). Their storage is held directly: each nonlinear part writes its own at every
+    /// iteration, and an array's check that its storage is its own before each write cost a sequenced synth voice a
+    /// twentieth of its time. Whole, they are copied in and out (see `zeroed` and `assign`).
+    var limitedVoltage = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
+    var limitedVoltage2 = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
+    var limitedVoltage3 = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
     /// The charge each part stores, by slot (`chargeSlots` a part: a diode's junction in the first; a transistor's
     /// base-emitter, base-collector and outer base-collector charges; a JFET's gate-source and gate-drain), at the last
     /// solution and the two before (for the local error), and the current it took to charge over the last step
@@ -758,6 +760,9 @@ public final class Simulator {
         stampedFlags?.deallocate()
         bipolarRefs.deallocate()
         bipolarSlots.deallocate()
+        limitedVoltage.deallocate()
+        limitedVoltage2.deallocate()
+        limitedVoltage3.deallocate()
         behaviorRegisters.deallocate()
         behaviorRates.deallocate()
         behaviorValues.deallocate()
@@ -835,9 +840,9 @@ public final class Simulator {
         capacitorVoltageOlder = Array(repeating: 0, count: count)
         inductorCurrentOlder = Array(repeating: 0, count: count)
         memristorStates = Array(repeating: 0, count: count)
-        limitedVoltage = Array(repeating: 0, count: count)
-        limitedVoltage2 = Array(repeating: 0, count: count)
-        limitedVoltage3 = Array(repeating: 0, count: count)
+        Self.zeroed(&limitedVoltage, count)
+        Self.zeroed(&limitedVoltage2, count)
+        Self.zeroed(&limitedVoltage3, count)
         digitalState = Array(repeating: false, count: count)
         logicStates = Array(repeating: LogicState(), count: count)
         moduleStates = Array(repeating: ModuleState(), count: count)
@@ -1090,6 +1095,19 @@ public final class Simulator {
 
     /// Copies into an array of the same size in place. Simply assigning would share the other simulator's storage, and
     /// that one (the sound's, on its own thread) would then have to copy it at its next step.
+    /// Storage for `count` zeros in place of `buffer`'s
+    static func zeroed(_ buffer: inout UnsafeMutableBufferPointer<Double>, _ count: Int) {
+        buffer.deallocate()
+        buffer = .allocate(capacity: count)
+        buffer.initialize(repeating: 0)
+    }
+
+    /// `values` into `buffer` (its storage replaced where the counts differ)
+    static func assign(_ buffer: inout UnsafeMutableBufferPointer<Double>, _ values: [Double]) {
+        if buffer.count != values.count { zeroed(&buffer, values.count) }
+        for k in values.indices { buffer[k] = values[k] }
+    }
+
     @inline(__always) static func adopt<T>(_ target: inout [T], _ source: [T]) {
         guard target.count == source.count else {
             target = source
@@ -1139,9 +1157,9 @@ public final class Simulator {
         Self.adopt(&inductorCurrentOlder, other.inductorCurrentOlder)
         (substepLevel, lastLevel, olderLevel) = (other.substepLevel, other.lastLevel, other.olderLevel)
         Self.adopt(&memristorStates, other.memristorStates)
-        Self.adopt(&limitedVoltage, other.limitedVoltage)
-        Self.adopt(&limitedVoltage2, other.limitedVoltage2)
-        Self.adopt(&limitedVoltage3, other.limitedVoltage3)
+        Self.assign(&limitedVoltage, Array(other.limitedVoltage))
+        Self.assign(&limitedVoltage2, Array(other.limitedVoltage2))
+        Self.assign(&limitedVoltage3, Array(other.limitedVoltage3))
         Self.adopt(&junctionCharge, other.junctionCharge)
         Self.adopt(&junctionChargePrevious, other.junctionChargePrevious)
         Self.adopt(&junctionChargeOlder, other.junctionChargeOlder)
@@ -1572,9 +1590,11 @@ public final class Simulator {
         // the substep is done again in halves (the caller goes back to where it started)
         if canHalve { return false }
         predictedSolve = false
-        let firstTry = (x, limitedVoltage, limitedVoltage2, limitedVoltage3)
+        let firstTry = (x, Array(limitedVoltage), Array(limitedVoltage2), Array(limitedVoltage3))
         restoreSolveStart()
-        (limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedLimited, savedLimited2, savedLimited3)
+        Self.assign(&limitedVoltage, savedLimited)
+        Self.assign(&limitedVoltage2, savedLimited2)
+        Self.assign(&limitedVoltage3, savedLimited3)
         converged = false
         trace?("   gmin stepping")
         for conductance in Self.steppedConductances {
@@ -1584,7 +1604,12 @@ public final class Simulator {
         }
         junctionConductance = 0
         // if that failed too, the first try is the better guess to carry on from
-        if !converged && !isFailed { (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = firstTry }
+        if !converged && !isFailed {
+            x = firstTry.0
+            Self.assign(&limitedVoltage, firstTry.1)
+            Self.assign(&limitedVoltage2, firstTry.2)
+            Self.assign(&limitedVoltage3, firstTry.3)
+        }
         return converged && !isFailed
     }
 
@@ -2450,7 +2475,7 @@ public final class Simulator {
     /// mostly wires, labels and resistors, each with an entry, and behavioural sources, which limit nothing)
     private func saveLimited(_ a: inout [Double], _ b: inout [Double], _ c: inout [Double]) {
         guard a.count == limitedVoltage.count, b.count == limitedVoltage2.count, c.count == limitedVoltage3.count else {
-            (a, b, c) = (limitedVoltage, limitedVoltage2, limitedVoltage3)
+            (a, b, c) = (Array(limitedVoltage), Array(limitedVoltage2), Array(limitedVoltage3))
             return
         }
         guard !limitingIndices.isEmpty else { return }
@@ -2462,13 +2487,30 @@ public final class Simulator {
     /// Goes back to limited voltages kept by `saveLimited`
     private func restoreLimited(_ a: [Double], _ b: [Double], _ c: [Double]) {
         guard a.count == limitedVoltage.count, b.count == limitedVoltage2.count, c.count == limitedVoltage3.count else {
-            (limitedVoltage, limitedVoltage2, limitedVoltage3) = (a, b, c)
+            Self.assign(&limitedVoltage, a)
+            Self.assign(&limitedVoltage2, b)
+            Self.assign(&limitedVoltage3, c)
             return
         }
         guard !limitingIndices.isEmpty else { return }
-        Self.copy(limitingIndices, from: a, into: &limitedVoltage)
-        Self.copy(limitingIndices, from: b, into: &limitedVoltage2)
-        Self.copy(limitingIndices, from: c, into: &limitedVoltage3)
+        Self.copy(limitingIndices, from: a, into: limitedVoltage)
+        Self.copy(limitingIndices, from: b, into: limitedVoltage2)
+        Self.copy(limitingIndices, from: c, into: limitedVoltage3)
+    }
+
+    /// Copies the entries at `indices` (each within both) from a held buffer into an array, and back
+    @inline(__always) private static func copy(_ indices: [Int], from source: UnsafeMutableBufferPointer<Double>,
+                                               into target: inout [Double]) {
+        target.withUnsafeMutableBufferPointer { target in
+            for i in indices { target[i] = source[i] }
+        }
+    }
+
+    @inline(__always) private static func copy(_ indices: [Int], from source: [Double],
+                                               into target: UnsafeMutableBufferPointer<Double>) {
+        source.withUnsafeBufferPointer { source in
+            for i in indices { target[i] = source[i] }
+        }
     }
 
     /// Copies the entries at `indices` (each within both arrays) from one array into another
@@ -2666,11 +2708,14 @@ public final class Simulator {
             }
         }
         if hasNonlinear || hasMemristor {
-            let saved = (limitedVoltage, limitedVoltage2, limitedVoltage3, opAmpCrossings, limiting)
+            let saved = (Array(limitedVoltage), Array(limitedVoltage2), Array(limitedVoltage3), opAmpCrossings, limiting)
             var scratch = [Double](repeating: 0, count: m)
             stampMemristors(&matrix, m)
             if hasNonlinear { stampNonlinear(&matrix, &scratch, m) }
-            (limitedVoltage, limitedVoltage2, limitedVoltage3, opAmpCrossings, limiting) = saved
+            Self.assign(&limitedVoltage, saved.0)
+            Self.assign(&limitedVoltage2, saved.1)
+            Self.assign(&limitedVoltage3, saved.2)
+            (opAmpCrossings, limiting) = (saved.3, saved.4)
         }
         guard let made = SparsePlan.make(matrix: matrix, pattern: pattern, nonlinear: nonlinear, size: m) else {
             plan = nil
@@ -4715,7 +4760,7 @@ public final class Simulator {
     public func smallSignalModel() -> SmallSignalModel? {
         let m = topology.matrixSize
         guard m > 0, x.count == m, !isFailed else { return nil }
-        let saved = (limitedVoltage, limitedVoltage2, limitedVoltage3, limiting)
+        let saved = (Array(limitedVoltage), Array(limitedVoltage2), Array(limitedVoltage3), limiting)
         linearising = true
         linearEntries = []
         // behavioural sources decided at the operating point
@@ -4734,7 +4779,10 @@ public final class Simulator {
         var entries = linearEntries
         linearising = false
         linearEntries = []
-        (limitedVoltage, limitedVoltage2, limitedVoltage3, limiting) = saved
+        Self.assign(&limitedVoltage, saved.0)
+        Self.assign(&limitedVoltage2, saved.1)
+        Self.assign(&limitedVoltage3, saved.2)
+        limiting = saved.3
 
         func admittance(_ a: Int, _ b: Int, _ transfer: SmallSignalModel.Transfer) {
             if a > 0 { entries.append(.init(row: a - 1, column: a - 1, scale: 1, transfer: transfer)) }
