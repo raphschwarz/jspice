@@ -100,12 +100,17 @@ func benchmarkMaker(_ part: String, seconds: Double) throws {
     var done = 0
     // Newton iterations by where the sine is in its cycle, in twelve 30° slices
     var slices = [(steps: Int, iterations: Int)](repeating: (steps: 0, iterations: 0), count: 12)
+    // the steps that took most iterations, and what they spent them on
+    var heavy = 0, heaviest = 0
     while done < steps && !simulator.isFailed {
         let before = simulator.newtonIterations
         simulator.step()
+        let taken = simulator.newtonIterations - before
         let slice = min(11, Int((simulator.time * 1000).truncatingRemainder(dividingBy: 1) * 12))
         slices[slice].steps += 1
-        slices[slice].iterations += simulator.newtonIterations - before
+        slices[slice].iterations += taken
+        if taken > 10 { heavy += 1 }
+        heaviest = max(heaviest, taken)
         done += 1
     }
     let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
@@ -118,7 +123,9 @@ func benchmarkMaker(_ part: String, seconds: Double) throws {
     print("\(part): Newton iterations a step through the sine's cycle, every 30° from 0°: "
           + slices.map { String(format: "%.1f", Double($0.iterations) / Double(max($0.steps, 1))) }.joined(separator: " ")
           + "; \(simulator.limitedIterations) iterations limited, \(simulator.dampedIterations) damped, "
-          + "\(simulator.convergenceFailures) convergence failures, \(simulator.substeps) substeps")
+          + "\(simulator.convergenceFailures) convergence failures, \(simulator.substeps) substeps (\(simulator.rejectedSubsteps) rejected); "
+          + "\(heavy) steps of more than 10 iterations, the most \(heaviest); \(simulator.decisionSolves) solves again for decisions "
+          + "that moved, \(simulator.chatteringSolves) left chattering")
     print("\(part)'s model as simulated: \(size.unknowns) unknowns, \(size.nonzeros) nonzeros, \(size.factorEntries) entries "
           + "factored, \(size.nonlinearUnknowns) nonlinear; \(made)")
     print(String(format: "%@ follower, 1 kHz at 48 kHz: %.1f µs/step, %.2f× real time, %.2f Newton iterations a step "
