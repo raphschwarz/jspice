@@ -92,6 +92,8 @@ jobs:
           sample $! 3 -file build/profile-maker.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-maker.txt | head -70
+          # with what each function costs with all it calls, and who calls the runtime's copies and checks
+          python3 scripts/profile-callers.py build/profile-maker.txt 45 || true
       - name: Chip support (installs Arduino's AVR toolchain as the app does, compiles a sketch)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 10

@@ -185,6 +185,31 @@ final class EliminationProgram {
         return change
     }
 
+    /// `backPacked` without measuring the change (a division a row): the same unknowns, to the bit. False if one is
+    /// not a number (then `x` is partly written).
+    func substituteBack(_ packed: UnsafePointer<Double>, _ b: UnsafePointer<Double>, _ x: UnsafeMutablePointer<Double>) -> Bool {
+        let upper = packed + Int(lStart[steps])
+        let reciprocals = upper + Int(uStart[steps])
+        var k = steps - 1
+        while k >= 0 {
+            var sum = b[Int(pivotRow[k])]
+            var other = 0.0
+            var i = Int(uStart[k])
+            let u1 = Int(uStart[k + 1])
+            while i + 1 < u1 {
+                sum -= upper[i] * x[Int(uColumn[i])]
+                other -= upper[i + 1] * x[Int(uColumn[i + 1])]
+                i += 2
+            }
+            if i < u1 { sum -= upper[i] * x[Int(uColumn[i])] }
+            let next = (sum + other) * reciprocals[k]
+            guard next.isFinite else { return false }
+            x[Int(pivotColumn[k])] = next
+            k -= 1
+        }
+        return true
+    }
+
     /// Forward substitution: `b` (indexed by the equations' rows) becomes L⁻¹ b
     func forward(_ values: UnsafePointer<Double>, _ b: UnsafeMutablePointer<Double>) {
         var k = 0

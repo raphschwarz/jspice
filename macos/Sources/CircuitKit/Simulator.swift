@@ -373,12 +373,17 @@ public final class Simulator {
     static let junctionGmin = 1e-12
     /// The elements each part of a step needs, so wires and resistors cost nothing once the base matrix is built
     private var nonlinearIndices: [Int] = []
+    /// The nonlinear parts other than behavioural sources: those whose voltages Newton-Raphson limits
+    private var limitingIndices: [Int] = []
     private var drivenIndices: [Int] = []
     private var statefulIndices: [Int] = []
     private var digitalIndices: [Int] = []
     private var memristorIndices: [Int] = []
     /// Elements whose state moves with each substep, those whose error is estimated, and those that move once a step
     private var dynamicIndices: [Int] = []
+    /// The capacitors among them, and the rest
+    private var dynamicCapacitors: [Int] = []
+    private var dynamicOthers: [Int] = []
     private var reactiveIndices: [Int] = []
     private var stepIndices: [Int] = []
     /// Scopes with the index of the element each one shows
@@ -418,6 +423,9 @@ public final class Simulator {
     private var valuesVersion = -1
     /// The right-hand side after the linear block's forward substitution
     private var rhsForwarded: [Double] = []
+    /// Whether building the right-hand side reads the present solution (a DAC's reference, a delay line's clock): it is
+    /// then kept as built through a solve, to forward again for a new plan, rather than built again
+    private var rightHandSideReadsSolution = false
     /// While stamping into the plan's slots: the slot map, the first slot a stamp may write (the base writes any, Newton-
     /// Raphson only the nonlinear block's), and whether one fell outside
     private var sparseStamping = false
@@ -436,6 +444,8 @@ public final class Simulator {
     private var predictionRatio = 1.0
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
     private var savedX: [Double] = []
+    /// Whether the solve under way started from `substepStartX` (then `savedX` is not kept)
+    private var solveStartsSubstep = false
     /// The iterate a damped Newton-Raphson iteration moves from
     private var dampFrom: [Double] = []
     /// The nonlinear block's last factoring, kept for the iterations after it (see `newton`): the plan and pivot order it
@@ -485,8 +495,8 @@ public final class Simulator {
     private var reuseAllowed = false
     private weak var confirmedPlan: SparsePlan?
     private var confirmedBaseVersion = -1
-    /// Whether `newton` starts from where `solve` started it (from `savedX`, moved on by the predictor), so that it can
-    /// start again from there
+    /// Whether `newton` starts from where `solve` started it (where `restoreSolveStart` puts `x`, moved on by the
+    /// predictor), so that it can start again from there
     private var newtonFromSolveStart = false
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
@@ -669,6 +679,8 @@ public final class Simulator {
         }
         dynamicIndices = statefulIndices.filter { [.capacitor, .inductor, .opAmp, .memristor, .vactrol].contains(kinds[$0]) }
             + indices { $0 == .pll }
+        dynamicCapacitors = dynamicIndices.filter { kinds[$0] == .capacitor }
+        dynamicOthers = dynamicIndices.filter { kinds[$0] != .capacitor }
         reactiveIndices = indices { $0 == .capacitor || $0 == .inductor }
         stepIndices = statefulIndices.filter { !dynamicIndices.contains($0) }
         delayHistory = [:]
@@ -698,6 +710,8 @@ public final class Simulator {
         // on the right-hand side, out of the nonlinear block
         let linearBehaviors = Set(kinds.indices.filter { kinds[$0] == .behavioralSource && behaviors[$0]?.linear == true })
         nonlinearIndices.removeAll { linearBehaviors.contains($0) }
+        limitingIndices = nonlinearIndices.filter { kinds[$0] != .behavioralSource }
+        rightHandSideReadsSolution = kinds.contains { $0 == .dac || $0 == .delayLine }
         drivenIndices += linearBehaviors.sorted()
         decidingIndices = nonlinearIndices.filter { kinds[$0] == .behavioralSource && behaviors[$0]?.decides == true }
         dampsNewton = nonlinearIndices.contains { kinds[$0] == .behavioralSource }
@@ -1131,7 +1145,7 @@ public final class Simulator {
             Self.copy(x, into: &substepStartX)
             predictNext = predictorReady && hasNonlinear
             predictionRatio = ratio
-            var converged = solve(at: t, canHalve: mayReject)
+            var converged = solve(at: t, canHalve: mayReject, fromSubstepStart: true)
             if isFailed { return }
             // a 555 or Schmitt trigger that switches during the substep changes the circuit: solve it again
             var switched = false
@@ -1229,7 +1243,7 @@ public final class Simulator {
     /// `maxNewtonIterations`, then the junctions are temporarily shunted with conductances strong enough to leave the
     /// circuit a single, easily found solution, and the shunts are stepped down to nothing, each solution leading Newton
     /// to the next (gmin stepping).
-    private func solve(at t: Double, canHalve: Bool = false) -> Bool {
+    private func solve(at t: Double, canHalve: Bool = false, fromSubstepStart: Bool = false) -> Bool {
         solveTime = t
         solveChattered = false
         let m = topology.matrixSize
@@ -1254,7 +1268,9 @@ public final class Simulator {
             Self.copy(workVector, into: &x)
             return true
         }
-        Self.copy(x, into: &savedX)
+        // where it starts, to go back to: the substep's start, kept already, or kept here
+        solveStartsSubstep = fromSubstepStart && substepStartX.count == x.count
+        if !solveStartsSubstep { Self.copy(x, into: &savedX) }
         saveLimited(&savedLimited, &savedLimited2, &savedLimited3)
         // behavioural sources' decisions held where the solve starts
         if !decidingIndices.isEmpty { Self.copy(x, into: &decisionX) }
@@ -1292,7 +1308,8 @@ public final class Simulator {
         if canHalve { return false }
         predictedSolve = false
         let firstTry = (x, limitedVoltage, limitedVoltage2, limitedVoltage3)
-        (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedX, savedLimited, savedLimited2, savedLimited3)
+        restoreSolveStart()
+        (limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedLimited, savedLimited2, savedLimited3)
         converged = false
         for conductance in Self.steppedConductances {
             junctionConductance = conductance
@@ -1305,13 +1322,29 @@ public final class Simulator {
         return converged && !isFailed
     }
 
-    /// Moves `x` along the last substep: x + (x − x before) × this substep's length over the last's
+    /// Puts `x` back where the solve started
+    private func restoreSolveStart() {
+        if solveStartsSubstep {
+            Self.copy(substepStartX, into: &x)
+        } else {
+            Self.copy(savedX, into: &x)
+        }
+    }
+
+    /// Moves `x` along the last substep: x + (x − x before) × this substep's length over the last's. Only the nonlinear
+    /// block's unknowns, where there is a plan: Newton-Raphson starts from them alone, and the linear block's follow
+    /// from them at the end, whatever they were.
     private func predict() {
         let ratio = predictionRatio
         guard olderX.count == x.count, ratio.isFinite, ratio > 0 else { return }
+        let block = plan.flatMap { $0.n == x.count ? $0.block : nil }
         x.withUnsafeMutableBufferPointer { x in
             olderX.withUnsafeBufferPointer { older in
-                for k in 0..<x.count { x[k] += ratio * (x[k] - older[k]) }
+                if let block {
+                    for k in block { x[k] += ratio * (x[k] - older[k]) }
+                } else {
+                    for k in 0..<x.count { x[k] += ratio * (x[k] - older[k]) }
+                }
             }
         }
     }
@@ -1340,7 +1373,7 @@ public final class Simulator {
     /// them once, at the end.
     private func newton(iterations: Int) -> Bool {
         let m = topology.matrixSize
-        for i in nonlinearIndices { opAmpCrossings[i] = 0 }
+        for i in limitingIndices { opAmpCrossings[i] = 0 }
         if workVector.count != m { workVector = [Double](repeating: 0, count: m) }
         var iteration = 0
         var plansMade = 0
@@ -1363,10 +1396,10 @@ public final class Simulator {
         func startAgain() {
             startedFromKept = false
             reuseAllowed = false
-            Self.copy(savedX, into: &x)
+            restoreSolveStart()
             if predictedSolve { predict() }
             restoreLimited(savedLimited, savedLimited2, savedLimited3)
-            for i in nonlinearIndices { opAmpCrossings[i] = 0 }
+            for i in limitingIndices { opAmpCrossings[i] = 0 }
             iteration = 0
             lastChange = .infinity
             damping = 1
@@ -1378,7 +1411,7 @@ public final class Simulator {
         }
         while iteration < iterations {
             if stopRequested {
-                Self.copy(savedX, into: &x)
+                restoreSolveStart()
                 fail()
                 return false
             }
@@ -1389,6 +1422,7 @@ public final class Simulator {
                 replan()
                 prepareBaseMatrix()
                 if isFailed { return false }
+                if !rightHandSideReadsSolution { buildRightHandSide(at: solveTime) }
                 forwardRightHandSide()
             }
             guard let plan else { fail(); return false }
@@ -1412,7 +1446,8 @@ public final class Simulator {
             }
             valuesFactored = false
             let started = Self.profiling ? DispatchTime.now().uptimeNanoseconds : 0
-            Self.copy(rhsForwarded, into: &workVector)
+            // only the block's rows: the stamps reach no others, and the linear block's are read from `rhsForwarded`
+            Self.copy(plan.block, from: rhsForwarded, into: &workVector)
             limiting = false
             if iteration == 1 && reuseLastStamps(plan) {
                 // the last step ended on stamps that its own solution confirmed (its parts on straight stretches): this
@@ -1481,7 +1516,7 @@ public final class Simulator {
                 }
                 guard let order = chosen else {
                     keptOrder = nil
-                    Self.copy(savedX, into: &x)
+                    restoreSolveStart()
                     fail()
                     return false
                 }
@@ -1509,7 +1544,7 @@ public final class Simulator {
                     startAgain()
                     continue
                 }
-                Self.copy(savedX, into: &x)
+                restoreSolveStart()
                 fail()
                 return false
             }
@@ -1536,13 +1571,13 @@ public final class Simulator {
         // through its factors packed for the base matrix
         guard let plan, valuesVersion == baseVersion else { return converged }
         packLinear(plan)
-        let change = linearPacked.withUnsafeBufferPointer { f -> Double in
-            workVector.withUnsafeBufferPointer { b -> Double in
-                x.withUnsafeMutableBufferPointer { x -> Double in plan.linear.backPacked(f.baseAddress!, b.baseAddress!, x.baseAddress!) }
+        let finite = linearPacked.withUnsafeBufferPointer { f -> Bool in
+            rhsForwarded.withUnsafeBufferPointer { b -> Bool in
+                x.withUnsafeMutableBufferPointer { x -> Bool in plan.linear.substituteBack(f.baseAddress!, b.baseAddress!, x.baseAddress!) }
             }
         }
-        if change.isNaN {
-            Self.copy(savedX, into: &x)
+        if !finite {
+            restoreSolveStart()
             fail()
             return false
         }
@@ -1763,7 +1798,8 @@ public final class Simulator {
         guard let order = keptOrder else { return .nan }
         let m = workVector.count
         if residual.count != m { residual = [Double](repeating: 0, count: m) }
-        Self.copy(workVector, into: &residual)
+        // (substitution through the block's factors reads and writes only its rows)
+        Self.copy(plan.block, from: workVector, into: &residual)
         let count = stampedSlots.count
         values.withUnsafeBufferPointer { v in
             keptValues.withUnsafeBufferPointer { kept in
@@ -1794,9 +1830,15 @@ public final class Simulator {
     }
 
     /// The linear block's forward substitution of the right-hand side, done once per solve (the nonlinear parts only
-    /// stamp the nonlinear block's rows); for a circuit without them, the whole forward substitution
+    /// stamp the nonlinear block's rows); for a circuit without them, the whole forward substitution. The right-hand
+    /// side as built becomes the forwarded one (to be built again before it is forwarded again), unless building it
+    /// reads the solution.
     private func forwardRightHandSide() {
-        Self.copy(rhs, into: &rhsForwarded)
+        if rightHandSideReadsSolution {
+            Self.copy(rhs, into: &rhsForwarded)
+        } else {
+            swap(&rhs, &rhsForwarded)
+        }
         guard let plan, baseValues.count == plan.entryCount else { return }
         if hasNonlinear || hasMemristor {
             // through the linear block's factors packed for the base matrix, as Newton-Raphson goes back through them
@@ -1835,19 +1877,17 @@ public final class Simulator {
         }
     }
 
-    /// Copies element by element into an array of the same size, so the target keeps its storage
-    /// Keeps the voltages Newton-Raphson limited, to go back to: only the nonlinear parts limit theirs (a maker's
-    /// model is mostly wires, labels and resistors, each with an entry)
+    /// Keeps the voltages Newton-Raphson limited, to go back to: only the parts that limit theirs (a maker's model is
+    /// mostly wires, labels and resistors, each with an entry, and behavioural sources, which limit nothing)
     private func saveLimited(_ a: inout [Double], _ b: inout [Double], _ c: inout [Double]) {
         guard a.count == limitedVoltage.count, b.count == limitedVoltage2.count, c.count == limitedVoltage3.count else {
             (a, b, c) = (limitedVoltage, limitedVoltage2, limitedVoltage3)
             return
         }
-        for i in nonlinearIndices {
-            a[i] = limitedVoltage[i]
-            b[i] = limitedVoltage2[i]
-            c[i] = limitedVoltage3[i]
-        }
+        guard !limitingIndices.isEmpty else { return }
+        Self.copy(limitingIndices, from: limitedVoltage, into: &a)
+        Self.copy(limitingIndices, from: limitedVoltage2, into: &b)
+        Self.copy(limitingIndices, from: limitedVoltage3, into: &c)
     }
 
     /// Goes back to limited voltages kept by `saveLimited`
@@ -1856,13 +1896,22 @@ public final class Simulator {
             (limitedVoltage, limitedVoltage2, limitedVoltage3) = (a, b, c)
             return
         }
-        for i in nonlinearIndices {
-            limitedVoltage[i] = a[i]
-            limitedVoltage2[i] = b[i]
-            limitedVoltage3[i] = c[i]
+        guard !limitingIndices.isEmpty else { return }
+        Self.copy(limitingIndices, from: a, into: &limitedVoltage)
+        Self.copy(limitingIndices, from: b, into: &limitedVoltage2)
+        Self.copy(limitingIndices, from: c, into: &limitedVoltage3)
+    }
+
+    /// Copies the entries at `indices` (each within both arrays) from one array into another
+    @inline(__always) private static func copy(_ indices: [Int], from source: [Double], into target: inout [Double]) {
+        target.withUnsafeMutableBufferPointer { target in
+            source.withUnsafeBufferPointer { source in
+                for i in indices { target[i] = source[i] }
+            }
         }
     }
 
+    /// Copies element by element into an array of the same size, so the target keeps its storage
     @inline(__always) private static func copy(_ source: [Double], into target: inout [Double]) {
         guard target.count == source.count, !source.isEmpty else {
             target = source
@@ -2300,11 +2349,16 @@ public final class Simulator {
 
     private func buildRightHandSide(at t: Double) {
         let m = topology.matrixSize
-        if rhs.count != m {
-            rhs = [Double](repeating: 0, count: m)
-        } else {
-            for k in 0..<m { rhs[k] = 0 }
+        if rhs.count != m { rhs = [Double](repeating: 0, count: m) }
+        rhs.withUnsafeMutableBufferPointer { buffer in
+            guard let r = buffer.baseAddress else { return }
+            r.update(repeating: 0, count: m)
+            fillRightHandSide(r, at: t)
         }
+    }
+
+    /// The sources' and reactive parts' terms of the right-hand side, into `r` (zeroed)
+    private func fillRightHandSide(_ r: Entries, at t: Double) {
         let lists = nodeLists
         for i in drivenIndices {
             let nodes = lists[i]
@@ -2312,85 +2366,85 @@ public final class Simulator {
             switch kinds[i] {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
                 let row = topology.sourceRow[i]
-                if row >= 0 { rhs[row] = sourceVoltage(i, at: t) }
+                if row >= 0 { r[row] = sourceVoltage(i, at: t) }
             case .currentSource:
-                stampCurrent(&rhs, nodes[0], nodes[1], c.value)
+                stampCurrent(r, nodes[0], nodes[1], c.value)
             case .capacitor:
                 // BDF2: i(n+1) = C/h (a0 v(n+1) + a1 v(n) + a2 v(n-1))
                 let history = -c.value / h * (a1 * capacitorVoltage[i] + a2 * capacitorVoltagePrevious[i])
-                stampCurrent(&rhs, nodes[0], nodes[1], -history)
+                stampCurrent(r, nodes[0], nodes[1], -history)
             case .inductor:
                 // BDF2: i(n+1) = h / (a0 L) v(n+1) - (a1 i(n) + a2 i(n-1)) / a0
                 let history = -(a1 * inductorCurrent[i] + a2 * inductorCurrentPrevious[i]) / a0
-                stampCurrent(&rhs, nodes[0], nodes[1], history)
+                stampCurrent(r, nodes[0], nodes[1], history)
             case .timer555:
                 if digitalState[i] {
                     // high: VCC minus the output stage's drop
-                    stampCurrent(&rhs, nodes[2], nodes[7], c.outputConductance * c.highDrop)
+                    stampCurrent(r, nodes[2], nodes[7], c.outputConductance * c.highDrop)
                 } else {
                     // low: 0.1 V above GND
-                    stampCurrent(&rhs, nodes[0], nodes[2], c.outputConductance * 0.1)
+                    stampCurrent(r, nodes[0], nodes[2], c.outputConductance * 0.1)
                 }
             case .schmittInverter:
                 if digitalState[i] {
-                    stampCurrent(&rhs, 0, nodes[1], c.supply * c.outputConductance)
+                    stampCurrent(r, 0, nodes[1], c.supply * c.outputConductance)
                 }
             case .dac:
                 guard nodes.count > 5 else { continue }
                 let output = Logic.dacOutput(logicStates[i].count, reference: voltage(nodes[4]), supply: c.supply)
-                stampCurrent(&rhs, 0, nodes[5], output * c.outputConductance)
+                stampCurrent(r, 0, nodes[5], output * c.outputConductance)
             case .dualDac:
                 guard nodes.count > 5 else { continue }
                 for channel in 0...1 {
                     let output = Logic.dualDacOutput(logicStates[i].count, channel: channel, supply: c.supply)
-                    stampCurrent(&rhs, 0, nodes[4 + channel], output * c.outputConductance)
+                    stampCurrent(r, 0, nodes[4 + channel], output * c.outputConductance)
                 }
             case .i2sDac:
                 guard nodes.count > 4 else { continue }
-                stampCurrent(&rhs, 0, nodes[3], Logic.i2sOutput(Int32(bitPattern: logicStates[i].latch)) * c.outputConductance)
-                stampCurrent(&rhs, 0, nodes[4], Logic.i2sOutput(Int32(truncatingIfNeeded: logicStates[i].count)) * c.outputConductance)
+                stampCurrent(r, 0, nodes[3], Logic.i2sOutput(Int32(bitPattern: logicStates[i].latch)) * c.outputConductance)
+                stampCurrent(r, 0, nodes[4], Logic.i2sOutput(Int32(truncatingIfNeeded: logicStates[i].count)) * c.outputConductance)
             case .i2cDac:
                 guard nodes.count > 3 else { continue }
-                stampCurrent(&rhs, 0, nodes[3], Logic.i2cDacOutput(logicStates[i].count, supply: c.supply) * c.outputConductance)
+                stampCurrent(r, 0, nodes[3], Logic.i2cDacOutput(logicStates[i].count, supply: c.supply) * c.outputConductance)
             case .spiAdc:
                 guard nodes.count > 3, logicStates[i].inputs & 1 == 0, logicStates[i].count != 0 else { continue }
-                stampCurrent(&rhs, 0, nodes[3], c.supply * c.outputConductance)
+                stampCurrent(r, 0, nodes[3], c.supply * c.outputConductance)
             case .effectsProcessor:
                 guard nodes.count > 5, let processor = effectsProcessors[i] else { continue }
-                stampCurrent(&rhs, 0, nodes[4], processor.left * c.outputConductance)
-                stampCurrent(&rhs, 0, nodes[5], processor.right * c.outputConductance)
+                stampCurrent(r, 0, nodes[4], processor.left * c.outputConductance)
+                stampCurrent(r, 0, nodes[5], processor.right * c.outputConductance)
             case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
                 let kind = kinds[i]
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where high {
-                    stampCurrent(&rhs, 0, nodes[k], c.supply * c.outputConductance)
+                    stampCurrent(r, 0, nodes[k], c.supply * c.outputConductance)
                 }
             case .atmega328p, .atmega2560, .attiny85, .rp2040:
                 guard let states = chipPinStates[i] else { continue }
                 for (pin, state) in states.enumerated() where pin < nodes.count {
                     switch state {
-                    case .output(high: true): stampCurrent(&rhs, 0, nodes[pin], c.supply * c.outputConductance)
-                    case .input(pullUp: true): stampCurrent(&rhs, 0, nodes[pin], c.supply * c.onConductance)
+                    case .output(high: true): stampCurrent(r, 0, nodes[pin], c.supply * c.outputConductance)
+                    case .input(pullUp: true): stampCurrent(r, 0, nodes[pin], c.supply * c.onConductance)
                     default: break
                     }
                 }
             case .delayLine:
                 let row = topology.sourceRow[i]
-                if row >= 0 { rhs[row] = delayedOutput(i) }
+                if row >= 0 { r[row] = delayedOutput(i) }
             case .digitalDelay:
-                stampCurrent(&rhs, 0, nodes[1], Self.echoReference / c.value)
+                stampCurrent(r, 0, nodes[1], Self.echoReference / c.value)
                 let row = topology.sourceRow[i]
-                if row >= 0 { rhs[row] = moduleStates[i].output }
+                if row >= 0 { r[row] = moduleStates[i].output }
             case .comparator, .vco, .vcf, .envelope, .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp:
                 let row = topology.sourceRow[i]
-                if row >= 0 { rhs[row] = moduleStates[i].output }
+                if row >= 0 { r[row] = moduleStates[i].output }
             case .behavioralSource:
                 // a linear one's value at zero inputs
                 guard i < behaviors.count, let b = behaviors[i], b.linear, b.offset != 0, b.offset.isFinite else { break }
                 if b.voltage {
                     let row = topology.sourceRow[i]
-                    if row >= 0 { rhs[row] += b.offset }
+                    if row >= 0 { r[row] += b.offset }
                 } else {
-                    stampCurrent(&rhs, nodes[0], nodes[1], b.offset)
+                    stampCurrent(r, nodes[0], nodes[1], b.offset)
                 }
             default:
                 break
@@ -4185,17 +4239,36 @@ public final class Simulator {
                 meyerHistory[i] = MeyerHistory(vgs: vgs, vgd: vgs - vds, vgb: vgs - vbs, gs: half.gs, gd: half.gd, gb: half.gb)
             }
         }
-        for i in dynamicIndices {
+        // the capacitors (a maker's model has dozens), each from its own history alone
+        if !dynamicCapacitors.isEmpty {
+            let (h, a0, a1, a2) = (self.h, self.a0, self.a1, self.a2)
+            x.withUnsafeBufferPointer { x in
+                constants.withUnsafeBufferPointer { constants in
+                    capacitorCurrent.withUnsafeMutableBufferPointer { current in
+                        capacitorVoltage.withUnsafeMutableBufferPointer { now in
+                            capacitorVoltagePrevious.withUnsafeMutableBufferPointer { previous in
+                                capacitorVoltageOlder.withUnsafeMutableBufferPointer { older in
+                                    for i in dynamicCapacitors {
+                                        let nodes = lists[i]
+                                        let (p, n) = (nodes[0], nodes[1])
+                                        let v = (p == 0 ? 0 : x[p - 1]) - (n == 0 ? 0 : x[n - 1])
+                                        let c = constants[i].value
+                                        current[i] = c / h * (a0 * v + a1 * now[i] + a2 * previous[i])
+                                        older[i] = previous[i]
+                                        previous[i] = now[i]
+                                        now[i] = v
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for i in dynamicOthers {
             let nodes = lists[i]
             let parameters = constants[i]
             switch kinds[i] {
-            case .capacitor:
-                let v = voltage(nodes[0]) - voltage(nodes[1])
-                let c = parameters.value
-                capacitorCurrent[i] = c / h * (a0 * v + a1 * capacitorVoltage[i] + a2 * capacitorVoltagePrevious[i])
-                capacitorVoltageOlder[i] = capacitorVoltagePrevious[i]
-                capacitorVoltagePrevious[i] = capacitorVoltage[i]
-                capacitorVoltage[i] = v
             case .inductor:
                 let v = voltage(nodes[0]) - voltage(nodes[1])
                 let g = h / (a0 * parameters.value)
