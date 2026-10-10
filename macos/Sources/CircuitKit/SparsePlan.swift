@@ -92,9 +92,11 @@ final class EliminationProgram {
         }
     }
 
-    /// The slots elimination writes: the entries below each pivot, and those it updates (the fill-in among them)
+    /// The slots elimination writes: the entries below each pivot, those it updates (the fill-in among them), and the
+    /// pivots (each left holding its reciprocal)
     var writtenSlots: [Int32] {
         Array(UnsafeBufferPointer(start: lSlot, count: Int(lStart[steps]))) + Array(UnsafeBufferPointer(start: target, count: opCount))
+            + Array(UnsafeBufferPointer(start: diagonal, count: steps))
     }
 
     /// Eliminates in `values`, in place, each pivot's slot left holding its reciprocal; -1 when done, or the step whose
