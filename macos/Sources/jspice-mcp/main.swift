@@ -105,6 +105,16 @@ func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
         print(String(format: "%@ %@: off %.2f µs/step (%.2f solves), on %.2f µs/step (%.2f solves), on saves %.1f%%",
                      id.padding(toLength: 18, withPad: " ", startingAt: 0), name, fastest[0] / Double(steps) * 1e6, solves[0],
                      fastest[1] / Double(steps) * 1e6, solves[1], (1 - fastest[1] / fastest[0]) * 100))
+        // where the iterations went, a step: factored, solved with kept factors, confirmed without a solve, started from
+        // kept stamps, started again, and substeps (rejected)
+        let per = Double(5 * steps)
+        let detail = simulators.map { s in
+            String(format: "%.2f factored %.2f chord %.2f confirmed %.2f from kept stamps %.3f restarted %.3f substeps (%.3f rejected)",
+                   Double(s.factorings) / per, Double(s.reusedFactorings) / per, Double(s.confirmedWithoutSolving) / per,
+                   Double(s.reusedStampings) / per, Double(s.restartedSolves) / per, Double(s.substeps) / per,
+                   Double(s.rejectedSubsteps) / per)
+        }
+        print("    off: \(detail[0])\n    on:  \(detail[1])")
     }
 }
 

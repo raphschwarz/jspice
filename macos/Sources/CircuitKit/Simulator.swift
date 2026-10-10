@@ -2048,7 +2048,11 @@ public final class Simulator {
         guard keptPlan === plan, keptOrder != nil, !plan.block.isEmpty, keptBaseVersion == baseVersion, !stampedSlotsGrew,
               keptValues.count == plan.entryCount else { return false }
         let count = stampedSlots.count
-        let relaxed = Self.reusesPastStillColumns && keptPointValid && keptPoint.count == x.count
+        // (only where nonlinear behavioural sources are: a product with an enable that sits still, as in the LM358's
+        // output stage, is what this is for; in a transistor circuit an unknown that held still since the factoring
+        // starts to move at the next iteration as often as not, and the chord steps then contract slowly: the synth
+        // voice took a fifth more iterations a step, and nearly twice the time)
+        let relaxed = Self.reusesPastStillColumns && dampsNewton && keptPointValid && keptPoint.count == x.count
         return values.withUnsafeBufferPointer { v -> Bool in
             keptValues.withUnsafeBufferPointer { kept -> Bool in
                 stampedSlots.withUnsafeBufferPointer { slots -> Bool in
