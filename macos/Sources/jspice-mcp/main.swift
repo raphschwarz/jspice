@@ -75,6 +75,7 @@ let switches: [String: (Bool) -> Void] = [
     "rest-chords": { Simulator.restsChords = $0 },
     "choose-predictor": { Simulator.choosesPredictor = $0 },
     "reuse-everywhere": { Simulator.reusesFactorsEverywhere = $0 },
+    "damp-op-amps": { Simulator.dampsOpAmps = $0 },
 ]
 
 /// Simulates each example twice over, with one of the engine's switches off and on, in alternate runs of `seconds` of

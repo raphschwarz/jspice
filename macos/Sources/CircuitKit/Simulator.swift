@@ -937,6 +937,7 @@ public final class Simulator {
         drivenIndices += linearBehaviors.sorted()
         decidingIndices = nonlinearIndices.filter { kinds[$0] == .behavioralSource && behaviors[$0]?.decides == true }
         dampsNewton = nonlinearIndices.contains { kinds[$0] == .behavioralSource }
+        hasOpAmpStages = nonlinearIndices.contains { kinds[$0] == .opAmp && constants[$0].gbw > 0 }
         junctionIndices = kinds.indices.filter { storesCharge($0) }
         audioClips = [:]
         for i in indices({ $0 == .audioInput }) {
@@ -1725,6 +1726,15 @@ public final class Simulator {
     /// stage in saturation), the full step can jump from one side of the corner to the other and back for ever. Each
     /// such iteration halves the step taken (to a sixty-fourth at most), and each one that contracts doubles it back.
     static let dampingAfter = 8
+    /// Whether Newton-Raphson is damped so in a circuit of built-in op-amps with their internal stage too, from
+    /// `opAmpDampingAfter` iterations on (off: for comparing): a comparator whose output snaps from one limit to the
+    /// other in the middle of a step (positive feedback, its loop gain near one as it leaves its limit) swings its
+    /// guesses from one side of the knee to the other, as the synth voice's VCO did at each edge, a dozen iterations at
+    /// a whole, a half and a quarter step each before an eighth converged
+    public static var dampsOpAmps = false
+    static let opAmpDampingAfter = 4
+    /// Whether the circuit has an op-amp with an internal stage (a gain-bandwidth)
+    private var hasOpAmpStages = false
 
     /// A substep that can be halved gives up after this many iterations in a row whose steps have not halved (without
     /// a junction's limiting), in a circuit with nonlinear behavioural sources: Newton-Raphson swinging from one side of
@@ -1998,7 +2008,8 @@ public final class Simulator {
                     }
                 }
             }
-            if dampsNewton && iteration >= Self.dampingAfter && !limiting {
+            if (dampsNewton && iteration >= Self.dampingAfter || Self.dampsOpAmps && hasOpAmpStages && iteration >= Self.opAmpDampingAfter)
+                && !limiting {
                 damping = change > 0.5 * lastChange ? max(damping / 2, 1.0 / 64) : min(damping * 2, 1)
             }
             if Self.givesUpWhenStalled && dampsNewton && iterations == Self.halvingIterations && iteration >= 3 && !limiting {

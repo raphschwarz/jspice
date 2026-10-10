@@ -57,12 +57,10 @@ jobs:
         timeout-minutes: 5
         run: |
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25
-          # an engine switch off and on, run for run on the same machine: what the predictor choosing the parabola or
-          # the line by unknown, and reusing factors (made for makers' models) in every circuit, save (or cost)
-          # transistor circuits
-          for switch in choose-predictor reuse-everywhere; do
-            ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch $switch 0.25 voice acid synth vco wind vcf mc1496-ring guitar-fuzz tube-screamer bargraph tube-amp lm1036 || true
-          done
+          # an engine switch off and on, run for run on the same machine: what damping Newton-Raphson in circuits of
+          # built-in op-amps saves (or costs) them, and reusing factors (made for makers' models) transistor circuits
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch damp-op-amps 0.25 voice acid synth vco vcf wind tube-screamer rat overdrive lfo compressor lm1036 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-everywhere 0.25 voice acid mc1496-ring guitar-fuzz tube-screamer bargraph tube-amp lm1036 || true
           # and what bypassing behavioural sources saves them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
           # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns
