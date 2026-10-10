@@ -8,8 +8,9 @@ import JSpiceAutomation
 // If the JSpice app is running (with Allow AI Control on), requests go to the circuit in its frontmost window, so you
 // can watch the agent work and undo its changes; otherwise, or with --headless, the server simulates on its own.
 // --app insists on the app. --benchmark [seconds] [example…] times the engine alone at the audio sample rate,
-// --benchmark-maker PART [seconds] a maker's op-amp model, and --benchmark-switch NAME [seconds] [example…] the
-// examples with one of the engine's switches off and on.
+// --benchmark-maker PART [seconds] a maker's op-amp model, --benchmark-switch NAME [seconds] [example…] the
+// examples with one of the engine's switches off and on, and --benchmark-scale [seconds] [example…] the examples drawn
+// several times over in one circuit.
 
 let arguments = CommandLine.arguments
 let path = ProcessInfo.processInfo.environment["JSPICE_SOCKET"] ?? LocalSocket.defaultPath
@@ -104,6 +105,63 @@ func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
         print(String(format: "%@ %@: off %.2f µs/step (%.2f solves), on %.2f µs/step (%.2f solves), on saves %.1f%%",
                      id.padding(toLength: 18, withPad: " ", startingAt: 0), name, fastest[0] / Double(steps) * 1e6, solves[0],
                      fastest[1] / Double(steps) * 1e6, solves[1], (1 - fastest[1] / fastest[0]) * 100))
+    }
+}
+
+/// The circuit drawn `count` times side by side, each copy on nets of its own (its net labels renamed, but for ground):
+/// a bigger circuit of the same parts, for how the engine's cost grows with a circuit's size
+func copies(of circuit: Circuit, _ count: Int) -> Circuit {
+    guard count > 1, let bounds = circuit.bounds else { return circuit }
+    let width = bounds.max.x - bounds.min.x + 8
+    var result = circuit
+    result.elements = []
+    result.scopes = []
+    for copy in 0..<count {
+        for var element in circuit.elements {
+            if copy > 0 { element.id = UUID() }
+            element.a.x += copy * width
+            element.b.x += copy * width
+            let label = element.name.trimmingCharacters(in: .whitespaces).lowercased()
+            if element.kind == .netLabel && copy > 0 && !["gnd", "0", "ground"].contains(label) {
+                element.name += "_\(copy)"
+            }
+            result.elements.append(element)
+        }
+    }
+    return result
+}
+
+/// Simulates each example drawn once, twice, four and eight times over in one circuit, for `seconds` of circuit time
+/// at 48 kHz as the sound runs it, and prints the time per step per copy (flat where the cost grows with the size),
+/// solves a step, and the nonlinear block's size and factors
+func benchmarkScale(seconds: Double, ids: [String]) {
+    let rate = 48_000.0
+    let steps = max(1, Int(seconds * rate))
+    for id in ids {
+        guard let example = Examples.example(id) else {
+            log("there is no example \(id)")
+            continue
+        }
+        var single = 0.0
+        for count in [1, 2, 4, 8] {
+            let simulator = Simulator(circuit: copies(of: example.circuit, count), timeStep: 1 / rate)
+            simulator.errorControl = false
+            var fastest = Double.infinity
+            for _ in 0..<3 {
+                let start = DispatchTime.now().uptimeNanoseconds
+                for _ in 0..<steps { simulator.step() }
+                fastest = min(fastest, Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9)
+            }
+            let perStep = fastest / Double(steps) * 1e6
+            if count == 1 { single = perStep }
+            let size = simulator.equationStatistics
+            let factors = simulator.blockFactorSize
+            print(String(format: "%@ ×%d %8.2f µs/step %6.2f a copy (%.2f× one's) %5.2f solves/step  n %d nl %d L %d U %d ops %d%@",
+                         id.padding(toLength: 18, withPad: " ", startingAt: 0), count, perStep, perStep / Double(count),
+                         perStep / Double(count) / single, Double(simulator.newtonIterations) / Double(3 * steps),
+                         size.unknowns, size.nonlinearUnknowns, factors.lower, factors.upper, factors.operations,
+                         simulator.isFailed ? " FAILED" : ""))
+        }
     }
 }
 
@@ -365,6 +423,18 @@ if let flag = arguments.firstIndex(of: "--benchmark-switch"), flag + 1 < argumen
         rest.removeFirst()
     }
     benchmarkSwitch(arguments[flag + 1], seconds: seconds, ids: rest.isEmpty ? Examples.all.map(\.id) : rest)
+    exit(0)
+}
+
+// --benchmark-scale [seconds] [example…]: the examples drawn 1, 2, 4 and 8 times over in one circuit
+if let flag = arguments.firstIndex(of: "--benchmark-scale") {
+    var rest = Array(arguments[(flag + 1)...])
+    var seconds = 0.1
+    if let first = rest.first, let value = Double(first), value > 0, value < 1e4 {
+        seconds = value
+        rest.removeFirst()
+    }
+    benchmarkScale(seconds: seconds, ids: rest.isEmpty ? ["voice", "acid"] : rest)
     exit(0)
 }
 

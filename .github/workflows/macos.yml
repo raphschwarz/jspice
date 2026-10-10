@@ -65,6 +65,8 @@ jobs:
           # and what reusing factors (the chord method, confirmations, kept stamps) and bypassing behavioural sources save them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-factors 0.25 voice acid mc1496-ring tube-screamer bargraph lm1036 || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
+          # bigger circuits: examples drawn 1, 2, 4 and 8 times over in one circuit (the cost a copy should stay flat)
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-scale 0.1 voice acid guitar-fuzz tube-screamer mc1496-ring bargraph tube-amp || true
           # where the time goes, for the heaviest synth example
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 voice > /dev/null &
           sleep 1
@@ -93,6 +95,13 @@ jobs:
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-avr.txt | head -45
           python3 scripts/profile-callers.py build/profile-avr.txt 30 || true
+          # and for an Arduino reading an SPI ADC and writing an I2C DAC (its pins' events go to the parts as it runs)
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 arduino-mcp3008-mcp4725 > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-bus.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-bus.txt | head -45
+          python3 scripts/profile-callers.py build/profile-bus.txt 30 || true
           # and for makers' op-amp models (downloaded from TI, as the app does) as followers at 48 kHz
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker LM358 0.25 || true
