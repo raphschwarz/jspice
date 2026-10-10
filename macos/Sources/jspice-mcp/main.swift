@@ -74,6 +74,7 @@ let switches: [String: (Bool) -> Void] = [
     "quadratic-predictor": { Simulator.predictsQuadratically = $0 },
     "rest-chords": { Simulator.restsChords = $0 },
     "rescue-level": { Simulator.remembersRescueLevel = $0 },
+    "choose-predictor": { Simulator.choosesPredictor = $0 },
 ]
 
 /// Simulates each example twice over, with one of the engine's switches off and on, in alternate runs of `seconds` of

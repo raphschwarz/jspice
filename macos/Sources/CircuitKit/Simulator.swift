@@ -554,6 +554,16 @@ public final class Simulator {
     /// over), a diode clipper a tenth more, and a transistor multivibrator stopped oscillating: the parabola through a
     /// switching edge starts Newton-Raphson on the far side of where the circuit goes.
     public static var predictsQuadratically = false
+    /// Whether the predictor takes each unknown along the parabola or the straight line, whichever came nearer to where
+    /// that unknown ended the last substep (off by default: for comparing): a signal moving smoothly is followed along
+    /// the parabola, while an unknown nearly still, or one that turned sharply, keeps to the straight line
+    public static var choosesPredictor = false
+    /// Each unknown's guess along the straight line and along the parabola for the substep being solved, whether they
+    /// are this substep's, and by unknown whether the parabola's came nearer last time
+    private var lineGuess: [Double] = []
+    private var parabolaGuess: [Double] = []
+    private var guessesMade = false
+    private var parabolaNearer: [Bool] = []
     private var predictNext = false
     private var predictionRatio = 1.0
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
@@ -1413,6 +1423,13 @@ public final class Simulator {
                 rescueLevel = level
                 rescuing = false
             }
+            // which of the predictor's two guesses came nearer, by unknown, for the next substep to take
+            if guessesMade {
+                guessesMade = false
+                if converged && lineGuess.count == x.count {
+                    for k in 0..<x.count { parabolaNearer[k] = abs(parabolaGuess[k] - x[k]) < abs(lineGuess[k] - x[k]) }
+                }
+            }
             trace?("  substep at level \(level) kept" + (converged ? "" : ", not converged") + (solveChattered ? ", chattering" : ""))
             updateDynamicStates()
             // the next substep predicts from this one's start and end, unless the circuit jumped (a part switched over)
@@ -1629,6 +1646,41 @@ public final class Simulator {
         let ratio = predictionRatio
         guard olderX.count == x.count, ratio.isFinite, ratio > 0 else { return }
         let block = plan.flatMap { $0.n == x.count ? $0.block : nil }
+        if Self.choosesPredictor && quadraticReady && oldestX.count == x.count {
+            let r = ratio
+            let s = Double(1 << lastLevel) / Double(1 << olderLevel)
+            let w0 = (r + 1) * (r + 1 + s) / (1 + s), w1 = -r * (r + 1 + s) / s, w2 = r * (r + 1) / ((1 + s) * s)
+            let n = x.count
+            if lineGuess.count != n {
+                lineGuess = [Double](repeating: 0, count: n)
+                parabolaGuess = [Double](repeating: 0, count: n)
+                parabolaNearer = [Bool](repeating: false, count: n)
+            }
+            x.withUnsafeMutableBufferPointer { x in
+                olderX.withUnsafeBufferPointer { older in
+                    oldestX.withUnsafeBufferPointer { oldest in
+                        lineGuess.withUnsafeMutableBufferPointer { line in
+                            parabolaGuess.withUnsafeMutableBufferPointer { parabola in
+                                parabolaNearer.withUnsafeBufferPointer { nearer in
+                                    func guess(_ k: Int) {
+                                        line[k] = x[k] + r * (x[k] - older[k])
+                                        parabola[k] = w0 * x[k] + w1 * older[k] + w2 * oldest[k]
+                                        x[k] = nearer[k] ? parabola[k] : line[k]
+                                    }
+                                    if let block {
+                                        for k in block { guess(k) }
+                                    } else {
+                                        for k in 0..<n { guess(k) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            guessesMade = true
+            return
+        }
         if Self.predictsQuadratically && quadraticReady && oldestX.count == x.count {
             // the parabola through the last three substeps' starts (the last ends at x), at this substep's end: with
             // r this substep's length and s the one before last's, over the last's, x's weight is (r + 1)(r + 1 + s)/(1 + s),
