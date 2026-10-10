@@ -105,6 +105,9 @@ jobs:
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-avr.txt | head -45
           python3 scripts/profile-callers.py build/profile-avr.txt 30 || true
+          # the AVR's step as compiled (its own time, between executing an instruction and counting its cycles, is near
+          # a quarter of the chip's): its instructions, and what it calls
+          otool -tV -p '_$s10CircuitKit3AVRC4stepSiyF' ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>/dev/null | sed -n '2,160p' || true
           # and for an Arduino reading an SPI ADC and writing an I2C DAC (its pins' events go to the parts as it runs)
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 arduino-mcp3008-mcp4725 > /dev/null &
           sleep 1
