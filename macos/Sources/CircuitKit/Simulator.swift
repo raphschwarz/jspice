@@ -1561,8 +1561,10 @@ public final class Simulator {
     static let dampingAfter = 8
 
     /// A substep that can be halved gives up after this many iterations in a row whose steps have not halved (without
-    /// a junction's limiting): Newton-Raphson swinging from one side of a maker's model's corners to the other, as at
-    /// the end of its crossover dead zone, rarely settles before `halvingIterations`, and the halves start nearer
+    /// a junction's limiting), in a circuit with nonlinear behavioural sources: Newton-Raphson swinging from one side of
+    /// a maker's model's corners to the other, as at the end of its crossover dead zone, rarely settles before
+    /// `halvingIterations`, and the halves start nearer. (A diode clipper's Newton-Raphson contracts slowly but
+    /// surely, and halving it costs more iterations than it saves.)
     static let stallsTolerated = 3
 
     /// How many times a solve is done again for behavioural sources' decisions that changed during it
@@ -1806,7 +1808,7 @@ public final class Simulator {
             if dampsNewton && iteration >= Self.dampingAfter && !limiting {
                 damping = change > 0.5 * lastChange ? max(damping / 2, 1.0 / 64) : min(damping * 2, 1)
             }
-            if Self.givesUpWhenStalled && iterations == Self.halvingIterations && iteration >= 3 && !limiting {
+            if Self.givesUpWhenStalled && dampsNewton && iterations == Self.halvingIterations && iteration >= 3 && !limiting {
                 stalls = change > 0.5 * lastChange ? stalls + 1 : 0
                 if stalls >= Self.stallsTolerated {
                     trace?("    no nearer after \(stalls) iterations: the substep is halved")
