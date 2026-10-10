@@ -199,7 +199,8 @@ final class EliminationProgram {
             let column = Int(pivotColumn[k])
             let next = (sum + other) * reciprocals[k]
             guard next.isFinite else { return .nan }
-            change = max(change, abs(next - x[column]) / (1 + abs(next)))
+            let moved = abs(next - x[column]), scale = 1 + abs(next)
+            if moved > change * scale { change = moved / scale }
             x[column] = next
             n += 1
         }
@@ -252,23 +253,32 @@ final class EliminationProgram {
     /// Back substitution, last step first, writing the unknowns the pivots' columns stand for into `x` (the unknowns of
     /// later eliminations must be there already). Returns the largest change of an unknown, relative to its new size, or
     /// NaN if one is not a number (then `x` is partly written).
+    ///
+    /// The steps are taken by level (see `backOrder`), each row's entries summed in two halves at once, and a row's
+    /// change divided out only where it may be the largest yet: a division takes several times as long as a
+    /// multiply-add, and each row waits on the rows before.
     func back(_ values: UnsafePointer<Double>, _ b: UnsafePointer<Double>, _ x: UnsafeMutablePointer<Double>) -> Double {
         var change = 0.0
-        var k = steps - 1
-        while k >= 0 {
+        var n = 0
+        while n < steps {
+            let k = Int(backOrder[n])
             var sum = b[Int(pivotRow[k])]
+            var other = 0.0
             var i = Int(uStart[k])
             let u1 = Int(uStart[k + 1])
-            while i < u1 {
+            while i + 1 < u1 {
                 sum -= values[Int(uSlot[i])] * x[Int(uColumn[i])]
-                i += 1
+                other -= values[Int(uSlot[i + 1])] * x[Int(uColumn[i + 1])]
+                i += 2
             }
+            if i < u1 { sum -= values[Int(uSlot[i])] * x[Int(uColumn[i])] }
             let column = Int(pivotColumn[k])
-            let next = sum / values[Int(diagonal[k])]
+            let next = (sum + other) / values[Int(diagonal[k])]
             guard next.isFinite else { return .nan }
-            change = max(change, abs(next - x[column]) / (1 + abs(next)))
+            let moved = abs(next - x[column]), scale = 1 + abs(next)
+            if moved > change * scale { change = moved / scale }
             x[column] = next
-            k -= 1
+            n += 1
         }
         return change
     }
