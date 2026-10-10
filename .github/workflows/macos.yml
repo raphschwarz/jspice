@@ -58,12 +58,12 @@ jobs:
         run: |
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25
           # an engine switch off and on, run for run on the same machine: what the predictor choosing the parabola or
-          # the line by unknown, and resting kept factors, save (or cost) transistor circuits
-          for switch in choose-predictor rest-chords; do
+          # the line by unknown, and reusing factors (made for makers' models) in every circuit, save (or cost)
+          # transistor circuits
+          for switch in choose-predictor reuse-everywhere; do
             ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch $switch 0.25 voice acid synth vco wind vcf mc1496-ring guitar-fuzz tube-screamer bargraph tube-amp lm1036 || true
           done
-          # and what reusing factors (the chord method, confirmations, kept stamps) and bypassing behavioural sources save them
-          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-factors 0.25 voice acid mc1496-ring tube-screamer bargraph lm1036 || true
+          # and what bypassing behavioural sources saves them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
           # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns
           # keep moving, in the synth voice, the sequenced acid line and the fuzz

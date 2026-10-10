@@ -83,6 +83,16 @@ public final class Simulator {
     /// values they were made from (the chord method); read at each iteration. Off, it factors at every iteration: for
     /// comparing the two.
     public static var reusesFactors = true
+    /// Whether it does so in every circuit, rather than only where nonlinear behavioural sources are (off: for
+    /// comparing). Kept factors, confirmations without a solve and kept stamps were made for a maker's op-amp model, its
+    /// piecewise-linear sources' slopes held still between their corners; a circuit of transistors, diodes and built-in
+    /// op-amps moves its slopes at every iteration, and keeping, packing and comparing for the few iterations they save
+    /// cost it more than they saved (CI, run for run: the ring modulator of transistors, the acid line, the Tube
+    /// Screamer and the LM1036 tone control 2 to 3% slower with them, the LED bar graph 8%, and the synth voice, with
+    /// the predictor choosing its guesses, 2.13 iterations a step for 1.70 without)
+    public static var reusesFactorsEverywhere = false
+    /// `reusesFactors`, for the present circuit
+    private var reusing: Bool { Self.reusesFactors && (dampsNewton || Self.reusesFactorsEverywhere) }
     /// Solves done again because a behavioural source's decision (a comparator in a maker's model) changed during one,
     /// and solves left as they were after `decisionRounds` of that (a comparator chattering about its threshold)
     public private(set) var decisionSolves = 0
@@ -563,10 +573,10 @@ public final class Simulator {
     public static var choosesPredictor = true
     /// Each unknown's guess along the straight line and along the parabola for the substep being solved, whether they
     /// are this substep's, and by unknown whether the parabola's came nearer last time
-    private var lineGuess: [Double] = []
-    private var parabolaGuess: [Double] = []
+    private var lineGuess = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
+    private var parabolaGuess = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
     private var guessesMade = false
-    private var parabolaNearer: [Bool] = []
+    private var parabolaNearer = UnsafeMutableBufferPointer<Bool>(start: nil, count: 0)
     private var predictNext = false
     private var predictionRatio = 1.0
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
@@ -763,6 +773,9 @@ public final class Simulator {
         limitedVoltage3.deallocate()
         savedLimited.deallocate()
         rejectLimited.deallocate()
+        lineGuess.deallocate()
+        parabolaGuess.deallocate()
+        parabolaNearer.deallocate()
         behaviorRegisters.deallocate()
         behaviorRates.deallocate()
         behaviorValues.deallocate()
@@ -1410,7 +1423,10 @@ public final class Simulator {
             if guessesMade {
                 guessesMade = false
                 if converged && lineGuess.count == x.count {
-                    for k in 0..<x.count { parabolaNearer[k] = abs(parabolaGuess[k] - x[k]) < abs(lineGuess[k] - x[k]) }
+                    let (line, parabola, nearer) = (lineGuess, parabolaGuess, parabolaNearer)
+                    x.withUnsafeBufferPointer { x in
+                        for k in 0..<x.count { nearer[k] = abs(parabola[k] - x[k]) < abs(line[k] - x[k]) }
+                    }
                 }
             }
             trace?("  substep at level \(level) kept" + (converged ? "" : ", not converged") + (solveChattered ? ", chattering" : ""))
@@ -1633,28 +1649,27 @@ public final class Simulator {
             let w0 = (r + 1) * (r + 1 + s) / (1 + s), w1 = -r * (r + 1 + s) / s, w2 = r * (r + 1) / ((1 + s) * s)
             let n = x.count
             if lineGuess.count != n {
-                lineGuess = [Double](repeating: 0, count: n)
-                parabolaGuess = [Double](repeating: 0, count: n)
-                parabolaNearer = [Bool](repeating: false, count: n)
+                Self.zeroed(&lineGuess, n)
+                Self.zeroed(&parabolaGuess, n)
+                parabolaNearer.deallocate()
+                parabolaNearer = .allocate(capacity: n)
+                parabolaNearer.initialize(repeating: false)
             }
+            let (line, parabola, nearer) = (lineGuess, parabolaGuess, parabolaNearer)
             x.withUnsafeMutableBufferPointer { x in
                 olderX.withUnsafeBufferPointer { older in
                     oldestX.withUnsafeBufferPointer { oldest in
-                        lineGuess.withUnsafeMutableBufferPointer { line in
-                            parabolaGuess.withUnsafeMutableBufferPointer { parabola in
-                                parabolaNearer.withUnsafeBufferPointer { nearer in
-                                    func guess(_ k: Int) {
-                                        line[k] = x[k] + r * (x[k] - older[k])
-                                        parabola[k] = w0 * x[k] + w1 * older[k] + w2 * oldest[k]
-                                        x[k] = nearer[k] ? parabola[k] : line[k]
-                                    }
-                                    if let block {
-                                        for k in block { guess(k) }
-                                    } else {
-                                        for k in 0..<n { guess(k) }
-                                    }
-                                }
+                        func guess(_ k: Int) {
+                            line[k] = x[k] + r * (x[k] - older[k])
+                            parabola[k] = w0 * x[k] + w1 * older[k] + w2 * oldest[k]
+                            x[k] = nearer[k] ? parabola[k] : line[k]
+                        }
+                        if let block {
+                            block.withUnsafeBufferPointer { block in
+                                for k in block { guess(k) }
                             }
+                        } else {
+                            for k in 0..<n { guess(k) }
                         }
                     }
                 }
@@ -1738,9 +1753,9 @@ public final class Simulator {
         // have stopped finding it (a transistor's slopes move at every iteration, and its block never stamps as it was
         // solved)
         if confirmRest > 0 { confirmRest -= 1 }
-        let confirming = Self.reusesFactors && (confirmRest == 0 || !Self.restsConfirmation)
+        let confirming = reusing && (confirmRest == 0 || !Self.restsConfirmation)
         if chordRest > 0 { chordRest -= 1 }
-        let chording = Self.reusesFactors && (chordRest == 0 || !Self.restsChords)
+        let chording = reusing && (chordRest == 0 || !Self.restsChords)
         // only a solve that ends confirmed leaves stamps to start the next from, and only a solve that can start again
         // from where it started takes them (not one that a single iteration from the prediction ends)
         if reuseRest > 0 { reuseRest -= 1 }
@@ -2086,7 +2101,7 @@ public final class Simulator {
 
     /// Whether there are stamps the last solve confirmed, for this plan and base matrix, to start from
     private func mayReuseLastStamps(_ plan: SparsePlan) -> Bool {
-        reuseAllowed && Self.reusesFactors && confirmedPlanSerial == planSerial && stampedPlan === plan && confirmedBaseVersion == baseVersion
+        reuseAllowed && reusing && confirmedPlanSerial == planSerial && stampedPlan === plan && confirmedBaseVersion == baseVersion
             && stampSnapshot.count == stampedSlots.count && rightSnapshot.count == plan.block.count
     }
 
