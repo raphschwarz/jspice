@@ -2579,19 +2579,21 @@ public final class Simulator {
         for node in 1..<max(1, topology.nodeCount) {
             stamp(matrix, (node - 1) * m + node - 1, Self.gmin)
         }
-        for (i, element) in flat.elements.enumerated() {
+        // (by kind and constants: copying each element, its parameters, firmware and block, cost more than all the
+        // stamping)
+        for i in kinds.indices where i < topology.elementNodes.count {
             let nodes = topology.elementNodes[i]
-            switch element.kind {
+            let kind = kinds[i]
+            switch kind {
             case .resistor, .lamp:
-                stampConductance(matrix, m, nodes[0], nodes[1], 1 / max(element[param: "resistance"], 1e-9))
+                stampConductance(matrix, m, nodes[0], nodes[1], constants[i].onConductance)
             case .behavioralSource:
                 stampLinearBehavior(i, nodes, matrix, m)
             case .potentiometer:
-                let (upper, lower) = potentiometerResistances(element)
-                stampConductance(matrix, m, nodes[0], nodes[2], 1 / upper)
-                stampConductance(matrix, m, nodes[2], nodes[1], 1 / lower)
+                stampConductance(matrix, m, nodes[0], nodes[2], constants[i].onConductance)
+                stampConductance(matrix, m, nodes[2], nodes[1], constants[i].offConductance)
             case .capacitor where !linearising:
-                stampConductance(matrix, m, nodes[0], nodes[1], a0 * element[param: "capacitance"] / h)
+                stampConductance(matrix, m, nodes[0], nodes[1], a0 * constants[i].value / h)
             case .inductor where !linearising:
                 stampConductance(matrix, m, nodes[0], nodes[1], h / (a0 * constants[i].value))
             case .transformer:
@@ -2645,11 +2647,11 @@ public final class Simulator {
                  .levelDetector, .springReverb, .agcPreamp:
                 // output: a voltage source to ground, whose voltage the nonlinear stage (or the delay line, or the chip's
                 // state) sets
-                if element.kind == .springReverb {
+                if kind == .springReverb {
                     // the tank's input coil
                     stampConductance(matrix, m, nodes[0], nodes[1], constants[i].onConductance)
                 }
-                if element.kind == .digitalDelay {
+                if kind == .digitalDelay {
                     // an echo chip's pin 6: its internal reference behind its internal resistance
                     stampConductance(matrix, m, nodes[1], 0, 1 / constants[i].value)
                 }
@@ -2665,14 +2667,14 @@ public final class Simulator {
                 stampConductance(matrix, m, supply, control, 1 / 5000.0)
                 stampConductance(matrix, m, control, ground, 1 / 10_000.0)
                 let high = digitalState[i]
-                stampConductance(matrix, m, output, high ? supply : ground, 1 / max(element[param: "outputResistance"], 0.1))
-                stampConductance(matrix, m, discharge, ground, high ? 1e-9 : 1 / max(element[param: "dischargeResistance"], 0.1))
+                stampConductance(matrix, m, output, high ? supply : ground, constants[i].outputConductance)
+                stampConductance(matrix, m, discharge, ground, high ? 1e-9 : constants[i].dischargeConductance)
             case .schmittInverter:
                 // output drives towards the hidden supply or ground through its output resistance
-                stampConductance(matrix, m, nodes[1], 0, 1 / max(element[param: "outputResistance"], 0.1))
+                stampConductance(matrix, m, nodes[1], 0, constants[i].outputConductance)
             case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
                 // each output likewise; the inputs draw nothing
-                for k in element.kind.logicOutputs where k < nodes.count {
+                for k in kind.logicOutputs where k < nodes.count {
                     stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance)
                 }
             case .dac:
@@ -2696,18 +2698,18 @@ public final class Simulator {
                 }
             case .analogMux, .analogSelector:
                 // the channel the select inputs pick, connected to the common terminal
-                if let channel = Logic.channel(element.kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
+                if let channel = Logic.channel(kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
                     stampConductance(matrix, m, nodes[channel], common, constants[i].onConductance)
                 }
             case .atmega328p, .atmega2560, .attiny85, .rp2040:
                 // each output pin drives towards the supply or ground through its resistance; a pull-up is a resistor
                 // to the supply, a pull-down one to ground; other inputs draw nothing
                 guard let states = chipPinStates[i] else { continue }
-                let c = constants[i]
+                let (output, pull) = (constants[i].outputConductance, constants[i].onConductance)
                 for (pin, state) in states.enumerated() where pin < nodes.count {
                     switch state {
-                    case .output: stampConductance(matrix, m, nodes[pin], 0, c.outputConductance)
-                    case .input(pullUp: true), .inputPullDown: stampConductance(matrix, m, nodes[pin], 0, c.onConductance)
+                    case .output: stampConductance(matrix, m, nodes[pin], 0, output)
+                    case .input(pullUp: true), .inputPullDown: stampConductance(matrix, m, nodes[pin], 0, pull)
                     case .input: break
                     }
                 }
@@ -2979,6 +2981,14 @@ public final class Simulator {
         var c = Constants()
         func p(_ key: String) -> Double { element[param: key] }
         switch element.kind {
+        case .resistor, .lamp:
+            // (the base matrix is built often where a chip's pins switch between driving and letting go, as an I²C
+            // line does at every bit: its conductances are worked out here, not looked up by name then)
+            c.onConductance = 1 / max(p("resistance"), 1e-9)
+        case .potentiometer:
+            let (upper, lower) = potentiometerResistances(element)
+            c.onConductance = 1 / upper
+            c.offConductance = 1 / lower
         case .capacitor:
             c.value = p("capacitance")
         case .inductor:
