@@ -627,6 +627,16 @@ public final class Simulator {
     static let confirmRestSolves = 512
     /// Whether confirmations rest after many misses (off, every solve tries them: for comparing the two)
     public static var restsConfirmation = true
+    /// How often kept (or former) factors served an iteration that asked for them (an average over about the last
+    /// fifty), and the solves for which none asks once that falls below `chordRateFloor`: a transistor circuit playing
+    /// a signal moves its slopes at every iteration, and keeping, packing and checking its factorings for chord steps
+    /// that hardly ever come cost the sequenced synth voice a seventh of its time
+    private var chordRate = 1.0
+    private var chordRest = 0
+    static let chordRateFloor = 0.05
+    static let chordRestSolves = 256
+    /// Whether kept factors rest so (off, every iteration asks for them: for comparing the two)
+    public static var restsChords = true
     /// Whether a confirmation also takes a block whose changed entries balance at the solution (see `stampsUnchanged`),
     /// whether kept factors serve past changes in the columns of unknowns that hold still (see `keptFactorsSuit`), and
     /// whether a substep that can be halved gives up once Newton-Raphson stalls (see `stallsTolerated`): each off, for
@@ -1625,6 +1635,8 @@ public final class Simulator {
         // solved)
         if confirmRest > 0 { confirmRest -= 1 }
         let confirming = Self.reusesFactors && (confirmRest == 0 || !Self.restsConfirmation)
+        if chordRest > 0 { chordRest -= 1 }
+        let chording = Self.reusesFactors && (chordRest == 0 || !Self.restsChords)
         // only a solve that ends confirmed leaves stamps to start the next from, and only a solve that can start again
         // from where it started takes them (not one that a single iteration from the prediction ends)
         if reuseRest > 0 { reuseRest -= 1 }
@@ -1766,13 +1778,23 @@ public final class Simulator {
                 dampedIterations += 1
             }
             let change: Double
-            if Self.reusesFactors && !damped && !refactor && (keptFactorsSuit(plan) || formerFactorsSuit(plan)) {
+            let mayChord = chording && !damped && !refactor
+            if mayChord && (keptFactorsSuit(plan) || formerFactorsSuit(plan)) {
                 // the block is as it was when last factored, near enough: a step solved with those factors from the
                 // present residual (the chord method) converges to the very same solution, without factoring
+                chordRate += (1 - chordRate) * 0.02
                 change = chordStep(plan)
                 reusedFactorings += 1
                 chordSteps += 1
             } else {
+                if mayChord {
+                    chordRate -= chordRate * 0.02
+                    if chordRate < Self.chordRateFloor {
+                        // (after the rest, a few tries more before the next)
+                        chordRate = 2.5 * Self.chordRateFloor
+                        chordRest = Self.chordRestSolves
+                    }
+                }
                 // the nonlinear block, by the first of the plan's pivot orders that suits its values (or a new one)
                 if let trace, unsuitedEntry >= 0, unsuitedEntry < stampedSlots.count, keptValues.count == plan.entryCount {
                     let k = unsuitedEntry, slot = Int(stampedSlots[k])
@@ -1782,7 +1804,8 @@ public final class Simulator {
                                    keptRowScale[Int(stampedLocalRows[k])]))
                 }
                 unsuitedEntry = -1
-                keepEntries(plan)
+                // (the entries kept are for chord steps and, their rows' scales, for confirmations: none while both rest)
+                if chording || confirming { keepEntries(plan) }
                 valuesFactored = true
                 let blockCount = max(plan.entryCount - plan.tailStart, 1)
                 if blockScratch.count != blockCount { blockScratch = [Double](repeating: 0, count: blockCount) }
@@ -1795,7 +1818,7 @@ public final class Simulator {
                     fail()
                     return false
                 }
-                keepFactors(plan, order)
+                if chording { keepFactors(plan, order) } else { keptOrder = nil }
                 factorings += 1
                 chordSteps = 0
                 change = values.withUnsafeBufferPointer { v -> Double in

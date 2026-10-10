@@ -69,6 +69,7 @@ let switches: [String: (Bool) -> Void] = [
     "rest-reuse": { Simulator.restsReuse = $0 },
     "retry-from-memory": { Simulator.retriesFromMemory = $0 },
     "quadratic-predictor": { Simulator.predictsQuadratically = $0 },
+    "rest-chords": { Simulator.restsChords = $0 },
 ]
 
 /// Simulates each example twice over, with one of the engine's switches off and on, in alternate runs of `seconds` of
