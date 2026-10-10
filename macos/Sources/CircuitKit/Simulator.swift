@@ -329,7 +329,15 @@ public final class Simulator {
     private var kinds: [ElementKind] = []
     var constants: [Constants] = []
     /// Each bipolar transistor's Gummel-Poon card at the circuit's temperature (an empty one for other parts)
-    private var bipolar: [GummelPoon] = []
+    private var bipolar: [GummelPoon] = [] {
+        didSet {
+            bipolarRefs.deallocate()
+            bipolarRefs = .allocate(capacity: bipolar.count)
+            for (k, g) in bipolar.enumerated() { bipolarRefs[k] = Unmanaged.passUnretained(g) }
+        }
+    }
+    /// The same, unretained (the array keeps them): stamping reads one at every iteration without counting references
+    private var bipolarRefs = UnsafeMutableBufferPointer<Unmanaged<GummelPoon>>(start: nil, count: 0)
     /// Each diode's, Zener diode's and LED's SPICE card at the circuit's temperature
     private var diodes: [SpiceDiode] = []
     /// Each JFET's SPICE card at the circuit's temperature
@@ -734,6 +742,7 @@ public final class Simulator {
 
     deinit {
         stampedFlags?.deallocate()
+        bipolarRefs.deallocate()
         behaviorRegisters.deallocate()
         behaviorRates.deallocate()
         behaviorValues.deallocate()
@@ -3568,8 +3577,11 @@ public final class Simulator {
     /// linear in the internal base-emitter and base-collector voltages and the external base to internal collector
     /// voltage; and a base resistance that falls with the base current
     private func stampBipolar(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
+        bipolarRefs[i]._withUnsafeGuaranteedRef { stampBipolar(i, $0, nodes, matrix, rhs, m) }
+    }
+
+    private func stampBipolar(_ i: Int, _ g: GummelPoon, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
         let p: Double = kinds[i] == .npn ? 1 : -1
-        let g = bipolar[i]
         let n = Self.bipolarNodes({ nodes[$0] }, g)
         // in the transistor's own polarity
         let vbe = limitJunction(p * (voltage(n.bp) - voltage(n.ep)), old: limitedVoltage[i], nvt: vt, critical: g.critical)
@@ -4953,11 +4965,12 @@ public final class Simulator {
     @inline(__always) private func forEachStoredCharge(_ i: Int, _ nodes: NodeList, _ body: (Int, Double) -> Void) {
         switch kinds[i] {
         case .npn, .pnp:
-            let g = bipolar[i]
-            let n = Self.bipolarNodes({ nodes[$0] }, g)
-            let p: Double = kinds[i] == .npn ? 1 : -1
-            // (as the last iteration stamped them: kept then)
-            let q = g.storedCharges(vbe: limitedVoltage[i], vbc: limitedVoltage2[i], vbx: p * (voltage(n.b) - voltage(n.cp)))
+            let q = bipolarRefs[i]._withUnsafeGuaranteedRef { (g: GummelPoon) -> (qbe: Double, qbc: Double, qbx: Double) in
+                let n = Self.bipolarNodes({ nodes[$0] }, g)
+                let p: Double = kinds[i] == .npn ? 1 : -1
+                // (as the last iteration stamped them: kept then)
+                return g.storedCharges(vbe: limitedVoltage[i], vbc: limitedVoltage2[i], vbx: p * (voltage(n.b) - voltage(n.cp)))
+            }
             body(0, q.qbe)
             body(1, q.qbc)
             body(2, q.qbx)
