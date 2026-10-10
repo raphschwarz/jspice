@@ -10,7 +10,10 @@ import Foundation
 /// body diode from source to drain. A drawn MOSFET is set by its threshold and its beta (KP W / L); a card's process
 /// parameters (TOX, NSUB, U0, LD, CJ, JS…) are worked out into these with the transistor's W, L and areas when it is read.
 /// Not modelled: the sidewall junctions, and flicker noise.
-struct SpiceMOSFET {
+final class SpiceMOSFET {
+    // (a class: the model is read at every Newton-Raphson iteration, and copying its values each time cost more than
+    // what they give; it is never changed once made)
+
     /// 1 for N-channel, −1 for P-channel: the voltages in the transistor's own polarity are this times the circuit's
     var type = 1.0
     /// Parameters as worked out at the circuit's temperature: beta (KP W / Leff), the surface potential, the built-in

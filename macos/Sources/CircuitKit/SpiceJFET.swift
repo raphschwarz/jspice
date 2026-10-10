@@ -9,7 +9,10 @@ import Foundation
 /// A drawn JFET is set by its pinch-off voltage and IDSS, the drain current with the gate at the source in saturation;
 /// a card's BETA is IDSS over the pinch-off voltage squared (with B at 1). Not modelled: PSpice's extensions (the gate
 /// junction's N and grading M, ISR and NR, ALPHA and VK), and flicker noise.
-struct SpiceJFET {
+final class SpiceJFET {
+    // (a class: the model is read at every Newton-Raphson iteration, and copying its values each time cost more than
+    // what they give; it is never changed once made)
+
     /// 1 for N-channel, −1 for P-channel: the voltages in the transistor's own polarity are this times the circuit's
     var polarity = 1.0
     /// Parameters as worked out at the circuit's temperature

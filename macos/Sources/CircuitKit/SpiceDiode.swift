@@ -6,7 +6,10 @@ import Foundation
 /// charges, and the temperature. Diodes, Zener diodes and LEDs are all this; a Zener's card has BV, an LED's its colour's
 /// saturation current. Not modelled: the sidewall, tunnelling and recombination currents, self-heating, and the
 /// temperature coefficients of BV, RS, TT and M (TCV, TRS1…).
-struct SpiceDiode {
+final class SpiceDiode {
+    // (a class: the model is read at every Newton-Raphson iteration, and copying its values each time cost more than
+    // what they give; it is never changed once made)
+
     var saturation = 1e-14, emission = 1.0
     var rs = 0.0
     /// Breakdown voltage at temperature, matched to IBV (0: no breakdown), and its emission coefficient
