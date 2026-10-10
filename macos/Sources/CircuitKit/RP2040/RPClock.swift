@@ -94,9 +94,13 @@ final class RPClock {
             nextAlarm = alarm.next
             nanos = alarm.nanos
             alarm.callback()
+            firedAt = target
         }
         nanos = target
     }
+
+    /// The end of the last tick at which an alarm went off (the time the chip's state last changed by one)
+    private(set) var firedAt = -1.0
 
     var nanosToNextAlarm: Double {
         guard let alarm = nextAlarm else { return 0 }
@@ -110,6 +114,7 @@ final class RPClock {
 
     /// Clears every alarm and starts time over (a reset of the whole chip)
     func restart() {
+        firedAt = -1
         var item = nextAlarm
         while let current = item {
             item = current.next

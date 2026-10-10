@@ -354,6 +354,7 @@ final class RP2040 {
         }
         if pioRunning {
             for block in pio where block.running { block.run(until: clock.nanos) }
+            pioRanAt = clock.nanos
         }
     }
 
@@ -361,6 +362,12 @@ final class RP2040 {
 
     /// Whether runs skip busy-waits (for comparing): see `run(until:)`
     static var skipsBusyWaits = true
+
+    /// When a PIO block last ran
+    private var pioRanAt = -1.0
+
+    /// When something but the core last changed the chip: an alarm went off, or a PIO block ran
+    var changedAt: Double { max(clock.firedAt, pioRanAt) }
 
     /// Until when nothing but the core changes the chip, within a run that ends at `end`: the next alarm, the next
     /// instruction of a running PIO block, the run's end
@@ -383,7 +390,8 @@ final class RP2040 {
         let core: CortexM0 = self.core
         let clock = self.clock
         let pio0 = pio[0], pio1 = pio[1]
-        if RP2040.skipsBusyWaits { core.runEnd = end }
+        // (the circuit may have changed the pins since the last run: a busy-wait is looked at afresh)
+        core.startRun(until: RP2040.skipsBusyWaits ? end : 0)
         defer { core.runEnd = 0 }
         while clock.nanos < end {
             if core.waiting {
@@ -395,8 +403,14 @@ final class RP2040 {
             if pio0.running || pio1.running {
                 // only once an instruction is due: the busy processor would otherwise visit them after its every one
                 let now = clock.nanos
-                if pio0.running && now >= pio0.nextDue { pio0.run(until: now) }
-                if pio1.running && now >= pio1.nextDue { pio1.run(until: now) }
+                if pio0.running && now >= pio0.nextDue {
+                    pio0.run(until: now)
+                    pioRanAt = now
+                }
+                if pio1.running && now >= pio1.nextDue {
+                    pio1.run(until: now)
+                    pioRanAt = now
+                }
             }
         }
     }

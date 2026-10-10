@@ -595,7 +595,11 @@ public final class AVR: Microcontroller {
         let registers = (raw.loadUnaligned(as: UInt64.self), raw.loadUnaligned(fromByteOffset: 8, as: UInt64.self),
                          raw.loadUnaligned(fromByteOffset: 16, as: UInt64.self), raw.loadUnaligned(fromByteOffset: 24, as: UInt64.self))
         let core = Int(data[AVR.SPL]) | Int(data[AVR.SPH]) << 8 | Int(data[AVR.SREG]) << 16
-        if loopSeen && registers == loopRegisters && core == loopCore {
+        if loopSeen && registers == loopRegisters && core == loopCore && servicedAt > loopCycles {
+            // alike, but the round looked at the peripherals before and after their turn within it: the values it
+            // read before may have changed since (a flag set), so it says nothing of the rounds after; the next does
+            loopCycles = now
+        } else if loopSeen && registers == loopRegisters && core == loopCore {
             // round and round alike: the whole rounds that end before a peripheral's next turn and the run's end
             let length = now - loopCycles
             let rounds = length > 0 ? max((min(nextService, runEnd) - 1 - now) / length, 0) : 0

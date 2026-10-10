@@ -91,6 +91,12 @@ final class CortexM0 {
         loopRegisters.deallocate()
     }
 
+    /// A run starts, to `end` (0: busy-waits are not skipped)
+    func startRun(until end: Double) {
+        runEnd = end
+        loopSeen = false
+    }
+
     /// A backward branch taken (to `PC`), of `used` cycles: where it finds the registers, flags and PRIMASK as they
     /// were the last time it was taken and nothing counted in `effects` since, the program goes round to the same
     /// effect until the chip's next event (nothing else changes before then), and the rounds that end before it (and
@@ -111,7 +117,13 @@ final class CortexM0 {
         let flags = (N ? 1 : 0) | (Z ? 2 : 0) | (C ? 4 : 0) | (V ? 8 : 0) | (PM ? 16 : 0)
         let now = clockRef._withUnsafeGuaranteedRef { $0.nanos } + Double(used) * RP2040.cycleNanos
         let cyclesNow = cycles + used
-        if loopSeen && flags == loopFlags && memcmp(registers, loopRegisters, 64) == 0 {
+        let alike = loopSeen && flags == loopFlags && memcmp(registers, loopRegisters, 64) == 0
+        if alike && chipRef._withUnsafeGuaranteedRef({ $0.changedAt }) > loopNanos {
+            // alike, but an alarm or a PIO block changed the chip within the round: what it read before may have
+            // changed since (a FIFO with room), so it says nothing of the rounds after; the next does
+            loopNanos = now
+            loopCycles = cyclesNow
+        } else if alike {
             let length = now - loopNanos
             // (in whole nanoseconds, which the clock adds up exactly one instruction at a time as at once)
             guard length > 0, now == now.rounded(), length == length.rounded(), now < 1e15 else { return }
