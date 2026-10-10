@@ -1081,19 +1081,22 @@ public final class AVR: Microcontroller {
         }
     }
 
-    /// The highest-priority interrupt that is enabled and flagged (an index into the sources)
-    private func pendingInterrupt() -> Int? {
-        if interruptsChanged {
-            let d = data
-            nextInterrupt = nil
-            for (index, source) in sources.enumerated()
-            where d[source.mask] & source.maskBit != 0 && d[source.flag] & source.flagBit != 0 {
-                nextInterrupt = index
-                break
-            }
-            interruptsChanged = false
-        }
+    /// The highest-priority interrupt that is enabled and flagged (an index into the sources): asked after every
+    /// instruction while interrupts are enabled, and worked out again only when a flag or an enable bit changed
+    @inline(__always) private func pendingInterrupt() -> Int? {
+        if interruptsChanged { findPendingInterrupt() }
         return nextInterrupt
+    }
+
+    @inline(never) private func findPendingInterrupt() {
+        let d = data
+        nextInterrupt = nil
+        for (index, source) in sources.enumerated()
+        where d[source.mask] & source.maskBit != 0 && d[source.flag] & source.flagBit != 0 {
+            nextInterrupt = index
+            break
+        }
+        interruptsChanged = false
     }
 
     // MARK: - Stack
