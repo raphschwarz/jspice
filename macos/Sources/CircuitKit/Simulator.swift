@@ -43,6 +43,19 @@ public final class Simulator {
     public private(set) var bypassedEvaluations = 0
     /// Those of them whose inputs had moved, but not out of the straight stretch they were on (see `stampBehavior`)
     public private(set) var straightBypasses = 0
+
+    /// The behavioural sources whose expressions were run most to stamp them, rather than bypassed, since the circuit
+    /// loaded: each one's expression in outline (see `SpiceExpression.Program.outline`: a maker's expressions are
+    /// theirs), how many times, its reach at the last run and whether it decides (for a benchmark to show where
+    /// evaluation goes)
+    public func mostEvaluatedSources(_ count: Int) -> [(outline: String, evaluations: Int, reach: Double, decides: Bool)] {
+        var found: [(outline: String, evaluations: Int, reach: Double, decides: Bool)] = []
+        for i in behaviors.indices {
+            guard let b = behaviors[i], b.evaluations > 0 else { continue }
+            found.append((outline: b.program.outline, evaluations: b.evaluations, reach: b.reach, decides: b.decides))
+        }
+        return Array(found.sorted { $0.evaluations > $1.evaluations }.prefix(count))
+    }
     /// Newton-Raphson iterations that ended without a solve, their block stamped as the iteration before solved it
     public private(set) var confirmedWithoutSolving = 0
     /// First iterations that started from the stamps the last solve confirmed, without evaluating the parts
@@ -325,6 +338,8 @@ public final class Simulator {
         var lastCelsius = 0.0
         var reach = 0.0
         var evaluated = false
+        /// Times its expression was run to stamp it (rather than bypassed)
+        var evaluations = 0
         /// The plan's slots its stamps go to, for the plan numbered `slotsSerial` (see `stampBehavior`): four for each
         /// input, then four for its own row (-1 where an entry is ground's); usable unless some stamp is outside the plan
         let slots: UnsafeMutablePointer<Int32>
@@ -3501,6 +3516,7 @@ public final class Simulator {
             b.lastCelsius = celsius
             b.reach = Self.bypassesDevices && program.piecewiseLinear ? program.straightReach(r, rates: behaviorRates) : 0
             b.evaluated = true
+            b.evaluations += 1
         }
         var equivalent = b.lastValue
         let row = topology.sourceRow[i]
@@ -3633,7 +3649,8 @@ public final class Simulator {
                 for k in 0..<count {
                     let (live, ended, held) = (abs(v[k] - last[k]), abs(v[k] - lastDecisions[k]), abs(d[k] - lastDecisions[k]))
                     if !(live.isFinite && ended.isFinite && held.isFinite) { finite = false }
-                    furthest = max(furthest, live, ended, held)
+                    // (in twos: max of four takes the fourth in an array, made and freed each time)
+                    furthest = max(max(furthest, live), max(ended, held))
                 }
                 if finite && furthest <= 0.5 * b.reach { continue }
             }

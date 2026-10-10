@@ -140,6 +140,10 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
           + "evaluations bypassed (\(simulator.straightBypasses) on straight stretches); \(simulator.confirmedWithoutSolving) iterations confirmed without a solve; "
           + "\(simulator.reusedStampings) first iterations started from the confirmed stamps, "
           + "\(simulator.restartedSolves) started again without them")
+    let busiest = simulator.mostEvaluatedSources(6)
+    print("\(part): the behavioural sources run most, in outline (times run; reach at the last run, in volts or amps): "
+          + busiest.map { "[\($0.outline)] (\($0.evaluations); \(String(format: "%.3g", $0.reach))\($0.decides ? ", decides" : ""))" }
+          .joined(separator: "; "))
     let block = simulator.blockFactorSize
     print("\(part)'s model as simulated: \(size.unknowns) unknowns, \(size.nonzeros) nonzeros, \(size.factorEntries) entries "
           + "factored, \(size.nonlinearUnknowns) nonlinear (its factors \(block.lower) below and \(block.upper) right of the "

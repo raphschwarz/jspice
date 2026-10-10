@@ -49,6 +49,27 @@ extension SpiceExpression {
         /// of anything that reads an input, and not the time (see `straightReach`)
         public let piecewiseLinear: Bool
 
+        /// What it is made of, without its numbers: the functions, comparisons and tables in it, its steps and inputs,
+        /// and whether it is straight lines between decisions (for a report on where evaluation goes)
+        public var outline: String {
+            var kinds: [String] = []
+            for k in 0..<count {
+                let kind: String?
+                switch steps[k] {
+                case let .call(f, _, _, _): kind = f.rawValue
+                case let .binary(op, _, _): kind = op.rawValue
+                case .select: kind = "if"
+                case .table, .tableSlope: kind = "table"
+                case .not: kind = "!"
+                case .multiply: kind = "*"
+                case .divide: kind = "/"
+                default: kind = nil
+                }
+                if let kind, !kinds.contains(kind) { kinds.append(kind) }
+            }
+            return "\(kinds.joined(separator: " ")); \(count) steps, \(slopes.count) inputs\(piecewiseLinear ? "" : ", curved")"
+        }
+
         /// The functions that are straight lines in their arguments but where they decide (a corner or a jump)
         static let straightFunctions: Set<Function> = [.abs, .u, .sgn, .floor, .ceil, .uramp, .min, .max, .limit]
 
@@ -209,7 +230,7 @@ extension SpiceExpression {
                         margin(vb - vc, sb + sc)
                         margin(va - vb, sa + sb)
                         margin(va - vc, sa + sc)
-                        s[k] = Swift.max(sa, sb, sc)
+                        s[k] = Swift.max(Swift.max(sa, sb), sc)
                     default:
                         // curved, of values that do not move
                         guard sa == 0 && sb == 0 && sc == 0 else { return 0 }
