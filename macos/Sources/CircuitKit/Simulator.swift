@@ -478,6 +478,20 @@ public final class Simulator {
     private var keptSlots: [Int32] = []
     private var keptLocalRows: [Int32] = []
     private var keptRowScale: [Double] = []
+    /// How many of the stamped slots there were when the present factoring's values were kept
+    private var keptStampedCount = 0
+    /// The block's factorings before the present one, most recent first (see `formerFactorsSuit`), on the same plan and
+    /// base matrix: their values at the stamped slots (in `stampedSlots`' order), their rows' scale, factors and order
+    private struct FormerFactoring {
+        var values: [Double]
+        var rowScale: [Double]
+        var factors: [Double]
+        var order: EliminationProgram
+    }
+    private var formerFactorings: [FormerFactoring] = []
+    static let formerFactoringsKept = 3
+    /// Factorings taken up again from the former ones rather than made afresh
+    public private(set) var restoredFactorings = 0
     /// The linear block's factors packed (see `EliminationProgram.pack`) from the base matrix of version
     /// `linearPackedVersion`, for a circuit with nonlinear parts
     private var linearPacked: [Double] = []
@@ -1520,7 +1534,7 @@ public final class Simulator {
                 dampedIterations += 1
             }
             let change: Double
-            if Self.reusesFactors && !damped && !refactor && keptFactorsSuit(plan) {
+            if Self.reusesFactors && !damped && !refactor && (keptFactorsSuit(plan) || formerFactorsSuit(plan)) {
                 // the block is as it was when last factored, near enough: a step solved with those factors from the
                 // present residual (the chord method) converges to the very same solution, without factoring
                 change = chordStep(plan)
@@ -1756,6 +1770,13 @@ public final class Simulator {
     /// for it, or a stamped one's), and those of the slots the stamps reach, which later iterations' are compared with
     private func keepEntries(_ plan: SparsePlan) {
         let s = plan.block.count
+        if keptPlan !== plan || keptBaseVersion != baseVersion {
+            formerFactorings.removeAll()
+        } else if let order = keptOrder, keptStampedCount > 0, keptStampedCount == stampedSlots.count {
+            // the factoring about to be replaced, for the block to come back to
+            formerFactorings.insert(presentFactoring(order), at: 0)
+            if formerFactorings.count > Self.formerFactoringsKept { formerFactorings.removeLast() }
+        }
         if keptPlan !== plan {
             keptPlan = plan
             keptSlots = []
@@ -1798,7 +1819,57 @@ public final class Simulator {
             }
         }
         keptBaseVersion = baseVersion
+        keptStampedCount = stampedSlots.count
         stampedSlotsGrew = false
+    }
+
+    /// The present factoring, as a former one
+    private func presentFactoring(_ order: EliminationProgram) -> FormerFactoring {
+        let values = keptValues.withUnsafeBufferPointer { kept in
+            (0..<keptStampedCount).map { kept[Int(stampedSlots[$0])] }
+        }
+        return FormerFactoring(values: values, rowScale: keptRowScale, factors: keptFactors, order: order)
+    }
+
+    /// Whether one of the former factorings was made from the block as it is stamped now, near enough (as
+    /// `keptFactorsSuit` asks of the present one): a comparator that flipped and flipped back puts a maker's model's
+    /// block back exactly as it was, its parts being straight lines between their decisions. That one becomes the
+    /// present factoring, and the present one a former.
+    private func formerFactorsSuit(_ plan: SparsePlan) -> Bool {
+        guard keptPlan === plan, keptBaseVersion == baseVersion, !formerFactorings.isEmpty, !plan.block.isEmpty,
+              keptValues.count == plan.entryCount else { return false }
+        let count = stampedSlots.count
+        let found = values.withUnsafeBufferPointer { v -> Int? in
+            stampedSlots.withUnsafeBufferPointer { slots -> Int? in
+                stampedLocalRows.withUnsafeBufferPointer { rows -> Int? in
+                    formerFactorings.firstIndex { former in
+                        guard former.values.count == count else { return false }
+                        return former.values.withUnsafeBufferPointer { kept -> Bool in
+                            former.rowScale.withUnsafeBufferPointer { scale -> Bool in
+                                for k in 0..<count {
+                                    // (written so that a value that is not a number fails too)
+                                    guard abs(v[Int(slots[k])] - kept[k]) <= Self.reuseTolerance * scale[Int(rows[k])] else { return false }
+                                }
+                                return true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        guard let found else { return false }
+        let former = formerFactorings.remove(at: found)
+        if let order = keptOrder, keptStampedCount == count { formerFactorings.insert(presentFactoring(order), at: 0) }
+        keptValues.withUnsafeMutableBufferPointer { kept in
+            for k in 0..<count { kept[Int(stampedSlots[k])] = former.values[k] }
+        }
+        keptRowScale = former.rowScale
+        keptFactors = former.factors
+        keptOrder = former.order
+        keptStampedCount = count
+        stampedSlotsGrew = false
+        restoredFactorings += 1
+        return true
     }
 
     /// Keeps the block's factors, just made by `order`, packed for the iterations after

@@ -145,11 +145,11 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
           + "factored, \(size.nonlinearUnknowns) nonlinear (its factors \(block.lower) below and \(block.upper) right of the "
           + "pivots, \(block.operations) multiply-adds to factor); \(made)")
     print(String(format: "%@ %@, 1 kHz at 48 kHz: %.1f µs/step (the fastest fifth %.1f), %.2f× real time, %.2f Newton iterations a step "
-                 + "(%ld factored, %ld with kept factors), %ld unknowns, %ld in the nonlinear block%@",
+                 + "(%ld factored, %ld with kept factors, %ld factorings taken up again), %ld unknowns, %ld in the nonlinear block%@",
                  part, stages > 1 ? "\(stages) followers in a row" : "follower", elapsed / Double(done) * 1e6,
                  fastest.isFinite ? fastest / 1e3 : elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
                  Double(simulator.newtonIterations) / Double(done), simulator.factorings, simulator.reusedFactorings,
-                 shape.unknowns, shape.nonlinear, simulator.isFailed ? " FAILED: " + simulator.problems.joined(separator: "; ") : ""))
+                 simulator.restoredFactorings, shape.unknowns, shape.nonlinear, simulator.isFailed ? " FAILED: " + simulator.problems.joined(separator: "; ") : ""))
 }
 
 /// Holds what a background task produced, for the main code waiting on it
