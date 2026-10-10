@@ -1941,7 +1941,10 @@ public final class Simulator {
               keptRowScale.count == rows else { return false }
         let tolerance = 1e-12
         if confirmScratch.count != rows { confirmScratch = [Double](repeating: 0, count: rows) }
-        let balancing = Self.confirmsByBalance && snapshotPoint.count == x.count
+        // (where nonlinear behavioural sources are, as with factors kept past still columns: the synth voice, whose
+        // confirmations are exact or nothing, took a ninth more iterations with confirmations by balance, and
+        // refactored half as often again)
+        let balancing = Self.confirmsByBalance && dampsNewton && snapshotPoint.count == x.count
         var changed = false
         let finite = values.withUnsafeBufferPointer { v -> Bool in
             keptRowScale.withUnsafeBufferPointer { scale -> Bool in
