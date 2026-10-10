@@ -41,6 +41,8 @@ public final class Simulator {
     public private(set) var limitedIterations = 0
     /// Behavioural sources' stamps given again from their last evaluation, their inputs not having moved
     public private(set) var bypassedEvaluations = 0
+    /// Newton-Raphson iterations that ended without a solve, their block stamped as the iteration before solved it
+    public private(set) var confirmedWithoutSolving = 0
     /// Whether a behavioural source whose inputs have not moved is stamped from its last evaluation (see `stampBehavior`)
     public static var bypassesDevices = true
     /// How far (relative, above 1 V) an input can move before a source is evaluated again
@@ -464,6 +466,9 @@ public final class Simulator {
     private var recordingStamps = false
     /// Whether the values hold a factoring of the block (written over more than the stamps reach)
     private var valuesFactored = true
+    /// The block as the last iteration stamped it: the values of the stamped slots, and the right-hand side's rows
+    private var stampSnapshot: [Double] = []
+    private var rightSnapshot: [Double] = []
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
     private var savedLimited3: [Double] = []
@@ -1323,6 +1328,8 @@ public final class Simulator {
         var damping = 1.0
         var refactor = false
         var chordSteps = 0
+        // whether the last iteration solved the block as it stamped it, undamped and unlimited
+        var solvedAsStamped = false
         while iteration < iterations {
             if stopRequested {
                 Self.copy(savedX, into: &x)
@@ -1374,6 +1381,15 @@ public final class Simulator {
             if limiting { limitedIterations += 1 }
             let stamped = Self.profiling ? DispatchTime.now().uptimeNanoseconds : 0
             let damped = damping < 1
+            // stamped at the last iteration's solution, the block is the very block that iteration solved (its parts
+            // sit where they did, or on straight stretches of their curves): that solution is this one's, to far
+            // within the tolerance, and the solve would only confirm it
+            if Self.reusesFactors && solvedAsStamped && !damped && !limiting && stampsUnchanged(plan) {
+                confirmedWithoutSolving += 1
+                converged = true
+                break
+            }
+            if Self.reusesFactors { snapshotStamps(plan) }
             if damped {
                 Self.copy(x, into: &dampFrom)
                 dampedIterations += 1
@@ -1427,6 +1443,7 @@ public final class Simulator {
                 converged = true
                 break
             }
+            solvedAsStamped = !damped && !limiting
             if damped {
                 // only the nonlinear block's unknowns moved (the linear block's follow from them at the end)
                 let lambda = damping
@@ -1459,6 +1476,47 @@ public final class Simulator {
     /// The largest change in a nonlinear block entry, against the largest entry of its row, for which the kept factors
     /// still serve: the chord method then contracts by about that much a step (times the block's conditioning)
     static let reuseTolerance = 1e-7
+
+    /// Keeps the block as just stamped: its stamped slots' values and its rows of the right-hand side
+    private func snapshotStamps(_ plan: SparsePlan) {
+        let count = stampedSlots.count, rows = plan.block.count
+        if stampSnapshot.count != count { stampSnapshot = [Double](repeating: 0, count: count) }
+        if rightSnapshot.count != rows { rightSnapshot = [Double](repeating: 0, count: rows) }
+        values.withUnsafeBufferPointer { v in
+            stampSnapshot.withUnsafeMutableBufferPointer { kept in
+                for k in 0..<count { kept[k] = v[Int(stampedSlots[k])] }
+            }
+        }
+        workVector.withUnsafeBufferPointer { b in
+            rightSnapshot.withUnsafeMutableBufferPointer { kept in
+                for k in 0..<rows { kept[k] = b[plan.block[k]] }
+            }
+        }
+    }
+
+    /// Whether the block as just stamped is the one `snapshotStamps` kept, each entry within 10⁻¹² of its row's scale
+    private func stampsUnchanged(_ plan: SparsePlan) -> Bool {
+        let rows = plan.block.count
+        guard stampedPlan === plan, keptPlan === plan, stampSnapshot.count == stampedSlots.count, rightSnapshot.count == rows,
+              keptRowScale.count == rows else { return false }
+        let tolerance = 1e-12
+        return values.withUnsafeBufferPointer { v -> Bool in
+            keptRowScale.withUnsafeBufferPointer { scale -> Bool in
+                for k in 0..<stampedSlots.count {
+                    let now = v[Int(stampedSlots[k])], then = stampSnapshot[k]
+                    // (written so that a value that is not a number fails too)
+                    guard abs(now - then) <= tolerance * (abs(now) + scale[Int(stampedLocalRows[k])]) else { return false }
+                }
+                return workVector.withUnsafeBufferPointer { b -> Bool in
+                    for k in 0..<rows {
+                        let now = b[plan.block[k]], then = rightSnapshot[k]
+                        guard abs(now - then) <= tolerance * (abs(now) + scale[k]) else { return false }
+                    }
+                    return true
+                }
+            }
+        }
+    }
 
     /// Starts recording which slots of the nonlinear block Newton-Raphson's stamps reach, afresh for a new plan
     private func recordStamps(for plan: SparsePlan) {
