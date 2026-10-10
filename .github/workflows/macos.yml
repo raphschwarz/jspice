@@ -67,13 +67,20 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
           # bigger circuits: examples drawn 1, 2, 4 and 8 times over in one circuit (the cost a copy should stay flat)
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-scale 0.1 voice acid guitar-fuzz tube-screamer mc1496-ring bargraph tube-amp || true
-          # where the time goes, for the heaviest synth example
-          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 voice > /dev/null &
+          # where the time goes, for the synth voice playing its sequence (every iteration factored), and for the ring
+          # modulator of transistors, the slowest analog example
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 acid > /dev/null &
           sleep 1
           sample $! 3 -file build/profile.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile.txt | head -45
           python3 scripts/profile-callers.py build/profile.txt 30 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 mc1496-ring > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-ring.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-ring.txt | head -45
+          python3 scripts/profile-callers.py build/profile-ring.txt 30 || true
           # and for the Pico running flat out
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-knob > /dev/null &
           sleep 1
