@@ -156,8 +156,8 @@ final class AVRVariantTests: XCTestCase {
                 runs.append((voltages, (avr.pc, avr.cycles, avr.registers, avr.serialOutput), avr.skippedCycles))
             }
             XCTAssertEqual(runs[0].skipped, 0, id)
-            // (Wire waits for its interrupt, analogRead for the ADC)
-            if ["arduino-mcp3008-mcp4725", "arduino-knob"].contains(id) { XCTAssertGreaterThan(runs[1].skipped, 0, id) }
+            // (analogRead waits for the ADC; Wire's wait reads micros() for its timeout, a round never like the last)
+            if id == "arduino-knob" { XCTAssertGreaterThan(runs[1].skipped, 0, id) }
             XCTAssertEqual(runs[0].chip.pc, runs[1].chip.pc, id)
             XCTAssertEqual(runs[0].chip.cycles, runs[1].chip.cycles, id)
             XCTAssertEqual(runs[0].chip.registers, runs[1].chip.registers, id)
