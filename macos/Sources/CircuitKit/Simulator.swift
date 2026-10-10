@@ -539,6 +539,8 @@ public final class Simulator {
     /// factors does, so it does not keep them from serving (see `keptFactorsSuit`)
     private var keptPoint: [Double] = []
     private var keptPointValid = false
+    /// The stamped entry (its index among `stampedSlots`) that last kept the kept factors from serving, for the trace
+    private var unsuitedEntry = -1
     /// Unknowns within this (relative, above 1) of where they were count as not having moved
     static let unmovedTolerance = 1e-9
     /// Whether the last confirmation (see `stampsUnchanged`) found the block stamped exactly as it was solved
@@ -1710,6 +1712,14 @@ public final class Simulator {
                 chordSteps += 1
             } else {
                 // the nonlinear block, by the first of the plan's pivot orders that suits its values (or a new one)
+                if let trace, unsuitedEntry >= 0, unsuitedEntry < stampedSlots.count, keptValues.count == plan.entryCount {
+                    let k = unsuitedEntry, slot = Int(stampedSlots[k])
+                    trace("    (factors not kept: the entry in the row of " + describeUnknown(Int(stampedRows[k]))
+                          + " and the column of " + describeUnknown(Int(stampedColumns[k]))
+                          + String(format: " went from %.6g to %.6g, its row's scale %.3g)", keptValues[slot], values[slot],
+                                   keptRowScale[Int(stampedLocalRows[k])]))
+                }
+                unsuitedEntry = -1
                 keepEntries(plan)
                 valuesFactored = true
                 let blockCount = max(plan.entryCount - plan.tailStart, 1)
@@ -2014,9 +2024,12 @@ public final class Simulator {
                                             // (written so that a value that is not a number fails too)
                                             if !(abs(v[slot] - kept[slot]) <= Self.reuseTolerance * scale[Int(rows[k])]) {
                                                 // changed, but in the column of an unknown that has not moved since
-                                                guard relaxed, v[slot].isFinite else { return false }
                                                 let u = Int(columns[k])
-                                                guard abs(x[u] - point[u]) <= Self.unmovedTolerance * (1 + abs(x[u])) else { return false }
+                                                guard relaxed, v[slot].isFinite,
+                                                      abs(x[u] - point[u]) <= Self.unmovedTolerance * (1 + abs(x[u])) else {
+                                                    unsuitedEntry = k
+                                                    return false
+                                                }
                                             }
                                             k += 1
                                         }
