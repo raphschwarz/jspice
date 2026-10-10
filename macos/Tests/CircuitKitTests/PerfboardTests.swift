@@ -56,15 +56,25 @@ final class PerfboardTests: XCTestCase {
         XCTAssertTrue(plan.supplyNotes.contains { $0.hasPrefix("JSpice could not find the voltages this circuit rests at") })
     }
 
-    func testEveryExampleIsConnectedExactlyAsDrawnOnHalfSizeBreadboards() {
-        for example in Examples.all {
-            let layout = Breadboard.layout(example.circuit, size: .half)
-            XCTAssertEqual(Breadboard.verify(layout), [], example.id)
-            XCTAssertEqual(layout.size, .half)
-            // a whole number of boards, each in the bill of materials
-            XCTAssertEqual(layout.width % 30, 0, example.id)
-            XCTAssertEqual(layout.bom.first { $0.description == "solderless breadboard, half size (400 points)" }?.quantity, layout.boards, example.id)
-            if layout.boards > 1 { XCTAssertTrue(layout.notes.contains { $0.contains("half-size breadboards") }, example.id) }
+    func testEveryExampleIsConnectedExactlyAsDrawnOnSmallerBreadboards() {
+        for size in [Breadboard.Size.half, .mini] {
+            for example in Examples.all {
+                let label = "\(example.id) on \(size.title)"
+                let layout = Breadboard.layout(example.circuit, size: size)
+                XCTAssertEqual(Breadboard.verify(layout), [], label)
+                XCTAssertEqual(layout.size, size)
+                // a whole number of boards, each in the bill of materials
+                XCTAssertEqual(layout.width % size.columns, 0, label)
+                XCTAssertEqual(layout.bom.first { $0.description == "solderless breadboard, " + size.title.lowercased() }?.quantity, layout.boards, label)
+                if layout.boards > 1 { XCTAssertTrue(layout.notes.contains { $0.contains("breadboards (\(size.columns) columns each)") }, label) }
+                // a mini board has no rails: nothing in a rail's holes
+                if !size.hasRails {
+                    XCTAssertTrue(layout.rails.isEmpty, label)
+                    let holes = layout.placements.flatMap { $0.legs.map(\.hole) } + layout.jumpers.flatMap { [$0.from, $0.to] }
+                        + layout.offBoard.flatMap { $0.wires.map(\.hole) }
+                    XCTAssertFalse(holes.contains { if case .rail = $0 { return true } else { return false } }, label)
+                }
+            }
         }
         // a full-size board is one board of 63 columns for a small circuit
         let small = Breadboard.layout(Examples.all.first { $0.id == "fuzz" }!.circuit)

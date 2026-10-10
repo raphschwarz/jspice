@@ -320,7 +320,7 @@ public enum BoardSVG {
             }
         }
         let supplies = Set(layout.rails.values)
-        for rail in Breadboard.Rail.allCases {
+        for rail in Breadboard.Rail.allCases where layout.size.hasRails {
             let a = breadboardPoint(.rail(rail, column: 1)), b = breadboardPoint(.rail(rail, column: width))
             let positive = rail == .topPositive || rail == .bottomPositive
             let offset = (rail == .topPositive || rail == .bottomNegative) ? -1.3 : 1.3
@@ -332,7 +332,7 @@ public enum BoardSVG {
         }
         for column in 1...width {
             for row in 0..<10 { sheet.circle(breadboardPoint(.strip(column: column, row: row)), 0.4, fill: "#555") }
-            for rail in Breadboard.Rail.allCases { sheet.circle(breadboardPoint(.rail(rail, column: column)), 0.4, fill: "#555") }
+            for rail in Breadboard.Rail.allCases where layout.size.hasRails { sheet.circle(breadboardPoint(.rail(rail, column: column)), 0.4, fill: "#555") }
             if column == 1 || column % 5 == 0 {
                 let p = breadboardPoint(.strip(column: column, row: 0))
                 sheet.text("\(column)", Point(x: p.x, y: p.y - pitch * 1.2), size: 1.8, anchor: "middle", color: "#555")

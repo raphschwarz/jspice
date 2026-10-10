@@ -339,8 +339,8 @@ public final class CircuitSession {
                                  required: ["path"]),
              run: { session, arguments in try session.captureSchematic(arguments) }),
         Tool(name: "breadboard",
-             description: "The circuit laid out on white solderless breadboards, full size (830 points, 63 columns) or half size (400 points, 30 columns), as many side by side as it needs (strips a–e and f–j, a + and − rail top and bottom): each part's legs and the hole each goes in (a1…j63, or a rail), chips straddling the channel with pin 1 bottom left and their units packed into as few packages as possible, transistors' legs in datasheet order with the flat face towards you, electrolytics' + leg on the higher DC voltage, the jumper wires, the rails' nets, and what is wired from off the board (supplies, sources, speakers). Checked: problems lists anything the board would connect differently from the schematic (empty when it matches).",
-             inputSchema: schema(["size": string("\"full\" (830 points, the default) or \"half\" (400 points)")]),
+             description: "The circuit laid out on white solderless breadboards, full size (830 points, 63 columns), half size (400 points, 30 columns) or mini (170 points, 17 columns, no rails: the supplies on strips), as many side by side as it needs (strips a–e and f–j, a + and − rail top and bottom): each part's legs and the hole each goes in (a1…j63, or a rail), chips straddling the channel with pin 1 bottom left and their units packed into as few packages as possible, transistors' legs in datasheet order with the flat face towards you, electrolytics' + leg on the higher DC voltage, the jumper wires, the rails' nets, and what is wired from off the board (supplies, sources, speakers). Checked: problems lists anything the board would connect differently from the schematic (empty when it matches).",
+             inputSchema: schema(["size": string("\"full\" (830 points, the default), \"half\" (400 points) or \"mini\" (170 points, no rails)")]),
              run: { session, arguments in try session.breadboard(arguments) }),
         Tool(name: "stripboard",
              description: "The circuit laid out on stripboard (Veroboard: as many copper strips as the circuit needs, lettered from A at the top, holes numbered from 1 at the left): the supplies' strips (the main positive supply on A, ground on the bottom strip, a second supply above it), each part standing across the strips with its legs' holes (\"C12\"), chips straddling a cut with pin 1 top left, transistors' legs down one column in datasheet order with the flat face to the left, the holes where the strips must be cut, the wire links, and what is wired from off the board (pots and switches on the panel, by their lugs; supplies, sockets). Checked: problems lists anything the board would connect differently from the schematic.",
@@ -350,12 +350,12 @@ public final class CircuitSession {
              inputSchema: schema([:]), run: { session, _ in session.perfboard() }),
         Tool(name: "board_sheet",
              description: "A printable build sheet: the board laid out as an SVG drawing at its true size (holes 0.1 in apart, with a ruler of ten holes to check the print's scale), each part in its holes with its name, the strips and cuts, trails, links or jumpers, what is wired from off the board, and under it the parts with their holes, the bill of materials and the notes. Print it at 100 %; a stripboard's or perfboard's can be laid over the board. Writes it to path if given, else returns it.",
-             inputSchema: schema(["board": string("\"breadboard\" (default), \"half_breadboard\", \"stripboard\" or \"perfboard\""),
+             inputSchema: schema(["board": string("\"breadboard\" (default), \"half_breadboard\", \"mini_breadboard\", \"stripboard\" or \"perfboard\""),
                                   "path": string("File to write, usually ending .svg (optional)")]),
              run: { session, arguments in try session.boardSheet(arguments) }),
         Tool(name: "bom",
              description: "The bill of materials for building the circuit: each part as bought (values, electrolytics' voltage ratings from the operating point, chips by package, transistors with their leg order), how many, and which parts of the schematic they are; plus the wires and what is wired from off the board. For a full-size breadboard by default, a half-size one, a stripboard or a perfboard (with the board, chip sockets and wire).",
-             inputSchema: schema(["board": string("\"breadboard\" (default), \"half_breadboard\", \"stripboard\" or \"perfboard\"")]),
+             inputSchema: schema(["board": string("\"breadboard\" (default), \"half_breadboard\", \"mini_breadboard\", \"stripboard\" or \"perfboard\"")]),
              run: { session, arguments in try session.billOfMaterials(arguments) }),
         Tool(name: "save_circuit",
              description: "Saves the circuit as a .jspice file the JSpice app can open.",
@@ -2027,7 +2027,7 @@ public final class CircuitSession {
 
     func breadboard(_ arguments: [String: Any] = [:]) throws -> Any {
         let name = (arguments["size"] as? String ?? "full").lowercased()
-        guard let size = Breadboard.Size(rawValue: name) else { throw ToolError("\"size\" should be \"full\" or \"half\", not \"\(name)\"") }
+        guard let size = Breadboard.Size(rawValue: name) else { throw ToolError("\"size\" should be \"full\", \"half\" or \"mini\", not \"\(name)\"") }
         let layout = Breadboard.layout(circuit, size: size)
         func legs(_ legs: [Breadboard.Leg]) -> [[String: Any]] {
             legs.map { ["leg": $0.name, "hole": $0.hole.description, "net": $0.net.isEmpty ? "(free)" : $0.net] }
@@ -2107,9 +2107,10 @@ public final class CircuitSession {
         switch arguments["board"] as? String ?? "breadboard" {
         case "breadboard": svg = BoardSVG.breadboard(Breadboard.layout(circuit), title: title)
         case "half_breadboard": svg = BoardSVG.breadboard(Breadboard.layout(circuit, size: .half), title: title)
+        case "mini_breadboard": svg = BoardSVG.breadboard(Breadboard.layout(circuit, size: .mini), title: title)
         case "stripboard": svg = BoardSVG.stripboard(Stripboard.layout(circuit), title: title)
         case "perfboard": svg = BoardSVG.perfboard(Perfboard.layout(circuit), title: title)
-        case let other: throw ToolError("\"board\" should be \"breadboard\", \"half_breadboard\", \"stripboard\" or \"perfboard\", not \"\(other)\"")
+        case let other: throw ToolError("\"board\" should be \"breadboard\", \"half_breadboard\", \"mini_breadboard\", \"stripboard\" or \"perfboard\", not \"\(other)\"")
         }
         if let path = arguments["path"] as? String, !path.isEmpty {
             let file = (path as NSString).expandingTildeInPath
@@ -2124,9 +2125,10 @@ public final class CircuitSession {
         switch arguments["board"] as? String ?? "breadboard" {
         case "breadboard": bom = Breadboard.layout(circuit).bom
         case "half_breadboard": bom = Breadboard.layout(circuit, size: .half).bom
+        case "mini_breadboard": bom = Breadboard.layout(circuit, size: .mini).bom
         case "stripboard": bom = Stripboard.layout(circuit).bom
         case "perfboard": bom = Perfboard.layout(circuit).bom
-        case let other: throw ToolError("\"board\" should be \"breadboard\", \"half_breadboard\", \"stripboard\" or \"perfboard\", not \"\(other)\"")
+        case let other: throw ToolError("\"board\" should be \"breadboard\", \"half_breadboard\", \"mini_breadboard\", \"stripboard\" or \"perfboard\", not \"\(other)\"")
         }
         return ["items": bom.map { ["quantity": $0.quantity, "part": $0.description, "designators": $0.parts] as [String: Any] }]
     }

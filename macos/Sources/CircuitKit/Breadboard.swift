@@ -14,14 +14,34 @@ public enum Breadboard {
     public static let columns = 63
 
     /// The white solderless boards most people have: 830 points (63 columns) and 400 points (30 columns), each with a
-    /// + and a − rail along the top and the bottom
+    /// + and a − rail along the top and the bottom, and the mini board of 170 points (17 columns), without rails, whose
+    /// supplies go on strips of their own
     public enum Size: String, CaseIterable, Sendable, Identifiable {
-        case full, half
+        case full, half, mini
 
         public var id: Self { self }
-        public var columns: Int { self == .full ? 63 : 30 }
-        public var points: Int { self == .full ? 830 : 400 }
-        public var title: String { self == .full ? "Full size (830 points)" : "Half size (400 points)" }
+        public var columns: Int {
+            switch self {
+            case .full: return 63
+            case .half: return 30
+            case .mini: return 17
+            }
+        }
+        public var points: Int {
+            switch self {
+            case .full: return 830
+            case .half: return 400
+            case .mini: return 170
+            }
+        }
+        public var title: String {
+            switch self {
+            case .full: return "Full size (830 points)"
+            case .half: return "Half size (400 points)"
+            case .mini: return "Mini (170 points)"
+            }
+        }
+        public var hasRails: Bool { self != .mini }
     }
 
     public enum Rail: Int, CaseIterable, Hashable, Sendable {
@@ -733,7 +753,8 @@ public enum Breadboard {
         b.layout.width = size.columns
 
         // the rails: ground on both − rails; the supply most parts use on the top + rail, a second (a negative one first)
-        // on the bottom + rail
+        // on the bottom + rail. A mini board has none: its supplies go on strips like any net.
+        if size.hasRails {
         b.railsOf["GND"] = [.topNegative, .bottomNegative]
         b.layout.rails[.topNegative] = "GND"
         b.layout.rails[.bottomNegative] = "GND"
@@ -748,6 +769,7 @@ public enum Breadboard {
         } else if let first = positives.first {
             b.railsOf[first.net]?.append(.bottomPositive)
             b.layout.rails[.bottomPositive] = first.net
+        }
         }
         b.layout.notes += plan.supplyNotes
 
@@ -869,8 +891,10 @@ public enum Breadboard {
         if b.layout.width > size.columns {
             let used = b.layout.width
             b.layout.width = b.layout.boards * size.columns
-            b.layout.notes.append("The circuit needs \(used) columns: \(b.layout.boards) \(size == .full ? "full-size" : "half-size") breadboards "
-                                  + "(\(size.columns) columns each) side by side, their rails joined; column \(size.columns + 1) is the second board's column 1")
+            let kind = size == .full ? "full-size" : size == .half ? "half-size" : "mini"
+            b.layout.notes.append("The circuit needs \(used) columns: \(b.layout.boards) \(kind) breadboards "
+                                  + "(\(size.columns) columns each) side by side\(size.hasRails ? ", their rails joined" : ""); "
+                                  + "column \(size.columns + 1) is the second board's column 1")
         }
         b.layout.bom = billOfMaterials(b.layout.placements.map { ($0.name, $0.title, $0.style) }, offBoard: b.layout.offBoard.map { ($0.name, $0.title) },
                                        wires: b.layout.jumpers.count, wireName: "jumper wires")

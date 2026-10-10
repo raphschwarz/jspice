@@ -119,7 +119,7 @@ struct BreadboardView: View {
         // the board
         context.fill(Path(roundedRect: CGRect(origin: .zero, size: g.size), cornerRadius: 8), with: .color(Color(red: 0.95, green: 0.94, blue: 0.9)))
         context.fill(Path(CGRect(x: 0, y: g.channel - p * 0.35, width: g.size.width, height: p * 0.7)), with: .color(Color(red: 0.88, green: 0.87, blue: 0.83)))
-        for rail in Breadboard.Rail.allCases {
+        for rail in Breadboard.Rail.allCases where layout.size.hasRails {
             let y = g.railY(rail)
             let positive = rail == .topPositive || rail == .bottomPositive
             var line = Path()
@@ -144,7 +144,7 @@ struct BreadboardView: View {
         var holes = Path()
         for column in 1...layout.width {
             for row in 0..<10 { holes.addRect(square(g.point(.strip(column: column, row: row)), p * 0.32)) }
-            for rail in Breadboard.Rail.allCases { holes.addRect(square(g.point(.rail(rail, column: column)), p * 0.32)) }
+            for rail in Breadboard.Rail.allCases where layout.size.hasRails { holes.addRect(square(g.point(.rail(rail, column: column)), p * 0.32)) }
             if column % 5 == 0 || column == 1 {
                 context.draw(Text("\(column)").font(.system(size: 8)).foregroundStyle(.secondary),
                              at: CGPoint(x: g.x(column), y: g.rowY(0) - p * 0.75))
