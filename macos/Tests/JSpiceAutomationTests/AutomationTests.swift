@@ -508,7 +508,19 @@ final class AutomationTests: XCTestCase {
         XCTAssertFalse((strip["cuts"] as? [String])?.isEmpty ?? true)
         let stripBOM = try XCTUnwrap((session.call("bom", arguments: ["board": "stripboard"]) as? [String: Any])?["items"] as? [[String: Any]])
         XCTAssertTrue(stripBOM.contains { ($0["part"] as? String)?.hasPrefix("stripboard") == true })
-        XCTAssertThrowsError(try session.call("bom", arguments: ["board": "perfboard"]))
+        // perfboard and half-size breadboards; a board it has no layout for is an error
+        let perf = try XCTUnwrap(session.call("perfboard", arguments: [:]) as? [String: Any])
+        XCTAssertEqual((perf["problems"] as? [String])?.isEmpty, true, "\(perf["problems"] ?? "")")
+        XCTAssertFalse((perf["trails"] as? [[String: Any]])?.isEmpty ?? true)
+        let perfBOM = try XCTUnwrap((session.call("bom", arguments: ["board": "perfboard"]) as? [String: Any])?["items"] as? [[String: Any]])
+        XCTAssertTrue(perfBOM.contains { ($0["part"] as? String)?.hasPrefix("perfboard") == true })
+        let half = try XCTUnwrap(session.call("breadboard", arguments: ["size": "half"]) as? [String: Any])
+        XCTAssertEqual((half["problems"] as? [String])?.isEmpty, true, "\(half["problems"] ?? "")")
+        XCTAssertEqual((half["columns"] as? Int).map { $0 % 30 }, 0)
+        XCTAssertThrowsError(try session.call("breadboard", arguments: ["size": "mini"]))
+        let sheet = try XCTUnwrap((session.call("board_sheet", arguments: ["board": "perfboard"]) as? [String: Any])?["svg"] as? String)
+        XCTAssertTrue(sheet.hasPrefix("<?xml") && sheet.contains("<svg"))
+        XCTAssertThrowsError(try session.call("bom", arguments: ["board": "veroboard"]))
     }
 
     func testAnAgentCanMapMIDIControllers() throws {
