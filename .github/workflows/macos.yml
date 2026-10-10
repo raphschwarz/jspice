@@ -57,10 +57,10 @@ jobs:
         timeout-minutes: 5
         run: |
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25
-          # an engine switch off and on, run for run on the same machine: what the parabola predictor and resting kept
-          # factors, confirmations and kept stamps save (or cost) transistor circuits
-          for switch in quadratic-predictor rest-chords rest-confirmation rest-reuse; do
-            ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch $switch 0.25 voice acid wind vcf mc1496-ring guitar-fuzz tube-screamer bargraph tube-amp lm1036 || true
+          # an engine switch off and on, run for run on the same machine: what going straight to the level that rescued
+          # the last substep given up, the parabola predictor and resting kept factors save (or cost) transistor circuits
+          for switch in rescue-level quadratic-predictor rest-chords; do
+            ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch $switch 0.25 voice acid synth vco wind vcf mc1496-ring guitar-fuzz tube-screamer bargraph tube-amp lm1036 || true
           done
           # and what reusing factors (the chord method, confirmations, kept stamps) and bypassing behavioural sources save them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-factors 0.25 voice acid mc1496-ring tube-screamer bargraph lm1036 || true

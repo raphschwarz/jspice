@@ -690,6 +690,18 @@ public final class Simulator {
     private var lastLevel = 0
     private var olderLevel = 0
     static let finestLevel = 6
+    /// The level at which a substep last converged after Newton-Raphson gave one up, and whether one has been given up
+    /// since without one converging yet: the next substep given up goes straight to that level, as a comparator that
+    /// snaps over in the middle of a step takes the same halvings every time (the synth voice's VCO comparator gave up a
+    /// whole, a half and a quarter step at each of its edges, a dozen iterations each, before an eighth converged), but
+    /// for every `rescueRelearn`th, which halves once at a time to find a shallower level again
+    private var rescueLevel = 0
+    private var rescuing = false
+    private var rescueCount = 0
+    static let rescueRelearn = 8
+    /// Whether substeps given up go straight to the level that last converged (off, they halve once at a time: for
+    /// comparing)
+    public static var remembersRescueLevel = true
     /// Allowed local error of a substep: relative, and absolute in volts (capacitors) and amps (inductors)
     static let relativeTolerance = 1e-3
     static let voltageTolerance = 1e-4
@@ -1047,6 +1059,7 @@ public final class Simulator {
         junctionChargePrevious = junctionCharge
         junctionChargeOlder = junctionCharge
         substepLevel = 0
+        (rescueLevel, rescuing) = (0, false)
         lastLevel = 0
         olderLevel = 0
         for (i, element) in flat.elements.enumerated() {
@@ -1359,9 +1372,18 @@ public final class Simulator {
                 // each halving cuts the error about eightfold
                 let halvings = converged && error.isFinite ? max(1, Int(min(log2(cbrt(error) / 0.9), 6).rounded(.up))) : 1
                 substepLevel = min(Self.finestLevel, level + halvings)
+                if !converged && Self.remembersRescueLevel {
+                    rescueCount += 1
+                    if rescueLevel > substepLevel && rescueCount % Self.rescueRelearn != 0 { substepLevel = rescueLevel }
+                    rescuing = true
+                }
                 continue
             }
             if !converged { convergenceFailures += 1 }
+            if rescuing && converged {
+                rescueLevel = level
+                rescuing = false
+            }
             trace?("  substep at level \(level) kept" + (converged ? "" : ", not converged") + (solveChattered ? ", chattering" : ""))
             updateDynamicStates()
             // the next substep predicts from this one's start and end, unless the circuit jumped (a part switched over)
