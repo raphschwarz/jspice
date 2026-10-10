@@ -427,6 +427,20 @@ public final class Simulator {
     /// A solve's rounds of decisions (see `solve`): the solutions each round's decisions were made at, and its solution
     private var heldRounds: [[Double]] = []
     private var solvedRounds: [[Double]] = []
+    /// Solutions found just before decisions moved, each with the solution its decisions were made at, the newest last
+    /// (a few, from this solve and earlier ones): a round whose Newton-Raphson does not converge starts again from the
+    /// newest in which the sources that moved into the round decided as they do now. At the end of a maker's model's
+    /// crossover dead zone the stage switches back on, and Newton-Raphson from the dead zone's solution, where the
+    /// enable is 0 and its product has no slope in what it multiplies, swings the output stage between its corners;
+    /// from the solution before the dead zone, it is a step or two.
+    private var flipHeld: [[Double]] = []
+    private var flipSolved: [[Double]] = []
+    private var flipNext = 0
+    static let flipMemoryKept = 4
+    public static var retriesFromMemory = true
+    /// Rounds started again from such a solution, and how many of them then converged
+    public private(set) var memoryRetries = 0
+    public private(set) var memoryRetriesConverged = 0
     /// The behavioural sources whose decisions are held
     private var decidingIndices: [Int] = []
     /// Whether Newton-Raphson is damped when its steps stop shrinking: with nonlinear behavioural sources only (their
@@ -1448,6 +1462,7 @@ public final class Simulator {
             while rounds < Self.decisionRounds && decisionsMoved() {
                 // (the round just solved, kept only now that another may follow)
                 keepRound()
+                if Self.retriesFromMemory { rememberFlip(held: heldRounds[kept - 1], solved: solvedRounds[kept - 1]) }
                 // decisions made where it ended that an earlier round was solved with: the comparators go round in a
                 // cycle (a maker's model's crossover detector, whose switching turns off the stage that switched it),
                 // and no round would settle them. That round's solution stands, solved again from itself (a step or
@@ -1468,6 +1483,16 @@ public final class Simulator {
                 trace?("   again, with the decisions made where it ended (round \(rounds))")
                 converged = newton(iterations: iterations)
                 trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
+                if !converged && !isFailed && Self.retriesFromMemory,
+                   let start = rememberedStart(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1]) {
+                    memoryRetries += 1
+                    trace?("   again from the solution before the sources that moved last decided as they do now")
+                    Self.copy(flipSolved[start], into: &x)
+                    restoreLimited(savedLimited, savedLimited2, savedLimited3)
+                    converged = newton(iterations: iterations)
+                    if converged { memoryRetriesConverged += 1 }
+                    trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
+                }
                 if !converged || isFailed { break }
             }
             if converged && (cycled || rounds == Self.decisionRounds) {
@@ -3937,6 +3962,54 @@ public final class Simulator {
         if input.row >= 0 { return input.row < decisionX.count ? input.sign * decisionX[input.row] : 0 }
         let p = input.plus > 0 ? decisionX[input.plus - 1] : 0, n = input.minus > 0 ? decisionX[input.minus - 1] : 0
         return p - n
+    }
+
+    /// Keeps a solution found just before decisions moved (see `flipHeld`), in the place of the oldest
+    private func rememberFlip(held: [Double], solved: [Double]) {
+        if flipHeld.count < Self.flipMemoryKept {
+            flipHeld.append(held)
+            flipSolved.append(solved)
+            flipNext = flipHeld.count % Self.flipMemoryKept
+            return
+        }
+        Self.copy(held, into: &flipHeld[flipNext])
+        Self.copy(solved, into: &flipSolved[flipNext])
+        flipNext = (flipNext + 1) % Self.flipMemoryKept
+    }
+
+    /// The newest remembered solution (its index) in which the behavioural sources whose decisions moved from
+    /// `previous` to the present `decisionX` decided as they do now (all compared at the solution `point`), other than
+    /// the one just remembered
+    private func rememberedStart(previous: [Double], at point: [Double]) -> Int? {
+        let count = flipHeld.count
+        guard count > 1, point.count == x.count else { return nil }
+        let moved = decidingIndices.filter { decides($0, at: point, previous) != decides($0, at: point, decisionX) }
+        guard !moved.isEmpty else { return nil }
+        // newest first, past the one just remembered (the decisions before this round's)
+        for age in 1..<count {
+            let k = ((flipNext - 1 - age) % count + count) % count
+            guard flipSolved[k].count == x.count, flipHeld[k].count == x.count else { continue }
+            if moved.allSatisfy({ decides($0, at: point, flipHeld[k]) == decides($0, at: point, decisionX) }) { return k }
+        }
+        return nil
+    }
+
+    /// A behavioural source's value with its inputs read from `point` and its decisions made at `held`: two held
+    /// solutions that give the same value decide alike
+    private func decides(_ i: Int, at point: [Double], _ held: [Double]) -> Double {
+        guard let b = behaviors[i] else { return 0 }
+        let v = behaviorValues, d = behaviorDecisions, r = behaviorRegisters
+        func read(_ input: BehaviorInput, _ vector: [Double]) -> Double {
+            if input.row >= 0 { return input.row < vector.count ? input.sign * vector[input.row] : 0 }
+            return (input.plus > 0 ? vector[input.plus - 1] : 0) - (input.minus > 0 ? vector[input.minus - 1] : 0)
+        }
+        for k in 0..<b.inputCount {
+            let input = b.inputList[k]
+            v[k] = read(input, point)
+            d[k] = read(input, held)
+        }
+        b.program.run(v, deciding: d, time: solveTime, celsius: kelvin - 273.15, into: r)
+        return r[b.program.value]
     }
 
     /// Whether every behavioural source that holds its decisions has, at the present solution, the value it has with its
