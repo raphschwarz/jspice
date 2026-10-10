@@ -285,10 +285,12 @@ public final class Simulator {
     struct BehaviorInput {
         var plus = 0, minus = 0, row = -1, sign = -1.0
     }
-    struct Behavior {
-        var expression: SpiceExpression
-        var inputs: [BehaviorInput]
-        var voltage: Bool
+    final class Behavior {
+        let expression: SpiceExpression
+        /// The expression and its slopes compiled, to run at every iteration
+        let program: SpiceExpression.Program
+        let inputs: [BehaviorInput]
+        let voltage: Bool
         /// An affine expression (a gain, POLY of the first degree): stamped once in the base matrix with its constant
         /// slopes, its value at zero inputs on the right-hand side, and kept out of Newton-Raphson's nonlinear block
         var linear = false
@@ -296,8 +298,19 @@ public final class Simulator {
         /// Whether its value jumps where a decision in it changes (a comparison, IF, u, sgn…): Newton-Raphson holds its
         /// decisions where the solve started (`decisionX`), and the solve is done again if they have changed by the end
         var decides = false
+
+        init(expression: SpiceExpression, program: SpiceExpression.Program, inputs: [BehaviorInput], voltage: Bool) {
+            self.expression = expression
+            self.program = program
+            self.inputs = inputs
+            self.voltage = voltage
+        }
     }
     private var behaviors: [Behavior?] = []
+    /// Expressions read and compiled, by their text: a knob turned takes on new values without reading them again
+    private var compiledExpressions: [String: (expression: SpiceExpression, program: SpiceExpression.Program)] = [:]
+    /// Where a behavioural source's program writes its steps' values
+    private var behaviorRegisters: [Double] = []
     /// What reading the behavioural sources' expressions found wrong
     private var behaviorProblems: [String] = []
     private var behaviorValues: [Double] = []
@@ -2857,14 +2870,22 @@ public final class Simulator {
         behaviors = Array(repeating: nil, count: kinds.count)
         behaviorProblems = []
         var widest = 0
+        var longest = 0
         for (i, element) in flat.elements.enumerated() where element.kind == .behavioralSource {
             let name = element.name.isEmpty ? "B" : element.name
             // (without an expression it is 0, so a voltage it sets still has its equation)
             let text = element.code ?? ""
             var expression = SpiceExpression(root: .constant(0), inputs: [])
-            if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+            var program: SpiceExpression.Program?
+            if let compiled = compiledExpressions[text] {
+                expression = compiled.expression
+                program = compiled.program
+            } else if !text.trimmingCharacters(in: .whitespaces).isEmpty {
                 do {
                     expression = try SpiceExpression(parsing: text)
+                    let made = SpiceExpression.Program(expression)
+                    compiledExpressions[text] = (expression, made)
+                    program = made
                 } catch {
                     behaviorProblems.append("\(name): can't read its expression \(text): \(error)")
                 }
@@ -2904,7 +2925,9 @@ public final class Simulator {
                 }
             }
             widest = max(widest, inputs.count)
-            var behavior = Behavior(expression: expression, inputs: inputs, voltage: element[param: "mode"] >= 0.5)
+            let behavior = Behavior(expression: expression, program: program ?? SpiceExpression.Program(expression), inputs: inputs,
+                                    voltage: element[param: "mode"] >= 0.5)
+            longest = max(longest, behavior.program.count)
             if Self.linearAffineSources && expression.isAffine {
                 let zeros = [Double](repeating: 0, count: max(inputs.count, 1))
                 behavior.linear = true
@@ -2915,6 +2938,7 @@ public final class Simulator {
         }
         behaviorValues = [Double](repeating: 0, count: max(widest, 1))
         behaviorDecisions = behaviorValues
+        behaviorRegisters = [Double](repeating: 0, count: max(longest, 1))
     }
 
     /// A behavioural source, linearised at the present solution with its expression's exact slopes: a voltage across + and
@@ -2930,44 +2954,49 @@ public final class Simulator {
         }
         let celsius = kelvin - 273.15
         let plus = nodes[0] - 1, minus = nodes[1] - 1
+        let program = b.program
         behaviorValues.withUnsafeBufferPointer { values in behaviorDecisions.withUnsafeBufferPointer { decisions in
-            let v = values.baseAddress!
-            let d = holds ? decisions.baseAddress! : v
-            var equivalent = b.expression.value(v, deciding: d, time: solveTime, celsius: celsius)
-            let row = topology.sourceRow[i]
-            for k in 0..<count {
-                let slope = b.expression.slope(k, v, deciding: d, time: solveTime, celsius: celsius)
-                guard slope != 0 && slope.isFinite else { continue }
-                equivalent -= slope * v[k]
-                let input = b.inputs[k]
-                if b.voltage {
-                    guard row >= 0 else { continue }
-                    if input.row >= 0 {
-                        add(matrix, m, row, input.row, -slope * input.sign)
+            behaviorRegisters.withUnsafeMutableBufferPointer { registers in
+                let v = values.baseAddress!
+                let r = registers.baseAddress!
+                // the value and every slope in one run of the compiled expression
+                program.run(v, deciding: holds ? decisions.baseAddress! : nil, time: solveTime, celsius: celsius, into: r)
+                var equivalent = r[program.value]
+                let row = topology.sourceRow[i]
+                for k in 0..<count {
+                    let slope = r[program.slopes[k]]
+                    guard slope != 0 && slope.isFinite else { continue }
+                    equivalent -= slope * v[k]
+                    let input = b.inputs[k]
+                    if b.voltage {
+                        guard row >= 0 else { continue }
+                        if input.row >= 0 {
+                            add(matrix, m, row, input.row, -slope * input.sign)
+                        } else {
+                            add(matrix, m, row, input.plus - 1, -slope)
+                            add(matrix, m, row, input.minus - 1, slope)
+                        }
+                    } else if input.row >= 0 {
+                        add(matrix, m, plus, input.row, slope * input.sign)
+                        add(matrix, m, minus, input.row, -slope * input.sign)
                     } else {
-                        add(matrix, m, row, input.plus - 1, -slope)
-                        add(matrix, m, row, input.minus - 1, slope)
+                        add(matrix, m, plus, input.plus - 1, slope)
+                        add(matrix, m, plus, input.minus - 1, -slope)
+                        add(matrix, m, minus, input.plus - 1, -slope)
+                        add(matrix, m, minus, input.minus - 1, slope)
                     }
-                } else if input.row >= 0 {
-                    add(matrix, m, plus, input.row, slope * input.sign)
-                    add(matrix, m, minus, input.row, -slope * input.sign)
-                } else {
-                    add(matrix, m, plus, input.plus - 1, slope)
-                    add(matrix, m, plus, input.minus - 1, -slope)
-                    add(matrix, m, minus, input.plus - 1, -slope)
-                    add(matrix, m, minus, input.minus - 1, slope)
                 }
-            }
-            if b.voltage {
-                guard row >= 0 else { return }
-                // as a voltage source's: its current leaves + and returns at −, and v(+) − v(−) is the expression
-                add(matrix, m, plus, row, -1)
-                add(matrix, m, minus, row, 1)
-                add(matrix, m, row, plus, 1)
-                add(matrix, m, row, minus, -1)
-                if equivalent.isFinite { rhs[row] += equivalent }
-            } else if equivalent.isFinite {
-                stampCurrent(rhs, nodes[0], nodes[1], equivalent)
+                if b.voltage {
+                    guard row >= 0 else { return }
+                    // as a voltage source's: its current leaves + and returns at −, and v(+) − v(−) is the expression
+                    add(matrix, m, plus, row, -1)
+                    add(matrix, m, minus, row, 1)
+                    add(matrix, m, row, plus, 1)
+                    add(matrix, m, row, minus, -1)
+                    if equivalent.isFinite { rhs[row] += equivalent }
+                } else if equivalent.isFinite {
+                    stampCurrent(rhs, nodes[0], nodes[1], equivalent)
+                }
             }
         } }
     }
@@ -2990,10 +3019,16 @@ public final class Simulator {
                     : voltage(input.plus) - voltage(input.minus)
                 behaviorDecisions[k] = decisionInput(input)
             }
+            let program = b.program
             let moved = behaviorValues.withUnsafeBufferPointer { values -> Bool in behaviorDecisions.withUnsafeBufferPointer { decisions -> Bool in
-                let held = b.expression.value(values.baseAddress!, deciding: decisions.baseAddress!, time: solveTime, celsius: celsius)
-                let now = b.expression.value(values.baseAddress!, time: solveTime, celsius: celsius)
-                return !(Swift.abs(held - now) <= 1e-9 * (1 + Swift.abs(now)))
+                behaviorRegisters.withUnsafeMutableBufferPointer { registers -> Bool in
+                    let r = registers.baseAddress!
+                    program.run(values.baseAddress!, deciding: decisions.baseAddress!, time: solveTime, celsius: celsius, into: r)
+                    let held = r[program.value]
+                    program.run(values.baseAddress!, time: solveTime, celsius: celsius, into: r)
+                    let now = r[program.value]
+                    return !(Swift.abs(held - now) <= 1e-9 * (1 + Swift.abs(now)))
+                }
             } }
             if moved { return true }
         }

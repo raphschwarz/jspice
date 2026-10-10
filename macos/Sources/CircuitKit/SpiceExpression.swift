@@ -200,69 +200,19 @@ public struct SpiceExpression: Hashable, Sendable {
             case .and: return evaluate(a, d, d, time, celsius) != 0 && evaluate(b, d, d, time, celsius) != 0 ? 1 : 0
             case .or: return evaluate(a, d, d, time, celsius) != 0 || evaluate(b, d, d, time, celsius) != 0 ? 1 : 0
             case .less, .greater, .lessEqual, .greaterEqual, .equal, .notEqual:
-                let u = evaluate(a, d, d, time, celsius), v = evaluate(b, d, d, time, celsius)
-                switch op {
-                case .less: return u < v ? 1 : 0
-                case .greater: return u > v ? 1 : 0
-                case .lessEqual: return u <= v ? 1 : 0
-                case .greaterEqual: return u >= v ? 1 : 0
-                case .equal: return u == v ? 1 : 0
-                default: return u != v ? 1 : 0
-                }
+                return arithmetic(op, evaluate(a, d, d, time, celsius), evaluate(b, d, d, time, celsius))
             case .add, .subtract, .multiply, .divide, .power:
-                break
-            }
-            let u = evaluate(a, x, d, time, celsius), v = evaluate(b, x, d, time, celsius)
-            switch op {
-            case .add: return u + v
-            case .subtract: return u - v
-            case .multiply: return u * v
-            case .divide: return v == 0 ? (u == 0 ? 0 : u.sign == .minus ? -1e300 : 1e300) : u / v
-            case .power: return pow(u, v)
-            default: return 0
+                return arithmetic(op, evaluate(a, x, d, time, celsius), evaluate(b, x, d, time, celsius))
             }
         case let .call(f, args):
             switch f {
             case .u, .sgn, .floor, .ceil:
-                let a = evaluate(args[0], d, d, time, celsius)
-                switch f {
-                case .u: return a > 0 ? 1 : 0
-                case .sgn: return a > 0 ? 1 : a < 0 ? -1 : 0
-                case .floor: return a.rounded(.down)
-                default: return a.rounded(.up)
-                }
+                return apply(f, evaluate(args[0], d, d, time, celsius), 0, 0)
             default:
-                break
-            }
-            let a = evaluate(args[0], x, d, time, celsius)
-            switch f {
-            case .abs: return Swift.abs(a)
-            case .sqrt: return a > 0 ? a.squareRoot() : 0
-            case .exp: return Foundation.exp(Swift.min(a, 700))
-            case .ln, .log: return a > 0 ? Foundation.log(a) : -1e300
-            case .log10: return a > 0 ? Foundation.log10(a) : -1e300
-            case .sin: return Foundation.sin(a)
-            case .cos: return Foundation.cos(a)
-            case .tan: return Foundation.tan(a)
-            case .asin: return Foundation.asin(Swift.min(Swift.max(a, -1), 1))
-            case .acos: return Foundation.acos(Swift.min(Swift.max(a, -1), 1))
-            case .atan: return Foundation.atan(a)
-            case .sinh: return Foundation.sinh(Swift.min(Swift.max(a, -700), 700))
-            case .cosh: return Foundation.cosh(Swift.min(Swift.max(a, -700), 700))
-            case .tanh: return Foundation.tanh(a)
-            case .min: return Swift.min(a, evaluate(args[1], x, d, time, celsius))
-            case .max: return Swift.max(a, evaluate(args[1], x, d, time, celsius))
-            case .pow: return Foundation.pow(a, evaluate(args[1], x, d, time, celsius))
-            case .pwr: return Foundation.pow(Swift.abs(a), evaluate(args[1], x, d, time, celsius))
-            case .pwrs:
-                let p = Foundation.pow(Swift.abs(a), evaluate(args[1], x, d, time, celsius))
-                return a < 0 ? -p : p
-            case .limit:
-                let lo = evaluate(args[1], x, d, time, celsius), hi = evaluate(args[2], x, d, time, celsius)
-                return Swift.min(Swift.max(a, Swift.min(lo, hi)), Swift.max(lo, hi))
-            case .uramp: return a > 0 ? a : 0
-            case .u, .sgn, .floor, .ceil: return 0
-            case .atan2: return Foundation.atan2(a, evaluate(args[1], x, d, time, celsius))
+                let a = evaluate(args[0], x, d, time, celsius)
+                let b = args.count > 1 ? evaluate(args[1], x, d, time, celsius) : 0
+                let c = args.count > 2 ? evaluate(args[2], x, d, time, celsius) : 0
+                return apply(f, a, b, c)
             }
         case let .conditional(c, a, b):
             // a condition is a decision, made at `d`, unless it is a continuous function's slope's (live)
@@ -275,25 +225,88 @@ public struct SpiceExpression: Hashable, Sendable {
             return condition != 0 ? evaluate(a, x, d, time, celsius) : evaluate(b, x, d, time, celsius)
         case let .table(a, xs, ys):
             let v = evaluate(a, x, d, time, celsius)
-            guard let first = xs.first, let last = xs.last else { return 0 }
-            if v <= first { return ys[0] }
-            if v >= last { return ys[ys.count - 1] }
-            var lo = 0, hi = xs.count - 1
-            while hi - lo > 1 {
-                let mid = (lo + hi) / 2
-                if xs[mid] <= v { lo = mid } else { hi = mid }
-            }
-            return ys[lo] + (v - xs[lo]) / (xs[hi] - xs[lo]) * (ys[hi] - ys[lo])
+            return xs.withUnsafeBufferPointer { xs in ys.withUnsafeBufferPointer { ys in lookup(v, xs.baseAddress, ys.baseAddress, xs.count) } }
         case let .tableSlope(a, xs, ys):
             let v = evaluate(a, x, d, time, celsius)
-            guard xs.count > 1, v > xs[0], v < xs[xs.count - 1] else { return 0 }
-            var lo = 0, hi = xs.count - 1
-            while hi - lo > 1 {
-                let mid = (lo + hi) / 2
-                if xs[mid] <= v { lo = mid } else { hi = mid }
-            }
-            return (ys[hi] - ys[lo]) / (xs[hi] - xs[lo])
+            return xs.withUnsafeBufferPointer { xs in ys.withUnsafeBufferPointer { ys in lookupSlope(v, xs.baseAddress, ys.baseAddress, xs.count) } }
         }
+    }
+
+    /// An operator on its operands' values (a comparison or a logical operator gives 1 or 0)
+    @inline(__always) static func arithmetic(_ op: Operator, _ u: Double, _ v: Double) -> Double {
+        switch op {
+        case .add: return u + v
+        case .subtract: return u - v
+        case .multiply: return u * v
+        case .divide: return v == 0 ? (u == 0 ? 0 : u.sign == .minus ? -1e300 : 1e300) : u / v
+        case .power: return Foundation.pow(u, v)
+        case .less: return u < v ? 1 : 0
+        case .greater: return u > v ? 1 : 0
+        case .lessEqual: return u <= v ? 1 : 0
+        case .greaterEqual: return u >= v ? 1 : 0
+        case .equal: return u == v ? 1 : 0
+        case .notEqual: return u != v ? 1 : 0
+        case .and: return u != 0 && v != 0 ? 1 : 0
+        case .or: return u != 0 || v != 0 ? 1 : 0
+        }
+    }
+
+    /// A function of its arguments' values (`b` and `c` for those of two and three)
+    @inline(__always) static func apply(_ f: Function, _ a: Double, _ b: Double, _ c: Double) -> Double {
+        switch f {
+        case .u: return a > 0 ? 1 : 0
+        case .sgn: return a > 0 ? 1 : a < 0 ? -1 : 0
+        case .floor: return a.rounded(.down)
+        case .ceil: return a.rounded(.up)
+        case .abs: return Swift.abs(a)
+        case .sqrt: return a > 0 ? a.squareRoot() : 0
+        case .exp: return Foundation.exp(Swift.min(a, 700))
+        case .ln, .log: return a > 0 ? Foundation.log(a) : -1e300
+        case .log10: return a > 0 ? Foundation.log10(a) : -1e300
+        case .sin: return Foundation.sin(a)
+        case .cos: return Foundation.cos(a)
+        case .tan: return Foundation.tan(a)
+        case .asin: return Foundation.asin(Swift.min(Swift.max(a, -1), 1))
+        case .acos: return Foundation.acos(Swift.min(Swift.max(a, -1), 1))
+        case .atan: return Foundation.atan(a)
+        case .sinh: return Foundation.sinh(Swift.min(Swift.max(a, -700), 700))
+        case .cosh: return Foundation.cosh(Swift.min(Swift.max(a, -700), 700))
+        case .tanh: return Foundation.tanh(a)
+        case .min: return Swift.min(a, b)
+        case .max: return Swift.max(a, b)
+        case .pow: return Foundation.pow(a, b)
+        case .pwr: return Foundation.pow(Swift.abs(a), b)
+        case .pwrs:
+            let p = Foundation.pow(Swift.abs(a), b)
+            return a < 0 ? -p : p
+        case .limit: return Swift.min(Swift.max(a, Swift.min(b, c)), Swift.max(b, c))
+        case .uramp: return a > 0 ? a : 0
+        case .atan2: return Foundation.atan2(a, b)
+        }
+    }
+
+    /// Straight lines between `count` points, flat beyond the ends
+    @inline(__always) static func lookup(_ v: Double, _ xs: UnsafePointer<Double>?, _ ys: UnsafePointer<Double>?, _ count: Int) -> Double {
+        guard count > 0, let xs, let ys else { return 0 }
+        if v <= xs[0] { return ys[0] }
+        if v >= xs[count - 1] { return ys[count - 1] }
+        var lo = 0, hi = count - 1
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if xs[mid] <= v { lo = mid } else { hi = mid }
+        }
+        return ys[lo] + (v - xs[lo]) / (xs[hi] - xs[lo]) * (ys[hi] - ys[lo])
+    }
+
+    /// The slope of the line between points that `v` is on (0 beyond the ends)
+    @inline(__always) static func lookupSlope(_ v: Double, _ xs: UnsafePointer<Double>?, _ ys: UnsafePointer<Double>?, _ count: Int) -> Double {
+        guard count > 1, let xs, let ys, v > xs[0], v < xs[count - 1] else { return 0 }
+        var lo = 0, hi = count - 1
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if xs[mid] <= v { lo = mid } else { hi = mid }
+        }
+        return (ys[hi] - ys[lo]) / (xs[hi] - xs[lo])
     }
 
     /// A node without inputs evaluated
