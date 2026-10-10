@@ -84,7 +84,10 @@ jobs:
           # and for makers' op-amp models (downloaded from TI, as the app does) as followers at 48 kHz
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker LM358 0.25 || true
-          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 60 > /dev/null &
+          # two in a row, as a pedal's two op-amps: real time needs them under 20.8 us a step together
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 2 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA1656 0.5 2 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 60 2 > /dev/null &
           sleep 2
           sample $! 3 -file build/profile-maker.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true

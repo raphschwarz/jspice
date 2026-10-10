@@ -80,7 +80,7 @@ func accuracy(of circuit: Circuit, listened: Int) -> Double {
 /// Runs a maker's op-amp model (downloaded from its maker as the app does, or taken from the cache) as a follower of a
 /// 1 V, 1 kHz sine at 48 kHz, one step per sample without error control, as the live sound runs it, for `seconds` of
 /// circuit time, and prints the time per step, Newton iterations and factorings
-func benchmarkMaker(_ part: String, seconds: Double) throws {
+func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
     guard let model = MakerModelCatalog.models.first(where: { $0.part == part }) else {
         log("no maker's model \(part); there are \(MakerModelCatalog.models.map(\.part).joined(separator: ", "))")
         exit(2)
@@ -92,7 +92,8 @@ func benchmarkMaker(_ part: String, seconds: Double) throws {
     }
     let input = NetlistPart(kind: .acVoltage, name: "VI", params: ["amplitude": 1, "frequency": 1000, "offset": 0],
                             connections: ["plus": "inp", "minus": "GND"])
-    let circuit = try MakerModels.bench(imported.block, pins: pins, supply: model.supply, load: model.load, input: input, follower: true)
+    let circuit = try MakerModels.bench(imported.block, pins: pins, supply: model.supply, load: model.load, input: input, follower: true,
+                                        stages: stages)
     let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
     simulator.errorControl = false
     let steps = max(1, Int(seconds * 48_000))
@@ -130,9 +131,9 @@ func benchmarkMaker(_ part: String, seconds: Double) throws {
     print("\(part)'s model as simulated: \(size.unknowns) unknowns, \(size.nonzeros) nonzeros, \(size.factorEntries) entries "
           + "factored, \(size.nonlinearUnknowns) nonlinear (its factors \(block.lower) below and \(block.upper) right of the "
           + "pivots, \(block.operations) multiply-adds to factor); \(made)")
-    print(String(format: "%@ follower, 1 kHz at 48 kHz: %.1f µs/step, %.2f× real time, %.2f Newton iterations a step "
+    print(String(format: "%@ %@, 1 kHz at 48 kHz: %.1f µs/step, %.2f× real time, %.2f Newton iterations a step "
                  + "(%ld factored, %ld with kept factors), %ld unknowns, %ld in the nonlinear block%@",
-                 part, elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
+                 part, stages > 1 ? "\(stages) followers in a row" : "follower", elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
                  Double(simulator.newtonIterations) / Double(done), simulator.factorings, simulator.reusedFactorings,
                  shape.unknowns, shape.nonlinear, simulator.isFailed ? " FAILED: " + simulator.problems.joined(separator: "; ") : ""))
 }
@@ -249,11 +250,13 @@ if let flag = arguments.firstIndex(of: "--capture-eval"), flag + 1 < arguments.c
     exit(0)
 }
 
-// --benchmark-maker PART [seconds]: a maker's op-amp model at the sound's rate (see benchmarkMaker)
+// --benchmark-maker PART [seconds] [stages]: a maker's op-amp model at the sound's rate, or that many in a row (see
+// benchmarkMaker)
 if let flag = arguments.firstIndex(of: "--benchmark-maker"), flag + 1 < arguments.count {
     let seconds = flag + 2 < arguments.count ? Double(arguments[flag + 2]) ?? 1 : 1
+    let stages = flag + 3 < arguments.count ? max(1, Int(arguments[flag + 3]) ?? 1) : 1
     do {
-        try benchmarkMaker(arguments[flag + 1], seconds: seconds)
+        try benchmarkMaker(arguments[flag + 1], seconds: seconds, stages: stages)
     } catch {
         log("\(error)")
         exit(1)

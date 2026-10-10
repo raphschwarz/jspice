@@ -175,14 +175,28 @@ public enum MakerModels {
     }
 
     /// The op-amp `block` with its supplies at ± `supply` and `load` on its output, `input` at its + input, its − input
-    /// at its output (a follower) or grounded through a 0 V source
+    /// at its output (a follower) or grounded through a 0 V source. With `stages` above 1, that many followers in a row,
+    /// each driving the next and `load`, the last one's output "out".
     public static func bench(_ block: BlockDefinition, pins: [String], supply: Double, load: Double, input: NetlistPart,
-                             follower: Bool) throws -> Circuit {
+                             follower: Bool, stages: Int = 1) throws -> Circuit {
         var u = NetlistPart(kind: .block, name: "U1")
         u.block = block
-        u.connections = [pins[0]: "inp", pins[1]: follower ? "out" : "inn", pins[2]: "vcc", pins[3]: "vee", pins[4]: "out"]
-        var parts = [
-            u, input,
+        let first = stages > 1 ? "out1" : "out"
+        u.connections = [pins[0]: "inp", pins[1]: follower ? first : "inn", pins[2]: "vcc", pins[3]: "vee", pins[4]: first]
+        var parts = [u]
+        if stages > 1 {
+            for k in 2...stages {
+                let from = "out\(k - 1)", to = k == stages ? "out" : "out\(k)"
+                var next = NetlistPart(kind: .block, name: "U\(k)")
+                next.block = block
+                next.connections = [pins[0]: from, pins[1]: to, pins[2]: "vcc", pins[3]: "vee", pins[4]: to]
+                parts.append(next)
+                parts.append(NetlistPart(kind: .resistor, name: "RL\(k - 1)", params: ["resistance": load],
+                                         connections: ["a": from, "b": "GND"]))
+            }
+        }
+        parts += [
+            input,
             NetlistPart(kind: .dcVoltage, name: "VP", params: ["voltage": supply], connections: ["plus": "vcc", "minus": "GND"]),
             NetlistPart(kind: .dcVoltage, name: "VN", params: ["voltage": supply], connections: ["plus": "GND", "minus": "vee"]),
             NetlistPart(kind: .resistor, name: "RL", params: ["resistance": load], connections: ["a": "out", "b": "GND"]),
