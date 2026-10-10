@@ -63,12 +63,14 @@ jobs:
           sample $! 3 -file build/profile.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile.txt | head -45
+          python3 scripts/profile-callers.py build/profile.txt 30 || true
           # and for the Pico running flat out
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-knob > /dev/null &
           sleep 1
           sample $! 3 -file build/profile-pico.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-pico.txt | head -45
+          python3 scripts/profile-callers.py build/profile-pico.txt 30 || true
           # and for the Pico driving an I2S DAC from PIO
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-pcm5102 > /dev/null &
           sleep 1
@@ -81,6 +83,7 @@ jobs:
           sample $! 3 -file build/profile-avr.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-avr.txt | head -45
+          python3 scripts/profile-callers.py build/profile-avr.txt 30 || true
           # and for makers' op-amp models (downloaded from TI, as the app does) as followers at 48 kHz
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker LM358 0.25 || true
