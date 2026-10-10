@@ -348,6 +348,11 @@ public final class CircuitSession {
         Tool(name: "perfboard",
              description: "The circuit laid out on perfboard (a copper pad round each hole, nothing joining them; rows lettered from A at the top, holes numbered from 1 at the left): the parts placed as on stripboard, and trails on the copper side, each a row of pads joined from one hole to another by tinned copper wire (or solder, for neighbours), where stripboard would have a piece of strip; the wire links on the parts' side, and what is wired from off the board. Checked: problems lists anything the board would connect differently from the schematic.",
              inputSchema: schema([:]), run: { session, _ in session.perfboard() }),
+        Tool(name: "board_sheet",
+             description: "A printable build sheet: the board laid out as an SVG drawing at its true size (holes 0.1 in apart, with a ruler of ten holes to check the print's scale), each part in its holes with its name, the strips and cuts, trails, links or jumpers, what is wired from off the board, and under it the parts with their holes, the bill of materials and the notes. Print it at 100 %; a stripboard's or perfboard's can be laid over the board. Writes it to path if given, else returns it.",
+             inputSchema: schema(["board": string("\"breadboard\" (default), \"half_breadboard\", \"stripboard\" or \"perfboard\""),
+                                  "path": string("File to write, usually ending .svg (optional)")]),
+             run: { session, arguments in try session.boardSheet(arguments) }),
         Tool(name: "bom",
              description: "The bill of materials for building the circuit: each part as bought (values, electrolytics' voltage ratings from the operating point, chips by package, transistors with their leg order), how many, and which parts of the schematic they are; plus the wires and what is wired from off the board. For a full-size breadboard by default, a half-size one, a stripboard or a perfboard (with the board, chip sockets and wire).",
              inputSchema: schema(["board": string("\"breadboard\" (default), \"half_breadboard\", \"stripboard\" or \"perfboard\"")]),
@@ -2094,6 +2099,24 @@ public final class CircuitSession {
             "notes": layout.notes,
             "problems": Perfboard.verify(layout),
         ] as [String: Any]
+    }
+
+    func boardSheet(_ arguments: [String: Any]) throws -> Any {
+        let title = circuit.elements.isEmpty ? "Empty circuit" : "JSpice circuit"
+        let svg: String
+        switch arguments["board"] as? String ?? "breadboard" {
+        case "breadboard": svg = BoardSVG.breadboard(Breadboard.layout(circuit), title: title)
+        case "half_breadboard": svg = BoardSVG.breadboard(Breadboard.layout(circuit, size: .half), title: title)
+        case "stripboard": svg = BoardSVG.stripboard(Stripboard.layout(circuit), title: title)
+        case "perfboard": svg = BoardSVG.perfboard(Perfboard.layout(circuit), title: title)
+        case let other: throw ToolError("\"board\" should be \"breadboard\", \"half_breadboard\", \"stripboard\" or \"perfboard\", not \"\(other)\"")
+        }
+        if let path = arguments["path"] as? String, !path.isEmpty {
+            let file = (path as NSString).expandingTildeInPath
+            do { try svg.write(toFile: file, atomically: true, encoding: .utf8) } catch { throw ToolError("Can't write \(path)") }
+            return ["saved": file, "bytes": svg.utf8.count]
+        }
+        return ["svg": svg]
     }
 
     func billOfMaterials(_ arguments: [String: Any]) throws -> Any {

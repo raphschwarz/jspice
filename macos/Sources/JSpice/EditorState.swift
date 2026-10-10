@@ -470,6 +470,23 @@ final class EditorState: ObservableObject {
         }
     }
 
+    /// Saves a board's printable sheet: an SVG at true size, which `make` draws with the window's title
+    func exportBoardSheet(_ make: (String) -> String, board: String) {
+        let save = NSSavePanel()
+        save.allowedContentTypes = [UTType(filenameExtension: "svg") ?? .plainText]
+        let title = canvas?.window?.title ?? "Circuit"
+        save.nameFieldStringValue = "\(title) \(board).svg"
+        guard save.runModal() == .OK, let url = save.url else { return }
+        do {
+            try make(title).write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "The sheet couldn't be written"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
     /// Writes the circuit as a KiCad netlist, for a printed circuit board (File ▸ Export KiCad Netlist)
     func exportKiCad() {
         let save = NSSavePanel()

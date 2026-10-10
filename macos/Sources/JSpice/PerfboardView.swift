@@ -15,6 +15,19 @@ struct PerfboardView: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    if let layout {
+                        Button("Printable Sheet…", systemImage: "printer") {
+                            editor.exportBoardSheet({ BoardSVG.perfboard(layout, title: $0) }, board: "perfboard")
+                        }
+                        .help("Save the board at its true size (0.1 in between holes), its parts' holes and bill of materials as an SVG drawing to print and build from")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                Divider()
             ScrollView([.horizontal, .vertical]) {
                 if let layout {
                     Canvas { context, _ in draw(context, layout) }
@@ -28,6 +41,7 @@ struct PerfboardView: View {
             }
             .defaultScrollAnchor(.topLeading)
             .background(Color(nsColor: .underPageBackgroundColor))
+            }
             Divider()
             if let layout {
                 BoardSidePanel(problems: problems,

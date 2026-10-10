@@ -33,6 +33,12 @@ struct BreadboardView: View {
                         Text("\(layout.boards) boards side by side").font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if let layout {
+                        Button("Printable Sheet…", systemImage: "printer") {
+                            editor.exportBoardSheet({ BoardSVG.breadboard(layout, title: $0) }, board: "breadboard")
+                        }
+                        .help("Save the board, its parts' holes and bill of materials as an SVG drawing to print and build from")
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
