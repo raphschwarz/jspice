@@ -1467,8 +1467,8 @@ public final class Simulator {
                 // cycle (a maker's model's crossover detector, whose switching turns off the stage that switched it),
                 // and no round would settle them. That round's solution stands, solved again from itself (a step or
                 // two), its decisions as they were: they switch at the next substep, which starts from there.
-                if let k = (0..<kept - 1).first(where: { decisionsAgree(with: heldRounds[$0]) }) {
-                    trace?("   the decisions go round in a cycle: those of round \(k) again")
+                if let k = cycleRound(kept) {
+                    trace?("   the decisions go round in a cycle: back to those of round \(k)")
                     Self.copy(heldRounds[k], into: &decisionX)
                     Self.copy(solvedRounds[k], into: &x)
                     cycled = true
@@ -4024,32 +4024,32 @@ public final class Simulator {
         return r[b.program.value]
     }
 
-    /// Whether every behavioural source that holds its decisions has, at the present solution, the value it has with its
-    /// decisions made at `held` (an earlier round's): the decisions made here are that round's
-    private func decisionsAgree(with held: [Double]) -> Bool {
-        let celsius = kelvin - 273.15
-        for i in decidingIndices {
-            guard let b = behaviors[i] else { continue }
-            let v = behaviorValues, d = behaviorDecisions, r = behaviorRegisters
-            let count = b.inputCount, inputs = b.inputList
-            for k in 0..<count {
-                let input = inputs[k]
-                if input.row >= 0 {
-                    v[k] = input.row < x.count ? input.sign * x[input.row] : 0
-                    d[k] = input.row < held.count ? input.sign * held[input.row] : 0
-                } else {
-                    v[k] = voltage(input.plus) - voltage(input.minus)
-                    d[k] = (input.plus > 0 ? held[input.plus - 1] : 0) - (input.minus > 0 ? held[input.minus - 1] : 0)
+    /// The round to go back to (of the `kept` rounds of this solve) when the decisions made at the present solution go
+    /// round in a cycle: those of an earlier round again, or those of an earlier round but for sources that have
+    /// settled since (an output current's sign detectors, that flipped once at the crossing and stayed, while its
+    /// crossover detector and the enable go round). Then the round after it, which has them as they are now. Each
+    /// source is compared by its value at the present inputs with its decisions made here and at each round's held
+    /// solution.
+    private func cycleRound(_ kept: Int) -> Int? {
+        guard kept >= 2 else { return nil }
+        let sources = decidingIndices
+        let now = sources.map { decides($0, at: x, x) }
+        let rounds = (0..<kept).map { j in sources.map { decides($0, at: x, heldRounds[j]) } }
+        func same(_ a: Double, _ b: Double) -> Bool { Swift.abs(a - b) <= 1e-9 * (1 + Swift.abs(b)) }
+        for k in 0..<(kept - 1) {
+            var exact = true, cycles = true
+            for n in sources.indices where !same(now[n], rounds[k][n]) {
+                exact = false
+                // settled since: as now in every round after it
+                if !((k + 1)..<kept).allSatisfy({ same(rounds[$0][n], now[n]) }) {
+                    cycles = false
+                    break
                 }
             }
-            let program = b.program
-            program.run(v, deciding: d, time: solveTime, celsius: celsius, into: r)
-            let then = r[program.value]
-            program.run(v, time: solveTime, celsius: celsius, into: r)
-            let now = r[program.value]
-            if !(Swift.abs(then - now) <= 1e-9 * (1 + Swift.abs(now))) { return false }
+            if exact { return k }
+            if cycles { return k + 1 }
         }
-        return true
+        return nil
     }
 
     /// Whether a behavioural source's value at the present solution changes with its decisions made there rather than
