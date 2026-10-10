@@ -59,18 +59,31 @@ final class MakerModelCatalogTests: XCTestCase {
         var finished: Bool
     }
 
+    /// What a step costs: a follower at rest, 200 steps of 1 µs (or, `audio`, a 1 kHz sine of 1 V through it for 4,800
+    /// steps of a 48 kHz sample, without error control, as the live sound runs), and where its output ends
     static func profile(_ model: MakerModelCatalog.Model, _ block: BlockDefinition, _ pins: [String], linear: Bool,
-                        budget: TimeInterval) throws -> Profile {
-        let follower = try MakerModels.bench(block, pins: pins, supply: model.supply, load: model.load,
-                                              input: NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": 0],
-                                                                 connections: ["plus": "inp", "minus": "GND"]), follower: true)
+                        reuse: Bool = true, audio: Bool = false, budget: TimeInterval) throws -> Profile {
+        let input = audio
+            ? NetlistPart(kind: .acVoltage, name: "VI", params: ["amplitude": 1, "frequency": 1000, "offset": 0],
+                          connections: ["plus": "inp", "minus": "GND"])
+            : NetlistPart(kind: .dcVoltage, name: "VI", params: ["voltage": 0], connections: ["plus": "inp", "minus": "GND"])
+        let follower = try MakerModels.bench(block, pins: pins, supply: model.supply, load: model.load, input: input, follower: true)
         let output = try XCTUnwrap(follower.elements.firstIndex { $0.name == "RL" })
         Simulator.linearAffineSources = linear
-        let probe = Simulator(circuit: follower, timeStep: 1e-6)
+        Simulator.reusesFactors = reuse
+        Simulator.profiling = true
+        defer {
+            Simulator.reusesFactors = true
+            Simulator.profiling = false
+        }
+        let probe = Simulator(circuit: follower, timeStep: audio ? 1 / 48_000 : 1e-6)
+        // the live sound sets its own step, without the integration's error control
+        if audio { probe.errorControl = false }
+        let total = audio ? 4_800 : 200
         let clock = Date()
         let stepped = concurrently([{ () -> Int in
             var steps = 0
-            while steps < 200 && !probe.isFailed {
+            while steps < total && !probe.isFailed {
                 probe.step()
                 steps += 1
             }
@@ -78,18 +91,23 @@ final class MakerModelCatalogTests: XCTestCase {
         }], budget: budget)[0]
         if stepped == nil { probe.stopRequested = true }
         let steps = stepped ?? Int((probe.time / probe.timeStep).rounded())
+        let seconds = Date().timeIntervalSince(clock)
         let shape = probe.planShape
-        let line = String(format: "%@ (affine sources %@): %@%.2f ms a step over %ld steps; %ld unknowns, %ld in the nonlinear block, "
-                          + "%ld pivot orders, %ld plans (%.2f s); %.1f Newton iterations, %.1f substeps (%ld rejected) a step, "
-                          + "%ld convergence failures%@",
-                          model.part, linear ? "linear" : "nonlinear", stepped == nil ? "STOPPED after \(Int(budget)) s, " : "",
-                          Date().timeIntervalSince(clock) * 1e3 / Double(max(steps, 1)), steps, shape.unknowns, shape.nonlinear,
-                          shape.orders, probe.plans, probe.planningSeconds,
-                          Double(probe.newtonIterations) / Double(max(steps, 1)), Double(probe.substeps) / Double(max(steps, 1)),
-                          probe.rejectedSubsteps, probe.convergenceFailures,
+        let perStep = seconds / Double(max(steps, 1))
+        let line = String(format: "%@ (affine sources %@, factors %@%@): %@%.1f µs a step over %ld steps%@; %ld unknowns, %ld in the nonlinear block, "
+                          + "%ld pivot orders, %ld plans (%.2f s); %.1f Newton iterations (%ld factored, %ld with kept factors; "
+                          + "%.1f µs stamping, %.1f µs solving an iteration), %.1f substeps (%ld rejected) a step, %ld convergence failures%@",
+                          model.part, linear ? "linear" : "nonlinear", reuse ? "kept" : "made each iteration", audio ? ", 1 kHz at 48 kHz" : "",
+                          stepped == nil ? "STOPPED after \(Int(budget)) s, " : "", perStep * 1e6, steps,
+                          audio ? String(format: " (%.2f× real time)", (1.0 / 48_000) / perStep) : "",
+                          shape.unknowns, shape.nonlinear, shape.orders, probe.plans, probe.planningSeconds,
+                          Double(probe.newtonIterations) / Double(max(steps, 1)), probe.factorings, probe.reusedFactorings,
+                          Double(probe.stampNanoseconds) / 1e3 / Double(max(probe.newtonIterations, 1)),
+                          Double(probe.solveNanoseconds) / 1e3 / Double(max(probe.newtonIterations, 1)),
+                          Double(probe.substeps) / Double(max(steps, 1)), probe.rejectedSubsteps, probe.convergenceFailures,
                           probe.isFailed && stepped != nil ? "; FAILED: " + probe.problems.joined(separator: "; ") : "")
         return Profile(line: line, output: stepped == nil ? .nan : probe.terminalVoltage(output, 0),
-                       finished: stepped == 200 && !probe.isFailed)
+                       finished: stepped == total && !probe.isFailed)
     }
 
     func testMakersModelsMatchNgspice() throws {
@@ -137,21 +155,35 @@ final class MakerModelCatalogTests: XCTestCase {
             }
         }
 
-        // what a step costs, with affine sources linearised at every iteration and stamped once as linear parts: the two
-        // must agree
+        // what a step costs, with affine sources linearised at every iteration and stamped once as linear parts, and
+        // with the nonlinear block factored at every iteration and its factors kept while it stays as it was: all must
+        // agree
         var linearAgrees = true
-        let profiles = try [false, true].map { linear in
-            try models.map { m in try Self.profile(m.model, m.block, m.pins, linear: linear, budget: 60) }
+        let profiles = try [(false, true), (true, false), (true, true)].map { (linear, reuse) in
+            try models.map { m in try Self.profile(m.model, m.block, m.pins, linear: linear, reuse: reuse, budget: 60) }
         }
         for (k, m) in models.enumerated() {
-            let (nonlinear, linear) = (profiles[0][k], profiles[1][k])
+            let (nonlinear, factored, linear) = (profiles[0][k], profiles[1][k], profiles[2][k])
             Self.progress(nonlinear.line)
+            Self.progress(factored.line)
             Self.progress(linear.line)
             guard nonlinear.finished, linear.finished, abs(linear.output - nonlinear.output) <= 1e-6 else {
                 linearAgrees = false
                 XCTFail("\(m.model.part): with affine sources linear the follower ends at \(linear.output) V, "
                         + "linearised at every iteration \(nonlinear.output) V")
                 continue
+            }
+            XCTAssertTrue(factored.finished, m.model.part)
+            XCTAssertEqual(linear.output, factored.output, accuracy: 1e-6, "\(m.model.part): kept factors against factoring at every iteration")
+        }
+        // at the sound's rate: a sine through each, factors kept and made each iteration, which must agree
+        for m in models {
+            let made = try Self.profile(m.model, m.block, m.pins, linear: true, reuse: false, audio: true, budget: 20)
+            let kept = try Self.profile(m.model, m.block, m.pins, linear: true, reuse: true, audio: true, budget: 20)
+            Self.progress(made.line)
+            Self.progress(kept.line)
+            if made.finished && kept.finished {
+                XCTAssertEqual(kept.output, made.output, accuracy: 1e-4, "\(m.model.part) at 48 kHz: kept factors against factoring each iteration")
             }
         }
 

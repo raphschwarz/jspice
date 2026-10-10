@@ -37,6 +37,19 @@ public final class Simulator {
     /// Newton-Raphson iterations since the start, each one a solve of the stamped equations, and those of them damped
     public private(set) var newtonIterations = 0
     public private(set) var dampedIterations = 0
+    /// Of those iterations, how many factored the nonlinear block, and how many solved with factors kept from an earlier
+    /// one (see `newton`)
+    public private(set) var factorings = 0
+    public private(set) var reusedFactorings = 0
+    /// Nanoseconds spent restamping the nonlinear block and solving it (factoring or not), while `profiling` is on
+    public private(set) var stampNanoseconds: UInt64 = 0
+    public private(set) var solveNanoseconds: UInt64 = 0
+    /// Whether iterations time their stamping and solving
+    public static var profiling = false
+    /// Whether Newton-Raphson solves with the factors of an earlier iteration while the nonlinear block stays near the
+    /// values they were made from (the chord method); read at each iteration. Off, it factors at every iteration: for
+    /// comparing the two.
+    public static var reusesFactors = true
     /// Solves done again because a behavioural source's decision (a comparator in a maker's model) changed during one,
     /// and solves left as they were after `decisionRounds` of that (a comparator chattering about its threshold)
     public private(set) var decisionSolves = 0
@@ -369,6 +382,20 @@ public final class Simulator {
     private var savedX: [Double] = []
     /// The iterate a damped Newton-Raphson iteration moves from
     private var dampFrom: [Double] = []
+    /// The nonlinear block's last factoring, kept for the iterations after it (see `newton`): the plan and pivot order it
+    /// was made with, the factors (in the plan's slots), the block's entries before factoring (at `keptSlots`, the
+    /// block's structure, with each one's row and column), and the largest entry of each row of the block
+    private var keptPlan: SparsePlan?
+    private var keptOrder: EliminationProgram?
+    private var keptFactors: [Double] = []
+    private var keptEntries: [Double] = []
+    private var keptSlots: [Int32] = []
+    private var keptRows: [Int32] = []
+    private var keptColumns: [Int32] = []
+    private var keptLocalRows: [Int32] = []
+    private var keptRowScale: [Double] = []
+    private var residual: [Double] = []
+    private var chordDelta: [Double] = []
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
     private var savedLimited3: [Double] = []
@@ -1215,6 +1242,8 @@ public final class Simulator {
         var converged = false
         var lastChange = Double.infinity
         var damping = 1.0
+        var refactor = false
+        var chordSteps = 0
         while iteration < iterations {
             if stopRequested {
                 Self.copy(savedX, into: &x)
@@ -1242,6 +1271,7 @@ public final class Simulator {
                     baseValues.withUnsafeBufferPointer { plan.restoreChanging(v.baseAddress!, from: $0.baseAddress!) }
                 }
             }
+            let started = Self.profiling ? DispatchTime.now().uptimeNanoseconds : 0
             Self.copy(rhsForwarded, into: &workVector)
             limiting = false
             beginSparseStamping(plan, floor: plan.tailStart)
@@ -1252,28 +1282,51 @@ public final class Simulator {
                 needsPlan = true
                 continue
             }
-            // the nonlinear block, by the first of the plan's pivot orders that suits its values (or a new one)
-            let blockCount = max(plan.entryCount - plan.tailStart, 1)
-            if blockScratch.count != blockCount { blockScratch = [Double](repeating: 0, count: blockCount) }
-            let chosen = values.withUnsafeMutableBufferPointer { v -> EliminationProgram? in
-                blockScratch.withUnsafeMutableBufferPointer { plan.factorBlock(v.baseAddress!, scratch: $0.baseAddress!) }
-            }
-            guard let order = chosen else {
-                Self.copy(savedX, into: &x)
-                fail()
-                return false
-            }
+            let stamped = Self.profiling ? DispatchTime.now().uptimeNanoseconds : 0
             let damped = damping < 1
             if damped {
                 Self.copy(x, into: &dampFrom)
                 dampedIterations += 1
             }
-            let change = values.withUnsafeBufferPointer { v -> Double in
-                workVector.withUnsafeMutableBufferPointer { b -> Double in
-                    order.forward(v.baseAddress!, b.baseAddress!)
-                    return x.withUnsafeMutableBufferPointer { x -> Double in order.back(v.baseAddress!, b.baseAddress!, x.baseAddress!) }
+            let change: Double
+            if Self.reusesFactors && !damped && !refactor && keptFactorsSuit(plan) {
+                // the block is as it was when last factored, near enough: a step solved with those factors from the
+                // present residual (the chord method) converges to the very same solution, without factoring
+                change = chordStep(plan)
+                reusedFactorings += 1
+                chordSteps += 1
+            } else {
+                // the nonlinear block, by the first of the plan's pivot orders that suits its values (or a new one)
+                keepEntries(plan)
+                let blockCount = max(plan.entryCount - plan.tailStart, 1)
+                if blockScratch.count != blockCount { blockScratch = [Double](repeating: 0, count: blockCount) }
+                let chosen = values.withUnsafeMutableBufferPointer { v -> EliminationProgram? in
+                    blockScratch.withUnsafeMutableBufferPointer { plan.factorBlock(v.baseAddress!, scratch: $0.baseAddress!) }
+                }
+                guard let order = chosen else {
+                    keptOrder = nil
+                    Self.copy(savedX, into: &x)
+                    fail()
+                    return false
+                }
+                keepFactors(plan, order)
+                factorings += 1
+                chordSteps = 0
+                change = values.withUnsafeBufferPointer { v -> Double in
+                    workVector.withUnsafeMutableBufferPointer { b -> Double in
+                        order.forward(v.baseAddress!, b.baseAddress!)
+                        return x.withUnsafeMutableBufferPointer { x -> Double in order.back(v.baseAddress!, b.baseAddress!, x.baseAddress!) }
+                    }
                 }
             }
+            if Self.profiling {
+                let now = DispatchTime.now().uptimeNanoseconds
+                stampNanoseconds &+= stamped &- started
+                solveNanoseconds &+= now &- stamped
+            }
+            // the chord method contracts linearly, by how near the kept factors are: where it does not contract fast,
+            // the next iteration factors afresh
+            refactor = chordSteps > 0 && (change > 0.25 * lastChange || chordSteps >= 4)
             if change.isNaN {
                 Self.copy(savedX, into: &x)
                 fail()
@@ -1310,6 +1363,123 @@ public final class Simulator {
             return false
         }
         return converged
+    }
+
+    /// The largest change in a nonlinear block entry, against the largest entry of its row, for which the kept factors
+    /// still serve: the chord method then contracts by about that much a step (times the block's conditioning)
+    static let reuseTolerance = 1e-7
+
+    /// Whether the kept factors were made for this plan and the block's entries, as stamped, are near those they were
+    /// made from
+    private func keptFactorsSuit(_ plan: SparsePlan) -> Bool {
+        guard keptPlan === plan, keptOrder != nil, !plan.block.isEmpty, keptEntries.count == keptSlots.count else { return false }
+        let count = keptSlots.count
+        return values.withUnsafeBufferPointer { v -> Bool in
+            keptSlots.withUnsafeBufferPointer { slots -> Bool in
+                keptEntries.withUnsafeBufferPointer { entries -> Bool in
+                    keptLocalRows.withUnsafeBufferPointer { rows -> Bool in
+                        keptRowScale.withUnsafeBufferPointer { scale -> Bool in
+                            var k = 0
+                            while k < count {
+                                let difference = abs(v[Int(slots[k])] - entries[k])
+                                // (written so that a value that is not a number fails too)
+                                guard difference <= Self.reuseTolerance * scale[Int(rows[k])] else { return false }
+                                k += 1
+                            }
+                            return true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Keeps the block's entries as stamped, before factoring: what later iterations' are compared with
+    private func keepEntries(_ plan: SparsePlan) {
+        let s = plan.block.count
+        if keptPlan !== plan {
+            keptPlan = plan
+            keptOrder = nil
+            keptSlots = []
+            keptRows = []
+            keptColumns = []
+            keptLocalRows = []
+            for i in 0..<s {
+                for j in 0..<s where plan.blockStructure[i * s + j] {
+                    keptSlots.append(Int32(plan.tailStart + i * s + j))
+                    keptRows.append(Int32(plan.block[i]))
+                    keptColumns.append(Int32(plan.block[j]))
+                    keptLocalRows.append(Int32(i))
+                }
+            }
+            keptEntries = [Double](repeating: 0, count: keptSlots.count)
+            keptFactors = [Double](repeating: 0, count: plan.entryCount)
+            keptRowScale = [Double](repeating: 0, count: s)
+        }
+        keptOrder = nil
+        for i in 0..<s { keptRowScale[i] = 0 }
+        for k in keptSlots.indices {
+            let entry = values[Int(keptSlots[k])]
+            keptEntries[k] = entry
+            let row = Int(keptLocalRows[k])
+            keptRowScale[row] = max(keptRowScale[row], abs(entry))
+        }
+    }
+
+    /// Keeps the block's factors, just made by `order`, for the iterations after
+    private func keepFactors(_ plan: SparsePlan, _ order: EliminationProgram) {
+        guard keptPlan === plan, keptFactors.count == plan.entryCount else { return }
+        values.withUnsafeBufferPointer { v in
+            keptFactors.withUnsafeMutableBufferPointer { kept in
+                plan.changingSlots.withUnsafeBufferPointer { slots in
+                    for slot in slots { kept[Int(slot)] = v[Int(slot)] }
+                }
+            }
+        }
+        keptOrder = order
+    }
+
+    /// One chord step: the residual of the block's equations as stamped at the present solution, solved with the kept
+    /// factors for the correction to it. Returns the largest change of an unknown, relative to its new size, or NaN.
+    private func chordStep(_ plan: SparsePlan) -> Double {
+        guard let order = keptOrder else { return .nan }
+        let m = workVector.count
+        if residual.count != m { residual = [Double](repeating: 0, count: m) }
+        if chordDelta.count != m { chordDelta = [Double](repeating: 0, count: m) }
+        Self.copy(workVector, into: &residual)
+        let count = keptSlots.count
+        values.withUnsafeBufferPointer { v in
+            residual.withUnsafeMutableBufferPointer { r in
+                x.withUnsafeBufferPointer { x in
+                    keptSlots.withUnsafeBufferPointer { slots in
+                        keptRows.withUnsafeBufferPointer { rows in
+                            keptColumns.withUnsafeBufferPointer { columns in
+                                var k = 0
+                                while k < count {
+                                    r[Int(rows[k])] -= v[Int(slots[k])] * x[Int(columns[k])]
+                                    k += 1
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let solved = keptFactors.withUnsafeBufferPointer { f -> Double in
+            residual.withUnsafeMutableBufferPointer { r -> Double in
+                order.forward(f.baseAddress!, r.baseAddress!)
+                return chordDelta.withUnsafeMutableBufferPointer { d -> Double in order.back(f.baseAddress!, r.baseAddress!, d.baseAddress!) }
+            }
+        }
+        if solved.isNaN { return .nan }
+        var change = 0.0
+        for u in plan.block {
+            let next = x[u] + chordDelta[u]
+            guard next.isFinite else { return .nan }
+            change = max(change, abs(chordDelta[u]) / (1 + abs(next)))
+            x[u] = next
+        }
+        return change
     }
 
     /// The linear block's forward substitution of the right-hand side, done once per solve (the nonlinear parts only
