@@ -7,24 +7,31 @@ extension SpiceExpression {
     /// the same operations on the same values, in the same order. Its steps are kept in memory of its own, so running it
     /// (at every Newton-Raphson iteration) touches no reference counts.
     public final class Program: @unchecked Sendable {
+        /// One step: what it works out, from which earlier steps (by number). The arithmetic operators have steps of
+        /// their own, so a step is one dispatch.
         enum Step: Sendable {
             case constant(Double)
             /// An input, as it is (`x`) or as decisions are held at (`d`)
-            case input(Int)
-            case decidingInput(Int)
+            case input(Int32)
+            case decidingInput(Int32)
             case time
             case temperature
-            case negate(Int)
-            case not(Int)
-            case binary(Operator, Int, Int)
+            case negate(Int32)
+            case not(Int32)
+            case add(Int32, Int32)
+            case subtract(Int32, Int32)
+            case multiply(Int32, Int32)
+            case divide(Int32, Int32)
+            /// A power, comparison or logical operator
+            case binary(Operator, Int32, Int32)
             /// A function of one to three earlier steps (-1 for an argument it does not take)
-            case call(Function, Int, Int, Int)
+            case call(Function, Int32, Int32, Int32)
             /// The second step's value where the first's is not 0, else the third's
-            case select(Int, Int, Int)
+            case select(Int32, Int32, Int32)
             /// A table's line, or its slope: the argument's step, then where its points' x and y values start in
             /// `data`, and how many there are
-            case table(Int, Int, Int, Int)
-            case tableSlope(Int, Int, Int, Int)
+            case table(Int32, Int32, Int32, Int32)
+            case tableSlope(Int32, Int32, Int32, Int32)
         }
 
         private let steps: UnsafeMutablePointer<Step>
@@ -69,20 +76,24 @@ extension SpiceExpression {
             for k in 0..<count {
                 switch steps[k] {
                 case let .constant(c): r[k] = c
-                case let .input(j): r[k] = x[j]
-                case let .decidingInput(j): r[k] = d[j]
+                case let .input(j): r[k] = x[Int(j)]
+                case let .decidingInput(j): r[k] = d[Int(j)]
                 case .time: r[k] = time
                 case .temperature: r[k] = celsius
-                case let .negate(a): r[k] = -r[a]
-                case let .not(a): r[k] = r[a] != 0 ? 0 : 1
-                case let .binary(op, a, b): r[k] = SpiceExpression.arithmetic(op, r[a], r[b])
+                case let .negate(a): r[k] = -r[Int(a)]
+                case let .not(a): r[k] = r[Int(a)] != 0 ? 0 : 1
+                case let .add(a, b): r[k] = r[Int(a)] + r[Int(b)]
+                case let .subtract(a, b): r[k] = r[Int(a)] - r[Int(b)]
+                case let .multiply(a, b): r[k] = r[Int(a)] * r[Int(b)]
+                case let .divide(a, b): r[k] = SpiceExpression.arithmetic(.divide, r[Int(a)], r[Int(b)])
+                case let .binary(op, a, b): r[k] = SpiceExpression.arithmetic(op, r[Int(a)], r[Int(b)])
                 case let .call(f, a, b, c):
-                    r[k] = SpiceExpression.apply(f, r[a], b >= 0 ? r[b] : 0, c >= 0 ? r[c] : 0)
-                case let .select(c, a, b): r[k] = r[c] != 0 ? r[a] : r[b]
+                    r[k] = SpiceExpression.apply(f, r[Int(a)], b >= 0 ? r[Int(b)] : 0, c >= 0 ? r[Int(c)] : 0)
+                case let .select(c, a, b): r[k] = r[Int(c)] != 0 ? r[Int(a)] : r[Int(b)]
                 case let .table(a, xs, ys, n):
-                    r[k] = SpiceExpression.lookup(r[a], table + xs, table + ys, n)
+                    r[k] = SpiceExpression.lookup(r[Int(a)], table + Int(xs), table + Int(ys), Int(n))
                 case let .tableSlope(a, xs, ys, n):
-                    r[k] = SpiceExpression.lookupSlope(r[a], table + xs, table + ys, n)
+                    r[k] = SpiceExpression.lookupSlope(r[Int(a)], table + Int(xs), table + Int(ys), Int(n))
                 }
             }
         }
@@ -124,17 +135,17 @@ extension SpiceExpression {
             case let .constant(c):
                 step = emit(.constant(c))
             case let .input(k):
-                step = emit(reading == .decided ? .decidingInput(k) : .input(k))
+                step = emit(reading == .decided ? .decidingInput(Int32(k)) : .input(Int32(k)))
             case .time:
                 step = emit(.time)
             case .temperature:
                 step = emit(.temperature)
             case let .negate(a):
                 let u = compile(a, reading)
-                step = emit(.negate(u))
+                step = emit(.negate(Int32(u)))
             case let .not(a):
                 let u = compile(a, reading.deciding)
-                step = emit(.not(u))
+                step = emit(.not(Int32(u)))
             case let .live(a):
                 step = compile(a, reading.living)
             case let .binary(op, a, b):
@@ -143,19 +154,25 @@ extension SpiceExpression {
                 case .add, .subtract, .multiply, .divide, .power: operands = reading
                 default: operands = reading.deciding
                 }
-                let u = compile(a, operands)
-                let v = compile(b, operands)
-                step = emit(.binary(op, u, v))
+                let u = Int32(compile(a, operands))
+                let v = Int32(compile(b, operands))
+                switch op {
+                case .add: step = emit(.add(u, v))
+                case .subtract: step = emit(.subtract(u, v))
+                case .multiply: step = emit(.multiply(u, v))
+                case .divide: step = emit(.divide(u, v))
+                default: step = emit(.binary(op, u, v))
+                }
             case let .call(f, args):
                 switch f {
                 case .u, .sgn, .floor, .ceil:
                     let u = compile(args[0], reading.deciding)
-                    step = emit(.call(f, u, -1, -1))
+                    step = emit(.call(f, Int32(u), -1, -1))
                 default:
                     let u = compile(args[0], reading)
                     let v = args.count > 1 ? compile(args[1], reading) : -1
                     let w = args.count > 2 ? compile(args[2], reading) : -1
-                    step = emit(.call(f, u, v, w))
+                    step = emit(.call(f, Int32(u), Int32(v), Int32(w)))
                 }
             case let .conditional(c, a, b):
                 let condition: Int
@@ -166,16 +183,17 @@ extension SpiceExpression {
                 }
                 let u = compile(a, reading)
                 let v = compile(b, reading)
-                step = emit(.select(condition, u, v))
+                step = emit(.select(Int32(condition), Int32(u), Int32(v)))
             case let .table(a, xs, ys), let .tableSlope(a, xs, ys):
                 let u = compile(a, reading)
                 let start = data.count
                 data += xs
                 data += ys
+                let (argument, first, second, points) = (Int32(u), Int32(start), Int32(start + xs.count), Int32(xs.count))
                 if case .table = node {
-                    step = emit(.table(u, start, start + xs.count, xs.count))
+                    step = emit(.table(argument, first, second, points))
                 } else {
-                    step = emit(.tableSlope(u, start, start + xs.count, xs.count))
+                    step = emit(.tableSlope(argument, first, second, points))
                 }
             }
             made[key] = step
