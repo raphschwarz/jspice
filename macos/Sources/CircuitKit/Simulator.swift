@@ -602,6 +602,13 @@ public final class Simulator {
     static let confirmRestSolves = 512
     /// Whether confirmations rest after many misses (off, every solve tries them: for comparing the two)
     public static var restsConfirmation = true
+    /// Whether a confirmation also takes a block whose changed entries balance at the solution (see `stampsUnchanged`),
+    /// whether kept factors serve past changes in the columns of unknowns that hold still (see `keptFactorsSuit`), and
+    /// whether a substep that can be halved gives up once Newton-Raphson stalls (see `stallsTolerated`): each off, for
+    /// comparing
+    public static var confirmsByBalance = true
+    public static var reusesPastStillColumns = true
+    public static var givesUpWhenStalled = true
     private var reuseAllowed = false
     private var confirmedPlanSerial = -1
     private var confirmedBaseVersion = -1
@@ -1744,7 +1751,7 @@ public final class Simulator {
             if dampsNewton && iteration >= Self.dampingAfter && !limiting {
                 damping = change > 0.5 * lastChange ? max(damping / 2, 1.0 / 64) : min(damping * 2, 1)
             }
-            if iterations == Self.halvingIterations && iteration >= 3 && !limiting {
+            if Self.givesUpWhenStalled && iterations == Self.halvingIterations && iteration >= 3 && !limiting {
                 stalls = change > 0.5 * lastChange ? stalls + 1 : 0
                 if stalls >= Self.stallsTolerated {
                     trace?("    no nearer after \(stalls) iterations: the substep is halved")
@@ -1886,7 +1893,7 @@ public final class Simulator {
                             let row = Int(stampedLocalRows[k])
                             // (written so that a value that is not a number fails too)
                             if !(abs(now - then) <= tolerance * (abs(now) + scale[row])) {
-                                guard now.isFinite else { return false }
+                                guard now.isFinite, Self.confirmsByBalance else { return false }
                                 changed = true
                                 balance[row] += (now - then) * x[Int(stampedColumns[k])]
                             }
@@ -1975,7 +1982,7 @@ public final class Simulator {
         guard keptPlan === plan, keptOrder != nil, !plan.block.isEmpty, keptBaseVersion == baseVersion, !stampedSlotsGrew,
               keptValues.count == plan.entryCount else { return false }
         let count = stampedSlots.count
-        let relaxed = keptPointValid && keptPoint.count == x.count
+        let relaxed = Self.reusesPastStillColumns && keptPointValid && keptPoint.count == x.count
         return values.withUnsafeBufferPointer { v -> Bool in
             keptValues.withUnsafeBufferPointer { kept -> Bool in
                 stampedSlots.withUnsafeBufferPointer { slots -> Bool in

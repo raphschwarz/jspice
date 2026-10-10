@@ -142,17 +142,20 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
         XCTAssertEqual(lowest, 0.5, accuracy: 0.011)
         XCTAssertEqual(simulator.convergenceFailures, 0)
         XCTAssertGreaterThan(simulator.decisionSolves, 0)
+        // each step at the threshold goes round a cycle of two (charging takes it over, discharging back under), seen at
+        // the second round rather than solved round after round
+        XCTAssertGreaterThan(simulator.chatteringSolves, 50)
+        XCTAssertLessThanOrEqual(simulator.decisionSolves, 2 * simulator.chatteringSolves + 20)
         XCTAssertLessThan(simulator.newtonIterations, 20_000)
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
 
     /// A crossover detector as a maker's op-amp model has one: the sign of the output (through a fast RC) turns the
-    /// stage that drives it off while the sign changes over. At a step where the output crosses, no set of decisions
-    /// holds: the sign switches, which turns the stage off, which leaves the output where it was, which switches the
-    /// sign back, which turns the stage on. The rounds of decisions go round that cycle; it is seen when a round's
-    /// decisions are an earlier round's, and that round's solution stands (the switch then comes a substep later),
-    /// rather than solving on until Newton-Raphson gives up between the stage's two states and the substep is halved.
-    func testDecisionsGoingRoundInACycleKeepAnEarlierRound() throws {
+    /// stage that drives it off while the sign changes over. At a step where the output crosses, the sign switches,
+    /// which turns the stage off; the output's capacitor carries it on over the threshold (the integration follows its
+    /// slope), and the decisions settle in a few rounds, without the substep halved and with the output a step or two
+    /// behind at most.
+    func testACrossoverDetectorSettlesInAFewRounds() throws {
         let (circuit, warnings) = try SpiceNetlist.circuit(from: """
         crossover detector
         V1 in 0 SIN(0 1 1k)
@@ -189,7 +192,7 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
             + heaviest.joined(separator: "\n")
         XCTAssertFalse(simulator.isFailed, "\(simulator.problems)")
         XCTAssertEqual(simulator.convergenceFailures, 0)
-        XCTAssertGreaterThan(simulator.chatteringSolves, 0, "no crossing went round a cycle: " + report)
+        XCTAssertGreaterThan(simulator.decisionSolves, 0, "no crossing switched the detector: " + report)
         XCTAssertLessThan(worst, 0.3, report)
         XCTAssertLessThan(simulator.rejectedSubsteps, steps / 10, "substeps halved at crossings: " + report)
         XCTAssertLessThan(Double(simulator.newtonIterations) / Double(steps), 6, report)
