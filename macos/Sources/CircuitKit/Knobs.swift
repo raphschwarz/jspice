@@ -36,8 +36,9 @@ extension Circuit {
     /// Turns a knob to `position` (held within 0 to 1); true if it moved
     @discardableResult
     public mutating func turn(_ knob: KnobID, to position: Double) -> Bool {
+        // (checked before clamping: the clamp would make a position that is not a number 0)
+        guard position.isFinite, let i = index(of: knob.part) else { return false }
         let value = min(1, max(0, position))
-        guard value.isFinite, let i = index(of: knob.part) else { return false }
         if let inner = knob.inner {
             guard var block = elements[i].block, let j = block.circuit.index(of: inner),
                   block.circuit.elements[j].kind == .potentiometer,
