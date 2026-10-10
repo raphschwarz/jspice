@@ -72,6 +72,9 @@ public final class Pico: Microcontroller {
         publish()
     }
 
+    /// The running chip (for tests)
+    var rp2040: RP2040 { system.chip }
+
     public var pinCount: Int { Pico.gpioOfPin.count }
     public var clock: Double { 125e6 }
     public var cycles: Int { shownCycles }

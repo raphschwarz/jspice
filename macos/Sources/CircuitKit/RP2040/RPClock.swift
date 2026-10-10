@@ -105,6 +105,9 @@ final class RPClock {
 
     var hasAlarm: Bool { nextAlarm != nil }
 
+    /// When the next alarm goes off (infinity if none)
+    var nextAlarmAt: Double { nextAlarmNanos }
+
     /// Clears every alarm and starts time over (a reset of the whole chip)
     func restart() {
         var item = nextAlarm

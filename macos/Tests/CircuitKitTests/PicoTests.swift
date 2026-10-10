@@ -160,6 +160,42 @@ final class PicoTests: XCTestCase {
         XCTAssertEqual(frequency(from: 0.55, to: 0.9), 125e6 / (2 * Double((125_000_000 + 1000) / 2000)), accuracy: 0.2)
     }
 
+    /// Busy-waits counted at once (a sketch waiting on PIO's FIFO, on the ADC, on its loop) leave the Pico where it
+    /// would have been: the same circuit, step for step, to the bit
+    func testSkippedBusyWaitsLeaveThePicoWhereRunningWould() {
+        defer { RP2040.skipsBusyWaits = true }
+        for id in ["pico-pcm5102", "pico-knob", "pico-melody"] {
+            let circuit = Examples.example(id)!.circuit
+            var runs: [(voltages: [Double], registers: [UInt32], cycles: Int, serial: [UInt8], skipped: Double)] = []
+            for skipping in [false, true] {
+                RP2040.skipsBusyWaits = skipping
+                let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
+                simulator.errorControl = false
+                let elements = simulator.circuit.elements
+                let chipIndex = elements.firstIndex { $0.kind == .rp2040 }!
+                var voltages: [Double] = []
+                for _ in 0..<4_800 {
+                    simulator.step()
+                    for i in elements.indices where [.probe, .led, .speaker].contains(elements[i].kind) {
+                        voltages.append(simulator.voltageAcross(i))
+                    }
+                }
+                let pico = simulator.chip(chipIndex) as! Pico
+                let core = pico.rp2040.core!
+                runs.append((voltages, (0..<16).map { core.registers[$0] }, pico.cycles, pico.serialOutput, core.skippedNanos))
+            }
+            XCTAssertEqual(runs[0].skipped, 0, id)
+            // (pio_sm_put_blocking waits on FSTAT, analogRead on the ADC's READY)
+            if ["pico-pcm5102", "pico-knob"].contains(id) { XCTAssertGreaterThan(runs[1].skipped, 0, id) }
+            XCTAssertEqual(runs[0].registers, runs[1].registers, id)
+            XCTAssertEqual(runs[0].cycles, runs[1].cycles, id)
+            XCTAssertEqual(runs[0].serial, runs[1].serial, id)
+            XCTAssertEqual(runs[0].voltages.count, runs[1].voltages.count, id)
+            XCTAssertTrue(runs[0].voltages.elementsEqual(runs[1].voltages) { $0.bitPattern == $1.bitPattern }, id)
+            print("\(id): \(runs[1].skipped / 1e6) ms of \(Double(runs[1].cycles) / 125e3) ms counted at once")
+        }
+    }
+
     /// Compiles a sketch end to end when arduino-pico is installed (CI installs it through Chip Support)
     func testCompilesAndRunsAPicoSketchWhenAToolchainIsInstalled() throws {
         guard let toolchain = PicoToolchain.find() else {

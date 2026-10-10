@@ -536,6 +536,10 @@ public final class AVR: Microcontroller {
     private var loopCycles = 0
     private var loopRegisters: (UInt64, UInt64, UInt64, UInt64) = (0, 0, 0, 0)
     private var loopCore = 0
+    /// Rounds in a row that found the registers moved, and visits to pass over after too many (a loop that computes,
+    /// or counts down a delay)
+    private var loopStrikes = 0
+    private var loopIgnored = 0
     /// Cycles counted at once in busy-waits
     public private(set) var skippedCycles = 0
 
@@ -546,6 +550,12 @@ public final class AVR: Microcontroller {
             loopTarget = pc
             loopEffects = effects
             loopSeen = false
+            loopStrikes = 0
+            loopIgnored = 0
+            return
+        }
+        if loopIgnored > 0 {
+            loopIgnored -= 1
             return
         }
         let raw = UnsafeRawPointer(data)
@@ -559,7 +569,14 @@ public final class AVR: Microcontroller {
             cycles += rounds * length
             skippedCycles += rounds * length
             loopCycles = now + rounds * length
+            loopStrikes = 0
+        } else if loopSeen && loopStrikes >= 3 {
+            // a loop that computes, its registers moving round after round: not looked at for a while
+            loopStrikes = 0
+            loopIgnored = 64
+            loopSeen = false
         } else {
+            if loopSeen { loopStrikes += 1 }
             loopRegisters = registers
             loopCore = core
             loopCycles = now

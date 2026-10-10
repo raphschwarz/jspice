@@ -359,11 +359,32 @@ final class RP2040 {
 
     private var pioRunning: Bool { pio[0].running || pio[1].running }
 
-    /// Steps until `end` (nanoseconds): `step(limit:)` in a loop, with what it looks up each time looked up once
+    /// Whether runs skip busy-waits (for comparing): see `run(until:)`
+    static var skipsBusyWaits = true
+
+    /// Until when nothing but the core changes the chip, within a run that ends at `end`: the next alarm, the next
+    /// instruction of a running PIO block, the run's end
+    func quietUntil(_ end: Double) -> Double {
+        var until = min(end, clock.nextAlarmAt)
+        if pio[0].running { until = min(until, pio[0].nextDue) }
+        if pio[1].running { until = min(until, pio[1].nextDue) }
+        return until
+    }
+
+    /// Steps until `end` (nanoseconds): `step(limit:)` in a loop, with what it looks up each time looked up once.
+    ///
+    /// A busy-wait (the program polling a status that a PIO block, an alarm or an interrupt changes) goes round the
+    /// same instructions to the same effect until the chip's next event: nothing else changes in between. A backward
+    /// branch that finds the core as it was the last time it was taken, with nothing stored since but what was there
+    /// already, nothing written outside SRAM and only registers read that give the same until an event, counts the
+    /// rounds left before the next event (or the run's end) at once: the program is where it would have been, at the
+    /// same nanosecond. Instructions run one at a time outside a run (as traces take them) are as they were.
     func run(until end: Double) {
         let core: CortexM0 = self.core
         let clock = self.clock
         let pio0 = pio[0], pio1 = pio[1]
+        if RP2040.skipsBusyWaits { core.runEnd = end }
+        defer { core.runEnd = 0 }
         while clock.nanos < end {
             if core.waiting {
                 step(limit: end)

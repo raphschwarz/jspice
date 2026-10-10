@@ -52,16 +52,107 @@ final class CortexM0 {
     // chip object (each call through it costs a retain and a release)
     private let flash: UnsafeMutableRawPointer
     private let sram: UnsafeMutableRawPointer
+    private let clockRef: Unmanaged<RPClock>
+
+    // A busy-wait (see `RP2040.run(until:)`): what would make one round differ from the next, counted (stores that
+    // changed memory, writes outside SRAM, reads of registers that are not `pollable`, exceptions entered, WFE, WFI
+    // and writes to the special registers), and the state the last backward branch found
+    var effects = 0
+    /// Where the present run ends, in the clock's nanoseconds (0 outside `RP2040.run(until:)`: no skipping)
+    var runEnd = 0.0
+    private var loopTarget: UInt32 = 1
+    private var loopEffects = 0
+    private var loopSeen = false
+    private var loopNanos = 0.0
+    private var loopCycles = 0
+    private var loopFlags = 0
+    /// Rounds in a row that found the registers moved, and visits to pass over after too many (a loop that computes)
+    private var loopStrikes = 0
+    private var loopIgnored = 0
+    private let loopRegisters: UnsafeMutablePointer<UInt32> = {
+        let pointer = UnsafeMutablePointer<UInt32>.allocate(capacity: 16)
+        pointer.initialize(repeating: 0, count: 16)
+        return pointer
+    }()
+    /// Nanoseconds counted at once in busy-waits
+    private(set) var skippedNanos = 0.0
 
     init(chip: RP2040) {
         self.chip = chip
         chipRef = .passUnretained(chip)
         flash = chip.flash
         sram = chip.sram
+        clockRef = .passUnretained(chip.clock)
         registers[13] = 0xFFFF_FFFC
     }
 
-    deinit { registers.deallocate() }
+    deinit {
+        registers.deallocate()
+        loopRegisters.deallocate()
+    }
+
+    /// A backward branch taken (to `PC`), of `used` cycles: where it finds the registers, flags and PRIMASK as they
+    /// were the last time it was taken and nothing counted in `effects` since, the program goes round to the same
+    /// effect until the chip's next event (nothing else changes before then), and the rounds that end before it (and
+    /// before the run's end) are counted at once
+    private func loopedBack(used: Int) {
+        guard PC == loopTarget && effects == loopEffects else {
+            loopTarget = PC
+            loopEffects = effects
+            loopSeen = false
+            loopStrikes = 0
+            loopIgnored = 0
+            return
+        }
+        if loopIgnored > 0 {
+            loopIgnored -= 1
+            return
+        }
+        let flags = (N ? 1 : 0) | (Z ? 2 : 0) | (C ? 4 : 0) | (V ? 8 : 0) | (PM ? 16 : 0)
+        let now = clockRef._withUnsafeGuaranteedRef { $0.nanos } + Double(used) * RP2040.cycleNanos
+        let cyclesNow = cycles + used
+        if loopSeen && flags == loopFlags && memcmp(registers, loopRegisters, 64) == 0 {
+            let length = now - loopNanos
+            // (in whole nanoseconds, which the clock adds up exactly one instruction at a time as at once)
+            guard length > 0, now == now.rounded(), length == length.rounded(), now < 1e15 else { return }
+            let quiet = chipRef._withUnsafeGuaranteedRef { $0.quietUntil(runEnd) }
+            let rounds = max(Int(((quiet - now) / length).rounded(.up)) - 1, 0)
+            if rounds > 0 {
+                clockRef._withUnsafeGuaranteedRef { $0.tick(Double(rounds) * length) }
+                cycles += rounds * (cyclesNow - loopCycles)
+                skippedNanos += Double(rounds) * length
+            }
+            loopCycles += (rounds + 1) * (cyclesNow - loopCycles)
+            loopNanos = now + Double(rounds) * length
+            loopStrikes = 0
+        } else if loopSeen && loopStrikes >= 3 {
+            // a loop that computes, its registers moving round after round: not looked at for a while
+            loopStrikes = 0
+            loopIgnored = 64
+            loopSeen = false
+        } else {
+            if loopSeen { loopStrikes += 1 }
+            loopRegisters.update(from: registers, count: 16)
+            loopFlags = flags
+            loopNanos = now
+            loopCycles = cyclesNow
+            loopSeen = true
+        }
+    }
+
+    /// Registers a busy-wait can poll: reading them changes nothing, and what they give changes only at the chip's
+    /// events (an alarm, a PIO instruction, the circuit's pins), never with time alone. The boot ROM, the PIO blocks'
+    /// registers but their RX FIFOs, SIO's pins and FIFO status, the ADC's status and result, and USB's RAM.
+    @inline(__always) static func pollable(_ address: UInt32) -> Bool {
+        if address < UInt32(RP2040.bootromSize) { return true }
+        switch address >> 20 {
+        case 0x502, 0x503: return (address & 0xFFF) &- 0x20 >= 0x10
+        case 0xD00: return address >> 12 == 0xD0000 && address & 0xFFF < 0x58
+        case 0x501: return address < RP2040.dpramStart + UInt32(RP2040.dpramSize)
+        case 0x400: return address == 0x4004_C000 || address == 0x4004_C004
+        default: return false
+        }
+    }
 
     func reset() {
         SP = read32(VTOR)
@@ -139,6 +230,7 @@ final class CortexM0 {
     }
 
     func exceptionEntry(_ number: Int) {
+        effects &+= 1
         var frame: UInt32
         let align: UInt32
         if processStack && !handlerMode {
@@ -309,6 +401,7 @@ final class CortexM0 {
     }
 
     func writeSpecialRegister(_ sysm: Int, _ value: UInt32) {
+        effects &+= 1
         switch sysm {
         case CortexM0.sysmAPSR: APSR = value
         case CortexM0.sysmXPSR: xPSR = value
@@ -341,6 +434,7 @@ final class CortexM0 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt32.self) }
         if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt32.self) }
+        if !CortexM0.pollable(address) { effects &+= 1 }
         return chipRef._withUnsafeGuaranteedRef { $0.readUint32(address) }
     }
 
@@ -348,6 +442,7 @@ final class CortexM0 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt16.self) }
         if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt16.self) }
+        if !CortexM0.pollable(address) { effects &+= 1 }
         return chipRef._withUnsafeGuaranteedRef { $0.readUint16(address) }
     }
 
@@ -355,14 +450,19 @@ final class CortexM0 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.load(fromByteOffset: Int(inFlash), as: UInt8.self) }
         if inRAM < CortexM0.sramSize { return sram.load(fromByteOffset: Int(inRAM), as: UInt8.self) }
+        if !CortexM0.pollable(address) { effects &+= 1 }
         return chipRef._withUnsafeGuaranteedRef { $0.readUint8(address) }
     }
 
     @inline(__always) private func write32(_ address: UInt32, _ value: UInt32) {
         let inRAM = address &- RP2040.ramStart
         if inRAM < CortexM0.sramSize {
-            sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt32.self)
+            if sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt32.self) != value {
+                sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt32.self)
+                effects &+= 1
+            }
         } else {
+            effects &+= 1
             chipRef._withUnsafeGuaranteedRef { $0.writeUint32(address, value) }
         }
     }
@@ -370,8 +470,12 @@ final class CortexM0 {
     @inline(__always) private func write16(_ address: UInt32, _ value: UInt16) {
         let inRAM = address &- RP2040.ramStart
         if inRAM < CortexM0.sramSize {
-            sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt16.self)
+            if sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt16.self) != value {
+                sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt16.self)
+                effects &+= 1
+            }
         } else {
+            effects &+= 1
             chipRef._withUnsafeGuaranteedRef { $0.writeUint16(address, value) }
         }
     }
@@ -379,8 +483,12 @@ final class CortexM0 {
     @inline(__always) private func write8(_ address: UInt32, _ value: UInt8) {
         let inRAM = address &- RP2040.ramStart
         if inRAM < CortexM0.sramSize {
-            sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt8.self)
+            if sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt8.self) != value {
+                sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt8.self)
+                effects &+= 1
+            }
         } else {
+            effects &+= 1
             chipRef._withUnsafeGuaranteedRef { $0.writeUint8(address, value) }
         }
     }
@@ -604,12 +712,15 @@ final class CortexM0 {
             if checkCondition((opcode >> 8) & 0xF) {
                 PC = PC &+ UInt32(bitPattern: Int32(imm + 2))
                 delta += 1
+                // (back to this branch or before it)
+                if imm <= -4 && runEnd != 0 { loopedBack(used: 2) }
             }
         case .b:
             var imm = (opcode & 0x7FF) << 1
             if imm & (1 << 11) != 0 { imm = (imm & 0x7FF) - 0x800 }
             PC = PC &+ UInt32(bitPattern: Int32(imm + 2))
             delta += 1
+            if imm <= -4 && runEnd != 0 { loopedBack(used: 2) }
         case .bics:
             let rdn = opcode & 7
             let result = r(rdn) & ~r((opcode >> 3) & 7)
@@ -870,9 +981,11 @@ final class CortexM0 {
             registers[opcode & 7] = r((opcode >> 3) & 7) & 0xFFFF
         case .wfe:
             delta += 1
+            effects &+= 1
             if eventRegistered { eventRegistered = false } else { waiting = true }
         case .wfi:
             delta += 1
+            effects &+= 1
             waiting = true
         case .wide:
             delta = executeWide(opcode, Int(read16(opcodePC &+ 2)))
