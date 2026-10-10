@@ -609,6 +609,15 @@ public final class Simulator {
     public static var confirmsByBalance = true
     public static var reusesPastStillColumns = true
     public static var givesUpWhenStalled = true
+    /// How often a step that started from the confirmed stamps was confirmed at its second iteration rather than
+    /// started again (an average over about the last twenty), and the solves for which none starts from them once
+    /// that falls below a half: a transistor circuit's parts move between steps, and the second iteration finds them
+    /// elsewhere than the stamps had them, at the cost of two iterations
+    private var reuseRate = 1.0
+    private var reuseRest = 0
+    static let reuseRestSolves = 256
+    /// Whether that rest is taken (off, for comparing)
+    public static var restsReuse = true
     private var reuseAllowed = false
     private var confirmedPlanSerial = -1
     private var confirmedBaseVersion = -1
@@ -814,6 +823,7 @@ public final class Simulator {
         pinSwitch = nil
         switchSolutions = [:]
         (confirmRate, confirmRest) = (1, 0)
+        (reuseRate, reuseRest) = (1, 0)
         chipCycleCarry = [:]
         for i in chipIndices {
             let element = flat.elements[i]
@@ -1553,8 +1563,9 @@ public final class Simulator {
         let confirming = Self.reusesFactors && (confirmRest == 0 || !Self.restsConfirmation)
         // only a solve that ends confirmed leaves stamps to start the next from, and only a solve that can start again
         // from where it started takes them (not one that a single iteration from the prediction ends)
+        if reuseRest > 0 { reuseRest -= 1 }
         let mayReuse = confirming && confirmedStamps && junctionConductance == 0 && newtonFromSolveStart
-            && !(onlyQuasiLinear && predictedSolve)
+            && !(onlyQuasiLinear && predictedSolve) && (reuseRest == 0 || !Self.restsReuse)
         confirmedStamps = false
         reuseAllowed = mayReuse
         // whether the first iteration started from them
@@ -1660,6 +1671,7 @@ public final class Simulator {
                 // the snapshot (the stamps the solution solved, which the parts gave again there) for the next step
                 // to start from; or, where entries changed, the stamps as the parts gave them there
                 if !stampsConfirmedExactly { snapshotStamps(plan) }
+                if startedFromKept && iteration == 2 { reuseRate += (1 - reuseRate) * 0.05 }
                 confirmedStamps = true
                 confirmedPlanSerial = planSerial
                 confirmedBaseVersion = baseVersion
@@ -1674,6 +1686,11 @@ public final class Simulator {
                 }
             }
             if startedFromKept && iteration == 2 {
+                reuseRate -= reuseRate * 0.05
+                if reuseRate < 0.5 {
+                    reuseRate = 0.6
+                    reuseRest = Self.reuseRestSolves
+                }
                 startAgain()
                 continue
             }

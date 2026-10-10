@@ -65,6 +65,7 @@ let switches: [String: (Bool) -> Void] = [
     "confirm-by-balance": { Simulator.confirmsByBalance = $0 },
     "reuse-past-still-columns": { Simulator.reusesPastStillColumns = $0 },
     "give-up-when-stalled": { Simulator.givesUpWhenStalled = $0 },
+    "rest-reuse": { Simulator.restsReuse = $0 },
 ]
 
 /// Simulates each example twice over, with one of the engine's switches off and on, in alternate runs of `seconds` of

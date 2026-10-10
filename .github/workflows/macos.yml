@@ -59,7 +59,7 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25
           # an engine switch off and on, run for run on the same machine: what confirming by balance, kept factors past
           # columns that hold still and giving up on stalls save (or cost) transistor circuits
-          for switch in confirm-by-balance reuse-past-still-columns give-up-when-stalled rest-confirmation; do
+          for switch in confirm-by-balance reuse-past-still-columns give-up-when-stalled rest-confirmation rest-reuse; do
             ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch $switch 0.25 voice acid wind vcf mc1496-ring guitar-fuzz tube-screamer bargraph || true
           done
           # and what reusing factors (the chord method, confirmations, kept stamps) and bypassing behavioural sources save them
