@@ -325,6 +325,11 @@ public final class Simulator {
         var lastCelsius = 0.0
         var reach = 0.0
         var evaluated = false
+        /// The plan's slots its stamps go to, for the plan numbered `slotsSerial` (see `stampBehavior`): four for each
+        /// input, then four for its own row (-1 where an entry is ground's); usable unless some stamp is outside the plan
+        let slots: UnsafeMutablePointer<Int32>
+        var slotsSerial = -1
+        var slotsUsable = false
 
         init(expression: SpiceExpression, program: SpiceExpression.Program, inputs: [BehaviorInput], voltage: Bool) {
             self.expression = expression
@@ -338,6 +343,8 @@ public final class Simulator {
             lastInputs.initialize(repeating: 0, count: max(inputs.count, 1))
             lastDecisions = .allocate(capacity: max(inputs.count, 1))
             lastDecisions.initialize(repeating: 0, count: max(inputs.count, 1))
+            slots = .allocate(capacity: 4 * inputs.count + 4)
+            slots.initialize(repeating: -1, count: 4 * inputs.count + 4)
             lastSlopes = .allocate(capacity: max(inputs.count, 1))
             lastSlopes.initialize(repeating: 0, count: max(inputs.count, 1))
         }
@@ -346,6 +353,7 @@ public final class Simulator {
             inputList.deallocate()
             lastInputs.deallocate()
             lastDecisions.deallocate()
+            slots.deallocate()
             lastSlopes.deallocate()
         }
     }
@@ -398,7 +406,9 @@ public final class Simulator {
 
     /// How the equations are factored (see `SparsePlan`): made at the first solve after the circuit changes shape, and
     /// again whenever it no longer fits
-    private var plan: SparsePlan?
+    private var plan: SparsePlan? { didSet { planSerial &+= 1 } }
+    /// Counts the plans set, so what is worked out for one (a source's slots) is known to be for the present one
+    private var planSerial = 0
     /// Plans made since the start, and the seconds spent making them
     public private(set) var plans = 0
     public private(set) var planningSeconds = 0.0
@@ -1436,6 +1446,7 @@ public final class Simulator {
             guard let plan else { fail(); return false }
             iteration += 1
             newtonIterations += 1
+            let fromKept = iteration == 1 && mayReuseLastStamps(plan)
             if valuesVersion != baseVersion || values.count != baseValues.count {
                 Self.copy(baseValues, into: &values)
                 valuesVersion = baseVersion
@@ -1444,8 +1455,9 @@ public final class Simulator {
                 values.withUnsafeMutableBufferPointer { v in
                     baseValues.withUnsafeBufferPointer { plan.restoreChanging(v.baseAddress!, from: $0.baseAddress!) }
                 }
-            } else {
-                // since a chord step (which factors nothing), only the slots the stamps reached
+            } else if !fromKept {
+                // since a chord step (which factors nothing), only the slots the stamps reached (which the kept stamps
+                // are written over, each of them)
                 values.withUnsafeMutableBufferPointer { v in
                     baseValues.withUnsafeBufferPointer { base in
                         for slot in stampedSlots { v[Int(slot)] = base[Int(slot)] }
@@ -1457,7 +1469,8 @@ public final class Simulator {
             // only the block's rows: the stamps reach no others, and the linear block's are read from `rhsForwarded`
             Self.copy(plan.block, from: rhsForwarded, into: &workVector)
             limiting = false
-            if iteration == 1 && reuseLastStamps(plan) {
+            if fromKept {
+                reuseLastStamps(plan)
                 // the last step ended on stamps that its own solution confirmed (its parts on straight stretches): this
                 // step's first iteration starts from them rather than evaluating every part. It cannot end the solve:
                 // the next iteration evaluates every part at its solution and confirms it, or Newton-Raphson starts
@@ -1501,7 +1514,7 @@ public final class Simulator {
                 continue
             }
             // (the kept stamps are the snapshot already)
-            if Self.reusesFactors && !(startedFromKept && iteration == 1) { snapshotStamps(plan) }
+            if Self.reusesFactors && !fromKept { snapshotStamps(plan) }
             if damped {
                 Self.copy(x, into: &dampFrom)
                 dampedIterations += 1
@@ -1546,7 +1559,6 @@ public final class Simulator {
             // the chord method contracts linearly, by how near the kept factors are: where it does not contract fast,
             // the next iteration factors afresh
             refactor = chordSteps > 0 && (change > 0.25 * lastChange || chordSteps >= 4)
-            let fromKept = startedFromKept && iteration == 1
             if change.isNaN {
                 if fromKept {
                     startAgain()
@@ -1619,12 +1631,15 @@ public final class Simulator {
         }
     }
 
-    /// Puts the stamps the last solve confirmed into the block, in place of stamping: true if there are such stamps for
-    /// this plan and base matrix
-    private func reuseLastStamps(_ plan: SparsePlan) -> Bool {
+    /// Whether there are stamps the last solve confirmed, for this plan and base matrix, to start from
+    private func mayReuseLastStamps(_ plan: SparsePlan) -> Bool {
+        reuseAllowed && Self.reusesFactors && confirmedPlan === plan && stampedPlan === plan && confirmedBaseVersion == baseVersion
+            && stampSnapshot.count == stampedSlots.count && rightSnapshot.count == plan.block.count
+    }
+
+    /// Puts the stamps the last solve confirmed (see `mayReuseLastStamps`) into the block, in place of stamping
+    private func reuseLastStamps(_ plan: SparsePlan) {
         let rows = plan.block.count
-        guard reuseAllowed, Self.reusesFactors, confirmedPlan === plan, stampedPlan === plan, confirmedBaseVersion == baseVersion,
-              stampSnapshot.count == stampedSlots.count, rightSnapshot.count == rows else { return false }
         reuseAllowed = false
         values.withUnsafeMutableBufferPointer { v in
             stampSnapshot.withUnsafeBufferPointer { kept in
@@ -1636,7 +1651,6 @@ public final class Simulator {
                 for k in 0..<rows { b[plan.block[k]] += kept[k] }
             }
         }
-        return true
     }
 
     /// Whether the block as just stamped is the one `snapshotStamps` kept, each entry within 10⁻¹² of its row's scale
@@ -3420,40 +3434,103 @@ public final class Simulator {
         var equivalent = b.lastValue
         let row = topology.sourceRow[i]
         let voltageSource = b.voltage
+        // Newton-Raphson's stamps go straight to the plan's slots, worked out once for each plan, rather than through
+        // the slot map (as large as the matrix is dense) for every entry: the same additions in the same order
+        let cached = sparseStamping && stampFloor > 0 && slotsUsable(b, row, plus, minus, m)
+        let slots = b.slots
+        let recording = recordingStamps, flags = stampedFlags
+        func entry(_ j: Int, _ r: Int, _ c: Int, _ value: Double) {
+            guard cached else {
+                add(matrix, m, r, c, value)
+                return
+            }
+            let slot = Int(slots[j])
+            guard slot >= 0 else { return }
+            matrix[slot] += value
+            if recording, let flags, !flags[slot] { noteStampedSlot(slot) }
+        }
         for k in 0..<count {
             let slope = lastSlopes[k]
             guard slope != 0 && slope.isFinite else { continue }
             equivalent -= slope * v[k]
             let input = inputs[k]
+            let j = 4 * k
             if voltageSource {
                 guard row >= 0 else { continue }
                 if input.row >= 0 {
-                    add(matrix, m, row, input.row, -slope * input.sign)
+                    entry(j, row, input.row, -slope * input.sign)
                 } else {
-                    add(matrix, m, row, input.plus - 1, -slope)
-                    add(matrix, m, row, input.minus - 1, slope)
+                    entry(j, row, input.plus - 1, -slope)
+                    entry(j + 1, row, input.minus - 1, slope)
                 }
             } else if input.row >= 0 {
-                add(matrix, m, plus, input.row, slope * input.sign)
-                add(matrix, m, minus, input.row, -slope * input.sign)
+                entry(j, plus, input.row, slope * input.sign)
+                entry(j + 1, minus, input.row, -slope * input.sign)
             } else {
-                add(matrix, m, plus, input.plus - 1, slope)
-                add(matrix, m, plus, input.minus - 1, -slope)
-                add(matrix, m, minus, input.plus - 1, -slope)
-                add(matrix, m, minus, input.minus - 1, slope)
+                entry(j, plus, input.plus - 1, slope)
+                entry(j + 1, plus, input.minus - 1, -slope)
+                entry(j + 2, minus, input.plus - 1, -slope)
+                entry(j + 3, minus, input.minus - 1, slope)
             }
         }
         if voltageSource {
             guard row >= 0 else { return }
             // as a voltage source's: its current leaves + and returns at −, and v(+) − v(−) is the expression
-            add(matrix, m, plus, row, -1)
-            add(matrix, m, minus, row, 1)
-            add(matrix, m, row, plus, 1)
-            add(matrix, m, row, minus, -1)
+            let own = 4 * count
+            entry(own, plus, row, -1)
+            entry(own + 1, minus, row, 1)
+            entry(own + 2, row, plus, 1)
+            entry(own + 3, row, minus, -1)
             if equivalent.isFinite { rhs[row] += equivalent }
         } else if equivalent.isFinite {
             stampCurrent(rhs, nodes[0], nodes[1], equivalent)
         }
+    }
+
+    /// Whether a behavioural source's slots (see `Behavior.slots`) serve the present plan, working them out from the
+    /// slot map if they are for another: in the order and positions `stampBehavior` stamps them
+    private func slotsUsable(_ b: Behavior, _ row: Int, _ plus: Int, _ minus: Int, _ m: Int) -> Bool {
+        if b.slotsSerial == planSerial { return b.slotsUsable }
+        b.slotsSerial = planSerial
+        let count = b.inputCount, inputs = b.inputList, slots = b.slots
+        var usable = true
+        func slot(_ r: Int, _ c: Int) -> Int32 {
+            guard r >= 0 && c >= 0 else { return -1 }
+            let s = slotMap[r * m + c]
+            if Int(s) < stampFloor { usable = false }
+            return s
+        }
+        slots.update(repeating: -1, count: 4 * count + 4)
+        for k in 0..<count {
+            let input = inputs[k]
+            let j = 4 * k
+            if b.voltage {
+                guard row >= 0 else { continue }
+                if input.row >= 0 {
+                    slots[j] = slot(row, input.row)
+                } else {
+                    slots[j] = slot(row, input.plus - 1)
+                    slots[j + 1] = slot(row, input.minus - 1)
+                }
+            } else if input.row >= 0 {
+                slots[j] = slot(plus, input.row)
+                slots[j + 1] = slot(minus, input.row)
+            } else {
+                slots[j] = slot(plus, input.plus - 1)
+                slots[j + 1] = slot(plus, input.minus - 1)
+                slots[j + 2] = slot(minus, input.plus - 1)
+                slots[j + 3] = slot(minus, input.minus - 1)
+            }
+        }
+        if b.voltage && row >= 0 {
+            let own = 4 * count
+            slots[own] = slot(plus, row)
+            slots[own + 1] = slot(minus, row)
+            slots[own + 2] = slot(row, plus)
+            slots[own + 3] = slot(row, minus)
+        }
+        b.slotsUsable = usable
+        return usable
     }
 
     /// A behavioural source's input at the solution its decisions are held at
@@ -3470,10 +3547,24 @@ public final class Simulator {
         for i in decidingIndices {
             guard let b = behaviors[i] else { continue }
             let v = behaviorValues, d = behaviorDecisions, r = behaviorRegisters
-            for (k, input) in b.inputs.enumerated() {
+            let count = b.inputCount, inputs = b.inputList
+            for k in 0..<count {
+                let input = inputs[k]
                 v[k] = input.row >= 0 ? (input.row < x.count ? input.sign * x[input.row] : 0)
                     : voltage(input.plus) - voltage(input.minus)
                 d[k] = decisionInput(input)
+            }
+            // within half its reach of its last evaluation, both where it ended and where its decisions are held (and
+            // its decisions made where it ended): every decision in it is as it was there, the same both ways
+            if Self.bypassesDevices && b.evaluated && b.reach > 0 && b.lastCelsius == celsius {
+                let last = b.lastInputs, lastDecisions = b.lastDecisions
+                var furthest = 0.0, finite = true
+                for k in 0..<count {
+                    let (live, ended, held) = (abs(v[k] - last[k]), abs(v[k] - lastDecisions[k]), abs(d[k] - lastDecisions[k]))
+                    if !(live.isFinite && ended.isFinite && held.isFinite) { finite = false }
+                    furthest = max(furthest, live, ended, held)
+                }
+                if finite && furthest <= 0.5 * b.reach { continue }
             }
             let program = b.program
             program.run(v, deciding: d, time: solveTime, celsius: celsius, into: r)
