@@ -515,7 +515,6 @@ public final class Simulator {
     private var baseKey = -1
     private var baseVersionCount = 0
     /// What a substep changes, kept to go back to if it is thrown away
-    private var rejectX: [Double] = []
     private var rejectLimited: [Double] = []
     private var rejectLimited2: [Double] = []
     private var rejectLimited3: [Double] = []
@@ -1118,8 +1117,8 @@ public final class Simulator {
             a2 = ratio * ratio / (1 + ratio)
             let t = position + units == whole ? end : time + timeStep * Double(position + units) / Double(whole)
             let mayReject = canSubdivide && level < Self.finestLevel
+            // (a rejected substep goes back to `substepStartX`, the solution it started from)
             if mayReject {
-                Self.copy(x, into: &rejectX)
                 saveLimited(&rejectLimited, &rejectLimited2, &rejectLimited3)
                 rejectDigital = digitalState
                 rejectLogic = logicStates
@@ -1141,7 +1140,7 @@ public final class Simulator {
             }
             let error = canSubdivide && errorControl && converged && !solveChattered ? errorRatio() : 0
             if mayReject && (!converged || error > 1) {
-                Self.copy(rejectX, into: &x)
+                Self.copy(substepStartX, into: &x)
                 restoreLimited(rejectLimited, rejectLimited2, rejectLimited3)
                 if digitalState != rejectDigital || logicStates != rejectLogic {
                     digitalState = rejectDigital
