@@ -398,19 +398,31 @@ public final class Simulator {
     /// The iterate a damped Newton-Raphson iteration moves from
     private var dampFrom: [Double] = []
     /// The nonlinear block's last factoring, kept for the iterations after it (see `newton`): the plan and pivot order it
-    /// was made with, the factors (in the plan's slots), the block's entries before factoring (at `keptSlots`, the
-    /// block's structure, with each one's row and column), and the largest entry of each row of the block
+    /// was made with, the factors (in the plan's slots), the base matrix it was made on, the values the slots
+    /// Newton-Raphson's stamps reach had then, and the largest entry of each row of the block
     private var keptPlan: SparsePlan?
     private var keptOrder: EliminationProgram?
     private var keptFactors: [Double] = []
-    private var keptEntries: [Double] = []
+    private var keptValues: [Double] = []
+    private var keptBaseVersion = -1
+    /// The block's structure: its slots, and the row of the block each is in (for the rows' largest entries)
     private var keptSlots: [Int32] = []
-    private var keptRows: [Int32] = []
-    private var keptColumns: [Int32] = []
     private var keptLocalRows: [Int32] = []
     private var keptRowScale: [Double] = []
     private var residual: [Double] = []
-    private var chordDelta: [Double] = []
+    /// The slots of the nonlinear block that Newton-Raphson's stamps have reached since the plan was made, each with its
+    /// row and column and its row of the block (`stampedFlags` marks them): on the same base matrix, the only slots in
+    /// which an iteration's block can differ from the one the kept factors were made from
+    private var stampedSlots: [Int32] = []
+    private var stampedRows: [Int32] = []
+    private var stampedColumns: [Int32] = []
+    private var stampedLocalRows: [Int32] = []
+    private var stampedFlags: UnsafeMutablePointer<Bool>?
+    private var stampedPlan: SparsePlan?
+    /// Whether a slot has been reached for the first time since the factors were kept (they were not made with it in view)
+    private var stampedSlotsGrew = false
+    /// Whether the stamps going in are Newton-Raphson's, to be recorded
+    private var recordingStamps = false
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
     private var savedLimited3: [Double] = []
@@ -468,6 +480,10 @@ public final class Simulator {
     static let steppedIterations = 40
     /// How long a noise source holds each sample, at least
     static let noiseSampleTime = 1 / 48_000.0
+
+    deinit {
+        stampedFlags?.deallocate()
+    }
 
     public init(circuit: Circuit = Circuit(), timeStep: Double = 1e-5) {
         self.circuit = Circuit()
@@ -1290,9 +1306,11 @@ public final class Simulator {
             Self.copy(rhsForwarded, into: &workVector)
             limiting = false
             beginSparseStamping(plan, floor: plan.tailStart)
+            recordStamps(for: plan)
             stampMemristors(&values, m)
             if hasNonlinear { stampNonlinear(&values, &workVector, m) }
             sparseStamping = false
+            recordingStamps = false
             if stampMissed {
                 needsPlan = true
                 continue
@@ -1385,21 +1403,54 @@ public final class Simulator {
     /// still serve: the chord method then contracts by about that much a step (times the block's conditioning)
     static let reuseTolerance = 1e-7
 
-    /// Whether the kept factors were made for this plan and the block's entries, as stamped, are near those they were
-    /// made from
+    /// Starts recording which slots of the nonlinear block Newton-Raphson's stamps reach, afresh for a new plan
+    private func recordStamps(for plan: SparsePlan) {
+        if stampedPlan !== plan {
+            stampedFlags?.deallocate()
+            let count = max(plan.entryCount, 1)
+            let flags = UnsafeMutablePointer<Bool>.allocate(capacity: count)
+            flags.initialize(repeating: false, count: count)
+            stampedFlags = flags
+            stampedPlan = plan
+            stampedSlots = []
+            stampedRows = []
+            stampedColumns = []
+            stampedLocalRows = []
+            stampedSlotsGrew = true
+        }
+        recordingStamps = true
+    }
+
+    /// A slot of the nonlinear block reached by a stamp for the first time
+    @inline(never) private func noteStampedSlot(_ slot: Int) {
+        guard let plan = stampedPlan, let flags = stampedFlags else { return }
+        flags[slot] = true
+        let s = plan.block.count
+        let local = slot - plan.tailStart
+        guard s > 0, local >= 0, local < s * s else { return }
+        stampedSlots.append(Int32(slot))
+        stampedRows.append(Int32(plan.block[local / s]))
+        stampedColumns.append(Int32(plan.block[local % s]))
+        stampedLocalRows.append(Int32(local / s))
+        stampedSlotsGrew = true
+    }
+
+    /// Whether the kept factors were made for this plan, on this base matrix, and the block's entries, as stamped, are
+    /// near those they were made from (only the slots the stamps reach can differ)
     private func keptFactorsSuit(_ plan: SparsePlan) -> Bool {
-        guard keptPlan === plan, keptOrder != nil, !plan.block.isEmpty, keptEntries.count == keptSlots.count else { return false }
-        let count = keptSlots.count
+        guard keptPlan === plan, keptOrder != nil, !plan.block.isEmpty, keptBaseVersion == baseVersion, !stampedSlotsGrew,
+              keptValues.count == plan.entryCount else { return false }
+        let count = stampedSlots.count
         return values.withUnsafeBufferPointer { v -> Bool in
-            keptSlots.withUnsafeBufferPointer { slots -> Bool in
-                keptEntries.withUnsafeBufferPointer { entries -> Bool in
-                    keptLocalRows.withUnsafeBufferPointer { rows -> Bool in
+            keptValues.withUnsafeBufferPointer { kept -> Bool in
+                stampedSlots.withUnsafeBufferPointer { slots -> Bool in
+                    stampedLocalRows.withUnsafeBufferPointer { rows -> Bool in
                         keptRowScale.withUnsafeBufferPointer { scale -> Bool in
                             var k = 0
                             while k < count {
-                                let difference = abs(v[Int(slots[k])] - entries[k])
+                                let slot = Int(slots[k])
                                 // (written so that a value that is not a number fails too)
-                                guard difference <= Self.reuseTolerance * scale[Int(rows[k])] else { return false }
+                                guard abs(v[slot] - kept[slot]) <= Self.reuseTolerance * scale[Int(rows[k])] else { return false }
                                 k += 1
                             }
                             return true
@@ -1410,36 +1461,39 @@ public final class Simulator {
         }
     }
 
-    /// Keeps the block's entries as stamped, before factoring: what later iterations' are compared with
+    /// Keeps the block's entries as stamped, before factoring: the largest of each row, and those of the slots the
+    /// stamps reach, which later iterations' are compared with
     private func keepEntries(_ plan: SparsePlan) {
         let s = plan.block.count
         if keptPlan !== plan {
             keptPlan = plan
-            keptOrder = nil
             keptSlots = []
-            keptRows = []
-            keptColumns = []
             keptLocalRows = []
             for i in 0..<s {
                 for j in 0..<s where plan.blockStructure[i * s + j] {
                     keptSlots.append(Int32(plan.tailStart + i * s + j))
-                    keptRows.append(Int32(plan.block[i]))
-                    keptColumns.append(Int32(plan.block[j]))
                     keptLocalRows.append(Int32(i))
                 }
             }
-            keptEntries = [Double](repeating: 0, count: keptSlots.count)
             keptFactors = [Double](repeating: 0, count: plan.entryCount)
+            keptValues = [Double](repeating: 0, count: plan.entryCount)
             keptRowScale = [Double](repeating: 0, count: s)
         }
         keptOrder = nil
         for i in 0..<s { keptRowScale[i] = 0 }
-        for k in keptSlots.indices {
-            let entry = values[Int(keptSlots[k])]
-            keptEntries[k] = entry
-            let row = Int(keptLocalRows[k])
-            keptRowScale[row] = max(keptRowScale[row], abs(entry))
+        values.withUnsafeBufferPointer { v in
+            keptRowScale.withUnsafeMutableBufferPointer { scale in
+                for k in keptSlots.indices {
+                    let row = Int(keptLocalRows[k])
+                    scale[row] = max(scale[row], abs(v[Int(keptSlots[k])]))
+                }
+            }
+            keptValues.withUnsafeMutableBufferPointer { kept in
+                for slot in stampedSlots { kept[Int(slot)] = v[Int(slot)] }
+            }
         }
+        keptBaseVersion = baseVersion
+        stampedSlotsGrew = false
     }
 
     /// Keeps the block's factors, just made by `order`, for the iterations after
@@ -1455,25 +1509,29 @@ public final class Simulator {
         keptOrder = order
     }
 
-    /// One chord step: the residual of the block's equations as stamped at the present solution, solved with the kept
-    /// factors for the correction to it. Returns the largest change of an unknown, relative to its new size, or NaN.
+    /// One chord step: the block's equations as stamped, A x = b, solved with the factors of the block A₀ they were made
+    /// from as A₀ x' = b + (A₀ − A) x at the present solution x, A₀ − A being zero but where the stamps reach. Its
+    /// fixed point is A x = b, Newton-Raphson's solution. Writes x' and returns the largest change of an unknown,
+    /// relative to its new size, or NaN.
     private func chordStep(_ plan: SparsePlan) -> Double {
         guard let order = keptOrder else { return .nan }
         let m = workVector.count
         if residual.count != m { residual = [Double](repeating: 0, count: m) }
-        if chordDelta.count != m { chordDelta = [Double](repeating: 0, count: m) }
         Self.copy(workVector, into: &residual)
-        let count = keptSlots.count
+        let count = stampedSlots.count
         values.withUnsafeBufferPointer { v in
-            residual.withUnsafeMutableBufferPointer { r in
-                x.withUnsafeBufferPointer { x in
-                    keptSlots.withUnsafeBufferPointer { slots in
-                        keptRows.withUnsafeBufferPointer { rows in
-                            keptColumns.withUnsafeBufferPointer { columns in
-                                var k = 0
-                                while k < count {
-                                    r[Int(rows[k])] -= v[Int(slots[k])] * x[Int(columns[k])]
-                                    k += 1
+            keptValues.withUnsafeBufferPointer { kept in
+                residual.withUnsafeMutableBufferPointer { r in
+                    x.withUnsafeBufferPointer { x in
+                        stampedSlots.withUnsafeBufferPointer { slots in
+                            stampedRows.withUnsafeBufferPointer { rows in
+                                stampedColumns.withUnsafeBufferPointer { columns in
+                                    var k = 0
+                                    while k < count {
+                                        let slot = Int(slots[k])
+                                        r[Int(rows[k])] += (kept[slot] - v[slot]) * x[Int(columns[k])]
+                                        k += 1
+                                    }
                                 }
                             }
                         }
@@ -1481,21 +1539,12 @@ public final class Simulator {
                 }
             }
         }
-        let solved = keptFactors.withUnsafeBufferPointer { f -> Double in
+        return keptFactors.withUnsafeBufferPointer { f -> Double in
             residual.withUnsafeMutableBufferPointer { r -> Double in
                 order.forward(f.baseAddress!, r.baseAddress!)
-                return chordDelta.withUnsafeMutableBufferPointer { d -> Double in order.back(f.baseAddress!, r.baseAddress!, d.baseAddress!) }
+                return x.withUnsafeMutableBufferPointer { x -> Double in order.back(f.baseAddress!, r.baseAddress!, x.baseAddress!) }
             }
         }
-        if solved.isNaN { return .nan }
-        var change = 0.0
-        for u in plan.block {
-            let next = x[u] + chordDelta[u]
-            guard next.isFinite else { return .nan }
-            change = max(change, abs(chordDelta[u]) / (1 + abs(next)))
-            x[u] = next
-        }
-        return change
     }
 
     /// The linear block's forward substitution of the right-hand side, done once per solve (the nonlinear parts only
@@ -1576,7 +1625,12 @@ public final class Simulator {
     @inline(__always) private func stamp(_ matrix: Entries, _ index: Int, _ value: Double) {
         if sparseStamping {
             let slot = Int(slotMap[index])
-            if slot >= stampFloor { matrix[slot] += value } else { missStamp(index) }
+            if slot >= stampFloor {
+                matrix[slot] += value
+                if recordingStamps, let flags = stampedFlags, !flags[slot] { noteStampedSlot(slot) }
+            } else {
+                missStamp(index)
+            }
         } else {
             matrix[index] += value
         }
