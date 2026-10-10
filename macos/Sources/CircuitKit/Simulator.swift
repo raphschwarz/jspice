@@ -696,9 +696,8 @@ public final class Simulator {
     /// Whether `newton` starts from where `solve` started it (where `restoreSolveStart` puts `x`, moved on by the
     /// predictor), so that it can start again from there
     private var newtonFromSolveStart = false
-    private var savedLimited: [Double] = []
-    private var savedLimited2: [Double] = []
-    private var savedLimited3: [Double] = []
+    /// The limited voltages where the solve started (see `saveLimited`)
+    private var savedLimited = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
 
     private var matrixIsCurrent = false
     private var hasNonlinear = false
@@ -728,9 +727,7 @@ public final class Simulator {
     private var baseKey = -1
     private var baseVersionCount = 0
     /// What a substep changes, kept to go back to if it is thrown away
-    private var rejectLimited: [Double] = []
-    private var rejectLimited2: [Double] = []
-    private var rejectLimited3: [Double] = []
+    private var rejectLimited = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
     private var rejectDigital: [Bool] = []
     private var rejectLogic: [LogicState] = []
     /// Extra conductance across every junction while gmin stepping, otherwise zero
@@ -764,6 +761,8 @@ public final class Simulator {
         limitedVoltage.deallocate()
         limitedVoltage2.deallocate()
         limitedVoltage3.deallocate()
+        savedLimited.deallocate()
+        rejectLimited.deallocate()
         behaviorRegisters.deallocate()
         behaviorRates.deallocate()
         behaviorValues.deallocate()
@@ -1368,9 +1367,12 @@ public final class Simulator {
             let mayReject = canSubdivide && level < Self.finestLevel
             // (a rejected substep goes back to `substepStartX`, the solution it started from)
             if mayReject {
-                saveLimited(&rejectLimited, &rejectLimited2, &rejectLimited3)
-                rejectDigital = digitalState
-                rejectLogic = logicStates
+                saveLimited(&rejectLimited)
+                // (only 555s, Schmitt triggers and logic change these, as they switch)
+                if hasDigital {
+                    rejectDigital = digitalState
+                    rejectLogic = logicStates
+                }
             }
             Self.copy(x, into: &substepStartX)
             predictNext = predictorReady && hasNonlinear
@@ -1390,8 +1392,8 @@ public final class Simulator {
             let error = canSubdivide && errorControl && converged && !solveChattered ? errorRatio() : 0
             if mayReject && (!converged || error > 1) {
                 Self.copy(substepStartX, into: &x)
-                restoreLimited(rejectLimited, rejectLimited2, rejectLimited3)
-                if digitalState != rejectDigital || logicStates != rejectLogic {
+                restoreLimited(rejectLimited)
+                if hasDigital && (digitalState != rejectDigital || logicStates != rejectLogic) {
                     digitalState = rejectDigital
                     logicStates = rejectLogic
                     matrixIsCurrent = false
@@ -1513,7 +1515,7 @@ public final class Simulator {
         // where it starts, to go back to: the substep's start, kept already, or kept here
         solveStartsSubstep = fromSubstepStart && substepStartX.count == x.count
         if !solveStartsSubstep { Self.copy(x, into: &savedX) }
-        saveLimited(&savedLimited, &savedLimited2, &savedLimited3)
+        saveLimited(&savedLimited)
         // behavioural sources' decisions held where the solve starts
         if !decidingIndices.isEmpty { Self.copy(x, into: &decisionX) }
         junctionConductance = 0
@@ -1572,7 +1574,7 @@ public final class Simulator {
                     memoryRetries += 1
                     trace?("   again from the solution before the sources that moved last decided as they do now")
                     Self.copy(flipSolved[start], into: &x)
-                    restoreLimited(savedLimited, savedLimited2, savedLimited3)
+                    restoreLimited(savedLimited)
                     converged = newton(iterations: iterations)
                     if converged { memoryRetriesConverged += 1 }
                     trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
@@ -1590,9 +1592,7 @@ public final class Simulator {
         predictedSolve = false
         let firstTry = (x, Array(limitedVoltage), Array(limitedVoltage2), Array(limitedVoltage3))
         restoreSolveStart()
-        Self.assign(&limitedVoltage, savedLimited)
-        Self.assign(&limitedVoltage2, savedLimited2)
-        Self.assign(&limitedVoltage3, savedLimited3)
+        restoreLimited(savedLimited)
         converged = false
         trace?("   gmin stepping")
         for conductance in Self.steppedConductances {
@@ -1759,7 +1759,7 @@ public final class Simulator {
             reuseAllowed = false
             restoreSolveStart()
             if predictedSolve { predict() }
-            restoreLimited(savedLimited, savedLimited2, savedLimited3)
+            restoreLimited(savedLimited)
             for i in limitingIndices { opAmpCrossings[i] = 0 }
             iteration = 0
             lastChange = .infinity
@@ -2065,15 +2065,19 @@ public final class Simulator {
         if rightSnapshot.count != rows { rightSnapshot = [Double](repeating: 0, count: rows) }
         values.withUnsafeBufferPointer { v in
             stampSnapshot.withUnsafeMutableBufferPointer { kept in
-                for k in 0..<count { kept[k] = v[Int(stampedSlots[k])] }
+                stampedSlots.withUnsafeBufferPointer { slots in
+                    for k in 0..<count { kept[k] = v[Int(slots[k])] }
+                }
             }
         }
         workVector.withUnsafeBufferPointer { b in
             rhsForwarded.withUnsafeBufferPointer { forwarded in
                 rightSnapshot.withUnsafeMutableBufferPointer { kept in
-                    for k in 0..<rows {
-                        let row = plan.block[k]
-                        kept[k] = b[row] - forwarded[row]
+                    plan.block.withUnsafeBufferPointer { block in
+                        for k in 0..<rows {
+                            let row = block[k]
+                            kept[k] = b[row] - forwarded[row]
+                        }
                     }
                 }
             }
@@ -2092,12 +2096,16 @@ public final class Simulator {
         reuseAllowed = false
         values.withUnsafeMutableBufferPointer { v in
             stampSnapshot.withUnsafeBufferPointer { kept in
-                for k in 0..<kept.count { v[Int(stampedSlots[k])] = kept[k] }
+                stampedSlots.withUnsafeBufferPointer { slots in
+                    for k in 0..<kept.count { v[Int(slots[k])] = kept[k] }
+                }
             }
         }
         workVector.withUnsafeMutableBufferPointer { b in
             rightSnapshot.withUnsafeBufferPointer { kept in
-                for k in 0..<rows { b[plan.block[k]] += kept[k] }
+                plan.block.withUnsafeBufferPointer { block in
+                    for k in 0..<rows { b[block[k]] += kept[k] }
+                }
             }
         }
     }
@@ -2124,22 +2132,32 @@ public final class Simulator {
                 x.withUnsafeBufferPointer { x -> Bool in
                     snapshotPoint.withUnsafeBufferPointer { point -> Bool in
                         confirmScratch.withUnsafeMutableBufferPointer { balance -> Bool in
-                            for k in 0..<rows { balance[k] = 0 }
-                            for k in 0..<stampedSlots.count {
-                                let now = v[Int(stampedSlots[k])], then = stampSnapshot[k]
-                                let row = Int(stampedLocalRows[k])
-                                // (written so that a value that is not a number fails too)
-                                if !(abs(now - then) <= tolerance * (abs(now) + scale[row])) {
-                                    // only in the column of an unknown that has held still since the snapshot (a
-                                    // transistor's moved: no balance to look for)
-                                    let u = Int(stampedColumns[k])
-                                    guard balancing, now.isFinite,
-                                          abs(x[u] - point[u]) <= Self.unmovedTolerance * (1 + abs(x[u])) else { return false }
-                                    changed = true
-                                    balance[row] += (now - then) * x[u]
+                            stampedSlots.withUnsafeBufferPointer { slots -> Bool in
+                                stampSnapshot.withUnsafeBufferPointer { snapshot -> Bool in
+                                    stampedLocalRows.withUnsafeBufferPointer { localRows -> Bool in
+                                        stampedColumns.withUnsafeBufferPointer { columns -> Bool in
+                                            for k in 0..<rows { balance[k] = 0 }
+                                            for k in 0..<slots.count {
+                                                let now = v[Int(slots[k])], then = snapshot[k]
+                                                let row = Int(localRows[k])
+                                                // (written so that a value that is not a number fails too)
+                                                if !(abs(now - then) <= tolerance * (abs(now) + scale[row])) {
+                                                    // only in the column of an unknown that has held still since the
+                                                    // snapshot (a transistor's moved: no balance to look for)
+                                                    let u = Int(columns[k])
+                                                    guard balancing, now.isFinite,
+                                                          abs(x[u] - point[u]) <= Self.unmovedTolerance * (1 + abs(x[u])) else {
+                                                        return false
+                                                    }
+                                                    changed = true
+                                                    balance[row] += (now - then) * x[u]
+                                                }
+                                            }
+                                            return true
+                                        }
+                                    }
                                 }
                             }
-                            return true
                         }
                     }
                 }
@@ -2153,18 +2171,20 @@ public final class Simulator {
                 rightSnapshot.withUnsafeBufferPointer { kept -> Bool in
                     keptRowScale.withUnsafeBufferPointer { scale -> Bool in
                         confirmScratch.withUnsafeBufferPointer { balance -> Bool in
-                            for k in 0..<rows {
-                                let row = plan.block[k]
-                                let now = b[row], added = now - forwarded[row]
-                                if changed {
-                                    guard abs(balance[k] - (added - kept[k])) <= tolerance * (abs(now) + scale[k] * (1 + largest)) else {
-                                        return false
+                            plan.block.withUnsafeBufferPointer { block -> Bool in
+                                for k in 0..<rows {
+                                    let row = block[k]
+                                    let now = b[row], added = now - forwarded[row]
+                                    if changed {
+                                        guard abs(balance[k] - (added - kept[k])) <= tolerance * (abs(now) + scale[k] * (1 + largest)) else {
+                                            return false
+                                        }
+                                    } else {
+                                        guard abs(added - kept[k]) <= tolerance * (abs(now) + scale[k]) else { return false }
                                     }
-                                } else {
-                                    guard abs(added - kept[k]) <= tolerance * (abs(now) + scale[k]) else { return false }
                                 }
+                                return true
                             }
-                            return true
                         }
                     }
                 }
@@ -2506,43 +2526,26 @@ public final class Simulator {
 
     /// Keeps the voltages Newton-Raphson limited, to go back to: only the parts that limit theirs (a maker's model is
     /// mostly wires, labels and resistors, each with an entry, and behavioural sources, which limit nothing)
-    private func saveLimited(_ a: inout [Double], _ b: inout [Double], _ c: inout [Double]) {
-        guard a.count == limitedVoltage.count, b.count == limitedVoltage2.count, c.count == limitedVoltage3.count else {
-            (a, b, c) = (Array(limitedVoltage), Array(limitedVoltage2), Array(limitedVoltage3))
-            return
+    private func saveLimited(_ saved: inout UnsafeMutableBufferPointer<Double>) {
+        let (a, b, c) = (limitedVoltage, limitedVoltage2, limitedVoltage3)
+        limitingIndices.withUnsafeBufferPointer { indices in
+            if saved.count != 3 * indices.count { Self.zeroed(&saved, 3 * indices.count) }
+            for k in 0..<indices.count {
+                let i = indices[k]
+                (saved[3 * k], saved[3 * k + 1], saved[3 * k + 2]) = (a[i], b[i], c[i])
+            }
         }
-        guard !limitingIndices.isEmpty else { return }
-        Self.copy(limitingIndices, from: limitedVoltage, into: &a)
-        Self.copy(limitingIndices, from: limitedVoltage2, into: &b)
-        Self.copy(limitingIndices, from: limitedVoltage3, into: &c)
     }
 
     /// Goes back to limited voltages kept by `saveLimited`
-    private func restoreLimited(_ a: [Double], _ b: [Double], _ c: [Double]) {
-        guard a.count == limitedVoltage.count, b.count == limitedVoltage2.count, c.count == limitedVoltage3.count else {
-            Self.assign(&limitedVoltage, a)
-            Self.assign(&limitedVoltage2, b)
-            Self.assign(&limitedVoltage3, c)
-            return
-        }
-        guard !limitingIndices.isEmpty else { return }
-        Self.copy(limitingIndices, from: a, into: limitedVoltage)
-        Self.copy(limitingIndices, from: b, into: limitedVoltage2)
-        Self.copy(limitingIndices, from: c, into: limitedVoltage3)
-    }
-
-    /// Copies the entries at `indices` (each within both) from a held buffer into an array, and back
-    @inline(__always) private static func copy(_ indices: [Int], from source: UnsafeMutableBufferPointer<Double>,
-                                               into target: inout [Double]) {
-        target.withUnsafeMutableBufferPointer { target in
-            for i in indices { target[i] = source[i] }
-        }
-    }
-
-    @inline(__always) private static func copy(_ indices: [Int], from source: [Double],
-                                               into target: UnsafeMutableBufferPointer<Double>) {
-        source.withUnsafeBufferPointer { source in
-            for i in indices { target[i] = source[i] }
+    private func restoreLimited(_ saved: UnsafeMutableBufferPointer<Double>) {
+        let (a, b, c) = (limitedVoltage, limitedVoltage2, limitedVoltage3)
+        limitingIndices.withUnsafeBufferPointer { indices in
+            guard saved.count == 3 * indices.count else { return }
+            for k in 0..<indices.count {
+                let i = indices[k]
+                (a[i], b[i], c[i]) = (saved[3 * k], saved[3 * k + 1], saved[3 * k + 2])
+            }
         }
     }
 
