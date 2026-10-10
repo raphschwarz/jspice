@@ -132,6 +132,42 @@ final class AVRVariantTests: XCTestCase {
               + "\(followed.iterations) following pin switches (\(followed.followed) followed)")
     }
 
+    /// Busy-waits counted at once (Wire waiting for its interrupt, analogRead for the ADC, a sketch's loop that has
+    /// nothing to do) leave the chips where they would have been: the same circuit, step for step, to the bit
+    func testSkippedBusyWaitsLeaveTheChipsWhereRunningWould() {
+        defer { AVR.skipsBusyWaits = true }
+        for id in ["arduino-mcp3008-mcp4725", "arduino-knob", "arduino-melody", "attiny85-dimmer", "arduino-mega-bargraph"] {
+            let circuit = Examples.example(id)!.circuit
+            var runs: [(voltages: [Double], chip: (pc: Int, cycles: Int, registers: [UInt8], serial: [UInt8]), skipped: Int)] = []
+            for skipping in [false, true] {
+                AVR.skipsBusyWaits = skipping
+                let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
+                simulator.errorControl = false
+                let elements = simulator.circuit.elements
+                let chipIndex = elements.firstIndex { [.atmega328p, .atmega2560, .attiny85].contains($0.kind) }!
+                var voltages: [Double] = []
+                for _ in 0..<1_500 {
+                    simulator.step()
+                    for i in elements.indices where [.probe, .led, .speaker].contains(elements[i].kind) {
+                        voltages.append(simulator.voltageAcross(i))
+                    }
+                }
+                let avr = simulator.chip(chipIndex) as! AVR
+                runs.append((voltages, (avr.pc, avr.cycles, avr.registers, avr.serialOutput), avr.skippedCycles))
+            }
+            XCTAssertEqual(runs[0].skipped, 0, id)
+            // (Wire waits for its interrupt, analogRead for the ADC)
+            if ["arduino-mcp3008-mcp4725", "arduino-knob"].contains(id) { XCTAssertGreaterThan(runs[1].skipped, 0, id) }
+            XCTAssertEqual(runs[0].chip.pc, runs[1].chip.pc, id)
+            XCTAssertEqual(runs[0].chip.cycles, runs[1].chip.cycles, id)
+            XCTAssertEqual(runs[0].chip.registers, runs[1].chip.registers, id)
+            XCTAssertEqual(runs[0].chip.serial, runs[1].chip.serial, id)
+            XCTAssertEqual(runs[0].voltages.count, runs[1].voltages.count, id)
+            XCTAssertTrue(runs[0].voltages.elementsEqual(runs[1].voltages) { $0.bitPattern == $1.bitPattern }, id)
+            print("\(id): \(runs[1].skipped) of \(runs[1].chip.cycles) cycles counted at once")
+        }
+    }
+
     func testEveryBoardsPinsAreDrawnOnTheirSides() {
         for board in Board.allCases {
             let element = Element(kind: board.kind, a: GridPoint(0, 0), b: GridPoint(0, board.length))

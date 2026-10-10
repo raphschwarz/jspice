@@ -333,6 +333,9 @@ public final class AVR: Microcontroller {
     public func run(cycles count: Int) {
         runStart = cycles
         let end = cycles + count
+        if AVR.skipsBusyWaits { runEnd = end }
+        loopSeen = false
+        defer { runEnd = 0 }
         guard !watchedPins.isEmpty else {
             while cycles < end { step() }
             return
@@ -480,6 +483,7 @@ public final class AVR: Microcontroller {
             let source = sources[index]
             if source.clears { data[source.flag] &= ~source.flagBit }
             interruptsChanged = true
+            effects &+= 1
             // an interrupt on a low level asks again for as long as the pin stays low
             if externalWatch { externalInterrupts() }
             pushPC(pc)
@@ -509,6 +513,59 @@ public final class AVR: Microcontroller {
     private var nextService = 0
     /// The cycle the timers' prescalers were last brought up to
     private var servicedAt = 0
+
+    // A busy-wait (the program polling a flag that an interrupt or a peripheral sets) goes round the same instructions
+    // to the same effect until a peripheral next has something to do: nothing else changes in between. Within a run, a
+    // backward jump that finds the registers, the stack pointer and the status as they were the last time it was
+    // taken, with nothing stored since but what was there already, no I/O register written or data register read and
+    // no interrupt entered, counts the rounds left before then (or before the run ends) at once: the program is where
+    // it would have been after them, at the same cycle. `step` alone (as traces take it) runs one instruction.
+
+    /// Whether runs skip busy-waits so (for comparing)
+    public static var skipsBusyWaits = true
+    /// Stores that changed the data space, writes to I/O registers (but the status register's and the stack
+    /// pointer's), reads of a data register that change flags, and interrupts entered, counted
+    private var effects = 0
+    /// Where the present run ends (0 outside a run)
+    private var runEnd = 0
+    /// The last backward jump's target, and the effects counted when it was taken
+    private var loopTarget = -1
+    private var loopEffects = 0
+    /// The registers, stack pointer and status at the jump, and the cycle after it, the last time round
+    private var loopSeen = false
+    private var loopCycles = 0
+    private var loopRegisters: (UInt64, UInt64, UInt64, UInt64) = (0, 0, 0, 0)
+    private var loopCore = 0
+    /// Cycles counted at once in busy-waits
+    public private(set) var skippedCycles = 0
+
+    /// A backward jump taken (to `pc`), of `used` cycles
+    private func loopedBack(used: Int) {
+        let now = cycles + used
+        guard pc == loopTarget && effects == loopEffects && interruptDelay == 0 else {
+            loopTarget = pc
+            loopEffects = effects
+            loopSeen = false
+            return
+        }
+        let raw = UnsafeRawPointer(data)
+        let registers = (raw.loadUnaligned(as: UInt64.self), raw.loadUnaligned(fromByteOffset: 8, as: UInt64.self),
+                         raw.loadUnaligned(fromByteOffset: 16, as: UInt64.self), raw.loadUnaligned(fromByteOffset: 24, as: UInt64.self))
+        let core = Int(data[AVR.SPL]) | Int(data[AVR.SPH]) << 8 | Int(data[AVR.SREG]) << 16
+        if loopSeen && registers == loopRegisters && core == loopCore {
+            // round and round alike: the whole rounds that end before a peripheral's next turn and the run's end
+            let length = now - loopCycles
+            let rounds = length > 0 ? max((min(nextService, runEnd) - 1 - now) / length, 0) : 0
+            cycles += rounds * length
+            skippedCycles += rounds * length
+            loopCycles = now + rounds * length
+        } else {
+            loopRegisters = registers
+            loopCore = core
+            loopCycles = now
+            loopSeen = true
+        }
+    }
 
     @inline(__always) private func tick(_ count: Int) {
         cycles += count
@@ -682,9 +739,13 @@ public final class AVR: Microcontroller {
         case .count16High(let timer), .capture16High(let timer): return timer.temp
         case .compare16Low(let timer, let unit): return UInt8(truncatingIfNeeded: timer.ocrBuffer[unit])
         case .compare16High(let timer, let unit): return UInt8(truncatingIfNeeded: timer.ocrBuffer[unit] >> 8)
-        case .usartData(let usart): return usart.readData()
+        case .usartData(let usart):
+            effects &+= 1
+            return usart.readData()
         case .spiStatus: return spi?.readStatus() ?? data[address]
-        case .spiData: return spi?.readData() ?? data[address]
+        case .spiData:
+            effects &+= 1
+            return spi?.readData() ?? data[address]
         case .twiStatus: return twi?.readStatus() ?? data[address]
         default: return data[address]
         }
@@ -693,7 +754,10 @@ public final class AVR: Microcontroller {
     func write(_ address: Int, _ value: UInt8) {
         let d = data
         if address < 0x20 || address >= ioEnd {
-            if address < dataSize { d[address] = value }
+            if address < dataSize && d[address] != value {
+                d[address] = value
+                effects &+= 1
+            }
             return
         }
         // the status register and the stack pointer are the core's own, written at every cli() and its restore and in
@@ -710,6 +774,7 @@ public final class AVR: Microcontroller {
         default:
             break
         }
+        effects &+= 1
         peripheralsTouched()
         if address < pinRegisters.count && pinRegisters[address] { ioWritten = true }
         switch handlers[address] {
@@ -793,6 +858,7 @@ public final class AVR: Microcontroller {
     }
 
     private func writeBit(_ address: Int, _ bit: Int, _ value: Bool) {
+        effects &+= 1
         peripheralsTouched()
         let mask = UInt8(1) << bit
         switch handlers[address] {
@@ -958,7 +1024,10 @@ public final class AVR: Microcontroller {
 
     private func push(_ value: UInt8) {
         let sp = Int(data[AVR.SPL]) | Int(data[AVR.SPH]) << 8
-        if sp < dataSize { data[sp] = value }
+        if sp < dataSize && data[sp] != value {
+            data[sp] = value
+            effects &+= 1
+        }
         let next = (sp - 1) & 0xFFFF
         data[AVR.SPL] = UInt8(truncatingIfNeeded: next)
         data[AVR.SPH] = UInt8(truncatingIfNeeded: next >> 8)
@@ -1198,6 +1267,7 @@ public final class AVR: Microcontroller {
             var k = op & 0x0FFF
             if k & 0x800 != 0 { k -= 0x1000 }
             pc = (pc + k) & pcMask
+            if k < 0 && runEnd != 0 { loopedBack(used: 2) }
             return 2
         case 0xD:  // RCALL
             var k = op & 0x0FFF
@@ -1215,6 +1285,7 @@ public final class AVR: Microcontroller {
                 if k & 0x40 != 0 { k -= 0x80 }
                 if (flags & bit != 0) == (op & 0x0400 == 0) {
                     pc = (pc + k) & pcMask
+                    if k < 0 && runEnd != 0 { loopedBack(used: 2) }
                     return 2
                 }
                 return 1
