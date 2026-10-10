@@ -97,7 +97,8 @@ final class EliminationProgram {
         Array(UnsafeBufferPointer(start: lSlot, count: Int(lStart[steps]))) + Array(UnsafeBufferPointer(start: target, count: opCount))
     }
 
-    /// Eliminates in `values`, in place; -1 when done, or the step whose pivot has become too small to use
+    /// Eliminates in `values`, in place, each pivot's slot left holding its reciprocal; -1 when done, or the step whose
+    /// pivot has become too small to use
     func factor(_ values: UnsafeMutablePointer<Double>) -> Int {
         withUnsafeTemporaryAllocation(of: Double.self, capacity: max(widest, 1)) { row in factor(values, row: row.baseAddress!) }
     }
@@ -125,8 +126,10 @@ final class EliminationProgram {
                 i += 1
             }
             var t = Int(opStart[k])
-            // (one division a pivot, rather than one an entry below it)
+            // (one division a pivot, rather than one an entry below it; the pivot's slot keeps its reciprocal, for
+            // substitution to multiply by)
             let inverse = 1 / pivot
+            values[Int(diagonal[k])] = inverse
             j = l0
             while j < l1 {
                 let slot = Int(lSlot[j])
@@ -159,7 +162,7 @@ final class EliminationProgram {
         let lCount = Int(lStart[steps]), uCount = Int(uStart[steps])
         for j in 0..<lCount { packed[j] = values[Int(lSlot[j])] }
         for i in 0..<uCount { packed[lCount + i] = values[Int(uSlot[i])] }
-        for k in 0..<steps { packed[lCount + uCount + k] = 1 / values[Int(diagonal[k])] }
+        for k in 0..<steps { packed[lCount + uCount + k] = values[Int(diagonal[k])] }
     }
 
     /// `forward` with factors packed by `pack`: the same operations in the same order as `forward`
@@ -256,9 +259,9 @@ final class EliminationProgram {
     /// later eliminations must be there already). Returns the largest change of an unknown, relative to its new size, or
     /// NaN if one is not a number (then `x` is partly written).
     ///
-    /// The steps are taken by level (see `backOrder`), each row's entries summed in two halves at once, and a row's
-    /// change divided out only where it may be the largest yet: a division takes several times as long as a
-    /// multiply-add, and each row waits on the rows before.
+    /// The steps are taken by level (see `backOrder`), each row's entries summed in two halves at once and multiplied by
+    /// its pivot's reciprocal (as `factor` left it), and a row's change divided out only where it may be the largest
+    /// yet: a division takes several times as long as a multiply-add, and each row waits on the rows before.
     func back(_ values: UnsafePointer<Double>, _ b: UnsafePointer<Double>, _ x: UnsafeMutablePointer<Double>) -> Double {
         var change = 0.0
         var n = 0
@@ -275,7 +278,7 @@ final class EliminationProgram {
             }
             if i < u1 { sum -= values[Int(uSlot[i])] * x[Int(uColumn[i])] }
             let column = Int(pivotColumn[k])
-            let next = (sum + other) / values[Int(diagonal[k])]
+            let next = (sum + other) * values[Int(diagonal[k])]
             guard next.isFinite else { return .nan }
             let moved = abs(next - x[column]), scale = 1 + abs(next)
             if moved > change * scale { change = moved / scale }
