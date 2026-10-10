@@ -43,8 +43,9 @@ public final class AVR: Microcontroller {
     var twi: AVRTWI?
     /// The same, held by those and reached here without counting: the peripherals are looked at every few dozen cycles,
     /// and a counted reference costs a retain and a release at each use
-    private var timerRefs: [Unmanaged<AVRTimer>] = []
-    private var usartRefs: [Unmanaged<AVRUSART>] = []
+    /// (in buffers of their own: going through an array costs a retain and a release of its storage each time)
+    private var timerRefs = UnsafeMutableBufferPointer<Unmanaged<AVRTimer>>(start: nil, count: 0)
+    private var usartRefs = UnsafeMutableBufferPointer<Unmanaged<AVRUSART>>(start: nil, count: 0)
     private var spiRef: Unmanaged<AVRSPI>?
     private var twiRef: Unmanaged<AVRTWI>?
 
@@ -192,8 +193,10 @@ public final class AVR: Microcontroller {
         usarts = variant.usarts.map { AVRUSART(spec: $0, avr: self) }
         spi = variant.spi.map { AVRSPI(spec: $0, avr: self) }
         twi = variant.twi.map { AVRTWI(spec: $0, avr: self) }
-        timerRefs = timers.map { Unmanaged.passUnretained($0) }
-        usartRefs = usarts.map { Unmanaged.passUnretained($0) }
+        timerRefs = .allocate(capacity: timers.count)
+        _ = timerRefs.initialize(from: timers.map { Unmanaged.passUnretained($0) })
+        usartRefs = .allocate(capacity: usarts.count)
+        _ = usartRefs.initialize(from: usarts.map { Unmanaged.passUnretained($0) })
         spiRef = spi.map { Unmanaged.passUnretained($0) }
         twiRef = twi.map { Unmanaged.passUnretained($0) }
         handlers = buildHandlers()
@@ -203,6 +206,8 @@ public final class AVR: Microcontroller {
     deinit {
         flash.deallocate()
         data.deallocate()
+        timerRefs.deallocate()
+        usartRefs.deallocate()
     }
 
     private func buildHandlers() -> [Handler] {
@@ -1849,7 +1854,12 @@ final class AVRUSART {
     private let avrRef: Unmanaged<AVR>
 
     var output: [UInt8] = []
-    var input: [UInt8] = []
+    var input: [UInt8] = [] {
+        didSet { hasInput = !input.isEmpty }
+    }
+    /// Whether bytes wait to be received (the chip asks at every look at its peripherals, and an array's count costs
+    /// a retain and a release of its storage there)
+    private var hasInput = false
     private var busyUntil = 0
     private var pending: UInt8?
     private var receiveNext = 0
@@ -1955,7 +1965,7 @@ final class AVRUSART {
     }
 
     var needsUpdate: Bool {
-        busyUntil != 0 || simPumpAt != nil || (!input.isEmpty && data[spec.controlB] & 0x10 != 0)
+        busyUntil != 0 || simPumpAt != nil || (hasInput && data[spec.controlB] & 0x10 != 0)
     }
 
     /// The cycle `update` next has something to do at (0: after the next instruction; Int.max: nothing to do)
@@ -1966,7 +1976,7 @@ final class AVRUSART {
         } else if busyUntil != 0 {
             next = busyUntil
         }
-        if !input.isEmpty && data[spec.controlB] & 0x10 != 0 {
+        if hasInput && data[spec.controlB] & 0x10 != 0 {
             // a byte is received once the last one has been read (a read the chip is not told of): until then, looked
             // at after every instruction
             next = min(next, data[spec.statusA] & 0x80 == 0 ? receiveNext : 0)
