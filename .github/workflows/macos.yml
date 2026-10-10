@@ -81,6 +81,14 @@ jobs:
           sample $! 3 -file build/profile-avr.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-avr.txt | head -45
+          # and for makers' op-amp models (downloaded from TI, as the app does) as followers at 48 kHz
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker LM358 0.25 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 60 > /dev/null &
+          sleep 2
+          sample $! 3 -file build/profile-maker.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-maker.txt | head -70
       - name: Chip support (installs Arduino's AVR toolchain as the app does, compiles a sketch)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 10

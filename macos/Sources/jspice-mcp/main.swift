@@ -7,7 +7,8 @@ import JSpiceAutomation
 //
 // If the JSpice app is running (with Allow AI Control on), requests go to the circuit in its frontmost window, so you
 // can watch the agent work and undo its changes; otherwise, or with --headless, the server simulates on its own.
-// --app insists on the app. --benchmark [seconds] [example…] times the engine alone at the audio sample rate.
+// --app insists on the app. --benchmark [seconds] [example…] times the engine alone at the audio sample rate, and
+// --benchmark-maker PART [seconds] a maker's op-amp model.
 
 let arguments = CommandLine.arguments
 let path = ProcessInfo.processInfo.environment["JSPICE_SOCKET"] ?? LocalSocket.defaultPath
@@ -74,6 +75,47 @@ func accuracy(of circuit: Circuit, listened: Int) -> Double {
     }
     guard signal > 0, error.isFinite else { return error == 0 ? -999 : 999 }
     return max(10 * log10(max(error, 1e-300) / signal), -999)
+}
+
+/// Runs a maker's op-amp model (downloaded from its maker as the app does, or taken from the cache) as a follower of a
+/// 1 V, 1 kHz sine at 48 kHz, one step per sample without error control, as the live sound runs it, for `seconds` of
+/// circuit time, and prints the time per step, Newton iterations and factorings
+func benchmarkMaker(_ part: String, seconds: Double) throws {
+    guard let model = MakerModelCatalog.models.first(where: { $0.part == part }) else {
+        log("no maker's model \(part); there are \(MakerModelCatalog.models.map(\.part).joined(separator: ", "))")
+        exit(2)
+    }
+    let imported = try MakerModelCatalog.download(model)
+    guard let pins = imported.block.source?.pins else {
+        log("\(part)'s model has no pins")
+        exit(1)
+    }
+    let input = NetlistPart(kind: .acVoltage, name: "VI", params: ["amplitude": 1, "frequency": 1000, "offset": 0],
+                            connections: ["plus": "inp", "minus": "GND"])
+    let circuit = try MakerModels.bench(imported.block, pins: pins, supply: model.supply, load: model.load, input: input, follower: true)
+    let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
+    simulator.errorControl = false
+    let steps = max(1, Int(seconds * 48_000))
+    let start = DispatchTime.now().uptimeNanoseconds
+    var done = 0
+    while done < steps && !simulator.isFailed {
+        simulator.step()
+        done += 1
+    }
+    let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
+    let shape = simulator.planShape
+    let size = simulator.equationStatistics
+    // what the model is made of, as simulated: the most numerous kinds of part
+    var kinds: [String: Int] = [:]
+    for element in circuit.flattened().elements { kinds[element.kind.displayName, default: 0] += 1 }
+    let made = kinds.sorted { $0.value > $1.value }.prefix(12).map { "\($0.value) \($0.key)" }.joined(separator: ", ")
+    print("\(part)'s model as simulated: \(size.unknowns) unknowns, \(size.nonzeros) nonzeros, \(size.factorEntries) entries "
+          + "factored, \(size.nonlinearUnknowns) nonlinear; \(made)")
+    print(String(format: "%@ follower, 1 kHz at 48 kHz: %.1f µs/step, %.2f× real time, %.2f Newton iterations a step "
+                 + "(%ld factored, %ld with kept factors), %ld unknowns, %ld in the nonlinear block%@",
+                 part, elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
+                 Double(simulator.newtonIterations) / Double(done), simulator.factorings, simulator.reusedFactorings,
+                 shape.unknowns, shape.nonlinear, simulator.isFailed ? " FAILED: " + simulator.problems.joined(separator: "; ") : ""))
 }
 
 /// Holds what a background task produced, for the main code waiting on it
@@ -185,6 +227,18 @@ if let flag = arguments.firstIndex(of: "--capture-eval"), flag + 1 < arguments.c
     done.wait()
     let mean = scores.connections.isEmpty ? 0 : scores.connections.reduce(0, +) / Double(scores.connections.count)
     print(String(format: "mean connection score %.3f over %d drawings", mean, scores.connections.count))
+    exit(0)
+}
+
+// --benchmark-maker PART [seconds]: a maker's op-amp model at the sound's rate (see benchmarkMaker)
+if let flag = arguments.firstIndex(of: "--benchmark-maker"), flag + 1 < arguments.count {
+    let seconds = flag + 2 < arguments.count ? Double(arguments[flag + 2]) ?? 1 : 1
+    do {
+        try benchmarkMaker(arguments[flag + 1], seconds: seconds)
+    } catch {
+        log("\(error)")
+        exit(1)
+    }
     exit(0)
 }
 

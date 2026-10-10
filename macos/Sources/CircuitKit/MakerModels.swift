@@ -176,8 +176,8 @@ public enum MakerModels {
 
     /// The op-amp `block` with its supplies at ± `supply` and `load` on its output, `input` at its + input, its − input
     /// at its output (a follower) or grounded through a 0 V source
-    static func bench(_ block: BlockDefinition, pins: [String], supply: Double, load: Double, input: NetlistPart,
-                      follower: Bool) throws -> Circuit {
+    public static func bench(_ block: BlockDefinition, pins: [String], supply: Double, load: Double, input: NetlistPart,
+                             follower: Bool) throws -> Circuit {
         var u = NetlistPart(kind: .block, name: "U1")
         u.block = block
         u.connections = [pins[0]: "inp", pins[1]: follower ? "out" : "inn", pins[2]: "vcc", pins[3]: "vee", pins[4]: "out"]
