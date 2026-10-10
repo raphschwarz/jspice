@@ -14,6 +14,9 @@ public enum KiCadNetlist {
         public var unassigned: [String]
         public var components: Int
         public var nets: Int
+        /// What to know: supplies the chips need that the circuit leaves implicit, electrolytics whose polarity the
+        /// circuit's resting voltages could not settle
+        public var notes: [String] = []
     }
 
     struct Component {
@@ -131,7 +134,9 @@ public enum KiCadNetlist {
                                         description: "Wired from off the board: " + terminals.joined(separator: ", "),
                                         pins: pins, id: id(part)))
         }
-        return write(components, title: title, date: date)
+        var export = write(components, title: title, date: date)
+        export.notes = plan.supplyNotes
+        return export
     }
 
     /// An id made from a name, the same each time (FNV-1a, twice over)

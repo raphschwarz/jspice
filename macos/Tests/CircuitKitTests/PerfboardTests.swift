@@ -44,6 +44,18 @@ final class PerfboardTests: XCTestCase {
         XCTAssertTrue(Perfboard.verify(layout).contains { $0.contains("places the board does not join") }, "\(Perfboard.verify(layout))")
     }
 
+    /// Where the circuit's resting voltages cannot be found, an electrolytic's polarity is not guessed from them: its
+    /// note and the board's say to follow the schematic
+    func testUnknownRestingVoltagesAreSaid() {
+        let electrolytic = NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 10e-6], connections: ["a": "GND", "b": "x"])
+        XCTAssertTrue(Breadboard.describe(electrolytic, [:]).2?.contains("resting voltages are unknown") == true)
+        XCTAssertTrue(Breadboard.describe(electrolytic, ["GND": 0, "x": 0]).2?.hasPrefix("No DC across it") == true)
+        var plan = Breadboard.Plan()
+        XCTAssertTrue(plan.supplyNotes.isEmpty)
+        plan.restingFound = false
+        XCTAssertTrue(plan.supplyNotes.contains { $0.hasPrefix("JSpice could not find the voltages this circuit rests at") })
+    }
+
     func testEveryExampleIsConnectedExactlyAsDrawnOnHalfSizeBreadboards() {
         for example in Examples.all {
             let layout = Breadboard.layout(example.circuit, size: .half)

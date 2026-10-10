@@ -1975,7 +1975,8 @@ public final class CircuitSession {
 
     func exportKiCad(_ arguments: [String: Any]) throws -> Any {
         let export = KiCadNetlist.export(circuit)
-        var result: [String: Any] = ["components": export.components, "nets": export.nets, "unassigned_footprints": export.unassigned]
+        var result: [String: Any] = ["components": export.components, "nets": export.nets, "unassigned_footprints": export.unassigned,
+                                     "notes": export.notes]
         if let path = arguments["path"] as? String, !path.isEmpty {
             let file = (path as NSString).expandingTildeInPath
             do { try export.text.write(toFile: file, atomically: true, encoding: .utf8) } catch { throw ToolError("Can't write \(path)") }

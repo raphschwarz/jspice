@@ -487,10 +487,11 @@ final class EditorState: ObservableObject {
             alert.runModal()
             return
         }
-        guard !export.unassigned.isEmpty else { return }
+        guard !export.unassigned.isEmpty || !export.notes.isEmpty else { return }
         let alert = NSAlert()
-        alert.messageText = "Some parts need footprints"
-        alert.informativeText = "JSpice doesn't know a footprint for \(export.unassigned.joined(separator: ", ")). Assign them in KiCad's PCB editor after importing the netlist."
+        alert.messageText = export.unassigned.isEmpty ? "Before laying out the board" : "Some parts need footprints"
+        alert.informativeText = ((export.unassigned.isEmpty ? [] : ["JSpice doesn't know a footprint for \(export.unassigned.joined(separator: ", ")). Assign them in KiCad's PCB editor after importing the netlist."])
+            + export.notes).joined(separator: "\n\n")
         alert.runModal()
     }
 

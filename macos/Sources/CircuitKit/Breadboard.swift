@@ -582,6 +582,8 @@ public enum Breadboard {
     struct Plan {
         var parts: [NetlistPart] = []
         var voltages: [String: Double] = [:]
+        /// Whether the circuit's resting voltages were found (its simulation from rest did not fail)
+        var restingFound = true
         var supplies: [(net: String, volts: Double)] = []
         /// Supplies the chips need that the circuit leaves implicit
         var virtual: [String: Double] = [:]
@@ -639,6 +641,8 @@ public enum Breadboard {
         /// The notes every board shares: the supplies the circuit leaves implicit
         var supplyNotes: [String] {
             virtual.sorted { $0.key < $1.key }.map { "The chips need a \(SI.format($0.value, unit: "V")) supply (\($0.key)), which the circuit leaves implicit" }
+                + (restingFound ? [] : ["JSpice could not find the voltages this circuit rests at (its simulation from rest fails), so its "
+                                        + "electrolytics are not turned by them: put each one's + leg the way the schematic shows"])
         }
 
         /// The supplies wired to the board: each with its source's name
@@ -665,7 +669,7 @@ public enum Breadboard {
         }
         var plan = Plan()
         plan.parts = NetlistExtractor.netlist(from: flat).filter { $0.kind != .block && $0.kind != .port }
-        plan.voltages = netVoltages(flat, plan.parts)
+        (plan.voltages, plan.restingFound) = netVoltages(flat, plan.parts)
 
         // supplies: the circuit's own DC sources to ground, and what the chips need
         for part in plan.parts where part.kind == .dcVoltage {
@@ -880,7 +884,7 @@ public enum Breadboard {
     }
 
     /// Each net's DC voltage where the circuit rests, its signal sources held still
-    static func netVoltages(_ circuit: Circuit, _ parts: [NetlistPart]) -> [String: Double] {
+    static func netVoltages(_ circuit: Circuit, _ parts: [NetlistPart]) -> (voltages: [String: Double], found: Bool) {
         var still = circuit
         for i in still.elements.indices where [.acVoltage, .squareVoltage, .noiseVoltage, .balancedCable].contains(still.elements[i].kind)
             || still.elements[i].kind.playsClip {
@@ -897,7 +901,8 @@ public enum Breadboard {
                 if let net = part.connections[terminal], result[net] == nil { result[net] = v[k] }
             }
         }
-        return result
+        // (none at all where they could not be found: see `describe`)
+        return (simulator.isFailed ? [:] : result, !simulator.isFailed)
     }
 
     /// How a two-lead part looks, what it is called, and what to know
@@ -915,7 +920,8 @@ public enum Breadboard {
                 // its own rating, or the next standard one above half as much again as it has across it
                 let rating = p("ratedVoltage") > 0 ? p("ratedVoltage")
                     : [6.3, 10, 16, 25, 35, 50, 63, 100, 160, 250, 400, 450].first { $0 >= across * 1.5 + 1 } ?? 450
-                let note = across < 0.1 ? "No DC across it: either way round, or a non-polar (bipolar) electrolytic"
+                let note = voltages.isEmpty ? "Electrolytic: the circuit's resting voltages are unknown, so put its + leg the way the schematic shows"
+                    : across < 0.1 ? "No DC across it: either way round, or a non-polar (bipolar) electrolytic"
                     : "Electrolytic: + to the higher voltage, the stripe (−) to the lower"
                 return (.electrolytic, SI.format(farads, unit: "F") + " \(SI.trimmed(rating, digits: 3)) V", note)
             }
