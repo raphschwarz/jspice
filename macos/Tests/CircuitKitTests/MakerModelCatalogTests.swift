@@ -70,10 +70,13 @@ final class MakerModelCatalogTests: XCTestCase {
         let follower = try MakerModels.bench(block, pins: pins, supply: model.supply, load: model.load, input: input, follower: true)
         let output = try XCTUnwrap(follower.elements.firstIndex { $0.name == "RL" })
         Simulator.linearAffineSources = linear
+        // (the plain Newton-Raphson, for reference: no factors kept, no device bypassed)
         Simulator.reusesFactors = reuse
+        Simulator.bypassesDevices = reuse
         Simulator.profiling = true
         defer {
             Simulator.reusesFactors = true
+            Simulator.bypassesDevices = true
             Simulator.profiling = false
         }
         let probe = Simulator(circuit: follower, timeStep: audio ? 1 / 48_000 : 1e-6)
@@ -96,7 +99,7 @@ final class MakerModelCatalogTests: XCTestCase {
         let perStep = seconds / Double(max(steps, 1))
         let line = String(format: "%@ (affine sources %@, factors %@%@): %@%.1f µs a step over %ld steps%@; %ld unknowns, %ld in the nonlinear block, "
                           + "%ld pivot orders, %ld plans (%.2f s); %.1f Newton iterations (%ld factored, %ld with kept factors; "
-                          + "%.1f µs stamping, %.1f µs solving an iteration), %.1f substeps (%ld rejected) a step, %ld convergence failures%@",
+                          + "%.1f µs stamping, %.1f µs solving an iteration), %.1f substeps (%ld rejected) a step, %ld convergence failures, %ld bypassed%@",
                           model.part, linear ? "linear" : "nonlinear", reuse ? "kept" : "made each iteration", audio ? ", 1 kHz at 48 kHz" : "",
                           stepped == nil ? "STOPPED after \(Int(budget)) s, " : "", perStep * 1e6, steps,
                           audio ? String(format: " (%.2f× real time)", (1.0 / 48_000) / perStep) : "",
@@ -105,6 +108,7 @@ final class MakerModelCatalogTests: XCTestCase {
                           Double(probe.stampNanoseconds) / 1e3 / Double(max(probe.newtonIterations, 1)),
                           Double(probe.solveNanoseconds) / 1e3 / Double(max(probe.newtonIterations, 1)),
                           Double(probe.substeps) / Double(max(steps, 1)), probe.rejectedSubsteps, probe.convergenceFailures,
+                          probe.bypassedEvaluations,
                           probe.isFailed && stepped != nil ? "; FAILED: " + probe.problems.joined(separator: "; ") : "")
         return Profile(line: line, output: stepped == nil ? .nan : probe.terminalVoltage(output, 0),
                        finished: stepped == total && !probe.isFailed)

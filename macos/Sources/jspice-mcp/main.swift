@@ -126,7 +126,8 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
           + "; \(simulator.limitedIterations) iterations limited, \(simulator.dampedIterations) damped, "
           + "\(simulator.convergenceFailures) convergence failures, \(simulator.substeps) substeps (\(simulator.rejectedSubsteps) rejected); "
           + "\(heavy) steps of more than 10 iterations, the most \(heaviest); \(simulator.decisionSolves) solves again for decisions "
-          + "that moved, \(simulator.chatteringSolves) left chattering")
+          + "that moved, \(simulator.chatteringSolves) left chattering; \(simulator.bypassedEvaluations) behavioural sources' "
+          + "evaluations bypassed")
     let block = simulator.blockFactorSize
     print("\(part)'s model as simulated: \(size.unknowns) unknowns, \(size.nonzeros) nonzeros, \(size.factorEntries) entries "
           + "factored, \(size.nonlinearUnknowns) nonlinear (its factors \(block.lower) below and \(block.upper) right of the "

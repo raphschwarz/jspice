@@ -39,6 +39,12 @@ public final class Simulator {
     public private(set) var dampedIterations = 0
     /// Newton-Raphson iterations in which a part limited how far its voltages moved (so it could not converge there)
     public private(set) var limitedIterations = 0
+    /// Behavioural sources' stamps given again from their last evaluation, their inputs not having moved
+    public private(set) var bypassedEvaluations = 0
+    /// Whether a behavioural source whose inputs have not moved is stamped from its last evaluation (see `stampBehavior`)
+    public static var bypassesDevices = true
+    /// How far (relative, above 1 V) an input can move before a source is evaluated again
+    static let bypassTolerance = 1e-9
     /// Of those iterations, how many factored the nonlinear block, and how many solved with factors kept from an earlier
     /// one (see `newton`)
     public private(set) var factorings = 0
@@ -302,6 +308,15 @@ public final class Simulator {
         /// The inputs again, in memory of their own: read at every iteration without touching reference counts
         let inputList: UnsafeMutablePointer<BehaviorInput>
         let inputCount: Int
+        /// Its last evaluation: the inputs, the value and each input's slope (see `stampBehavior`'s bypass)
+        let lastInputs: UnsafeMutablePointer<Double>
+        let lastSlopes: UnsafeMutablePointer<Double>
+        var lastValue = 0.0
+        var lastCelsius = 0.0
+        var evaluated = false
+        /// Whether a last evaluation can stand for a new one at the same inputs: not when the value moves with time,
+        /// or its decisions are held elsewhere
+        var bypassable: Bool { !decides && !program.readsTime }
 
         init(expression: SpiceExpression, program: SpiceExpression.Program, inputs: [BehaviorInput], voltage: Bool) {
             self.expression = expression
@@ -311,9 +326,17 @@ public final class Simulator {
             inputCount = inputs.count
             inputList = .allocate(capacity: max(inputs.count, 1))
             inputList.initialize(from: inputs, count: inputs.count)
+            lastInputs = .allocate(capacity: max(inputs.count, 1))
+            lastInputs.initialize(repeating: 0, count: max(inputs.count, 1))
+            lastSlopes = .allocate(capacity: max(inputs.count, 1))
+            lastSlopes.initialize(repeating: 0, count: max(inputs.count, 1))
         }
 
-        deinit { inputList.deallocate() }
+        deinit {
+            inputList.deallocate()
+            lastInputs.deallocate()
+            lastSlopes.deallocate()
+        }
     }
     private var behaviors: [Behavior?] = []
     /// Expressions read and compiled, by their text: a knob turned takes on new values without reading them again
@@ -3096,15 +3119,38 @@ public final class Simulator {
         }
         let celsius = kelvin - 273.15
         let plus = nodes[0] - 1, minus = nodes[1] - 1
-        let program = b.program
-        // the value and every slope in one run of the compiled expression
-        program.run(v, deciding: holds ? d : nil, time: solveTime, celsius: celsius, into: r)
-        var equivalent = r[program.value]
+        let last = b.lastInputs, lastSlopes = b.lastSlopes
+        // bypass, as SPICE bypasses a device whose voltages have not moved: inputs within a billionth of the last
+        // evaluation's give the same stamp again, its value and slopes as they were (the difference is far below what
+        // Newton-Raphson resolves, being second order in so small a change)
+        var bypass = Self.bypassesDevices && b.evaluated && b.bypassable && b.lastCelsius == celsius
+        if bypass {
+            for k in 0..<count where !(abs(v[k] - last[k]) <= Self.bypassTolerance * (1 + abs(v[k]))) {
+                bypass = false
+                break
+            }
+        }
+        if bypass {
+            bypassedEvaluations += 1
+            for k in 0..<count { v[k] = last[k] }
+        } else {
+            // the value and every slope in one run of the compiled expression
+            let program = b.program
+            program.run(v, deciding: holds ? d : nil, time: solveTime, celsius: celsius, into: r)
+            let slopes = program.slopeSteps
+            for k in 0..<count {
+                last[k] = v[k]
+                lastSlopes[k] = r[slopes[k]]
+            }
+            b.lastValue = r[program.value]
+            b.lastCelsius = celsius
+            b.evaluated = true
+        }
+        var equivalent = b.lastValue
         let row = topology.sourceRow[i]
-        let slopes = program.slopeSteps
         let voltageSource = b.voltage
         for k in 0..<count {
-            let slope = r[slopes[k]]
+            let slope = lastSlopes[k]
             guard slope != 0 && slope.isFinite else { continue }
             equivalent -= slope * v[k]
             let input = inputs[k]

@@ -36,12 +36,15 @@ extension SpiceExpression {
         let slopeSteps: UnsafeMutablePointer<Int>
         /// How many values running it writes
         public let count: Int
+        /// Whether it reads the time (its value can change while its inputs stay)
+        public let readsTime: Bool
 
         public init(_ expression: SpiceExpression) {
             var compiler = Compiler()
             value = compiler.compile(expression.root, .normal)
             slopes = expression.slopes.map { compiler.compile($0, .normal) }
             count = compiler.steps.count
+            readsTime = compiler.steps.contains { if case .time = $0 { return true } else { return false } }
             steps = .allocate(capacity: max(count, 1))
             steps.initialize(from: compiler.steps, count: count)
             data = .allocate(capacity: max(compiler.data.count, 1))
