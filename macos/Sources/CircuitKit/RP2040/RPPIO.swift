@@ -540,6 +540,10 @@ final class RPPIO: RPPeripheral {
     private let firstIRQ: Int
     var instructions = [UInt32](repeating: 0, count: 32)
     private(set) var machines: [RPPIOMachine] = []
+    /// The same, held by `machines`, and the chip, reached without counting: the block runs at each of its
+    /// instructions (some thirty times a step where it clocks an I2S DAC)
+    private var machineRefs = UnsafeMutableBufferPointer<Unmanaged<RPPIOMachine>>(start: nil, count: 0)
+    private var chipRef: Unmanaged<RP2040>!
     /// Set when a machine's FIFO changes: FSTAT, which a sketch polls while it keeps a FIFO full, is kept until then
     var fifosChanged = true
     private var fifoStatus: UInt32 = 0
@@ -562,7 +566,12 @@ final class RPPIO: RPPeripheral {
         self.firstIRQ = firstIRQ
         super.init(chip: chip, name: name)
         machines = (0..<4).map { RPPIOMachine(chip: chip, pio: self, index: $0) }
+        machineRefs = .allocate(capacity: 4)
+        _ = machineRefs.initialize(from: machines.map { Unmanaged.passUnretained($0) })
+        chipRef = .passUnretained(chip)
     }
+
+    deinit { machineRefs.deallocate() }
 
     /// Whether any state machine runs
     private(set) var running = false
@@ -710,10 +719,12 @@ final class RPPIO: RPPeripheral {
         oldPinValues = pinValues
         // only the pins that changed (a clock pin changes at every other instruction), lowest first
         var bits = changed
-        while bits != 0 {
-            let i = bits.trailingZeroBitCount
-            bits &= bits - 1
-            if i < RP2040.gpioCount { chip.withPin(i) { $0.checkForUpdates() } }
+        chipRef._withUnsafeGuaranteedRef { chip in
+            while bits != 0 {
+                let i = bits.trailingZeroBitCount
+                bits &= bits - 1
+                if i < RP2040.gpioCount { chip.withPin(i) { $0.checkForUpdates() } }
+            }
         }
     }
 
@@ -722,9 +733,12 @@ final class RPPIO: RPPeripheral {
         // (a machine woken during the run, by another's IRQ, sets it back to 0)
         nextDue = .infinity
         var due = Double.infinity
-        for machine in machines where machine.enabled {
-            machine.run(until: now)
-            if !machine.waiting { due = min(due, machine.nextNanos) }
+        for machineRef in machineRefs {
+            machineRef._withUnsafeGuaranteedRef { machine in
+                guard machine.enabled else { return }
+                machine.run(until: now)
+                if !machine.waiting { due = min(due, machine.nextNanos) }
+            }
         }
         nextDue = min(nextDue, due)
         checkChangedPins()
