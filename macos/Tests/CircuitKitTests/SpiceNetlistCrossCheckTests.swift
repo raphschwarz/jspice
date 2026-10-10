@@ -170,20 +170,29 @@ final class SpiceNetlistCrossCheckTests: XCTestCase {
         let capacitor = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "C1" })
         let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
         simulator.errorControl = false
+        // the heaviest step's trace, to show if it fails
+        var lines: [String] = [], heaviest: [String] = [], most = 0
+        simulator.trace = { lines.append($0) }
         var steps = 0, worst = 0.0
         while simulator.time < 4e-3 && !simulator.isFailed {
+            lines.removeAll()
+            let before = simulator.newtonIterations
             simulator.step()
+            if simulator.newtonIterations - before > most { (most, heaviest) = (simulator.newtonIterations - before, lines) }
             steps += 1
             // the output follows the input (1 µs behind), but for a step or two at each crossing (6.3 mV/µs there)
             let input = sin(2 * Double.pi * 1000 * simulator.time)
             if simulator.time > 0.5e-3 { worst = max(worst, abs(simulator.terminalVoltages(capacitor)[0] - input)) }
         }
+        let report = "\(simulator.decisionSolves) solves again, \(simulator.chatteringSolves) chattering, \(simulator.rejectedSubsteps) "
+            + "substeps rejected, \(simulator.newtonIterations) iterations in \(steps) steps; the heaviest step (\(most)):\n"
+            + heaviest.joined(separator: "\n")
         XCTAssertFalse(simulator.isFailed, "\(simulator.problems)")
         XCTAssertEqual(simulator.convergenceFailures, 0)
-        XCTAssertGreaterThan(simulator.chatteringSolves, 0, "no crossing went round a cycle")
-        XCTAssertLessThan(worst, 0.3)
-        XCTAssertLessThan(simulator.rejectedSubsteps, steps / 10, "substeps halved at crossings")
-        XCTAssertLessThan(Double(simulator.newtonIterations) / Double(steps), 6)
+        XCTAssertGreaterThan(simulator.chatteringSolves, 0, "no crossing went round a cycle: " + report)
+        XCTAssertLessThan(worst, 0.3, report)
+        XCTAssertLessThan(simulator.rejectedSubsteps, steps / 10, "substeps halved at crossings: " + report)
+        XCTAssertLessThan(Double(simulator.newtonIterations) / Double(steps), 6, report)
     }
 
     /// The expression engine: SPICE's precedence, functions and POLY's order of coefficients, with exact slopes

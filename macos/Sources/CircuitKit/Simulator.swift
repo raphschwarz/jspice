@@ -533,6 +533,17 @@ public final class Simulator {
     private var keptRowScale: [Double] = []
     /// How many of the stamped slots there were when the present factoring's values were kept
     private var keptStampedCount = 0
+    /// The solution the present factoring was made at (the block's unknowns, by unknown), while `keptPointValid`: an
+    /// entry changed since in the column of an unknown that has not moved since (an enable held at 1, times an input
+    /// that moves: the product's slope in the enable's column is the input) changes nothing a step solved with these
+    /// factors does, so it does not keep them from serving (see `keptFactorsSuit`)
+    private var keptPoint: [Double] = []
+    private var keptPointValid = false
+    /// Unknowns within this (relative, above 1) of where they were count as not having moved
+    static let unmovedTolerance = 1e-9
+    /// Whether the last confirmation (see `stampsUnchanged`) found the block stamped exactly as it was solved
+    private var stampsConfirmedExactly = true
+    private var confirmScratch: [Double] = []
     /// The block's factorings before the present one, most recent first (see `formerFactorsSuit`), on the same plan and
     /// base matrix: their values at the stamped slots (in `stampedSlots`' order), their rows' scale, factors and order
     private struct FormerFactoring {
@@ -1499,6 +1510,11 @@ public final class Simulator {
     /// such iteration halves the step taken (to a sixty-fourth at most), and each one that contracts doubles it back.
     static let dampingAfter = 8
 
+    /// A substep that can be halved gives up after this many iterations in a row whose steps have not halved (without
+    /// a junction's limiting): Newton-Raphson swinging from one side of a maker's model's corners to the other, as at
+    /// the end of its crossover dead zone, rarely settles before `halvingIterations`, and the halves start nearer
+    static let stallsTolerated = 3
+
     /// How many times a solve is done again for behavioural sources' decisions that changed during it
     static let decisionRounds = 4
 
@@ -1519,6 +1535,7 @@ public final class Simulator {
         var damping = 1.0
         var refactor = false
         var chordSteps = 0
+        var stalls = 0
         // whether this solve snapshots its stamps to confirm an iteration without a solve: not for a while after many
         // misses in a row (a transistor's slopes move at every iteration, and its block never stamps as it was solved)
         if confirmRest > 0 { confirmRest -= 1 }
@@ -1630,7 +1647,8 @@ public final class Simulator {
                 confirmedWithoutSolving += 1
                 converged = true
                 // the snapshot (the stamps the solution solved, which the parts gave again there) for the next step
-                // to start from
+                // to start from; or, where entries changed, the stamps as the parts gave them there
+                if !stampsConfirmedExactly { snapshotStamps(plan) }
                 confirmedStamps = true
                 confirmedPlanSerial = planSerial
                 confirmedBaseVersion = baseVersion
@@ -1720,6 +1738,13 @@ public final class Simulator {
             }
             if dampsNewton && iteration >= Self.dampingAfter && !limiting {
                 damping = change > 0.5 * lastChange ? max(damping / 2, 1.0 / 64) : min(damping * 2, 1)
+            }
+            if iterations == Self.halvingIterations && iteration >= 3 && !limiting {
+                stalls = change > 0.5 * lastChange ? stalls + 1 : 0
+                if stalls >= Self.stallsTolerated {
+                    trace?("    no nearer after \(stalls) iterations: the substep is halved")
+                    break
+                }
             }
             lastChange = change
         }
@@ -1833,26 +1858,57 @@ public final class Simulator {
         }
     }
 
-    /// Whether the block as just stamped is the one `snapshotStamps` kept, each entry within 10⁻¹² of its row's scale
+    /// Whether the solution the block was just stamped at solves the block as stamped: it solved the block `snapshotStamps`
+    /// kept, so it does if each entry and what the stamps add to the right-hand side are as they were then (within
+    /// 10⁻¹² of the row's scale), or if, where entries changed, the changes times the solution balance the changes on the
+    /// right-hand side, row by row, within as much: an entry changed in the column of an unknown held still (an enable
+    /// at 1 times an input that moves, whose slope in the enable's column is the input) is balanced by the input's move
+    /// in what the product adds to the right-hand side. `stampsConfirmedExactly` tells the two apart.
     private func stampsUnchanged(_ plan: SparsePlan) -> Bool {
         let rows = plan.block.count
         guard stampedPlan === plan, keptPlan === plan, stampSnapshot.count == stampedSlots.count, rightSnapshot.count == rows,
               keptRowScale.count == rows else { return false }
         let tolerance = 1e-12
-        return values.withUnsafeBufferPointer { v -> Bool in
+        if confirmScratch.count != rows { confirmScratch = [Double](repeating: 0, count: rows) }
+        var changed = false
+        let finite = values.withUnsafeBufferPointer { v -> Bool in
             keptRowScale.withUnsafeBufferPointer { scale -> Bool in
-                for k in 0..<stampedSlots.count {
-                    let now = v[Int(stampedSlots[k])], then = stampSnapshot[k]
-                    // (written so that a value that is not a number fails too)
-                    guard abs(now - then) <= tolerance * (abs(now) + scale[Int(stampedLocalRows[k])]) else { return false }
+                x.withUnsafeBufferPointer { x -> Bool in
+                    confirmScratch.withUnsafeMutableBufferPointer { balance -> Bool in
+                        for k in 0..<rows { balance[k] = 0 }
+                        for k in 0..<stampedSlots.count {
+                            let now = v[Int(stampedSlots[k])], then = stampSnapshot[k]
+                            let row = Int(stampedLocalRows[k])
+                            // (written so that a value that is not a number fails too)
+                            if !(abs(now - then) <= tolerance * (abs(now) + scale[row])) {
+                                guard now.isFinite else { return false }
+                                changed = true
+                                balance[row] += (now - then) * x[Int(stampedColumns[k])]
+                            }
+                        }
+                        return true
+                    }
                 }
-                return workVector.withUnsafeBufferPointer { b -> Bool in
-                    rhsForwarded.withUnsafeBufferPointer { forwarded -> Bool in
-                        rightSnapshot.withUnsafeBufferPointer { kept -> Bool in
+            }
+        }
+        guard finite else { return false }
+        var largest = 0.0
+        if changed { for u in plan.block { largest = max(largest, abs(x[u])) } }
+        let holds = workVector.withUnsafeBufferPointer { b -> Bool in
+            rhsForwarded.withUnsafeBufferPointer { forwarded -> Bool in
+                rightSnapshot.withUnsafeBufferPointer { kept -> Bool in
+                    keptRowScale.withUnsafeBufferPointer { scale -> Bool in
+                        confirmScratch.withUnsafeBufferPointer { balance -> Bool in
                             for k in 0..<rows {
                                 let row = plan.block[k]
                                 let now = b[row], added = now - forwarded[row]
-                                guard abs(added - kept[k]) <= tolerance * (abs(now) + scale[k]) else { return false }
+                                if changed {
+                                    guard abs(balance[k] - (added - kept[k])) <= tolerance * (abs(now) + scale[k] * (1 + largest)) else {
+                                        return false
+                                    }
+                                } else {
+                                    guard abs(added - kept[k]) <= tolerance * (abs(now) + scale[k]) else { return false }
+                                }
                             }
                             return true
                         }
@@ -1860,6 +1916,8 @@ public final class Simulator {
                 }
             }
         }
+        stampsConfirmedExactly = !changed
+        return holds
     }
 
     /// Packs the linear block's factors from the base matrix, once for each base matrix
@@ -1912,19 +1970,31 @@ public final class Simulator {
         guard keptPlan === plan, keptOrder != nil, !plan.block.isEmpty, keptBaseVersion == baseVersion, !stampedSlotsGrew,
               keptValues.count == plan.entryCount else { return false }
         let count = stampedSlots.count
+        let relaxed = keptPointValid && keptPoint.count == x.count
         return values.withUnsafeBufferPointer { v -> Bool in
             keptValues.withUnsafeBufferPointer { kept -> Bool in
                 stampedSlots.withUnsafeBufferPointer { slots -> Bool in
                     stampedLocalRows.withUnsafeBufferPointer { rows -> Bool in
                         keptRowScale.withUnsafeBufferPointer { scale -> Bool in
-                            var k = 0
-                            while k < count {
-                                let slot = Int(slots[k])
-                                // (written so that a value that is not a number fails too)
-                                guard abs(v[slot] - kept[slot]) <= Self.reuseTolerance * scale[Int(rows[k])] else { return false }
-                                k += 1
+                            stampedColumns.withUnsafeBufferPointer { columns -> Bool in
+                                x.withUnsafeBufferPointer { x -> Bool in
+                                    keptPoint.withUnsafeBufferPointer { point -> Bool in
+                                        var k = 0
+                                        while k < count {
+                                            let slot = Int(slots[k])
+                                            // (written so that a value that is not a number fails too)
+                                            if !(abs(v[slot] - kept[slot]) <= Self.reuseTolerance * scale[Int(rows[k])]) {
+                                                // changed, but in the column of an unknown that has not moved since
+                                                guard relaxed, v[slot].isFinite else { return false }
+                                                let u = Int(columns[k])
+                                                guard abs(x[u] - point[u]) <= Self.unmovedTolerance * (1 + abs(x[u])) else { return false }
+                                            }
+                                            k += 1
+                                        }
+                                        return true
+                                    }
+                                }
                             }
-                            return true
                         }
                     }
                 }
@@ -1985,6 +2055,9 @@ public final class Simulator {
         keptBaseVersion = baseVersion
         keptStampedCount = stampedSlots.count
         stampedSlotsGrew = false
+        if keptPoint.count != x.count { keptPoint = [Double](repeating: .nan, count: x.count) }
+        Self.copy(plan.block, from: x, into: &keptPoint)
+        keptPointValid = true
     }
 
     /// Keeps the factoring about to be replaced among the former ones, for the block to come back to, in the memory of
@@ -2060,6 +2133,8 @@ public final class Simulator {
         swap(&keptRowScale, &former.rowScale)
         swap(&keptFactors, &former.factors)
         keptOrder = former.order
+        // (where the former one was made is not kept)
+        keptPointValid = false
         if let present, keptStampedCount == count {
             former.order = present
             formerFactorings.insert(former, at: 0)
