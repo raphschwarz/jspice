@@ -45,6 +45,12 @@ extension SpiceExpression {
         public let count: Int
         /// Whether it reads the time (its value can change while its inputs stay)
         public let readsTime: Bool
+        /// Whether it is made of straight lines in its inputs between its decisions: nothing curved (exp, a power, sin…)
+        /// of anything that reads an input, and not the time (see `straightReach`)
+        public let piecewiseLinear: Bool
+
+        /// The functions that are straight lines in their arguments but where they decide (a corner or a jump)
+        static let straightFunctions: Set<Function> = [.abs, .u, .sgn, .floor, .ceil, .uramp, .min, .max, .limit]
 
         public init(_ expression: SpiceExpression) {
             var compiler = Compiler()
@@ -52,6 +58,27 @@ extension SpiceExpression {
             slopes = expression.slopes.map { compiler.compile($0, .normal) }
             count = compiler.steps.count
             readsTime = compiler.steps.contains { if case .time = $0 { return true } else { return false } }
+            // which steps read an input, and whether any of those is curved
+            var reads = [Bool](repeating: false, count: compiler.steps.count)
+            var straight = !readsTime
+            for (k, step) in compiler.steps.enumerated() {
+                switch step {
+                case .input, .decidingInput: reads[k] = true
+                case .constant, .time, .temperature: reads[k] = false
+                case let .negate(a), let .not(a): reads[k] = reads[Int(a)]
+                case let .add(a, b), let .subtract(a, b), let .multiply(a, b), let .divide(a, b):
+                    reads[k] = reads[Int(a)] || reads[Int(b)]
+                case let .binary(op, a, b):
+                    reads[k] = reads[Int(a)] || reads[Int(b)]
+                    if op == .power && reads[k] { straight = false }
+                case let .call(f, a, b, c):
+                    reads[k] = reads[Int(a)] || (b >= 0 && reads[Int(b)]) || (c >= 0 && reads[Int(c)])
+                    if reads[k] && !Self.straightFunctions.contains(f) { straight = false }
+                case let .select(c, a, b): reads[k] = reads[Int(c)] || reads[Int(a)] || reads[Int(b)]
+                case let .table(a, _, _, _), let .tableSlope(a, _, _, _): reads[k] = reads[Int(a)]
+                }
+            }
+            piecewiseLinear = straight
             steps = .allocate(capacity: max(count, 1))
             steps.initialize(from: compiler.steps, count: count)
             data = .allocate(capacity: max(compiler.data.count, 1))
@@ -96,6 +123,123 @@ extension SpiceExpression {
                     r[k] = SpiceExpression.lookupSlope(r[Int(a)], table + Int(xs), table + Int(ys), Int(n))
                 }
             }
+        }
+
+        /// How far the inputs can move (the largest change of any of them, and of the inputs its decisions are made at)
+        /// from those of the run that wrote `results` with every decision in it staying as it was: the value and its
+        /// slopes are straight lines in the inputs that far, the slopes the same, so a stamp made from the run stays
+        /// exactly as it was. Infinity where nothing in it decides; 0 where something curves (a product of two moving
+        /// values) or is not a number.
+        ///
+        /// Each step's rate, the most its value can move for each volt the inputs move, goes into `rates` (at least
+        /// `count` long), and each decision's margin bounds the reach: how far its argument is from where it flips,
+        /// over the argument's rate.
+        public func straightReach(_ results: UnsafePointer<Double>, rates: UnsafeMutablePointer<Double>) -> Double {
+            guard piecewiseLinear, results[value].isFinite else { return 0 }
+            for k in 0..<slopes.count where !results[slopeSteps[k]].isFinite { return 0 }
+            let r = results, s = rates
+            let steps = self.steps, table = self.data
+            var reach = Double.infinity
+            var unsure = false
+            func margin(_ distance: Double, _ rate: Double) {
+                if rate == 0 { return }
+                let m = Swift.abs(distance) / rate
+                if m < reach { reach = m } else if m.isNaN { unsure = true }
+            }
+            for k in 0..<count {
+                switch steps[k] {
+                case .constant, .time, .temperature: s[k] = 0
+                case .input, .decidingInput: s[k] = 1
+                case let .negate(a): s[k] = s[Int(a)]
+                case let .not(a):
+                    margin(r[Int(a)], s[Int(a)])
+                    s[k] = 0
+                case let .add(a, b), let .subtract(a, b): s[k] = s[Int(a)] + s[Int(b)]
+                case let .multiply(a, b):
+                    let (sa, sb) = (s[Int(a)], s[Int(b)])
+                    if sa == 0 {
+                        s[k] = sb == 0 ? 0 : Swift.abs(r[Int(a)]) * sb
+                    } else if sb == 0 {
+                        s[k] = Swift.abs(r[Int(b)]) * sa
+                    } else {
+                        return 0
+                    }
+                case let .divide(a, b):
+                    let (sa, sb) = (s[Int(a)], s[Int(b)])
+                    guard sb == 0 else { return 0 }
+                    if sa == 0 {
+                        s[k] = 0
+                    } else {
+                        // (by 0, the quotient jumps from one huge value to the other as its numerator's sign changes)
+                        let denominator = Swift.abs(r[Int(b)])
+                        guard denominator > 0 else { return 0 }
+                        s[k] = sa / denominator
+                    }
+                case let .binary(op, a, b):
+                    let (sa, sb) = (s[Int(a)], s[Int(b)])
+                    switch op {
+                    case .less, .greater, .lessEqual, .greaterEqual, .equal, .notEqual:
+                        margin(r[Int(a)] - r[Int(b)], sa + sb)
+                    case .and, .or:
+                        margin(r[Int(a)], sa)
+                        margin(r[Int(b)], sb)
+                    default:
+                        // a power, of values that do not move
+                        guard sa == 0 && sb == 0 else { return 0 }
+                    }
+                    s[k] = 0
+                case let .call(f, a, b, c):
+                    let sa = s[Int(a)], sb = b >= 0 ? s[Int(b)] : 0, sc = c >= 0 ? s[Int(c)] : 0
+                    let va = r[Int(a)]
+                    switch f {
+                    case .abs, .uramp:
+                        margin(va, sa)
+                        s[k] = sa
+                    case .u, .sgn:
+                        margin(va, sa)
+                        s[k] = 0
+                    case .floor, .ceil:
+                        margin(Swift.min(va - va.rounded(.down), va.rounded(.up) - va), sa)
+                        s[k] = 0
+                    case .min, .max:
+                        margin(va - (b >= 0 ? r[Int(b)] : 0), sa + sb)
+                        s[k] = Swift.max(sa, sb)
+                    case .limit:
+                        let (vb, vc) = (b >= 0 ? r[Int(b)] : 0, c >= 0 ? r[Int(c)] : 0)
+                        margin(vb - vc, sb + sc)
+                        margin(va - vb, sa + sb)
+                        margin(va - vc, sa + sc)
+                        s[k] = Swift.max(sa, sb, sc)
+                    default:
+                        // curved, of values that do not move
+                        guard sa == 0 && sb == 0 && sc == 0 else { return 0 }
+                        s[k] = 0
+                    }
+                case let .select(c, a, b):
+                    margin(r[Int(c)], s[Int(c)])
+                    s[k] = r[Int(c)] != 0 ? s[Int(a)] : s[Int(b)]
+                case let .table(a, first, second, n), let .tableSlope(a, first, second, n):
+                    let sa = s[Int(a)], v = r[Int(a)], points = Int(n)
+                    let xs = table + Int(first), ys = table + Int(second)
+                    // the distance to the nearest point, where the line's slope changes, and the slope
+                    var slope = 0.0
+                    if points > 0 && v <= xs[0] {
+                        margin(xs[0] - v, sa)
+                    } else if points > 0 && v >= xs[points - 1] {
+                        margin(v - xs[points - 1], sa)
+                    } else if points > 1 {
+                        var lo = 0, hi = points - 1
+                        while hi - lo > 1 {
+                            let mid = (lo + hi) / 2
+                            if xs[mid] <= v { lo = mid } else { hi = mid }
+                        }
+                        margin(Swift.min(v - xs[lo], xs[hi] - v), sa)
+                        slope = Swift.abs((ys[hi] - ys[lo]) / (xs[hi] - xs[lo]))
+                    }
+                    if case .table = steps[k] { s[k] = sa == 0 ? 0 : slope * sa } else { s[k] = 0 }
+                }
+            }
+            return unsure || reach.isNaN ? 0 : reach
         }
     }
 

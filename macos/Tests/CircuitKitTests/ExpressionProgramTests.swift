@@ -80,6 +80,99 @@ final class ExpressionProgramTests: XCTestCase {
         check(try SpiceExpression(parsing: "1k*2 + 3"), "constant")
     }
 
+    /// Within its straight reach, an expression made of straight lines between its decisions is one straight line: its
+    /// slopes are those at the point the reach was worked out at, and its value moves along them. Inputs and the inputs
+    /// decisions are made at move together, each by up to 0.45 of the reach in either direction.
+    func testWithinItsReachAnExpressionIsAStraightLine() throws {
+        let straight = [
+            "V(a)*2 + 1",
+            "V(a,b) > 0.5 ? V(c) : -V(c)",
+            "if(V(a) > 0, V(a)*3, 0.1*V(b))",
+            "limit(V(a), -1, 1) * 3 + limit(V(b), V(c), -V(c))",
+            "limit(89*V(a,b), -0.002, 0.003)",
+            "min(V(a), V(b)) + max(V(a), V(c))",
+            "table(V(a), -1, -2, 0, 0, 1, 3, 2, 3.5)",
+            "u(V(a)) * V(b) + uramp(V(a) - 0.2) + stp(V(c))",
+            "sgn(V(a)) * abs(V(b))",
+            "!(V(a) > 0) * V(b) + (V(a) != V(b)) - (V(c) <= 0) + (V(a) >= V(c))",
+            "floor(V(a)) + ceil(V(b)) + int(V(c))",
+            "(V(a) > 0 && V(b) < 0) || V(c) == 0 ? 1 : 0",
+            "V(a)/4 - V(b)/0.5",
+        ]
+        var reached = 0
+        for text in straight {
+            let expression = try SpiceExpression(parsing: text)
+            let program = SpiceExpression.Program(expression)
+            XCTAssertTrue(program.piecewiseLinear, text)
+            let n = max(expression.inputs.count, 1)
+            var draws = Draws()
+            var results = [Double](repeating: .nan, count: max(program.count, 1))
+            var moved = results
+            var rates = results
+            for _ in 0..<200 {
+                let x = (0..<n).map { _ in draws.next() }
+                let held = (0..<n).map { _ in draws.next() }
+                for holding in [false, true] {
+                    let reach = x.withUnsafeBufferPointer { x in held.withUnsafeBufferPointer { held -> Double in
+                        results.withUnsafeMutableBufferPointer { r -> Double in
+                            program.run(x.baseAddress!, deciding: holding ? held.baseAddress! : nil, into: r.baseAddress!)
+                            return rates.withUnsafeMutableBufferPointer { program.straightReach(r.baseAddress!, rates: $0.baseAddress!) }
+                        }
+                    } }
+                    XCTAssertGreaterThanOrEqual(reach, 0, text)
+                    guard reach > 0 else { continue }
+                    reached += 1
+                    let span = reach.isFinite ? 0.45 * reach : 1
+                    let step = (0..<n).map { _ in (draws.next() / 3) * span }
+                    let x2 = zip(x, step).map { $0 + $1 }
+                    // decisions held where they were, moved as far (or, not held, made at the inputs as they are)
+                    let held2 = zip(held, step).map { $0 - $1 }
+                    x2.withUnsafeBufferPointer { x2 in held2.withUnsafeBufferPointer { held2 in
+                        moved.withUnsafeMutableBufferPointer {
+                            program.run(x2.baseAddress!, deciding: holding ? held2.baseAddress! : nil, into: $0.baseAddress!)
+                        }
+                    } }
+                    var expected = results[program.value]
+                    for k in expression.inputs.indices {
+                        XCTAssertEqual(moved[program.slopes[k]], results[program.slopes[k]],
+                                       "\(text), slope \(k) at \(x) moved by \(step) (reach \(reach), held \(holding))")
+                        expected += results[program.slopes[k]] * step[k]
+                    }
+                    XCTAssertEqual(moved[program.value], expected, accuracy: 1e-9 * (1 + abs(expected)),
+                                   "\(text) at \(x) moved by \(step) (reach \(reach), held \(holding))")
+                }
+            }
+        }
+        XCTAssertGreaterThan(reached, 1000, "few points had a reach")
+        // curved, or a product of two moving values: no reach
+        for text in ["exp(V(a)) + V(b)", "tanh(V(a)*10)", "V(a)^2", "0.5*V(a) + 2*table(V(b)*V(c), 0, 0, 1, 1)", "V(a)*V(b) > 0 ? 1 : 0",
+                     "sin(time*1000) + V(a)"] {
+            let expression = try SpiceExpression(parsing: text)
+            let program = SpiceExpression.Program(expression)
+            let x = [Double](repeating: 0.3, count: max(expression.inputs.count, 1))
+            var results = [Double](repeating: .nan, count: max(program.count, 1))
+            var rates = results
+            let reach = x.withUnsafeBufferPointer { x in
+                results.withUnsafeMutableBufferPointer { r -> Double in
+                    program.run(x.baseAddress!, into: r.baseAddress!)
+                    return rates.withUnsafeMutableBufferPointer { program.straightReach(r.baseAddress!, rates: $0.baseAddress!) }
+                }
+            }
+            XCTAssertEqual(reach, 0, text)
+        }
+        // LIMIT(89·V, −2 mA, 3 mA) at 10 µV: 0.89 mA, 2.89 mA from the lower limit and 2.11 mA from the upper, so
+        // 2.11 mA / 89 S of reach
+        let limit = SpiceExpression.Program(try SpiceExpression(parsing: "limit(89*V(a), -0.002, 0.003)"))
+        var results = [Double](repeating: 0, count: limit.count), rates = results
+        let reach = [1e-5].withUnsafeBufferPointer { x in
+            results.withUnsafeMutableBufferPointer { r -> Double in
+                limit.run(x.baseAddress!, into: r.baseAddress!)
+                return rates.withUnsafeMutableBufferPointer { limit.straightReach(r.baseAddress!, rates: $0.baseAddress!) }
+            }
+        }
+        XCTAssertEqual(reach, (0.003 - 89e-5) / 89, accuracy: 1e-15)
+    }
+
     /// A part the value and its slopes share is worked out once: exp(V(a)·V(b)) for the value and both slopes
     func testSharedPartsAreWorkedOutOnce() throws {
         let expression = try SpiceExpression(parsing: "exp(V(a)*V(b))")

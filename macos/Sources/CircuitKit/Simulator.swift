@@ -41,6 +41,8 @@ public final class Simulator {
     public private(set) var limitedIterations = 0
     /// Behavioural sources' stamps given again from their last evaluation, their inputs not having moved
     public private(set) var bypassedEvaluations = 0
+    /// Those of them whose inputs had moved, but not out of the straight stretch they were on (see `stampBehavior`)
+    public private(set) var straightBypasses = 0
     /// Newton-Raphson iterations that ended without a solve, their block stamped as the iteration before solved it
     public private(set) var confirmedWithoutSolving = 0
     /// First iterations that started from the stamps the last solve confirmed, without evaluating the parts
@@ -314,15 +316,15 @@ public final class Simulator {
         /// The inputs again, in memory of their own: read at every iteration without touching reference counts
         let inputList: UnsafeMutablePointer<BehaviorInput>
         let inputCount: Int
-        /// Its last evaluation: the inputs, the value and each input's slope (see `stampBehavior`'s bypass)
+        /// Its last evaluation: the inputs, those its decisions were made at, the value and each input's slope, and
+        /// how far the inputs can move from those with every decision in it as it was (see `stampBehavior`'s bypass)
         let lastInputs: UnsafeMutablePointer<Double>
+        let lastDecisions: UnsafeMutablePointer<Double>
         let lastSlopes: UnsafeMutablePointer<Double>
         var lastValue = 0.0
         var lastCelsius = 0.0
+        var reach = 0.0
         var evaluated = false
-        /// Whether a last evaluation can stand for a new one at the same inputs: not when the value moves with time,
-        /// or its decisions are held elsewhere
-        var bypassable: Bool { !decides && !program.readsTime }
 
         init(expression: SpiceExpression, program: SpiceExpression.Program, inputs: [BehaviorInput], voltage: Bool) {
             self.expression = expression
@@ -334,6 +336,8 @@ public final class Simulator {
             inputList.initialize(from: inputs, count: inputs.count)
             lastInputs = .allocate(capacity: max(inputs.count, 1))
             lastInputs.initialize(repeating: 0, count: max(inputs.count, 1))
+            lastDecisions = .allocate(capacity: max(inputs.count, 1))
+            lastDecisions.initialize(repeating: 0, count: max(inputs.count, 1))
             lastSlopes = .allocate(capacity: max(inputs.count, 1))
             lastSlopes.initialize(repeating: 0, count: max(inputs.count, 1))
         }
@@ -341,6 +345,7 @@ public final class Simulator {
         deinit {
             inputList.deallocate()
             lastInputs.deallocate()
+            lastDecisions.deallocate()
             lastSlopes.deallocate()
         }
     }
@@ -349,6 +354,8 @@ public final class Simulator {
     private var compiledExpressions: [String: (expression: SpiceExpression, program: SpiceExpression.Program)] = [:]
     /// Where a behavioural source's program writes its steps' values (room for `behaviorRegisterRoom`)
     private var behaviorRegisters = UnsafeMutablePointer<Double>.allocate(capacity: 1)
+    /// And where it works out each step's rate (see `SpiceExpression.Program.straightReach`), with the same room
+    private var behaviorRates = UnsafeMutablePointer<Double>.allocate(capacity: 1)
     private var behaviorRegisterRoom = 1
     /// What reading the behavioural sources' expressions found wrong
     private var behaviorProblems: [String] = []
@@ -562,6 +569,7 @@ public final class Simulator {
     deinit {
         stampedFlags?.deallocate()
         behaviorRegisters.deallocate()
+        behaviorRates.deallocate()
         behaviorValues.deallocate()
         behaviorDecisions.deallocate()
     }
@@ -3336,10 +3344,13 @@ public final class Simulator {
         behaviorDecisions.initialize(repeating: 0, count: behaviorInputRoom)
         if longest > behaviorRegisterRoom {
             behaviorRegisters.deallocate()
+            behaviorRates.deallocate()
             behaviorRegisterRoom = longest
             behaviorRegisters = .allocate(capacity: longest)
+            behaviorRates = .allocate(capacity: longest)
         }
         behaviorRegisters.initialize(repeating: 0, count: behaviorRegisterRoom)
+        behaviorRates.initialize(repeating: 0, count: behaviorRegisterRoom)
     }
 
     /// A behavioural source, linearised at the present solution with its expression's exact slopes: a voltage across + and
@@ -3358,15 +3369,34 @@ public final class Simulator {
         }
         let celsius = kelvin - 273.15
         let plus = nodes[0] - 1, minus = nodes[1] - 1
-        let last = b.lastInputs, lastSlopes = b.lastSlopes
+        let last = b.lastInputs, lastDecisions = b.lastDecisions, lastSlopes = b.lastSlopes
         // bypass, as SPICE bypasses a device whose voltages have not moved: inputs within a billionth of the last
         // evaluation's give the same stamp again, its value and slopes as they were (the difference is far below what
-        // Newton-Raphson resolves, being second order in so small a change)
-        var bypass = Self.bypassesDevices && b.evaluated && b.bypassable && b.lastCelsius == celsius
-        if bypass {
-            for k in 0..<count where !(abs(v[k] - last[k]) <= Self.bypassTolerance * (1 + abs(v[k]))) {
-                bypass = false
-                break
+        // Newton-Raphson resolves, being second order in so small a change). And a source made of straight lines
+        // between its decisions (a LIMIT, IF or TABLE of its inputs, as a maker's model's are) whose inputs, and those
+        // its decisions are made at, have moved less than half its reach from the last evaluation's: no decision in it
+        // can have changed, so its value has moved along its slopes and its stamp is exactly the one it made.
+        var bypass = false
+        if Self.bypassesDevices && b.evaluated && b.lastCelsius == celsius && !b.program.readsTime {
+            // (a deciding source's value moves with where its decisions are held, which the first test does not see)
+            var near = !b.decides
+            var furthest = 0.0, finite = true
+            for k in 0..<count {
+                let change = abs(v[k] - last[k])
+                if change > furthest { furthest = change } else if change.isNaN { finite = false }
+                if !(change <= Self.bypassTolerance * (1 + abs(v[k]))) { near = false }
+            }
+            if b.decides {
+                for k in 0..<count {
+                    let change = abs((holds ? d[k] : v[k]) - lastDecisions[k])
+                    if change > furthest { furthest = change } else if change.isNaN { finite = false }
+                }
+            }
+            if near {
+                bypass = true
+            } else if finite && furthest <= 0.5 * b.reach {
+                bypass = true
+                straightBypasses += 1
             }
         }
         if bypass {
@@ -3379,10 +3409,12 @@ public final class Simulator {
             let slopes = program.slopeSteps
             for k in 0..<count {
                 last[k] = v[k]
+                lastDecisions[k] = holds ? d[k] : v[k]
                 lastSlopes[k] = r[slopes[k]]
             }
             b.lastValue = r[program.value]
             b.lastCelsius = celsius
+            b.reach = Self.bypassesDevices && program.piecewiseLinear ? program.straightReach(r, rates: behaviorRates) : 0
             b.evaluated = true
         }
         var equivalent = b.lastValue
