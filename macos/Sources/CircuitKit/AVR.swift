@@ -1727,6 +1727,10 @@ final class AVRTimer {
 final class AVRUSART {
     let spec: AVRVariant.USART
     unowned(unsafe) let avr: AVR
+    /// The chip's data space, and the chip, reached without counting a reference (the chip looks the USART over at
+    /// every service of its peripherals)
+    private let data: UnsafeMutablePointer<UInt8>
+    private let avrRef: Unmanaged<AVR>
 
     var output: [UInt8] = []
     var input: [UInt8] = []
@@ -1741,11 +1745,13 @@ final class AVRUSART {
     init(spec: AVRVariant.USART, avr: AVR) {
         self.spec = spec
         self.avr = avr
+        data = avr.data
+        avrRef = .passUnretained(avr)
     }
 
     func reset() {
-        avr.data[spec.statusA] = 0x20  // the transmit buffer starts empty
-        avr.data[spec.controlC] = 0x06
+        data[spec.statusA] = 0x20  // the transmit buffer starts empty
+        data[spec.controlC] = 0x06
         output = []
         // what was typed before a reset is not received after it
         input = []
@@ -1766,7 +1772,7 @@ final class AVRUSART {
     }
 
     private func frameCycles() -> Int {
-        let d = avr.data
+        let d = data
         let rate = (Int(d[spec.rateHigh]) << 8 | Int(d[spec.rateLow])) & 0xFFF
         return (d[spec.statusA] & 0x02 != 0 ? 8 : 16) * (rate + 1) * 10
     }
@@ -1778,7 +1784,7 @@ final class AVRUSART {
     }
 
     func writeData(_ value: UInt8) {
-        let d = avr.data
+        let d = data
         avr.interruptsChanged = true
         if !avr.transmitDoubleBuffered {
             d[spec.statusA] &= ~0x20
@@ -1801,7 +1807,7 @@ final class AVRUSART {
     }
 
     func readData() -> UInt8 {
-        let d = avr.data
+        let d = data
         let value = d[spec.dataRegister]
         d[spec.statusA] &= ~0x80
         avr.interruptsChanged = true
@@ -1809,14 +1815,14 @@ final class AVRUSART {
     }
 
     func writeStatus(_ value: UInt8) {
-        let d = avr.data
+        let d = data
         // only U2X and MPCM are written; writing 1 to TXC clears it
         d[spec.statusA] = (d[spec.statusA] & ~0x03 | value & 0x03) & ~(value & 0x40)
         avr.interruptsChanged = true
     }
 
     func writeControl(_ value: UInt8) {
-        let d = avr.data
+        let d = data
         let old = d[spec.controlB]
         d[spec.controlB] = value
         avr.interruptsChanged = true
@@ -1826,34 +1832,34 @@ final class AVRUSART {
     }
 
     func writeRateLow(_ value: UInt8) {
-        let d = avr.data
+        let d = data
         d[spec.rateLow] = value
         let rate = (Int(d[spec.rateHigh]) << 8 | Int(value)) & 0xFFF
         simCyclesPerByte = (rate + 1) * (d[spec.statusA] & 0x02 != 0 ? 8 : 16) * 11
     }
 
     var needsUpdate: Bool {
-        busyUntil != 0 || simPumpAt != nil || (!input.isEmpty && avr.data[spec.controlB] & 0x10 != 0)
+        busyUntil != 0 || simPumpAt != nil || (!input.isEmpty && data[spec.controlB] & 0x10 != 0)
     }
 
     /// The cycle `update` next has something to do at (0: after the next instruction; Int.max: nothing to do)
     var nextUpdate: Int {
         var next = Int.max
-        if !avr.transmitDoubleBuffered {
+        if !avrRef._withUnsafeGuaranteedRef({ $0.transmitDoubleBuffered }) {
             if let at = simPumpAt { next = at }
         } else if busyUntil != 0 {
             next = busyUntil
         }
-        if !input.isEmpty && avr.data[spec.controlB] & 0x10 != 0 {
+        if !input.isEmpty && data[spec.controlB] & 0x10 != 0 {
             // a byte is received once the last one has been read (a read the chip is not told of): until then, looked
             // at after every instruction
-            next = min(next, avr.data[spec.statusA] & 0x80 == 0 ? receiveNext : 0)
+            next = min(next, data[spec.statusA] & 0x80 == 0 ? receiveNext : 0)
         }
         return next
     }
 
     func update() {
-        let d = avr.data
+        let d = data
         let cycles = avr.cycles
         if !avr.transmitDoubleBuffered {
             while let at = simPumpAt, cycles >= at { simavrPump() }
@@ -1879,7 +1885,7 @@ final class AVRUSART {
 
     // simavr's transmitter: UDRE raised once per byte time (11 bits) while bytes are queued or UDRIE is on
     private func simavrPump() {
-        let d = avr.data
+        let d = data
         guard let when = simPumpAt else { return }
         simPumpAt = nil
         if simCount > 0 {
