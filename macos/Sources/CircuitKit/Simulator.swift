@@ -524,6 +524,12 @@ public final class Simulator {
     private var substepStartX: [Double] = []
     private var olderX: [Double] = []
     private var predictorReady = false
+    /// The start of the substep before that too, and whether it is from an ordinary substep as well: the predictor then
+    /// extrapolates along the parabola through the three
+    private var oldestX: [Double] = []
+    private var quadraticReady = false
+    /// Whether the predictor extrapolates along a parabola where it can (off, along a straight line: for comparing)
+    public static var predictsQuadratically = true
     private var predictNext = false
     private var predictionRatio = 1.0
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
@@ -944,6 +950,7 @@ public final class Simulator {
         linkClocks()
         // the equations' shape may have changed: plan afresh
         predictorReady = false
+        quadraticReady = false
         plan = nil
         needsPlan = false
         missedPositions = []
@@ -1008,6 +1015,7 @@ public final class Simulator {
         timeStep = dt
         matrixIsCurrent = false
         predictorReady = false
+        quadraticReady = false
         // a delay line's history is kept one value per step: resample it to the new step
         for (i, history) in delayHistory {
             delayHistory[i] = history.resampled(stepRatio: dt / previous, capacity: delayCapacity(i, timeStep: dt))
@@ -1058,6 +1066,7 @@ public final class Simulator {
         guard other.flat.elements.count == flat.elements.count, other.x.count == x.count else { return }
         time = other.time
         predictorReady = false
+        quadraticReady = false
         if timeStep != other.timeStep {
             timeStep = other.timeStep
             matrixIsCurrent = false
@@ -1139,6 +1148,7 @@ public final class Simulator {
         watchChipPins()
         matrixIsCurrent = false
         predictorReady = false
+        quadraticReady = false
         sequenceOwnsKeyboard = false
         currentsAreStale = true
     }
@@ -1332,7 +1342,9 @@ public final class Simulator {
             trace?("  substep at level \(level) kept" + (converged ? "" : ", not converged") + (solveChattered ? ", chattering" : ""))
             updateDynamicStates()
             // the next substep predicts from this one's start and end, unless the circuit jumped (a part switched over)
+            swap(&oldestX, &olderX)
             swap(&olderX, &substepStartX)
+            quadraticReady = predictorReady && !switched
             predictorReady = !switched
             (olderLevel, lastLevel) = (lastLevel, level)
             substeps += 1
@@ -1536,6 +1548,26 @@ public final class Simulator {
         let ratio = predictionRatio
         guard olderX.count == x.count, ratio.isFinite, ratio > 0 else { return }
         let block = plan.flatMap { $0.n == x.count ? $0.block : nil }
+        if Self.predictsQuadratically && quadraticReady && oldestX.count == x.count {
+            // the parabola through the last three substeps' starts (the last ends at x), at this substep's end: with
+            // r this substep's length and s the one before last's, over the last's, x's weight is (r + 1)(r + 1 + s)/(1 + s),
+            // the last start's −r(r + 1 + s)/s, the one before's r(r + 1)/((1 + s)s) (3, −3 and 1 for equal lengths)
+            let r = ratio
+            let s = Double(1 << lastLevel) / Double(1 << olderLevel)
+            let w0 = (r + 1) * (r + 1 + s) / (1 + s), w1 = -r * (r + 1 + s) / s, w2 = r * (r + 1) / ((1 + s) * s)
+            x.withUnsafeMutableBufferPointer { x in
+                olderX.withUnsafeBufferPointer { older in
+                    oldestX.withUnsafeBufferPointer { oldest in
+                        if let block {
+                            for k in block { x[k] = w0 * x[k] + w1 * older[k] + w2 * oldest[k] }
+                        } else {
+                            for k in 0..<x.count { x[k] = w0 * x[k] + w1 * older[k] + w2 * oldest[k] }
+                        }
+                    }
+                }
+            }
+            return
+        }
         x.withUnsafeMutableBufferPointer { x in
             olderX.withUnsafeBufferPointer { older in
                 if let block {
@@ -5298,6 +5330,7 @@ public final class Simulator {
         }
         // (the last steps' solutions are from before the switch: nothing to extrapolate from)
         predictorReady = false
+        quadraticReady = false
         switchesFollowed += 1
     }
 
