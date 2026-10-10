@@ -528,8 +528,12 @@ public final class Simulator {
     /// extrapolates along the parabola through the three
     private var oldestX: [Double] = []
     private var quadraticReady = false
-    /// Whether the predictor extrapolates along a parabola where it can (off, along a straight line: for comparing)
-    public static var predictsQuadratically = true
+    /// Whether the predictor extrapolates along a parabola where it can (off by default: for comparing). CI's
+    /// comparison: the ring modulator of transistors took a sixth fewer iterations with it, the VCF a tenth, but the
+    /// synth voice at rest a third more (its unknowns nearly still, the parabola carries their rounding three times
+    /// over), a diode clipper a tenth more, and a transistor multivibrator stopped oscillating: the parabola through a
+    /// switching edge starts Newton-Raphson on the far side of where the circuit goes.
+    public static var predictsQuadratically = false
     private var predictNext = false
     private var predictionRatio = 1.0
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
