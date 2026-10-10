@@ -386,6 +386,14 @@ public struct SpiceExpression: Hashable, Sendable {
 
     /// Constants folded, and additions of 0 and multiplications by 0 or 1 left out
     static func fold(_ node: Node) -> Node {
+        let folded = foldTerms(node)
+        // -0 written as 0: nodes that are equal are then the same to the bit (-0 == 0, and they hash alike, so a
+        // compiled program, which works out equal nodes once, would otherwise take one for the other)
+        if case let .constant(c) = folded, c == 0, c.sign == .minus { return .constant(0) }
+        return folded
+    }
+
+    private static func foldTerms(_ node: Node) -> Node {
         switch node {
         case let .negate(a):
             let f = fold(a)
@@ -672,8 +680,9 @@ public struct SpiceExpression: Hashable, Sendable {
                 guard case let .constant(xv) = x, case let .constant(yv) = y else {
                     throw ParseError.unexpected("table point", at: rest)
                 }
-                xs.append(xv)
-                ys.append(yv)
+                // (-0 as 0, as `fold` writes it)
+                xs.append(xv == 0 ? 0 : xv)
+                ys.append(yv == 0 ? 0 : yv)
             }
             return .table(argument, xs, ys)
         }
