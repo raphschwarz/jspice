@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reads the call graph in a macOS `sample` report and prints where the time goes: each function's samples with all it
-calls (inclusive), and for the runtime's helpers (copies, reference counts, uniqueness checks) which functions call
-them, so a profile's anonymous memmove is traced to the copy that costs it.
+calls (inclusive), and for the runtime's helpers (copies, reference counts, uniqueness checks, hashing) which functions
+call them, so a profile's anonymous memmove is traced to the copy that costs it.
 
     profile-callers.py build/profile-maker.txt [rows]
 """
@@ -11,7 +11,8 @@ from collections import Counter, defaultdict
 
 HELPERS = ("memmove", "memcpy", "memset", "isUniquelyReferenced", "swift_retain", "swift_release", "swift_bridgeObject",
            "malloc", "free", "swift_allocObject", "swift_beginAccess", "_checkSubscript", "RefCounts", "dealloc", "arrayDestroy",
-           "ContiguousArrayStorage", "swift_unowned", "swift_weak")
+           "ContiguousArrayStorage", "swift_unowned", "swift_weak", "Hasher", "_NativeDictionary", "Set.contains",
+           "Dictionary.subscript")
 
 
 def main():

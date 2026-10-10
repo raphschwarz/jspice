@@ -268,7 +268,11 @@ public final class Simulator {
     /// Microcontrollers' chips by element index (none until a part has firmware), the pin setup the matrix was built
     /// for, and the fraction of a clock cycle carried to the next step
     private var chips: [Int: Microcontroller] = [:]
-    private var chipPinStates: [Int: [PinState]] = [:]
+    private var chipPinStates: [Int: [PinState]] = [:] {
+        didSet { pinStatesMoved = true }
+    }
+    /// Whether the chips' pins have changed since `followPinSwitch` last made their key (it is only made again then)
+    private var pinStatesMoved = true
     /// The chips' pins as they were at the last step, as a key; a switch of them under way in the present step (what
     /// they switched from and to, and the nonlinear block's unknowns just before); and the solutions the steps after
     /// switches found, by the switch (see `followPinSwitch`)
@@ -293,13 +297,18 @@ public final class Simulator {
     public static var followsPinSwitches = true
     private var chipCycleCarry: [Int: Double] = [:]
     private var chipIndices: [Int] = []
-    /// For each chip, its pins that logic parts' inputs are wired to, and those inputs (the part and the input's bit):
-    /// what the chip does on these pins is replayed into the parts as it happened, change by change
-    private var chipWatches: [Int: [Int: [(element: Int, bit: Int)]]] = [:]
+    /// For each chip (by its index among the parts), for each of its pins, the logic parts' inputs wired to it (the part
+    /// and the input's bit), empty where there are none: what the chip does on these pins is replayed into the parts as
+    /// it happened, change by change. (Arrays, not dictionaries: an I²S stream changes pins hundreds of times a step.)
+    private var chipWatches: [[[(element: Int, bit: Int)]]] = []
     /// Likewise for the converters that answer within a transfer (`isBusDevice`): they follow the chip's pins as it
     /// runs. And for each of those, the chips' pins on the line it drives back (an ADC's DOUT, an I²C target's SDA).
-    private var busWatches: [Int: [Int: [(element: Int, bit: Int)]]] = [:]
-    private var busLines: [Int: [(chip: Int, pin: Int)]] = [:]
+    private var busWatches: [[[(element: Int, bit: Int)]]] = []
+    private var busLines: [[(chip: Int, pin: Int)]] = []
+    /// For each chip with bus devices on its pins, what it calls as a watched pin changes while it runs
+    private var busHandlers: [((PinEvent) -> Void)?] = []
+    /// The pin events of a step, from every chip, in the order they happened
+    private var stepPinEvents: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
     var digitalState: [Bool] = []
     /// What each logic part remembers: its inputs' levels, its count
@@ -734,6 +743,7 @@ public final class Simulator {
         // left out, as a block's are
         kinds = flat.elements.map { $0.runsMakerModel ? .block : $0.kind }
         constants = flat.elements.map { makeConstants($0) }
+        findAcross()
         bipolar = flat.elements.map { $0.kind.isBipolar ? GummelPoon($0, kelvin: kelvin, vt: vt) : GummelPoon() }
         diodes = flat.elements.map { $0.kind.isDiode ? SpiceDiode($0, kelvin: kelvin, vt: vt) : SpiceDiode() }
         jfets = flat.elements.map { $0.kind.isJFET ? SpiceJFET($0, kelvin: kelvin, vt: vt) : SpiceJFET() }
@@ -4837,23 +4847,32 @@ public final class Simulator {
             let whole = max(Int(budget), 0)
             let start = chip.cycles
             // the bus devices wired to it follow its pins as it runs, and answer within the run
-            if busWatches[i] != nil { chip.onPinEvent = { [unowned self] event in self.busEvent(i, event) } }
+            if i < busHandlers.count, let handler = busHandlers[i] { chip.onPinEvent = handler }
             if whole > 0 { chip.run(cycles: whole) }
             chip.onPinEvent = nil
             // the last instruction may run past the budget: the next step has that much less
             chipCycleCarry[i] = budget - Double(chip.cycles - start)
             let states = chip.pinStates
-            if !Self.samePinSetup(states, chipPinStates[i]) { matrixIsCurrent = false }
-            chipPinStates[i] = states
+            let kept = chipPinStates[i]
+            if !Self.samePinSetup(states, kept) { matrixIsCurrent = false }
+            if kept != states { chipPinStates[i] = states }
         }
         replayPinEvents()
     }
 
     /// Finds the logic parts' inputs wired to chips' pins, and has the chips log those pins
     private func watchChipPins() {
-        chipWatches = [:]
-        busWatches = [:]
-        busLines = [:]
+        chipWatches = Array(repeating: [], count: kinds.count)
+        busWatches = Array(repeating: [], count: kinds.count)
+        busLines = Array(repeating: [], count: kinds.count)
+        busHandlers = Array(repeating: nil, count: kinds.count)
+        /// pin by pin, as an array long enough for the last pin that has any
+        func byPinArray(_ byPin: [Int: [(element: Int, bit: Int)]]) -> [[(element: Int, bit: Int)]] {
+            guard let last = byPin.keys.max() else { return [] }
+            var table = [[(element: Int, bit: Int)]](repeating: [], count: last + 1)
+            for (pin, targets) in byPin { table[pin] = targets }
+            return table
+        }
         for i in chipIndices {
             guard let chip = chips[i], i < topology.elementNodes.count else { continue }
             let chipNodes = topology.elementNodes[i]
@@ -4870,26 +4889,28 @@ public final class Simulator {
                 // the line a bus device drives back: an ADC's DOUT, an I²C target's SDA
                 let line = kinds[j] == .spiAdc ? 3 : 1
                 if bus, line < nodes.count, nodes[line] > 0 {
-                    for (pin, node) in chipNodes.enumerated() where node == nodes[line] { busLines[j, default: []].append((i, pin)) }
+                    for (pin, node) in chipNodes.enumerated() where node == nodes[line] { busLines[j].append((i, pin)) }
                 }
             }
             chip.watchedPins = Set(byPin.keys).union(busByPin.keys).sorted()
-            if !byPin.isEmpty { chipWatches[i] = byPin }
-            if !busByPin.isEmpty { busWatches[i] = busByPin }
+            chipWatches[i] = byPinArray(byPin)
+            busWatches[i] = byPinArray(busByPin)
+            // (called only while the chip runs, within `runChips`: the simulator is there)
+            if !busByPin.isEmpty { busHandlers[i] = { [unowned(unsafe) self] event in self.busEvent(i, event) } }
         }
     }
 
     /// A watched pin changing as a chip runs, for the bus devices that follow it: they move on at once, and what they
     /// drive back on the chip's pins (an ADC's DOUT bit, an I²C target's acknowledge) is what the chip reads from then
     private func busEvent(_ chipIndex: Int, _ event: PinEvent) {
-        guard let targets = busWatches[chipIndex]?[event.pin] else { return }
-        for target in targets {
+        guard chipIndex < busWatches.count, event.pin >= 0, event.pin < busWatches[chipIndex].count else { return }
+        for target in busWatches[chipIndex][event.pin] {
             let old = logicStates[target.element]
             let mask = UInt32(1) << UInt32(target.bit)
             let inputs = event.high ? old.inputs | mask : old.inputs & ~mask
             guard inputs != old.inputs else { continue }
             let next = advanceLogic(target.element, old, inputs: inputs)
-            for line in busLines[target.element] ?? [] {
+            for line in busLines[target.element] {
                 guard let chip = chips[line.chip], line.pin < chip.pinVoltages.count else { continue }
                 let volts: Double
                 switch kinds[target.element] {
@@ -4909,19 +4930,19 @@ public final class Simulator {
     /// Plays what the chips did on the watched pins during their run into the logic parts wired to them, in the order
     /// it happened: an SPI word clocked out within one step reaches a DAC bit by bit
     private func replayPinEvents() {
-        guard !chipWatches.isEmpty || !busWatches.isEmpty else { return }
-        var events: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
-        for (i, chip) in chips where chipWatches[i] != nil || busWatches[i] != nil {
+        stepPinEvents.removeAll(keepingCapacity: true)
+        for i in chipIndices where i < chipWatches.count && (!chipWatches[i].isEmpty || !busWatches[i].isEmpty) {
+            guard let chip = chips[i] else { continue }
             // (the bus devices had theirs as the chip ran)
             let taken = chip.takePinEvents()
-            guard chipWatches[i] != nil else { continue }
+            guard !chipWatches[i].isEmpty else { continue }
             for event in taken {
-                events.append((Double(event.cycle) / chip.clock, events.count, i, event))
+                stepPinEvents.append((Double(event.cycle) / chip.clock, stepPinEvents.count, i, event))
             }
         }
-        events.sort { ($0.time, $0.order) < ($1.time, $1.order) }
-        for (_, _, i, event) in events {
-            for target in chipWatches[i]?[event.pin] ?? [] {
+        stepPinEvents.sort { ($0.time, $0.order) < ($1.time, $1.order) }
+        for (_, _, i, event) in stepPinEvents where event.pin >= 0 && event.pin < chipWatches[i].count {
+            for target in chipWatches[i][event.pin] {
                 let old = logicStates[target.element]
                 let mask = UInt32(1) << UInt32(target.bit)
                 let inputs = event.high ? old.inputs | mask : old.inputs & ~mask
@@ -4955,9 +4976,12 @@ public final class Simulator {
     /// at a time. Only with the unknowns as they were then (so it is the same situation, not a latch that has flipped
     /// since): the solve starts nearer its answer, and finds it as it would have.
     private func followPinSwitch() {
+        pinSwitch = nil
+        // (the key follows the pins alone: as they were, it is as it was)
+        guard pinStatesMoved else { return }
+        pinStatesMoved = false
         let key = pinSetupKey()
         defer { pinKey = key }
-        pinSwitch = nil
         guard Self.followsPinSwitches, key != pinKey, hasNonlinear, let plan, plan.n == x.count, !plan.block.isEmpty else { return }
         let change = PinSwitch(from: pinKey, to: key)
         let before = plan.block.map { x[$0] }
@@ -5437,12 +5461,29 @@ public final class Simulator {
     /// Voltage across the element: a minus b; for voltage sources + (b) minus - (a), so a 5 V source reads 5 V;
     /// drain minus source (collector minus emitter) for transistors; the output voltage for op-amps
     public func voltageAcross(_ index: Int) -> Double {
-        guard index < topology.elementNodes.count, index < kinds.count, x.count == topology.matrixSize else { return 0 }
-        let kind = kinds[index]
-        if kind == .behavioralSource, let (plus, minus) = acrossNodes(index) { return voltage(plus) - voltage(minus) }
-        if kind.isMicrocontroller || kind.hasChipPackage { return constants[index].supply }
-        guard let (plus, minus) = acrossNodes(index) else { return 0 }
-        return voltage(plus) - voltage(minus)
+        guard index < across.count, x.count == topology.matrixSize else { return 0 }
+        switch across[index] {
+        case let .nodes(plus, minus): return voltage(plus) - voltage(minus)
+        case .supply: return constants[index].supply
+        case .nothing: return 0
+        }
+    }
+
+    /// What `voltageAcross` reads of a part: two nodes, or (a chip) its supply, or nothing
+    private enum Across {
+        case nodes(Int, Int), supply, nothing
+    }
+    /// Per part, worked out as the circuit is loaded: the sound reads a part's voltage at every sample, and the checks
+    /// of its kind (whether it is drawn as a chip) hash the kind's name
+    private var across: [Across] = []
+
+    private func findAcross() {
+        across = kinds.indices.map { i -> Across in
+            let kind = kinds[i]
+            if kind != .behavioralSource && (kind.isMicrocontroller || kind.hasChipPackage) { return .supply }
+            guard let (plus, minus) = acrossNodes(i) else { return .nothing }
+            return .nodes(plus, minus)
+        }
     }
 
     /// The nodes `voltageAcross` reads, plus then minus (0 is ground); nil for parts it reads no nodes of

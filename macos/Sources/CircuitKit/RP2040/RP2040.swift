@@ -41,10 +41,19 @@ final class RP2040 {
     private(set) var spi: [RPSPI] = []
     private(set) var i2c: [RPI2C] = []
     /// The peripherals at 0x40000000-0x40FFFFFF (APB) and 0x50000000-0x50FFFFFF (AHB), by address bits 14-23; and the
-    /// SSI at 0x18000000
-    private var apb = [RPPeripheral?](repeating: nil, count: 1024)
-    private var ahb = [RPPeripheral?](repeating: nil, count: 1024)
-    private var ssi: RPPeripheral?
+    /// SSI at 0x18000000. Held by `owned`, and reached through these without counting (a firmware polling a register
+    /// otherwise pays a retain and a release at every read).
+    private let apb: UnsafeMutablePointer<Unmanaged<RPPeripheral>?> = {
+        let table = UnsafeMutablePointer<Unmanaged<RPPeripheral>?>.allocate(capacity: 1024)
+        table.initialize(repeating: nil, count: 1024)
+        return table
+    }()
+    private let ahb: UnsafeMutablePointer<Unmanaged<RPPeripheral>?> = {
+        let table = UnsafeMutablePointer<Unmanaged<RPPeripheral>?>.allocate(capacity: 1024)
+        table.initialize(repeating: nil, count: 1024)
+        return table
+    }()
+    private var ssi: Unmanaged<RPPeripheral>?
 
     init() {
         bootrom = .allocate(byteCount: RP2040.bootromSize, alignment: 4)
@@ -125,17 +134,20 @@ final class RP2040 {
         ]
         // rp2040.ts looks them up by (address >>> 14) << 2, the keys of this table
         for (key, peripheral) in table {
+            owned.append(peripheral)
             let block = Int((key >> 2) & 0x3FF)
             switch key >> 12 {
-            case 0x40: apb[block] = peripheral
-            case 0x50: ahb[block] = peripheral
-            default: ssi = peripheral
+            case 0x40: apb[block] = .passUnretained(peripheral)
+            case 0x50: ahb[block] = .passUnretained(peripheral)
+            default: ssi = .passUnretained(peripheral)
             }
         }
         reset()
     }
 
     deinit {
+        apb.deallocate()
+        ahb.deallocate()
         bootrom.deallocate()
         sram.deallocate()
         flash.deallocate()
@@ -172,7 +184,7 @@ final class RP2040 {
 
     // MARK: - The bus
 
-    @inline(__always) private func findPeripheral(_ address: UInt32) -> RPPeripheral? {
+    @inline(__always) private func findPeripheral(_ address: UInt32) -> Unmanaged<RPPeripheral>? {
         switch address >> 24 {
         case 0x40: return apb[Int((address >> 14) & 0x3FF)]
         case 0x50: return ahb[Int((address >> 14) & 0x3FF)]
@@ -194,7 +206,7 @@ final class RP2040 {
         } else if address >= RP2040.sioStart && address < 0xE000_0000 {
             return sio.readUint32(address - RP2040.sioStart)
         }
-        if let peripheral = findPeripheral(address) { return peripheral.readUint32(address & 0x3FFF) }
+        if let peripheral = findPeripheral(address) { return peripheral._withUnsafeGuaranteedRef { $0.readUint32(address & 0x3FFF) } }
         return 0xFFFF_FFFF
     }
 
@@ -220,7 +232,7 @@ final class RP2040 {
 
     func writeUint32(_ address: UInt32, _ value: UInt32) {
         if let peripheral = findPeripheral(address) {
-            peripheral.writeUint32Atomic(address & 0xFFF, value, (address & 0x3000) >> 12)
+            peripheral._withUnsafeGuaranteedRef { $0.writeUint32Atomic(address & 0xFFF, value, (address & 0x3000) >> 12) }
         } else if address < UInt32(RP2040.bootromSize) {
             // ROM: a stray write (a null pointer in a sketch) changes nothing, as on the chip
         } else if address >= RP2040.flashStart && address < RP2040.flashStart + UInt32(RP2040.flashSize) {
@@ -246,7 +258,9 @@ final class RP2040 {
         let aligned = address & 0xFFFF_FFFC
         let byte = UInt32(value)
         if let peripheral = findPeripheral(address) {
-            peripheral.writeUint32Atomic(aligned & 0xFFF, byte | byte << 8 | byte << 16 | byte << 24, (aligned & 0x3000) >> 12)
+            peripheral._withUnsafeGuaranteedRef {
+                $0.writeUint32Atomic(aligned & 0xFFF, byte | byte << 8 | byte << 16 | byte << 24, (aligned & 0x3000) >> 12)
+            }
             return
         }
         let shift = (address & 0x3) * 8
@@ -262,7 +276,7 @@ final class RP2040 {
         let aligned = address & 0xFFFF_FFFC
         let half = UInt32(value)
         if let peripheral = findPeripheral(address) {
-            peripheral.writeUint32Atomic(aligned & 0xFFF, half | half << 16, (aligned & 0x3000) >> 12)
+            peripheral._withUnsafeGuaranteedRef { $0.writeUint32Atomic(aligned & 0xFFF, half | half << 16, (aligned & 0x3000) >> 12) }
             return
         }
         let original = readUint32(aligned)

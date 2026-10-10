@@ -77,6 +77,7 @@ jobs:
           sample $! 3 -file build/profile-i2s.txt > /dev/null 2>&1 || true
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-i2s.txt | head -45
+          python3 scripts/profile-callers.py build/profile-i2s.txt 30 || true
           # and for an Arduino fading an LED
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 arduino-fade > /dev/null &
           sleep 1

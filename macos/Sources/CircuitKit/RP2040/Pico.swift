@@ -29,7 +29,9 @@ public final class Pico: Microcontroller {
             cdc.onSerialData = { [unowned self] bytes in self.outbox += bytes }
             for pin in chip.gpio {
                 let gpio = pin.index
-                pin.onChange = { [unowned self] state in
+                // (the pins are the chip's, which is this system's: they cannot outlive it, and a counted reference
+                // would cost at every change, millions of them a second where PIO clocks a DAC)
+                pin.onChange = { [unowned(unsafe) self] state in
                     self.pinsChanged = true
                     let watchedPin = self.watched[gpio]
                     guard watchedPin >= 0 else { return }
