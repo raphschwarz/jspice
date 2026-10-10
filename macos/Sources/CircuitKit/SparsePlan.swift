@@ -131,15 +131,16 @@ final class EliminationProgram {
     var packedCount: Int { Int(lStart[steps]) + Int(uStart[steps]) + steps }
 
     /// The factors in `values` (as `factor` left them) gathered in the order substitution reads them: those below the
-    /// pivots, then those right of them, then the pivots. Substituting through them then reads memory in order.
+    /// pivots, then those right of them, then the pivots' reciprocals. Substituting through them then reads memory in
+    /// order, and multiplies where it would divide (a division takes several times as long, and each row's waits on it).
     func pack(_ values: UnsafePointer<Double>, into packed: UnsafeMutablePointer<Double>) {
         let lCount = Int(lStart[steps]), uCount = Int(uStart[steps])
         for j in 0..<lCount { packed[j] = values[Int(lSlot[j])] }
         for i in 0..<uCount { packed[lCount + i] = values[Int(uSlot[i])] }
-        for k in 0..<steps { packed[lCount + uCount + k] = values[Int(diagonal[k])] }
+        for k in 0..<steps { packed[lCount + uCount + k] = 1 / values[Int(diagonal[k])] }
     }
 
-    /// `forward` with factors packed by `pack`: the same operations in the same order
+    /// `forward` with factors packed by `pack`: the same operations in the same order as `forward`
     func forwardPacked(_ packed: UnsafePointer<Double>, _ b: UnsafeMutablePointer<Double>) {
         var k = 0
         while k < steps {
@@ -156,22 +157,26 @@ final class EliminationProgram {
         }
     }
 
-    /// `back` with factors packed by `pack`: the same operations in the same order
+    /// `back` with factors packed by `pack`: each row's entries summed in two halves at once (so each multiply-add
+    /// does not wait on the one before) and multiplied by its pivot's reciprocal; the same to within rounding
     func backPacked(_ packed: UnsafePointer<Double>, _ b: UnsafePointer<Double>, _ x: UnsafeMutablePointer<Double>) -> Double {
         let upper = packed + Int(lStart[steps])
-        let pivots = upper + Int(uStart[steps])
+        let reciprocals = upper + Int(uStart[steps])
         var change = 0.0
         var k = steps - 1
         while k >= 0 {
             var sum = b[Int(pivotRow[k])]
+            var other = 0.0
             var i = Int(uStart[k])
             let u1 = Int(uStart[k + 1])
-            while i < u1 {
+            while i + 1 < u1 {
                 sum -= upper[i] * x[Int(uColumn[i])]
-                i += 1
+                other -= upper[i + 1] * x[Int(uColumn[i + 1])]
+                i += 2
             }
+            if i < u1 { sum -= upper[i] * x[Int(uColumn[i])] }
             let column = Int(pivotColumn[k])
-            let next = sum / pivots[k]
+            let next = (sum + other) * reciprocals[k]
             guard next.isFinite else { return .nan }
             change = max(change, abs(next - x[column]) / (1 + abs(next)))
             x[column] = next

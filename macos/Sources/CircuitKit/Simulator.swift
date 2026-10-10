@@ -447,6 +447,11 @@ public final class Simulator {
     private var keptSlots: [Int32] = []
     private var keptLocalRows: [Int32] = []
     private var keptRowScale: [Double] = []
+    /// The linear block's factors packed (see `EliminationProgram.pack`) from the base matrix of version
+    /// `linearPackedVersion`, for a circuit with nonlinear parts
+    private var linearPacked: [Double] = []
+    private var linearPackedVersion = -1
+    private weak var linearPackedPlan: SparsePlan?
     /// The largest entry of each row of the block in the base matrix of version `baseRowScaleVersion`
     private var baseRowScale: [Double] = []
     private var baseRowScaleVersion = -1
@@ -1458,11 +1463,13 @@ public final class Simulator {
             }
             lastChange = change
         }
-        // the linear block's unknowns, from the nonlinear block's (its rows of the right-hand side are as forwarded)
+        // the linear block's unknowns, from the nonlinear block's (its rows of the right-hand side are as forwarded),
+        // through its factors packed for the base matrix
         guard let plan, valuesVersion == baseVersion else { return converged }
-        let change = values.withUnsafeBufferPointer { v -> Double in
+        packLinear(plan)
+        let change = linearPacked.withUnsafeBufferPointer { f -> Double in
             workVector.withUnsafeBufferPointer { b -> Double in
-                x.withUnsafeMutableBufferPointer { x -> Double in plan.linear.back(v.baseAddress!, b.baseAddress!, x.baseAddress!) }
+                x.withUnsafeMutableBufferPointer { x -> Double in plan.linear.backPacked(f.baseAddress!, b.baseAddress!, x.baseAddress!) }
             }
         }
         if change.isNaN {
@@ -1516,6 +1523,18 @@ public final class Simulator {
                 }
             }
         }
+    }
+
+    /// Packs the linear block's factors from the base matrix, once for each base matrix
+    private func packLinear(_ plan: SparsePlan) {
+        let count = plan.linear.packedCount
+        guard linearPackedVersion != baseVersion || linearPackedPlan !== plan || linearPacked.count != max(count, 1) else { return }
+        if linearPacked.count != max(count, 1) { linearPacked = [Double](repeating: 0, count: max(count, 1)) }
+        baseValues.withUnsafeBufferPointer { v in
+            linearPacked.withUnsafeMutableBufferPointer { plan.linear.pack(v.baseAddress!, into: $0.baseAddress!) }
+        }
+        linearPackedVersion = baseVersion
+        linearPackedPlan = plan
     }
 
     /// Starts recording which slots of the nonlinear block Newton-Raphson's stamps reach, afresh for a new plan
@@ -1679,6 +1698,14 @@ public final class Simulator {
     private func forwardRightHandSide() {
         Self.copy(rhs, into: &rhsForwarded)
         guard let plan, baseValues.count == plan.entryCount else { return }
+        if hasNonlinear || hasMemristor {
+            // through the linear block's factors packed for the base matrix, as Newton-Raphson goes back through them
+            packLinear(plan)
+            linearPacked.withUnsafeBufferPointer { f in
+                rhsForwarded.withUnsafeMutableBufferPointer { plan.linear.forwardPacked(f.baseAddress!, $0.baseAddress!) }
+            }
+            return
+        }
         let order = hasNonlinear || hasMemristor ? nil : baseOrder
         baseValues.withUnsafeBufferPointer { v in
             rhsForwarded.withUnsafeMutableBufferPointer { b in
