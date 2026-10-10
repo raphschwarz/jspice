@@ -73,7 +73,6 @@ let switches: [String: (Bool) -> Void] = [
     "retry-from-memory": { Simulator.retriesFromMemory = $0 },
     "quadratic-predictor": { Simulator.predictsQuadratically = $0 },
     "rest-chords": { Simulator.restsChords = $0 },
-    "rescue-level": { Simulator.remembersRescueLevel = $0 },
     "choose-predictor": { Simulator.choosesPredictor = $0 },
 ]
 
