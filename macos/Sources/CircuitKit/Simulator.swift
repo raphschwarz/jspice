@@ -3964,8 +3964,18 @@ public final class Simulator {
         return p - n
     }
 
-    /// Keeps a solution found just before decisions moved (see `flipHeld`), in the place of the oldest
+    /// Keeps a solution found just before decisions moved (see `flipHeld`), in the place of the oldest, or of the newest
+    /// if that decided alike (a substep halved over the same decisions keeps the memory of other ones)
     private func rememberFlip(held: [Double], solved: [Double]) {
+        if !flipHeld.isEmpty, solved.count == x.count {
+            let newest = (flipNext - 1 + flipHeld.count) % flipHeld.count
+            if flipHeld[newest].count == held.count,
+               decidingIndices.allSatisfy({ decides($0, at: solved, flipHeld[newest]) == decides($0, at: solved, held) }) {
+                Self.copy(held, into: &flipHeld[newest])
+                Self.copy(solved, into: &flipSolved[newest])
+                return
+            }
+        }
         if flipHeld.count < Self.flipMemoryKept {
             flipHeld.append(held)
             flipSolved.append(solved)
