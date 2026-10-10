@@ -1457,14 +1457,20 @@ final class AVRTimer {
     var accumulator = 0
     /// The clock division in use (0: stopped), from the clock select bits
     private(set) var prescale = 0
-    /// Compare values in use, and as written (copied over at TOP or BOTTOM in PWM modes)
-    var ocr: [Int]
-    var ocrBuffer: [Int]
+    /// Compare values in use, and as written (copied over at TOP or BOTTOM in PWM modes). These, the pins' states and
+    /// the compare flags' bits are raw memory, and the chip's data space is reached through a pointer kept here rather
+    /// than the reference to the chip: the timer ticks every few cycles, and arrays and counted references cost a
+    /// retain and a release at each use.
+    let ocr: UnsafeMutablePointer<Int>
+    let ocrBuffer: UnsafeMutablePointer<Int>
     var icr = 0
     /// tiny1: OCR1C
     var topC = 0xFF
     /// Compare output pin states
-    var output: [Bool]
+    let output: UnsafeMutablePointer<Bool>
+    private let compareBits: UnsafeMutablePointer<UInt8>
+    private let data: UnsafeMutablePointer<UInt8>
+    private let avrRef: Unmanaged<AVR>
     /// The 16-bit registers' shared high byte (TEMP)
     var temp: UInt8 = 0
 
@@ -1472,9 +1478,24 @@ final class AVRTimer {
         self.spec = spec
         self.avr = avr
         units = spec.compare.count
-        ocr = [Int](repeating: 0, count: units)
-        ocrBuffer = ocr
-        output = [Bool](repeating: false, count: units)
+        ocr = .allocate(capacity: max(units, 1))
+        ocr.initialize(repeating: 0, count: max(units, 1))
+        ocrBuffer = .allocate(capacity: max(units, 1))
+        ocrBuffer.initialize(repeating: 0, count: max(units, 1))
+        output = .allocate(capacity: max(units, 1))
+        output.initialize(repeating: false, count: max(units, 1))
+        compareBits = .allocate(capacity: max(units, 1))
+        compareBits.initialize(repeating: 0, count: max(units, 1))
+        for unit in 0..<min(units, spec.compareBits.count) { compareBits[unit] = spec.compareBits[unit] }
+        data = avr.data
+        avrRef = .passUnretained(avr)
+    }
+
+    deinit {
+        ocr.deallocate()
+        ocrBuffer.deallocate()
+        output.deallocate()
+        compareBits.deallocate()
     }
 
     func reset() {
@@ -1482,11 +1503,11 @@ final class AVRTimer {
         down = false
         accumulator = 0
         prescale = 0
-        ocr = [Int](repeating: 0, count: units)
-        ocrBuffer = ocr
+        ocr.update(repeating: 0, count: units)
+        ocrBuffer.update(repeating: 0, count: units)
         icr = 0
         topC = 0xFF
-        output = [Bool](repeating: false, count: units)
+        output.update(repeating: false, count: units)
         temp = 0
     }
 
@@ -1495,16 +1516,16 @@ final class AVRTimer {
         down = other.down
         accumulator = other.accumulator
         prescale = other.prescale
-        ocr = other.ocr
-        ocrBuffer = other.ocrBuffer
+        ocr.update(from: other.ocr, count: min(units, other.units))
+        ocrBuffer.update(from: other.ocrBuffer, count: min(units, other.units))
         icr = other.icr
         topC = other.topC
-        output = other.output
+        output.update(from: other.output, count: min(units, other.units))
         temp = other.temp
     }
 
     func updatePrescale() {
-        let select = spec.kind == .tiny1 ? Int(avr.data[spec.controlA] & 0x0F) : Int(avr.data[spec.controlB] & 7)
+        let select = spec.kind == .tiny1 ? Int(data[spec.controlA] & 0x0F) : Int(data[spec.controlB] & 7)
         prescale = spec.prescalers[select]
     }
 
@@ -1512,8 +1533,8 @@ final class AVRTimer {
 
     /// The waveform mode: its TOP, its kind and where TOP comes from
     func mode() -> (top: Int, kind: Kind, source: TopSource) {
-        let a = Int(avr.data[spec.controlA])
-        let b = Int(avr.data[spec.controlB])
+        let a = Int(data[spec.controlA])
+        let b = Int(data[spec.controlB])
         if spec.kind == .tiny1 {
             if a & 0x40 != 0 || b & 0x40 != 0 { return (topC, .fast, .ocrc) }  // PWM1A or PWM1B
             if a & 0x80 != 0 { return (topC, .ctc, .ocrc) }  // CTC1
@@ -1560,18 +1581,18 @@ final class AVRTimer {
 
     /// COMnx1:COMnx0: A in bits 7:6, B in 5:4, C in 3:2 of TCCRnA (tiny1: A in TCCR1 5:4, B in GTCCR 5:4)
     func compareOutputMode(_ unit: Int) -> Int {
-        if spec.kind == .tiny1 { return Int(avr.data[unit == 0 ? spec.controlA : spec.controlB]) >> 4 & 3 }
-        return Int(avr.data[spec.controlA]) >> (6 - 2 * unit) & 3
+        if spec.kind == .tiny1 { return Int(data[unit == 0 ? spec.controlA : spec.controlB]) >> 4 & 3 }
+        return Int(data[spec.controlA]) >> (6 - 2 * unit) & 3
     }
 
     /// tiny1: whether the unit is in PWM mode (PWM1A, PWM1B)
     func pwmUnit(_ unit: Int) -> Bool {
-        avr.data[unit == 0 ? spec.controlA : spec.controlB] & 0x40 != 0
+        data[unit == 0 ? spec.controlA : spec.controlB] & 0x40 != 0
     }
 
     private func flag(_ bit: UInt8) {
-        avr.data[spec.flagRegister] |= bit
-        avr.interruptsChanged = true
+        data[spec.flagRegister] |= bit
+        avrRef._withUnsafeGuaranteedRef { $0.interruptsChanged = true }
     }
 
     /// What a compare match does to the pin
@@ -1630,7 +1651,7 @@ final class AVRTimer {
             count += 1
         }
         for unit in 0..<units where old == ocr[unit] {
-            flag(spec.compareBits[unit])
+            flag(compareBits[unit])
             match(unit, kind, .ocrc)
         }
     }
@@ -1648,7 +1669,7 @@ final class AVRTimer {
                     count = top
                     down = true
                     // double-buffered compare values are updated at TOP
-                    ocr = ocrBuffer
+                    ocr.update(from: ocrBuffer, count: units)
                 }
             } else {
                 count -= 1
@@ -1659,7 +1680,7 @@ final class AVRTimer {
                 }
             }
             for unit in 0..<units where count == ocr[unit] {
-                flag(spec.compareBits[unit])
+                flag(compareBits[unit])
                 match(unit, kind, source)
             }
             return
@@ -1681,11 +1702,11 @@ final class AVRTimer {
         // (OCR + 1) / (TOP + 1), and the change at BOTTOM comes after it (OCR = TOP stays high, OCR = 0 gives a
         // one-clock spike)
         for unit in 0..<units where old == ocr[unit] {
-            flag(spec.compareBits[unit])
+            flag(compareBits[unit])
             match(unit, kind, source)
         }
         if kind == .fast && wrapped {
-            ocr = ocrBuffer
+            ocr.update(from: ocrBuffer, count: units)
             for unit in 0..<units {
                 let com = compareOutputMode(unit)
                 if com == 2 { output[unit] = true } else if com == 3 { output[unit] = false }
