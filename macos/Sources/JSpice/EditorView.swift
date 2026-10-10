@@ -27,6 +27,7 @@ struct EditorView: View {
                 case .schematic: schematic
                 case .breadboard: BreadboardView(editor: editor, circuit: document.circuit)
                 case .stripboard: StripboardView(editor: editor, circuit: document.circuit)
+                case .perfboard: PerfboardView(editor: editor, circuit: document.circuit)
                 }
                 // a board is for building: the panel and scopes give it their room
                 let onBoard = editor.board != .schematic && !document.circuit.elements.isEmpty
@@ -145,9 +146,10 @@ struct EditorToolbar: ToolbarContent {
                 Label("Schematic", systemImage: "point.3.connected.trianglepath.dotted").tag(BoardKind.schematic)
                 Label("Breadboard", systemImage: "circle.grid.3x3").tag(BoardKind.breadboard)
                 Label("Stripboard", systemImage: "line.3.horizontal").tag(BoardKind.stripboard)
+                Label("Perfboard", systemImage: "circle.grid.2x2").tag(BoardKind.perfboard)
             }
             .pickerStyle(.segmented)
-            .help("Show the schematic, or the circuit built on a breadboard or stripboard with its bill of materials")
+            .help("Show the schematic, or the circuit built on a solderless breadboard (full or half size), stripboard or perfboard, with its bill of materials")
             Toggle(isOn: $editor.showPanel) {
                 Label("Panel", systemImage: "slider.horizontal.3")
             }

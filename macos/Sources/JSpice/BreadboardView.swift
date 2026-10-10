@@ -9,9 +9,34 @@ struct BreadboardView: View {
     let circuit: Circuit
     @State private var layout: Breadboard.Layout?
     @State private var problems: [String] = []
+    /// The size of breadboard the user has, remembered
+    @AppStorage("breadboardSize") private var sizeName = Breadboard.Size.full.rawValue
+    private var size: Breadboard.Size { Breadboard.Size(rawValue: sizeName) ?? .full }
+
+    /// What the layout is worked out from
+    private struct Request: Equatable {
+        var circuit: Circuit
+        var size: Breadboard.Size
+    }
 
     var body: some View {
         HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack {
+                    Picker("Breadboard", selection: $sizeName) {
+                        ForEach(Breadboard.Size.allCases) { Text($0.title).tag($0.rawValue) }
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .help("The size of solderless breadboard you have: the circuit is laid out on as many as it needs")
+                    if let layout, layout.boards > 1 {
+                        Text("\(layout.boards) boards side by side").font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                Divider()
             ScrollView([.horizontal, .vertical]) {
                 if let layout {
                     let size = BoardGeometry(width: layout.width).size
@@ -25,16 +50,17 @@ struct BreadboardView: View {
             }
             .defaultScrollAnchor(.topLeading)
             .background(Color(nsColor: .underPageBackgroundColor))
+            }
             Divider()
             if let layout { sidePanel(layout).frame(width: 300) }
         }
-        .task(id: circuit) {
+        .task(id: Request(circuit: circuit, size: size)) {
             // a knob turned or a note played changes the circuit many times a second: lay out the board once it rests
             if layout != nil { try? await Task.sleep(for: .milliseconds(150)) }
             guard !Task.isCancelled else { return }
-            let circuit = circuit
+            let circuit = circuit, size = size
             let job = Task.detached(priority: .userInitiated) { () -> (Breadboard.Layout, [String]) in
-                let layout = Breadboard.layout(circuit)
+                let layout = Breadboard.layout(circuit, size: size)
                 return (layout, Breadboard.verify(layout))
             }
             let result = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
@@ -98,6 +124,14 @@ struct BreadboardView: View {
             if let net = layout.rails[rail] {
                 context.draw(Text(net).font(.system(size: 9, weight: .semibold)).foregroundStyle(positive ? Color.red : Color.blue),
                              at: CGPoint(x: g.x(1) - p * 1.2, y: y), anchor: .trailing)
+            }
+        }
+        // where one board ends and the next begins (their rails joined by jumpers)
+        if layout.boards > 1 {
+            for k in 1..<layout.boards {
+                let x = (g.x(k * layout.size.columns) + g.x(k * layout.size.columns + 1)) / 2
+                context.fill(Path(CGRect(x: x - p * 0.12, y: 0, width: p * 0.24, height: g.size.height)),
+                             with: .color(Color(nsColor: .underPageBackgroundColor)))
             }
         }
         // holes

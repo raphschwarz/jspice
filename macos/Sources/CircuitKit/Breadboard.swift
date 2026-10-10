@@ -4,13 +4,25 @@ import Foundation
 /// the strips of one net, what goes on the power rails, what stays off the board (supplies, signal sources, speakers,
 /// modules), and the bill of materials.
 ///
-/// The board is a full-size one: 63 columns; in each, the five holes a–e (above the channel) are one strip and f–j
-/// (below it) another; a + and a − rail run along the top and the bottom. Chips straddle the channel, pin 1 at the
+/// The board is a full-size one (830 points: 63 columns) or a half-size one (400 points: 30 columns), and as many side
+/// by side as the circuit needs; in each column, the five holes a–e (above the channel) are one strip and f–j (below
+/// it) another; a + and a − rail run along the top and the bottom. Chips straddle the channel, pin 1 at the
 /// bottom left. Parts that come several to a package (op-amps, gates, inverters, switches) are packed into as few
 /// packages as their shared pins allow, and their supply pins wired to the rails. Every pin number comes from the
 /// part's datasheet; `verify` checks that the board, as laid out, connects exactly the circuit's nets.
 public enum Breadboard {
     public static let columns = 63
+
+    /// The white solderless boards most people have: 830 points (63 columns) and 400 points (30 columns), each with a
+    /// + and a − rail along the top and the bottom
+    public enum Size: String, CaseIterable, Sendable, Identifiable {
+        case full, half
+
+        public var id: Self { self }
+        public var columns: Int { self == .full ? 63 : 30 }
+        public var points: Int { self == .full ? 830 : 400 }
+        public var title: String { self == .full ? "Full size (830 points)" : "Half size (400 points)" }
+    }
 
     public enum Rail: Int, CaseIterable, Hashable, Sendable {
         case topPositive, topNegative, bottomNegative, bottomPositive
@@ -103,6 +115,10 @@ public enum Breadboard {
         public var notes: [String] = []
         /// Columns in use: more than one board's 63 when the circuit needs them
         public var width = Breadboard.columns
+        /// The boards' size; `width` is a whole number of them
+        public var size = Size.full
+        /// How many boards, side by side
+        public var boards: Int { max(1, (width + size.columns - 1) / size.columns) }
 
         /// The net each hole in use is on: legs, wire ends, jumper ends
         public var nets: [Hole: String] {
@@ -514,7 +530,7 @@ public enum Breadboard {
             guard let rails = railsOf[net], !rails.isEmpty else { return nil }
             let rail = rails.first { $0.top == top } ?? rails[0]
             for distance in 0..<200 {
-                for c in [column + distance, column - distance] where c >= 1 && c <= max(layout.width, Breadboard.columns) {
+                for c in [column + distance, column - distance] where c >= 1 && c <= max(layout.width, layout.size.columns) {
                     let hole = Hole.rail(rail, column: c)
                     if !used.contains(hole) {
                         used.insert(hole)
@@ -704,11 +720,13 @@ public enum Breadboard {
         return plan
     }
 
-    /// Lays the circuit out on a breadboard
-    public static func layout(_ circuit: Circuit) -> Layout {
+    /// Lays the circuit out on breadboards of `size`
+    public static func layout(_ circuit: Circuit, size: Size = .full) -> Layout {
         let plan = plan(circuit)
         let voltages = plan.voltages
         var b = Builder()
+        b.layout.size = size
+        b.layout.width = size.columns
 
         // the rails: ground on both − rails; the supply most parts use on the top + rail, a second (a negative one first)
         // on the bottom + rail
@@ -804,8 +822,8 @@ public enum Breadboard {
 
         // off the board: supplies, sources, speakers, modules, each terminal wired to a hole of its net
         for supply in plan.wiredSupplies {
-            let plus = b.hole(on: supply.net, near: Breadboard.columns, top: supply.volts > 0)
-            let ground = b.hole(on: "GND", near: Breadboard.columns, top: supply.volts > 0)
+            let plus = b.hole(on: supply.net, near: size.columns, top: supply.volts > 0)
+            let ground = b.hole(on: "GND", near: size.columns, top: supply.volts > 0)
             b.layout.offBoard.append(OffBoard(name: supply.name, title: "Power supply, \(SI.format(supply.volts, unit: "V"))",
                                               wires: [Leg(name: supply.volts > 0 ? "+" : "−", hole: plus, net: supply.net), Leg(name: "common", hole: ground, net: "GND")]))
         }
@@ -839,16 +857,20 @@ public enum Breadboard {
         }
         // a net on both rails of a kind: the two joined at the right-hand end
         for (net, rails) in b.railsOf where rails.count == 2 {
-            let end = max(b.layout.width, Breadboard.columns)
+            let end = max(b.layout.width, size.columns)
             if let from = b.railHole(net, near: end, top: true), let to = b.railHole(net, near: end, top: false) {
                 b.layout.jumpers.append(Jumper(from: from, to: to, net: net))
             }
         }
-        if b.layout.width > Breadboard.columns {
-            b.layout.notes.append("The circuit needs \(b.layout.width) columns: more than one breadboard (63 each), side by side with their rails joined")
+        if b.layout.width > size.columns {
+            let used = b.layout.width
+            b.layout.width = b.layout.boards * size.columns
+            b.layout.notes.append("The circuit needs \(used) columns: \(b.layout.boards) \(size == .full ? "full-size" : "half-size") breadboards "
+                                  + "(\(size.columns) columns each) side by side, their rails joined; column \(size.columns + 1) is the second board's column 1")
         }
         b.layout.bom = billOfMaterials(b.layout.placements.map { ($0.name, $0.title, $0.style) }, offBoard: b.layout.offBoard.map { ($0.name, $0.title) },
                                        wires: b.layout.jumpers.count, wireName: "jumper wires")
+        b.layout.bom.append(Item(quantity: b.layout.boards, description: "solderless breadboard, " + size.title.lowercased(), parts: []))
         return b.layout
     }
 

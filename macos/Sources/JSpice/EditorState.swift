@@ -966,6 +966,6 @@ final class EditorState: ObservableObject {
 
 /// The circuit drawn as a schematic, or as it would be built
 enum BoardKind: String, CaseIterable, Identifiable {
-    case schematic = "Schematic", breadboard = "Breadboard", stripboard = "Stripboard"
+    case schematic = "Schematic", breadboard = "Breadboard", stripboard = "Stripboard", perfboard = "Perfboard"
     var id: Self { self }
 }

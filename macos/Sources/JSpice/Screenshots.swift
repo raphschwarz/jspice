@@ -85,6 +85,7 @@ enum ScreenshotRunner {
         Shot(name: "57-breadboard-vcf-dark", example: "vcf", dark: true, seconds: 3, board: .breadboard),
         Shot(name: "58-stripboard-fuzz-light", example: "fuzz", dark: false, seconds: 3, board: .stripboard),
         Shot(name: "59-stripboard-netlist-dark", example: "netlist", dark: true, seconds: 3, board: .stripboard),
+        Shot(name: "60-perfboard-fuzz-light", example: "fuzz", dark: false, seconds: 3, board: .perfboard),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool, drawings: Bool = false) {
