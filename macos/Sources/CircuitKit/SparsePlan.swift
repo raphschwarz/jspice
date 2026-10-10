@@ -560,19 +560,25 @@ final class SparsePlan {
     /// or a new one made for it; `scratch` (as long as the block) keeps the block's values to go back to between tries.
     /// The order used, or nil if the block is singular.
     func factorBlock(_ values: UnsafeMutablePointer<Double>, scratch: UnsafeMutablePointer<Double>) -> EliminationProgram? {
-        let count = entryCount - tailStart
-        if count == 0 { return orders.first }
         // only what elimination writes changes: that much is kept to go back to
         let written = writtenSlots
         let saved = written.count
         written.withUnsafeBufferPointer { slots in
             for k in 0..<saved { scratch[k] = values[Int(slots[k])] }
         }
-        func restore() {
+        return factorBlock(values) {
             written.withUnsafeBufferPointer { slots in
                 for k in 0..<saved { values[Int(slots[k])] = scratch[k] }
             }
         }
+    }
+
+    /// `factorBlock`, with `restore` putting the block's values back as they were before it, wherever elimination
+    /// writes (`writtenSlots`, as it is when `restore` is called), should the pivot order last used not suit them:
+    /// for a caller that has them elsewhere, rather than all of them being kept at every factoring
+    func factorBlock(_ values: UnsafeMutablePointer<Double>, restore: () -> Void) -> EliminationProgram? {
+        let count = entryCount - tailStart
+        if count == 0 { return orders.first }
         for (index, order) in orders.enumerated() {
             if index > 0 { restore() }
             if order.factor(values) < 0 {

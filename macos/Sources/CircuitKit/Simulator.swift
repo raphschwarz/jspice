@@ -1833,8 +1833,22 @@ public final class Simulator {
                 valuesFactored = true
                 let blockCount = max(plan.entryCount - plan.tailStart, 1)
                 if blockScratch.count != blockCount { blockScratch = [Double](repeating: 0, count: blockCount) }
+                // the block goes back to as stamped, should the pivot order last used not suit it: the base matrix's
+                // values wherever elimination writes, and over them the stamps (kept here, a few of the block's entries,
+                // rather than every entry elimination writes being kept at every factoring)
                 let chosen = values.withUnsafeMutableBufferPointer { v -> EliminationProgram? in
-                    blockScratch.withUnsafeMutableBufferPointer { plan.factorBlock(v.baseAddress!, scratch: $0.baseAddress!) }
+                    blockScratch.withUnsafeMutableBufferPointer { kept -> EliminationProgram? in
+                        stampedSlots.withUnsafeBufferPointer { slots -> EliminationProgram? in
+                            let values = v.baseAddress!, kept = kept.baseAddress!
+                            for k in 0..<slots.count { kept[k] = values[Int(slots[k])] }
+                            return plan.factorBlock(values) {
+                                baseValues.withUnsafeBufferPointer { base in
+                                    for slot in plan.writtenSlots { values[Int(slot)] = base[Int(slot)] }
+                                }
+                                for k in 0..<slots.count { values[Int(slots[k])] = kept[k] }
+                            }
+                        }
+                    }
                 }
                 guard let order = chosen else {
                     keptOrder = nil
