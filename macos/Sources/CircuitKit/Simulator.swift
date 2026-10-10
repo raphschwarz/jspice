@@ -31,6 +31,10 @@ public final class Simulator {
     /// Whether substeps also follow the integration's estimated error (they always follow Newton-Raphson's failures).
     /// The sound turns it off: it sets its own step by how fast the computer keeps up.
     public var errorControl = true
+    /// While set, where a step spends its iterations, line by line: each substep, Newton-Raphson iteration and round
+    /// of decisions, and what moved most at each iteration (for the benchmark, which keeps its heaviest step's)
+    public var trace: ((String) -> Void)?
+    private var traceBefore: [Double] = []
     /// Substeps solved and kept, and solved and thrown away for a finer one, since the start
     public private(set) var substeps = 0
     public private(set) var rejectedSubsteps = 0
@@ -1253,12 +1257,14 @@ public final class Simulator {
                     matrixIsCurrent = false
                 }
                 rejectedSubsteps += 1
+                trace?("  substep at level \(level) rejected: " + (converged ? String(format: "error %.3g", error) : "not converged"))
                 // each halving cuts the error about eightfold
                 let halvings = converged && error.isFinite ? max(1, Int(min(log2(cbrt(error) / 0.9), 6).rounded(.up))) : 1
                 substepLevel = min(Self.finestLevel, level + halvings)
                 continue
             }
             if !converged { convergenceFailures += 1 }
+            trace?("  substep at level \(level) kept" + (converged ? "" : ", not converged") + (solveChattered ? ", chattering" : ""))
             updateDynamicStates()
             // the next substep predicts from this one's start and end, unless the circuit jumped (a part switched over)
             swap(&olderX, &substepStartX)
@@ -1373,6 +1379,7 @@ public final class Simulator {
         newtonFromSolveStart = true
         var converged = newton(iterations: iterations)
         newtonFromSolveStart = false
+        trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
         if converged && !isFailed && !decidingIndices.isEmpty {
             // comparators that switched during the solve: solved again with their decisions made where it ended, until
             // they stay (or, a comparator chattering about its threshold, as they are after a few rounds)
@@ -1382,7 +1389,9 @@ public final class Simulator {
                 decisionSolves += 1
                 Self.copy(x, into: &decisionX)
                 // (not from the stamps the solve ended on: they were made with the decisions as they were)
+                trace?("   again, with the decisions made where it ended (round \(rounds))")
                 converged = newton(iterations: iterations)
+                trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
                 if !converged || isFailed { break }
             }
             if converged && rounds == Self.decisionRounds {
@@ -1398,6 +1407,7 @@ public final class Simulator {
         restoreSolveStart()
         (limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedLimited, savedLimited2, savedLimited3)
         converged = false
+        trace?("   gmin stepping")
         for conductance in Self.steppedConductances {
             junctionConductance = conductance
             converged = newton(iterations: Self.steppedIterations)
@@ -1576,6 +1586,7 @@ public final class Simulator {
             let mayConfirm = confirming && solvedAsStamped && !damped && !limiting
             if mayConfirm && stampsUnchanged(plan) {
                 confirmMisses = 0
+                trace?("    iteration \(iteration): confirmed without a solve")
                 confirmedWithoutSolving += 1
                 converged = true
                 // the snapshot (the stamps the solution solved, which the parts gave again there) for the next step
@@ -1598,6 +1609,7 @@ public final class Simulator {
             }
             // (the kept stamps are the snapshot already)
             if confirming && !fromKept { snapshotStamps(plan) }
+            if trace != nil { traceBefore = plan.block.map { x[$0] } }
             if damped {
                 Self.copy(x, into: &dampFrom)
                 dampedIterations += 1
@@ -1642,6 +1654,7 @@ public final class Simulator {
             // the chord method contracts linearly, by how near the kept factors are: where it does not contract fast,
             // the next iteration factors afresh
             refactor = chordSteps > 0 && (change > 0.25 * lastChange || chordSteps >= 4)
+            if let trace { traceIteration(trace, plan, iteration, change, damping) }
             if change.isNaN {
                 if fromKept {
                     startAgain()
@@ -1690,6 +1703,50 @@ public final class Simulator {
     /// The largest change in a nonlinear block entry, against the largest entry of its row, for which the kept factors
     /// still serve: the chord method then contracts by about that much a step (times the block's conditioning)
     static let reuseTolerance = 1e-7
+
+    /// An iteration, for the trace: its change, how it solved, and the unknown that moved most
+    private func traceIteration(_ trace: (String) -> Void, _ plan: SparsePlan, _ iteration: Int, _ change: Double, _ damping: Double) {
+        var worst = -1, most = -1.0
+        for (k, u) in plan.block.enumerated() where k < traceBefore.count && u < x.count {
+            let moved = abs(x[u] - traceBefore[k])
+            if moved > most { (most, worst) = (moved, u) }
+        }
+        var line = "    iteration \(iteration): change " + String(format: "%.3g", change) + (valuesFactored ? ", factored" : ", chord")
+        if damping < 1 { line += String(format: ", damped to %.3g", damping) }
+        if limiting { line += ", limited" }
+        if worst >= 0 {
+            line += ", most " + String(format: "%.3g", most) + " at " + describeUnknown(worst) + String(format: " (now %.4g)", x[worst])
+        }
+        trace(line)
+    }
+
+    /// An unknown, for the trace: the parts at its node (their kinds and values), or the part whose current it is
+    private func describeUnknown(_ u: Int) -> String {
+        let node = u + 1
+        if node < topology.nodeCount {
+            var parts: [String] = []
+            for i in topology.elementNodes.indices where topology.elementNodes[i].contains(node)
+                && i < kinds.count && ![.wire, .ground, .netLabel].contains(kinds[i]) {
+                if parts.count == 5 {
+                    parts.append("…")
+                    break
+                }
+                parts.append(describePart(i))
+            }
+            return "a node of " + parts.joined(separator: ", ")
+        }
+        if let i = topology.sourceRow.firstIndex(of: u) { return "the current of " + describePart(i) }
+        return "unknown \(u)"
+    }
+
+    /// A part, for the trace: a behavioural source's expression in outline, or the part's kind and values
+    private func describePart(_ i: Int) -> String {
+        if i < behaviors.count, let b = behaviors[i] { return "[" + b.program.outline + "]" }
+        guard i < flat.elements.count else { return "part \(i)" }
+        let element = flat.elements[i]
+        let values = element.params.sorted { $0.key < $1.key }.map { String(format: "%.3g", $0.value) }.joined(separator: " ")
+        return values.isEmpty ? element.kind.displayName : element.kind.displayName + " " + values
+    }
 
     /// Keeps the block as just stamped: its stamped slots' values, and what the stamps added to its rows of the
     /// right-hand side
@@ -3717,6 +3774,8 @@ public final class Simulator {
     /// where they are held: a comparator in it has switched during the solve
     private func decisionsMoved() -> Bool {
         let celsius = kelvin - 273.15
+        // (while tracing, every source whose decisions moved is listed)
+        var moved = false
         for i in decidingIndices {
             guard let b = behaviors[i] else { continue }
             let v = behaviorValues, d = behaviorDecisions, r = behaviorRegisters
@@ -3745,9 +3804,13 @@ public final class Simulator {
             let held = r[program.value]
             program.run(v, time: solveTime, celsius: celsius, into: r)
             let now = r[program.value]
-            if !(Swift.abs(held - now) <= 1e-9 * (1 + Swift.abs(now))) { return true }
+            if !(Swift.abs(held - now) <= 1e-9 * (1 + Swift.abs(now))) {
+                guard let trace else { return true }
+                trace("   decisions moved in " + describePart(i) + String(format: ": %.4g held, %.4g made where it ended", held, now))
+                moved = true
+            }
         }
-        return false
+        return moved
     }
 
     /// A linear behavioural source's constant slopes, into the base matrix (as `stampBehavior` stamps them at every

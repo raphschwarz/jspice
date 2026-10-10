@@ -154,6 +154,23 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
                  fastest.isFinite ? fastest / 1e3 : elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
                  Double(simulator.newtonIterations) / Double(done), simulator.factorings, simulator.reusedFactorings,
                  simulator.restoredFactorings, shape.unknowns, shape.nonlinear, simulator.isFailed ? " FAILED: " + simulator.problems.joined(separator: "; ") : ""))
+    // where steps take many iterations, the heaviest of the second and third cycles, iteration by iteration
+    guard heaviest > 30 else { return }
+    let traced = Simulator(circuit: circuit, timeStep: 1 / 48_000)
+    traced.errorControl = false
+    var lines: [String] = [], kept: [String] = [], most = 0, keptStep = 0
+    traced.trace = { lines.append($0) }
+    for step in 0..<144 where !traced.isFailed {
+        lines.removeAll(keepingCapacity: true)
+        let before = traced.newtonIterations
+        traced.step()
+        let taken = traced.newtonIterations - before
+        if step >= 48 && taken > most { (most, kept, keptStep) = (taken, lines, step) }
+    }
+    print("\(part): the heaviest step of the second and third cycles, step \(keptStep) (ending at \((keptStep + 1) % 48 * 15 / 2)°), "
+          + "\(most) iterations:")
+    for line in kept.prefix(300) { print(line) }
+    if kept.count > 300 { print("  … \(kept.count - 300) lines more") }
 }
 
 /// Holds what a background task produced, for the main code waiting on it
