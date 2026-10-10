@@ -592,6 +592,9 @@ public final class Simulator {
     /// block's rows of the right-hand side (beyond the forwarded sources)
     private var stampSnapshot: [Double] = []
     private var rightSnapshot: [Double] = []
+    /// Where the snapshot was stamped (the block's unknowns, by unknown): an entry changed since balances only in the
+    /// column of an unknown that has not moved since (see `stampsUnchanged`)
+    private var snapshotPoint: [Double] = []
     /// Whether the last solve ended confirmed (see `newton`): its snapshot is then the stamps its solution solved, which
     /// the parts gave again there, kept with the plan and base matrix they are for
     private var confirmedStamps = false
@@ -1856,6 +1859,8 @@ public final class Simulator {
     /// right-hand side
     private func snapshotStamps(_ plan: SparsePlan) {
         let count = stampedSlots.count, rows = plan.block.count
+        if snapshotPoint.count != x.count { snapshotPoint = [Double](repeating: .nan, count: x.count) }
+        Self.copy(plan.block, from: x, into: &snapshotPoint)
         if stampSnapshot.count != count { stampSnapshot = [Double](repeating: 0, count: count) }
         if rightSnapshot.count != rows { rightSnapshot = [Double](repeating: 0, count: rows) }
         values.withUnsafeBufferPointer { v in
@@ -1909,23 +1914,30 @@ public final class Simulator {
               keptRowScale.count == rows else { return false }
         let tolerance = 1e-12
         if confirmScratch.count != rows { confirmScratch = [Double](repeating: 0, count: rows) }
+        let balancing = Self.confirmsByBalance && snapshotPoint.count == x.count
         var changed = false
         let finite = values.withUnsafeBufferPointer { v -> Bool in
             keptRowScale.withUnsafeBufferPointer { scale -> Bool in
                 x.withUnsafeBufferPointer { x -> Bool in
-                    confirmScratch.withUnsafeMutableBufferPointer { balance -> Bool in
-                        for k in 0..<rows { balance[k] = 0 }
-                        for k in 0..<stampedSlots.count {
-                            let now = v[Int(stampedSlots[k])], then = stampSnapshot[k]
-                            let row = Int(stampedLocalRows[k])
-                            // (written so that a value that is not a number fails too)
-                            if !(abs(now - then) <= tolerance * (abs(now) + scale[row])) {
-                                guard now.isFinite, Self.confirmsByBalance else { return false }
-                                changed = true
-                                balance[row] += (now - then) * x[Int(stampedColumns[k])]
+                    snapshotPoint.withUnsafeBufferPointer { point -> Bool in
+                        confirmScratch.withUnsafeMutableBufferPointer { balance -> Bool in
+                            for k in 0..<rows { balance[k] = 0 }
+                            for k in 0..<stampedSlots.count {
+                                let now = v[Int(stampedSlots[k])], then = stampSnapshot[k]
+                                let row = Int(stampedLocalRows[k])
+                                // (written so that a value that is not a number fails too)
+                                if !(abs(now - then) <= tolerance * (abs(now) + scale[row])) {
+                                    // only in the column of an unknown that has held still since the snapshot (a
+                                    // transistor's moved: no balance to look for)
+                                    let u = Int(stampedColumns[k])
+                                    guard balancing, now.isFinite,
+                                          abs(x[u] - point[u]) <= Self.unmovedTolerance * (1 + abs(x[u])) else { return false }
+                                    changed = true
+                                    balance[row] += (now - then) * x[u]
+                                }
                             }
+                            return true
                         }
-                        return true
                     }
                 }
             }

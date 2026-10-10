@@ -70,7 +70,7 @@ let switches: [String: (Bool) -> Void] = [
 
 /// Simulates each example twice over, with one of the engine's switches off and on, in alternate runs of `seconds` of
 /// circuit time (so the machine's ups and downs fall on both alike), and prints the time per step of the fastest of
-/// three runs each, and what the switch saves
+/// five runs each, and what the switch saves
 func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
     guard let flip = switches[name] else {
         log("there is no switch \(name); there are \(switches.keys.sorted().joined(separator: ", "))")
@@ -90,7 +90,7 @@ func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
             return simulator
         }
         var fastest = [Double.infinity, .infinity]
-        for _ in 0..<3 {
+        for _ in 0..<5 {
             for k in 0..<2 {
                 flip(k == 1)
                 let start = DispatchTime.now().uptimeNanoseconds
@@ -99,7 +99,7 @@ func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
             }
         }
         flip(true)
-        let solves = simulators.map { Double($0.newtonIterations) / Double(3 * steps) }
+        let solves = simulators.map { Double($0.newtonIterations) / Double(5 * steps) }
         print(String(format: "%@ %@: off %.2f µs/step (%.2f solves), on %.2f µs/step (%.2f solves), on saves %.1f%%",
                      id.padding(toLength: 18, withPad: " ", startingAt: 0), name, fastest[0] / Double(steps) * 1e6, solves[0],
                      fastest[1] / Double(steps) * 1e6, solves[1], (1 - fastest[1] / fastest[0]) * 100))
