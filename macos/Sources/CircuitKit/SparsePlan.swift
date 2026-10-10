@@ -476,6 +476,13 @@ final class SparsePlan {
     /// Pivot orders made for the nonlinear block so far, at most `maxOrders` kept
     var orderCount: Int { orders.count }
 
+    /// The entries below and right of the pivots the last pivot order used goes through (L and U, without the
+    /// diagonal), and the multiply-adds of factoring with it: what each substitution and factoring costs
+    var blockFactorSize: (lower: Int, upper: Int, operations: Int) {
+        guard let order = orders.first else { return (0, 0, 0) }
+        return (Int(order.lStart[order.steps]), Int(order.uStart[order.steps]), order.opCount)
+    }
+
     /// Puts the base matrix's values back where an iteration can have changed them
     func restoreChanging(_ values: UnsafeMutablePointer<Double>, from base: UnsafePointer<Double>) {
         changingSlots.withUnsafeBufferPointer { slots in

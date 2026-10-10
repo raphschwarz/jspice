@@ -4795,6 +4795,11 @@ public final class Simulator {
         return (m, nonzeros, plan.entryCount, plan.n - plan.leading)
     }
 
+    /// The nonlinear block's factors as last factored: entries of L and U, and the multiply-adds of factoring
+    public var blockFactorSize: (lower: Int, upper: Int, operations: Int) {
+        plan?.blockFactorSize ?? (0, 0, 0)
+    }
+
     /// Pivot orders the plan has for its nonlinear block (one for each state its parts have been seen in, up to a few)
     public var pivotOrders: Int {
         plan?.orderCount ?? 0

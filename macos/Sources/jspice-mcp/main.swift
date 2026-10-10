@@ -126,8 +126,10 @@ func benchmarkMaker(_ part: String, seconds: Double) throws {
           + "\(simulator.convergenceFailures) convergence failures, \(simulator.substeps) substeps (\(simulator.rejectedSubsteps) rejected); "
           + "\(heavy) steps of more than 10 iterations, the most \(heaviest); \(simulator.decisionSolves) solves again for decisions "
           + "that moved, \(simulator.chatteringSolves) left chattering")
+    let block = simulator.blockFactorSize
     print("\(part)'s model as simulated: \(size.unknowns) unknowns, \(size.nonzeros) nonzeros, \(size.factorEntries) entries "
-          + "factored, \(size.nonlinearUnknowns) nonlinear; \(made)")
+          + "factored, \(size.nonlinearUnknowns) nonlinear (its factors \(block.lower) below and \(block.upper) right of the "
+          + "pivots, \(block.operations) multiply-adds to factor); \(made)")
     print(String(format: "%@ follower, 1 kHz at 48 kHz: %.1f µs/step, %.2f× real time, %.2f Newton iterations a step "
                  + "(%ld factored, %ld with kept factors), %ld unknowns, %ld in the nonlinear block%@",
                  part, elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
