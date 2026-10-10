@@ -566,6 +566,11 @@ public final class Simulator {
     /// Whether the last solve ended confirmed (see `newton`): its snapshot is then the stamps its solution solved, which
     /// the parts gave again there, kept with the plan and base matrix they are for
     private var confirmedStamps = false
+    /// Confirmations tried that missed, one after another, and the solves for which none is tried after too many
+    private var confirmMisses = 0
+    private var confirmRest = 0
+    static let confirmMissesTolerated = 32
+    static let confirmRestSolves = 512
     private var reuseAllowed = false
     private var confirmedPlanSerial = -1
     private var confirmedBaseVersion = -1
@@ -1464,9 +1469,14 @@ public final class Simulator {
         var damping = 1.0
         var refactor = false
         var chordSteps = 0
+        // whether this solve snapshots its stamps to confirm an iteration without a solve: not for a while after many
+        // misses in a row (a transistor's slopes move at every iteration, and its block never stamps as it was solved)
+        if confirmRest > 0 { confirmRest -= 1 }
+        let confirming = Self.reusesFactors && confirmRest == 0
         // only a solve that ends confirmed leaves stamps to start the next from, and only a solve that can start again
         // from where it started takes them (not one that a single iteration from the prediction ends)
-        let mayReuse = confirmedStamps && junctionConductance == 0 && newtonFromSolveStart && !(onlyQuasiLinear && predictedSolve)
+        let mayReuse = confirming && confirmedStamps && junctionConductance == 0 && newtonFromSolveStart
+            && !(onlyQuasiLinear && predictedSolve)
         confirmedStamps = false
         reuseAllowed = mayReuse
         // whether the first iteration started from them
@@ -1563,7 +1573,9 @@ public final class Simulator {
             // stamped at the last iteration's solution, the block is the very block that iteration solved (its parts
             // sit where they did, or on straight stretches of their curves): that solution is this one's, to far
             // within the tolerance, and the solve would only confirm it
-            if Self.reusesFactors && solvedAsStamped && !damped && !limiting && stampsUnchanged(plan) {
+            let mayConfirm = confirming && solvedAsStamped && !damped && !limiting
+            if mayConfirm && stampsUnchanged(plan) {
+                confirmMisses = 0
                 confirmedWithoutSolving += 1
                 converged = true
                 // the snapshot (the stamps the solution solved, which the parts gave again there) for the next step
@@ -1573,12 +1585,19 @@ public final class Simulator {
                 confirmedBaseVersion = baseVersion
                 break
             }
+            if mayConfirm {
+                confirmMisses += 1
+                if confirmMisses >= Self.confirmMissesTolerated {
+                    confirmMisses = 0
+                    confirmRest = Self.confirmRestSolves
+                }
+            }
             if startedFromKept && iteration == 2 {
                 startAgain()
                 continue
             }
             // (the kept stamps are the snapshot already)
-            if Self.reusesFactors && !fromKept { snapshotStamps(plan) }
+            if confirming && !fromKept { snapshotStamps(plan) }
             if damped {
                 Self.copy(x, into: &dampFrom)
                 dampedIterations += 1
