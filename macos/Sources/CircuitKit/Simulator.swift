@@ -5208,7 +5208,7 @@ public final class Simulator {
             guard inputs != old.inputs else { continue }
             let next = advanceLogic(target.element, old, inputs: inputs)
             for line in busLines[target.element] {
-                guard let chip = chips[line.chip], line.pin < chip.pinVoltages.count else { continue }
+                guard let chip = chips[line.chip], line.pin < chip.pinCount else { continue }
                 let volts: Double
                 switch kinds[target.element] {
                 case .spiAdc:
@@ -5219,7 +5219,8 @@ public final class Simulator {
                     // SDA held low while it acknowledges, else pulled up
                     volts = Logic.acknowledging(next) ? 0 : chip.supply
                 }
-                if chip.pinVoltages[line.pin] != volts { chip.pinVoltages[line.pin] = volts }
+                // (that pin alone: setting the chip's voltages would look at every pin again)
+                if chip.pinVoltage(line.pin) != volts { chip.setPinVoltage(line.pin, volts) }
             }
         }
     }

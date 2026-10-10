@@ -92,24 +92,39 @@ public final class Pico: Microcontroller {
     /// The circuit's voltages on the pins: the digital level of each follows with hysteresis (high above 0.6 of the
     /// supply, low below 0.3), and the ADC reads GP26–GP28 against the supply
     public var pinVoltages: [Double] {
-        didSet { applyVoltages() }
+        didSet { if !settingOnePin { applyVoltages() } }
     }
+    private var settingOnePin = false
 
     private func applyVoltages() {
+        for pin in Pico.gpioOfPin.indices where pin < pinVoltages.count { applyVoltage(pin) }
+    }
+
+    private func applyVoltage(_ pin: Int) {
         let chip = system.chip
-        for (pin, gpio) in Pico.gpioOfPin.enumerated() where pin < pinVoltages.count {
-            let v = pinVoltages[pin]
-            var level = system.levels[gpio]
-            if v > 0.6 * supply { level = true } else if v < 0.3 * supply { level = false }
-            if level != system.levels[gpio] {
-                system.levels[gpio] = level
-                chip.gpio[gpio].setInputValue(level)
-            }
-            if gpio >= 26 {
-                let code = (v / max(supply, 0.1) * 4095).rounded()
-                chip.adc.channelValues[gpio - 26] = UInt32(min(max(code, 0), 4095))
-            }
+        let gpio = Pico.gpioOfPin[pin]
+        let v = pinVoltages[pin]
+        var level = system.levels[gpio]
+        if v > 0.6 * supply { level = true } else if v < 0.3 * supply { level = false }
+        if level != system.levels[gpio] {
+            system.levels[gpio] = level
+            chip.gpio[gpio].setInputValue(level)
         }
+        if gpio >= 26 {
+            let code = (v / max(supply, 0.1) * 4095).rounded()
+            chip.adc.channelValues[gpio - 26] = UInt32(min(max(code, 0), 4095))
+        }
+    }
+
+    public func pinVoltage(_ pin: Int) -> Double { pin >= 0 && pin < pinVoltages.count ? pinVoltages[pin] : 0 }
+
+    /// One pin's voltage set alone (a bus device answering as the chip runs), as `applyVoltages` takes it
+    public func setPinVoltage(_ pin: Int, _ volts: Double) {
+        guard pin >= 0 && pin < pinVoltages.count && pin < Pico.gpioOfPin.count else { return }
+        settingOnePin = true
+        pinVoltages[pin] = volts
+        settingOnePin = false
+        applyVoltage(pin)
     }
 
     public var watchedPins: [Int] {

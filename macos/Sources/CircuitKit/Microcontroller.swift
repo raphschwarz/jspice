@@ -53,10 +53,22 @@ public protocol Microcontroller: AnyObject {
     /// for the chip to read at once. A released I²C line is logged as high (the bus is pulled up).
     var onPinEvent: ((PinEvent) -> Void)? { get set }
 
+    /// One pin's voltage, and setting it alone (a bus device answering within a run): as reading and writing that
+    /// pin's place in `pinVoltages`, without the other pins looked at again
+    func pinVoltage(_ pin: Int) -> Double
+    func setPinVoltage(_ pin: Int, _ volts: Double)
+
     /// Runs whole instructions until at least `count` more cycles have passed
     func run(cycles count: Int)
     /// Power-on reset: the program starts over (its firmware kept)
     func reset()
     /// Takes on another chip's whole state (the sound thread's chip, for the window's simulator to show)
     func adopt(_ other: Microcontroller)
+}
+
+extension Microcontroller {
+    public func pinVoltage(_ pin: Int) -> Double { pin >= 0 && pin < pinVoltages.count ? pinVoltages[pin] : 0 }
+    public func setPinVoltage(_ pin: Int, _ volts: Double) {
+        if pin >= 0 && pin < pinVoltages.count { pinVoltages[pin] = volts }
+    }
 }

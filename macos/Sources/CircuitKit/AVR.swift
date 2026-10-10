@@ -52,9 +52,31 @@ public final class AVR: Microcontroller {
     /// Pin voltages the chip sees, set by the circuit before it runs; the digital levels follow them with hysteresis
     public var pinVoltages: [Double] {
         didSet {
+            guard !settingOnePin else { return }
             updateInputLevels()
             peripheralsTouched()
         }
+    }
+    private var settingOnePin = false
+
+    public func pinVoltage(_ pin: Int) -> Double { pin >= 0 && pin < pinVoltages.count ? pinVoltages[pin] : 0 }
+
+    /// One pin's voltage set alone (a bus device answering as the chip runs): its level follows with the hysteresis
+    /// `updateInputLevels` gives it (the others' would stay as they are)
+    public func setPinVoltage(_ pin: Int, _ volts: Double) {
+        guard pin >= 0 && pin < pinVoltages.count else { return }
+        settingOnePin = true
+        pinVoltages[pin] = volts
+        settingOnePin = false
+        if pin < pinHigh.count {
+            if volts > 0.6 * supply {
+                pinHigh[pin] = true
+            } else if volts < 0.3 * supply {
+                pinHigh[pin] = false
+            }
+        }
+        levelsChanged()
+        peripheralsTouched()
     }
     public private(set) var pinHigh: [Bool]
     /// Supply and ADC reference voltage
