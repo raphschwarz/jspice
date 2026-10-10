@@ -119,6 +119,42 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(inputPoints[0]["reactance"] as? Double), -1000, accuracy: 1e-3)
     }
 
+    /// A pot across 9 V turned from 0 to 1 and back in a second: its wiper sweeps from 9 V to 0 and back to 9 V
+    func testKnobsMoveWhileSimulatingAndRendering() throws {
+        let server = MCPServer(session: CircuitSession())
+        let parts: [[String: Any]] = [
+            ["kind": "dcVoltage", "name": "V1", "params": ["voltage": 9], "connections": ["plus": "vcc", "minus": "GND"]],
+            ["kind": "potentiometer", "name": "P1", "params": ["resistance": "10k", "position": 0.5], "connections": ["a": "vcc", "b": "GND", "wiper": "w"]],
+            ["kind": "speaker", "name": "SPK1", "connections": ["plus": "w", "minus": "GND"]],
+        ]
+        let (built, buildError) = try call(server, "build_circuit", ["parts": parts])
+        XCTAssertFalse(buildError, "\(built)")
+        let (value, isError) = try call(server, "simulate", ["duration": 1, "time_step": "1m", "probes": ["V(w)"],
+                                                             "knobs": [["part": "P1", "period": 1]]])
+        XCTAssertFalse(isError, "\(value)")
+        let result = try XCTUnwrap(value as? [String: Any])
+        let wiper = try XCTUnwrap((result["probes"] as? [String: Any])?["V(w)"] as? [String: Any])
+        XCTAssertEqual(try XCTUnwrap(wiper["max"] as? Double), 9, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(wiper["min"] as? Double), 0, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(wiper["final"] as? Double), 9, accuracy: 0.01)
+        let knob = try XCTUnwrap((result["knobs"] as? [[String: Any]])?.first)
+        XCTAssertEqual(knob["part"] as? String, "P1")
+        XCTAssertEqual(try XCTUnwrap(knob["end_position"] as? Double), 0, accuracy: 0.001)
+        // a knob that is not there, or out of range, is said
+        let (missing, missingError) = try call(server, "simulate", ["duration": 0.01, "probes": ["V(w)"], "knobs": [["part": "P9"]]])
+        XCTAssertTrue(missingError)
+        XCTAssertTrue("\(missing)".contains("knobs: P1"), "\(missing)")
+        let (_, rangeError) = try call(server, "simulate", ["duration": 0.01, "probes": ["V(w)"], "knobs": [["part": "P1", "high": 2]]])
+        XCTAssertTrue(rangeError)
+
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("knob-\(UUID().uuidString).wav").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let (rendered, renderError) = try call(server, "render_audio", ["path": path, "duration": 0.1, "sample_rate": 8000,
+                                                                       "knobs": [["part": "P1", "period": 0.05]]])
+        XCTAssertFalse(renderError, "\(rendered)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+    }
+
     /// 12 V across 100 Ω: 1.44 W in a quarter-watt resistor
     func testStressTool() throws {
         let server = MCPServer(session: CircuitSession())

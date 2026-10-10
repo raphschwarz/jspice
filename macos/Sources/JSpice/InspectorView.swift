@@ -172,6 +172,10 @@ struct ElementInspector: View {
                 }
             }
 
+            if element.kind == .potentiometer {
+                KnobMotionSection(editor: editor, knob: KnobID(part: element.id))
+            }
+
             if element.kind.playsClip && element[param: "input"] < 0.5 {
                 // microphones play a voice unless given a sound; the audio input and the pickup, the guitar riff
                 let voice = element.kind == .microphone || element.kind == .electretMic
@@ -292,6 +296,53 @@ struct BlockSection: View {
 
     private func names(_ ports: [BlockDefinition.Port]) -> String {
         ports.isEmpty ? "None" : ports.map(\.name).joined(separator: ", ")
+    }
+}
+
+/// A knob moving back and forth by itself, as a foot rocks a wah pedal: how often, and between which positions
+struct KnobMotionSection: View {
+    @ObservedObject var editor: EditorState
+    let knob: KnobID
+    @AppStorage("knobMotionPeriod") private var period = 2.0
+    @State private var low = 0.0
+    @State private var high = 1.0
+
+    private static let periods: [Double] = [0.25, 0.5, 1, 2, 4, 8, 16]
+
+    var body: some View {
+        let moving = editor.motion(of: knob) != nil
+        Section {
+            Toggle("Move back and forth", isOn: Binding(
+                get: { moving },
+                set: { on in
+                    if on { editor.startMoving(knob, period: period, low: min(low, high), high: max(low, high)) } else { editor.stopMoving(knob) }
+                }
+            ))
+            Picker("Once every", selection: $period) {
+                ForEach(Self.periods, id: \.self) { seconds in
+                    Text(seconds < 1 ? String(format: "%.0f ms", seconds * 1000) : String(format: "%.0f s", seconds)).tag(seconds)
+                }
+            }
+            LabeledContent("From") { Slider(value: $low, in: 0...1, onEditingChanged: { editing in if !editing { restart() } }).controlSize(.small) }
+            LabeledContent("To") { Slider(value: $high, in: 0...1, onEditingChanged: { editing in if !editing { restart() } }).controlSize(.small) }
+        } header: {
+            Text("Movement")
+        } footer: {
+            Text("Turns the knob from one position to the other and back by itself, slowing at each end, while you listen and watch the scopes. It goes back where it was when it stops; File ▸ Export Sound records it moving.")
+        }
+        .onChange(of: period) { _, _ in restart() }
+        .onAppear {
+            if let motion = editor.motion(of: knob) {
+                low = motion.low
+                high = motion.high
+            }
+        }
+    }
+
+    /// A moving knob takes on the new settings from where it is
+    private func restart() {
+        guard editor.motion(of: knob) != nil else { return }
+        editor.startMoving(knob, period: period, low: min(low, high), high: max(low, high))
     }
 }
 

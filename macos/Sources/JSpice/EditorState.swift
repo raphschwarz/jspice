@@ -581,8 +581,10 @@ final class EditorState: ObservableObject {
         save.nameFieldStringValue = (canvas?.window?.title ?? "Circuit") + ".wav"
         guard save.runModal() == .OK, let url = save.url else { return }
         let circuit = self.circuit
+        // knobs moving by themselves move in the sound too
+        let knobs = knobMotionsFromHere
         Task.detached(priority: .userInitiated) {
-            let result = AudioRender.render(circuit, output: speaker, duration: seconds)
+            let result = AudioRender.render(circuit, output: speaker, duration: seconds, knobs: knobs)
             let written = (try? WAV.encode(result.samples, sampleRate: result.sampleRate).write(to: url)) != nil
             await MainActor.run {
                 let done = NSAlert()
@@ -707,6 +709,71 @@ final class EditorState: ObservableObject {
         var next = circuit
         next.update(id) { $0[param: "position"] = min(1, max(0, $0[param: "position"] + delta)) }
         if next != circuit { document.circuit = next }
+    }
+
+    // MARK: - Knobs moving by themselves
+
+    /// Knobs moving back and forth by themselves, as a foot rocks a wah pedal: live, like a knob turned by hand or by
+    /// MIDI, so not undoable edits. Each goes back where it was when it stops.
+    @Published private(set) var knobMotions: [KnobMotion] = []
+    private var motionStarts: [KnobID: Date] = [:]
+    private var motionRests: [KnobID: Double] = [:]
+    private var motionTimer: Timer?
+
+    func motion(of knob: KnobID) -> KnobMotion? { knobMotions.first { $0.knob == knob } }
+
+    /// Starts a knob moving from where it is, or changes how it moves
+    func startMoving(_ knob: KnobID, period: Double, low: Double = 0, high: Double = 1) {
+        guard let position = circuit.position(of: knob) else { return }
+        if motionRests[knob] == nil { motionRests[knob] = position }
+        knobMotions.removeAll { $0.knob == knob }
+        knobMotions.append(KnobMotion(knob: knob, period: period, low: low, high: high, from: position))
+        motionStarts[knob] = Date()
+        if motionTimer == nil {
+            // 30 moves a second, also while a menu is open or a slider dragged
+            let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
+                guard let self else { return timer.invalidate() }
+                MainActor.assumeIsolated { self.moveKnobs() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            motionTimer = timer
+        }
+    }
+
+    /// Stops a knob, back where it was before it started
+    func stopMoving(_ knob: KnobID) {
+        knobMotions.removeAll { $0.knob == knob }
+        motionStarts[knob] = nil
+        if let rest = motionRests.removeValue(forKey: knob) {
+            var next = circuit
+            if next.turn(knob, to: rest) { document.circuit = next }
+        }
+        if knobMotions.isEmpty {
+            motionTimer?.invalidate()
+            motionTimer = nil
+        }
+    }
+
+    /// The moving knobs as they would move from now: from where each is, for an offline render
+    var knobMotionsFromHere: [KnobMotion] {
+        knobMotions.compactMap { motion in
+            circuit.position(of: motion.knob).map {
+                KnobMotion(knob: motion.knob, period: motion.period, low: motion.low, high: motion.high, from: $0)
+            }
+        }
+    }
+
+    private func moveKnobs() {
+        // a knob deleted with its part stops
+        for motion in knobMotions where circuit.position(of: motion.knob) == nil { stopMoving(motion.knob) }
+        var next = circuit
+        let now = Date()
+        var moved = false
+        for motion in knobMotions {
+            guard let start = motionStarts[motion.knob] else { continue }
+            if next.turn(motion.knob, to: motion.position(at: now.timeIntervalSince(start))) { moved = true }
+        }
+        if moved { document.circuit = next }
     }
 
     // MARK: - MIDI

@@ -31,6 +31,8 @@ private struct ScopeRow: View {
     @State private var spectrum = SpectrumCache()
     /// Whether the frequency response shades the spread its parts' tolerances give
     @State private var showSpread = false
+    /// The knob whose sweep the frequency response overlays
+    @State private var sweptKnob: KnobID?
     @Environment(\.colorScheme) private var colorScheme
 
     /// The source a frequency response is driven from: the one chosen, or the circuit's first signal source
@@ -93,10 +95,25 @@ private struct ScopeRow: View {
                         .controlSize(.small)
                         .help("Shade where the response of 24 copies falls, their resistors drawn within 5 %, capacitors and inductors within 10 % and transistors' gain within 30 %")
                 }
+                if spec.plot == .frequencyResponse {
+                    let knobs = editor.circuit.knobs
+                    if !knobs.isEmpty {
+                        Picker("Sweep", selection: $sweptKnob) {
+                            Text("No knob").tag(KnobID?.none)
+                            ForEach(knobs.indices, id: \.self) { k in
+                                Text(knobs[k].name).tag(Optional(knobs[k].id))
+                            }
+                        }
+                        .controlSize(.small)
+                        .fixedSize()
+                        .help("Draw the response with this knob at 0, 25, 50, 75 and 100 % as well, each settled and linearised there")
+                    }
+                }
                 TimelineView(.periodic(from: .now, by: 0.2)) { _ in
                     let trace = editor.simulation.simulator.trace(spec.id)
                     if spec.plot == .frequencyResponse {
-                        let result = response.update(editor.simulation.simulator, elementID: element.id, sourceID: source?.id, spread: showSpread)
+                        let result = response.update(editor.simulation.simulator, elementID: element.id, sourceID: source?.id, spread: showSpread,
+                                                     knob: sweptKnob)
                         if let note = result.note {
                             Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         } else if let margins = result.margins {
@@ -176,7 +193,8 @@ private struct ScopeRow: View {
             Divider()
             if spec.plot == .frequencyResponse {
                 ResponsePlot(editor: editor, cache: response, elementID: element.id, sourceID: source?.id,
-                             spread: showSpread && element.kind != .loopProbe,
+                             spread: showSpread && element.kind != .loopProbe, knob: sweptKnob,
+                             knobName: sweptKnob.flatMap { knob in editor.circuit.knobs.first { $0.id == knob }?.name },
                              gainColor: voltageColor, phaseColor: phaseColor)
             } else if spec.plot == .spectrum {
                 SpectrumPlot(editor: editor, cache: spectrum, scopeID: spec.id, unit: spec.quantity.unit, color: color)
@@ -192,7 +210,7 @@ private struct ScopeRow: View {
                 }
             }
         }
-        .frame(height: spec.plot == .time ? 118 : 160)
+        .frame(height: spec.plot == .time ? 118 : spec.plot == .frequencyResponse ? 184 : 160)
     }
 
     private enum ScopeChoice: Hashable {
@@ -443,15 +461,34 @@ final class ResponseCache {
     private(set) var spread: (low: [Double], high: [Double])?
     private var spreadCircuit: Circuit?
     private var spreadTask: Task<Void, Never>?
+    /// The response with a knob at five positions, 0 to 100 %, at `sweepFrequencies`
+    private(set) var sweep: [KnobSweep.Curve] = []
+    private(set) var sweepFrequencies: [Double] = []
+    /// Whether newer curves are being worked out
+    private(set) var sweepPending = false
+    private var sweptKnob: KnobID?
+    /// The circuit they are for, with the swept knob at 0 (where it is does not change them)
+    private var sweepCircuit: Circuit?
+    private var sweepTask: Task<Void, Never>?
 
-    /// A scope removed or replaced stops working out its spread
-    deinit { spreadTask?.cancel() }
+    /// A scope removed or replaced stops working out its spread and sweep
+    deinit {
+        spreadTask?.cancel()
+        sweepTask?.cancel()
+    }
 
-    func update(_ simulator: Simulator, elementID: UUID, sourceID: UUID?, spread wanted: Bool = false) -> Response {
+    func update(_ simulator: Simulator, elementID: UUID, sourceID: UUID?, spread wanted: Bool = false, knob: KnobID? = nil) -> Response {
         if !wanted && spreadCircuit != nil {
             spreadTask?.cancel()
             spreadCircuit = nil
             spread = nil
+        }
+        if knob == nil && sweptKnob != nil {
+            sweepTask?.cancel()
+            sweptKnob = nil
+            sweepCircuit = nil
+            sweep = []
+            sweepPending = false
         }
         guard Date().timeIntervalSince(checked) >= 0.18 else { return response }
         checked = Date()
@@ -484,6 +521,14 @@ final class ResponseCache {
         }
         guard let (plus, minus) = shadow.acrossNodes(index) else { return set(Response(note: "This part has no voltage to plot")) }
         if wanted && !loop && quiet != spreadCircuit { startSpread(quiet, input: input, element: index) }
+        if let knob {
+            var key = quiet
+            key.turn(knob, to: 0)
+            // another knob chosen starts again at once; the same knob's curves for a changed circuit once the last are done
+            if knob != sweptKnob || (key != sweepCircuit && !sweepPending) {
+                startSweep(quiet, key: key, knob: knob, element: index, input: loop ? nil : input, frequencies: loop ? Self.loopBand : Self.frequencies)
+            }
+        }
         guard let model = shadow.smallSignalModel() else { return set(Response(note: "Nothing to show while the circuit can't be solved")) }
         let key = Key(input: input, plus: plus, minus: minus)
         if model == self.model && key == self.key { return response }
@@ -538,6 +583,27 @@ final class ResponseCache {
         }
     }
 
+    /// Works out the knob's sweep in the background: five copies of the circuit, the knob at 0 to 100 %, each settled
+    /// and linearised. The last curves stay on show until the new ones are ready.
+    private func startSweep(_ quiet: Circuit, key: Circuit, knob: KnobID, element: Int, input: Int?, frequencies: [Double]) {
+        sweepTask?.cancel()
+        if knob != sweptKnob { sweep = [] }
+        sweptKnob = knob
+        sweepCircuit = key
+        sweepPending = true
+        sweepTask = Task.detached(priority: .utility) { [weak self] in
+            let curves = KnobSweep.responses(quiet, knob: knob, positions: KnobSweep.positions(5), element: element, input: input,
+                                             frequencies: frequencies, isCancelled: { Task.isCancelled })
+            guard !Task.isCancelled else { return }
+            await MainActor.run { [weak self] in
+                guard let self, self.sweptKnob == knob, self.sweepCircuit == key else { return }
+                self.sweep = curves
+                self.sweepFrequencies = frequencies
+                self.sweepPending = false
+            }
+        }
+    }
+
     private func set(_ new: Response) -> Response {
         if new.note != nil {
             model = nil
@@ -556,13 +622,21 @@ private struct ResponsePlot: View {
     let elementID: UUID
     let sourceID: UUID?
     let spread: Bool
+    /// The knob whose sweep is drawn, and its name
+    let knob: KnobID?
+    let knobName: String?
     let gainColor: Color
     let phaseColor: Color
     @State private var pointer: CGPoint?
 
+    /// A sweep's curve's colour: blue at 0 % to orange at 100 %
+    static func sweepColor(_ position: Double) -> Color {
+        Color(hue: 0.62 - 0.55 * position, saturation: 0.75, brightness: 0.9)
+    }
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.2)) { _ in
-            let response = cache.update(editor.simulation.simulator, elementID: elementID, sourceID: sourceID, spread: spread)
+            let response = cache.update(editor.simulation.simulator, elementID: elementID, sourceID: sourceID, spread: spread, knob: knob)
             Canvas { context, size in draw(context, size, response) }
         }
         .onContinuousHover { phase in
@@ -595,7 +669,10 @@ private struct ResponsePlot: View {
                          at: CGPoint(x: x(decade), y: plot.maxY + 3), anchor: .top)
             decade *= 10
         }
-        guard gains.count == frequencies.count, gains.count > 1, let peak = gains.max(), let floor = gains.min() else { return }
+        // a knob's sweep, worked out at the same frequencies
+        let curves = knob != nil && cache.sweepFrequencies == frequencies ? cache.sweep : []
+        let shown = gains + curves.flatMap { $0.gains }
+        guard gains.count == frequencies.count, gains.count > 1, let peak = shown.max(), let floor = shown.min() else { return }
 
         // gain: a span of 20 to 80 dB, in steps of 10 or 20
         let top = ((peak + 2) / 10).rounded(.up) * 10
@@ -652,7 +729,28 @@ private struct ResponsePlot: View {
             clipped.fill(area, with: .color(gainColor.opacity(0.2)))
         }
         clipped.stroke(phaseLine, with: .color(phaseColor.opacity(0.8)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3]))
+        // the knob's sweep: its gain at each position, under the response as the knob is now
+        for curve in curves {
+            var line = Path()
+            for k in frequencies.indices {
+                let point = CGPoint(x: x(frequencies[k]), y: y(curve.gains[k]))
+                if k == 0 { line.move(to: point) } else { line.addLine(to: point) }
+            }
+            clipped.stroke(line, with: .color(Self.sweepColor(curve.position).opacity(0.9)),
+                           style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
+        }
         clipped.stroke(gainLine, with: .color(gainColor), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        if knob != nil {
+            // the legend: each position in its colour (a loop's, with its phase margin)
+            var legend: Text = Text((knobName ?? "Knob") + "  ").foregroundStyle(.secondary)
+            for curve in curves {
+                var label = String(format: "%.0f %%", curve.position * 100)
+                if let margin = curve.margins?.phaseMargin { label += String(format: " %.0f°", margin + 0) }
+                legend = legend + Text(label + "  ").foregroundStyle(Self.sweepColor(curve.position))
+            }
+            if cache.sweepPending { legend = legend + Text(curves.isEmpty ? "sweeping…" : "updating…").foregroundStyle(.secondary) }
+            context.draw(legend.font(labelFont), at: CGPoint(x: plot.minX + 6, y: plot.maxY - 4), anchor: .bottomLeading)
+        }
 
         // the readout under the pointer
         guard let pointer, plot.contains(pointer) else { return }
@@ -667,6 +765,13 @@ private struct ResponsePlot: View {
         let leftSide = x(frequencies[k]) > plot.midX
         context.draw(Text(text).font(labelFont.weight(.semibold)).foregroundStyle(.primary),
                      at: CGPoint(x: x(frequencies[k]) + (leftSide ? -6 : 6), y: plot.minY + 2), anchor: leftSide ? .topTrailing : .topLeading)
+        // and the sweep's gains there, a line each
+        for (n, curve) in curves.enumerated() {
+            let line = String(format: "%.0f %%   %+.1f dB", curve.position * 100, curve.gains[k])
+            context.draw(Text(line).font(labelFont).foregroundStyle(Self.sweepColor(curve.position)),
+                         at: CGPoint(x: x(frequencies[k]) + (leftSide ? -6 : 6), y: plot.minY + 16 + CGFloat(n) * 12),
+                         anchor: leftSide ? .topTrailing : .topLeading)
+        }
     }
 }
 

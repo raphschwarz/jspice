@@ -90,6 +90,17 @@ struct FrontPanel: View {
                                 Button("Forget \(mapping.label)") { editor.forgetMIDI(part: target.part, inner: target.inner) }
                             }
                         }
+                        if control.element.kind == .potentiometer {
+                            let knob = KnobID(part: target.part, inner: target.inner)
+                            Divider()
+                            if editor.motion(of: knob) != nil {
+                                Button("Stop Moving") { editor.stopMoving(knob) }
+                            } else {
+                                Button("Move Back and Forth") {
+                                    editor.startMoving(knob, period: UserDefaults.standard.object(forKey: "knobMotionPeriod") as? Double ?? 2)
+                                }
+                            }
+                        }
                     }
                 }
             }

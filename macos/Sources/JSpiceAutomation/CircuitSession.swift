@@ -44,7 +44,9 @@ public final class CircuitSession {
     frequency_response for filters and amplifiers (small-signal analysis by default). Adjust values with set_parameter or set_model and simulate again. \
     For a feedback loop's stability, break it with a loopProbe part (its "in" on the side that drives, an op-amp's \
     output, its "out" on the side driven) and call loop_gain for its phase and gain margins; impedance gives a node's or \
-    a source's impedance against frequency, and stress the parts run past their ratings. \
+    a source's impedance against frequency, and stress the parts run past their ratings. To see what a knob does, sweep \
+    its "position" (0 to 1) with an ac measure; to hear it turned, give simulate or render_audio "knobs" that move by \
+    themselves (a wah's sweep, a filter's). \
     Values accept SI prefixes as strings ("4.7k", "100n", "2.2u", "1meg"). Probes: "V(net)" is a net's voltage, \
     "V(R1)" the voltage across a part, "I(R1)" its current, "P(R1)" its power, "V(U1.out)" a terminal's voltage. \
     Synth circuits can be played: keyboardPitch parts put out 1 V per octave (0 V at C2) and keyboardGate parts a gate, \
@@ -164,6 +166,8 @@ public final class CircuitSession {
                 "continue": ["type": "boolean", "description": "Continue from the end of the last simulation instead of starting from rest"],
                 "keyboard": ["type": "array", "items": ["type": "object"],
                              "description": "Notes to play on the circuit's keyboard pitch and gate sources, in time order: {\"at\": seconds, \"note\": 60 or \"C4\"} presses a key (the newest key sounds), {\"at\": seconds, \"off\": true} releases all keys. The pitch stays on the last note after release."],
+                "knobs": ["type": "array", "items": ["type": "object"],
+                          "description": "Knobs that move back and forth by themselves while it runs, as a foot rocks a wah pedal: [{\"part\": \"WAH\", \"period\": 2, \"low\": 0, \"high\": 1}] turns the pot WAH (a pot inside a block: \"BLOCK KNOB\") from low to high and back once every period seconds, slowing at each end, starting at low (defaults 2 s, 0 and 1). The knobs move every millisecond of circuit time."],
              ], required: ["duration", "probes"]),
              run: { session, arguments in try session.simulate(arguments) }),
         Tool(name: "measure",
@@ -274,7 +278,7 @@ public final class CircuitSession {
              ], required: ["part"]),
              run: { session, arguments in try session.setAudioInput(arguments) }),
         Tool(name: "render_audio",
-             description: "Simulates the circuit for a while and writes what a part hears, the speaker by default, to a WAV file (24-bit mono), as the app's speaker would play it: the voltage across it, divided by its full scale, without DC and softly limited above full scale. Audio inputs play their sounds and keyboard events play the keyboard sources. Returns the peak level (1 is full scale) and the fraction of samples that clipped.",
+             description: "Simulates the circuit for a while and writes what a part hears, the speaker by default, to a WAV file (24-bit mono), as the app's speaker would play it: the voltage across it, divided by its full scale, without DC and softly limited above full scale. Audio inputs play their sounds, keyboard events play the keyboard sources and knobs given motions move. Returns the peak level (1 is full scale) and the fraction of samples that clipped.",
              inputSchema: schema([
                 "path": string("WAV file to write"),
                 "duration": ["description": "Seconds of sound (at most 120)"],
@@ -282,6 +286,7 @@ public final class CircuitSession {
                 "sample_rate": ["description": "Samples per second (default 48000)"],
                 "full_scale": ["description": "Volts that make full scale (default: the speaker's full scale parameter, or 1 V for other parts)"],
                 "keyboard": ["type": "array", "items": ["type": "object"], "description": "Notes to play, as in simulate"],
+                "knobs": ["type": "array", "items": ["type": "object"], "description": "Knobs moving back and forth by themselves, as in simulate"],
              ], required: ["path", "duration"]),
              run: { session, arguments in try session.renderAudio(arguments) }),
         Tool(name: "define_block",
@@ -998,6 +1003,9 @@ public final class CircuitSession {
         if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
 
         let events = try Self.keyboardEvents(arguments["keyboard"])
+        let knobs = try knobMotions(arguments["knobs"])
+        let motions = knobs.map { $0.motion }
+        var nextMove = 0.0
         var nextEvent = 0
         let start = simulator.time
         var traces = probes.map { _ in Trace() }
@@ -1011,6 +1019,12 @@ public final class CircuitSession {
                 let event = events[nextEvent]
                 simulator.keyboard = Simulator.KeyboardState(note: event.note ?? simulator.keyboard.note, gate: event.note != nil)
                 nextEvent += 1
+            }
+            // knobs move every millisecond (or every step, when steps are longer)
+            let elapsed = simulator.time - start
+            if !motions.isEmpty && elapsed + timeStep / 2 >= nextMove {
+                simulator.move(motions, at: elapsed)
+                nextMove = max(nextMove + KnobMotion.interval, elapsed)
             }
             simulator.step()
             if simulator.isFailed { break }
@@ -1032,10 +1046,38 @@ public final class CircuitSession {
             "truncated": truncated,
         ]
         if simulator.isFailed || !simulator.problems.isEmpty { result["problems"] = simulator.problems }
+        if !knobs.isEmpty {
+            result["knobs"] = knobs.map { knob -> [String: Any] in
+                ["part": knob.name, "end_position": simulator.circuit.position(of: knob.motion.knob) ?? 0]
+            }
+        }
         var outputs: [String: Any] = [:]
         for (probe, trace) in zip(probes, traces) { outputs[probe.label] = trace.summary() }
         result["probes"] = outputs
         return result
+    }
+
+    /// Knobs moving by themselves, for simulate and render_audio: [{"part": "WAH", "period": 2, "low": 0, "high": 1}], a
+    /// pot inside a block named after the block ("X1 GAIN"), each starting at its low end
+    func knobMotions(_ value: Any?) throws -> [(name: String, motion: KnobMotion)] {
+        guard let value else { return [] }
+        guard let list = value as? [[String: Any]] else {
+            throw ToolError("\"knobs\" should be a list of {\"part\": \"WAH\", \"period\": 2, \"low\": 0, \"high\": 1}")
+        }
+        let knobs = circuit.knobs
+        return try list.map { entry in
+            let name = entry["part"] as? String ?? ""
+            guard let knob = knobs.first(where: { $0.name == name }) else {
+                throw ToolError(knobs.isEmpty ? "The circuit has no potentiometer to move"
+                                : "There is no knob \(name); knobs: \(knobs.map { $0.name }.joined(separator: ", "))")
+            }
+            let period = try Self.number(entry["period"], "period") ?? 2
+            let low = try Self.number(entry["low"], "low") ?? 0
+            let high = try Self.number(entry["high"], "high") ?? 1
+            guard period > 0, period <= 3600 else { throw ToolError("A knob's \"period\" should be more than 0 and at most 3600 seconds") }
+            guard (0...1).contains(low), (0...1).contains(high) else { throw ToolError("A knob's \"low\" and \"high\" should be from 0 to 1") }
+            return (name: name, motion: KnobMotion(knob: knob.id, period: period, low: low, high: high))
+        }
     }
 
     /// Keyboard events for simulate: a time, and a note to press or nil to release
@@ -1652,9 +1694,10 @@ public final class CircuitSession {
         let fullScale = try Self.number(arguments["full_scale"], "full_scale")
         if let fullScale, !(fullScale > 0) { throw ToolError("\"full_scale\" should be positive") }
         let events = try Self.keyboardEvents(arguments["keyboard"])
+        let knobs = try knobMotions(arguments["knobs"]).map { $0.motion }
         let wallStart = Date()
         let result = AudioRender.render(circuit, output: output, duration: duration, sampleRate: sampleRate, fullScale: fullScale,
-                                        keyboard: events, deadline: wallStart.addingTimeInterval(Self.maxWallSeconds))
+                                        keyboard: events, knobs: knobs, deadline: wallStart.addingTimeInterval(Self.maxWallSeconds))
         do {
             try WAV.encode(result.samples, sampleRate: result.sampleRate).write(to: URL(fileURLWithPath: path))
         } catch {

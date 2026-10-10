@@ -294,7 +294,8 @@ public struct SpeakerShaping {
 }
 
 /// Renders a circuit's sound offline, faster or slower than real time as it takes: the voltage across a part (a
-/// speaker), averaged over `oversampling` steps a sample as the live sound does, through the speaker's shaping
+/// speaker), averaged over `oversampling` steps a sample as the live sound does, through the speaker's shaping. Knobs
+/// given motions move as they play, from the start of the sound.
 public enum AudioRender {
     public struct Result: Sendable {
         public var samples: [Float]
@@ -307,7 +308,7 @@ public enum AudioRender {
 
     public static func render(_ circuit: Circuit, output index: Int, duration: Double, sampleRate: Double = 48_000,
                               oversampling: Int = 4, fullScale: Double? = nil, keyboard: [(at: Double, note: Double?)] = [],
-                              deadline: Date = .distantFuture) -> Result {
+                              knobs: [KnobMotion] = [], deadline: Date = .distantFuture) -> Result {
         let steps = max(1, oversampling)
         let simulator = Simulator(circuit: circuit, timeStep: 1 / (sampleRate * Double(steps)))
         simulator.errorControl = false
@@ -319,7 +320,9 @@ public enum AudioRender {
         var clipped = 0
         var peak = 0.0
         var nextEvent = 0
+        let moveEvery = max(1, Int((KnobMotion.interval * sampleRate).rounded()))
         for n in 0..<count {
+            if !knobs.isEmpty && n % moveEvery == 0 { simulator.move(knobs, at: Double(n) / sampleRate) }
             while nextEvent < keyboard.count && keyboard[nextEvent].at <= Double(n) / sampleRate {
                 let event = keyboard[nextEvent]
                 simulator.keyboard = Simulator.KeyboardState(note: event.note ?? simulator.keyboard.note, gate: event.note != nil)
