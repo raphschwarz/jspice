@@ -51,9 +51,12 @@ func benchmark(seconds: Double, ids: [String]) {
         let solves = String(format: "%5.2f", Double(simulator.newtonIterations) / Double(3 * steps))
         let error = String(format: "%6.1f", accuracy(of: example.circuit, listened: listened))
         let size = simulator.equationStatistics
+        // the nonlinear block's factors below and right of its pivots, and the multiply-adds factoring it takes
+        let block = simulator.blockFactorSize
         print("\(name)\(perStep) µs/step \(speed)× real time  \(simulator.convergenceFailures) unconverged  \(solves) solves/step"
               + "  error \(error) dB"
-              + "  n \(size.unknowns) nz \(size.nonzeros) lu \(size.factorEntries) nl \(size.nonlinearUnknowns) plans \(simulator.plans) orders \(simulator.pivotOrders)\(notes)")
+              + "  n \(size.unknowns) nz \(size.nonzeros) lu \(size.factorEntries) nl \(size.nonlinearUnknowns) plans \(simulator.plans) orders \(simulator.pivotOrders)"
+              + "  block \(block.lower)+\(block.upper) ops \(block.operations)\(notes)")
     }
 }
 

@@ -3584,6 +3584,8 @@ public final class Simulator {
         let charged = g.hasCharges && !linearising
         if charged {
             let q = g.charges(vbe: vbe, vbc: vbc, vbx: vbx, r)
+            // (for the step's end to store, should this be the last iteration)
+            g.keep(q, vbe: vbe, vbc: vbc)
             let k = Self.chargeSlots * i
             func flow(_ slot: Int, _ charge: Double) -> Double {
                 (a0 * charge + a1 * junctionCharge[k + slot] + a2 * junctionChargePrevious[k + slot]) / h
@@ -4940,9 +4942,8 @@ public final class Simulator {
             let g = bipolar[i]
             let n = Self.bipolarNodes({ nodes[$0] }, g)
             let p: Double = kinds[i] == .npn ? 1 : -1
-            let (vbe, vbc) = (limitedVoltage[i], limitedVoltage2[i])
-            let q = g.charges(vbe: vbe, vbc: vbc, vbx: p * (voltage(n.b) - voltage(n.cp)),
-                              g.currents(vbe: vbe, vbc: vbc, gmin: Self.junctionGmin))
+            // (as the last iteration stamped them: kept then)
+            let q = g.storedCharges(vbe: limitedVoltage[i], vbc: limitedVoltage2[i], vbx: p * (voltage(n.b) - voltage(n.cp)))
             body(0, q.qbe)
             body(1, q.qbc)
             body(2, q.qbx)

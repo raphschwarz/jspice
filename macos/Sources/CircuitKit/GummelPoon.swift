@@ -9,7 +9,7 @@ import Foundation
 /// (CJS, ISS), the temperature coefficients of the resistances and of IKF and VAF (TRB1, TIKF1…), quasi-saturation.
 final class GummelPoon {
     // (a class: a transistor's model is read at every Newton-Raphson iteration, and copying its fifty values each time
-    // cost more than the currents they give; it is never changed once made)
+    // cost more than the currents they give; its parameters never change once made)
 
     /// Parameters as worked out at the circuit's temperature
     var saturation = 1e-14
@@ -32,6 +32,10 @@ final class GummelPoon {
     /// Thermal voltage, and the junction voltage above which SPICE limits Newton-Raphson's steps
     var vt = Simulator.thermalVoltage
     var critical = 0.0
+    /// The junction voltages Newton-Raphson last stamped this transistor at, and its charges there (see `keep`): the
+    /// only state the model holds, its own transistor's
+    private var keptVbe = Double.nan, keptVbc = Double.nan
+    private var keptQbe = 0.0, keptQbc = 0.0
 
     /// Whether the base, collector and emitter have internal nodes (their resistances are not zero), in that order
     /// after the three terminals
@@ -226,6 +230,24 @@ final class GummelPoon {
         }
         let cjf2 = cj / f2
         return (cj * f1 + cjf2 * (f3 * (v - fcv) + m / (vj + vj) * (v * v - fcv * fcv)), cjf2 * (f3 + m * v / vj))
+    }
+
+    /// Keeps the charges `charges` just gave at these junction voltages, with `currents` at `gmin` `Simulator.junctionGmin`
+    /// (as Newton-Raphson stamps them), for `storedCharges`
+    @inline(__always) func keep(_ q: Charges, vbe: Double, vbc: Double) {
+        (keptVbe, keptVbc, keptQbe, keptQbc) = (vbe, vbc, q.qbe, q.qbc)
+    }
+
+    /// The charges a step ends with at these junction voltages (base-emitter, base-collector at the internal base and
+    /// at the external base): the kept ones where they were stamped at these very voltages, as the last iteration's
+    /// stamps were, or worked out afresh. The same either way: the first two depend on vbe and vbc alone.
+    func storedCharges(vbe: Double, vbc: Double, vbx: Double) -> (qbe: Double, qbc: Double, qbx: Double) {
+        guard vbe == keptVbe && vbc == keptVbc else {
+            let q = charges(vbe: vbe, vbc: vbc, vbx: vbx, currents(vbe: vbe, vbc: vbc, gmin: Simulator.junctionGmin))
+            return (q.qbe, q.qbc, q.qbx)
+        }
+        let qbx = Self.depletion(vbx, cj: cjcOuter, vj: vjc, m: mjc, fcv: fcBC, f1: f1BC, f2: f2BC, f3: f3BC).0
+        return (keptQbe, keptQbc, qbx)
     }
 
     func charges(vbe: Double, vbc: Double, vbx: Double, _ r: Currents) -> Charges {
