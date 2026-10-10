@@ -5228,16 +5228,19 @@ public final class Simulator {
     /// it happened: an SPI word clocked out within one step reaches a DAC bit by bit
     private func replayPinEvents() {
         stepPinEvents.removeAll(keepingCapacity: true)
+        var sources = 0
         for i in chipIndices where i < chipWatches.count && (!chipWatches[i].isEmpty || !busWatches[i].isEmpty) {
             guard let chip = chips[i] else { continue }
             // (the bus devices had theirs as the chip ran)
             let taken = chip.takePinEvents()
-            guard !chipWatches[i].isEmpty else { continue }
+            guard !chipWatches[i].isEmpty, !taken.isEmpty else { continue }
+            sources += 1
             for event in taken {
                 stepPinEvents.append((Double(event.cycle) / chip.clock, stepPinEvents.count, i, event))
             }
         }
-        stepPinEvents.sort { ($0.time, $0.order) < ($1.time, $1.order) }
+        // (one chip's events are in order already)
+        if sources > 1 { stepPinEvents.sort { ($0.time, $0.order) < ($1.time, $1.order) } }
         for (_, _, i, event) in stepPinEvents where event.pin >= 0 && event.pin < chipWatches[i].count {
             for target in chipWatches[i][event.pin] {
                 let old = logicStates[target.element]
