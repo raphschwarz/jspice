@@ -15,6 +15,10 @@ final class EliminationProgram {
     let opCount: Int
     /// The most entries right of a pivot
     private let widest: Int
+    /// The order back substitution takes the steps in: by level (a step's unknown needs those of the steps right of its
+    /// pivot that are this program's, each a level lower), so that steps one after another seldom wait on each other
+    /// and the processor overlaps them, rather than last step first. Each step's sum is the same either way.
+    let backOrder: UnsafeMutablePointer<Int32>
 
     /// The relative size a pivot must keep, against the largest entry below it, for the program to be replayed: far
     /// below the threshold it was chosen with (`SparsePlan.threshold`), so a program lasts while values move
@@ -64,10 +68,26 @@ final class EliminationProgram {
         uStart[steps] = Int32(u)
         opStart[steps] = Int32(op)
         widest = right.map(\.count).max() ?? 0
+        // each step's level, last step first (a step needs only later ones)
+        let columns = (pivots.map(\.column).max() ?? -1) + 1
+        var stepOfColumn = [Int](repeating: -1, count: max(columns, 0))
+        for (k, pivot) in pivots.enumerated() { stepOfColumn[pivot.column] = k }
+        var level = [Int](repeating: 0, count: steps)
+        for k in stride(from: steps - 1, through: 0, by: -1) {
+            var deepest = 0
+            for c in right[k] where Int(c) < columns {
+                let later = stepOfColumn[Int(c)]
+                if later > k { deepest = max(deepest, level[later] + 1) }
+            }
+            level[k] = deepest
+        }
+        let order = (0..<steps).sorted { level[$0] != level[$1] ? level[$0] < level[$1] : $0 > $1 }
+        backOrder = .allocate(capacity: max(steps, 1))
+        for (i, k) in order.enumerated() { backOrder[i] = Int32(k) }
     }
 
     deinit {
-        for pointer in [pivotRow, pivotColumn, diagonal, lStart, uStart, opStart, lRow, lSlot, uColumn, uSlot, target] {
+        for pointer in [pivotRow, pivotColumn, diagonal, lStart, uStart, opStart, lRow, lSlot, uColumn, uSlot, target, backOrder] {
             pointer.deallocate()
         }
     }
@@ -163,8 +183,9 @@ final class EliminationProgram {
         let upper = packed + Int(lStart[steps])
         let reciprocals = upper + Int(uStart[steps])
         var change = 0.0
-        var k = steps - 1
-        while k >= 0 {
+        var n = 0
+        while n < steps {
+            let k = Int(backOrder[n])
             var sum = b[Int(pivotRow[k])]
             var other = 0.0
             var i = Int(uStart[k])
@@ -180,7 +201,7 @@ final class EliminationProgram {
             guard next.isFinite else { return .nan }
             change = max(change, abs(next - x[column]) / (1 + abs(next)))
             x[column] = next
-            k -= 1
+            n += 1
         }
         return change
     }
@@ -190,8 +211,9 @@ final class EliminationProgram {
     func substituteBack(_ packed: UnsafePointer<Double>, _ b: UnsafePointer<Double>, _ x: UnsafeMutablePointer<Double>) -> Bool {
         let upper = packed + Int(lStart[steps])
         let reciprocals = upper + Int(uStart[steps])
-        var k = steps - 1
-        while k >= 0 {
+        var n = 0
+        while n < steps {
+            let k = Int(backOrder[n])
             var sum = b[Int(pivotRow[k])]
             var other = 0.0
             var i = Int(uStart[k])
@@ -205,7 +227,7 @@ final class EliminationProgram {
             let next = (sum + other) * reciprocals[k]
             guard next.isFinite else { return false }
             x[Int(pivotColumn[k])] = next
-            k -= 1
+            n += 1
         }
         return true
     }
