@@ -37,6 +37,8 @@ public final class Simulator {
     /// Newton-Raphson iterations since the start, each one a solve of the stamped equations, and those of them damped
     public private(set) var newtonIterations = 0
     public private(set) var dampedIterations = 0
+    /// Newton-Raphson iterations in which a part limited how far its voltages moved (so it could not converge there)
+    public private(set) var limitedIterations = 0
     /// Of those iterations, how many factored the nonlinear block, and how many solved with factors kept from an earlier
     /// one (see `newton`)
     public private(set) var factorings = 0
@@ -1282,6 +1284,7 @@ public final class Simulator {
                 needsPlan = true
                 continue
             }
+            if limiting { limitedIterations += 1 }
             let stamped = Self.profiling ? DispatchTime.now().uptimeNanoseconds : 0
             let damped = damping < 1
             if damped {

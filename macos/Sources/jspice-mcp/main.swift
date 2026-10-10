@@ -98,8 +98,14 @@ func benchmarkMaker(_ part: String, seconds: Double) throws {
     let steps = max(1, Int(seconds * 48_000))
     let start = DispatchTime.now().uptimeNanoseconds
     var done = 0
+    // Newton iterations by where the sine is in its cycle, in twelve 30° slices
+    var slices = [(steps: Int, iterations: Int)](repeating: (steps: 0, iterations: 0), count: 12)
     while done < steps && !simulator.isFailed {
+        let before = simulator.newtonIterations
         simulator.step()
+        let slice = min(11, Int((simulator.time * 1000).truncatingRemainder(dividingBy: 1) * 12))
+        slices[slice].steps += 1
+        slices[slice].iterations += simulator.newtonIterations - before
         done += 1
     }
     let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
@@ -109,6 +115,10 @@ func benchmarkMaker(_ part: String, seconds: Double) throws {
     var kinds: [String: Int] = [:]
     for element in circuit.flattened().elements { kinds[element.kind.displayName, default: 0] += 1 }
     let made = kinds.sorted { $0.value > $1.value }.prefix(12).map { "\($0.value) \($0.key)" }.joined(separator: ", ")
+    print("\(part): Newton iterations a step through the sine's cycle, every 30° from 0°: "
+          + slices.map { String(format: "%.1f", Double($0.iterations) / Double(max($0.steps, 1))) }.joined(separator: " ")
+          + "; \(simulator.limitedIterations) iterations limited, \(simulator.dampedIterations) damped, "
+          + "\(simulator.convergenceFailures) convergence failures, \(simulator.substeps) substeps")
     print("\(part)'s model as simulated: \(size.unknowns) unknowns, \(size.nonzeros) nonzeros, \(size.factorEntries) entries "
           + "factored, \(size.nonlinearUnknowns) nonlinear; \(made)")
     print(String(format: "%@ follower, 1 kHz at 48 kHz: %.1f µs/step, %.2f× real time, %.2f Newton iterations a step "
