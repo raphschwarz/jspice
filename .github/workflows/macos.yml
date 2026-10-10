@@ -59,6 +59,9 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25
           # an engine switch off and on, run for run on the same machine: what resting confirmations saves transistor circuits
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch rest-confirmation 0.25 voice acid wind vcf mc1496-ring sa612-ring frequency-shifter guitar-fuzz tube-screamer bargraph || true
+          # and what reusing factors (the chord method, confirmations, kept stamps) and bypassing behavioural sources save them
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-factors 0.25 voice acid mc1496-ring tube-screamer bargraph lm1036 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
           # where the time goes, for the heaviest synth example
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 voice > /dev/null &
           sleep 1
