@@ -265,6 +265,28 @@ public final class Simulator {
     /// for, and the fraction of a clock cycle carried to the next step
     private var chips: [Int: Microcontroller] = [:]
     private var chipPinStates: [Int: [PinState]] = [:]
+    /// The chips' pins as they were at the last step, as a key; a switch of them under way in the present step (what
+    /// they switched from and to, and the nonlinear block's unknowns just before); and the solutions the steps after
+    /// switches found, by the switch (see `followPinSwitch`)
+    private var pinKey = 0
+    private var pinSwitch: (change: PinSwitch, serial: Int, before: [Double])?
+    private struct PinSwitch: Hashable {
+        var from: Int
+        var to: Int
+    }
+    private struct SwitchSolution {
+        var serial: Int
+        var before: [Double]
+        var after: [Double]
+        var limited: [Double]
+        var limited2: [Double]
+        var limited3: [Double]
+    }
+    private var switchSolutions: [PinSwitch: SwitchSolution] = [:]
+    /// Steps after a switch of the chips' pins that started from the solution after the same switch before
+    public private(set) var switchesFollowed = 0
+    /// Whether they do (a test compares with stepping from the last solution)
+    public static var followsPinSwitches = true
     private var chipCycleCarry: [Int: Double] = [:]
     private var chipIndices: [Int] = []
     /// For each chip, its pins that logic parts' inputs are wired to, and those inputs (the part and the input's bit):
@@ -744,6 +766,9 @@ public final class Simulator {
         chipIndices = indices { $0.isMicrocontroller }
         chips = [:]
         chipPinStates = [:]
+        pinKey = 0
+        pinSwitch = nil
+        switchSolutions = [:]
         chipCycleCarry = [:]
         for i in chipIndices {
             let element = flat.elements[i]
@@ -1169,7 +1194,10 @@ public final class Simulator {
             keyboard.gate = false
             sequenceOwnsKeyboard = false
         }
-        if !chips.isEmpty { runChips() }
+        if !chips.isEmpty {
+            runChips()
+            followPinSwitch()
+        }
         // without capacitors, inductors, stored charge or op-amp dynamics, smaller steps would only give the same answer again
         let canSubdivide = !dynamicIndices.isEmpty || !junctionIndices.isEmpty
         if !canSubdivide { substepLevel = 0 }
@@ -1236,6 +1264,7 @@ public final class Simulator {
             // twice as long again where the error leaves room, and where a substep twice as long ends on the grid
             if level > 0 && error < 0.09 && position % (2 * units) == 0 { substepLevel = level - 1 }
         }
+        if let pinSwitch { keepSwitchSolution(pinSwitch) }
         finishStep(at: end)
     }
 
@@ -4821,6 +4850,61 @@ public final class Simulator {
     }
 
     /// Whether two pin states need the same matrix: each pin an output, an input with pull-up or pull-down, or a bare input
+    /// The chips' pins, each one's direction, pull-up and level, as a key
+    private func pinSetupKey() -> Int {
+        var hasher = Hasher()
+        for i in chipIndices {
+            guard let states = chipPinStates[i] else { continue }
+            hasher.combine(i)
+            for state in states {
+                switch state {
+                case let .input(pullUp): hasher.combine(pullUp ? 1 : 2)
+                case .inputPullDown: hasher.combine(3)
+                case let .output(high): hasher.combine(high ? 4 : 5)
+                }
+            }
+        }
+        return hasher.finalize()
+    }
+
+    /// Where the chips' pins have switched since the last step (an LED on a pin that PWM flips at nearly every step):
+    /// starts Newton-Raphson from the solution found the last time the same switch came with the nonlinear block's
+    /// unknowns where they are now. Otherwise it climbs each junction's exponential from the old solution a limited step
+    /// at a time. Only with the unknowns as they were then (so it is the same situation, not a latch that has flipped
+    /// since): the solve starts nearer its answer, and finds it as it would have.
+    private func followPinSwitch() {
+        let key = pinSetupKey()
+        defer { pinKey = key }
+        pinSwitch = nil
+        guard Self.followsPinSwitches, key != pinKey, hasNonlinear, let plan, plan.n == x.count, !plan.block.isEmpty else { return }
+        let change = PinSwitch(from: pinKey, to: key)
+        let before = plan.block.map { x[$0] }
+        pinSwitch = (change, planSerial, before)
+        guard let known = switchSolutions[change], known.serial == planSerial, known.before.count == before.count,
+              known.limited.count == limitingIndices.count else { return }
+        for k in before.indices where !(abs(before[k] - known.before[k]) <= 1e-3 * (1 + abs(before[k]))) { return }
+        for (k, u) in plan.block.enumerated() { x[u] = known.after[k] }
+        for (k, i) in limitingIndices.enumerated() {
+            limitedVoltage[i] = known.limited[k]
+            limitedVoltage2[i] = known.limited2[k]
+            limitedVoltage3[i] = known.limited3[k]
+        }
+        // (the last steps' solutions are from before the switch: nothing to extrapolate from)
+        predictorReady = false
+        switchesFollowed += 1
+    }
+
+    /// Keeps the solution the step after a switch of the chips' pins found, for the same switch to start from
+    private func keepSwitchSolution(_ pending: (change: PinSwitch, serial: Int, before: [Double])) {
+        pinSwitch = nil
+        guard !isFailed, let plan, plan.n == x.count, planSerial == pending.serial, plan.block.count == pending.before.count else { return }
+        if switchSolutions.count >= 32 { switchSolutions.removeAll() }
+        switchSolutions[pending.change] = SwitchSolution(
+            serial: pending.serial, before: pending.before, after: plan.block.map { x[$0] },
+            limited: limitingIndices.map { limitedVoltage[$0] }, limited2: limitingIndices.map { limitedVoltage2[$0] },
+            limited3: limitingIndices.map { limitedVoltage3[$0] })
+    }
+
     private static func samePinSetup(_ a: [PinState], _ b: [PinState]?) -> Bool {
         guard let b, a.count == b.count else { return false }
         for (x, y) in zip(a, b) {

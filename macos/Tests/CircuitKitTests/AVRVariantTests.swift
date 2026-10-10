@@ -100,6 +100,38 @@ final class AVRVariantTests: XCTestCase {
         XCTAssertEqual(Double(on) / Double(samples), 129.0 / 256, accuracy: 0.04)
     }
 
+    /// After the chip's pins switch (PWM on PB4 flips the LED at nearly every step), a step starts from the solution the
+    /// same switch led to before rather than climbing the LED's exponential again a limited step at a time: fewer
+    /// Newton-Raphson iterations, and the same currents
+    func testAPinSwitchStartsFromWhereTheSameSwitchLedBefore() {
+        func run(_ follow: Bool) -> (iterations: Int, followed: Int, currents: [Double]) {
+            Simulator.followsPinSwitches = follow
+            defer { Simulator.followsPinSwitches = true }
+            let circuit = Examples.tinyDimmer.circuit
+            let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
+            simulator.errorControl = false
+            let leds = [index(circuit, "D1"), index(circuit, "D2")]
+            var currents: [Double] = []
+            for _ in 0..<4800 {
+                simulator.step()
+                currents += leds.map { simulator.current($0) }
+            }
+            XCTAssertFalse(simulator.isFailed, simulator.problems.joined(separator: " "))
+            return (simulator.newtonIterations, simulator.switchesFollowed, currents)
+        }
+        let plain = run(false), followed = run(true)
+        XCTAssertEqual(plain.followed, 0)
+        XCTAssertGreaterThan(followed.followed, 0)
+        XCTAssertLessThan(followed.iterations, plain.iterations,
+                          "\(followed.iterations) iterations (\(followed.followed) switches followed) against \(plain.iterations)")
+        XCTAssertEqual(followed.currents.count, plain.currents.count)
+        var worst = 0.0
+        for (a, b) in zip(followed.currents, plain.currents) { worst = max(worst, abs(a - b) / (1e-6 + 1e-4 * abs(b))) }
+        XCTAssertLessThanOrEqual(worst, 1, "LED currents apart by \(worst) of the tolerance")
+        print("ATtiny85 dimmer, 0.1 s at 48 kHz: \(plain.iterations) Newton iterations stepping from the last solution, "
+              + "\(followed.iterations) following pin switches (\(followed.followed) followed)")
+    }
+
     func testEveryBoardsPinsAreDrawnOnTheirSides() {
         for board in Board.allCases {
             let element = Element(kind: board.kind, a: GridPoint(0, 0), b: GridPoint(0, board.length))
