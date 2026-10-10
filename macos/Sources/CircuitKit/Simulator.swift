@@ -4898,9 +4898,17 @@ public final class Simulator {
         for i in chipIndices {
             guard let chip = chips[i] else { continue }
             let nodes = topology.elementNodes[i]
-            var volts = [Double](repeating: 0, count: chip.pinCount)
-            for pin in 0..<min(chip.pinCount, nodes.count) { volts[pin] = voltage(nodes[pin]) }
-            chip.pinVoltages = volts
+            let reached = min(chip.pinCount, nodes.count)
+            if chip.pinVoltages.count == chip.pinCount {
+                // written in place, in one change the chip sees once (a new array at every step otherwise)
+                chip.pinVoltages.withUnsafeMutableBufferPointer { volts in
+                    for pin in volts.indices { volts[pin] = pin < reached ? voltage(nodes[pin]) : 0 }
+                }
+            } else {
+                var volts = [Double](repeating: 0, count: chip.pinCount)
+                for pin in 0..<reached { volts[pin] = voltage(nodes[pin]) }
+                chip.pinVoltages = volts
+            }
             let budget = timeStep * chip.clock + (chipCycleCarry[i] ?? 0)
             let whole = max(Int(budget), 0)
             let start = chip.cycles
@@ -5729,6 +5737,26 @@ public final class Simulator {
     /// One element's current for a scope at every step, without working out the whole circuit's: only wires and
     /// other conductors need the walk through the wire network
     private func scopedCurrent(_ index: Int) -> Double {
+        // the commonest parts on a scope read straight from the solution, as `elementCurrents` reads them, without
+        // copying the part or making the array of its terminals' currents at every step
+        if index < kinds.count, index < topology.elementNodes.count {
+            switch kinds[index] {
+            case .capacitor:
+                return capacitorCurrent[index]
+            case .diode, .led, .zener:
+                let nodes = topology.elementNodes[index]
+                let anode = diodes[index].hasSeriesNode ? nodes[2] : nodes[0]
+                return diodes[index].current(voltage(anode) - voltage(nodes[1]), gmin: Self.junctionGmin).current
+                    + junctionCurrent[Self.chargeSlots * index]
+            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
+                let row = topology.sourceRow[index]
+                return row >= 0 && row < x.count ? x[row] : 0
+            case .currentSource:
+                return constants[index].value
+            default:
+                break
+            }
+        }
         let element = flat.elements[index]
         if element.isConductor { return current(index) }
         return elementCurrents(index, element) { self.voltage($0) }.main

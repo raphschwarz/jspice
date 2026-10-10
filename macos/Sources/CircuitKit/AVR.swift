@@ -41,6 +41,12 @@ public final class AVR: Microcontroller {
     var usarts: [AVRUSART] = []
     var spi: AVRSPI?
     var twi: AVRTWI?
+    /// The same, held by those and reached here without counting: the peripherals are looked at every few dozen cycles,
+    /// and a counted reference costs a retain and a release at each use
+    private var timerRefs: [Unmanaged<AVRTimer>] = []
+    private var usartRefs: [Unmanaged<AVRUSART>] = []
+    private var spiRef: Unmanaged<AVRSPI>?
+    private var twiRef: Unmanaged<AVRTWI>?
 
     /// Pin voltages the chip sees, set by the circuit before it runs; the digital levels follow them with hysteresis
     public var pinVoltages: [Double] {
@@ -186,6 +192,10 @@ public final class AVR: Microcontroller {
         usarts = variant.usarts.map { AVRUSART(spec: $0, avr: self) }
         spi = variant.spi.map { AVRSPI(spec: $0, avr: self) }
         twi = variant.twi.map { AVRTWI(spec: $0, avr: self) }
+        timerRefs = timers.map { Unmanaged.passUnretained($0) }
+        usartRefs = usarts.map { Unmanaged.passUnretained($0) }
+        spiRef = spi.map { Unmanaged.passUnretained($0) }
+        twiRef = twi.map { Unmanaged.passUnretained($0) }
         handlers = buildHandlers()
         reset()
     }
@@ -510,7 +520,9 @@ public final class AVR: Microcontroller {
     func peripheralsTouched() {
         let elapsed = cycles - servicedAt
         if elapsed > 0 {
-            for timer in timers where timer.prescale != 0 { timer.advance(elapsed) }
+            for timer in timerRefs {
+                timer._withUnsafeGuaranteedRef { if $0.prescale != 0 { $0.advance(elapsed) } }
+            }
         }
         servicedAt = cycles
         nextService = 0
@@ -521,32 +533,39 @@ public final class AVR: Microcontroller {
         servicedAt = cycles
         // (nothing below changes a timer's prescaler, so when each ticks next is known now)
         var next = Int.max
-        for timer in timers where timer.prescale != 0 {
-            if elapsed > 0 { timer.advance(elapsed) }
-            next = min(next, cycles + timer.prescale - timer.accumulator)
+        for timer in timerRefs {
+            timer._withUnsafeGuaranteedRef { timer in
+                guard timer.prescale != 0 else { return }
+                if elapsed > 0 { timer.advance(elapsed) }
+                next = min(next, cycles + timer.prescale - timer.accumulator)
+            }
         }
-        for usart in usarts where usart.needsUpdate { usart.update() }
+        for usart in usartRefs {
+            usart._withUnsafeGuaranteedRef { if $0.needsUpdate { $0.update() } }
+        }
         if let done = adcDoneAt, cycles >= done { adcFinish() }
         // at 8 MHz the SPI clock changes every cycle, more than once within an instruction: watched pins are logged at
         // each of its events
-        if let spi {
+        spiRef?._withUnsafeGuaranteedRef { spi in
             while cycles >= spi.nextEvent {
                 let at = spi.nextEvent
                 spi.advance()
                 if !watchedPins.isEmpty { logWatchedPins(at: at) }
             }
         }
-        if let twi {
+        twiRef?._withUnsafeGuaranteedRef { twi in
             while cycles >= twi.nextEvent {
                 let at = twi.nextEvent
                 twi.advance()
                 if !watchedPins.isEmpty { logWatchedPins(at: at) }
             }
         }
-        for usart in usarts { next = min(next, usart.nextUpdate) }
+        for usart in usartRefs {
+            usart._withUnsafeGuaranteedRef { next = min(next, $0.nextUpdate) }
+        }
         if let done = adcDoneAt { next = min(next, done) }
-        if let spi { next = min(next, spi.nextEvent) }
-        if let twi { next = min(next, twi.nextEvent) }
+        spiRef?._withUnsafeGuaranteedRef { next = min(next, $0.nextEvent) }
+        twiRef?._withUnsafeGuaranteedRef { next = min(next, $0.nextEvent) }
         nextService = next
     }
 
@@ -570,53 +589,64 @@ public final class AVR: Microcontroller {
 
     /// What each pin does: driven high or low (by its port, a timer's PWM output or a USART), or an input
     public var pinStates: [PinState] {
-        var overrides = [Bool?](repeating: nil, count: pinCount)
+        // (worked out in place in arrays kept from the last time: the simulator asks at every step, and they change
+        // far less often; one it holds on to is copied before it is written)
+        if pinOverrides.count != pinCount {
+            pinOverrides = [Int8](repeating: -1, count: pinCount)
+        } else {
+            for k in pinOverrides.indices { pinOverrides[k] = -1 }
+        }
         for timer in timers {
             for unit in 0..<timer.units {
                 let com = timer.compareOutputMode(unit)
                 let pin = timer.spec.pins[unit]
                 guard com != 0, pin >= 0 else { continue }
-                overrides[pin] = timer.output[unit]
+                pinOverrides[pin] = timer.output[unit] ? 1 : 0
                 if timer.spec.kind == .tiny1 && com == 1 && timer.pwmUnit(unit) {
-                    overrides[timer.spec.complements[unit]] = !timer.output[unit]
+                    pinOverrides[timer.spec.complements[unit]] = timer.output[unit] ? 0 : 1
                 }
             }
         }
-        var result: [PinState] = []
-        result.reserveCapacity(pinCount)
+        if pinStateCache.count != variant.pins.count {
+            pinStateCache = [PinState](repeating: .inputPullDown, count: variant.pins.count)
+        }
         for (index, pin) in variant.pins.enumerated() {
             let address = variant.ports[pin.port]
             let mask = UInt8(1) << pin.bit
             let level = data[address + 2] & mask != 0
             if data[address + 1] & mask != 0 {
-                result.append(.output(high: overrides[index] ?? level))
+                let override = pinOverrides[index]
+                pinStateCache[index] = .output(high: override < 0 ? level : override == 1)
             } else {
-                result.append(.input(pullUp: level))
+                pinStateCache[index] = .input(pullUp: level)
             }
         }
         for usart in usarts {
             let control = data[usart.spec.controlB]
-            if control & 0x08 != 0 { result[usart.spec.txPin] = .output(high: true) }  // the transmitter idles high
+            if control & 0x08 != 0 { pinStateCache[usart.spec.txPin] = .output(high: true) }  // the transmitter idles high
             if control & 0x10 != 0 {
                 let pin = variant.pins[usart.spec.rxPin]
-                result[usart.spec.rxPin] = .input(pullUp: data[variant.ports[pin.port] + 2] & (1 << pin.bit) != 0)
+                pinStateCache[usart.spec.rxPin] = .input(pullUp: data[variant.ports[pin.port] + 2] & (1 << pin.bit) != 0)
             }
         }
         if let spi, spi.master {
             // the SPI drives SCK and MOSI (where they are outputs) and reads MISO
             let spec = spi.spec
-            if case .output = result[spec.sck] { result[spec.sck] = .output(high: spi.sck) }
-            if case .output = result[spec.mosi] { result[spec.mosi] = .output(high: spi.mosi) }
-            result[spec.miso] = .input(pullUp: portBit(spec.miso))
+            if case .output = pinStateCache[spec.sck] { pinStateCache[spec.sck] = .output(high: spi.sck) }
+            if case .output = pinStateCache[spec.mosi] { pinStateCache[spec.mosi] = .output(high: spi.mosi) }
+            pinStateCache[spec.miso] = .input(pullUp: portBit(spec.miso))
         }
         if let twi, twi.enabled {
             // open drain: pulled low, or let go (to the pull-up, if the port has it on)
-            for (pin, low) in [(twi.spec.sda, twi.sdaLow), (twi.spec.scl, twi.sclLow)] {
-                result[pin] = low ? .output(high: false) : .input(pullUp: portBit(pin))
-            }
+            let (sda, scl) = (twi.spec.sda, twi.spec.scl)
+            pinStateCache[sda] = twi.sdaLow ? .output(high: false) : .input(pullUp: portBit(sda))
+            pinStateCache[scl] = twi.sclLow ? .output(high: false) : .input(pullUp: portBit(scl))
         }
-        return result
+        return pinStateCache
     }
+    private var pinStateCache: [PinState] = []
+    /// Per pin, the level a timer's compare output drives it to (1 or 0), or -1 where none does
+    private var pinOverrides: [Int8] = []
 
     /// The PORTx bit of a pin (its output level, or its pull-up)
     private func portBit(_ pin: Int) -> Bool {
