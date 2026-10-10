@@ -7,8 +7,9 @@ import JSpiceAutomation
 //
 // If the JSpice app is running (with Allow AI Control on), requests go to the circuit in its frontmost window, so you
 // can watch the agent work and undo its changes; otherwise, or with --headless, the server simulates on its own.
-// --app insists on the app. --benchmark [seconds] [example…] times the engine alone at the audio sample rate, and
-// --benchmark-maker PART [seconds] a maker's op-amp model.
+// --app insists on the app. --benchmark [seconds] [example…] times the engine alone at the audio sample rate,
+// --benchmark-maker PART [seconds] a maker's op-amp model, and --benchmark-switch NAME [seconds] [example…] the
+// examples with one of the engine's switches off and on.
 
 let arguments = CommandLine.arguments
 let path = ProcessInfo.processInfo.environment["JSPICE_SOCKET"] ?? LocalSocket.defaultPath
@@ -52,6 +53,52 @@ func benchmark(seconds: Double, ids: [String]) {
         print("\(name)\(perStep) µs/step \(speed)× real time  \(simulator.convergenceFailures) unconverged  \(solves) solves/step"
               + "  error \(error) dB"
               + "  n \(size.unknowns) nz \(size.nonzeros) lu \(size.factorEntries) nl \(size.nonlinearUnknowns) plans \(simulator.plans) orders \(simulator.pivotOrders)\(notes)")
+    }
+}
+
+/// The engine's switches a benchmark can compare, each off against on (all are on as the app runs)
+let switches: [String: (Bool) -> Void] = [
+    "reuse-factors": { Simulator.reusesFactors = $0 },
+    "bypass": { Simulator.bypassesDevices = $0 },
+    "pin-switches": { Simulator.followsPinSwitches = $0 },
+    "rest-confirmation": { Simulator.restsConfirmation = $0 },
+]
+
+/// Simulates each example twice over, with one of the engine's switches off and on, in alternate runs of `seconds` of
+/// circuit time (so the machine's ups and downs fall on both alike), and prints the time per step of the fastest of
+/// three runs each, and what the switch saves
+func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
+    guard let flip = switches[name] else {
+        log("there is no switch \(name); there are \(switches.keys.sorted().joined(separator: ", "))")
+        exit(2)
+    }
+    let rate = 48_000.0
+    let steps = max(1, Int(seconds * rate))
+    for id in ids {
+        guard let example = Examples.example(id) else {
+            log("there is no example \(id)")
+            continue
+        }
+        let simulators = [false, true].map { on -> Simulator in
+            flip(on)
+            let simulator = Simulator(circuit: example.circuit, timeStep: 1 / rate)
+            simulator.errorControl = false
+            return simulator
+        }
+        var fastest = [Double.infinity, .infinity]
+        for _ in 0..<3 {
+            for k in 0..<2 {
+                flip(k == 1)
+                let start = DispatchTime.now().uptimeNanoseconds
+                for _ in 0..<steps { simulators[k].step() }
+                fastest[k] = min(fastest[k], Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9)
+            }
+        }
+        flip(true)
+        let solves = simulators.map { Double($0.newtonIterations) / Double(3 * steps) }
+        print(String(format: "%@ %@: off %.2f µs/step (%.2f solves), on %.2f µs/step (%.2f solves), on saves %.1f%%",
+                     id.padding(toLength: 18, withPad: " ", startingAt: 0), name, fastest[0] / Double(steps) * 1e6, solves[0],
+                     fastest[1] / Double(steps) * 1e6, solves[1], (1 - fastest[1] / fastest[0]) * 100))
     }
 }
 
@@ -296,6 +343,18 @@ if let flag = arguments.firstIndex(of: "--benchmark-maker"), flag + 1 < argument
         log("\(error)")
         exit(1)
     }
+    exit(0)
+}
+
+// --benchmark-switch NAME [seconds] [example…]: the examples with one of the engine's switches off and on
+if let flag = arguments.firstIndex(of: "--benchmark-switch"), flag + 1 < arguments.count {
+    var rest = Array(arguments[(flag + 2)...])
+    var seconds = 0.25
+    if let first = rest.first, let value = Double(first), value > 0, value < 1e4 {
+        seconds = value
+        rest.removeFirst()
+    }
+    benchmarkSwitch(arguments[flag + 1], seconds: seconds, ids: rest.isEmpty ? Examples.all.map(\.id) : rest)
     exit(0)
 }
 

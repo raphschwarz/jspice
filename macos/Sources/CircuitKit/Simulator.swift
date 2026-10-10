@@ -587,6 +587,8 @@ public final class Simulator {
     private var confirmRest = 0
     static let confirmMissesTolerated = 32
     static let confirmRestSolves = 512
+    /// Whether confirmations rest after many misses (off, every solve tries them: for comparing the two)
+    public static var restsConfirmation = true
     private var reuseAllowed = false
     private var confirmedPlanSerial = -1
     private var confirmedBaseVersion = -1
@@ -1520,7 +1522,7 @@ public final class Simulator {
         // whether this solve snapshots its stamps to confirm an iteration without a solve: not for a while after many
         // misses in a row (a transistor's slopes move at every iteration, and its block never stamps as it was solved)
         if confirmRest > 0 { confirmRest -= 1 }
-        let confirming = Self.reusesFactors && confirmRest == 0
+        let confirming = Self.reusesFactors && (confirmRest == 0 || !Self.restsConfirmation)
         // only a solve that ends confirmed leaves stamps to start the next from, and only a solve that can start again
         // from where it started takes them (not one that a single iteration from the prediction ends)
         let mayReuse = confirming && confirmedStamps && junctionConductance == 0 && newtonFromSolveStart
