@@ -127,6 +127,59 @@ final class EliminationProgram {
         return -1
     }
 
+    /// How many values `pack` writes: the factors below the pivots, right of them, and the pivots
+    var packedCount: Int { Int(lStart[steps]) + Int(uStart[steps]) + steps }
+
+    /// The factors in `values` (as `factor` left them) gathered in the order substitution reads them: those below the
+    /// pivots, then those right of them, then the pivots. Substituting through them then reads memory in order.
+    func pack(_ values: UnsafePointer<Double>, into packed: UnsafeMutablePointer<Double>) {
+        let lCount = Int(lStart[steps]), uCount = Int(uStart[steps])
+        for j in 0..<lCount { packed[j] = values[Int(lSlot[j])] }
+        for i in 0..<uCount { packed[lCount + i] = values[Int(uSlot[i])] }
+        for k in 0..<steps { packed[lCount + uCount + k] = values[Int(diagonal[k])] }
+    }
+
+    /// `forward` with factors packed by `pack`: the same operations in the same order
+    func forwardPacked(_ packed: UnsafePointer<Double>, _ b: UnsafeMutablePointer<Double>) {
+        var k = 0
+        while k < steps {
+            let bk = b[Int(pivotRow[k])]
+            if bk != 0 {
+                var j = Int(lStart[k])
+                let l1 = Int(lStart[k + 1])
+                while j < l1 {
+                    b[Int(lRow[j])] -= packed[j] * bk
+                    j += 1
+                }
+            }
+            k += 1
+        }
+    }
+
+    /// `back` with factors packed by `pack`: the same operations in the same order
+    func backPacked(_ packed: UnsafePointer<Double>, _ b: UnsafePointer<Double>, _ x: UnsafeMutablePointer<Double>) -> Double {
+        let upper = packed + Int(lStart[steps])
+        let pivots = upper + Int(uStart[steps])
+        var change = 0.0
+        var k = steps - 1
+        while k >= 0 {
+            var sum = b[Int(pivotRow[k])]
+            var i = Int(uStart[k])
+            let u1 = Int(uStart[k + 1])
+            while i < u1 {
+                sum -= upper[i] * x[Int(uColumn[i])]
+                i += 1
+            }
+            let column = Int(pivotColumn[k])
+            let next = sum / pivots[k]
+            guard next.isFinite else { return .nan }
+            change = max(change, abs(next - x[column]) / (1 + abs(next)))
+            x[column] = next
+            k -= 1
+        }
+        return change
+    }
+
     /// Forward substitution: `b` (indexed by the equations' rows) becomes L⁻¹ b
     func forward(_ values: UnsafePointer<Double>, _ b: UnsafeMutablePointer<Double>) {
         var k = 0

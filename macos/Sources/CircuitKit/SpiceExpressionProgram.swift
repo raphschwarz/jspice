@@ -4,8 +4,9 @@ extension SpiceExpression {
     /// The expression and its slopes in every input compiled into one list of steps, each working out one value from
     /// earlier ones. A part the value and its slopes share (the exp(x) of exp(x) and of its slope exp(x)·x') is worked
     /// out once, and running it walks an array instead of trees. It gives what `value` and `slope` give, to the last bit:
-    /// the same operations on the same values, in the same order.
-    public struct Program: Sendable {
+    /// the same operations on the same values, in the same order. Its steps are kept in memory of its own, so running it
+    /// (at every Newton-Raphson iteration) touches no reference counts.
+    public final class Program: @unchecked Sendable {
         enum Step: Sendable {
             case constant(Double)
             /// An input, as it is (`x`) or as decisions are held at (`d`)
@@ -26,20 +27,33 @@ extension SpiceExpression {
             case tableSlope(Int, Int, Int, Int)
         }
 
-        let steps: [Step]
-        let data: [Double]
+        private let steps: UnsafeMutablePointer<Step>
+        private let data: UnsafeMutablePointer<Double>
         /// The step that gives the value, and those that give each input's slope
         public let value: Int
         public let slopes: [Int]
+        /// The same as `slopes`, for the simulator's inner loop
+        let slopeSteps: UnsafeMutablePointer<Int>
         /// How many values running it writes
-        public var count: Int { steps.count }
+        public let count: Int
 
         public init(_ expression: SpiceExpression) {
             var compiler = Compiler()
             value = compiler.compile(expression.root, .normal)
             slopes = expression.slopes.map { compiler.compile($0, .normal) }
-            steps = compiler.steps
-            data = compiler.data
+            count = compiler.steps.count
+            steps = .allocate(capacity: max(count, 1))
+            steps.initialize(from: compiler.steps, count: count)
+            data = .allocate(capacity: max(compiler.data.count, 1))
+            data.initialize(from: compiler.data, count: compiler.data.count)
+            slopeSteps = .allocate(capacity: max(slopes.count, 1))
+            slopeSteps.initialize(from: slopes, count: slopes.count)
+        }
+
+        deinit {
+            steps.deallocate()
+            data.deallocate()
+            slopeSteps.deallocate()
         }
 
         /// Runs it at inputs `x`, with decisions made at `deciding` (at `x` when nil), writing each step's value to
@@ -48,28 +62,24 @@ extension SpiceExpression {
                         into results: UnsafeMutablePointer<Double>) {
             let d = deciding ?? x
             let r = results
-            steps.withUnsafeBufferPointer { steps in
-                data.withUnsafeBufferPointer { data in
-                    let table = data.baseAddress
-                    for k in 0..<steps.count {
-                        switch steps[k] {
-                        case let .constant(c): r[k] = c
-                        case let .input(j): r[k] = x[j]
-                        case let .decidingInput(j): r[k] = d[j]
-                        case .time: r[k] = time
-                        case .temperature: r[k] = celsius
-                        case let .negate(a): r[k] = -r[a]
-                        case let .not(a): r[k] = r[a] != 0 ? 0 : 1
-                        case let .binary(op, a, b): r[k] = SpiceExpression.arithmetic(op, r[a], r[b])
-                        case let .call(f, a, b, c):
-                            r[k] = SpiceExpression.apply(f, r[a], b >= 0 ? r[b] : 0, c >= 0 ? r[c] : 0)
-                        case let .select(c, a, b): r[k] = r[c] != 0 ? r[a] : r[b]
-                        case let .table(a, xs, ys, n):
-                            r[k] = SpiceExpression.lookup(r[a], table.map { $0 + xs }, table.map { $0 + ys }, n)
-                        case let .tableSlope(a, xs, ys, n):
-                            r[k] = SpiceExpression.lookupSlope(r[a], table.map { $0 + xs }, table.map { $0 + ys }, n)
-                        }
-                    }
+            let steps = self.steps, table = self.data
+            for k in 0..<count {
+                switch steps[k] {
+                case let .constant(c): r[k] = c
+                case let .input(j): r[k] = x[j]
+                case let .decidingInput(j): r[k] = d[j]
+                case .time: r[k] = time
+                case .temperature: r[k] = celsius
+                case let .negate(a): r[k] = -r[a]
+                case let .not(a): r[k] = r[a] != 0 ? 0 : 1
+                case let .binary(op, a, b): r[k] = SpiceExpression.arithmetic(op, r[a], r[b])
+                case let .call(f, a, b, c):
+                    r[k] = SpiceExpression.apply(f, r[a], b >= 0 ? r[b] : 0, c >= 0 ? r[c] : 0)
+                case let .select(c, a, b): r[k] = r[c] != 0 ? r[a] : r[b]
+                case let .table(a, xs, ys, n):
+                    r[k] = SpiceExpression.lookup(r[a], table + xs, table + ys, n)
+                case let .tableSlope(a, xs, ys, n):
+                    r[k] = SpiceExpression.lookupSlope(r[a], table + xs, table + ys, n)
                 }
             }
         }

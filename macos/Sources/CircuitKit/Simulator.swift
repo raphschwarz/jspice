@@ -299,24 +299,36 @@ public final class Simulator {
         /// decisions where the solve started (`decisionX`), and the solve is done again if they have changed by the end
         var decides = false
 
+        /// The inputs again, in memory of their own: read at every iteration without touching reference counts
+        let inputList: UnsafeMutablePointer<BehaviorInput>
+        let inputCount: Int
+
         init(expression: SpiceExpression, program: SpiceExpression.Program, inputs: [BehaviorInput], voltage: Bool) {
             self.expression = expression
             self.program = program
             self.inputs = inputs
             self.voltage = voltage
+            inputCount = inputs.count
+            inputList = .allocate(capacity: max(inputs.count, 1))
+            inputList.initialize(from: inputs, count: inputs.count)
         }
+
+        deinit { inputList.deallocate() }
     }
     private var behaviors: [Behavior?] = []
     /// Expressions read and compiled, by their text: a knob turned takes on new values without reading them again
     private var compiledExpressions: [String: (expression: SpiceExpression, program: SpiceExpression.Program)] = [:]
-    /// Where a behavioural source's program writes its steps' values
-    private var behaviorRegisters: [Double] = []
+    /// Where a behavioural source's program writes its steps' values (room for `behaviorRegisterRoom`)
+    private var behaviorRegisters = UnsafeMutablePointer<Double>.allocate(capacity: 1)
+    private var behaviorRegisterRoom = 1
     /// What reading the behavioural sources' expressions found wrong
     private var behaviorProblems: [String] = []
-    private var behaviorValues: [Double] = []
+    /// A behavioural source's inputs at the present solution (room for `behaviorInputRoom`)
+    private var behaviorValues = UnsafeMutablePointer<Double>.allocate(capacity: 1)
+    private var behaviorInputRoom = 1
     /// The inputs a behavioural source's decisions are made at, and the solution they are read from: held through a
     /// solve, from where it started (see `solve`)
-    private var behaviorDecisions: [Double] = []
+    private var behaviorDecisions = UnsafeMutablePointer<Double>.allocate(capacity: 1)
     private var decisionX: [Double] = []
     /// The behavioural sources whose decisions are held
     private var decidingIndices: [Int] = []
@@ -402,6 +414,7 @@ public final class Simulator {
     /// Newton-Raphson's stamps reach had then, and the largest entry of each row of the block
     private var keptPlan: SparsePlan?
     private var keptOrder: EliminationProgram?
+    /// The factors, packed in the order substitution reads them (see `EliminationProgram.pack`)
     private var keptFactors: [Double] = []
     private var keptValues: [Double] = []
     private var keptBaseVersion = -1
@@ -409,6 +422,9 @@ public final class Simulator {
     private var keptSlots: [Int32] = []
     private var keptLocalRows: [Int32] = []
     private var keptRowScale: [Double] = []
+    /// The largest entry of each row of the block in the base matrix of version `baseRowScaleVersion`
+    private var baseRowScale: [Double] = []
+    private var baseRowScaleVersion = -1
     private var residual: [Double] = []
     /// The slots of the nonlinear block that Newton-Raphson's stamps have reached since the plan was made, each with its
     /// row and column and its row of the block (`stampedFlags` marks them): on the same base matrix, the only slots in
@@ -489,6 +505,9 @@ public final class Simulator {
 
     deinit {
         stampedFlags?.deallocate()
+        behaviorRegisters.deallocate()
+        behaviorValues.deallocate()
+        behaviorDecisions.deallocate()
     }
 
     public init(circuit: Circuit = Circuit(), timeStep: Double = 1e-5) {
@@ -1476,8 +1495,8 @@ public final class Simulator {
         }
     }
 
-    /// Keeps the block's entries as stamped, before factoring: the largest of each row, and those of the slots the
-    /// stamps reach, which later iterations' are compared with
+    /// Keeps the block's entries as stamped, before factoring: the largest of each row (the base matrix's, worked out once
+    /// for it, or a stamped one's), and those of the slots the stamps reach, which later iterations' are compared with
     private func keepEntries(_ plan: SparsePlan) {
         let s = plan.block.count
         if keptPlan !== plan {
@@ -1490,36 +1509,48 @@ public final class Simulator {
                     keptLocalRows.append(Int32(i))
                 }
             }
-            keptFactors = [Double](repeating: 0, count: plan.entryCount)
             keptValues = [Double](repeating: 0, count: plan.entryCount)
             keptRowScale = [Double](repeating: 0, count: s)
+            baseRowScale = [Double](repeating: 0, count: s)
+            baseRowScaleVersion = -1
         }
         keptOrder = nil
-        for i in 0..<s { keptRowScale[i] = 0 }
-        values.withUnsafeBufferPointer { v in
-            keptRowScale.withUnsafeMutableBufferPointer { scale in
-                for k in keptSlots.indices {
-                    let row = Int(keptLocalRows[k])
-                    scale[row] = max(scale[row], abs(v[Int(keptSlots[k])]))
+        if baseRowScaleVersion != baseVersion {
+            baseValues.withUnsafeBufferPointer { base in
+                baseRowScale.withUnsafeMutableBufferPointer { scale in
+                    for i in 0..<s { scale[i] = 0 }
+                    for k in keptSlots.indices {
+                        let row = Int(keptLocalRows[k])
+                        scale[row] = max(scale[row], abs(base[Int(keptSlots[k])]))
+                    }
                 }
             }
-            keptValues.withUnsafeMutableBufferPointer { kept in
-                for slot in stampedSlots { kept[Int(slot)] = v[Int(slot)] }
+            baseRowScaleVersion = baseVersion
+        }
+        Self.copy(baseRowScale, into: &keptRowScale)
+        values.withUnsafeBufferPointer { v in
+            keptRowScale.withUnsafeMutableBufferPointer { scale in
+                keptValues.withUnsafeMutableBufferPointer { kept in
+                    for k in stampedSlots.indices {
+                        let slot = Int(stampedSlots[k])
+                        let row = Int(stampedLocalRows[k])
+                        kept[slot] = v[slot]
+                        scale[row] = max(scale[row], abs(v[slot]))
+                    }
+                }
             }
         }
         keptBaseVersion = baseVersion
         stampedSlotsGrew = false
     }
 
-    /// Keeps the block's factors, just made by `order`, for the iterations after
+    /// Keeps the block's factors, just made by `order`, packed for the iterations after
     private func keepFactors(_ plan: SparsePlan, _ order: EliminationProgram) {
-        guard keptPlan === plan, keptFactors.count == plan.entryCount else { return }
+        guard keptPlan === plan else { return }
+        let count = order.packedCount
+        if keptFactors.count != count { keptFactors = [Double](repeating: 0, count: max(count, 1)) }
         values.withUnsafeBufferPointer { v in
-            keptFactors.withUnsafeMutableBufferPointer { kept in
-                plan.changingSlots.withUnsafeBufferPointer { slots in
-                    for slot in slots { kept[Int(slot)] = v[Int(slot)] }
-                }
-            }
+            keptFactors.withUnsafeMutableBufferPointer { order.pack(v.baseAddress!, into: $0.baseAddress!) }
         }
         keptOrder = order
     }
@@ -1556,8 +1587,8 @@ public final class Simulator {
         }
         return keptFactors.withUnsafeBufferPointer { f -> Double in
             residual.withUnsafeMutableBufferPointer { r -> Double in
-                order.forward(f.baseAddress!, r.baseAddress!)
-                return x.withUnsafeMutableBufferPointer { x -> Double in order.back(f.baseAddress!, r.baseAddress!, x.baseAddress!) }
+                order.forwardPacked(f.baseAddress!, r.baseAddress!)
+                return x.withUnsafeMutableBufferPointer { x -> Double in order.backPacked(f.baseAddress!, r.baseAddress!, x.baseAddress!) }
             }
         }
     }
@@ -3032,69 +3063,80 @@ public final class Simulator {
             behavior.decides = expression.decides
             behaviors[i] = behavior
         }
-        behaviorValues = [Double](repeating: 0, count: max(widest, 1))
-        behaviorDecisions = behaviorValues
-        behaviorRegisters = [Double](repeating: 0, count: max(longest, 1))
+        if widest > behaviorInputRoom {
+            behaviorValues.deallocate()
+            behaviorDecisions.deallocate()
+            behaviorInputRoom = widest
+            behaviorValues = .allocate(capacity: widest)
+            behaviorDecisions = .allocate(capacity: widest)
+        }
+        behaviorValues.initialize(repeating: 0, count: behaviorInputRoom)
+        behaviorDecisions.initialize(repeating: 0, count: behaviorInputRoom)
+        if longest > behaviorRegisterRoom {
+            behaviorRegisters.deallocate()
+            behaviorRegisterRoom = longest
+            behaviorRegisters = .allocate(capacity: longest)
+        }
+        behaviorRegisters.initialize(repeating: 0, count: behaviorRegisterRoom)
     }
 
     /// A behavioural source, linearised at the present solution with its expression's exact slopes: a voltage across + and
     /// − (its own row: v(+) − v(−) = f), or a current from + to − through it
     private func stampBehavior(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
         guard i < behaviors.count, let b = behaviors[i] else { return }
-        let count = b.inputs.count
+        let count = b.inputCount
+        let inputs = b.inputList
         let holds = b.decides && decisionX.count == x.count
-        for (k, input) in b.inputs.enumerated() {
-            behaviorValues[k] = input.row >= 0 ? (input.row < x.count ? input.sign * x[input.row] : 0)
+        let v = behaviorValues, d = behaviorDecisions, r = behaviorRegisters
+        for k in 0..<count {
+            let input = inputs[k]
+            v[k] = input.row >= 0 ? (input.row < x.count ? input.sign * x[input.row] : 0)
                 : voltage(input.plus) - voltage(input.minus)
-            if holds { behaviorDecisions[k] = decisionInput(input) }
+            if holds { d[k] = decisionInput(input) }
         }
         let celsius = kelvin - 273.15
         let plus = nodes[0] - 1, minus = nodes[1] - 1
         let program = b.program
-        behaviorValues.withUnsafeBufferPointer { values in behaviorDecisions.withUnsafeBufferPointer { decisions in
-            behaviorRegisters.withUnsafeMutableBufferPointer { registers in
-                let v = values.baseAddress!
-                let r = registers.baseAddress!
-                // the value and every slope in one run of the compiled expression
-                program.run(v, deciding: holds ? decisions.baseAddress! : nil, time: solveTime, celsius: celsius, into: r)
-                var equivalent = r[program.value]
-                let row = topology.sourceRow[i]
-                for k in 0..<count {
-                    let slope = r[program.slopes[k]]
-                    guard slope != 0 && slope.isFinite else { continue }
-                    equivalent -= slope * v[k]
-                    let input = b.inputs[k]
-                    if b.voltage {
-                        guard row >= 0 else { continue }
-                        if input.row >= 0 {
-                            add(matrix, m, row, input.row, -slope * input.sign)
-                        } else {
-                            add(matrix, m, row, input.plus - 1, -slope)
-                            add(matrix, m, row, input.minus - 1, slope)
-                        }
-                    } else if input.row >= 0 {
-                        add(matrix, m, plus, input.row, slope * input.sign)
-                        add(matrix, m, minus, input.row, -slope * input.sign)
-                    } else {
-                        add(matrix, m, plus, input.plus - 1, slope)
-                        add(matrix, m, plus, input.minus - 1, -slope)
-                        add(matrix, m, minus, input.plus - 1, -slope)
-                        add(matrix, m, minus, input.minus - 1, slope)
-                    }
+        // the value and every slope in one run of the compiled expression
+        program.run(v, deciding: holds ? d : nil, time: solveTime, celsius: celsius, into: r)
+        var equivalent = r[program.value]
+        let row = topology.sourceRow[i]
+        let slopes = program.slopeSteps
+        let voltageSource = b.voltage
+        for k in 0..<count {
+            let slope = r[slopes[k]]
+            guard slope != 0 && slope.isFinite else { continue }
+            equivalent -= slope * v[k]
+            let input = inputs[k]
+            if voltageSource {
+                guard row >= 0 else { continue }
+                if input.row >= 0 {
+                    add(matrix, m, row, input.row, -slope * input.sign)
+                } else {
+                    add(matrix, m, row, input.plus - 1, -slope)
+                    add(matrix, m, row, input.minus - 1, slope)
                 }
-                if b.voltage {
-                    guard row >= 0 else { return }
-                    // as a voltage source's: its current leaves + and returns at −, and v(+) − v(−) is the expression
-                    add(matrix, m, plus, row, -1)
-                    add(matrix, m, minus, row, 1)
-                    add(matrix, m, row, plus, 1)
-                    add(matrix, m, row, minus, -1)
-                    if equivalent.isFinite { rhs[row] += equivalent }
-                } else if equivalent.isFinite {
-                    stampCurrent(rhs, nodes[0], nodes[1], equivalent)
-                }
+            } else if input.row >= 0 {
+                add(matrix, m, plus, input.row, slope * input.sign)
+                add(matrix, m, minus, input.row, -slope * input.sign)
+            } else {
+                add(matrix, m, plus, input.plus - 1, slope)
+                add(matrix, m, plus, input.minus - 1, -slope)
+                add(matrix, m, minus, input.plus - 1, -slope)
+                add(matrix, m, minus, input.minus - 1, slope)
             }
-        } }
+        }
+        if voltageSource {
+            guard row >= 0 else { return }
+            // as a voltage source's: its current leaves + and returns at −, and v(+) − v(−) is the expression
+            add(matrix, m, plus, row, -1)
+            add(matrix, m, minus, row, 1)
+            add(matrix, m, row, plus, 1)
+            add(matrix, m, row, minus, -1)
+            if equivalent.isFinite { rhs[row] += equivalent }
+        } else if equivalent.isFinite {
+            stampCurrent(rhs, nodes[0], nodes[1], equivalent)
+        }
     }
 
     /// A behavioural source's input at the solution its decisions are held at
@@ -3110,23 +3152,18 @@ public final class Simulator {
         let celsius = kelvin - 273.15
         for i in decidingIndices {
             guard let b = behaviors[i] else { continue }
+            let v = behaviorValues, d = behaviorDecisions, r = behaviorRegisters
             for (k, input) in b.inputs.enumerated() {
-                behaviorValues[k] = input.row >= 0 ? (input.row < x.count ? input.sign * x[input.row] : 0)
+                v[k] = input.row >= 0 ? (input.row < x.count ? input.sign * x[input.row] : 0)
                     : voltage(input.plus) - voltage(input.minus)
-                behaviorDecisions[k] = decisionInput(input)
+                d[k] = decisionInput(input)
             }
             let program = b.program
-            let moved = behaviorValues.withUnsafeBufferPointer { values -> Bool in behaviorDecisions.withUnsafeBufferPointer { decisions -> Bool in
-                behaviorRegisters.withUnsafeMutableBufferPointer { registers -> Bool in
-                    let r = registers.baseAddress!
-                    program.run(values.baseAddress!, deciding: decisions.baseAddress!, time: solveTime, celsius: celsius, into: r)
-                    let held = r[program.value]
-                    program.run(values.baseAddress!, time: solveTime, celsius: celsius, into: r)
-                    let now = r[program.value]
-                    return !(Swift.abs(held - now) <= 1e-9 * (1 + Swift.abs(now)))
-                }
-            } }
-            if moved { return true }
+            program.run(v, deciding: d, time: solveTime, celsius: celsius, into: r)
+            let held = r[program.value]
+            program.run(v, time: solveTime, celsius: celsius, into: r)
+            let now = r[program.value]
+            if !(Swift.abs(held - now) <= 1e-9 * (1 + Swift.abs(now))) { return true }
         }
         return false
     }
