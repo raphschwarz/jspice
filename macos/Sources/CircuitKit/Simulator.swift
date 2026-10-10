@@ -334,10 +334,20 @@ public final class Simulator {
             bipolarRefs.deallocate()
             bipolarRefs = .allocate(capacity: bipolar.count)
             for (k, g) in bipolar.enumerated() { bipolarRefs[k] = Unmanaged.passUnretained(g) }
+            bipolarSlots.deallocate()
+            bipolarSlots = .allocate(capacity: max(16 * bipolar.count, 1))
+            bipolarSlotsSerial = Array(repeating: -1, count: bipolar.count)
+            bipolarSlotsFit = Array(repeating: false, count: bipolar.count)
         }
     }
     /// The same, unretained (the array keeps them): stamping reads one at every iteration without counting references
     private var bipolarRefs = UnsafeMutableBufferPointer<Unmanaged<GummelPoon>>(start: nil, count: 0)
+    /// Each transistor's sixteen slots for Newton-Raphson's stamps (rows c', b', e', b by columns b', e', c', b; -1 where
+    /// either is ground or the entry is not stamped), the plan they were worked out for, and whether all of them are in
+    /// its nonlinear block (see `bipolarSlotsFit`)
+    private var bipolarSlots = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
+    private var bipolarSlotsSerial: [Int] = []
+    private var bipolarSlotsFit: [Bool] = []
     /// Each diode's, Zener diode's and LED's SPICE card at the circuit's temperature
     private var diodes: [SpiceDiode] = []
     /// Each JFET's SPICE card at the circuit's temperature
@@ -747,6 +757,7 @@ public final class Simulator {
     deinit {
         stampedFlags?.deallocate()
         bipolarRefs.deallocate()
+        bipolarSlots.deallocate()
         behaviorRegisters.deallocate()
         behaviorRates.deallocate()
         behaviorValues.deallocate()
@@ -3631,21 +3642,77 @@ public final class Simulator {
             cp.i -= xc
             cp.bx -= s * q.capbx
         }
+        // Newton-Raphson's stamps go straight to the plan's slots, worked out once for each plan, rather than through
+        // the slot map for every entry (as a behavioural source's): the same additions in the same order
+        let cached = sparseStamping && stampFloor > 0 && !linearising && bipolarSlotsFit(i, g, n, m)
+        let slots = bipolarSlots + 16 * i
+        let recording = recordingStamps, flags = stampedFlags
+        func entry(_ k: Int, _ row: Int, _ column: Int, _ value: Double) {
+            guard cached else {
+                add(matrix, m, row, column, value)
+                return
+            }
+            let slot = Int(slots[k])
+            guard slot >= 0 else { return }
+            matrix[slot] += value
+            if recording, let flags, !flags[slot] { noteStampedSlot(slot) }
+        }
         // currents and voltages flip sign for a PNP, slopes do not
-        func stampTerminal(_ node: Int, _ t: Flow) {
+        func stampTerminal(_ k: Int, _ node: Int, _ t: Flow) {
             guard node > 0 else { return }
             let row = node - 1
-            add(matrix, m, row, n.bp - 1, t.be + t.bc)
-            add(matrix, m, row, n.ep - 1, -t.be)
-            add(matrix, m, row, n.cp - 1, -t.bc - t.bx)
-            add(matrix, m, row, n.b - 1, t.bx)
+            entry(4 * k, row, n.bp - 1, t.be + t.bc)
+            entry(4 * k + 1, row, n.ep - 1, -t.be)
+            entry(4 * k + 2, row, n.cp - 1, -t.bc - t.bx)
+            entry(4 * k + 3, row, n.b - 1, t.bx)
             rhs[row] -= p * t.i - t.be * p * vbe - t.bc * p * vbc - t.bx * p * vbx
         }
-        stampTerminal(n.cp, cp)
-        stampTerminal(n.bp, bp)
-        stampTerminal(n.ep, ep)
-        if charged && g.cjcOuter > 0 { stampTerminal(n.b, bx) }
-        if g.baseModulated { stampConductance(matrix, m, n.b, n.bp, r.gx) }
+        stampTerminal(0, n.cp, cp)
+        stampTerminal(1, n.bp, bp)
+        stampTerminal(2, n.ep, ep)
+        if charged && g.cjcOuter > 0 { stampTerminal(3, n.b, bx) }
+        if g.baseModulated {
+            if cached {
+                // as `stampConductance` from b to b': (b, b), (b', b'), (b, b'), (b', b)
+                entry(15, 0, 0, r.gx)
+                entry(4, 0, 0, r.gx)
+                entry(12, 0, 0, -r.gx)
+                entry(7, 0, 0, -r.gx)
+            } else {
+                stampConductance(matrix, m, n.b, n.bp, r.gx)
+            }
+        }
+    }
+
+    /// Whether a transistor's slots (see `bipolarSlots`) serve the present plan, working them out from the slot map if
+    /// they are for another: those it stamps, in `stampBipolar`'s order
+    private func bipolarSlotsFit(_ i: Int, _ g: GummelPoon, _ n: BipolarNodes, _ m: Int) -> Bool {
+        if bipolarSlotsSerial[i] == planSerial { return bipolarSlotsFit[i] }
+        bipolarSlotsSerial[i] = planSerial
+        var fit = true
+        // (by node: 0 is ground)
+        func slot(_ row: Int, _ column: Int) -> Int32 {
+            guard row > 0 && column > 0 else { return -1 }
+            let s = slotMap[(row - 1) * m + column - 1]
+            if Int(s) < stampFloor { fit = false }
+            return s
+        }
+        let slots = bipolarSlots + 16 * i
+        let columns = (n.bp, n.ep, n.cp, n.b)
+        for (k, row) in [n.cp, n.bp, n.ep].enumerated() {
+            slots[4 * k] = slot(row, columns.0)
+            slots[4 * k + 1] = slot(row, columns.1)
+            slots[4 * k + 2] = slot(row, columns.2)
+            slots[4 * k + 3] = slot(row, columns.3)
+        }
+        // the external base's row: its charge's terminal, and the base resistance's entries in it
+        let outer = g.hasCharges && g.cjcOuter > 0
+        slots[12] = outer || g.baseModulated ? slot(n.b, columns.0) : -1
+        slots[13] = outer ? slot(n.b, columns.1) : -1
+        slots[14] = outer ? slot(n.b, columns.2) : -1
+        slots[15] = outer || g.baseModulated ? slot(n.b, columns.3) : -1
+        bipolarSlotsFit[i] = fit
+        return fit
     }
 
     /// A MOSFET's voltages in its own polarity (gate, internal drain and bulk to internal source) at the present
