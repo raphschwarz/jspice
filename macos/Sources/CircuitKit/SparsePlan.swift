@@ -125,10 +125,12 @@ final class EliminationProgram {
                 i += 1
             }
             var t = Int(opStart[k])
+            // (one division a pivot, rather than one an entry below it)
+            let inverse = 1 / pivot
             j = l0
             while j < l1 {
                 let slot = Int(lSlot[j])
-                let factor = values[slot] / pivot
+                let factor = values[slot] * inverse
                 values[slot] = factor
                 if factor != 0 {
                     i = 0
