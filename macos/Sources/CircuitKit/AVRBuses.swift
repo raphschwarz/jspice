@@ -31,6 +31,9 @@ extension AVRVariant {
 final class AVRSPI {
     let spec: AVRVariant.SPI
     unowned(unsafe) let avr: AVR
+    /// The chip's data space, reached without counting a reference to the chip (its pins' levels are looked up at
+    /// every bus event)
+    private let data: UnsafeMutablePointer<UInt8>
     /// The clock and data out, while the SPI drives them
     private(set) var sck = false
     private(set) var mosi = false
@@ -47,9 +50,10 @@ final class AVRSPI {
     init(spec: AVRVariant.SPI, avr: AVR) {
         self.spec = spec
         self.avr = avr
+        data = avr.data
     }
 
-    private var control: UInt8 { avr.data[spec.control] }
+    private var control: UInt8 { data[spec.control] }
     var enabled: Bool { control & 0x40 != 0 }
     var master: Bool { control & 0x50 == 0x50 }
     private var lsbFirst: Bool { control & 0x20 != 0 }
@@ -78,7 +82,7 @@ final class AVRSPI {
     }
 
     func writeControl(_ value: UInt8) {
-        avr.data[spec.control] = value
+        data[spec.control] = value
         if !enabled || !master {
             half = -1
             nextEvent = Int.max
@@ -88,19 +92,19 @@ final class AVRSPI {
     }
 
     func readStatus() -> UInt8 {
-        let value = avr.data[spec.status]
+        let value = data[spec.status]
         if value & 0x80 != 0 { statusSeen = true }
         return value
     }
 
     func writeStatus(_ value: UInt8) {
         // only SPI2X can be written
-        avr.data[spec.status] = avr.data[spec.status] & 0xFE | value & 0x01
+        data[spec.status] = data[spec.status] & 0xFE | value & 0x01
     }
 
     private func clearFlagIfSeen() {
         if statusSeen {
-            avr.data[spec.status] &= ~0xC0
+            data[spec.status] &= ~0xC0
             statusSeen = false
             avr.interruptsChanged = true
         }
@@ -114,11 +118,11 @@ final class AVRSPI {
     func writeData(_ value: UInt8) {
         clearFlagIfSeen()
         guard half < 0 else {
-            avr.data[spec.status] |= 0x40  // WCOL
+            data[spec.status] |= 0x40  // WCOL
             return
         }
         guard enabled && master else { return }
-        let rate = [4, 16, 64, 128][Int(control & 3)] / (avr.data[spec.status] & 1 != 0 ? 2 : 1)
+        let rate = [4, 16, 64, 128][Int(control & 3)] / (data[spec.status] & 1 != 0 ? 2 : 1)
         halfPeriod = rate / 2
         outgoing = value
         incoming = 0
@@ -165,7 +169,7 @@ final class AVRSPI {
             received = incoming
             half = -1
             nextEvent = Int.max
-            avr.data[spec.status] |= 0x80
+            data[spec.status] |= 0x80
             avr.interruptsChanged = true
         } else {
             nextEvent += halfPeriod
@@ -180,6 +184,8 @@ final class AVRSPI {
 final class AVRTWI {
     let spec: AVRVariant.TWI
     unowned(unsafe) let avr: AVR
+    /// The chip's data space (see AVRSPI)
+    private let data: UnsafeMutablePointer<UInt8>
     /// Whether the TWI pulls each line low
     private(set) var sdaLow = false
     private(set) var sclLow = false
@@ -205,9 +211,10 @@ final class AVRTWI {
     init(spec: AVRVariant.TWI, avr: AVR) {
         self.spec = spec
         self.avr = avr
+        data = avr.data
     }
 
-    var enabled: Bool { avr.data[spec.control] & 0x04 != 0 }
+    var enabled: Bool { data[spec.control] & 0x04 != 0 }
 
     func reset() {
         sdaLow = false
@@ -218,9 +225,9 @@ final class AVRTWI {
         reading = false
         addressNext = false
         busOwned = false
-        avr.data[spec.status] = 0xF8
-        avr.data[spec.rate + 2] = 0xFE  // TWAR
-        avr.data[spec.dataRegister] = 0xFF
+        data[spec.status] = 0xF8
+        data[spec.rate + 2] = 0xFE  // TWAR
+        data[spec.dataRegister] = 0xFF
     }
 
     func adopt(_ other: AVRTWI) {
@@ -237,28 +244,28 @@ final class AVRTWI {
     }
 
     private var halfPeriod: Int {
-        let d = avr.data
+        let d = data
         let prescale = [1, 4, 16, 64][Int(d[spec.status] & 3)]
         return max((16 + 2 * Int(d[spec.rate]) * prescale) / 2, 1)
     }
 
-    func readStatus() -> UInt8 { avr.data[spec.status] }
+    func readStatus() -> UInt8 { data[spec.status] }
 
     func writeStatus(_ value: UInt8) {
-        avr.data[spec.status] = avr.data[spec.status] & 0xF8 | value & 0x03
+        data[spec.status] = data[spec.status] & 0xF8 | value & 0x03
     }
 
     func writeData(_ value: UInt8) {
         // TWDR can only be written while TWINT is set
-        if avr.data[spec.control] & 0x80 != 0 {
-            avr.data[spec.dataRegister] = value
+        if data[spec.control] & 0x80 != 0 {
+            data[spec.dataRegister] = value
         } else {
-            avr.data[spec.control] |= 0x08  // TWWC
+            data[spec.control] |= 0x08  // TWWC
         }
     }
 
     func writeControl(_ value: UInt8) {
-        let d = avr.data
+        let d = data
         let clearing = value & 0x80 != 0
         // writing 1 to TWINT clears it; TWWC is read only
         var stored = value & 0x77 | d[spec.control] & 0x80
@@ -310,7 +317,7 @@ final class AVRTWI {
     }
 
     private func sendByte() {
-        let value = avr.data[spec.dataRegister]
+        let value = data[spec.dataRegister]
         for bit in (0..<8).reversed() {
             let low = value & (1 << bit) == 0
             steps += [.lines(sda: low, scl: nil), .wait, .lines(sda: nil, scl: false), .wait, .lines(sda: nil, scl: true)]
@@ -359,10 +366,10 @@ final class AVRTWI {
                 var code = status
                 // a byte sent: the acknowledge decides the status; a byte received: it goes to TWDR
                 if [0x18, 0x40, 0x28].contains(status) && !acknowledged { code += 8 }
-                if status == 0x50 || status == 0x58 { avr.data[spec.dataRegister] = shift }
-                avr.data[spec.status] = code | avr.data[spec.status] & 0x03
-                if setsFlag { avr.data[spec.control] |= 0x80 }
-                if status == 0xF8 { avr.data[spec.control] &= ~0x10 }  // TWSTO clears when the STOP is out
+                if status == 0x50 || status == 0x58 { data[spec.dataRegister] = shift }
+                data[spec.status] = code | data[spec.status] & 0x03
+                if setsFlag { data[spec.control] |= 0x80 }
+                if status == 0xF8 { data[spec.control] &= ~0x10 }  // TWSTO clears when the STOP is out
                 if code == 0x20 || code == 0x48 { reading = false }
                 avr.interruptsChanged = true
             }

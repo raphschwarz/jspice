@@ -401,27 +401,35 @@ public final class AVR: Microcontroller {
 
     /// The TWI moving one line of an event before the other: logged at once, so the parts on the bus see them in order
     func twiLinesMoved(at cycle: Int) {
-        if !watchedPins.isEmpty { logWatchedPins(at: cycle) }
+        guard !watchedPins.isEmpty, let twi else { return }
+        logWatchedPins(at: cycle, twi.spec.sda, twi.spec.scl)
     }
 
     private func logWatchedPins(at cycle: Int) {
-        for k in watchedPins.indices {
-            let level = eventLevel(watchedPins[k])
-            guard level != watchedLevels[k] else { continue }
-            watchedLevels[k] = level
-            guard let level else { continue }
-            let event = PinEvent(cycle: cycle - runStart, pin: watchedPins[k], high: level)
-            pinEvents.append(event)
-            onPinEvent?(event)
-        }
+        for k in watchedPins.indices { logWatchedPin(k, at: cycle) }
+    }
+
+    /// The same at an event of the SPI or the TWI, for the two pins it moves (no other can change there)
+    private func logWatchedPins(at cycle: Int, _ a: Int, _ b: Int) {
+        for k in watchedPins.indices where watchedPins[k] == a || watchedPins[k] == b { logWatchedPin(k, at: cycle) }
+    }
+
+    @inline(__always) private func logWatchedPin(_ k: Int, at cycle: Int) {
+        let level = eventLevel(watchedPins[k])
+        guard level != watchedLevels[k] else { return }
+        watchedLevels[k] = level
+        guard let level else { return }
+        let event = PinEvent(cycle: cycle - runStart, pin: watchedPins[k], high: level)
+        pinEvents.append(event)
+        onPinEvent?(event)
     }
 
     /// What a watched pin shows the parts wired to it: the level it drives, or high for an I²C line the TWI lets go
     /// (the bus is pulled up)
     private func eventLevel(_ index: Int) -> Bool? {
         if let level = drivenLevel(index) { return level }
-        if let twi, twi.enabled, index == twi.spec.sda || index == twi.spec.scl { return true }
-        return nil
+        let released = twiRef?._withUnsafeGuaranteedRef { twi in twi.enabled && (index == twi.spec.sda || index == twi.spec.scl) }
+        return released == true ? true : nil
     }
 
     public var onPinEvent: ((PinEvent) -> Void)?
@@ -444,34 +452,54 @@ public final class AVR: Microcontroller {
     /// The level a pin is driven to, or nil while it is an input: what `pinStates` gives it, worked out for one pin
     func drivenLevel(_ index: Int) -> Bool? {
         guard index >= 0 && index < variant.pins.count else { return nil }
-        if let twi, twi.enabled {
-            if index == twi.spec.sda { return twi.sdaLow ? false : nil }
-            if index == twi.spec.scl { return twi.sclLow ? false : nil }
+        // (the peripherals reached without counting: a watched pin is looked at at every bus event; -1 for none of
+        // theirs, 0 low, 1 high, 2 not driven)
+        if let twiRef {
+            let level = twiRef._withUnsafeGuaranteedRef { twi -> Int in
+                guard twi.enabled else { return -1 }
+                if index == twi.spec.sda { return twi.sdaLow ? 0 : 2 }
+                if index == twi.spec.scl { return twi.sclLow ? 0 : 2 }
+                return -1
+            }
+            if level >= 0 { return level == 2 ? nil : level == 1 }
         }
         let pin = variant.pins[index]
         let address = variant.ports[pin.port]
         let mask = UInt8(1) << pin.bit
         let isOutput = data[address + 1] & mask != 0
-        if let spi, spi.master {
-            if index == spi.spec.miso { return nil }
-            if index == spi.spec.sck { return isOutput ? spi.sck : nil }
-            if index == spi.spec.mosi { return isOutput ? spi.mosi : nil }
+        if let spiRef {
+            let level = spiRef._withUnsafeGuaranteedRef { spi -> Int in
+                guard spi.master else { return -1 }
+                if index == spi.spec.miso { return 2 }
+                if index == spi.spec.sck { return isOutput ? (spi.sck ? 1 : 0) : 2 }
+                if index == spi.spec.mosi { return isOutput ? (spi.mosi ? 1 : 0) : 2 }
+                return -1
+            }
+            if level >= 0 { return level == 2 ? nil : level == 1 }
         }
-        for usart in usarts {
-            let control = data[usart.spec.controlB]
-            if control & 0x10 != 0 && index == usart.spec.rxPin { return nil }
-            if control & 0x08 != 0 && index == usart.spec.txPin { return true }
+        for usartRef in usartRefs {
+            let level = usartRef._withUnsafeGuaranteedRef { usart -> Int in
+                let control = data[usart.spec.controlB]
+                if control & 0x10 != 0 && index == usart.spec.rxPin { return 2 }
+                if control & 0x08 != 0 && index == usart.spec.txPin { return 1 }
+                return -1
+            }
+            if level >= 0 { return level == 2 ? nil : level == 1 }
         }
         guard isOutput else { return nil }
-        for timer in timers {
-            for unit in 0..<timer.units {
-                let com = timer.compareOutputMode(unit)
-                guard com != 0 else { continue }
-                if timer.spec.pins[unit] == index { return timer.output[unit] }
-                if timer.spec.kind == .tiny1 && com == 1 && timer.pwmUnit(unit) && timer.spec.complements[unit] == index {
-                    return !timer.output[unit]
+        for timerRef in timerRefs {
+            let level = timerRef._withUnsafeGuaranteedRef { timer -> Int in
+                for unit in 0..<timer.units {
+                    let com = timer.compareOutputMode(unit)
+                    guard com != 0 else { continue }
+                    if timer.spec.pins[unit] == index { return timer.output[unit] ? 1 : 0 }
+                    if timer.spec.kind == .tiny1 && com == 1 && timer.pwmUnit(unit) && timer.spec.complements[unit] == index {
+                        return timer.output[unit] ? 0 : 1
+                    }
                 }
+                return -1
             }
+            if level >= 0 { return level == 1 }
         }
         return data[address + 2] & mask != 0
     }
@@ -624,14 +652,14 @@ public final class AVR: Microcontroller {
             while cycles >= spi.nextEvent {
                 let at = spi.nextEvent
                 spi.advance()
-                if !watchedPins.isEmpty { logWatchedPins(at: at) }
+                if !watchedPins.isEmpty { logWatchedPins(at: at, spi.spec.sck, spi.spec.mosi) }
             }
         }
         twiRef?._withUnsafeGuaranteedRef { twi in
             while cycles >= twi.nextEvent {
                 let at = twi.nextEvent
                 twi.advance()
-                if !watchedPins.isEmpty { logWatchedPins(at: at) }
+                if !watchedPins.isEmpty { logWatchedPins(at: at, twi.spec.sda, twi.spec.scl) }
             }
         }
         for usart in usartRefs {
