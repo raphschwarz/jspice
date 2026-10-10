@@ -45,6 +45,8 @@ public final class Simulator {
     public private(set) var confirmedWithoutSolving = 0
     /// First iterations that started from the stamps the last solve confirmed, without evaluating the parts
     public private(set) var reusedStampings = 0
+    /// Solves that started again without them, their parts found elsewhere than the stamps had them
+    public private(set) var restartedSolves = 0
     /// Whether a behavioural source whose inputs have not moved is stamped from its last evaluation (see `stampBehavior`)
     public static var bypassesDevices = true
     /// How far (relative, above 1 V) an input can move before a source is evaluated again
@@ -473,16 +475,19 @@ public final class Simulator {
     private var recordingStamps = false
     /// Whether the values hold a factoring of the block (written over more than the stamps reach)
     private var valuesFactored = true
-    /// The block as the last iteration stamped it: the values of the stamped slots, and the right-hand side's rows
+    /// The block as the last iteration stamped it: the values of the stamped slots, and what the stamps added to the
+    /// block's rows of the right-hand side (beyond the forwarded sources)
     private var stampSnapshot: [Double] = []
     private var rightSnapshot: [Double] = []
-    /// What the stamps added to the block's rows of the right-hand side, at the last confirmed solution
-    private var deviceRight: [Double] = []
-    /// Whether the last solve ended confirmed (see `newton`), its stamps kept with the plan and base matrix they are for
+    /// Whether the last solve ended confirmed (see `newton`): its snapshot is then the stamps its solution solved, which
+    /// the parts gave again there, kept with the plan and base matrix they are for
     private var confirmedStamps = false
     private var reuseAllowed = false
     private weak var confirmedPlan: SparsePlan?
     private var confirmedBaseVersion = -1
+    /// Whether `newton` starts from where `solve` started it (from `savedX`, moved on by the predictor), so that it can
+    /// start again from there
+    private var newtonFromSolveStart = false
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
     private var savedLimited3: [Double] = []
@@ -1262,7 +1267,9 @@ public final class Simulator {
             predict()
         }
         let iterations = canHalve ? Self.halvingIterations : Self.maxNewtonIterations
+        newtonFromSolveStart = true
         var converged = newton(iterations: iterations)
+        newtonFromSolveStart = false
         if converged && !isFailed && !decidingIndices.isEmpty {
             // comparators that switched during the solve: solved again with their decisions made where it ended, until
             // they stay (or, a comparator chattering about its threshold, as they are after a few rounds)
@@ -1271,6 +1278,7 @@ public final class Simulator {
                 rounds += 1
                 decisionSolves += 1
                 Self.copy(x, into: &decisionX)
+                // (not from the stamps the solve ended on: they were made with the decisions as they were)
                 converged = newton(iterations: iterations)
                 if !converged || isFailed { break }
             }
@@ -1341,12 +1349,33 @@ public final class Simulator {
         var damping = 1.0
         var refactor = false
         var chordSteps = 0
-        // only a solve that ends confirmed leaves stamps to start the next from
-        let mayReuse = confirmedStamps && junctionConductance == 0
+        // only a solve that ends confirmed leaves stamps to start the next from, and only a solve that can start again
+        // from where it started takes them (not one that a single iteration from the prediction ends)
+        let mayReuse = confirmedStamps && junctionConductance == 0 && newtonFromSolveStart && !(onlyQuasiLinear && predictedSolve)
         confirmedStamps = false
         reuseAllowed = mayReuse
+        // whether the first iteration started from them
+        var startedFromKept = false
         // whether the last iteration solved the block as it stamped it, undamped and unlimited
         var solvedAsStamped = false
+        // Newton-Raphson from where the solve started, as if the kept stamps had not been taken (at the second
+        // iteration, its parts found elsewhere than the stamps had them)
+        func startAgain() {
+            startedFromKept = false
+            reuseAllowed = false
+            Self.copy(savedX, into: &x)
+            if predictedSolve { predict() }
+            restoreLimited(savedLimited, savedLimited2, savedLimited3)
+            for i in nonlinearIndices { opAmpCrossings[i] = 0 }
+            iteration = 0
+            lastChange = .infinity
+            damping = 1
+            refactor = false
+            chordSteps = 0
+            solvedAsStamped = false
+            stampMissed = false
+            restartedSolves += 1
+        }
         while iteration < iterations {
             if stopRequested {
                 Self.copy(savedX, into: &x)
@@ -1387,9 +1416,11 @@ public final class Simulator {
             limiting = false
             if iteration == 1 && reuseLastStamps(plan) {
                 // the last step ended on stamps that its own solution confirmed (its parts on straight stretches): this
-                // step's first iteration starts from them rather than evaluating every part; the next iteration
-                // evaluates them at its solution, and confirms it or carries on as Newton-Raphson does
+                // step's first iteration starts from them rather than evaluating every part. It cannot end the solve:
+                // the next iteration evaluates every part at its solution and confirms it, or Newton-Raphson starts
+                // again from where it would have started without them
                 reusedStampings += 1
+                startedFromKept = true
             } else {
                 beginSparseStamping(plan, floor: plan.tailStart)
                 recordStamps(for: plan)
@@ -1399,7 +1430,11 @@ public final class Simulator {
                 recordingStamps = false
             }
             if stampMissed {
-                needsPlan = true
+                if startedFromKept {
+                    startAgain()
+                } else {
+                    needsPlan = true
+                }
                 continue
             }
             if limiting { limitedIterations += 1 }
@@ -1411,13 +1446,19 @@ public final class Simulator {
             if Self.reusesFactors && solvedAsStamped && !damped && !limiting && stampsUnchanged(plan) {
                 confirmedWithoutSolving += 1
                 converged = true
-                // the stamps at the solution, for the next step to start from
-                snapshotStamps(plan)
-                keepDeviceRight(plan)
+                // the snapshot (the stamps the solution solved, which the parts gave again there) for the next step
+                // to start from
                 confirmedStamps = true
+                confirmedPlan = plan
+                confirmedBaseVersion = baseVersion
                 break
             }
-            if Self.reusesFactors { snapshotStamps(plan) }
+            if startedFromKept && iteration == 2 {
+                startAgain()
+                continue
+            }
+            // (the kept stamps are the snapshot already)
+            if Self.reusesFactors && !(startedFromKept && iteration == 1) { snapshotStamps(plan) }
             if damped {
                 Self.copy(x, into: &dampFrom)
                 dampedIterations += 1
@@ -1462,12 +1503,17 @@ public final class Simulator {
             // the chord method contracts linearly, by how near the kept factors are: where it does not contract fast,
             // the next iteration factors afresh
             refactor = chordSteps > 0 && (change > 0.25 * lastChange || chordSteps >= 4)
+            let fromKept = startedFromKept && iteration == 1
             if change.isNaN {
+                if fromKept {
+                    startAgain()
+                    continue
+                }
                 Self.copy(savedX, into: &x)
                 fail()
                 return false
             }
-            if !hasNonlinear || (onlyQuasiLinear && predictedSolve) || (change < Self.newtonTolerance && !limiting) {
+            if !fromKept && (!hasNonlinear || (onlyQuasiLinear && predictedSolve) || (change < Self.newtonTolerance && !limiting)) {
                 converged = true
                 break
             }
@@ -1507,7 +1553,8 @@ public final class Simulator {
     /// still serve: the chord method then contracts by about that much a step (times the block's conditioning)
     static let reuseTolerance = 1e-7
 
-    /// Keeps the block as just stamped: its stamped slots' values and its rows of the right-hand side
+    /// Keeps the block as just stamped: its stamped slots' values, and what the stamps added to its rows of the
+    /// right-hand side
     private func snapshotStamps(_ plan: SparsePlan) {
         let count = stampedSlots.count, rows = plan.block.count
         if stampSnapshot.count != count { stampSnapshot = [Double](repeating: 0, count: count) }
@@ -1518,20 +1565,15 @@ public final class Simulator {
             }
         }
         workVector.withUnsafeBufferPointer { b in
-            rightSnapshot.withUnsafeMutableBufferPointer { kept in
-                for k in 0..<rows { kept[k] = b[plan.block[k]] }
+            rhsForwarded.withUnsafeBufferPointer { forwarded in
+                rightSnapshot.withUnsafeMutableBufferPointer { kept in
+                    for k in 0..<rows {
+                        let row = plan.block[k]
+                        kept[k] = b[row] - forwarded[row]
+                    }
+                }
             }
         }
-    }
-
-    /// Keeps what the stamps added to the block's rows of the right-hand side (beyond the forwarded sources), and the
-    /// plan and base matrix the stamps are for
-    private func keepDeviceRight(_ plan: SparsePlan) {
-        let rows = plan.block.count
-        if deviceRight.count != rows { deviceRight = [Double](repeating: 0, count: rows) }
-        for k in 0..<rows { deviceRight[k] = workVector[plan.block[k]] - rhsForwarded[plan.block[k]] }
-        confirmedPlan = plan
-        confirmedBaseVersion = baseVersion
     }
 
     /// Puts the stamps the last solve confirmed into the block, in place of stamping: true if there are such stamps for
@@ -1539,12 +1581,17 @@ public final class Simulator {
     private func reuseLastStamps(_ plan: SparsePlan) -> Bool {
         let rows = plan.block.count
         guard reuseAllowed, Self.reusesFactors, confirmedPlan === plan, stampedPlan === plan, confirmedBaseVersion == baseVersion,
-              stampSnapshot.count == stampedSlots.count, deviceRight.count == rows else { return false }
+              stampSnapshot.count == stampedSlots.count, rightSnapshot.count == rows else { return false }
+        reuseAllowed = false
         values.withUnsafeMutableBufferPointer { v in
-            for k in 0..<stampedSlots.count { v[Int(stampedSlots[k])] = stampSnapshot[k] }
+            stampSnapshot.withUnsafeBufferPointer { kept in
+                for k in 0..<kept.count { v[Int(stampedSlots[k])] = kept[k] }
+            }
         }
         workVector.withUnsafeMutableBufferPointer { b in
-            for k in 0..<rows { b[plan.block[k]] += deviceRight[k] }
+            rightSnapshot.withUnsafeBufferPointer { kept in
+                for k in 0..<rows { b[plan.block[k]] += kept[k] }
+            }
         }
         return true
     }
@@ -1563,11 +1610,16 @@ public final class Simulator {
                     guard abs(now - then) <= tolerance * (abs(now) + scale[Int(stampedLocalRows[k])]) else { return false }
                 }
                 return workVector.withUnsafeBufferPointer { b -> Bool in
-                    for k in 0..<rows {
-                        let now = b[plan.block[k]], then = rightSnapshot[k]
-                        guard abs(now - then) <= tolerance * (abs(now) + scale[k]) else { return false }
+                    rhsForwarded.withUnsafeBufferPointer { forwarded -> Bool in
+                        rightSnapshot.withUnsafeBufferPointer { kept -> Bool in
+                            for k in 0..<rows {
+                                let row = plan.block[k]
+                                let now = b[row], added = now - forwarded[row]
+                                guard abs(added - kept[k]) <= tolerance * (abs(now) + scale[k]) else { return false }
+                            }
+                            return true
+                        }
                     }
-                    return true
                 }
             }
         }

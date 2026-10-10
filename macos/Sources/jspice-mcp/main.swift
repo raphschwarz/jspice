@@ -99,6 +99,11 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
     let steps = max(1, Int(seconds * 48_000))
     let start = DispatchTime.now().uptimeNanoseconds
     var done = 0
+    // timed in five rounds as well, each a whole number of the sine's cycles where it can be: the fastest is the least
+    // disturbed by whatever else the machine is doing
+    let round = max(1, steps / 5)
+    var roundStart = start
+    var fastest = Double.infinity
     // Newton iterations by where the sine is in its cycle, in twelve 30° slices
     var slices = [(steps: Int, iterations: Int)](repeating: (steps: 0, iterations: 0), count: 12)
     // the steps that took most iterations, and what they spent them on
@@ -113,6 +118,11 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
         if taken > 10 { heavy += 1 }
         heaviest = max(heaviest, taken)
         done += 1
+        if done % round == 0 {
+            let now = DispatchTime.now().uptimeNanoseconds
+            fastest = min(fastest, Double(now - roundStart) / Double(round))
+            roundStart = now
+        }
     }
     let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
     let shape = simulator.planShape
@@ -128,14 +138,16 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
           + "\(heavy) steps of more than 10 iterations, the most \(heaviest); \(simulator.decisionSolves) solves again for decisions "
           + "that moved, \(simulator.chatteringSolves) left chattering; \(simulator.bypassedEvaluations) behavioural sources' "
           + "evaluations bypassed; \(simulator.confirmedWithoutSolving) iterations confirmed without a solve; "
-          + "\(simulator.reusedStampings) first iterations started from the confirmed stamps")
+          + "\(simulator.reusedStampings) first iterations started from the confirmed stamps, "
+          + "\(simulator.restartedSolves) started again without them")
     let block = simulator.blockFactorSize
     print("\(part)'s model as simulated: \(size.unknowns) unknowns, \(size.nonzeros) nonzeros, \(size.factorEntries) entries "
           + "factored, \(size.nonlinearUnknowns) nonlinear (its factors \(block.lower) below and \(block.upper) right of the "
           + "pivots, \(block.operations) multiply-adds to factor); \(made)")
-    print(String(format: "%@ %@, 1 kHz at 48 kHz: %.1f µs/step, %.2f× real time, %.2f Newton iterations a step "
+    print(String(format: "%@ %@, 1 kHz at 48 kHz: %.1f µs/step (the fastest fifth %.1f), %.2f× real time, %.2f Newton iterations a step "
                  + "(%ld factored, %ld with kept factors), %ld unknowns, %ld in the nonlinear block%@",
-                 part, stages > 1 ? "\(stages) followers in a row" : "follower", elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
+                 part, stages > 1 ? "\(stages) followers in a row" : "follower", elapsed / Double(done) * 1e6,
+                 fastest.isFinite ? fastest / 1e3 : elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
                  Double(simulator.newtonIterations) / Double(done), simulator.factorings, simulator.reusedFactorings,
                  shape.unknowns, shape.nonlinear, simulator.isFailed ? " FAILED: " + simulator.problems.joined(separator: "; ") : ""))
 }
