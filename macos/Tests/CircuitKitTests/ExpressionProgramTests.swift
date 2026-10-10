@@ -98,6 +98,10 @@ final class ExpressionProgramTests: XCTestCase {
             "floor(V(a)) + ceil(V(b)) + int(V(c))",
             "(V(a) > 0 && V(b) < 0) || V(c) == 0 ? 1 : 0",
             "V(a)/4 - V(b)/0.5",
+            // a switch's current, as PSpice's VSWITCH is read: the voltage over a resistance whose logarithm is a cubic
+            // of the control clamped between off (0) and on (1), straight where the clamp holds it
+            "V(a)/exp(1+(-2)*(1.5*((max(min(V(b),1),0)-0.5)/1)-2*((max(min(V(b),1),0)-0.5)/1)*((max(min(V(b),1),0)-0.5)/1)"
+                + "*((max(min(V(b),1),0)-0.5)/1)))",
         ]
         var reached = 0
         for text in straight {

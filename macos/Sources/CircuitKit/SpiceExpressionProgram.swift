@@ -45,8 +45,10 @@ extension SpiceExpression {
         public let count: Int
         /// Whether it reads the time (its value can change while its inputs stay)
         public let readsTime: Bool
-        /// Whether it is made of straight lines in its inputs between its decisions: nothing curved (exp, a power, sin…)
-        /// of anything that reads an input, and not the time (see `straightReach`)
+        /// Whether it can be made of straight lines in its inputs between its decisions, where it is (see
+        /// `straightReach`): it does not read the time, and anything curved in it (exp, a power, sin…) of what reads an
+        /// input can be held still by a decision (a switch's resistance, the exponential of its control clamped between
+        /// its off and on)
         public let piecewiseLinear: Bool
 
         /// What it is made of, without its numbers: the functions, comparisons and tables in it, its steps and inputs,
@@ -79,27 +81,34 @@ extension SpiceExpression {
             slopes = expression.slopes.map { compiler.compile($0, .normal) }
             count = compiler.steps.count
             readsTime = compiler.steps.contains { if case .time = $0 { return true } else { return false } }
-            // which steps read an input, and whether any of those is curved
+            // which steps read an input, and whether any of those is curved, and whether anything decides
             var reads = [Bool](repeating: false, count: compiler.steps.count)
-            var straight = !readsTime
+            var curves = false, decides = false
             for (k, step) in compiler.steps.enumerated() {
                 switch step {
                 case .input, .decidingInput: reads[k] = true
                 case .constant, .time, .temperature: reads[k] = false
-                case let .negate(a), let .not(a): reads[k] = reads[Int(a)]
+                case let .negate(a): reads[k] = reads[Int(a)]
+                case let .not(a):
+                    reads[k] = reads[Int(a)]
+                    decides = true
                 case let .add(a, b), let .subtract(a, b), let .multiply(a, b), let .divide(a, b):
                     reads[k] = reads[Int(a)] || reads[Int(b)]
                 case let .binary(op, a, b):
                     reads[k] = reads[Int(a)] || reads[Int(b)]
-                    if op == .power && reads[k] { straight = false }
+                    if op == .power { curves = curves || reads[k] } else { decides = true }
                 case let .call(f, a, b, c):
                     reads[k] = reads[Int(a)] || (b >= 0 && reads[Int(b)]) || (c >= 0 && reads[Int(c)])
-                    if reads[k] && !Self.straightFunctions.contains(f) { straight = false }
-                case let .select(c, a, b): reads[k] = reads[Int(c)] || reads[Int(a)] || reads[Int(b)]
-                case let .table(a, _, _, _), let .tableSlope(a, _, _, _): reads[k] = reads[Int(a)]
+                    if Self.straightFunctions.contains(f) { decides = true } else { curves = curves || reads[k] }
+                case let .select(c, a, b):
+                    reads[k] = reads[Int(c)] || reads[Int(a)] || reads[Int(b)]
+                    decides = true
+                case let .table(a, _, _, _), let .tableSlope(a, _, _, _):
+                    reads[k] = reads[Int(a)]
+                    decides = true
                 }
             }
-            piecewiseLinear = straight
+            piecewiseLinear = !readsTime && (!curves || decides)
             steps = .allocate(capacity: max(count, 1))
             steps.initialize(from: compiler.steps, count: count)
             data = .allocate(capacity: max(compiler.data.count, 1))
@@ -213,9 +222,12 @@ extension SpiceExpression {
                     let sa = s[Int(a)], sb = b >= 0 ? s[Int(b)] : 0, sc = c >= 0 ? s[Int(c)] : 0
                     let va = r[Int(a)]
                     switch f {
-                    case .abs, .uramp:
+                    case .abs:
                         margin(va, sa)
                         s[k] = sa
+                    case .uramp:
+                        margin(va, sa)
+                        s[k] = va > 0 ? sa : 0
                     case .u, .sgn:
                         margin(va, sa)
                         s[k] = 0
@@ -223,14 +235,19 @@ extension SpiceExpression {
                         margin(Swift.min(va - va.rounded(.down), va.rounded(.up) - va), sa)
                         s[k] = 0
                     case .min, .max:
-                        margin(va - (b >= 0 ? r[Int(b)] : 0), sa + sb)
-                        s[k] = Swift.max(sa, sb)
+                        // (the operand it takes: within the margin it takes the same one)
+                        let vb = b >= 0 ? r[Int(b)] : 0
+                        margin(va - vb, sa + sb)
+                        s[k] = (f == .min ? va <= vb : va >= vb) ? sa : sb
                     case .limit:
                         let (vb, vc) = (b >= 0 ? r[Int(b)] : 0, c >= 0 ? r[Int(c)] : 0)
                         margin(vb - vc, sb + sc)
                         margin(va - vb, sa + sb)
                         margin(va - vc, sa + sc)
-                        s[k] = Swift.max(Swift.max(sa, sb), sc)
+                        // between the lower and the upper of b and c, a; below, the lower; above, the upper
+                        let (low, lowRate) = vb <= vc ? (vb, sb) : (vc, sc)
+                        let (high, highRate) = vb <= vc ? (vc, sc) : (vb, sb)
+                        s[k] = va < low ? lowRate : va > high ? highRate : sa
                     default:
                         // curved, of values that do not move
                         guard sa == 0 && sb == 0 && sc == 0 else { return 0 }
