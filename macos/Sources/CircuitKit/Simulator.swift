@@ -423,6 +423,8 @@ public final class Simulator {
     private var stampedSlotsGrew = false
     /// Whether the stamps going in are Newton-Raphson's, to be recorded
     private var recordingStamps = false
+    /// Whether the values hold a factoring of the block (written over more than the stamps reach)
+    private var valuesFactored = true
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
     private var savedLimited3: [Double] = []
@@ -475,6 +477,10 @@ public final class Simulator {
     static let nominalKelvin = 300.15
     static let gmin = 1e-12
     static let maxNewtonIterations = 80
+    /// Iterations a substep that can still be halved gets before it is (SPICE's ITL4 is 10): Newton-Raphson that has not
+    /// converged by then is crawling round a sharp corner (a maker's model's output stage handing over at a zero
+    /// crossing), which a substep half as long, starting nearer its answer, gets round in a few
+    static let halvingIterations = 12
     /// Junction shunts for gmin stepping, strongest first, ending without any
     static let steppedConductances: [Double] = [1e-2, 1e-4, 1e-6, 1e-8, 1e-10, 0]
     static let steppedIterations = 40
@@ -1053,16 +1059,14 @@ public final class Simulator {
             let mayReject = canSubdivide && level < Self.finestLevel
             if mayReject {
                 Self.copy(x, into: &rejectX)
-                Self.copy(limitedVoltage, into: &rejectLimited)
-                Self.copy(limitedVoltage2, into: &rejectLimited2)
-                Self.copy(limitedVoltage3, into: &rejectLimited3)
+                saveLimited(&rejectLimited, &rejectLimited2, &rejectLimited3)
                 rejectDigital = digitalState
                 rejectLogic = logicStates
             }
             Self.copy(x, into: &substepStartX)
             predictNext = predictorReady && hasNonlinear
             predictionRatio = ratio
-            var converged = solve(at: t)
+            var converged = solve(at: t, canHalve: mayReject)
             if isFailed { return }
             // a 555 or Schmitt trigger that switches during the substep changes the circuit: solve it again
             var switched = false
@@ -1070,16 +1074,14 @@ public final class Simulator {
                 for _ in 0..<4 {
                     guard updateDigitalStates() else { break }
                     switched = true
-                    converged = solve(at: t)
+                    converged = solve(at: t, canHalve: mayReject)
                     if isFailed { return }
                 }
             }
             let error = canSubdivide && errorControl && converged && !solveChattered ? errorRatio() : 0
             if mayReject && (!converged || error > 1) {
                 Self.copy(rejectX, into: &x)
-                Self.copy(rejectLimited, into: &limitedVoltage)
-                Self.copy(rejectLimited2, into: &limitedVoltage2)
-                Self.copy(rejectLimited3, into: &limitedVoltage3)
+                restoreLimited(rejectLimited, rejectLimited2, rejectLimited3)
                 if digitalState != rejectDigital || logicStates != rejectLogic {
                     digitalState = rejectDigital
                     logicStates = rejectLogic
@@ -1156,10 +1158,13 @@ public final class Simulator {
     /// Solves the circuit equations for time `t` into `x`; false if Newton-Raphson did not converge.
     ///
     /// When it does not converge, the circuit has usually snapped from one state to another, like the two transistors of
-    /// a flip-flop changing over: the solution has jumped far from the last one, out of Newton's reach. Then the
-    /// junctions are temporarily shunted with conductances strong enough to leave the circuit a single, easily found
-    /// solution, and the shunts are stepped down to nothing, each solution leading Newton to the next (gmin stepping).
-    private func solve(at t: Double) -> Bool {
+    /// a flip-flop changing over: the solution has jumped far from the last one, out of Newton's reach. A substep that
+    /// can still be halved gets `halvingIterations` and is then given up, to be done in halves (as SPICE cuts its time
+    /// step after ITL4 iterations): a shorter substep starts nearer its answer. One that cannot gets
+    /// `maxNewtonIterations`, then the junctions are temporarily shunted with conductances strong enough to leave the
+    /// circuit a single, easily found solution, and the shunts are stepped down to nothing, each solution leading Newton
+    /// to the next (gmin stepping).
+    private func solve(at t: Double, canHalve: Bool = false) -> Bool {
         solveTime = t
         solveChattered = false
         let m = topology.matrixSize
@@ -1185,9 +1190,7 @@ public final class Simulator {
             return true
         }
         Self.copy(x, into: &savedX)
-        Self.copy(limitedVoltage, into: &savedLimited)
-        Self.copy(limitedVoltage2, into: &savedLimited2)
-        Self.copy(limitedVoltage3, into: &savedLimited3)
+        saveLimited(&savedLimited, &savedLimited2, &savedLimited3)
         // behavioural sources' decisions held where the solve starts
         if !decidingIndices.isEmpty { Self.copy(x, into: &decisionX) }
         junctionConductance = 0
@@ -1198,7 +1201,8 @@ public final class Simulator {
             predictNext = false
             predict()
         }
-        var converged = newton(iterations: Self.maxNewtonIterations)
+        let iterations = canHalve ? Self.halvingIterations : Self.maxNewtonIterations
+        var converged = newton(iterations: iterations)
         if converged && !isFailed && !decidingIndices.isEmpty {
             // comparators that switched during the solve: solved again with their decisions made where it ended, until
             // they stay (or, a comparator chattering about its threshold, as they are after a few rounds)
@@ -1207,7 +1211,7 @@ public final class Simulator {
                 rounds += 1
                 decisionSolves += 1
                 Self.copy(x, into: &decisionX)
-                converged = newton(iterations: Self.maxNewtonIterations)
+                converged = newton(iterations: iterations)
                 if !converged || isFailed { break }
             }
             if converged && rounds == Self.decisionRounds {
@@ -1216,6 +1220,8 @@ public final class Simulator {
             }
         }
         if converged || isFailed || !hasNonlinear { return !isFailed }
+        // the substep is done again in halves (the caller goes back to where it started)
+        if canHalve { return false }
         predictedSolve = false
         let firstTry = (x, limitedVoltage, limitedVoltage2, limitedVoltage3)
         (x, limitedVoltage, limitedVoltage2, limitedVoltage3) = (savedX, savedLimited, savedLimited2, savedLimited3)
@@ -1296,12 +1302,20 @@ public final class Simulator {
             if valuesVersion != baseVersion || values.count != baseValues.count {
                 Self.copy(baseValues, into: &values)
                 valuesVersion = baseVersion
-            } else {
+            } else if valuesFactored || stampedPlan !== plan {
                 // only the nonlinear block's structure and what elimination writes can have changed
                 values.withUnsafeMutableBufferPointer { v in
                     baseValues.withUnsafeBufferPointer { plan.restoreChanging(v.baseAddress!, from: $0.baseAddress!) }
                 }
+            } else {
+                // since a chord step (which factors nothing), only the slots the stamps reached
+                values.withUnsafeMutableBufferPointer { v in
+                    baseValues.withUnsafeBufferPointer { base in
+                        for slot in stampedSlots { v[Int(slot)] = base[Int(slot)] }
+                    }
+                }
             }
+            valuesFactored = false
             let started = Self.profiling ? DispatchTime.now().uptimeNanoseconds : 0
             Self.copy(rhsForwarded, into: &workVector)
             limiting = false
@@ -1332,6 +1346,7 @@ public final class Simulator {
             } else {
                 // the nonlinear block, by the first of the plan's pivot orders that suits its values (or a new one)
                 keepEntries(plan)
+                valuesFactored = true
                 let blockCount = max(plan.entryCount - plan.tailStart, 1)
                 if blockScratch.count != blockCount { blockScratch = [Double](repeating: 0, count: blockCount) }
                 let chosen = values.withUnsafeMutableBufferPointer { v -> EliminationProgram? in
@@ -1582,6 +1597,33 @@ public final class Simulator {
     }
 
     /// Copies element by element into an array of the same size, so the target keeps its storage
+    /// Keeps the voltages Newton-Raphson limited, to go back to: only the nonlinear parts limit theirs (a maker's
+    /// model is mostly wires, labels and resistors, each with an entry)
+    private func saveLimited(_ a: inout [Double], _ b: inout [Double], _ c: inout [Double]) {
+        guard a.count == limitedVoltage.count, b.count == limitedVoltage2.count, c.count == limitedVoltage3.count else {
+            (a, b, c) = (limitedVoltage, limitedVoltage2, limitedVoltage3)
+            return
+        }
+        for i in nonlinearIndices {
+            a[i] = limitedVoltage[i]
+            b[i] = limitedVoltage2[i]
+            c[i] = limitedVoltage3[i]
+        }
+    }
+
+    /// Goes back to limited voltages kept by `saveLimited`
+    private func restoreLimited(_ a: [Double], _ b: [Double], _ c: [Double]) {
+        guard a.count == limitedVoltage.count, b.count == limitedVoltage2.count, c.count == limitedVoltage3.count else {
+            (limitedVoltage, limitedVoltage2, limitedVoltage3) = (a, b, c)
+            return
+        }
+        for i in nonlinearIndices {
+            limitedVoltage[i] = a[i]
+            limitedVoltage2[i] = b[i]
+            limitedVoltage3[i] = c[i]
+        }
+    }
+
     @inline(__always) private static func copy(_ source: [Double], into target: inout [Double]) {
         guard target.count == source.count, !source.isEmpty else {
             target = source
