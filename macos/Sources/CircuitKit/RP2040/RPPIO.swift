@@ -111,7 +111,7 @@ final class RPPIOMachine {
         case 0b101: return x != y
         case 0b110:
             let pin = Int(jmpPin)
-            return pin < chip.gpio.count ? chip.gpio[pin].inputValue : false
+            return pin < RP2040.gpioCount ? chip.withPin(pin) { $0.inputValue } : false
         default: return outputShiftCount < pullThreshold
         }
     }
@@ -496,7 +496,7 @@ final class RPPIOMachine {
                 if value { pio.irq &= ~(1 << waitIndex) }
             }
         case .pin:
-            if Int(waitIndex) < chip.gpio.count && chip.gpio[Int(waitIndex)].inputValue == waitPolarity { waiting = false }
+            if Int(waitIndex) < RP2040.gpioCount && chip.withPin(Int(waitIndex), { $0.inputValue }) == waitPolarity { waiting = false }
         case .rxFIFO:
             if !rxFIFO.full {
                 rxFIFO.push(waitIndex)
@@ -709,12 +709,11 @@ final class RPPIO: RPPeripheral {
         oldPinDirections = pinDirections
         oldPinValues = pinValues
         // only the pins that changed (a clock pin changes at every other instruction), lowest first
-        let gpio = chip.gpio
         var bits = changed
         while bits != 0 {
             let i = bits.trailingZeroBitCount
             bits &= bits - 1
-            if i < gpio.count { gpio[i].checkForUpdates() }
+            if i < RP2040.gpioCount { chip.withPin(i) { $0.checkForUpdates() } }
         }
     }
 

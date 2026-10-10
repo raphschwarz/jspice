@@ -63,8 +63,8 @@ final class RPGPIOPin {
             return chip.i2c[instance].pullsLow(role: role)
         case RPGPIOPin.functionPWM: return chip.pwm.gpioDirection & bit != 0
         case RPGPIOPin.functionSIO: return chip.sio.gpioOutputEnable & bit != 0
-        case RPGPIOPin.functionPIO0: return chip.pio[0].pinDirections & bit != 0
-        case RPGPIOPin.functionPIO1: return chip.pio[1].pinDirections & bit != 0
+        case RPGPIOPin.functionPIO0: return chip.pioPinDirections(0) & bit != 0
+        case RPGPIOPin.functionPIO1: return chip.pioPinDirections(1) & bit != 0
         default: return false
         }
     }
@@ -77,8 +77,8 @@ final class RPGPIOPin {
             return chip.spi[instance].level(role: role)
         case RPGPIOPin.functionPWM: return chip.pwm.gpioValue & bit != 0
         case RPGPIOPin.functionSIO: return chip.sio.gpioValue & bit != 0
-        case RPGPIOPin.functionPIO0: return chip.pio[0].pinValues & bit != 0
-        case RPGPIOPin.functionPIO1: return chip.pio[1].pinValues & bit != 0
+        case RPGPIOPin.functionPIO0: return chip.pioPinValues(0) & bit != 0
+        case RPGPIOPin.functionPIO1: return chip.pioPinValues(1) & bit != 0
         default: return false
         }
     }
@@ -437,7 +437,7 @@ final class RPSIO {
         }
         let changed = (gpioValue ^ previousValue) | (gpioOutputEnable ^ previousEnable)
         if changed != 0 {
-            for (index, pin) in chip.gpio.enumerated() where changed & (1 << UInt32(index)) != 0 { pin.checkForUpdates() }
+            for index in 0..<RP2040.gpioCount where changed & (1 << UInt32(index)) != 0 { chip.withPin(index) { $0.checkForUpdates() } }
         }
     }
 }

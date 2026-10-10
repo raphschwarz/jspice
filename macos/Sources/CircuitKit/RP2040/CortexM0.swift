@@ -12,6 +12,8 @@ final class CortexM0 {
     static let maxHardwareIRQ = 25
 
     unowned(unsafe) let chip: RP2040
+    /// The chip again, for the bus accesses of loads and stores: reached without counting a reference
+    private let chipRef: Unmanaged<RP2040>
 
     /// R0-R15 (raw memory rather than an array: the instruction switch reads and writes them all the time)
     let registers: UnsafeMutablePointer<UInt32> = {
@@ -53,6 +55,7 @@ final class CortexM0 {
 
     init(chip: RP2040) {
         self.chip = chip
+        chipRef = .passUnretained(chip)
         flash = chip.flash
         sram = chip.sram
         registers[13] = 0xFFFF_FFFC
@@ -338,21 +341,21 @@ final class CortexM0 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt32.self) }
         if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt32.self) }
-        return chip.readUint32(address)
+        return chipRef._withUnsafeGuaranteedRef { $0.readUint32(address) }
     }
 
     @inline(__always) private func read16(_ address: UInt32) -> UInt16 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt16.self) }
         if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt16.self) }
-        return chip.readUint16(address)
+        return chipRef._withUnsafeGuaranteedRef { $0.readUint16(address) }
     }
 
     @inline(__always) private func read8(_ address: UInt32) -> UInt8 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.load(fromByteOffset: Int(inFlash), as: UInt8.self) }
         if inRAM < CortexM0.sramSize { return sram.load(fromByteOffset: Int(inRAM), as: UInt8.self) }
-        return chip.readUint8(address)
+        return chipRef._withUnsafeGuaranteedRef { $0.readUint8(address) }
     }
 
     @inline(__always) private func write32(_ address: UInt32, _ value: UInt32) {
@@ -360,7 +363,7 @@ final class CortexM0 {
         if inRAM < CortexM0.sramSize {
             sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt32.self)
         } else {
-            chip.writeUint32(address, value)
+            chipRef._withUnsafeGuaranteedRef { $0.writeUint32(address, value) }
         }
     }
 
@@ -369,7 +372,7 @@ final class CortexM0 {
         if inRAM < CortexM0.sramSize {
             sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt16.self)
         } else {
-            chip.writeUint16(address, value)
+            chipRef._withUnsafeGuaranteedRef { $0.writeUint16(address, value) }
         }
     }
 
@@ -378,7 +381,7 @@ final class CortexM0 {
         if inRAM < CortexM0.sramSize {
             sram.storeBytes(of: value, toByteOffset: Int(inRAM), as: UInt8.self)
         } else {
-            chip.writeUint8(address, value)
+            chipRef._withUnsafeGuaranteedRef { $0.writeUint8(address, value) }
         }
     }
 

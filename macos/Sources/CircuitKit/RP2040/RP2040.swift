@@ -54,6 +54,13 @@ final class RP2040 {
         return table
     }()
     private var ssi: Unmanaged<RPPeripheral>?
+    /// The GPIO pins, the PIO blocks, SIO and the PPB again, unretained (`gpio`, `pio` and `owned` hold them): reached at
+    /// every pin change and at many register accesses, where a counted reference costs a retain and a release
+    static let gpioCount = 30
+    private let pinTable = UnsafeMutablePointer<Unmanaged<RPGPIOPin>>.allocate(capacity: RP2040.gpioCount)
+    private let pioTable = UnsafeMutablePointer<Unmanaged<RPPIO>>.allocate(capacity: 2)
+    private var sioRef: Unmanaged<RPSIO>?
+    private var ppbRef: Unmanaged<RPPPB>?
 
     init() {
         bootrom = .allocate(byteCount: RP2040.bootromSize, alignment: 4)
@@ -88,13 +95,17 @@ final class RP2040 {
         let newAdc = RPADC(chip: self, name: "ADC")
         owned.append(newAdc)
         adc = newAdc
-        gpio = (0..<30).map { RPGPIOPin(chip: self, index: $0) }
+        gpio = (0..<RP2040.gpioCount).map { RPGPIOPin(chip: self, index: $0) }
+        for (index, pin) in gpio.enumerated() { (pinTable + index).initialize(to: .passUnretained(pin)) }
         qspi = (0..<6).map { RPGPIOPin(chip: self, index: $0, qspi: true) }
         let newDma = RPDMA(chip: self, name: "DMA")
         owned.append(newDma)
         dma = newDma
         pio = [RPPIO(chip: self, name: "PIO0", firstIRQ: RPIRQ.pio0IRQ0, index: 0),
                RPPIO(chip: self, name: "PIO1", firstIRQ: RPIRQ.pio1IRQ0, index: 1)]
+        for (index, block) in pio.enumerated() { (pioTable + index).initialize(to: .passUnretained(block)) }
+        sioRef = .passUnretained(newSio)
+        ppbRef = .passUnretained(newPpb)
         usbCtrl = RPUSBController(chip: self, name: "USB")
         spi = [RPSPI(chip: self, name: "SPI0", index: 0, irq: RPIRQ.spi0, dreqTX: RPDREQ.spi0TX, dreqRX: RPDREQ.spi0RX),
                RPSPI(chip: self, name: "SPI1", index: 1, irq: RPIRQ.spi1, dreqTX: RPDREQ.spi1TX, dreqRX: RPDREQ.spi1RX)]
@@ -146,6 +157,8 @@ final class RP2040 {
     }
 
     deinit {
+        pinTable.deallocate()
+        pioTable.deallocate()
         apb.deallocate()
         ahb.deallocate()
         bootrom.deallocate()
@@ -202,9 +215,9 @@ final class RP2040 {
         } else if address >= RP2040.dpramStart && address < RP2040.dpramStart + UInt32(RP2040.dpramSize) {
             return usbDPRAM.loadUnaligned(fromByteOffset: Int(address - RP2040.dpramStart), as: UInt32.self)
         } else if address >> 12 == 0xE000E {
-            return ppb.readUint32(address & 0xFFF)
+            return ppbRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.readUint32(address & 0xFFF) }
         } else if address >= RP2040.sioStart && address < 0xE000_0000 {
-            return sio.readUint32(address - RP2040.sioStart)
+            return sioRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.readUint32(address - RP2040.sioStart) }
         }
         if let peripheral = findPeripheral(address) { return peripheral._withUnsafeGuaranteedRef { $0.readUint32(address & 0x3FFF) } }
         return 0xFFFF_FFFF
@@ -244,9 +257,9 @@ final class RP2040 {
             usbDPRAM.storeBytes(of: value, toByteOffset: offset, as: UInt32.self)
             usbCtrl.dpramUpdated(offset, value)
         } else if address >= RP2040.sioStart && address < 0xE000_0000 {
-            sio.writeUint32(address - RP2040.sioStart, value)
+            sioRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.writeUint32(address - RP2040.sioStart, value) }
         } else if address >> 12 == 0xE000E {
-            ppb.writeUint32(address & 0xFFF, value)
+            ppbRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.writeUint32(address & 0xFFF, value) }
         }
     }
 
@@ -287,9 +300,18 @@ final class RP2040 {
 
     var gpioValues: UInt32 {
         var result: UInt32 = 0
-        for (index, pin) in gpio.enumerated() where pin.inputValue { result |= 1 << UInt32(index) }
+        for index in 0..<RP2040.gpioCount where withPin(index, { $0.inputValue }) { result |= 1 << UInt32(index) }
         return result
     }
+
+    /// Works with GPIO pin `index` (below `gpioCount`) without counting a reference to it
+    @inline(__always) func withPin<Result>(_ index: Int, _ body: (RPGPIOPin) -> Result) -> Result {
+        pinTable[index]._withUnsafeGuaranteedRef(body)
+    }
+
+    /// The pins PIO block `index` (0 or 1) drives, and their directions
+    @inline(__always) func pioPinValues(_ index: Int) -> UInt32 { pioTable[index]._withUnsafeGuaranteedRef { $0.pinValues } }
+    @inline(__always) func pioPinDirections(_ index: Int) -> UInt32 { pioTable[index]._withUnsafeGuaranteedRef { $0.pinDirections } }
 
     func setInterrupt(_ irq: Int, _ value: Bool) { core.setInterrupt(irq, value) }
 

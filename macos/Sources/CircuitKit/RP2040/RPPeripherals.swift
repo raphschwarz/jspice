@@ -716,7 +716,7 @@ final class RPPWM: RPPeripheral {
         let new = value ? gpioValue | bit : gpioValue & ~bit
         if gpioValue != new {
             gpioValue = new
-            chip.gpio[index].checkForUpdates()
+            chip.withPin(index) { $0.checkForUpdates() }
         }
     }
 
@@ -725,11 +725,11 @@ final class RPPWM: RPPeripheral {
         let new = output ? gpioDirection | bit : gpioDirection & ~bit
         if gpioDirection != new {
             gpioDirection = new
-            chip.gpio[index].checkForUpdates()
+            chip.withPin(index) { $0.checkForUpdates() }
         }
     }
 
-    func gpioRead(_ index: Int) -> Bool { chip.gpio[index].inputValue }
+    func gpioRead(_ index: Int) -> Bool { chip.withPin(index) { $0.inputValue } }
 
     func gpioOnInput(_ index: Int) {
         if gpioDirection & (1 << UInt32(index)) != 0 { return }

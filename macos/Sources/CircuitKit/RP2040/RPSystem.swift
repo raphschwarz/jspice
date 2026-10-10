@@ -89,8 +89,7 @@ final class RPIOBank: RPPeripheral {
 
     override func readUint32(_ offset: UInt32) -> UInt32 {
         if offset <= RPIOBank.lastControl {
-            let pin = chip.gpio[Int(offset >> 3)]
-            return offset & 0x4 != 0 ? pin.ctrl : pin.status
+            return chip.withPin(Int(offset >> 3)) { offset & 0x4 != 0 ? $0.ctrl : $0.status }
         }
         if offset >= RPIOBank.intr0 && offset <= RPIOBank.ints3 {
             let start = Int(offset & 0xF) * 2
@@ -116,9 +115,10 @@ final class RPIOBank: RPPeripheral {
     override func writeUint32(_ offset: UInt32, _ value: UInt32) {
         if offset <= RPIOBank.lastControl {
             if offset & 0x4 != 0 {
-                let pin = chip.gpio[Int(offset >> 3)]
-                pin.ctrl = value
-                pin.checkForUpdates()
+                chip.withPin(Int(offset >> 3)) { pin in
+                    pin.ctrl = value
+                    pin.checkForUpdates()
+                }
             }
             return
         }
@@ -165,24 +165,26 @@ final class RPPads: RPPeripheral {
         super.init(chip: chip, name: name)
     }
 
-    private func pin(_ offset: UInt32) -> RPGPIOPin {
+    /// Works with the pin of a pad's register (a GPIO pin without counting a reference to it)
+    @inline(__always) private func withPin<Result>(_ offset: UInt32, _ body: (RPGPIOPin) -> Result) -> Result {
         let index = Int((offset - first) >> 2)
-        return qspi ? chip.qspi[index] : chip.gpio[index]
+        return qspi ? body(chip.qspi[index]) : chip.withPin(index, body)
     }
 
     override func readUint32(_ offset: UInt32) -> UInt32 {
-        if offset >= first && offset <= last { return pin(offset).padValue }
+        if offset >= first && offset <= last { return withPin(offset) { $0.padValue } }
         if offset == 0 { return voltageSelect }
         return super.readUint32(offset)
     }
 
     override func writeUint32(_ offset: UInt32, _ value: UInt32) {
         if offset >= first && offset <= last {
-            let gpio = pin(offset)
-            let oldInputEnable = gpio.inputEnable
-            gpio.padValue = value
-            gpio.checkForUpdates()
-            if oldInputEnable != gpio.inputEnable { gpio.refreshInput() }
+            withPin(offset) { gpio in
+                let oldInputEnable = gpio.inputEnable
+                gpio.padValue = value
+                gpio.checkForUpdates()
+                if oldInputEnable != gpio.inputEnable { gpio.refreshInput() }
+            }
             return
         }
         if offset == 0 {
