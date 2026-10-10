@@ -7,9 +7,10 @@ import Foundation
 /// With only IS, BF, CJE, CJC and TF given it is the Ebers-Moll transistor JSpice had before (BR 1, no Early effect,
 /// no high-level injection, no leakage, no resistances). Not modelled: excess phase (PTF), the substrate junction
 /// (CJS, ISS), the temperature coefficients of the resistances and of IKF and VAF (TRB1, TIKF1…), quasi-saturation.
-// (a class: a transistor's model is read at every Newton-Raphson iteration, and copying its fifty values each time cost
-// more than the currents they give; it is never changed once made)
 final class GummelPoon {
+    // (a class: a transistor's model is read at every Newton-Raphson iteration, and copying its fifty values each time
+    // cost more than the currents they give; it is never changed once made)
+
     /// Parameters as worked out at the circuit's temperature
     var saturation = 1e-14
     var betaF = 100.0, betaR = 1.0
