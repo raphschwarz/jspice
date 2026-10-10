@@ -593,10 +593,12 @@ public final class Simulator {
     /// Whether the last solve ended confirmed (see `newton`): its snapshot is then the stamps its solution solved, which
     /// the parts gave again there, kept with the plan and base matrix they are for
     private var confirmedStamps = false
-    /// Confirmations tried that missed, one after another, and the solves for which none is tried after too many
-    private var confirmMisses = 0
+    /// How many of the confirmations tried lately found the solution (an average over about the last fifty), and the
+    /// solves for which none is tried once that falls below `confirmRateFloor`: a transistor circuit's almost never
+    /// do, an op-amp's often enough to pay for the tries many times over (the synth voice's one in a few)
+    private var confirmRate = 1.0
     private var confirmRest = 0
-    static let confirmMissesTolerated = 32
+    static let confirmRateFloor = 0.02
     static let confirmRestSolves = 512
     /// Whether confirmations rest after many misses (off, every solve tries them: for comparing the two)
     public static var restsConfirmation = true
@@ -804,6 +806,7 @@ public final class Simulator {
         pinKey = 0
         pinSwitch = nil
         switchSolutions = [:]
+        (confirmRate, confirmRest) = (1, 0)
         chipCycleCarry = [:]
         for i in chipIndices {
             let element = flat.elements[i]
@@ -1536,8 +1539,9 @@ public final class Simulator {
         var refactor = false
         var chordSteps = 0
         var stalls = 0
-        // whether this solve snapshots its stamps to confirm an iteration without a solve: not for a while after many
-        // misses in a row (a transistor's slopes move at every iteration, and its block never stamps as it was solved)
+        // whether this solve snapshots its stamps to confirm an iteration without a solve: not for a while once they
+        // have stopped finding it (a transistor's slopes move at every iteration, and its block never stamps as it was
+        // solved)
         if confirmRest > 0 { confirmRest -= 1 }
         let confirming = Self.reusesFactors && (confirmRest == 0 || !Self.restsConfirmation)
         // only a solve that ends confirmed leaves stamps to start the next from, and only a solve that can start again
@@ -1642,7 +1646,7 @@ public final class Simulator {
             // within the tolerance, and the solve would only confirm it
             let mayConfirm = confirming && solvedAsStamped && !damped && !limiting
             if mayConfirm && stampsUnchanged(plan) {
-                confirmMisses = 0
+                confirmRate += (1 - confirmRate) * 0.02
                 trace?("    iteration \(iteration): confirmed without a solve")
                 confirmedWithoutSolving += 1
                 converged = true
@@ -1655,9 +1659,10 @@ public final class Simulator {
                 break
             }
             if mayConfirm {
-                confirmMisses += 1
-                if confirmMisses >= Self.confirmMissesTolerated {
-                    confirmMisses = 0
+                confirmRate -= confirmRate * 0.02
+                if confirmRate < Self.confirmRateFloor {
+                    // (after the rest, a few tries more before the next)
+                    confirmRate = 2.5 * Self.confirmRateFloor
                     confirmRest = Self.confirmRestSolves
                 }
             }
