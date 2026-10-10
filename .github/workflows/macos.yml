@@ -65,6 +65,9 @@ jobs:
           # and what reusing factors (the chord method, confirmations, kept stamps) and bypassing behavioural sources save them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-factors 0.25 voice acid mc1496-ring tube-screamer bargraph lm1036 || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
+          # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns
+          # keep moving, in the synth voice, the sequenced acid line and the fuzz
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-rejections 0.25 voice acid guitar-fuzz || true
           # bigger circuits: examples drawn 1, 2, 4 and 8 times over in one circuit (the cost a copy should stay flat)
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-scale 0.1 voice acid guitar-fuzz tube-screamer mc1496-ring bargraph tube-amp || true
           # where the time goes, for the synth voice playing its sequence (every iteration factored), and for the ring

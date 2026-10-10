@@ -120,6 +120,59 @@ func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
     }
 }
 
+/// Simulates each example for `seconds` of circuit time at 48 kHz without error control (as the sound runs it), and
+/// prints how many substeps Newton-Raphson gave up on (to be done in halves), the unknowns that moved most at the last
+/// iteration of those it gave up on, and the first two such steps iteration by iteration
+func benchmarkRejections(seconds: Double, ids: [String]) {
+    let rate = 48_000.0
+    let steps = max(1, Int(seconds * rate))
+    for id in ids {
+        guard let example = Examples.example(id) else {
+            log("there is no example \(id)")
+            continue
+        }
+        let simulator = Simulator(circuit: example.circuit, timeStep: 1 / rate)
+        simulator.errorControl = false
+        var lines: [String] = []
+        simulator.trace = { lines.append($0) }
+        var printed = 0
+        var mostMoved: [String: Int] = [:]
+        var rejectingSteps: [Int] = []
+        for step in 0..<steps where !simulator.isFailed {
+            lines.removeAll(keepingCapacity: true)
+            let before = simulator.rejectedSubsteps
+            simulator.step()
+            guard simulator.rejectedSubsteps > before else { continue }
+            rejectingSteps.append(step)
+            var lastIteration = ""
+            for line in lines {
+                if line.hasPrefix("    iteration") { lastIteration = line }
+                if line.hasPrefix("  substep") && line.contains("rejected") {
+                    let moved = lastIteration.range(of: " at ").map { String(lastIteration[$0.upperBound...]) } ?? "?"
+                    // (without the value it is at now)
+                    let unknown = moved.range(of: " (now").map { String(moved[..<$0.lowerBound]) } ?? moved
+                    mostMoved[unknown, default: 0] += 1
+                }
+            }
+            if printed < 2 {
+                printed += 1
+                print("\(id): step \(step), \(lines.count) lines of trace:")
+                for line in lines.prefix(150) { print(line) }
+                if lines.count > 150 { print("  … \(lines.count - 150) lines more") }
+            }
+        }
+        var gaps: [Int: Int] = [:]
+        for k in rejectingSteps.indices.dropFirst() { gaps[rejectingSteps[k] - rejectingSteps[k - 1], default: 0] += 1 }
+        let first = rejectingSteps.prefix(12).map { String($0) }.joined(separator: " ")
+        let often = gaps.sorted { $0.value > $1.value }.prefix(4).map { "\($0.key) (\($0.value)×)" }.joined(separator: ", ")
+        print("\(id): \(simulator.rejectedSubsteps) substeps given up of \(simulator.substeps) kept, in \(rejectingSteps.count) of "
+              + "\(steps) steps; the first at steps \(first); steps between them most often \(often)")
+        for (unknown, count) in mostMoved.sorted(by: { $0.value > $1.value }).prefix(6) {
+            print("    \(count)× moving most at the last iteration: \(unknown)")
+        }
+    }
+}
+
 /// The circuit drawn `count` times side by side, each copy on nets of its own (its net labels renamed, but for ground):
 /// a bigger circuit of the same parts, for how the engine's cost grows with a circuit's size
 func copies(of circuit: Circuit, _ count: Int) -> Circuit {
@@ -435,6 +488,18 @@ if let flag = arguments.firstIndex(of: "--benchmark-switch"), flag + 1 < argumen
         rest.removeFirst()
     }
     benchmarkSwitch(arguments[flag + 1], seconds: seconds, ids: rest.isEmpty ? Examples.all.map(\.id) : rest)
+    exit(0)
+}
+
+// --benchmark-rejections [seconds] [example…]: where Newton-Raphson gives substeps up
+if let flag = arguments.firstIndex(of: "--benchmark-rejections") {
+    var rest = Array(arguments[(flag + 1)...])
+    var seconds = 0.25
+    if let first = rest.first, let value = Double(first), value > 0, value < 1e4 {
+        seconds = value
+        rest.removeFirst()
+    }
+    benchmarkRejections(seconds: seconds, ids: rest.isEmpty ? ["voice"] : rest)
     exit(0)
 }
 
