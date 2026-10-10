@@ -43,6 +43,8 @@ public final class Simulator {
     public private(set) var bypassedEvaluations = 0
     /// Newton-Raphson iterations that ended without a solve, their block stamped as the iteration before solved it
     public private(set) var confirmedWithoutSolving = 0
+    /// First iterations that started from the stamps the last solve confirmed, without evaluating the parts
+    public private(set) var reusedStampings = 0
     /// Whether a behavioural source whose inputs have not moved is stamped from its last evaluation (see `stampBehavior`)
     public static var bypassesDevices = true
     /// How far (relative, above 1 V) an input can move before a source is evaluated again
@@ -474,6 +476,13 @@ public final class Simulator {
     /// The block as the last iteration stamped it: the values of the stamped slots, and the right-hand side's rows
     private var stampSnapshot: [Double] = []
     private var rightSnapshot: [Double] = []
+    /// What the stamps added to the block's rows of the right-hand side, at the last confirmed solution
+    private var deviceRight: [Double] = []
+    /// Whether the last solve ended confirmed (see `newton`), its stamps kept with the plan and base matrix they are for
+    private var confirmedStamps = false
+    private var reuseAllowed = false
+    private weak var confirmedPlan: SparsePlan?
+    private var confirmedBaseVersion = -1
     private var savedLimited: [Double] = []
     private var savedLimited2: [Double] = []
     private var savedLimited3: [Double] = []
@@ -1333,6 +1342,10 @@ public final class Simulator {
         var damping = 1.0
         var refactor = false
         var chordSteps = 0
+        // only a solve that ends confirmed leaves stamps to start the next from
+        let mayReuse = confirmedStamps && junctionConductance == 0
+        confirmedStamps = false
+        reuseAllowed = mayReuse
         // whether the last iteration solved the block as it stamped it, undamped and unlimited
         var solvedAsStamped = false
         while iteration < iterations {
@@ -1373,12 +1386,19 @@ public final class Simulator {
             let started = Self.profiling ? DispatchTime.now().uptimeNanoseconds : 0
             Self.copy(rhsForwarded, into: &workVector)
             limiting = false
-            beginSparseStamping(plan, floor: plan.tailStart)
-            recordStamps(for: plan)
-            stampMemristors(&values, m)
-            if hasNonlinear { stampNonlinear(&values, &workVector, m) }
-            sparseStamping = false
-            recordingStamps = false
+            if iteration == 1 && reuseLastStamps(plan) {
+                // the last step ended on stamps that its own solution confirmed (its parts on straight stretches): this
+                // step's first iteration starts from them rather than evaluating every part; the next iteration
+                // evaluates them at its solution, and confirms it or carries on as Newton-Raphson does
+                reusedStampings += 1
+            } else {
+                beginSparseStamping(plan, floor: plan.tailStart)
+                recordStamps(for: plan)
+                stampMemristors(&values, m)
+                if hasNonlinear { stampNonlinear(&values, &workVector, m) }
+                sparseStamping = false
+                recordingStamps = false
+            }
             if stampMissed {
                 needsPlan = true
                 continue
@@ -1392,6 +1412,10 @@ public final class Simulator {
             if Self.reusesFactors && solvedAsStamped && !damped && !limiting && stampsUnchanged(plan) {
                 confirmedWithoutSolving += 1
                 converged = true
+                // the stamps at the solution, for the next step to start from
+                snapshotStamps(plan)
+                keepDeviceRight(plan)
+                confirmedStamps = true
                 break
             }
             if Self.reusesFactors { snapshotStamps(plan) }
@@ -1499,6 +1523,31 @@ public final class Simulator {
                 for k in 0..<rows { kept[k] = b[plan.block[k]] }
             }
         }
+    }
+
+    /// Keeps what the stamps added to the block's rows of the right-hand side (beyond the forwarded sources), and the
+    /// plan and base matrix the stamps are for
+    private func keepDeviceRight(_ plan: SparsePlan) {
+        let rows = plan.block.count
+        if deviceRight.count != rows { deviceRight = [Double](repeating: 0, count: rows) }
+        for k in 0..<rows { deviceRight[k] = workVector[plan.block[k]] - rhsForwarded[plan.block[k]] }
+        confirmedPlan = plan
+        confirmedBaseVersion = baseVersion
+    }
+
+    /// Puts the stamps the last solve confirmed into the block, in place of stamping: true if there are such stamps for
+    /// this plan and base matrix
+    private func reuseLastStamps(_ plan: SparsePlan) -> Bool {
+        let rows = plan.block.count
+        guard reuseAllowed, Self.reusesFactors, confirmedPlan === plan, stampedPlan === plan, confirmedBaseVersion == baseVersion,
+              stampSnapshot.count == stampedSlots.count, deviceRight.count == rows else { return false }
+        values.withUnsafeMutableBufferPointer { v in
+            for k in 0..<stampedSlots.count { v[Int(stampedSlots[k])] = stampSnapshot[k] }
+        }
+        workVector.withUnsafeMutableBufferPointer { b in
+            for k in 0..<rows { b[plan.block[k]] += deviceRight[k] }
+        }
+        return true
     }
 
     /// Whether the block as just stamped is the one `snapshotStamps` kept, each entry within 10⁻¹² of its row's scale
