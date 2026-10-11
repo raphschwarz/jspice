@@ -363,6 +363,18 @@ final class RP2040 {
     /// Whether runs skip busy-waits (for comparing): see `run(until:)`
     static var skipsBusyWaits = true
 
+    /// Whether runs take the instructions in stretches, the clock ticked once for each (off, after each instruction:
+    /// for comparing)
+    static var runsStretches = true
+
+    /// Where a stretch from `nanos` must end for the clock's sums to stay exact: the next power of two (from 0, all
+    /// whole nanoseconds are exact to 2⁵²; from 2⁵², an instruction at a time)
+    @inline(__always) static func stretchEnd(_ nanos: Double) -> Double {
+        if nanos == 0 { return 0x1p52 }
+        guard nanos > 0 && nanos < 0x1p52 else { return nanos }
+        return Double(sign: .plus, exponent: nanos.exponent + 1, significand: 1)
+    }
+
     /// Whether runs count the instructions they run, by kind, in `instructionCounts` (for the benchmark's breakdown)
     static var countsInstructions = false
     static var instructionCounts = [Int](repeating: 0, count: 256)
@@ -398,13 +410,26 @@ final class RP2040 {
         core.startRun(until: RP2040.skipsBusyWaits ? end : 0)
         defer { core.runEnd = 0 }
         let counting = RP2040.countsInstructions
+        let stretches = RP2040.runsStretches && !counting
         while clock.nanos < end {
             if core.waiting {
                 step(limit: end)
                 continue
             }
-            if counting { RP2040.instructionCounts[Int(core.nextOp.rawValue)] += 1 }
-            let cycles = core.executeInstruction()
+            let cycles: Int
+            if stretches {
+                // the instructions up to the first after which the clock would reach the run's end, the next alarm or
+                // a running PIO block's next instruction (as ticked after each, it would have done nothing else
+                // before), the clock ticked once for them all
+                let base = clock.nanos
+                var limit = min(end, clock.nextAlarmAt, RP2040.stretchEnd(base))
+                if pio0.running { limit = min(limit, pio0.nextDue) }
+                if pio1.running { limit = min(limit, pio1.nextDue) }
+                cycles = core.runStretch(from: base, to: limit)
+            } else {
+                if counting { RP2040.instructionCounts[Int(core.nextOp.rawValue)] += 1 }
+                cycles = core.executeInstruction()
+            }
             clock.tick(Double(cycles) * RP2040.cycleNanos)
             if pio0.running || pio1.running {
                 // only once an instruction is due: the busy processor would otherwise visit them after its every one

@@ -77,6 +77,11 @@ final class CortexM0 {
     /// Nanoseconds counted at once in busy-waits
     private(set) var skippedNanos = 0.0
 
+    // A stretch (see `runStretch(from:to:)`): the cycles run in it since the clock was last brought up to them, and
+    // whether an access past memory brought it up
+    private var unclocked = 0
+    private var clockedInStretch = false
+
     init(chip: RP2040) {
         self.chip = chip
         chipRef = .passUnretained(chip)
@@ -89,6 +94,36 @@ final class CortexM0 {
     deinit {
         registers.deallocate()
         loopRegisters.deallocate()
+    }
+
+    /// Runs instructions from the clock at `base` with the clock left where it is, as many as end short of `limit`
+    /// (the first that reaches it the last), and no more once one waits for an event or reaches past memory (a load or
+    /// store elsewhere than flash, SRAM and the boot ROM: the clock is brought up to the instructions before it first,
+    /// for what it reads or sets). Gives the cycles of those the clock is not yet brought up to: the caller ticks them.
+    ///
+    /// The clock adds the instructions up at once just as it would one at a time, to the bit: within a power of two
+    /// from `base` (the caller's `limit` keeps to it) every sum of whole cycles' nanoseconds is exact.
+    func runStretch(from base: Double, to limit: Double) -> Int {
+        clockedInStretch = false
+        unclocked = 0
+        repeat {
+            // (the instruction first: it can bring the clock up, setting `unclocked` to 0)
+            let cycles = executeInstruction()
+            unclocked += cycles
+        } while !clockedInStretch && !waiting && base + Double(unclocked) * RP2040.cycleNanos < limit
+        let cycles = unclocked
+        unclocked = 0
+        return cycles
+    }
+
+    /// Brings the clock up to the instructions run so far in a stretch, before anything reads or sets it (and ends
+    /// the stretch: what was reached may have set an alarm or started a PIO block)
+    @inline(__always) private func bringClockUp() {
+        clockedInStretch = true
+        guard unclocked != 0 else { return }
+        let nanos = Double(unclocked) * RP2040.cycleNanos
+        unclocked = 0
+        clockRef._withUnsafeGuaranteedRef { $0.tick(nanos) }
     }
 
     /// A run starts, to `end` (0: busy-waits are not skipped)
@@ -115,7 +150,8 @@ final class CortexM0 {
             return
         }
         let flags = (N ? 1 : 0) | (Z ? 2 : 0) | (C ? 4 : 0) | (V ? 8 : 0) | (PM ? 16 : 0)
-        let now = clockRef._withUnsafeGuaranteedRef { $0.nanos } + Double(used) * RP2040.cycleNanos
+        // (with the stretch's instructions the clock is not yet brought up to)
+        let now = clockRef._withUnsafeGuaranteedRef { $0.nanos } + Double(unclocked + used) * RP2040.cycleNanos
         let cyclesNow = cycles + used
         let alike = loopSeen && flags == loopFlags && memcmp(registers, loopRegisters, 64) == 0
         if alike && chipRef._withUnsafeGuaranteedRef({ $0.changedAt }) > loopNanos {
@@ -130,6 +166,7 @@ final class CortexM0 {
             let quiet = chipRef._withUnsafeGuaranteedRef { $0.quietUntil(runEnd) }
             let rounds = max(Int(((quiet - now) / length).rounded(.up)) - 1, 0)
             if rounds > 0 {
+                bringClockUp()
                 clockRef._withUnsafeGuaranteedRef { $0.tick(Double(rounds) * length) }
                 cycles += rounds * (cyclesNow - loopCycles)
                 skippedNanos += Double(rounds) * length
@@ -441,12 +478,14 @@ final class CortexM0 {
     // MARK: - Memory
 
     private static let flashSize = UInt32(RP2040.flashSize), sramSize = UInt32(RP2040.sramSize)
+    private static let bootromSize = UInt32(RP2040.bootromSize)
 
     @inline(__always) private func read32(_ address: UInt32) -> UInt32 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt32.self) }
         if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt32.self) }
         if !CortexM0.pollable(address) { effects &+= 1 }
+        if address >= CortexM0.bootromSize { bringClockUp() }
         return chipRef._withUnsafeGuaranteedRef { $0.readUint32(address) }
     }
 
@@ -455,6 +494,7 @@ final class CortexM0 {
         if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt16.self) }
         if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt16.self) }
         if !CortexM0.pollable(address) { effects &+= 1 }
+        if address >= CortexM0.bootromSize { bringClockUp() }
         return chipRef._withUnsafeGuaranteedRef { $0.readUint16(address) }
     }
 
@@ -463,6 +503,7 @@ final class CortexM0 {
         if inFlash < CortexM0.flashSize { return flash.load(fromByteOffset: Int(inFlash), as: UInt8.self) }
         if inRAM < CortexM0.sramSize { return sram.load(fromByteOffset: Int(inRAM), as: UInt8.self) }
         if !CortexM0.pollable(address) { effects &+= 1 }
+        if address >= CortexM0.bootromSize { bringClockUp() }
         return chipRef._withUnsafeGuaranteedRef { $0.readUint8(address) }
     }
 
@@ -475,6 +516,7 @@ final class CortexM0 {
             }
         } else {
             effects &+= 1
+            bringClockUp()
             chipRef._withUnsafeGuaranteedRef { $0.writeUint32(address, value) }
         }
     }
@@ -488,6 +530,7 @@ final class CortexM0 {
             }
         } else {
             effects &+= 1
+            bringClockUp()
             chipRef._withUnsafeGuaranteedRef { $0.writeUint16(address, value) }
         }
     }
@@ -501,6 +544,7 @@ final class CortexM0 {
             }
         } else {
             effects &+= 1
+            bringClockUp()
             chipRef._withUnsafeGuaranteedRef { $0.writeUint8(address, value) }
         }
     }

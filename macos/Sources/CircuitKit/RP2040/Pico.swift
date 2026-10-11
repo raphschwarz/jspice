@@ -19,6 +19,11 @@ public final class Pico: Microcontroller {
         get { RP2040.countsInstructions }
         set { RP2040.countsInstructions = newValue }
     }
+    /// Whether the chip takes its instructions in stretches, its clock ticked once for each (for comparing)
+    public static var runsStretches: Bool {
+        get { RP2040.runsStretches }
+        set { RP2040.runsStretches = newValue }
+    }
     /// The instructions counted, by kind
     public static var instructionCounts: [Int] {
         get { RP2040.instructionCounts }

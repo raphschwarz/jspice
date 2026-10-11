@@ -79,6 +79,7 @@ let switches: [String: (Bool) -> Void] = [
     "choose-predictor-together": { Simulator.choosesPredictorTogether = $0 },
     "reuse-everywhere": { Simulator.reusesFactorsEverywhere = $0 },
     "decode-ahead": { AVR.decodesAhead = $0 },
+    "run-stretches": { Pico.runsStretches = $0 },
     "skip-quiet-ticks": { AVR.skipsQuietTicks = $0 },
     "keep-switched-matrices": { Simulator.keepsSwitchedMatrices = $0 },
     "limit-junctions-down": { Simulator.limitsJunctionsDown = $0 },

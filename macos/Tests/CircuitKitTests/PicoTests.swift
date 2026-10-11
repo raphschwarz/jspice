@@ -196,6 +196,68 @@ final class PicoTests: XCTestCase {
         }
     }
 
+    /// Instructions taken in stretches, the clock ticked once for each, leave the Pico where ticking it after every
+    /// instruction would: the same circuits step for step, the same pin events, registers, cycles and time, to the bit
+    func testStretchesLeaveThePicoWhereTickingEachInstructionWould() throws {
+        defer { RP2040.runsStretches = true }
+        for id in ["pico-pcm5102", "pico-knob", "pico-melody"] {
+            let circuit = Examples.example(id)!.circuit
+            var runs: [(voltages: [Double], registers: [UInt32], cycles: Int, nanos: Double, serial: [UInt8])] = []
+            for stretching in [false, true] {
+                RP2040.runsStretches = stretching
+                let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
+                simulator.errorControl = false
+                let elements = simulator.circuit.elements
+                let chipIndex = elements.firstIndex { $0.kind == .rp2040 }!
+                var voltages: [Double] = []
+                for _ in 0..<4_800 {
+                    simulator.step()
+                    for i in elements.indices where [.probe, .led, .speaker].contains(elements[i].kind) {
+                        voltages.append(simulator.voltageAcross(i))
+                    }
+                }
+                let pico = simulator.chip(chipIndex) as! Pico
+                let core = pico.rp2040.core!
+                runs.append((voltages, (0..<16).map { core.registers[$0] }, pico.cycles, pico.rp2040.clock.nanos,
+                             pico.serialOutput))
+            }
+            XCTAssertEqual(runs[0].registers, runs[1].registers, id)
+            XCTAssertEqual(runs[0].cycles, runs[1].cycles, id)
+            XCTAssertEqual(runs[0].nanos.bitPattern, runs[1].nanos.bitPattern, id)
+            XCTAssertEqual(runs[0].serial, runs[1].serial, id)
+            XCTAssertEqual(runs[0].voltages.count, runs[1].voltages.count, id)
+            XCTAssertTrue(runs[0].voltages.elementsEqual(runs[1].voltages) { $0.bitPattern == $1.bitPattern }, id)
+        }
+        // and sketches on their own (timer interrupts, PWM, the ADC, USB serial, PIO, SPI and I2C), every pin watched
+        for name in ["pico-kitchen", "pico-tone", "pico-buses", "pico-blink"] {
+            let firmware = try image(name)
+            var runs: [(events: [PinEvent], states: [[PinState]], registers: [UInt32], cycles: Int, nanos: Double,
+                        serial: [UInt8])] = []
+            for stretching in [false, true] {
+                RP2040.runsStretches = stretching
+                let pico = Pico(firmware: firmware)
+                pico.watchedPins = Array(0..<pico.pinCount)
+                var events: [PinEvent] = []
+                var states: [[PinState]] = []
+                for _ in 0..<2_000 {
+                    pico.run(cycles: 12_500)  // 100 µs
+                    events += pico.takePinEvents()
+                    states.append(pico.pinStates)
+                }
+                let core = pico.rp2040.core!
+                runs.append((events, states, (0..<16).map { core.registers[$0] }, pico.cycles, pico.rp2040.clock.nanos,
+                             pico.serialOutput))
+            }
+            XCTAssertGreaterThan(runs[1].events.count, 0, name)
+            XCTAssertEqual(runs[0].events, runs[1].events, name)
+            XCTAssertEqual(runs[0].states, runs[1].states, name)
+            XCTAssertEqual(runs[0].registers, runs[1].registers, name)
+            XCTAssertEqual(runs[0].cycles, runs[1].cycles, name)
+            XCTAssertEqual(runs[0].nanos.bitPattern, runs[1].nanos.bitPattern, name)
+            XCTAssertEqual(runs[0].serial, runs[1].serial, name)
+        }
+    }
+
     /// Compiles a sketch end to end when arduino-pico is installed (CI installs it through Chip Support)
     func testCompilesAndRunsAPicoSketchWhenAToolchainIsInstalled() throws {
         guard let toolchain = PicoToolchain.find() else {
