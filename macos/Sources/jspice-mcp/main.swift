@@ -461,7 +461,7 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
     guard heaviest > 30 else { return }
     let traced = Simulator(circuit: circuit, timeStep: 1 / 48_000)
     traced.errorControl = false
-    var lines: [String] = [], kept: [String] = [], most = 0, keptStep = 0, ordinary: [String] = []
+    var lines: [String] = [], kept: [String] = [], most = 0, keptStep = 0, ordinary: [String] = [], approaching: [String] = []
     traced.trace = { lines.append($0) }
     for step in 0..<144 where !traced.isFailed {
         lines.removeAll(keepingCapacity: true)
@@ -469,11 +469,14 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
         traced.step()
         let taken = traced.newtonIterations - before
         if step >= 48 && taken > most { (most, kept, keptStep) = (taken, lines, step) }
-        // and one between the crossings (at 90°)
+        // and one between the crossings (at 90°), and one just before a crossing (at 172.5°)
         if step == 59 { ordinary = lines }
+        if step == 70 { approaching = lines }
     }
     print("\(part): an ordinary step, step 59 (ending at 90°):")
     for line in ordinary.prefix(40) { print(line) }
+    print("\(part): a step just before a crossing, step 70 (ending at 172.5°):")
+    for line in approaching.prefix(80) { print(line) }
     print("\(part): the heaviest step of the second and third cycles, step \(keptStep) (ending at \((keptStep + 1) % 48 * 15 / 2)°), "
           + "\(most) iterations:")
     for line in kept.prefix(300) { print(line) }
