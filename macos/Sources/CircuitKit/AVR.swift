@@ -318,6 +318,7 @@ public final class AVR: Microcontroller {
         timersAt = cycles
         timersEventAt = 0
         nextService = 0
+        pinStatesStale = true
     }
 
     /// Behaves as simavr does where it differs from the chip, to compare with it instruction by instruction
@@ -348,6 +349,7 @@ public final class AVR: Microcontroller {
         timersAt = other.timersAt
         timersEventAt = 0
         nextService = 0
+        pinStatesStale = true
         interruptDelay = other.interruptDelay
         externalPrevious = other.externalPrevious
         externalWatch = other.externalWatch
@@ -767,8 +769,14 @@ public final class AVR: Microcontroller {
 
     /// What each pin does: driven high or low (by its port, a timer's PWM output or a USART), or an input
     public var pinStates: [PinState] {
-        // (worked out in place in arrays kept from the last time: the simulator asks at every step, and they change
-        // far less often; one it holds on to is copied before it is written)
+        // (as worked out last time, unless a register was written or a timer's output moved since: the simulator asks
+        // at every step, and they change far less often; the SPI and the TWI move their lines by themselves)
+        if !pinStatesStale && pinStateCache.count == variant.pins.count && spi?.master != true && twi?.enabled != true {
+            return pinStateCache
+        }
+        pinStatesStale = false
+        // (worked out in place in arrays kept from the last time; one the simulator holds on to is copied before it
+        // is written)
         if pinOverrides.count != pinCount {
             pinOverrides = [Int8](repeating: -1, count: pinCount)
         } else {
@@ -823,6 +831,9 @@ public final class AVR: Microcontroller {
         return pinStateCache
     }
     private var pinStateCache: [PinState] = []
+    /// Whether what the pins do may have changed since `pinStates` last worked it out: an I/O register written, a
+    /// timer's compare output moved, the chip reset or adopting another's state
+    fileprivate(set) var pinStatesStale = true
     /// Per pin, the level a timer's compare output drives it to (1 or 0), or -1 where none does
     private var pinOverrides: [Int8] = []
 
@@ -900,6 +911,7 @@ public final class AVR: Microcontroller {
         }
         effects &+= 1
         peripheralsTouched()
+        pinStatesStale = true
         if address < pinRegisters.count && pinRegisters[address] { ioWritten = true }
         switch handlers[address] {
         case .plain:
@@ -984,6 +996,7 @@ public final class AVR: Microcontroller {
     private func writeBit(_ address: Int, _ bit: Int, _ value: Bool) {
         effects &+= 1
         peripheralsTouched()
+        pinStatesStale = true
         let mask = UInt8(1) << bit
         switch handlers[address] {
         case .pin:
@@ -2252,6 +2265,7 @@ final class AVRTimer {
     private func match(_ unit: Int, _ kind: Kind, _ source: TopSource) {
         let com = compareOutputMode(unit)
         guard com != 0 else { return }
+        avrRef._withUnsafeGuaranteedRef { $0.pinStatesStale = true }
         if spec.kind == .tiny1 {
             if pwmUnit(unit) {
                 output[unit] = com == 3  // cleared on match (set at BOTTOM); COM 3 inverted
@@ -2294,7 +2308,10 @@ final class AVRTimer {
                 flag(spec.overflowBit)
                 for unit in 0..<units {
                     let com = compareOutputMode(unit)
-                    if com != 0 && pwmUnit(unit) { output[unit] = com != 3 }
+                    if com != 0 && pwmUnit(unit) {
+                        output[unit] = com != 3
+                        avrRef._withUnsafeGuaranteedRef { $0.pinStatesStale = true }
+                    }
                 }
             }
         } else if count == 0xFF {
@@ -2363,6 +2380,7 @@ final class AVRTimer {
             for unit in 0..<units {
                 let com = compareOutputMode(unit)
                 if com == 2 { output[unit] = true } else if com == 3 { output[unit] = false }
+                if com >= 2 { avrRef._withUnsafeGuaranteedRef { $0.pinStatesStale = true } }
             }
         }
     }
