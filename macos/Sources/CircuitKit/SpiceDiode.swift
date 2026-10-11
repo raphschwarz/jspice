@@ -8,7 +8,12 @@ import Foundation
 /// temperature coefficients of BV, RS, TT and M (TCV, TRS1…).
 final class SpiceDiode {
     // (a class: the model is read at every Newton-Raphson iteration, and copying its values each time cost more than
-    // what they give; it is never changed once made)
+    // what they give; its parameters are never changed once made)
+
+    /// The last evaluation, for the simulator to bypass the next where the junction has not moved (see
+    /// `Simulator.bypassesDevices`): the junction voltage (nan: none yet), its current and slope, and its charge and
+    /// capacitance
+    var lastVoltage = Double.nan, lastCurrent = 0.0, lastConductance = 0.0, lastCharge = 0.0, lastCapacitance = 0.0
 
     var saturation = 1e-14, emission = 1.0
     var rs = 0.0

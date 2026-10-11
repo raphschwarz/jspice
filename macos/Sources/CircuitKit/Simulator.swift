@@ -4544,18 +4544,36 @@ public final class Simulator {
             limitJunction($0, old: $1, nvt: $2, critical: $3)
         }
         limitedVoltage[i] = vd
-        let junction = d.current(vd, gmin: Self.junctionGmin)
+        let charged = d.hasCharges && !linearising
+        // bypass, as for a behavioural source (and as SPICE bypasses a device): a junction within a billionth of the
+        // last evaluation's voltage is linearised there again, from what it gave then (an LED that is on or off stays
+        // so for many steps, and so does most of a bar graph's)
+        var v = vd
+        let junction: (current: Double, conductance: Double)
+        var (q, cap) = (0.0, 0.0)
+        if Self.bypassesDevices && !linearising && abs(vd - d.lastVoltage) <= Self.bypassTolerance * (1 + abs(vd)) {
+            v = d.lastVoltage
+            junction = (d.lastCurrent, d.lastConductance)
+            (q, cap) = (d.lastCharge, d.lastCapacitance)
+            bypassedEvaluations += 1
+        } else {
+            junction = d.current(vd, gmin: Self.junctionGmin)
+            if charged { (q, cap) = d.charge(vd, current: junction) }
+            if !linearising {
+                (d.lastVoltage, d.lastCurrent, d.lastConductance) = (vd, junction.current, junction.conductance)
+                (d.lastCharge, d.lastCapacitance) = (q, cap)
+            }
+        }
         var (id, gd) = junction
-        id += junctionConductance * vd
+        id += junctionConductance * v
         gd += junctionConductance
-        if d.hasCharges && !linearising {
-            let (q, cap) = d.charge(vd, current: junction)
+        if charged {
             let k = Self.chargeSlots * i
             id += (a0 * q + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
             gd += a0 * cap / h
         }
         stampConductance(matrix, m, anode, cathode, gd)
-        stampCurrent(rhs, anode, cathode, id - gd * vd)
+        stampCurrent(rhs, anode, cathode, id - gd * v)
     }
 
     private func stampNonlinear(_ matrix: Entries, _ rhs: Entries, _ m: Int) {
