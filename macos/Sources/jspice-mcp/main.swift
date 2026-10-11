@@ -80,6 +80,7 @@ let switches: [String: (Bool) -> Void] = [
     "decode-ahead": { AVR.decodesAhead = $0 },
     "skip-quiet-ticks": { AVR.skipsQuietTicks = $0 },
     "keep-switched-matrices": { Simulator.keepsSwitchedMatrices = $0 },
+    "limit-junctions-down": { Simulator.limitsJunctionsDown = $0 },
 ]
 
 /// Simulates each example twice over, with one of the engine's switches off and on, in alternate runs of `seconds` of

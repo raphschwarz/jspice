@@ -3567,8 +3567,28 @@ public final class Simulator {
         stampCurrent(rhs, plus, minus, p * (current - g * v))
     }
 
-    /// Junction voltage limiting (as in SPICE's pnjlim), so Newton does not overshoot into exp() overflow
+    /// Whether a conducting junction's step down is taken through its exponential too (off: only steps up are
+    /// limited, as SPICE limits them, for comparing). Newton-Raphson's step down, linear in the exponential, moves a
+    /// junction that the circuit is turning off by at most nVt an iteration however far its current is to fall (a
+    /// factor of e an iteration): CI's traces of the opto compressor's LED and the guitar fuzz's transistors, a dozen
+    /// such iterations and the substep given up, halved and given up again, a hundred iterations a step.
+    public static var limitsJunctionsDown = true
+    /// The most a step down so taken falls, in nVt (a factor of e^12 in current)
+    static let junctionDropLimit = 12.0
+
+    /// Junction voltage limiting (as in SPICE's pnjlim), so Newton does not overshoot into exp() overflow; and, going
+    /// down (see `limitsJunctionsDown`), to the voltage at which the junction carries the current its linearisation
+    /// gives at the new one: the same step through the logarithm that SPICE takes going up
     private func limitJunction(_ new: Double, old: Double, nvt: Double, critical: Double) -> Double {
+        // (conducting: its conductance above about 1e-7 S; and a step of more than half nVt, which Newton-Raphson
+        // takes while the junction's current falls by more than half)
+        if Self.limitsJunctionsDown && new < old && old > critical - 16 * nvt {
+            let argument = 1 + (new - old) / nvt
+            if argument > 0 && argument < 0.5 {
+                limiting = true
+                return old + nvt * max(log(argument), -Self.junctionDropLimit)
+            }
+        }
         guard new > critical && abs(new - old) > 2 * nvt else { return new }
         limiting = true
         if old > 0 {

@@ -62,6 +62,8 @@ jobs:
           # between line and parabola, which cost the LED bargraph a sixth at the same solves
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch nothing 0.25 frequency-shifter bargraph voice mc1496-ring || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch choose-predictor 0.25 bargraph voice acid opto-compressor || true
+          # junctions turning off taken down through their exponential: the circuits with junctions that switch
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch limit-junctions-down 0.25 opto-compressor guitar-fuzz pickup-fuzz rat tube-screamer fuzz overdrive mc1496-ring sa612-ring voice acid tube-amp power-amp rectifier || true
           # and what bypassing behavioural sources saves them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
           # the microcontrollers: their instructions a step, what each costs and which run most; base matrices kept by
