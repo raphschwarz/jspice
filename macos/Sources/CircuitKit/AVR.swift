@@ -780,7 +780,9 @@ public final class AVR: Microcontroller {
     public var pinStates: [PinState] {
         // (as worked out last time, unless a register was written or a timer's output moved since: the simulator asks
         // at every step, and they change far less often; the SPI and the TWI move their lines by themselves)
-        if !pinStatesStale && pinStateCache.count == variant.pins.count && spi?.master != true && twi?.enabled != true {
+        if !pinStatesStale && pinStateCache.count == variant.pins.count {
+            // (only their lines, worked out as below over what the rest left them)
+            busLinesStates()
             return pinStateCache
         }
         pinStatesStale = false
@@ -824,20 +826,29 @@ public final class AVR: Microcontroller {
                 pinStateCache[usart.spec.rxPin] = .input(pullUp: data[variant.ports[pin.port] + 2] & (1 << pin.bit) != 0)
             }
         }
+        busLinesStates()
+        return pinStateCache
+    }
+
+    /// The states of the lines the SPI and the TWI move by themselves, over those their ports give them (each written
+    /// only where it changes: the simulator holds on to the states it was given, which a write would copy)
+    private func busLinesStates() {
+        func set(_ pin: Int, _ state: PinState) {
+            if pinStateCache[pin] != state { pinStateCache[pin] = state }
+        }
         if let spi, spi.master {
             // the SPI drives SCK and MOSI (where they are outputs) and reads MISO
             let spec = spi.spec
-            if case .output = pinStateCache[spec.sck] { pinStateCache[spec.sck] = .output(high: spi.sck) }
-            if case .output = pinStateCache[spec.mosi] { pinStateCache[spec.mosi] = .output(high: spi.mosi) }
-            pinStateCache[spec.miso] = .input(pullUp: portBit(spec.miso))
+            if case .output = pinStateCache[spec.sck] { set(spec.sck, .output(high: spi.sck)) }
+            if case .output = pinStateCache[spec.mosi] { set(spec.mosi, .output(high: spi.mosi)) }
+            set(spec.miso, .input(pullUp: portBit(spec.miso)))
         }
         if let twi, twi.enabled {
             // open drain: pulled low, or let go (to the pull-up, if the port has it on)
             let (sda, scl) = (twi.spec.sda, twi.spec.scl)
-            pinStateCache[sda] = twi.sdaLow ? .output(high: false) : .input(pullUp: portBit(sda))
-            pinStateCache[scl] = twi.sclLow ? .output(high: false) : .input(pullUp: portBit(scl))
+            set(sda, twi.sdaLow ? .output(high: false) : .input(pullUp: portBit(sda)))
+            set(scl, twi.sclLow ? .output(high: false) : .input(pullUp: portBit(scl)))
         }
-        return pinStateCache
     }
     private var pinStateCache: [PinState] = []
     /// Whether what the pins do may have changed since `pinStates` last worked it out: an I/O register written, a

@@ -325,7 +325,13 @@ public final class Simulator {
     private var busWatches: [[[(element: Int, bit: Int)]]] = []
     private var busLines: [[(chip: Int, pin: Int)]] = []
     /// For each chip with bus devices on its pins, what it calls as a watched pin changes while it runs
-    private var busHandlers: [((PinEvent) -> Void)?] = []
+    private var busHandlers: [BusHandler?] = []
+    /// (in a class: a closure kept in an array comes out of it wrapped in two conversions, run at every event, the
+    /// outer one made anew at every step)
+    private final class BusHandler {
+        let call: (PinEvent) -> Void
+        init(_ call: @escaping (PinEvent) -> Void) { self.call = call }
+    }
     /// The pin events of a step, from every chip, in the order they happened
     private var stepPinEvents: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
@@ -5624,7 +5630,7 @@ public final class Simulator {
             let whole = max(Int(budget), 0)
             let start = chip.cycles
             // the bus devices wired to it follow its pins as it runs, and answer within the run
-            if i < busHandlers.count, let handler = busHandlers[i] { chip.onPinEvent = handler }
+            if i < busHandlers.count, let handler = busHandlers[i] { chip.onPinEvent = handler.call }
             if whole > 0 { chip.run(cycles: whole) }
             chip.onPinEvent = nil
             // the last instruction may run past the budget: the next step has that much less
@@ -5690,7 +5696,7 @@ public final class Simulator {
             chipWatches[i] = byPinArray(byPin)
             busWatches[i] = byPinArray(busByPin)
             // (called only while the chip runs, within `runChips`: the simulator is there)
-            if !busByPin.isEmpty { busHandlers[i] = { [unowned(unsafe) self] event in self.busEvent(i, event) } }
+            if !busByPin.isEmpty { busHandlers[i] = BusHandler { [unowned(unsafe) self] event in self.busEvent(i, event) } }
         }
     }
 
