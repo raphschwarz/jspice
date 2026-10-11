@@ -5857,43 +5857,27 @@ public final class Simulator {
     /// A watched pin changing as a chip runs, for the bus devices that follow it: they move on at once, and what they
     /// drive back on the chip's pins (an ADC's DOUT bit, an I²C target's acknowledge) is what the chip reads from then
     private func busEvent(_ chipIndex: Int, _ event: PinEvent) {
-        // (the tables read in place: an inner array copied out, at every event, counts its buffer up and down)
-        busWatches.withUnsafeBufferPointer { watches in
-            guard chipIndex < watches.count, event.pin >= 0 else { return }
-            watches[chipIndex].withUnsafeBufferPointer { pins in
-                guard event.pin < pins.count else { return }
-                pins[event.pin].withUnsafeBufferPointer { targets in
-                    for target in targets { busTarget(target, high: event.high) }
+        guard chipIndex < busWatches.count, event.pin >= 0, event.pin < busWatches[chipIndex].count else { return }
+        for target in busWatches[chipIndex][event.pin] {
+            let old = logicStates[target.element]
+            let mask = UInt32(1) << UInt32(target.bit)
+            let inputs = event.high ? old.inputs | mask : old.inputs & ~mask
+            guard inputs != old.inputs else { continue }
+            let next = advanceLogic(target.element, old, inputs: inputs)
+            for line in busLines[target.element] {
+                guard line.chip < chipAt.count, let chip = chipAt[line.chip], line.pin < chip.pinCount else { continue }
+                let volts: Double
+                switch kinds[target.element] {
+                case .spiAdc:
+                    // DOUT while CS is low; let go, it stays as the circuit last had it
+                    guard next.inputs & 1 == 0 else { continue }
+                    volts = next.count != 0 ? chip.supply : 0
+                default:
+                    // SDA held low while it acknowledges, else pulled up
+                    volts = Logic.acknowledging(next) ? 0 : chip.supply
                 }
-            }
-        }
-    }
-
-    /// `busEvent` for one bus device on the pin
-    private func busTarget(_ target: (element: Int, bit: Int), high: Bool) {
-        let old = logicStates[target.element]
-        let mask = UInt32(1) << UInt32(target.bit)
-        let inputs = high ? old.inputs | mask : old.inputs & ~mask
-        guard inputs != old.inputs else { return }
-        let next = advanceLogic(target.element, old, inputs: inputs)
-        let kind = kinds[target.element]
-        busLines.withUnsafeBufferPointer { lines in
-            lines[target.element].withUnsafeBufferPointer { lines in
-                for line in lines {
-                    guard line.chip < chipAt.count, let chip = chipAt[line.chip], line.pin < chip.pinCount else { continue }
-                    let volts: Double
-                    switch kind {
-                    case .spiAdc:
-                        // DOUT while CS is low; let go, it stays as the circuit last had it
-                        guard next.inputs & 1 == 0 else { continue }
-                        volts = next.count != 0 ? chip.supply : 0
-                    default:
-                        // SDA held low while it acknowledges, else pulled up
-                        volts = Logic.acknowledging(next) ? 0 : chip.supply
-                    }
-                    // (that pin alone: setting the chip's voltages would look at every pin again)
-                    if chip.pinVoltage(line.pin) != volts { chip.setPinVoltage(line.pin, volts) }
-                }
+                // (that pin alone: setting the chip's voltages would look at every pin again)
+                if chip.pinVoltage(line.pin) != volts { chip.setPinVoltage(line.pin, volts) }
             }
         }
     }
