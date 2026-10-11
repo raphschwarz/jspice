@@ -170,6 +170,8 @@ jobs:
           sed -n '/Sort by top of stack/,$p' build/profile-maker.txt | head -70
           # with what each function costs with all it calls, and who calls the runtime's copies and checks
           python3 scripts/profile-callers.py build/profile-maker.txt 45 || true
+          # their behavioural sources' stamps, instruction by instruction: where their own samples fall
+          python3 scripts/hot-instructions.py build/profile-maker.txt Simulator.stampBehavior 10 build/hot-maker.lldb || true
       - name: What Swift's bounds and overflow checks cost (a build without them, for comparing; not shipped)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         continue-on-error: true
