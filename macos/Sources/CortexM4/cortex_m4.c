@@ -28,6 +28,23 @@ typedef struct {
     bool owned;
 } Region;
 
+typedef struct Decoded Decoded;
+typedef void (*Handler)(CM4 *c, const Decoded *d);
+
+/// An instruction decoded once: where it is and its bits as fetched (an entry is used only while both match, so that
+/// code written anew is decoded anew), what runs it, and the fields it reads
+struct Decoded {
+    uint32_t pc;    // odd: an empty entry
+    uint32_t raw;   // the instruction's halfword and the next, the first in the low half
+    Handler run;
+    uint8_t length, d, n, m;
+    uint8_t op, rn, rt, words;
+    uint32_t imm;
+};
+
+/// The decoded instructions, direct-mapped by address: 16 K entries cover 32 KB of code
+#define DECODED_ENTRIES 16384
+
 enum { MAX_REGIONS = 12 };
 
 // exception numbers
@@ -112,6 +129,7 @@ struct CM4 {
     bool it_changed;
     /// Sleeping in WFE (woken by an event as well as an exception), rather than WFI
     bool waiting_for_event;
+    Decoded *decoded;
 };
 
 // ----------------------------------------------------------------------------------------------------------- memory
@@ -2480,6 +2498,154 @@ static bool wakes(CM4 *c) {
     return number && preempts;
 }
 
+// ------------------------------------------------------------------------------------------- decoded instructions
+
+// Every instruction is run through its entry in the decoded table: most by the decoders above (exec16, exec32), the
+// FPU's common single-precision ones (half of an audio module's instructions) by handlers of their own, which do
+// exactly what the decoders do with them once the FPU's checks pass, and fall back to the decoders otherwise.
+
+static void run16(CM4 *c, const Decoded *d) { exec16(c, d->raw & 0xFFFF); }
+static void run32(CM4 *c, const Decoded *d) { exec32(c, d->raw & 0xFFFF, d->raw >> 16); }
+
+/// The FPU on, with its context active: otherwise the decoders' path (a fault, or a new context made first)
+static inline bool fp_ready(const CM4 *c) {
+    return ((c->cpacr >> 20) & 3) && ((c->control & CONTROL_FPCA) || !(c->fpccr & (1u << 31)));
+}
+
+#define FP_HANDLER(name) static void name(CM4 *c, const Decoded *d) { \
+    if (__builtin_expect(!fp_ready(c), 0)) { run32(c, d); return; } \
+    uint32_t *s = c->s;
+#define END_HANDLER }
+
+// VFMA, VFMS: d + n * m, d - n * m
+FP_HANDLER(h_vfma)
+    s[d->d] = fp_muladd(c, s[d->d], d->op ? fp_neg(s[d->n]) : s[d->n], s[d->m]);
+    c->cost += 2;
+END_HANDLER
+// VFNMS, VFNMA: -d + n * m, -d - n * m
+FP_HANDLER(h_vfnma)
+    s[d->d] = fp_muladd(c, fp_neg(s[d->d]), d->op ? fp_neg(s[d->n]) : s[d->n], s[d->m]);
+    c->cost += 2;
+END_HANDLER
+// VMLA, VMLS: the product rounded, then added
+FP_HANDLER(h_vmla)
+    uint32_t product = fp_mul(c, s[d->n], s[d->m]);
+    s[d->d] = fp_add(c, s[d->d], d->op ? fp_neg(product) : product);
+    c->cost += 2;
+END_HANDLER
+// VNMLS, VNMLA
+FP_HANDLER(h_vnmla)
+    uint32_t product = fp_mul(c, s[d->n], s[d->m]);
+    s[d->d] = fp_add(c, fp_neg(s[d->d]), d->op ? fp_neg(product) : product);
+    c->cost += 2;
+END_HANDLER
+// VMUL, VNMUL
+FP_HANDLER(h_vmul)
+    uint32_t product = fp_mul(c, s[d->n], s[d->m]);
+    s[d->d] = d->op ? fp_neg(product) : product;
+END_HANDLER
+// VADD, VSUB
+FP_HANDLER(h_vadd)
+    s[d->d] = d->op ? fp_sub(c, s[d->n], s[d->m]) : fp_add(c, s[d->n], s[d->m]);
+END_HANDLER
+FP_HANDLER(h_vdiv)
+    s[d->d] = fp_div(c, s[d->n], s[d->m]);
+    c->cost += 13;
+END_HANDLER
+// VMOV (immediate, register), VABS, VNEG
+FP_HANDLER(h_vmov_imm)
+    s[d->d] = d->imm;
+END_HANDLER
+FP_HANDLER(h_vmov_reg)
+    s[d->d] = s[d->m];
+END_HANDLER
+FP_HANDLER(h_vabs)
+    s[d->d] = s[d->m] & 0x7FFFFFFFu;
+END_HANDLER
+FP_HANDLER(h_vneg)
+    s[d->d] = fp_neg(s[d->m]);
+END_HANDLER
+// VMOV between a core register and a single
+FP_HANDLER(h_vmov_to_core)
+    c->r[d->rt] = s[d->n];
+END_HANDLER
+FP_HANDLER(h_vmov_to_fp)
+    s[d->n] = c->r[d->rt];
+END_HANDLER
+// VLDR, VSTR: a single or a double at the base plus or minus the offset
+FP_HANDLER(h_vldr)
+    uint32_t base = d->rn == 15 ? align4(c->pc + 4) : c->r[d->rn];
+    uint32_t address = base + d->imm;
+    for (uint32_t i = 0; i < d->words; i++) s[d->d + i] = read32(c, address + 4 * i);
+    c->cost += d->words;
+END_HANDLER
+FP_HANDLER(h_vstr)
+    uint32_t base = d->rn == 15 ? align4(c->pc + 4) : c->r[d->rn];
+    uint32_t address = base + d->imm;
+    for (uint32_t i = 0; i < d->words; i++) write32(c, address + 4 * i, s[d->d + i]);
+    c->cost += d->words;
+END_HANDLER
+
+/// Decodes the instruction at `pc` whose halfwords are `word` into its entry
+static void decode(Decoded *d, uint32_t pc, uint32_t word) {
+    uint32_t hw1 = word & 0xFFFF, hw2 = word >> 16;
+    d->pc = pc;
+    d->raw = word;
+    if (hw1 < 0xE800) {
+        d->length = 2;
+        d->run = run16;
+        return;
+    }
+    d->length = 4;
+    d->run = run32;
+    if (((hw2 >> 8) & 0xF) != 0xA) return;  // the FPU's single-precision instructions only (CP10)
+    if ((hw1 & 0xFF00) == 0xEE00 && !(hw2 & 0x10)) {
+        // data processing
+        uint32_t opc1 = (hw1 >> 4) & 0xB;
+        d->op = (hw2 >> 6) & 1;
+        d->d = (uint8_t)(((hw2 >> 12) & 0xF) << 1 | ((hw1 >> 6) & 1));
+        d->n = (uint8_t)((hw1 & 0xF) << 1 | ((hw2 >> 7) & 1));
+        d->m = (uint8_t)((hw2 & 0xF) << 1 | ((hw2 >> 5) & 1));
+        switch (opc1) {
+        case 0x0: d->run = h_vmla; return;
+        case 0x1: d->run = h_vnmla; return;
+        case 0x2: d->run = h_vmul; return;
+        case 0x3: d->run = h_vadd; return;
+        case 0x8: if (!d->op) d->run = h_vdiv; return;
+        case 0x9: d->run = h_vfnma; return;
+        case 0xA: d->run = h_vfma; return;
+        case 0xB:
+            if (!d->op) {
+                d->imm = vfp_expand_imm(((hw1 & 0xF) << 4) | (hw2 & 0xF));
+                d->run = h_vmov_imm;
+            } else if ((hw1 & 0xF) == 0) {
+                d->run = (hw2 >> 7) & 1 ? h_vabs : h_vmov_reg;
+            } else if ((hw1 & 0xF) == 1 && !((hw2 >> 7) & 1)) {
+                d->run = h_vneg;
+            }
+            return;
+        default: return;
+        }
+    }
+    if ((hw1 & 0xFFE0) == 0xEE00 && (hw2 & 0x0F7F) == 0x0A10) {
+        // VMOV between a core register and a single (not SP or the PC: those the decoder takes)
+        d->rt = (uint8_t)(hw2 >> 12);
+        d->n = (uint8_t)((hw1 & 0xF) << 1 | ((hw2 >> 7) & 1));
+        if (d->rt < 13) d->run = (hw1 >> 4) & 1 ? h_vmov_to_core : h_vmov_to_fp;
+        return;
+    }
+    if ((hw1 & 0xFF20) == 0xED00) {
+        // VLDR, VSTR (single)
+        uint32_t imm8 = hw2 & 0xFF;
+        d->rn = (uint8_t)(hw1 & 0xF);
+        d->d = (uint8_t)(((hw2 >> 12) & 0xF) << 1 | ((hw1 >> 6) & 1));
+        d->words = 1;
+        d->imm = (hw1 >> 7) & 1 ? imm8 * 4 : (uint32_t)-(int32_t)(imm8 * 4);
+        d->run = (hw1 >> 4) & 1 ? h_vldr : h_vstr;
+        return;
+    }
+}
+
 __attribute__((always_inline)) static inline CM4Stop step(CM4 *c) {
     if (c->cycles >= c->systick_wrap) systick_update(c);
     if (c->check_exceptions && take_exception(c)) return CM4_RAN;
@@ -2509,13 +2675,11 @@ __attribute__((always_inline)) static inline CM4Stop step(CM4 *c) {
         hw1 = fetch16(c, pc);
         hw2 = hw1 >= 0xE800 ? fetch16(c, pc + 2) : 0;
     }
-    if (hw1 >= 0xE800) {
-        c->next_pc = pc + 4;
-        if (run) exec32(c, hw1, hw2);
-    } else {
-        c->next_pc = pc + 2;
-        if (run) exec16(c, hw1);
-    }
+    uint32_t word = hw1 | (hw2 << 16);
+    Decoded *d = &c->decoded[(pc >> 1) & (DECODED_ENTRIES - 1)];
+    if (__builtin_expect(d->pc != pc || d->raw != word, 0)) decode(d, pc, word);
+    c->next_pc = pc + d->length;
+    if (run) d->run(c, d);
     if (in_block && !c->it_changed) it_advance(c);
     c->instructions++;
     if (c->stop_breakpoint) {
@@ -2567,6 +2731,9 @@ CM4Stop cm4_run(CM4 *c, uint64_t cycles) {
 CM4 *cm4_create(void) {
     CM4 *c = calloc(1, sizeof(CM4));
     if (!c) return NULL;
+    c->decoded = calloc(DECODED_ENTRIES, sizeof(Decoded));
+    if (!c->decoded) { free(c); return NULL; }
+    for (int i = 0; i < DECODED_ENTRIES; i++) c->decoded[i].pc = 1;
     c->interrupts = 240;
     c->priority_bits = 8;
     c->priority_mask = 0xFF;
@@ -2579,6 +2746,7 @@ CM4 *cm4_create(void) {
 void cm4_destroy(CM4 *c) {
     if (!c) return;
     for (int i = 0; i < c->region_count; i++) if (c->regions[i].owned) free(c->regions[i].bytes);
+    free(c->decoded);
     free(c);
 }
 
