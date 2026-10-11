@@ -637,6 +637,12 @@ public final class Simulator {
     private var guessesMade = false
     private var parabolaNearer = UnsafeMutableBufferPointer<Bool>(start: nil, count: 0)
     private var predictNext = false
+    /// Whether a behavioural source's decisions moved in the present substep's solve: the next substep then starts
+    /// from its solution rather than from the line through it (a maker's model's output stage switching back on at the
+    /// end of its crossover dead zone bends the solution there; extrapolated through the bend, the guess lands far off
+    /// and Newton-Raphson swings between the stage's corners until the substep is halved)
+    private var decisionsMovedInSubstep = false
+    public static var predictsPastDecisions = false
     private var predictionRatio = 1.0
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
     private var savedX: [Double] = []
@@ -1473,6 +1479,7 @@ public final class Simulator {
             Self.copy(x, into: &substepStartX)
             predictNext = predictorReady && hasNonlinear
             predictionRatio = ratio
+            decisionsMovedInSubstep = false
             var converged = solve(at: t, canHalve: mayReject, fromSubstepStart: true)
             if isFailed { return }
             // a 555 or Schmitt trigger that switches during the substep changes the circuit: solve it again
@@ -1530,8 +1537,9 @@ public final class Simulator {
             // the next substep predicts from this one's start and end, unless the circuit jumped (a part switched over)
             swap(&oldestX, &olderX)
             swap(&olderX, &substepStartX)
-            quadraticReady = predictorReady && !switched
-            predictorReady = !switched
+            let smooth = !switched && (Self.predictsPastDecisions || !decisionsMovedInSubstep)
+            quadraticReady = predictorReady && smooth
+            predictorReady = smooth
             (olderLevel, lastLevel) = (lastLevel, level)
             substeps += 1
             position += units
@@ -1660,6 +1668,7 @@ public final class Simulator {
             var firstFlip: [Int] = []
             var stopsAfterRound = false
             while rounds < Self.decisionRounds && decisionsMoved() {
+                decisionsMovedInSubstep = true
                 // (the round just solved, kept only now that another may follow)
                 keepRound()
                 if Self.retriesFromMemory { rememberFlip(held: heldRounds[kept - 1], solved: solvedRounds[kept - 1]) }

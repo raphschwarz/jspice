@@ -75,6 +75,7 @@ let switches: [String: (Bool) -> Void] = [
     "retry-from-memory": { Simulator.retriesFromMemory = $0 },
     "memory-first": { Simulator.triesMemoryFirst = $0 },
     "skip-known-cycles": { Simulator.skipsKnownCycles = $0 },
+    "predict-past-decisions": { Simulator.predictsPastDecisions = $0 },
     "quadratic-predictor": { Simulator.predictsQuadratically = $0 },
     "rest-chords": { Simulator.restsChords = $0 },
     "choose-predictor": { Simulator.choosesPredictor = $0 },
@@ -622,11 +623,18 @@ if let flag = arguments.firstIndex(of: "--capture-eval"), flag + 1 < arguments.c
     exit(0)
 }
 
-// --benchmark-maker PART [seconds] [stages]: a maker's op-amp model at the sound's rate, or that many in a row (see
+// --benchmark-maker PART [seconds] [stages] [SWITCH=on|off…]: a maker's op-amp model at the sound's rate, or that many in a row (see
 // benchmarkMaker)
 if let flag = arguments.firstIndex(of: "--benchmark-maker"), flag + 1 < arguments.count {
     let seconds = flag + 2 < arguments.count ? Double(arguments[flag + 2]) ?? 1 : 1
     let stages = flag + 3 < arguments.count ? max(1, Int(arguments[flag + 3]) ?? 1) : 1
+    // and switches set for the run: NAME=on or NAME=off
+    for argument in arguments.dropFirst(flag + 4) {
+        let parts = argument.split(separator: "=").map(String.init)
+        guard parts.count == 2, let flip = switches[parts[0]] else { continue }
+        flip(parts[1] == "on")
+        print("(\(parts[0]) \(parts[1]))")
+    }
     do {
         try benchmarkMaker(arguments[flag + 1], seconds: seconds, stages: stages)
     } catch {
