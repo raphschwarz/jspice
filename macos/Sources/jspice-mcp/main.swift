@@ -303,6 +303,32 @@ func benchmarkInstructions(seconds: Double, ids: [String]) {
     }
 }
 
+/// Lays out netlists of a growing chain of op-amp stages (an inverting stage each: input resistor, feedback resistor
+/// and capacitor), as importing a SPICE netlist or building a circuit from one does, and prints how long each takes:
+/// for how the layout's cost grows with a circuit's size
+func benchmarkLayout(stages: [Int]) {
+    for count in stages {
+        var parts = [NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 1, "frequency": 440],
+                                 connections: ["plus": "s0", "minus": "GND"])]
+        for i in 0..<count {
+            parts.append(NetlistPart(kind: .resistor, name: "RI\(i)", params: ["resistance": 10_000],
+                                     connections: ["a": "s\(i)", "b": "m\(i)"]))
+            parts.append(NetlistPart(kind: .resistor, name: "RF\(i)", params: ["resistance": 22_000],
+                                     connections: ["a": "m\(i)", "b": "s\(i + 1)"]))
+            parts.append(NetlistPart(kind: .capacitor, name: "CF\(i)", params: ["capacitance": 1e-9],
+                                     connections: ["a": "m\(i)", "b": "s\(i + 1)"]))
+            parts.append(NetlistPart(kind: .opAmp, name: "U\(i)", connections: ["minus": "m\(i)", "plus": "GND", "out": "s\(i + 1)"]))
+        }
+        parts.append(NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000],
+                                 connections: ["a": "s\(count)", "b": "GND"]))
+        let start = DispatchTime.now().uptimeNanoseconds
+        let laid = try? SchematicLayout.layout(parts)
+        let millis = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        print(String(format: "layout of %3ld stages (%3ld parts): %8.1f ms, %ld elements drawn", count, parts.count, millis,
+                     laid?.elements.count ?? 0))
+    }
+}
+
 /// The circuit drawn `count` times side by side, each copy on nets of its own (its net labels renamed, but for ground):
 /// a bigger circuit of the same parts, for how the engine's cost grows with a circuit's size
 func copies(of circuit: Circuit, _ count: Int) -> Circuit {
@@ -711,6 +737,12 @@ if let flag = arguments.firstIndex(of: "--benchmark-instructions") {
 }
 
 // --benchmark-scale [seconds] [example…]: the examples drawn 1, 2, 4 and 8 times over in one circuit
+if let flag = arguments.firstIndex(of: "--benchmark-layout") {
+    let counts = arguments[(flag + 1)...].compactMap { Int($0) }
+    benchmarkLayout(stages: counts.isEmpty ? [4, 8, 16, 32, 64] : counts)
+    exit(0)
+}
+
 if let flag = arguments.firstIndex(of: "--benchmark-scale") {
     var rest = Array(arguments[(flag + 1)...])
     var seconds = 0.1
