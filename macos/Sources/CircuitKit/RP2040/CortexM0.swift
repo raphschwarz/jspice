@@ -205,7 +205,7 @@ final class CortexM0 {
         }
     }
 
-    func checkCondition(_ condition: Int) -> Bool {
+    @inline(__always) func checkCondition(_ condition: Int) -> Bool {
         let result: Bool
         switch condition >> 1 {
         case 0: result = Z
@@ -1002,7 +1002,23 @@ final class CortexM0 {
             effects &+= 1
             waiting = true
         case .wide:
-            delta = executeWide(opcode, Int(read16(opcodePC &+ 2)))
+            let opcode2 = Int(read16(opcodePC &+ 2))
+            if opcode >> 11 == 0b11110 && opcode2 >> 14 == 0b11 && (opcode2 >> 12) & 1 == 1 {
+                // BL, most of the 32-bit instructions a program runs, here rather than through the call (as there)
+                let imm11 = opcode2 & 0x7FF
+                let j2 = (opcode2 >> 11) & 1
+                let j1 = (opcode2 >> 13) & 1
+                let imm10 = opcode & 0x3FF
+                let s = (opcode >> 10) & 1
+                let i1 = 1 - (s ^ j1)
+                let i2 = 1 - (s ^ j2)
+                let imm32 = Int32(bitPattern: UInt32((s != 0 ? 0xFF : 0) << 24 | i1 << 23 | i2 << 22 | imm10 << 12 | imm11 << 1))
+                LR = (PC &+ 2) | 1
+                PC = PC &+ 2 &+ UInt32(bitPattern: imm32)
+                delta = 3
+            } else {
+                delta = executeWide(opcode, opcode2)
+            }
         case .unknown:
             break
         }
