@@ -203,13 +203,6 @@ final class PicoTests: XCTestCase {
         try assertSameRuns { RP2040.runsStretches = $0 }
     }
 
-    /// A waiting core passing over the small steps in which no state machine has an instruction due leaves the Pico
-    /// where taking each of them would
-    func testSkippedIdlePIOStepsLeaveThePicoWhereTakingEachWould() throws {
-        defer { RP2040.skipsIdlePIOSteps = true }
-        try assertSameRuns { RP2040.skipsIdlePIOSteps = $0 }
-    }
-
     /// Runs the Pico examples and the reference sketches with a setting off and on, and compares them to the bit
     private func assertSameRuns(_ setting: (Bool) -> Void, file: StaticString = #filePath, line: UInt = #line) throws {
         for id in ["pico-pcm5102", "pico-knob", "pico-melody"] {

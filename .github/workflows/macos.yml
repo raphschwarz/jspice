@@ -76,8 +76,6 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch decode-ahead 0.25 arduino-fade arduino-knob arduino-melody arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
           # the Pico's instructions in stretches, its clock ticked once for each rather than after every one
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch run-stretches 0.25 pico-knob pico-pcm5102 pico-melody || true
-          # and a waiting core passing over the microsecond steps in which no PIO instruction is due
-          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch skip-idle-pio-steps 0.25 pico-melody pico-pcm5102 pico-knob || true
           # and the interpreters inside their run loops rather than called for each instruction
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch inline-interpreter 0.25 pico-knob pico-pcm5102 arduino-fade arduino-blink arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
           # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns
@@ -134,6 +132,13 @@ jobs:
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-i2s.txt | head -45
           python3 scripts/profile-callers.py build/profile-i2s.txt 30 || true
+          # and for the Pico playing a melody: 34 instructions a step, its core mostly waiting while PIO plays the tone
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-melody > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-melody.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-melody.txt | head -45
+          python3 scripts/profile-callers.py build/profile-melody.txt 30 || true
           # and for an Arduino fading an LED
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 arduino-fade > /dev/null &
           sleep 1

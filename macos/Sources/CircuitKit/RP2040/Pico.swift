@@ -24,12 +24,6 @@ public final class Pico: Microcontroller {
         get { CortexM0.inlinesInterpreter }
         set { CortexM0.inlinesInterpreter = newValue }
     }
-    /// Whether a waiting core passes over the small steps in which no PIO state machine has an instruction due (for
-    /// comparing)
-    public static var skipsIdlePIOSteps: Bool {
-        get { RP2040.skipsIdlePIOSteps }
-        set { RP2040.skipsIdlePIOSteps = newValue }
-    }
     /// Whether the chip takes its instructions in stretches, its clock ticked once for each (for comparing)
     public static var runsStretches: Bool {
         get { RP2040.runsStretches }
