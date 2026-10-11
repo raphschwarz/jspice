@@ -106,9 +106,10 @@ final class CortexM0 {
     func runStretch(from base: Double, to limit: Double) -> Int {
         clockedInStretch = false
         unclocked = 0
+        let inlined = CortexM0.inlinesInterpreter
         repeat {
             // (the instruction first: it can bring the clock up, setting `unclocked` to 0)
-            let cycles = executeInstruction()
+            let cycles = inlined ? executeInline() : executeInstruction()
             unclocked += cycles
         } while !clockedInStretch && !waiting && base + Double(unclocked) * RP2040.cycleNanos < limit
         let cycles = unclocked
@@ -697,7 +698,15 @@ final class CortexM0 {
 
     /// Runs one instruction (entering a pending exception first); returns its cycles
     // swiftlint:disable:next cyclomatic_complexity function_body_length
-    func executeInstruction() -> Int {
+    func executeInstruction() -> Int { executeInline() }
+
+    /// Whether a stretch has the interpreter inside its loop (off, calling `executeInstruction` for each instruction:
+    /// for comparing). The interpreter keeps the most it holds in a frame of its own, set up and taken down at every
+    /// call; inside the loop, once a stretch.
+    static var inlinesInterpreter = true
+
+    /// `executeInstruction`, for a stretch's loop to take inside it
+    @inline(__always) private func executeInline() -> Int {
         if interruptsUpdated && checkForInterrupts() { waiting = false }
         let opcodePC = PC & ~1
         let opcode = Int(read16(opcodePC))

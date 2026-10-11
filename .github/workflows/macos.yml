@@ -76,6 +76,8 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch decode-ahead 0.25 arduino-fade arduino-knob arduino-melody arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
           # the Pico's instructions in stretches, its clock ticked once for each rather than after every one
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch run-stretches 0.25 pico-knob pico-pcm5102 pico-melody || true
+          # and the interpreters inside their run loops rather than called for each instruction
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch inline-interpreter 0.25 pico-knob pico-pcm5102 arduino-fade arduino-blink arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
           # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns
           # keep moving, in the synth voice, the sequenced acid line and the fuzz
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-rejections 0.25 voice acid guitar-fuzz || true
@@ -112,8 +114,8 @@ jobs:
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-pico.txt | head -45
           python3 scripts/profile-callers.py build/profile-pico.txt 30 || true
-          # the Cortex-M0+'s instruction loop, instruction by instruction: where its own samples fall
-          python3 scripts/hot-instructions.py build/profile-pico.txt CortexM0.executeInstruction 12 build/hot-pico.lldb || true
+          # the Cortex-M0+'s instruction loop (in a stretch's run), instruction by instruction: where its own samples fall
+          python3 scripts/hot-instructions.py build/profile-pico.txt CortexM0.runStretch 12 build/hot-pico.lldb || true
           lldb --batch -s build/hot-pico.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -160 || true
           # and for the Pico driving an I2S DAC from PIO
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-pcm5102 > /dev/null &
@@ -129,7 +131,7 @@ jobs:
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-avr.txt | head -45
           python3 scripts/profile-callers.py build/profile-avr.txt 30 || true
-          python3 scripts/hot-instructions.py build/profile-avr.txt AVR.step 10 build/hot-avr.lldb || true
+          python3 scripts/hot-instructions.py build/profile-avr.txt AVR.run 10 build/hot-avr.lldb || true
           lldb --batch -s build/hot-avr.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -130 || true
           # and for an Arduino reading an SPI ADC and writing an I2C DAC (its pins' events go to the parts as it runs)
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 arduino-mcp3008-mcp4725 > /dev/null &

@@ -370,18 +370,14 @@ public final class AVR: Microcontroller {
         loopSeen = false
         defer { runEnd = 0 }
         let counting = AVR.countsInstructions
-        guard !watchedPins.isEmpty else {
-            while cycles < end {
-                if counting { AVR.instructionCounts[Int(decoded[Int(flash[pc])].rawValue)] += 1 }
-                step()
-            }
-            return
-        }
-        // the watched pins' levels after each instruction that wrote an I/O register (or after every instruction,
-        // where a timer may be driving one), and at each SPI and TWI event, logged where they change
+        let inlined = AVR.inlinesInterpreter
+        let watching = !watchedPins.isEmpty
         while cycles < end {
             if counting { AVR.instructionCounts[Int(decoded[Int(flash[pc])].rawValue)] += 1 }
-            step()
+            if inlined { _ = stepInline() } else { step() }
+            guard watching else { continue }
+            // the watched pins' levels after each instruction that wrote an I/O register (or after every instruction,
+            // where a timer may be driving one), and at each SPI and TWI event, logged where they change
             if ioWritten {
                 ioWritten = false
                 timerDrivesWatchedPin = watchedPinDrivenByTimer()
@@ -544,7 +540,15 @@ public final class AVR: Microcontroller {
 
     /// Runs one instruction, or enters an interrupt
     @discardableResult
-    func step() -> Int {
+    func step() -> Int { stepInline() }
+
+    /// Whether a run's loop has the interpreter inside it (off, calling `step` for each instruction: for comparing).
+    /// The interpreter keeps the most it holds in a frame of its own, set up and taken down at every call; inside the
+    /// loop, once a run.
+    public static var inlinesInterpreter = true
+
+    /// `step`, for a run's loop to take inside it
+    @inline(__always) private func stepInline() -> Int {
         if interruptDelay == 0 && data[AVR.SREG] & AVR.flagI != 0, let index = pendingInterrupt() {
             let source = sources[index]
             if source.clears { data[source.flag] &= ~source.flagBit }
@@ -1782,7 +1786,7 @@ public final class AVR: Microcontroller {
     /// `execute`, its opcode's case looked up in `decodeTable` rather than decoded through nested switches: the same
     /// code for each instruction
     // swiftlint:disable:next cyclomatic_complexity function_body_length
-    private func executeDecoded() -> Int {
+    @inline(__always) private func executeDecoded() -> Int {
         let d = data
         let op = Int(flash[pc])
         pc = (pc + 1) & pcMask

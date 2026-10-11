@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 HELPERS = ("memmove", "memcpy", "memset", "isUniquelyReferenced", "swift_retain", "swift_release", "swift_bridgeObject",
            "malloc", "free", "swift_allocObject", "swift_beginAccess", "_checkSubscript", "RefCounts", "dealloc", "arrayDestroy",
            "ContiguousArrayStorage", "swift_unowned", "swift_weak", "Hasher", "_NativeDictionary", "Set.contains",
-           "Dictionary.subscript")
+           "Dictionary.subscript", "chkstk")
 
 
 def main():
