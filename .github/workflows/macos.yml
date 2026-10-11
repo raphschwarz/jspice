@@ -76,6 +76,8 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch decode-ahead 0.25 arduino-fade arduino-knob arduino-melody arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
           # the Pico's instructions in stretches, its clock ticked once for each rather than after every one
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch run-stretches 0.25 pico-knob pico-pcm5102 pico-melody || true
+          # and PIO delay loops' turns taken directly where they only count down
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch quiet-pio-turns 0.25 pico-melody pico-pcm5102 || true
           # and the interpreters inside their run loops rather than called for each instruction
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch inline-interpreter 0.25 pico-knob pico-pcm5102 arduino-fade arduino-blink arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
           # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns

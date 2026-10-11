@@ -80,6 +80,7 @@ let switches: [String: (Bool) -> Void] = [
     "reuse-everywhere": { Simulator.reusesFactorsEverywhere = $0 },
     "decode-ahead": { AVR.decodesAhead = $0 },
     "run-stretches": { Pico.runsStretches = $0 },
+    "quiet-pio-turns": { Pico.takesQuietPIOTurns = $0 },
     "inline-interpreter": { AVR.inlinesInterpreter = $0; Pico.inlinesInterpreter = $0 },
     "skip-quiet-ticks": { AVR.skipsQuietTicks = $0 },
     "keep-switched-matrices": { Simulator.keepsSwitchedMatrices = $0 },

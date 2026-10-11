@@ -24,6 +24,11 @@ public final class Pico: Microcontroller {
         get { CortexM0.inlinesInterpreter }
         set { CortexM0.inlinesInterpreter = newValue }
     }
+    /// Whether PIO delay loops' turns are taken directly where they only count down (for comparing)
+    public static var takesQuietPIOTurns: Bool {
+        get { RPPIOMachine.takesQuietTurns }
+        set { RPPIOMachine.takesQuietTurns = newValue }
+    }
     /// Whether the chip takes its instructions in stretches, its clock ticked once for each (for comparing)
     public static var runsStretches: Bool {
         get { RP2040.runsStretches }

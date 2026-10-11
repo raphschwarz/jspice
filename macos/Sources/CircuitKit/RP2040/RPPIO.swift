@@ -369,6 +369,34 @@ final class RPPIOMachine {
         if updatePC { nextPC() }
     }
 
+    /// Whether a delay loop's turns are taken directly where they change nothing but the count (off, each through
+    /// `step`: for comparing)
+    static var takesQuietTurns = true
+
+    /// `step`, done directly where the instruction is a `jmp x--` or `jmp y--` to itself that jumps (its register not
+    /// yet 0) and whose side-set, if any, sets its pins to what they are already: such a turn only counts down and
+    /// takes its cycles. False, doing nothing, for any other instruction.
+    @inline(__always) private func quietTurn() -> Bool {
+        guard RPPIOMachine.takesQuietTurns, !waiting, !execValid else { return false }
+        let opcode = pio.instructions[Int(pc)]
+        guard opcode >> 13 == 0, opcode & 0x1F == pc else { return false }
+        let condition = (opcode >> 5) & 0x7
+        guard condition == 0b010 ? x != 0 : condition == 0b100 && y != 0 else { return false }
+        let count = sidesetCount
+        let delaySideset = (opcode >> 8) & 0x1F
+        let sideEnable = execCtrl & (1 << 30) != 0
+        let delayBits = UInt32(max(5 - Int(count), 0))
+        if count != 0 && (!sideEnable || delaySideset & 0x10 != 0) {
+            let bits = sideEnable ? count - 1 : count
+            let directions = execCtrl & (1 << 29) != 0
+            guard pio.pinsAlready(delaySideset >> delayBits, sidesetBase, bits, directions: directions) else { return false }
+        }
+        if condition == 0b010 { x &-= 1 } else { y &-= 1 }
+        updatePC = false
+        cycles += 1 + Int(delaySideset & ((1 << delayBits) - 1))
+        return true
+    }
+
     /// Runs the instructions due by `now` (nanoseconds)
     func run(until now: Double) {
         let period = self.period
@@ -378,7 +406,7 @@ final class RPPIOMachine {
             skipDelayLoop(until: now, period: period)
             guard nextNanos <= now else { break }
             let before = cycles
-            step()
+            if !quietTurn() { step() }
             nextNanos += Double(cycles - before) * period
         }
     }
@@ -400,7 +428,7 @@ final class RPPIOMachine {
         // the first turn runs as usual, so its side-set is applied
         let skip = UInt32(min(due - 1, Double(remaining - 1)))
         guard skip >= 1 else { return }
-        step()
+        if !quietTurn() { step() }
         nextNanos += turn
         let more = skip - 1
         guard more > 0, !waiting, pc == opcode & 0x1F else { return }
@@ -697,6 +725,13 @@ final class RPPIO: RPPeripheral {
         default:
             super.writeUint32(offset, value)
         }
+    }
+
+    /// Whether `pinValuesChanged` (or, for `directions`, `pinDirectionsChanged`) with these would change nothing
+    @inline(__always) func pinsAlready(_ value: UInt32, _ firstPin: UInt32, _ count: UInt32, directions: Bool) -> Bool {
+        let mask: UInt32 = count > 31 ? 0xFFFF_FFFF : ((1 << count) - 1) << firstPin
+        let present = directions ? pinDirections : pinValues
+        return ((present & ~mask) | ((value << firstPin) & mask)) & 0x3FFF_FFFF == present
     }
 
     func pinValuesChanged(_ value: UInt32, _ firstPin: UInt32, _ count: UInt32) {

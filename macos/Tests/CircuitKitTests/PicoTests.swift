@@ -203,6 +203,12 @@ final class PicoTests: XCTestCase {
         try assertSameRuns { RP2040.runsStretches = $0 }
     }
 
+    /// PIO delay loops' turns taken directly, where they only count down, leave the Pico where stepping each would
+    func testQuietPIOTurnsLeaveThePicoWhereSteppingEachWould() throws {
+        defer { RPPIOMachine.takesQuietTurns = true }
+        try assertSameRuns { RPPIOMachine.takesQuietTurns = $0 }
+    }
+
     /// Runs the Pico examples and the reference sketches with a setting off and on, and compares them to the bit
     private func assertSameRuns(_ setting: (Bool) -> Void, file: StaticString = #filePath, line: UInt = #line) throws {
         for id in ["pico-pcm5102", "pico-knob", "pico-melody"] {
