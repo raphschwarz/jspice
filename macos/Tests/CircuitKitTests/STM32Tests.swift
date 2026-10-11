@@ -127,6 +127,61 @@ final class STM32Tests: XCTestCase {
         XCTAssertEqual((rights.max() ?? 0) - 1.65 * 10_000 / 10_100, 0.25 * 10_000 / 10_100, accuracy: 0.01)
     }
 
+    /// Mutable Instruments' Rings from its own firmware (GPL-3.0, so CI builds it from Mutable's repository and it is
+    /// not kept here) on the STM32 part, with its WM8731: its pots and CVs at mid-scale, its input normalled to its
+    /// probe (PC8, through 1 MΩ into 10 kΩ, as an unpatched jack's normal carries it), strummed twice a second on its
+    /// trigger input (PA2, active low). Its resonator rings at 380 Hz, the FREQUENCY pot's middle.
+    func testMutableInstrumentsRingsRingsInACircuit() throws {
+        guard let path = ProcessInfo.processInfo.environment["JSPICE_RINGS_HEX"] else {
+            throw XCTSkip("JSPICE_RINGS_HEX is not set: CI builds Rings' firmware for this test")
+        }
+        var chip = NetlistPart(kind: .stm32f405, name: "U1",
+                               connections: ["pb12": "ws", "pb13": "bclk", "pb15": "dacdat", "pb14": "adcdat", "pc6": "mclk",
+                                             "pb10": "scl", "pb11": "sda", "pa2": "strum", "pc8": "probe",
+                                             "pa0": "mid", "pa1": "mid", "pa4": "mid", "pa5": "mid", "pa6": "mid", "pa7": "mid",
+                                             "pc1": "mid", "pc2": "mid", "pc3": "mid"])
+        chip.firmware = try FirmwareFile.decode(try Data(contentsOf: URL(fileURLWithPath: path)))
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .codec, name: "U2",
+                        connections: ["mclk": "mclk", "bclk": "bclk", "dacdat": "dacdat", "daclrc": "ws", "adcdat": "adcdat",
+                                      "adclrc": "ws", "sclk": "scl", "sdin": "sda", "lout": "out", "rout": "aux",
+                                      "linl": "mid", "linr": "in"]),
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 1.65], connections: ["plus": "mid", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 1e6], connections: ["a": "probe", "b": "in"]),
+            NetlistPart(kind: .resistor, name: "R2", params: ["resistance": 10_000], connections: ["a": "mid", "b": "in"]),
+            NetlistPart(kind: .squareVoltage, name: "STRUM", params: ["high": 3.3, "low": 0, "frequency": 2, "duty": 0.98],
+                        connections: ["plus": "strum", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "OUT", connections: ["plus": "out", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        let probe = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "OUT" })
+        var out: [Double] = []
+        while simulator.time < 0.7 {
+            simulator.step()
+            XCTAssertFalse(simulator.isFailed, simulator.problems.joined(separator: " "))
+            if simulator.isFailed { break }
+            if simulator.time > 0.3 { out.append(simulator.voltageAcross(probe)) }
+        }
+        let mean = out.reduce(0, +) / Double(max(out.count, 1))
+        let ac = out.map { $0 - mean }
+        let rms = (ac.map { $0 * $0 }.reduce(0, +) / Double(max(ac.count, 1))).squareRoot()
+        XCTAssertGreaterThan(rms, 0.01, "Rings sounds")
+        // the strongest frequency between 200 and 600 Hz
+        func amplitude(_ f: Double) -> Double {
+            var (re, im) = (0.0, 0.0)
+            for (k, x) in ac.enumerated() {
+                let phase = 2 * Double.pi * f * Double(k) / 48000
+                re += x * cos(phase)
+                im += x * sin(phase)
+            }
+            return (re * re + im * im).squareRoot()
+        }
+        let strongest = stride(from: 200.0, through: 600, by: 5).max { amplitude($0) < amplitude($1) } ?? 0
+        XCTAssertEqual(strongest, 380, accuracy: 10)
+    }
+
     func testResetStartsOver() throws {
         let chip = STM32F405(firmware: try firmware())
         run(chip, for: 0.05)

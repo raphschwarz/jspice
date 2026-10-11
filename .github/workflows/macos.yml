@@ -243,6 +243,19 @@ jobs:
           make -C build/grids-src -f grids/makefile AVRLIB_TOOLS_PATH="$PWD/build/avr-tools/" > build/grids-build.log 2>&1 || { tail -30 build/grids-build.log; exit 1; }
           ls -l build/grids-src/build/grids/grids.hex
           echo "JSPICE_GRIDS_HEX=$PWD/build/grids-src/build/grids/grids.hex" >> "$GITHUB_ENV"
+      - name: Mutable Instruments' Rings firmware (GPL-3.0, built from its repository for an emulator test, not kept)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 15
+        run: |
+          # Arm's own toolchain (with newlib), as the modules are built with
+          brew install --cask gcc-arm-embedded > build/arm-toolchain.log 2>&1 || { tail -20 build/arm-toolchain.log; exit 1; }
+          gcc_path=$(command -v arm-none-eabi-gcc || find /Applications -path '*bin/arm-none-eabi-gcc' -type f | head -1)
+          test -n "$gcc_path"
+          "$gcc_path" --version | head -1
+          ln -sfn "$(dirname "$(dirname "$gcc_path")")" build/arm-toolchain
+          hex=$(tools/arm-reference/build-mutable.sh rings "$PWD/build/mutable" "$PWD/build/arm-toolchain/" | tail -1)
+          ls -l "$hex"
+          echo "JSPICE_RINGS_HEX=$hex" >> "$GITHUB_ENV"
       - name: Chip support for the Pico (installs arduino-pico and its gcc as the app does, compiles a sketch)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 25
