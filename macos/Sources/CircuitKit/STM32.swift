@@ -1,21 +1,37 @@
 import CortexM4
 import Foundation
 
-/// An STM32F405 (the chip of Mutable Instruments' Rings, Clouds, Elements, Warps and Marbles) running a flash image:
-/// the Cortex-M4 core and the chip's peripherals in C (Sources/CortexM4), its 49 I/O pins on the circuit (PA0–PA15,
-/// PB0–PB15, PC0–PC15, PD2), USART1 on the serial monitor, and its I²S ports' frames handed to the codec wired to them.
+/// An STM32 running a flash image: the Cortex-M4 core and the chip's peripherals in C (Sources/CortexM4), its I/O pins
+/// on the circuit, a USART on the serial monitor, and its I²S ports' frames handed to the codec or DAC wired to them.
 /// A firmware built for its bootloader's place (Mutable's start at 0x08008000) runs from there when nothing is at the
 /// start of flash.
-public final class STM32F405: Microcontroller {
+///
+/// - The STM32F405 (Mutable Instruments' Rings, Clouds, Elements, Warps and Marbles): 49 pins (PA0–PA15, PB0–PB15,
+///   PC0–PC15, PD2), USART1 on the serial monitor.
+/// - The STM32F373 (Plaits, Stages, Tides 2): 53 pins (PA0–PA15, PB0–PB15, PC0–PC15, PD8, PE8, PE9, PF6, PF7), with
+///   its sigma-delta ADCs' inputs among them; USART3 (Mutable's debug port) on the serial monitor.
+public final class STM32Microcontroller: Microcontroller {
     /// The flash image's address: a firmware file's addresses are taken from here
     public static let flashStart = 0x0800_0000
-    public static let flashSize = 0x10_0000
 
-    /// The pins' names, in the order of the part's terminals: "pa0" ... "pc15", "pd2"
-    public static let pinNames: [String] = (0..<Int(stm32_pin_count(STM32_F405))).map { index in
-        let port = stm32_pin_port(STM32_F405, Int32(index)), pin = stm32_pin_number(STM32_F405, Int32(index))
-        return "p" + String(UnicodeScalar(UInt8(97 + port))) + String(pin)
+    /// The flash's size
+    public static func flashSize(_ model: STM32Model) -> Int { model == STM32_F373 ? 0x4_0000 : 0x10_0000 }
+
+    /// The pins' names, in the order of the part's terminals: "pa0" ... "pc15", then the model's others
+    public static func pinNames(_ model: STM32Model) -> [String] {
+        model == STM32_F373 ? f373Pins : f405Pins
     }
+    private static let f405Pins = names(STM32_F405)
+    private static let f373Pins = names(STM32_F373)
+    private static func names(_ model: STM32Model) -> [String] {
+        (0..<Int(stm32_pin_count(model))).map { index in
+            let port = stm32_pin_port(model, Int32(index)), pin = stm32_pin_number(model, Int32(index))
+            return "p" + String(UnicodeScalar(UInt8(97 + port))) + String(pin)
+        }
+    }
+
+    /// The USART the serial monitor shows
+    static func serialUSART(_ model: STM32Model) -> Int32 { model == STM32_F373 ? 3 : 1 }
 
     /// An I²S port's partner (a codec): given each frame the chip sends, it gives back the one the chip receives.
     /// Samples are left-justified in 32 bits.
@@ -46,14 +62,16 @@ public final class STM32F405: Microcontroller {
         var onEvent: ((PinEvent) -> Void)?
         var runStart: UInt64 = 0
         var frames: FrameExchange?
+        var serialUSART: Int32 = 1
         var i2c: I2CTarget?
         var watched: [Int] = []
 
-        init(firmware: [UInt8]) {
-            chip = stm32_create(8e6)!
+        init(model: STM32Model, firmware: [UInt8]) {
+            chip = stm32_create_model(model, 8e6)!
             let flash = stm32_flash(chip)!
-            let offset = STM32F405.placement(of: firmware)
-            let count = min(firmware.count, STM32F405.flashSize - offset)
+            let size = STM32Microcontroller.flashSize(model)
+            let offset = STM32Microcontroller.placement(of: firmware, flashSize: size)
+            let count = min(firmware.count, size - offset)
             firmware.withUnsafeBufferPointer { bytes in
                 if let base = bytes.baseAddress { (flash + offset).update(from: base, count: count) }
             }
@@ -86,9 +104,10 @@ public final class STM32F405: Microcontroller {
                 inLeft?.pointee = l
                 inRight?.pointee = r
             }
+            serialUSART = STM32Microcontroller.serialUSART(model)
             devices.usart_send = { context, usart, byte in
                 let system = Unmanaged<System>.fromOpaque(context!).takeUnretainedValue()
-                if usart == 1 { system.outbox.append(byte) }
+                if usart == system.serialUSART { system.outbox.append(byte) }
             }
             stm32_set_devices(chip, &devices)
             stm32_reset(chip)
@@ -114,7 +133,7 @@ public final class STM32F405: Microcontroller {
     /// Where in flash a raw image goes: at its start, unless it is an application linked to run behind a bootloader
     /// (Mutable Instruments' at 0x08008000), whose vectors then all point within it placed there. A HEX file's image
     /// is placed by its addresses already, and starts at the flash's start.
-    static func placement(of image: [UInt8]) -> Int {
+    static func placement(of image: [UInt8], flashSize: Int = 0x10_0000) -> Int {
         guard image.count >= 64 else { return 0 }
         func word(_ k: Int) -> Int {
             Int(image[4 * k]) | Int(image[4 * k + 1]) << 8 | Int(image[4 * k + 2]) << 16 | Int(image[4 * k + 3]) << 24
@@ -129,6 +148,8 @@ public final class STM32F405: Microcontroller {
         return 0
     }
 
+    /// Which chip it is
+    public let model: STM32Model
     private let firmware: [UInt8]
     private var system: System
     private var shownStates: [PinState]
@@ -136,20 +157,23 @@ public final class STM32F405: Microcontroller {
     private var serial: [UInt8] = []
     private var stateCodes: [UInt8]
 
-    public init(firmware: [UInt8]) {
+    public init(model: STM32Model = STM32_F405, firmware: [UInt8]) {
+        self.model = model
         self.firmware = firmware
-        system = System(firmware: firmware)
-        shownStates = [PinState](repeating: .input(pullUp: false), count: STM32F405.pinNames.count)
-        stateCodes = [UInt8](repeating: 0, count: STM32F405.pinNames.count)
-        pinVoltages = [Double](repeating: 0, count: STM32F405.pinNames.count)
+        system = System(model: model, firmware: firmware)
+        let count = STM32Microcontroller.pinNames(model).count
+        shownStates = [PinState](repeating: .input(pullUp: false), count: count)
+        stateCodes = [UInt8](repeating: 0, count: count)
+        pinVoltages = [Double](repeating: 0, count: count)
         publish()
     }
 
     /// The chip in C (for tests)
     var chip: OpaquePointer { system.chip }
 
-    public var pinCount: Int { STM32F405.pinNames.count }
-    /// The core's clock as the firmware has set it up: 16 MHz from reset, 168 MHz once it has started its PLL
+    public var pinCount: Int { pinVoltages.count }
+    /// The core's clock as the firmware has set it up: the F405's 16 MHz from reset (168 MHz once it has started its
+    /// PLL), the F373's 8 MHz (72 MHz)
     public var clock: Double { stm32_hclk(system.chip) }
     public var cycles: Int { shownCycles }
     public var supply = 3.3
@@ -160,7 +184,7 @@ public final class STM32F405: Microcontroller {
         get { [] }
         set {
             newValue.withUnsafeBufferPointer { bytes in
-                stm32_usart_input(system.chip, 1, bytes.baseAddress, Int32(bytes.count))
+                stm32_usart_input(system.chip, system.serialUSART, bytes.baseAddress, Int32(bytes.count))
             }
         }
     }
@@ -227,7 +251,7 @@ public final class STM32F405: Microcontroller {
     public func reset() {
         let voltages = pinVoltages, frames = system.frames, i2c = system.i2c, watched = system.watched
         let onEvent = system.onEvent
-        system = System(firmware: firmware)
+        system = System(model: model, firmware: firmware)
         system.frames = frames
         system.i2c = i2c
         system.onEvent = onEvent
@@ -239,7 +263,7 @@ public final class STM32F405: Microcontroller {
 
     /// Takes on the other STM32's chip itself, not a copy of it: the two then share it (as the Pico does)
     public func adopt(_ other: Microcontroller) {
-        guard let other = other as? STM32F405, other !== self else { return }
+        guard let other = other as? STM32Microcontroller, other !== self, other.model == model else { return }
         system = other.system
         shownStates = other.shownStates
         shownCycles = other.shownCycles

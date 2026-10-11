@@ -1,4 +1,5 @@
 @testable import CircuitKit
+import CortexM4
 import XCTest
 
 /// The STM32F405 as a microcontroller part runs it: tools/arm-reference/stm32test/stm32test.c, a firmware written
@@ -11,7 +12,7 @@ final class STM32Tests: XCTestCase {
     }
 
     /// Runs the chip for `seconds` of its time, a step's cycles at a time as the simulator does
-    func run(_ chip: STM32F405, for seconds: Double) {
+    func run(_ chip: STM32Microcontroller, for seconds: Double) {
         var left = seconds
         while left > 0 {
             let step = min(left, 1e-3)
@@ -21,11 +22,13 @@ final class STM32Tests: XCTestCase {
     }
 
     func testTheTestFirmwareRuns() throws {
-        let chip = STM32F405(firmware: try firmware())
+        let chip = STM32Microcontroller(firmware: try firmware())
         XCTAssertEqual(chip.pinCount, 49)
-        XCTAssertEqual(STM32F405.pinNames.first, "pa0")
-        XCTAssertEqual(STM32F405.pinNames[45], "pc13")
-        XCTAssertEqual(STM32F405.pinNames.last, "pd2")
+        XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F405).first, "pa0")
+        XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F405)[45], "pc13")
+        XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F405).last, "pd2")
+        XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F373).count, 53)
+        XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F373).suffix(5), ["pd8", "pe8", "pe9", "pf6", "pf7"])
 
         // PA0 at half the reference, PC13 high
         var volts = [Double](repeating: 0, count: chip.pinCount)
@@ -46,9 +49,9 @@ final class STM32Tests: XCTestCase {
         }
         var written: [UInt8] = []
         var addressed: [UInt8] = []
-        chip.i2cTarget = STM32F405.I2CTarget(start: { _, address, _ in addressed.append(address); return address == 0x1A },
-                                             write: { _, byte in written.append(byte); return true },
-                                             read: { _, _ in 0xFF }, stop: { _ in })
+        chip.i2cTarget = STM32Microcontroller.I2CTarget(start: { _, address, _ in addressed.append(address); return address == 0x1A },
+                                                        write: { _, byte in written.append(byte); return true },
+                                                        read: { _, _ in 0xFF }, stop: { _ in })
 
         run(chip, for: 0.25)
         XCTAssertEqual(chip.clock, 168e6, "the firmware has started the PLL")
@@ -208,8 +211,61 @@ final class STM32Tests: XCTestCase {
         XCTAssertEqual(strongest, 380, accuracy: 10)
     }
 
+    /// Mutable Instruments' Plaits from its own firmware (GPL-3.0: built by CI from Mutable's repository, not kept here)
+    /// on the STM32F373 part, with its PCM5100 on I2S2 (BCK on PA8, LRCK on PA11, data on PA10): its pots at
+    /// mid-scale, its buttons (PB6, PB7) up, V/OCT (PB14) where 0 V puts it, and the inputs an unpatched jack normals to
+    /// its probe (PA9) following the probe inverted, as its input stages invert it: FM (PE9), TIMBRE (PB2), MORPH (PB15),
+    /// TRIGGER (PB0) and LEVEL (PE8). Unpatched, it drones on its first model at middle C (at the chip's I2S rate, 72
+    /// MHz over 47 × 32, 47 872 frames a second: 260.9 Hz).
+    func testMutableInstrumentsPlaitsPlaysMiddleC() throws {
+        guard let path = ProcessInfo.processInfo.environment["JSPICE_PLAITS_HEX"] else {
+            throw XCTSkip("JSPICE_PLAITS_HEX is not set: CI builds Plaits' firmware for this test")
+        }
+        var chip = NetlistPart(kind: .stm32f373, name: "U1",
+                               connections: ["pa8": "bck", "pa10": "din", "pa11": "lrck", "pa9": "probe",
+                                             "pe9": "normal", "pb2": "normal", "pb15": "normal", "pb0": "normal", "pe8": "normal",
+                                             "pb6": "high", "pb7": "high", "pb14": "voct", "pb1": "mid", "pd8": "mid",
+                                             "pa0": "mid", "pa1": "mid", "pa2": "mid", "pa3": "mid", "pa4": "mid", "pa5": "mid",
+                                             "pa6": "mid"])
+        chip.firmware = try FirmwareFile.decode(try Data(contentsOf: URL(fileURLWithPath: path)))
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .i2sDac, name: "U2", connections: ["bck": "bck", "din": "din", "lrck": "lrck", "outL": "out", "outR": "aux"]),
+            NetlistPart(kind: .schmittInverter, name: "U3", params: ["supply": 3.3], connections: ["in": "probe", "out": "normal"]),
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 1.65], connections: ["plus": "mid", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "V2", params: ["voltage": 3.3], connections: ["plus": "high", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "V3", params: ["voltage": 2.36], connections: ["plus": "voct", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "OUT", connections: ["plus": "out", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        let probe = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "OUT" })
+        var out: [Double] = []
+        while simulator.time < 0.6 {
+            simulator.step()
+            XCTAssertFalse(simulator.isFailed, simulator.problems.joined(separator: " "))
+            if simulator.isFailed { break }
+            if simulator.time > 0.35 { out.append(simulator.voltageAcross(probe)) }
+        }
+        let mean = out.reduce(0, +) / Double(max(out.count, 1))
+        let ac = out.map { $0 - mean }
+        let rms = (ac.map { $0 * $0 }.reduce(0, +) / Double(max(ac.count, 1))).squareRoot()
+        XCTAssertGreaterThan(rms, 0.05, "Plaits sounds")
+        func amplitude(_ f: Double) -> Double {
+            var (re, im) = (0.0, 0.0)
+            for (k, x) in ac.enumerated() {
+                let phase = 2 * Double.pi * f * Double(k) / 48000
+                re += x * cos(phase)
+                im += x * sin(phase)
+            }
+            return (re * re + im * im).squareRoot()
+        }
+        let strongest = stride(from: 150.0, through: 400, by: 2).max { amplitude($0) < amplitude($1) } ?? 0
+        XCTAssertEqual(strongest, 261, accuracy: 4)
+    }
+
     func testResetStartsOver() throws {
-        let chip = STM32F405(firmware: try firmware())
+        let chip = STM32Microcontroller(firmware: try firmware())
         run(chip, for: 0.05)
         XCTAssertTrue(String(decoding: chip.serialOutput, as: UTF8.self).hasPrefix("boot\n"))
         chip.reset()

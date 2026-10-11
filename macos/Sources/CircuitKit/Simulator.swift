@@ -336,8 +336,8 @@ public final class Simulator {
     /// the bus's SCL pin): its frames go to them and theirs come back, its writes to their control port are answered
     private var codecLinks: [[(port: Int, codec: Int)]] = []
     private var codecBuses: [[(bus: Int, codec: Int)]] = []
-    private var codecExchanges: [STM32F405.FrameExchange?] = []
-    private var codecTargets: [STM32F405.I2CTarget?] = []
+    private var codecExchanges: [STM32Microcontroller.FrameExchange?] = []
+    private var codecTargets: [STM32Microcontroller.I2CTarget?] = []
     /// The pin events of a step, from every chip, in the order they happened
     private var stepPinEvents: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
@@ -988,7 +988,7 @@ public final class Simulator {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
-                 .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .logicGate, .flipFlop, .decadeCounter,
+                 .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .logicGate, .flipFlop, .decadeCounter,
                  .binaryCounter, .shiftRegister, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .effectsProcessor: return true
             default: return false
             }
@@ -3005,7 +3005,7 @@ public final class Simulator {
             case .timer555, .analogMux, .analogSelector:
                 let own = unknowns(i)
                 for a in own { for b in own { pattern[a * m + b] = true } }
-            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
                 for a in unknowns(i) { pattern[a * m + a] = true }
             default:
                 break
@@ -3167,7 +3167,7 @@ public final class Simulator {
                 if let channel = Logic.channel(kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
                     stampConductance(matrix, m, nodes[channel], common, constants[i].onConductance)
                 }
-            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
                 // each output pin drives towards the supply or ground through its resistance; a pull-up is a resistor
                 // to the supply, a pull-down one to ground; other inputs draw nothing
                 guard let states = chipPinStates[i] else { continue }
@@ -3344,7 +3344,7 @@ public final class Simulator {
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(constants[i].value))) where high {
                     stampCurrent(r, 0, nodes[k], constants[i].supply * constants[i].outputConductance)
                 }
-            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
                 guard let states = chipPinStates[i] else { continue }
                 for (pin, state) in states.enumerated() where pin < nodes.count {
                     switch state {
@@ -3633,7 +3633,7 @@ public final class Simulator {
             c.threshold = p("threshold")
             c.beta = max(p("beta"), 1e-9)
             c.value = max(p("lambda"), 0)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
             c.supply = min(max(p("supply"), 0.5), 6)
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
             c.onConductance = 1 / max(p("pullUp"), 1)
@@ -5809,7 +5809,7 @@ public final class Simulator {
             // the bus devices wired to it follow its pins as it runs, and answer within the run
             if i < busHandlers.count, let handler = busHandlers[i] { chip.onPinEvent = handler.call }
             // the codecs wired to an STM32 exchange frames with it as it runs
-            let stm32 = i < codecExchanges.count && (codecExchanges[i] != nil || codecTargets[i] != nil) ? chip as? STM32F405 : nil
+            let stm32 = i < codecExchanges.count && (codecExchanges[i] != nil || codecTargets[i] != nil) ? chip as? STM32Microcontroller : nil
             if let stm32 {
                 stm32.frameExchange = codecExchanges[i]
                 stm32.i2cTarget = codecTargets[i]
@@ -5894,7 +5894,8 @@ public final class Simulator {
         codecBuses = Array(repeating: [], count: kinds.count)
         codecExchanges = Array(repeating: nil, count: kinds.count)
         codecTargets = Array(repeating: nil, count: kinds.count)
-        for i in chipIndices where kinds[i] == .stm32f405 && i < topology.elementNodes.count {
+        for i in chipIndices where (kinds[i] == .stm32f405 || kinds[i] == .stm32f373) && i < topology.elementNodes.count {
+            let f373 = kinds[i] == .stm32f373
             let chipNodes = topology.elementNodes[i]
             for j in kinds.indices where (kinds[j] == .codec || kinds[j] == .i2sDac) && j < topology.elementNodes.count {
                 let nodes = topology.elementNodes[j]
@@ -5902,13 +5903,14 @@ public final class Simulator {
                     terminal < nodes.count && nodes[terminal] > 0
                         && pins.contains { $0 < chipNodes.count && chipNodes[$0] == nodes[terminal] }
                 }
-                // (pins by index: PA0-PA15 0-15, PB0-PB15 16-31, PC0-PC15 32-47) I2S2's CK on PB13 or PB10, I2S3's on
-                // PC10 or PB3, at a codec's BCLK or a PCM5102's BCK; I2C1's SCL on PB6 or PB8, I2C2's on PB10, I2C3's
-                // on PA8, at a codec's SCLK
+                // (pins by index: PA0-PA15 0-15, PB0-PB15 16-31, PC0-PC15 32-47, then the F373's PD8 48) I2S2's CK on
+                // PB13 or PB10 (the F373's on PA8, PB8, PB10 or PD8), I2S3's on PC10 or PB3 (or the F373's PA1), at a
+                // codec's BCLK or a PCM5102's BCK; I2C1's SCL on PB6 or PB8, I2C2's on PB10, I2C3's on PA8, at a
+                // codec's SCLK (the F405's: the F373's I2C is not run)
                 let clock = kinds[j] == .codec ? 1 : 0
-                if wired(clock, [29, 26]) { codecLinks[i].append((2, j)) }
-                if wired(clock, [42, 19]) { codecLinks[i].append((3, j)) }
-                guard kinds[j] == .codec else { continue }
+                if wired(clock, f373 ? [8, 24, 26, 48] : [29, 26]) { codecLinks[i].append((2, j)) }
+                if wired(clock, f373 ? [42, 19, 1] : [42, 19]) { codecLinks[i].append((3, j)) }
+                guard kinds[j] == .codec, !f373 else { continue }
                 if wired(6, [22, 24]) { codecBuses[i].append((1, j)) }
                 if wired(6, [26]) { codecBuses[i].append((2, j)) }
                 if wired(6, [8]) { codecBuses[i].append((3, j)) }
@@ -5918,7 +5920,7 @@ public final class Simulator {
                 codecExchanges[i] = { [unowned(unsafe) self] port, left, right in self.codecFrame(i, port, left, right) }
             }
             if !codecBuses[i].isEmpty {
-                codecTargets[i] = STM32F405.I2CTarget(
+                codecTargets[i] = STM32Microcontroller.I2CTarget(
                     start: { [unowned(unsafe) self] bus, address, _ in
                         // a WM8731 at 0x1A (CSB low) or 0x1B
                         (address == 0x1A || address == 0x1B) && self.codecBuses[i].contains { $0.bus == bus }
@@ -6455,7 +6457,7 @@ public final class Simulator {
             flows[channel] = -current
             flows[nodes.count - 1] = current
             return (current, flows)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
             let c = constants[i]
             var flows = [Double](repeating: 0, count: nodes.count)
             var total = 0.0

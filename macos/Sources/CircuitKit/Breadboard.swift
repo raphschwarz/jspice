@@ -987,6 +987,7 @@ public enum Breadboard {
         case .dcVoltage: return "Power supply, \(SI.format(part.params["voltage"] ?? 0, unit: "V"))"
         case .atmega328p, .atmega2560, .rp2040: return (part.kind.board?.title ?? "Board") + ", wired by jumper leads"
         case .stm32f405: return "STM32F405 on an LQFP64 breakout board (with its 8 MHz crystal), wired by jumper leads, on 3.3 V"
+        case .stm32f373: return "STM32F373 on an LQFP64 breakout board (with its 8 MHz crystal), wired by jumper leads, on 3.3 V"
         case .triode, .pentode, .transformer: return "\(part.kind.displayName): not for a breadboard (high voltage), on a turret board or chassis"
         case .microphone: return "Microphone, on an XLR lead"
         case .electretMic: return "Electret capsule, on its two leads"

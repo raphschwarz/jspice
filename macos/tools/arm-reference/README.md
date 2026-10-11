@@ -21,7 +21,7 @@ and run here as it is in the app:
   Q15 mixing, block copies, under a SysTick interrupt) and a host that runs it on the core and prints its speed:
   `bench/build.sh` builds both.
 
-- `stm32.py`: the STM32F405 model (`Sources/CortexM4/stm32.c`) with stand-ins for a module's board: a WM8731 on
+- `stm32.py`: the STM32 model (the F405 by default) (`Sources/CortexM4/stm32.c`) with stand-ins for a module's board: a WM8731 on
   I2C and I2S (its register writes kept, its audio written to a WAV file, its input a sine or following a pin, as an
   unpatched input normalled to a module's probe), SPI and USART logs, pins held and voltages for the ADCs.
 - `stm32test/`: a firmware of ours for the STM32 model, register by register (the PLL, SysTick, GPIO, USART1 both
@@ -41,7 +41,10 @@ python3 stm32.py $hex 2 --trigger A2 --every 0.5 --normal C8 --all-volts 1.65 --
 
 Mutable's F405 modules (Rings, Clouds, Elements, Warps, Marbles) boot and run on the model as they are built: Rings,
 strummed, plays its resonator into the codec at 48 kHz, Clouds and Elements run at 32 kHz, Warps at 96 kHz, and
-Marbles streams its quad DAC's words over I2S3.
+Marbles streams its quad DAC's words over I2S3. On the F373 model (`stm32_create_model(STM32_F373, …)`), Plaits
+drones at middle C into its PCM5100 at the 47 872 Hz its I2S divider gives at 72 MHz, once its buttons are up and the
+inputs its jacks normal to its probe (PA9) follow the probe inverted; held still, they read as patched, and its LPG
+stays shut with no trigger.
 
 Unicorn (QEMU) quirks the harness works around: code rewritten in place needs QEMU's translation dropped
 (`ctl_remove_cache`); after a fault it keeps the exception pending, so a fresh instance is made; it runs an IT block
