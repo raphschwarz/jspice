@@ -483,16 +483,31 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
           + "\(most) iterations:")
     for line in kept.prefix(300) { print(line) }
     if kept.count > 300 { print("  … \(kept.count - 300) lines more") }
-    // and the heaviest of the whole run, if later (the run again, traced only there)
-    guard heaviestStep >= 144 else { return }
-    for step in 144...heaviestStep where !traced.isFailed {
-        lines.removeAll(keepingCapacity: true)
-        if step == heaviestStep { traced.trace = { lines.append($0) } } else { traced.trace = nil }
-        traced.step()
+    // and, the run again, the heaviest of the whole run if later, and the steps about the crossings in its last whole
+    // cycle (where what the solver has learnt from the cycles before shows)
+    let lastCycle = (done / 48 - 1) * 48
+    var wanted: [Int: String] = [:]
+    if heaviestStep >= 144 { wanted[heaviestStep] = "the heaviest step of the run" }
+    if lastCycle >= 144 {
+        for place in [0, 1, 2, 24, 25, 47] where wanted[lastCycle + place] == nil {
+            wanted[lastCycle + place] = "a step of the last whole cycle"
+        }
     }
-    print("\(part): the heaviest step of the run, step \(heaviestStep), as traced again:")
-    for line in lines.prefix(400) { print(line) }
-    if lines.count > 400 { print("  … \(lines.count - 400) lines more") }
+    guard let last = wanted.keys.max() else { return }
+    var traces: [Int: [String]] = [:]
+    for step in 144...last where !traced.isFailed {
+        lines.removeAll(keepingCapacity: true)
+        if wanted[step] != nil { traced.trace = { lines.append($0) } } else { traced.trace = nil }
+        let before = traced.newtonIterations
+        traced.step()
+        if wanted[step] != nil { traces[step] = ["(\(traced.newtonIterations - before) iterations)"] + lines }
+    }
+    for step in traces.keys.sorted() {
+        print("\(part): \(wanted[step] ?? ""), step \(step) (ending at \((step + 1) % 48 * 15 / 2)°), as traced again:")
+        let lines = traces[step] ?? []
+        for line in lines.prefix(150) { print(line) }
+        if lines.count > 150 { print("  … \(lines.count - 150) lines more") }
+    }
 }
 
 /// Holds what a background task produced, for the main code waiting on it
