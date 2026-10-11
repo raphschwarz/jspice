@@ -3927,8 +3927,12 @@ public final class Simulator {
 
     /// Whether a transistor's slots (see `bipolarSlots`) serve the present plan, working them out from the slot map if
     /// they are for another: those it stamps, in `stampBipolar`'s order
-    private func bipolarSlotsFit(_ i: Int, _ g: GummelPoon, _ n: BipolarNodes, _ m: Int) -> Bool {
-        if bipolarSlotsSerial[i] == planSerial { return bipolarSlotsFit[i] }
+    @inline(__always) private func bipolarSlotsFit(_ i: Int, _ g: GummelPoon, _ n: BipolarNodes, _ m: Int) -> Bool {
+        bipolarSlotsSerial[i] == planSerial ? bipolarSlotsFit[i] : findBipolarSlots(i, g, n, m)
+    }
+
+    /// `bipolarSlotsFit` for a transistor whose slots are for another plan: worked out afresh
+    @inline(never) private func findBipolarSlots(_ i: Int, _ g: GummelPoon, _ n: BipolarNodes, _ m: Int) -> Bool {
         bipolarSlotsSerial[i] = planSerial
         var fit = true
         // (by node: 0 is ground)

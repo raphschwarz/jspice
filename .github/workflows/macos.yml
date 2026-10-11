@@ -101,6 +101,9 @@ jobs:
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile-ring.txt | head -45
           python3 scripts/profile-callers.py build/profile-ring.txt 30 || true
+          # its transistors' stamps, instruction by instruction: where their own samples fall
+          python3 scripts/hot-instructions.py build/profile-ring.txt Simulator.stampBipolar 10 build/hot-ring.lldb || true
+          lldb --batch -s build/hot-ring.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -130 || true
           # and for an LED and its resistor, the smallest nonlinear circuit: what every step and iteration costs whatever
           # the circuit
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 led > /dev/null &
