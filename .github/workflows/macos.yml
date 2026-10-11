@@ -143,6 +143,14 @@ jobs:
           # the Cortex-M0+'s instruction loop (in a stretch's run), instruction by instruction: where its own samples fall
           python3 scripts/hot-instructions.py build/profile-pico.txt CortexM0.runStretch 12 build/hot-pico.lldb || true
           lldb --batch -s build/hot-pico.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -160 || true
+          # the same with Instruments' Time Profiler, which samples the instruction itself (sample's report can put a
+          # function's own samples at the return address of the last call it made); given a minute at most
+          perl -e 'alarm 90; exec @ARGV' xcrun xctrace record --template 'Time Profiler' --time-limit 4s --output build/pico.trace \
+            --launch -- ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-knob > build/xctrace.log 2>&1 || tail -5 build/xctrace.log
+          perl -e 'alarm 90; exec @ARGV' xcrun xctrace export --input build/pico.trace \
+            --xpath '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]' > build/pico-time.xml 2> build/xctrace-export.log || tail -5 build/xctrace-export.log
+          python3 scripts/xctrace-hot.py build/pico-time.xml CortexM0.runStretch 16 build/hot-pico-tp.lldb || true
+          lldb --batch -s build/hot-pico-tp.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -200 || true
           # and for the Pico driving an I2S DAC from PIO
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-pcm5102 > /dev/null &
           sleep 1
