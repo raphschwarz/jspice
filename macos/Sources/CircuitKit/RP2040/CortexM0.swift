@@ -124,7 +124,14 @@ final class CortexM0 {
         var ran = 0
         while true {
             repeat {
-                let cycles = inlined ? executeInline(&pc) : executeCalled(&pc)
+                let cycles: Int
+                if inlined {
+                    cycles = executeInline(&pc)
+                } else {
+                    let called = executeCalled(pc)
+                    cycles = called.cycles
+                    pc = called.pc
+                }
                 // (an instruction that brought the clock up set `unclocked` to 0)
                 if clockedInStretch { ran = unclocked }
                 ran &+= cycles
@@ -779,7 +786,12 @@ final class CortexM0 {
 
     /// `executeInline` called, for a stretch whose interpreter is outside its loop (for comparing): the stretch counts
     /// its cycles, as the inlined one's
-    @inline(never) private func executeCalled(_ pc: inout UInt32) -> Int { executeInline(&pc) }
+    /// (the PC in and out by value: taken inout, the loop's would live in memory, its address passed)
+    @inline(never) private func executeCalled(_ pc: UInt32) -> (cycles: Int, pc: UInt32) {
+        var pc = pc
+        let cycles = executeInline(&pc)
+        return (cycles, pc)
+    }
 
     /// Whether a stretch has the interpreter inside its loop (off, calling `executeInstruction` for each instruction:
     /// for comparing). The interpreter keeps the most it holds in a frame of its own, set up and taken down at every
