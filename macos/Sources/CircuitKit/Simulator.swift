@@ -314,7 +314,7 @@ public final class Simulator {
     public private(set) var switchesFollowed = 0
     /// Whether they do (a test compares with stepping from the last solution)
     public static var followsPinSwitches = true
-    private var chipCycleCarry: [Int: Double] = [:]
+    private var chipCycleCarry: [Double] = []
     private var chipIndices: [Int] = []
     /// For each chip (by its index among the parts), for each of its pins, the logic parts' inputs wired to it (the part
     /// and the input's bit), empty where there are none: what the chip does on these pins is replayed into the parts as
@@ -852,7 +852,7 @@ public final class Simulator {
         // chips keep running through edits that leave their firmware alone
         var previousChips: [UUID: (firmware: Data?, chip: Microcontroller, carry: Double)] = [:]
         for (i, chip) in chips where i < flat.elements.count {
-            previousChips[flat.elements[i].id] = (flat.elements[i].firmware, chip, chipCycleCarry[i] ?? 0)
+            previousChips[flat.elements[i].id] = (flat.elements[i].firmware, chip, i < chipCycleCarry.count ? chipCycleCarry[i] : 0)
         }
         // node voltages by place, so an edit does not throw away the solution (a latch keeps its state, and a paused
         // circuit still shows its voltages)
@@ -941,7 +941,7 @@ public final class Simulator {
         switchSolutions = [:]
         (confirmRate, confirmRest) = (1, 0)
         (reuseRate, reuseRest) = (1, 0)
-        chipCycleCarry = [:]
+        chipCycleCarry = Array(repeating: 0, count: kinds.count)
         for i in chipIndices {
             let element = flat.elements[i]
             if let previous = previousChips[element.id], previous.firmware == element.firmware,
@@ -1216,7 +1216,7 @@ public final class Simulator {
                 if !Self.samePinSetup(states, chipPinStates[i]) { matrixIsCurrent = false }
                 chipPinStates[i] = states
             }
-            chipCycleCarry[i] = other.chipCycleCarry[i]
+            if i < chipCycleCarry.count && i < other.chipCycleCarry.count { chipCycleCarry[i] = other.chipCycleCarry[i] }
         }
         Self.adopt(&noiseState, other.noiseState)
         convergenceFailures = other.convergenceFailures
@@ -5552,7 +5552,8 @@ public final class Simulator {
     /// whether its pins changed between input and output (which changes the matrix; levels only change currents)
     private func runChips() {
         for i in chipIndices {
-            guard let chip = chips[i] else { continue }
+            // (by element in arrays: the dictionaries' hashing was a fortieth of an Arduino's step)
+            guard i < chipAt.count, i < chipCycleCarry.count, let chip = chipAt[i] else { continue }
             let nodes = topology.elementNodes[i]
             let reached = min(chip.pinCount, nodes.count)
             if chip.pinVoltages.count == chip.pinCount {
@@ -5565,7 +5566,7 @@ public final class Simulator {
                 for pin in 0..<reached { volts[pin] = voltage(nodes[pin]) }
                 chip.pinVoltages = volts
             }
-            let budget = timeStep * chip.clock + (chipCycleCarry[i] ?? 0)
+            let budget = timeStep * chip.clock + chipCycleCarry[i]
             let whole = max(Int(budget), 0)
             let start = chip.cycles
             // the bus devices wired to it follow its pins as it runs, and answer within the run
