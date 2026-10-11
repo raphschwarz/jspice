@@ -168,7 +168,8 @@ public enum SchematicCapture {
             // (a model card's other parameters left out: a drawing gives a part's name, not its card)
             let params = kind.params.filter { !$0.advanced }.map { spec in spec.unit.isEmpty ? spec.key : "\(spec.key) [\(spec.unit)]" }
             if !params.isEmpty { line += "; params \(params.joined(separator: ", "))" }
-            let models = kind.models.map(\.name)
+            // (a model's other names in brackets: a drawing may give any of them)
+            let models = kind.models.map { $0.aliases.isEmpty ? $0.name : "\($0.name) (\($0.aliases.joined(separator: ", ")))" }
             if !models.isEmpty { line += "; models \(models.joined(separator: ", "))" }
             return line
         }.joined(separator: "\n")
@@ -393,8 +394,8 @@ public enum SchematicCapture {
             if !name.isEmpty { part["name"] = name }
             let kind = ElementKind(rawValue: part["kind"] as? String ?? "")
             if let model = entry["model"] as? String, !model.isEmpty {
-                if let kind, kind.models.contains(where: { $0.name.lowercased() == model.lowercased() }) {
-                    part["model"] = model
+                if let kind, let found = kind.model(named: model) {
+                    part["model"] = found.name
                 } else {
                     notes.append("\(name): JSpice has no model \(model), so it behaves as a generic part")
                 }

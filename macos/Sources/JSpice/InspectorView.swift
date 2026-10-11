@@ -83,7 +83,7 @@ struct ElementInspector: View {
                         }
                     )) {
                         ForEach(element.kind.models, id: \.name) { model in
-                            Text(model.name).tag(model.name)
+                            Text(model.title).tag(model.name)
                         }
                         if element.model == nil {
                             Text("Custom").tag("")

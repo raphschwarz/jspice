@@ -195,7 +195,8 @@ public enum Breadboard {
             // split supplies of ± the swing and a bit, or for an op-amp swinging about a single supply's half (a pedal's
             // 4.5 V), that supply and ground
             let middle = p("midpoint")
-            let (v, low) = middle > 0.5 ? ((2 * middle).rounded(), 0.0) : (rails(p("limit")), -rails(p("limit")))
+            // (a single supply to a tenth of a volt: 9 V, 3.3 V)
+            let (v, low) = middle > 0.5 ? ((20 * middle).rounded() / 10, 0.0) : (rails(p("limit")), -rails(p("limit")))
             let negative: Supply = low == 0 ? .ground : .volts(low)
             switch model {
             case "LM741":
@@ -203,7 +204,7 @@ public enum Breadboard {
                                supplies: [(4, "V−", negative), (7, "V+", .volts(v))],
                                labels: [1: "NULL", 2: "−IN", 3: "+IN", 4: "V−", 5: "NULL", 6: "OUT", 7: "V+", 8: "NC"])
             case "LM358", "NE5532", "TL072", "OPA1612", "LM4562", "NJM4556", "JRC4558", "OPA2134", "LM833", "OPA1656", "OPA1642",
-                 "OPA1678":
+                 "OPA1678", "NJM2068", "OPA1652", "OPA2171", "MCP6002", "LMV358":
                 return dual(model!, plus: v, minus: low)
             case "TL074", "TL064":
                 return Package(title: model!, pins: 14,
@@ -953,8 +954,14 @@ public enum Breadboard {
         case .inductor:
             return (.inductor, SI.format(p("inductance"), unit: "H"), nil)
         case .diode:
+            if model == "BAT54" {
+                return (.diode, "BAT54", "Surface-mount (SOT-23): on a breadboard a BAT41 does the same; the band marks the cathode")
+            }
             return (.diode, model == "Generic silicon" || model == nil ? "1N4148" : model!, "The band marks the cathode")
         case .zener:
+            if let model, model.hasPrefix("LM4040") {
+                return (.zener, model, "A shunt reference in a TO-92: its cathode is the reference; take its legs from the datasheet's pinout")
+            }
             return (.zener, SI.trimmed(p("breakdown"), digits: 3) + " V Zener", "The band marks the cathode")
         case .led:
             let color = Int(Simulator.choice(p("color"), 0...4))

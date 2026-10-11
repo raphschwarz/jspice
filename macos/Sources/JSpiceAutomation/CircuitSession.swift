@@ -471,7 +471,7 @@ public final class CircuitSession {
     private static func parameters(kind: ElementKind, model: Any?, params: Any?) throws -> [String: Double] {
         var result: [String: Double] = [:]
         if let modelName = model as? String {
-            guard let model = kind.models.first(where: { $0.name.lowercased() == modelName.lowercased() }) else {
+            guard let model = kind.model(named: modelName) else {
                 let names = kind.models.map(\.name)
                 throw ToolError(names.isEmpty ? "\(kind.rawValue) has no models"
                                               : "\(kind.rawValue) has no model \(modelName); models: \(names.joined(separator: ", "))")
@@ -592,7 +592,9 @@ public final class CircuitSession {
             }
             var models: [[String: Any]] = []
             for model in kind.models {
-                models.append(["name": model.name, "summary": model.summary, "values": model.values])
+                var entry: [String: Any] = ["name": model.name, "summary": model.summary, "values": model.values]
+                if !model.aliases.isEmpty { entry["also"] = model.aliases }
+                models.append(entry)
             }
             let part: [String: Any] = [
                 "kind": kind.rawValue,

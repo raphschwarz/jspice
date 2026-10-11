@@ -916,7 +916,7 @@ public enum Examples {
 
     /// Parameter values of one of the part's models, by name
     public static func model(_ kind: ElementKind, _ name: String) -> [String: Double] {
-        kind.models.first { $0.name == name }?.values ?? [:]
+        kind.model(named: name)?.values ?? [:]
     }
 
     public static func example(_ id: String) -> Example? {

@@ -429,7 +429,13 @@ extension ElementKind {
 
     /// Words a search for this part should find: its name, category and the real parts it models
     public var searchTerms: [String] {
-        [displayName, category.rawValue] + models.map(\.name)
+        [displayName, category.rawValue] + models.flatMap { [$0.name] + $0.aliases }
+    }
+
+    /// The model with this name or one of its aliases, in any case
+    public func model(named name: String) -> PartModel? {
+        let name = name.lowercased()
+        return models.first { $0.name.lowercased() == name } ?? models.first { $0.aliases.contains { $0.lowercased() == name } }
     }
 
     /// Three-terminal transistors drawn with their control terminal at `a` and their channel at `b`
@@ -1113,6 +1119,12 @@ public struct PartModel: Sendable, Hashable {
     public let name: String
     public let summary: String
     public let values: [String: Double]
+    /// The same part under other names (another maker's, a newer grade, the quad of a dual; not a surface-mount
+    /// version of a part named for its leaded one): found by them as by its name, which is the one kept
+    public var aliases: [String] = []
+
+    /// The name with the others it goes by: "TL072 / TL082"
+    public var title: String { ([name] + aliases).joined(separator: " / ") }
 }
 
 extension ElementKind {
@@ -1211,7 +1223,7 @@ extension ElementKind {
                 PartModel(name: "Ideal", summary: "Very high gain and bandwidth, no slew limit",
                           values: ["gain": 1e6, "limit": 15, "slewRate": 0, "gbw": 1e9, "offset": 1e-6, "noise": 0]),
                 PartModel(name: "TL072", summary: "JFET input, the synth workhorse: 13 V/µs, 3 MHz",
-                          values: ["gain": 2e5, "limit": 13.5, "slewRate": 13, "gbw": 3e6, "offset": 1e-3, "noise": 18e-9]),
+                          values: ["gain": 2e5, "limit": 13.5, "slewRate": 13, "gbw": 3e6, "offset": 1e-3, "noise": 18e-9], aliases: ["TL082"]),
                 PartModel(name: "LM358", summary: "Low power, slow: 0.3 V/µs, 1 MHz",
                           values: ["gain": 1e5, "limit": 13.5, "slewRate": 0.3, "gbw": 1e6, "offset": 2e-3, "noise": 40e-9]),
                 PartModel(name: "NE5532", summary: "Low noise audio: 9 V/µs, 10 MHz",
@@ -1223,7 +1235,7 @@ extension ElementKind {
                 PartModel(name: "OPA1612", summary: "Very low noise and distortion: 1.1 nV/√Hz, 27 V/µs, 40 MHz (dual)",
                           values: ["gain": 3e6, "limit": 13.5, "slewRate": 27, "gbw": 40e6, "offset": 0.1e-3, "noise": 1.1e-9]),
                 PartModel(name: "LM4562", summary: "Audiophile dual: 2.7 nV/√Hz, 20 V/µs, 55 MHz",
-                          values: ["gain": 1e7, "limit": 13.5, "slewRate": 20, "gbw": 55e6, "offset": 0.1e-3, "noise": 2.7e-9]),
+                          values: ["gain": 1e7, "limit": 13.5, "slewRate": 20, "gbw": 55e6, "offset": 0.1e-3, "noise": 2.7e-9], aliases: ["LME49720"]),
                 PartModel(name: "NJM4556", summary: "Headphone driver dual: 70 mA out, 3 V/µs, 8 MHz",
                           values: ["gain": 1e5, "limit": 13, "slewRate": 3, "gbw": 8e6, "offset": 0.5e-3, "noise": 8e-9]),
                 PartModel(name: "TPA6120", summary: "Current-feedback headphone amp: 1300 V/µs, very wide band (SMD only)",
@@ -1235,7 +1247,7 @@ extension ElementKind {
                 PartModel(name: "LM3886", summary: "68 W Overture power amp on ±35 V (on a heat sink): 19 V/µs",
                           values: ["gain": 5e5, "limit": 32, "slewRate": 19, "gbw": 8e6, "offset": 1e-3, "noise": 2e-9]),
                 PartModel(name: "JRC4558", summary: "Dual, the Tube Screamer's chip: bipolar, 1.7 V/µs, 3 MHz, a warm early roll-off",
-                          values: ["gain": 1e5, "limit": 13, "slewRate": 1.7, "gbw": 3e6, "offset": 0.5e-3, "noise": 8e-9]),
+                          values: ["gain": 1e5, "limit": 13, "slewRate": 1.7, "gbw": 3e6, "offset": 0.5e-3, "noise": 8e-9], aliases: ["NJM4558", "RC4558"]),
                 PartModel(name: "LM308", summary: "Single, the ProCo RAT's chip: with 30 pF from pin 1 to 8 it slews at 0.3 V/µs, which is the RAT's grit",
                           values: ["gain": 3e5, "limit": 13, "slewRate": 0.3, "gbw": 1e6, "offset": 2e-3, "noise": 35e-9]),
                 PartModel(name: "CA3130", summary: "Single CMOS op-amp, rail to rail on a single supply up to 16 V: fuzzes and synth envelopes",
@@ -1243,7 +1255,7 @@ extension ElementKind {
                 PartModel(name: "CA3140", summary: "Single MOSFET-input op-amp: near-zero input current, 9 V/µs, 4.5 MHz",
                           values: ["gain": 1e5, "limit": 13, "slewRate": 9, "gbw": 4.5e6, "offset": 5e-3, "noise": 40e-9]),
                 PartModel(name: "TL074", summary: "Quad TL072: four JFET op-amps in one package, for filters and mixers",
-                          values: ["gain": 2e5, "limit": 13.5, "slewRate": 13, "gbw": 3e6, "offset": 3e-3, "noise": 18e-9]),
+                          values: ["gain": 2e5, "limit": 13.5, "slewRate": 13, "gbw": 3e6, "offset": 3e-3, "noise": 18e-9], aliases: ["TL084"]),
                 PartModel(name: "TL064", summary: "Low-power quad JFET op-amp: 0.2 mA each, 3.5 V/µs, 1 MHz",
                           values: ["gain": 6e3, "limit": 13.5, "slewRate": 3.5, "gbw": 1e6, "offset": 3e-3, "noise": 42e-9]),
                 PartModel(name: "OPA2134", summary: "Dual audio FET-input op-amp: 8 nV/√Hz, 20 V/µs, 8 MHz, very low distortion",
@@ -1253,9 +1265,23 @@ extension ElementKind {
                 PartModel(name: "OPA1656", summary: "CMOS audio dual, rail to rail out: 4.3 nV/√Hz, 24 V/µs, 53 MHz, very low distortion",
                           values: ["gain": 5e7, "limit": 14.75, "slewRate": 24, "gbw": 53e6, "offset": 0.5e-3, "noise": 4.3e-9]),
                 PartModel(name: "OPA1642", summary: "JFET-input audio dual: 5.1 nV/√Hz, 20 V/µs, 11 MHz",
-                          values: ["gain": 2e6, "limit": 14.65, "slewRate": 20, "gbw": 11e6, "offset": 1e-3, "noise": 5.1e-9]),
+                          values: ["gain": 2e6, "limit": 14.65, "slewRate": 20, "gbw": 11e6, "offset": 1e-3, "noise": 5.1e-9], aliases: ["OPA1641", "OPA1644"]),
                 PartModel(name: "OPA1678", summary: "Low-noise audio dual on 2 mA: 4.5 nV/√Hz, 9 V/µs, 16 MHz",
-                          values: ["gain": 5e5, "limit": 14.2, "slewRate": 9, "gbw": 16e6, "offset": 0.5e-3, "noise": 4.5e-9]),
+                          values: ["gain": 5e5, "limit": 14.2, "slewRate": 9, "gbw": 16e6, "offset": 0.5e-3, "noise": 4.5e-9], aliases: ["OPA1679"]),
+                PartModel(name: "NJM2068", summary: "Low-noise audio dual, pin for pin a quieter 4558: 6 V/µs, 27 MHz (4ms's modules use it throughout)",
+                          values: ["gain": 3e5, "limit": 13.5, "slewRate": 6, "gbw": 27e6, "offset": 0.3e-3, "noise": 3.3e-9]),
+                PartModel(name: "OPA1652", summary: "CMOS audio dual, rail to rail out: 4.5 nV/√Hz, 10 V/µs, 18 MHz (the OPA1654 is the quad)",
+                          values: ["gain": 1e6, "limit": 14.8, "slewRate": 10, "gbw": 18e6, "offset": 0.5e-3, "noise": 4.5e-9],
+                          aliases: ["OPA1654"]),
+                PartModel(name: "OPA2171", summary: "36 V dual, rail to rail out: 3 MHz, 1.5 V/µs, 0.25 mV; Mutable's modules buffer their CV outputs with it (the OPA4171 is the quad)",
+                          values: ["gain": 3e6, "limit": 14.85, "slewRate": 1.5, "gbw": 3e6, "offset": 0.25e-3, "noise": 14e-9],
+                          aliases: ["OPA171", "OPA4171"]),
+                PartModel(name: "MCP6002", summary: "Rail-to-rail CMOS dual for 1.8 to 6 V, here on 3.3 V (its midpoint 1.65 V): 1 MHz, 0.6 V/µs. Mutable's modules scale their CV inputs into the microcontroller's ADC with it, its output kept within the 3.3 V rails (the MCP6004 is the quad)",
+                          values: ["gain": 4e5, "limit": 1.625, "slewRate": 0.6, "gbw": 1e6, "offset": 1e-3, "noise": 28e-9, "midpoint": 1.65],
+                          aliases: ["MCP6001", "MCP6004"]),
+                PartModel(name: "LMV358", summary: "Low-voltage dual, rail to rail out, here on 3.3 V (its midpoint 1.65 V): 1 MHz, 1 V/µs (the LMV324 is the quad)",
+                          values: ["gain": 1e5, "limit": 1.6, "slewRate": 1, "gbw": 1e6, "offset": 1.7e-3, "noise": 39e-9, "midpoint": 1.65],
+                          aliases: ["LMV321", "LMV324"]),
             ]
         case .ota:
             return [
@@ -1347,7 +1373,7 @@ extension ElementKind {
         case .i2sDac:
             return [
                 PartModel(name: "PCM5102", summary: "Stereo audio DAC on I²S (the PCM5102A): 16 to 32 bits a sample, 2.1 V RMS at full scale about ground from its own negative supply; it makes its own clocks from BCK",
-                          values: ["upper": 0.7, "lower": 0.3, "outputResistance": 100]),
+                          values: ["upper": 0.7, "lower": 0.3, "outputResistance": 100], aliases: ["PCM5102A", "PCM5101", "PCM5100"]),
             ]
         case .unbufferedInverter:
             return [
@@ -1408,7 +1434,7 @@ extension ElementKind {
                 PartModel(name: "Generic silicon", summary: "An ideal silicon junction",
                           values: ["saturationCurrent": 1e-14, "emission": 1, "cj0": 1e-12, "tt": 0]),
                 PartModel(name: "1N4148", summary: "Small-signal switching diode: the usual clipping diode (the 1N914 is the same)",
-                          values: ["saturationCurrent": 2.52e-9, "emission": 1.752, "cj0": 4e-12, "tt": 20e-9]),
+                          values: ["saturationCurrent": 2.52e-9, "emission": 1.752, "cj0": 4e-12, "tt": 20e-9], aliases: ["1N914"]),
                 PartModel(name: "1N4001", summary: "Rectifier: slow to let go of its stored charge",
                           values: ["saturationCurrent": 14.1e-9, "emission": 1.984, "cj0": 25.9e-12, "tt": 5.7e-6]),
                 PartModel(name: "1N34A", summary: "Germanium: soft, low-voltage clipping for vintage fuzz",
@@ -1419,6 +1445,27 @@ extension ElementKind {
                           values: ["saturationCurrent": 1e-6, "emission": 1.0, "cj0": 110e-12, "tt": 0]),
                 PartModel(name: "OA90", summary: "Germanium point-contact: the softest, lowest clipping (vintage fuzz and ring modulators)",
                           values: ["saturationCurrent": 1e-6, "emission": 1.5, "cj0": 1e-12, "tt": 0]),
+                PartModel(name: "1N5819", summary: "Schottky rectifier, 40 V, 1 A: about 0.22 V at 1 mA, 0.5 V at 1 A; Eurorack modules' reverse-polarity protection",
+                          values: ["saturationCurrent": 3e-7, "emission": 1.03, "cj0": 100e-12, "tt": 0, "rs": 0.1, "bv": 40, "ibv": 1e-3]),
+                PartModel(name: "BAT54", summary: "Small Schottky, 30 V: about 0.29 V at 1 mA. The BAT54S is two in series (anode, middle, cathode): an input's middle pin clamped between the ADC's rails",
+                          values: ["saturationCurrent": 1e-7, "emission": 1.2, "cj0": 10e-12, "tt": 0, "rs": 2, "bv": 30, "ibv": 1e-4],
+                          aliases: ["BAT54S", "BAT54A", "BAT54C"]),
+            ]
+        case .zener:
+            // (a shunt reference: its voltage at 100 µA, its dynamic impedance as RS and its knee as a small breakdown
+            // emission, within about 10 mV from its least current to 15 mA)
+            func reference(_ name: String, _ volts: Double, _ summary: String, aliases: [String]) -> PartModel {
+                PartModel(name: name, summary: summary, values: [
+                    "breakdown": volts, "ibv": 100e-6, "nbv": 0.02, "rs": 0.3, "cj0": 1e-12, "saturationCurrent": 1e-14, "emission": 1, "tt": 0,
+                ], aliases: aliases)
+            }
+            return [
+                PartModel(name: "Generic 5.1 V", summary: "A plain Zener diode: 5.1 V at 5 mA",
+                          values: ["breakdown": 5.1, "ibv": 5e-3, "cj0": 1e-12, "saturationCurrent": 1e-14, "emission": 1, "tt": 0]),
+                reference("LM4040-2.5", 2.5, "Precision shunt reference: 2.500 V at 100 µA, within 10 mV from 45 µA to 15 mA; the ADC reference of Mutable's modules. Feed it through a resistor, its cathode the reference",
+                          aliases: ["LM4040A25", "LM4040-2.5V"]),
+                reference("LM4040-10", 10, "Precision shunt reference: 10.00 V at 100 µA, within 10 mV up to 15 mA; the top of Mutable's pots and offsets. Feed it through a resistor from +12 V",
+                          aliases: ["LM4040A100", "LM4040-10V"]),
             ]
         case .npn:
             return [
@@ -1503,7 +1550,7 @@ extension ElementKind {
         case .vca:
             return [
                 PartModel(name: "SSM2164", summary: "One cell of the quad exponential VCA: −33 mV per dB, unity gain at 0 V (the V2164 is its clone)",
-                          values: ["response": 0, "dbPerVolt": -30.3]),
+                          values: ["response": 0, "dbPerVolt": -30.3], aliases: ["V2164"]),
                 PartModel(name: "Linear", summary: "Gain in proportion to the control: unity at 5 V, silent at 0 V and below",
                           values: ["response": 1, "unity": 5]),
                 PartModel(name: "THAT2180", summary: "Blackmer VCA for compressors and faders: −6.1 mV per dB at its EC− control",
