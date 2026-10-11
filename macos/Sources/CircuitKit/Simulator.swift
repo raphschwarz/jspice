@@ -3828,8 +3828,12 @@ public final class Simulator {
             // (for the step's end to store, should this be the last iteration)
             g.keep(q, vbe: vbe, vbc: vbc)
             let k = Self.chargeSlots * i
-            func flow(_ slot: Int, _ charge: Double) -> Double {
-                (a0 * charge + a1 * junctionCharge[k + slot] + a2 * junctionChargePrevious[k + slot]) / h
+            // (the step's coefficients and the three slots' histories read once, rather than through the simulator
+            // at each of the three)
+            let (a0, a1, a2, h) = (self.a0, self.a1, self.a2, self.h)
+            let (now, previous) = (junctionCharge, junctionChargePrevious)
+            @inline(__always) func flow(_ slot: Int, _ charge: Double) -> Double {
+                (a0 * charge + a1 * now[k + slot] + a2 * previous[k + slot]) / h
             }
             let s = a0 / h
             // base-emitter: b' to e', moving with vbc too
