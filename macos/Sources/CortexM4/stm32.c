@@ -164,6 +164,7 @@ typedef struct {
     uint64_t done_at;           // SPI: when it is shifted; I2S: the next slot
     double slot_time;           // I2S: the next slot's cycle, exactly
     int slot;                   // I2S: the slot in the frame
+    bool starved;               // I2S: a slot went out with no data; the next is taken at a frame's start
     uint32_t out[4], in[4];     // I2S: the frame's halfwords out, and the ones coming in
 } Spi;
 
@@ -1197,12 +1198,18 @@ static void i2s_slot(STM32 *m, int i) {
     bool transmitter = ((p->i2scfgr >> 8) & 3) == 0 || ((p->i2scfgr >> 8) & 3) == 2;
     // the main block: transmit (or receive)
     if (transmitter) {
-        if (p->tx_full) {
+        // after an underrun, data goes out from a frame's start (each word's, in PCM mode), as a stream started
+        // after the clocks (a firmware enabling its DMA after I2S) does on the chip
+        bool pcm = ((p->i2scfgr >> 4) & 3) == 3;
+        bool frame_start = slot == 0 || (pcm && slot == slots / 2);
+        if (p->tx_full && (!p->starved || frame_start)) {
             p->out[slot] = p->tx;
             p->tx_full = false;
+            p->starved = false;
         } else {
             p->out[slot] = 0;
             p->sr |= 0x08;  // underrun
+            p->starved = true;
         }
         p->sr = (p->sr & ~4u) | (slot >= slots / 2 ? 4u : 0);
         if (p->cr2 & 2) pump(m, spi_tx_request(i));

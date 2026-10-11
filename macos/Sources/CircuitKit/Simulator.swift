@@ -338,6 +338,8 @@ public final class Simulator {
     private var codecBuses: [[(bus: Int, codec: Int)]] = []
     private var codecExchanges: [STM32Microcontroller.FrameExchange?] = []
     private var codecTargets: [STM32Microcontroller.I2CTarget?] = []
+    /// Each CV DAC's outputs' codes, then its input registers'
+    private var cvDacCodes: [[UInt16]] = []
     /// The pin events of a step, from every chip, in the order they happened
     private var stepPinEvents: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
@@ -961,6 +963,7 @@ public final class Simulator {
         Self.zeroed(&limitedVoltage3, count)
         digitalState = Array(repeating: false, count: count)
         logicStates = Array(repeating: LogicState(), count: count)
+        cvDacCodes = Array(repeating: [UInt16](repeating: 0, count: 16), count: count)
         moduleStates = Array(repeating: ModuleState(), count: count)
         noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
@@ -989,7 +992,7 @@ public final class Simulator {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter, .shiftRegister, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .effectsProcessor: return true
+                 .binaryCounter, .shiftRegister, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor: return true
             default: return false
             }
         }
@@ -1163,6 +1166,7 @@ public final class Simulator {
         // a Schmitt inverter's input starts low, so its output starts high; a 555 decides from its trigger
         digitalState[i] = element.kind == .schmittInverter
         logicStates[i] = LogicState()
+        if i < cvDacCodes.count { cvDacCodes[i] = [UInt16](repeating: 0, count: 16) }
         // a keyboard's pitch starts at the present note rather than gliding up from 0 V
         if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
         // each noise source has its own sequence, the same every run
@@ -3151,6 +3155,8 @@ public final class Simulator {
                 for k in [3, 4] where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
             case .codec:
                 for k in [8, 9] where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
+            case .cvDac:
+                for k in 3...10 where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
             case .i2cDac:
                 if nodes.count > 3 { stampConductance(matrix, m, nodes[3], 0, constants[i].outputConductance) }
                 // SDA pulled low while it acknowledges
@@ -3329,6 +3335,12 @@ public final class Simulator {
                 let c = constants[i]
                 stampCurrent(r, 0, nodes[8], Logic.codecOutput(Int32(bitPattern: logicStates[i].latch), c.supply, c.value) * c.outputConductance)
                 stampCurrent(r, 0, nodes[9], Logic.codecOutput(Int32(truncatingIfNeeded: logicStates[i].count), c.supply, c.value) * c.outputConductance)
+            case .cvDac:
+                guard i < cvDacCodes.count else { continue }
+                let c = constants[i]
+                for k in 0..<8 where 3 + k < nodes.count {
+                    stampCurrent(r, 0, nodes[3 + k], Double(cvDacCodes[i][k]) / 65536 * c.value * c.outputConductance)
+                }
             case .i2cDac:
                 guard nodes.count > 3 else { continue }
                 stampCurrent(r, 0, nodes[3], Logic.i2cDacOutput(logicStates[i].count, supply: constants[i].supply) * constants[i].outputConductance)
@@ -3624,6 +3636,11 @@ public final class Simulator {
             c.supply = max(p("supply"), 0.1)
             c.value = max(p("fullScale"), 0.01)
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
+        case .cvDac:
+            c.supply = max(p("supply"), 0.1)
+            c.value = max(p("fullScale"), 0.01)
+            c.outputConductance = 1 / max(p("outputResistance"), 0.1)
+            c.high = Self.choice(p("format"), 0...1)
         case .effectsProcessor:
             c.value = Self.choice(p("program"), 0...7)
             c.supply = max(p("supply"), 0.1)
@@ -5897,7 +5914,7 @@ public final class Simulator {
         for i in chipIndices where (kinds[i] == .stm32f405 || kinds[i] == .stm32f373) && i < topology.elementNodes.count {
             let f373 = kinds[i] == .stm32f373
             let chipNodes = topology.elementNodes[i]
-            for j in kinds.indices where (kinds[j] == .codec || kinds[j] == .i2sDac) && j < topology.elementNodes.count {
+            for j in kinds.indices where (kinds[j] == .codec || kinds[j] == .i2sDac || kinds[j] == .cvDac) && j < topology.elementNodes.count {
                 let nodes = topology.elementNodes[j]
                 func wired(_ terminal: Int, _ pins: [Int]) -> Bool {
                     terminal < nodes.count && nodes[terminal] > 0
@@ -5938,6 +5955,13 @@ public final class Simulator {
         var first = true
         for link in codecLinks[chip] where link.port == port {
             let j = link.codec
+            if kinds[j] == .cvDac {
+                // a DAC8568's SYNC is the frame's left half: a word each frame; a DAC8564's, each PCM word
+                let dac8564 = constants[j].high >= 1
+                Logic.cvDacWord(UInt32(bitPattern: left), dac8564: dac8564, codes: &cvDacCodes[j])
+                if dac8564 { Logic.cvDacWord(UInt32(bitPattern: right), dac8564: true, codes: &cvDacCodes[j]) }
+                continue
+            }
             logicStates[j].latch = UInt32(bitPattern: left)
             logicStates[j].count = Int(right)
             if first && kinds[j] == .codec {
@@ -6416,7 +6440,7 @@ public final class Simulator {
                 total += kind == .logicGate ? flows[k] : max(flows[k], 0)
             }
             return (total, flows)
-        case .dualDac, .i2sDac, .i2cDac, .codec:
+        case .dualDac, .i2sDac, .i2cDac, .codec, .cvDac:
             // into each analog output from its source behind the output resistance
             var flows = [Double](repeating: 0, count: nodes.count)
             let c = constants[i]
@@ -6430,6 +6454,8 @@ public final class Simulator {
             case .codec:
                 outputs = [(8, Logic.codecOutput(Int32(bitPattern: state.latch), c.supply, c.value)),
                            (9, Logic.codecOutput(Int32(truncatingIfNeeded: state.count), c.supply, c.value))]
+            case .cvDac:
+                outputs = (0..<8).map { (3 + $0, i < cvDacCodes.count ? Double(cvDacCodes[i][$0]) / 65536 * c.value : 0) }
             default:
                 outputs = [(3, Logic.i2cDacOutput(state.count, supply: c.supply))]
             }

@@ -264,6 +264,58 @@ final class STM32Tests: XCTestCase {
         XCTAssertEqual(strongest, 261, accuracy: 4)
     }
 
+    /// Mutable Instruments' Tides 2 from its own firmware (built by CI, not kept here) on the STM32F373 part, with its
+    /// DAC8564 on I2S2 (SCLK on PA8, DIN on PA10, SYNC on PA11: a 24-bit word in each 32-bit PCM word): its pots (PA0,
+    /// PA1, PA6) and CVs (PB0, PB14, PB15, PD8, PE8, PE9) at mid-scale, its buttons (PA2, PA12, PC13) up, and its gate
+    /// inputs (PB1, PB2) following its probe (PA9) inverted, as unpatched jacks normalled to it through their input
+    /// transistors. It loops as it starts (its looping mode, its audio range): output A swings across half the DAC's
+    /// range at 100 Hz.
+    func testMutableInstrumentsTides2Loops() throws {
+        guard let path = ProcessInfo.processInfo.environment["JSPICE_TIDES2_HEX"] else {
+            throw XCTSkip("JSPICE_TIDES2_HEX is not set: CI builds Tides 2's firmware for this test")
+        }
+        var chip = NetlistPart(kind: .stm32f373, name: "U1",
+                               connections: ["pa8": "sclk", "pa10": "din", "pa11": "sync", "pa9": "probe",
+                                             "pb1": "normal", "pb2": "normal", "pa2": "high", "pa12": "high", "pc13": "high",
+                                             "pa0": "mid", "pa1": "mid", "pa6": "mid", "pb0": "mid", "pb14": "mid",
+                                             "pb15": "mid", "pd8": "mid", "pe8": "mid", "pe9": "mid"])
+        chip.firmware = try FirmwareFile.decode(try Data(contentsOf: URL(fileURLWithPath: path)))
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .cvDac, name: "U2", params: ["fullScale": 2.5, "format": 1],
+                        connections: ["sclk": "sclk", "din": "din", "sync": "sync", "outA": "out"]),
+            NetlistPart(kind: .schmittInverter, name: "U3", params: ["supply": 3.3], connections: ["in": "probe", "out": "normal"]),
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 1.65], connections: ["plus": "mid", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "V2", params: ["voltage": 3.3], connections: ["plus": "high", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "OUT", connections: ["plus": "out", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        let probe = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "OUT" })
+        var out: [Double] = []
+        while simulator.time < 0.6 {
+            simulator.step()
+            XCTAssertFalse(simulator.isFailed, simulator.problems.joined(separator: " "))
+            if simulator.isFailed { break }
+            if simulator.time > 0.3 { out.append(simulator.voltageAcross(probe)) }
+        }
+        let swing = (out.max() ?? 0) - (out.min() ?? 0)
+        XCTAssertEqual(swing, 1.23, accuracy: 0.1, "half the DAC8564's 2.5 V")
+        let mean = out.reduce(0, +) / Double(max(out.count, 1))
+        let ac = out.map { $0 - mean }
+        func amplitude(_ f: Double) -> Double {
+            var (re, im) = (0.0, 0.0)
+            for (k, x) in ac.enumerated() {
+                let phase = 2 * Double.pi * f * Double(k) / 48000
+                re += x * cos(phase)
+                im += x * sin(phase)
+            }
+            return (re * re + im * im).squareRoot()
+        }
+        let strongest = stride(from: 20.0, through: 400, by: 1).max { amplitude($0) < amplitude($1) } ?? 0
+        XCTAssertEqual(strongest, 100, accuracy: 3)
+    }
+
     func testResetStartsOver() throws {
         let chip = STM32Microcontroller(firmware: try firmware())
         run(chip, for: 0.05)

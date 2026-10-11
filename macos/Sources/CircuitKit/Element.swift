@@ -83,6 +83,9 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     /// The WM8731 audio codec: a stereo ADC and DAC on I²S, set up over I²C (its frames exchanged with an STM32 on its
     /// I²S pins)
     case codec
+    /// An octal CV DAC (the DAC8568, or the quad DAC8564): words of a channel and a 16-bit code, given it whole by an
+    /// STM32's I²S port (Mutable's Stages and Tides 2 drive theirs so)
+    case cvDac
     /// Dynamics and switching: the SSM2166 mic preamp with compression and gating, the THAT4301 (a VCA, an RMS detector
     /// and an op-amp), and a 3PDT footswitch
     case agcPreamp, analogEngine, footswitch
@@ -266,6 +269,7 @@ extension ElementKind {
         case .i2cDac: return "I²C DAC"
         case .i2sDac: return "I²S Audio DAC"
         case .codec: return "Audio Codec"
+        case .cvDac: return "Octal CV DAC"
         case .agcPreamp: return "Mic Preamp with AGC"
         case .analogEngine: return "VCA and RMS Detector"
         case .footswitch: return "3PDT Footswitch"
@@ -308,7 +312,7 @@ extension ElementKind {
              .atmega328p, .atmega2560,
              .attiny85, .rp2040, .stm32f405, .stm32f373: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return "U"
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
         case .behavioralSource: return "B"
@@ -344,7 +348,7 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .digitalDelay, .vactrol: return .effects
         case .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch: return .timersAndLogic
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return .timersAndLogic
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return .timersAndLogic
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373: return .microcontrollers
         case .memristor: return .memristors
         case .behavioralSource: return .sources
@@ -393,7 +397,7 @@ extension ElementKind {
              .triode, .pentode, .transformer:
             return nil
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373: return nil
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return nil
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return nil
         case .memristor: return "m"
         case .behavioralSource: return nil
         case .probe: return "o"
@@ -491,7 +495,7 @@ extension ElementKind {
         case .ota, .vactrol, .transformer: return 4
         case .timer555: return 5
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373: return board?.length
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return chipPackage?.length
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.length
         default: return audioChipPackage?.length
         }
     }
@@ -531,7 +535,7 @@ extension ElementKind {
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373: return board?.terminalNames ?? []
         case .schmittInverter, .unbufferedInverter: return ["in", "out"]
         case .logicGate: return ["in1", "in2", "out"]
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return chipPackage?.terminalNames ?? []
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.terminalNames ?? []
         case .electretMic: return ["out", "gnd"]
         case .pickup: return ["hot", "gnd"]
         case .vuMeter: return ["plus", "minus"]
@@ -594,7 +598,7 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode, .pentode: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373: return GridPoint(0, board?.length ?? 13)
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return GridPoint(0, chipPackage?.length ?? 3)
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return GridPoint(0, chipPackage?.length ?? 3)
         default: return audioChipPackage.map { GridPoint(0, $0.length) } ?? GridPoint(4, 0)
         }
     }
@@ -810,6 +814,13 @@ extension ElementKind {
                 ParamSpec("upper", "Input rising threshold", unit: "× supply", default: 0.7, range: 0.3...0.9, log: false),
                 ParamSpec("lower", "Input falling threshold", unit: "× supply", default: 0.3, range: 0.1...0.7, log: false),
                 ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 100, range: 0.1...1000),
+            ]
+        case .cvDac:
+            return [
+                ParamSpec("supply", "Supply (AVDD)", unit: "V", default: 5, range: 2.7...5.5, log: false),
+                ParamSpec("fullScale", "Full scale", unit: "V", default: 5, range: 0.5...5.5, log: false),
+                ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 1, range: 0.1...1000),
+                ParamSpec.choice("format", "Word format", ["DAC8568 (32-bit words, one each frame's left half)", "DAC8564 (24-bit words, every word)"]),
             ]
         case .codec:
             // its line outputs and inputs about VMID (half its analog supply), as a module's board AC-couples them
@@ -1117,7 +1128,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         case .timer555:
             return timerPins
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
-             .codec, .block:
+             .codec, .cvDac, .block:
             return packagePins
         default:
             return kind.audioChipPackage != nil ? packagePins : [a, b]
@@ -1435,6 +1446,13 @@ extension ElementKind {
             return [
                 PartModel(name: "PCM5102", summary: "Stereo audio DAC on I²S (the PCM5102A): 16 to 32 bits a sample, 2.1 V RMS at full scale about ground from its own negative supply; it makes its own clocks from BCK",
                           values: ["upper": 0.7, "lower": 0.3, "outputResistance": 100], aliases: ["PCM5102A", "PCM5101", "PCM5100"]),
+            ]
+        case .cvDac:
+            return [
+                PartModel(name: "DAC8568", summary: "Eight 16-bit DACs with a 2.5 V reference at gain 2 (0 to 5 V): 32-bit words, each a command (write, update, or both), a channel and a code",
+                          values: ["supply": 5, "fullScale": 5, "outputResistance": 1, "format": 0]),
+                PartModel(name: "DAC8564", summary: "Four 16-bit DACs with a 2.5 V reference (0 to 2.5 V): 24-bit words, each its load bits, a channel and a code",
+                          values: ["supply": 5, "fullScale": 2.5, "outputResistance": 1, "format": 1]),
             ]
         case .codec:
             return [

@@ -63,7 +63,7 @@ public enum SchematicLayout {
     private static func audioSides(second: Bool) -> [ElementKind: [String]] {
         var result: [ElementKind: [String]] = [:]
         // (and the converters', drawn the same way)
-        let converters: Set<ElementKind> = [.dualDac, .spiAdc, .i2cDac, .i2sDac, .codec]
+        let converters: Set<ElementKind> = [.dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac]
         for kind in ElementKind.allCases {
             guard let package = kind.audioChipPackage ?? (converters.contains(kind) ? kind.chipPackage : nil) else { continue }
             result[kind] = zip(package.terminalNames, package.pinPlaces).filter { $0.1.second == second }.map(\.0)
@@ -152,7 +152,7 @@ public enum SchematicLayout {
         case .vactrol, .transformer: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
-             .codec, .block:
+             .codec, .cvDac, .block:
             return frame(0...(e.chipPackage?.length ?? 13), -2...2)
         default:
             let length = abs(e.b.x - e.a.x) + abs(e.b.y - e.a.y)
@@ -591,7 +591,7 @@ public enum SchematicLayout {
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
                     case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
-                         .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .block:
+                         .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .block:
                         // analog inputs (a logic chip's or a block's inputs) down the left, digital pins (its outputs) down
                         // the right
                         put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.package?.length ?? 13)))

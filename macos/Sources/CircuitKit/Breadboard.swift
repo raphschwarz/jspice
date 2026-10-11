@@ -1003,6 +1003,7 @@ public enum Breadboard {
         case .reverbBrick: return "Belton reverb brick, on its six pins (5 V supply)"
         case .i2cDac: return "MCP4725 breakout board (I²C), on 5 V"
         case .i2sDac: return "PCM5102 I²S DAC board, on 3.3 V"
+        case .cvDac: return "\(part.params["format"] ?? 0 >= 1 ? "DAC8564" : "DAC8568") CV DAC on a TSSOP breakout board, on 5 V"
         case .codec: return "WM8731 audio codec board (I²S and I²C, its line in and out AC-coupled), on 3.3 V"
         case .agcPreamp: return "SSM2166: surface-mount, on an adapter board, on 5 V"
         case .analogEngine: return "THAT4301: surface-mount, on an adapter board, on ±15 V"

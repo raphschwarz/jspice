@@ -44,7 +44,10 @@ strummed, plays its resonator into the codec at 48 kHz, Clouds and Elements run 
 Marbles streams its quad DAC's words over I2S3. On the F373 model (`stm32_create_model(STM32_F373, …)`), Plaits
 drones at middle C into its PCM5100 at the 47 872 Hz its I2S divider gives at 72 MHz, once its buttons are up and the
 inputs its jacks normal to its probe (PA9) follow the probe inverted; held still, they read as patched, and its LPG
-stays shut with no trigger.
+stays shut with no trigger. Tides 2 loops at 100 Hz into its DAC8564 (words over I2S2 in PCM mode, its gate inputs
+following the probe the same way), and Stages streams DAC8568 words over I2S3 at 31.25 kHz for each of its six
+channels. A transmitter whose DMA starts after its I2S (Tides 2's) sends from the next frame's start, as the chip
+does: words are not split.
 
 Unicorn (QEMU) quirks the harness works around: code rewritten in place needs QEMU's translation dropped
 (`ctl_remove_cache`); after a fault it keeps the exception pending, so a fresh instance is made; it runs an IT block

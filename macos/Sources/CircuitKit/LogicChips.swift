@@ -83,6 +83,10 @@ extension ElementKind {
                                pinLabels: ["MCLK", "BCLK", "DACDAT", "DACLRC", "ADCDAT", "ADCLRC", "SCLK", "SDIN",
                                            "LOUT", "ROUT", "LLINEIN", "RLINEIN"],
                                pinPlaces: (0...7).map(second) + [first(0), first(1), first(3), first(4)], length: 7)
+        case .cvDac:
+            return ChipPackage(name: "DAC8568", terminalNames: ["sclk", "din", "sync"] + "abcdefgh".map { "out" + String($0).uppercased() },
+                               pinLabels: ["SCLK", "DIN", "SYNC"] + "ABCDEFGH".map { "VOUT " + String($0) },
+                               pinPlaces: (0...2).map(second) + (0...7).map(first), length: 7)
         case .analogSelector:
             return ChipPackage(name: "CD4053", terminalNames: ["x0", "x1", "select", "inhibit", "x"],
                                pinLabels: ["X0", "X1", "SEL", "INH", "X"],
@@ -97,7 +101,7 @@ extension ElementKind {
     public var isLogic: Bool {
         switch self {
         case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac,
-             .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return true
+             .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return true
         default: return false
         }
     }
@@ -466,6 +470,36 @@ enum Logic {
 
     /// A WM8731's line output for a left-justified 32-bit sample: about half its supply (its VMID), full scale at the
     /// peak of its line level (`fullScale`, V RMS)
+    /// A CV DAC's word, as its maker defines it: the DAC8568's 32 bits (a command in bits 27-24: 0 write a channel's
+    /// input register, 1 update a channel's output from it, 2 write and update all, 3 write and update the channel;
+    /// the channel in 23-20, 15 for all; the code in 19-4), or the DAC8564's 24 (left-justified: its load bits in 21-20,
+    /// 01 update the channel, 10 all; the channel in 18-17; the code in 15-0). `codes` holds the outputs then the
+    /// input registers.
+    static func cvDacWord(_ word: UInt32, dac8564: Bool, codes: inout [UInt16]) {
+        guard codes.count >= 16 else { return }
+        if dac8564 {
+            let control = word >> 24, channel = Int((control >> 1) & 3), code = UInt16(truncatingIfNeeded: word >> 8)
+            codes[8 + channel] = code
+            switch (control >> 4) & 3 {
+            case 1: codes[channel] = code
+            case 2, 3: for k in 0..<4 { codes[k] = codes[8 + k] }
+            default: break
+            }
+            return
+        }
+        let command = (word >> 24) & 0xF, address = Int((word >> 20) & 0xF), code = UInt16(truncatingIfNeeded: word >> 4)
+        let channels = address == 15 ? Array(0..<8) : address < 8 ? [address] : []
+        switch command {
+        case 0: for k in channels { codes[8 + k] = code }
+        case 1: for k in channels { codes[k] = codes[8 + k] }
+        case 2:
+            for k in channels { codes[8 + k] = code }
+            for k in 0..<8 { codes[k] = codes[8 + k] }
+        case 3: for k in channels { codes[8 + k] = code; codes[k] = code }
+        default: break
+        }
+    }
+
     static func codecOutput(_ sample: Int32, _ supply: Double, _ fullScale: Double) -> Double {
         supply / 2 + Double(sample) / 2_147_483_648 * fullScale * 2.squareRoot()
     }
