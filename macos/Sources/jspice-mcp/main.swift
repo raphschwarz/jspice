@@ -393,8 +393,11 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
     var fastest = Double.infinity
     // Newton iterations by where the sine is in its cycle, in twelve 30° slices
     var slices = [(steps: Int, iterations: Int)](repeating: (steps: 0, iterations: 0), count: 12)
-    // the steps that took most iterations, and what they spent them on
-    var heavy = 0, heaviest = 0
+    // the steps that took most iterations, and what they spent them on; and iterations by the step's place in the
+    // sine's cycle (48 steps), and the steps of more than 10 by how many more
+    var heavy = 0, heaviest = 0, heaviestStep = 0
+    var places = [Int](repeating: 0, count: 48)
+    var tail = [Int](repeating: 0, count: 4)
     while done < steps && !simulator.isFailed {
         let before = simulator.newtonIterations
         simulator.step()
@@ -402,8 +405,10 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
         let slice = min(11, Int((simulator.time * 1000).truncatingRemainder(dividingBy: 1) * 12))
         slices[slice].steps += 1
         slices[slice].iterations += taken
+        places[done % 48] += taken
         if taken > 10 { heavy += 1 }
-        heaviest = max(heaviest, taken)
+        if taken > 10 { tail[taken > 40 ? 3 : taken > 20 ? 2 : taken > 15 ? 1 : 0] += 1 }
+        if taken > heaviest { (heaviest, heaviestStep) = (taken, done) }
         done += 1
         if done % round == 0 {
             let now = DispatchTime.now().uptimeNanoseconds
@@ -442,6 +447,11 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
                  fastest.isFinite ? fastest / 1e3 : elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
                  Double(simulator.newtonIterations) / Double(done), simulator.factorings, simulator.reusedFactorings,
                  simulator.restoredFactorings, shape.unknowns, shape.nonlinear, simulator.isFailed ? " FAILED: " + simulator.problems.joined(separator: "; ") : ""))
+    let cycles = Double(max(done / 48, 1))
+    print("\(part): Newton iterations a step by its place in the sine's cycle (48 steps, from the first after 0°): "
+          + places.map { String(format: "%.1f", Double($0) / cycles) }.joined(separator: " "))
+    print("\(part): steps of more than 10 iterations: \(tail[0]) of 11-15, \(tail[1]) of 16-20, \(tail[2]) of 21-40, "
+          + "\(tail[3]) of more; the most, \(heaviest), at step \(heaviestStep) (ending at \((heaviestStep + 1) % 48 * 15 / 2)°)")
     // where steps take many iterations, the heaviest of the second and third cycles, iteration by iteration
     guard heaviest > 30 else { return }
     let traced = Simulator(circuit: circuit, timeStep: 1 / 48_000)
@@ -463,6 +473,16 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
           + "\(most) iterations:")
     for line in kept.prefix(300) { print(line) }
     if kept.count > 300 { print("  … \(kept.count - 300) lines more") }
+    // and the heaviest of the whole run, if later (the run again, traced only there)
+    guard heaviestStep >= 144 else { return }
+    for step in 144...heaviestStep where !traced.isFailed {
+        lines.removeAll(keepingCapacity: true)
+        if step == heaviestStep { traced.trace = { lines.append($0) } } else { traced.trace = nil }
+        traced.step()
+    }
+    print("\(part): the heaviest step of the run, step \(heaviestStep), as traced again:")
+    for line in lines.prefix(400) { print(line) }
+    if lines.count > 400 { print("  … \(lines.count - 400) lines more") }
 }
 
 /// Holds what a background task produced, for the main code waiting on it
