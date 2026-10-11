@@ -578,6 +578,10 @@ public final class Simulator {
     /// sequenced acid line, the mono synth and the VCF about a twelfth fewer, the guitar fuzz a twentieth more (the
     /// parabola throughout: an eighth more), the synth voice at rest the same.
     public static var choosesPredictor = true
+    /// Whether that choice is made for all the unknowns together, by which guess came nearer over them all (off, unknown
+    /// by unknown): a junction's two ends guessed one along the parabola and the other along the line can put the
+    /// junction itself further off than either guess would
+    public static var choosesPredictorTogether = false
     /// Each unknown's guess along the straight line and along the parabola for the substep being solved, whether they
     /// are this substep's, and by unknown whether the parabola's came nearer last time
     private var lineGuess = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
@@ -1456,7 +1460,16 @@ public final class Simulator {
                     let block = plan.flatMap { $0.n == x.count ? $0.block : nil } ?? Array(0..<x.count)
                     x.withUnsafeBufferPointer { x in
                         block.withUnsafeBufferPointer { block in
-                            for k in block { nearer[k] = abs(parabola[k] - x[k]) < abs(line[k] - x[k]) }
+                            if Self.choosesPredictorTogether {
+                                var (offParabola, offLine) = (0.0, 0.0)
+                                for k in block {
+                                    offParabola += abs(parabola[k] - x[k])
+                                    offLine += abs(line[k] - x[k])
+                                }
+                                for k in block { nearer[k] = offParabola < offLine }
+                            } else {
+                                for k in block { nearer[k] = abs(parabola[k] - x[k]) < abs(line[k] - x[k]) }
+                            }
                         }
                     }
                 }
