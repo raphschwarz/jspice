@@ -384,7 +384,15 @@ public final class Simulator {
     /// The same, unretained (the array keeps them): stamping reads one at every iteration without counting references
     private var diodeRefs = UnsafeMutableBufferPointer<Unmanaged<SpiceDiode>>(start: nil, count: 0)
     /// Each JFET's SPICE card at the circuit's temperature
-    private var jfets: [SpiceJFET] = []
+    private var jfets: [SpiceJFET] = [] {
+        didSet {
+            jfetRefs.deallocate()
+            jfetRefs = .allocate(capacity: jfets.count)
+            for (k, j) in jfets.enumerated() { jfetRefs[k] = Unmanaged.passUnretained(j) }
+        }
+    }
+    /// The same, unretained (the array keeps them): stamping reads one at every iteration without counting references
+    private var jfetRefs = UnsafeMutableBufferPointer<Unmanaged<SpiceJFET>>(start: nil, count: 0)
     /// Each MOSFET's SPICE card at the circuit's temperature, and its gate voltages and half Meyer capacitances at the
     /// last solution (SPICE integrates Meyer's capacitances over each step from both its ends)
     private var mosfets: [SpiceMOSFET] = []
@@ -852,6 +860,7 @@ public final class Simulator {
         bipolarRefs.deallocate()
         diodeRefs.deallocate()
         behaviorRefs.deallocate()
+        jfetRefs.deallocate()
         bipolarSlots.deallocate()
         limitedVoltage.deallocate()
         limitedVoltage2.deallocate()
@@ -4195,7 +4204,10 @@ public final class Simulator {
     /// A JFET's gate junctions and channel (between its internal drain and source), linearised at the present solution
     /// with SPICE's limiting, and the charging of its gate charges
     private func stampJFET(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
-        let j = jfets[i]
+        jfetRefs[i]._withUnsafeGuaranteedRef { stampJFET(i, $0, nodes, matrix, rhs, m) }
+    }
+
+    private func stampJFET(_ i: Int, _ j: SpiceJFET, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
         let p = j.polarity
         let n = Self.jfetNodes({ nodes[$0] }, j)
         // in the transistor's own polarity
@@ -4215,9 +4227,12 @@ public final class Simulator {
         if j.hasCharges && !linearising {
             let q = j.charges(vgs: vgs, vgd: vgd)
             let k = Self.chargeSlots * i
-            cgs += (a0 * q.qgs + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
+            // (the two slots' histories read once, without a bounds check at each)
+            let now = junctionCharge.withUnsafeBufferPointer { ($0[k], $0[k + 1]) }
+            let previous = junctionChargePrevious.withUnsafeBufferPointer { ($0[k], $0[k + 1]) }
+            cgs += (a0 * q.qgs + a1 * now.0 + a2 * previous.0) / h
             ggs += a0 * q.capgs / h
-            cgd += (a0 * q.qgd + a1 * junctionCharge[k + 1] + a2 * junctionChargePrevious[k + 1]) / h
+            cgd += (a0 * q.qgd + a1 * now.1 + a2 * previous.1) / h
             ggd += a0 * q.capgd / h
         }
         stampConductance(matrix, m, n.g, n.sp, ggs)

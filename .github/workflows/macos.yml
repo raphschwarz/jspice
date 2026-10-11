@@ -68,6 +68,9 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch limit-junctions-down 0.25 opto-compressor guitar-fuzz pickup-fuzz rat tube-screamer fuzz overdrive mc1496-ring sa612-ring voice acid tube-amp power-amp rectifier || true
           # and what bypassing behavioural sources and diodes whose junctions have not moved saves
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 bargraph rectifier led zener fuzz rat tube-screamer opto-compressor voice frequency-shifter || true
+          # factors kept between iterations (as for makers' models) in circuits of built-in op-amps and multipliers,
+          # whose slopes move little in their linear range
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-everywhere 0.25 frequency-shifter graphic-eq parametric-eq lm1036 vcf balanced-line mic-preamp compander || true
           # the microcontrollers: their instructions a step, what each costs and which run most; base matrices kept by
           # what the bus parts switch, and the AVR's decode table, each off and on
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-instructions 0.25 pico-knob pico-pcm5102 pico-melody arduino-fade arduino-blink arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
