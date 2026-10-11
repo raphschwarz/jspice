@@ -52,9 +52,10 @@ public final class STM32F405: Microcontroller {
         init(firmware: [UInt8]) {
             chip = stm32f4_create(8e6)!
             let flash = stm32f4_flash(chip)!
-            let count = min(firmware.count, STM32F405.flashSize)
+            let offset = STM32F405.placement(of: firmware)
+            let count = min(firmware.count, STM32F405.flashSize - offset)
             firmware.withUnsafeBufferPointer { bytes in
-                if let base = bytes.baseAddress { flash.update(from: base, count: count) }
+                if let base = bytes.baseAddress { (flash + offset).update(from: base, count: count) }
             }
             var devices = STM32F4Devices()
             devices.context = Unmanaged.passUnretained(self).toOpaque()
@@ -108,6 +109,24 @@ public final class STM32F405: Microcontroller {
         }
 
         deinit { stm32f4_destroy(chip) }
+    }
+
+    /// Where in flash a raw image goes: at its start, unless it is an application linked to run behind a bootloader
+    /// (Mutable Instruments' at 0x08008000), whose vectors then all point within it placed there. A HEX file's image
+    /// is placed by its addresses already, and starts at the flash's start.
+    static func placement(of image: [UInt8]) -> Int {
+        guard image.count >= 64 else { return 0 }
+        func word(_ k: Int) -> Int {
+            Int(image[4 * k]) | Int(image[4 * k + 1]) << 8 | Int(image[4 * k + 2]) << 16 | Int(image[4 * k + 3]) << 24
+        }
+        // the reset, NMI and hard fault handlers, as flash addresses
+        let handlers = (1...3).map { word($0) & ~1 }
+        guard handlers.allSatisfy({ $0 >= flashStart && $0 < flashStart + flashSize }) else { return 0 }
+        if handlers.allSatisfy({ $0 - flashStart < image.count }) { return 0 }
+        for offset in [0x4000, 0x8000, 0xC000, 0x10000, 0x20000, 0x40000] where offset + image.count <= flashSize {
+            if handlers.allSatisfy({ $0 - flashStart >= offset && $0 - flashStart < offset + image.count }) { return offset }
+        }
+        return 0
     }
 
     private let firmware: [UInt8]

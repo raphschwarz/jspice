@@ -75,6 +75,14 @@ extension ElementKind {
             return ChipPackage(name: "PCM5102", terminalNames: ["bck", "din", "lrck", "outL", "outR"],
                                pinLabels: ["BCK", "DIN", "LRCK", "OUT L", "OUT R"],
                                pinPlaces: [second(0), second(1), second(2), first(0), first(1)], length: 2)
+        case .codec:
+            // the digital side down the second, the line outputs and inputs down the first
+            return ChipPackage(name: "WM8731",
+                               terminalNames: ["mclk", "bclk", "dacdat", "daclrc", "adcdat", "adclrc", "sclk", "sdin",
+                                               "lout", "rout", "linl", "linr"],
+                               pinLabels: ["MCLK", "BCLK", "DACDAT", "DACLRC", "ADCDAT", "ADCLRC", "SCLK", "SDIN",
+                                           "LOUT", "ROUT", "LLINEIN", "RLINEIN"],
+                               pinPlaces: (0...7).map(second) + [first(0), first(1), first(3), first(4)], length: 7)
         case .analogSelector:
             return ChipPackage(name: "CD4053", terminalNames: ["x0", "x1", "select", "inhibit", "x"],
                                pinLabels: ["X0", "X1", "SEL", "INH", "X"],
@@ -89,7 +97,7 @@ extension ElementKind {
     public var isLogic: Bool {
         switch self {
         case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac,
-             .dualDac, .spiAdc, .i2cDac, .i2sDac: return true
+             .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return true
         default: return false
         }
     }
@@ -455,6 +463,12 @@ enum Logic {
 
     /// A PCM5102's output for a left-justified 32-bit sample: 2.1 V RMS at full scale, about ground
     static func i2sOutput(_ sample: Int32) -> Double { Double(sample) / 2_147_483_648 * 2.1 * 2.squareRoot() }
+
+    /// A WM8731's line output for a left-justified 32-bit sample: about half its supply (its VMID), full scale at the
+    /// peak of its line level (`fullScale`, V RMS)
+    static func codecOutput(_ sample: Int32, _ supply: Double, _ fullScale: Double) -> Double {
+        supply / 2 + Double(sample) / 2_147_483_648 * fullScale * 2.squareRoot()
+    }
 
     /// The channel a multiplexer or selector connects to its common terminal, or nil while inhibited
     static func channel(_ kind: ElementKind, _ state: LogicState) -> Int? {

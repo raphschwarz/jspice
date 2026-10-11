@@ -1,0 +1,5 @@
+module CortexM4 {
+    header "CortexM4.h"
+    header "STM32F4.h"
+    export *
+}

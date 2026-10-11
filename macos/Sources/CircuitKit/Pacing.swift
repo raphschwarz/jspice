@@ -74,6 +74,9 @@ public enum Pacing {
             case .rp2040:
                 // arduino-pico's PWM runs at 1 kHz
                 scales.append(contentsOf: [1, 1e-3])
+            case .stm32f405:
+                // a module's firmware: its audio at the codec's rate, its controls at a kilohertz
+                scales.append(contentsOf: [1, 1e-3])
             case .digitalDelay:
                 scales.append(element[param: "shortest"])
             case .audioInput:

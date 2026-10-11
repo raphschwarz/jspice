@@ -836,6 +836,11 @@ final class EditorState: ObservableObject {
     /// Compiles the sketch off the main thread and, if it builds, loads it into the chip, which restarts
     func uploadSketch(_ id: UUID, code: String) {
         let board = circuit[id]?.kind.board ?? .uno
+        // (an STM32 compiles nothing here: its firmware is built elsewhere, and loaded)
+        guard board.compilesSketches else {
+            loadFirmware(id)
+            return
+        }
         guard ChipSupport.isAvailable(board.family) else {
             showChipSupport = true
             return

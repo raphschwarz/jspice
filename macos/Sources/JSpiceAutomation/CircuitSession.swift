@@ -793,6 +793,9 @@ public final class CircuitSession {
         let index = try microcontroller(arguments)
         let code = try Self.text(arguments, "code")
         let board = circuit.elements[index].kind.board ?? .uno
+        guard board.compilesSketches else {
+            throw ToolError("the \(board.chip) runs firmware built with its maker's tools: give it with load_firmware")
+        }
         guard ChipSupport.isAvailable(board.family) else {
             throw ToolError("No compiler for the \(board.chip) is installed: call install_chip_support with family "
                             + "\(board.family.rawValue) first (or install it from JSpice's Chip Support window)")

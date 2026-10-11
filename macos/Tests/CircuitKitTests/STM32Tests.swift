@@ -81,6 +81,52 @@ final class STM32Tests: XCTestCase {
         XCTAssertEqual(Double(right.min() ?? 0), -8000, accuracy: 100)
     }
 
+    /// The chip in a circuit with a WM8731 on its I²S2 and I²C2 pins: the codec's line outputs carry what the firmware
+    /// sends (a 1 kHz square on the left, the left input halved on the right), about half its supply
+    func testTheChipPlaysThroughACodecInACircuit() throws {
+        var chip = NetlistPart(kind: .stm32f405, name: "U1",
+                               connections: ["pb12": "ws", "pb13": "bclk", "pb15": "dacdat", "pb14": "adcdat", "pc6": "mclk",
+                                             "pb10": "scl", "pb11": "sda", "pa0": "knob"])
+        chip.firmware = Data(try firmware())
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .codec, name: "U2",
+                        connections: ["mclk": "mclk", "bclk": "bclk", "dacdat": "dacdat", "daclrc": "ws", "adcdat": "adcdat",
+                                      "adclrc": "ws", "sclk": "scl", "sdin": "sda", "lout": "left", "rout": "right",
+                                      "linl": "in", "linr": "vmid"]),
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 1.65], connections: ["plus": "vmid", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "V2", params: ["voltage": 1.65], connections: ["plus": "knob", "minus": "GND"]),
+            NetlistPart(kind: .acVoltage, name: "VIN", params: ["amplitude": 0.5, "frequency": 440, "offset": 1.65],
+                        connections: ["plus": "in", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "left", "b": "GND"]),
+            NetlistPart(kind: .resistor, name: "RR", params: ["resistance": 10_000], connections: ["a": "right", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "LEFT", connections: ["plus": "left", "minus": "GND"]),
+            NetlistPart(kind: .probe, name: "RIGHT", connections: ["plus": "right", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        let left = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "LEFT" })
+        let right = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "RIGHT" })
+        var lefts: [Double] = [], rights: [Double] = []
+        while simulator.time < 0.3 {
+            simulator.step()
+            XCTAssertFalse(simulator.isFailed, simulator.problems.joined(separator: " "))
+            if simulator.isFailed { break }
+            if simulator.time > 0.2 {
+                lefts.append(simulator.voltageAcross(left))
+                rights.append(simulator.voltageAcross(right))
+            }
+        }
+        // full scale is 1 V RMS: 8192 of 32768 is 0.354 V of peak, through 100 Ω into 10 kΩ
+        let swing = 0.25 * 2.squareRoot() * 10_000 / 10_100
+        XCTAssertEqual(lefts.max() ?? 0, 1.65 * 10_000 / 10_100 + swing, accuracy: 0.01)
+        XCTAssertEqual(lefts.min() ?? 0, 1.65 * 10_000 / 10_100 - swing, accuracy: 0.01)
+        // the square's period: 48 frames
+        let crossings = zip(lefts, lefts.dropFirst()).filter { $0 < 1.6 && $1 >= 1.6 }.count
+        XCTAssertEqual(Double(crossings), 100, accuracy: 3)
+        // the input's 0.5 V peak is half the ADC's full scale at 0.354 of it; halved, and back out: 0.25 V
+        XCTAssertEqual((rights.max() ?? 0) - 1.65 * 10_000 / 10_100, 0.25 * 10_000 / 10_100, accuracy: 0.01)
+    }
+
     func testResetStartsOver() throws {
         let chip = STM32F405(firmware: try firmware())
         run(chip, for: 0.05)

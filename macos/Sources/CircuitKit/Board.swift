@@ -7,6 +7,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
     case mega
     case attiny85
     case pico
+    case stm32f405
 
     public var id: String { rawValue }
 
@@ -16,6 +17,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .atmega2560: self = .mega
         case .attiny85: self = .attiny85
         case .rp2040: self = .pico
+        case .stm32f405: self = .stm32f405
         default: return nil
         }
     }
@@ -26,6 +28,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return .atmega2560
         case .attiny85: return .attiny85
         case .pico: return .rp2040
+        case .stm32f405: return .stm32f405
         }
     }
 
@@ -36,6 +39,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return "Arduino Mega 2560"
         case .attiny85: return "ATtiny85"
         case .pico: return "Raspberry Pi Pico"
+        case .stm32f405: return "STM32F405"
         }
     }
 
@@ -46,11 +50,17 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return "ATmega2560"
         case .attiny85: return "ATtiny85"
         case .pico: return "RP2040"
+        case .stm32f405: return "STM32F405RG"
         }
     }
 
-    /// What compiling for it takes
-    public var family: ChipFamily { self == .pico ? .rp2040 : .avr }
+    /// What compiling for it takes (the STM32 compiles nothing here: its firmware is built elsewhere and loaded, see
+    /// `compilesSketches`)
+    public var family: ChipFamily { self == .pico || self == .stm32f405 ? .rp2040 : .avr }
+
+    /// Whether JSpice compiles Arduino sketches for it; an STM32 runs firmware built with its maker's tools instead
+    /// (Load Firmware…)
+    public var compilesSketches: Bool { self != .stm32f405 }
 
     /// The AVR layout, for AVR boards
     public var avrVariant: AVRVariant? {
@@ -58,14 +68,14 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return .atmega328p
         case .mega: return .atmega2560
         case .attiny85: return .attiny85
-        case .pico: return nil
+        case .pico, .stm32f405: return nil
         }
     }
 
-    public var clock: Double { self == .pico ? 125e6 : avrVariant?.clock ?? 0 }
+    public var clock: Double { self == .pico ? 125e6 : self == .stm32f405 ? 168e6 : avrVariant?.clock ?? 0 }
 
     /// The supply the chip runs from (and its logic high)
-    public var supply: Double { self == .pico ? 3.3 : 5 }
+    public var supply: Double { self == .pico || self == .stm32f405 ? 3.3 : 5 }
 
     /// Bytes of flash a sketch can use (the rest holds the bootloader)
     public var flashSize: Int {
@@ -74,6 +84,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return 253_952
         case .attiny85: return 8192
         case .pico: return 2_093_056  // 2 MB, less the last 4 KB (EEPROM emulation)
+        case .stm32f405: return STM32F405.flashSize
         }
     }
 
@@ -87,6 +98,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return (0...53).map { "d\($0)" } + (0...15).map { "a\($0)" }
         case .attiny85: return (0...5).map { "pb\($0)" }
         case .pico: return Pico.gpioOfPin.map { "gp\($0)" }
+        case .stm32f405: return STM32F405.pinNames
         }
     }
 
@@ -97,6 +109,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return (0...53).map { "D\($0)" } + (0...15).map { "A\($0)" }
         case .attiny85: return (0...5).map { "PB\($0)" }
         case .pico: return Pico.gpioOfPin.map { "GP\($0)" }
+        case .stm32f405: return STM32F405.pinNames.map { $0.uppercased() }
         }
     }
 
@@ -123,6 +136,9 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
             // GP0-GP15 down one side; the other, from the top, as on the board: GP28-GP26, then GP22 down to GP16
             return side(false, 0...15) + (16...22).map { PinPlace(second: true, offset: 26 - $0) }
                 + (26...28).map { PinPlace(second: true, offset: 28 - $0) }
+        case .stm32f405:
+            // PA0-PA15 and PB0-PB8 down one side; PB9-PB15, PC0-PC15 and PD2 down the other
+            return side(false, 0...24) + side(true, 0...23)
         }
     }
 
@@ -133,6 +149,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return 35
         case .attiny85: return 3
         case .pico: return 15
+        case .stm32f405: return 24
         }
     }
 
@@ -143,18 +160,21 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return Array(54...69)
         case .attiny85: return [5, 2, 4, 3]
         case .pico: return [23, 24, 25]
+        case .stm32f405: return Array(0...7) + [16, 17] + Array(32...37)  // ADC123 IN0-IN15: PA0-PA7, PB0-PB1, PC0-PC5
         }
     }
 
     /// A chip running `firmware`
     public func makeChip(firmware: [UInt8]) -> Microcontroller {
         if self == .pico { return Pico(firmware: firmware) }
+        if self == .stm32f405 { return STM32F405(firmware: firmware) }
         return AVR(firmware: firmware, variant: avrVariant ?? .atmega328p)
     }
 
     /// A chip running `firmware` as its part sets it up: an Uno's chip the one it is set to, at its clock
     public func makeChip(firmware: [UInt8], for element: Element) -> Microcontroller {
         if self == .pico { return Pico(firmware: firmware) }
+        if self == .stm32f405 { return STM32F405(firmware: firmware) }
         return AVR(firmware: firmware, variant: avrVariant(for: element) ?? .atmega328p)
     }
 
@@ -174,6 +194,12 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
 
     /// The sketch a new part starts with
     public var blinkSketch: String {
+        if self == .stm32f405 {
+            return """
+                // The STM32F405 runs firmware built with its maker's tools (arm-none-eabi-gcc and a makefile, as
+                // Mutable Instruments' modules are built): load the .hex or .bin file it leaves with Load Firmware…
+                """
+        }
         let pin = self == .attiny85 ? "1" : "LED_BUILTIN"
         return """
             // Runs once when the chip starts
@@ -199,7 +225,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return "atmega328p"
         case .mega: return "atmega2560"
         case .attiny85: return "attiny85"
-        case .pico: return ""
+        case .pico, .stm32f405: return ""
         }
     }
 
@@ -210,6 +236,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return "-DARDUINO_AVR_MEGA2560"
         case .attiny85: return "-DARDUINO_AVR_ATTINYX5"
         case .pico: return "-DARDUINO_RASPBERRY_PI_PICO"
+        case .stm32f405: return ""
         }
     }
 
@@ -218,7 +245,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .uno: return "standard"
         case .mega: return "mega"
-        case .attiny85, .pico: return nil
+        case .attiny85, .pico, .stm32f405: return nil
         }
     }
 

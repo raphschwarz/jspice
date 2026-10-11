@@ -63,7 +63,7 @@ public enum SchematicLayout {
     private static func audioSides(second: Bool) -> [ElementKind: [String]] {
         var result: [ElementKind: [String]] = [:]
         // (and the converters', drawn the same way)
-        let converters: Set<ElementKind> = [.dualDac, .spiAdc, .i2cDac, .i2sDac]
+        let converters: Set<ElementKind> = [.dualDac, .spiAdc, .i2cDac, .i2sDac, .codec]
         for kind in ElementKind.allCases {
             guard let package = kind.audioChipPackage ?? (converters.contains(kind) ? kind.chipPackage : nil) else { continue }
             result[kind] = zip(package.terminalNames, package.pinPlaces).filter { $0.1.second == second }.map(\.0)
@@ -87,6 +87,7 @@ public enum SchematicLayout {
         .vca: ["in", "cv"], .sampleHold: ["in", "trig"], .divider: ["clock", "reset"],
         .atmega328p: microcontrollerSide(.uno, second: true), .atmega2560: microcontrollerSide(.mega, second: true),
         .attiny85: microcontrollerSide(.attiny85, second: true), .rp2040: microcontrollerSide(.pico, second: true),
+        .stm32f405: microcontrollerSide(.stm32f405, second: true),
         .logicGate: ["in1", "in2"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicInputs),
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicInputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicInputs),
@@ -103,6 +104,7 @@ public enum SchematicLayout {
         .comparator: ["out"], .vco: ["out"], .vcf: ["out"], .envelope: ["out"], .vca: ["out"], .sampleHold: ["out"], .divider: ["out"],
         .atmega328p: microcontrollerSide(.uno, second: false), .atmega2560: microcontrollerSide(.mega, second: false),
         .attiny85: microcontrollerSide(.attiny85, second: false), .rp2040: microcontrollerSide(.pico, second: false),
+        .stm32f405: microcontrollerSide(.stm32f405, second: false),
         .logicGate: ["out"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicOutputs),
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicOutputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicOutputs),
@@ -149,8 +151,8 @@ public enum SchematicLayout {
             return frame(0...(e.chipPackage?.length ?? 3), -2...2)
         case .vactrol, .transformer: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
-             .block:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
+             .codec, .block:
             return frame(0...(e.chipPackage?.length ?? 13), -2...2)
         default:
             let length = abs(e.b.x - e.a.x) + abs(e.b.y - e.a.y)
@@ -588,8 +590,8 @@ public enum SchematicLayout {
                     case .timer555:
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
-                    case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
-                         .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .block:
+                    case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
+                         .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .block:
                         // analog inputs (a logic chip's or a block's inputs) down the left, digital pins (its outputs) down
                         // the right
                         put(p, GridPoint(x + 3, vy), GridPoint(x + 3, vy + (p.package?.length ?? 13)))

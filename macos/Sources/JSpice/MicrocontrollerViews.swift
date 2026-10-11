@@ -47,17 +47,26 @@ struct MicrocontrollerSection: View {
                         .lineLimit(3)
                 }
             }
-            HStack {
-                Button("Edit Sketch…") { editor.editingSketch = element.id }
-                Button("Upload") { editor.uploadSketch(element.id, code: element.code ?? element.kind.board?.blinkSketch ?? blinkTemplate) }
-                    .disabled(editor.sketchStatus[element.id] == .building)
-                    .help("Compile the sketch and load it into the chip (⌘U)")
+            if element.kind.board?.compilesSketches ?? true {
+                HStack {
+                    Button("Edit Sketch…") { editor.editingSketch = element.id }
+                    Button("Upload") { editor.uploadSketch(element.id, code: element.code ?? element.kind.board?.blinkSketch ?? blinkTemplate) }
+                        .disabled(editor.sketchStatus[element.id] == .building)
+                        .help("Compile the sketch and load it into the chip (⌘U)")
+                    Button("Restart") { editor.simulation.reset() }
+                        .help("Start the circuit, and the chip, from the beginning")
+                }
+            } else {
+                Text(element.firmware == nil ? "Runs firmware built with its maker's tools: load the .hex or .bin file."
+                                             : "Runs the firmware loaded.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Button("Restart") { editor.simulation.reset() }
                     .help("Start the circuit, and the chip, from the beginning")
             }
             Button("Load Firmware…") { editor.loadFirmware(element.id) }
                 .help("Load a firmware file built elsewhere (Intel HEX or a raw image), as a programmer flashes it")
-            if let family = element.kind.board?.family, !ChipSupport.isAvailable(family) {
+            if element.kind.board?.compilesSketches ?? true, let family = element.kind.board?.family, !ChipSupport.isAvailable(family) {
                 Text("Compiling sketches needs chip support: \(family.summary).")
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -332,6 +332,12 @@ public final class Simulator {
         let call: (PinEvent) -> Void
         init(_ call: @escaping (PinEvent) -> Void) { self.call = call }
     }
+    /// For each STM32, the codecs wired to its I²S ports (a codec's BCLK on the port's CK pin) and I²C buses (its SCLK on
+    /// the bus's SCL pin): its frames go to them and theirs come back, its writes to their control port are answered
+    private var codecLinks: [[(port: Int, codec: Int)]] = []
+    private var codecBuses: [[(bus: Int, codec: Int)]] = []
+    private var codecExchanges: [STM32F405.FrameExchange?] = []
+    private var codecTargets: [STM32F405.I2CTarget?] = []
     /// The pin events of a step, from every chip, in the order they happened
     private var stepPinEvents: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
@@ -982,8 +988,8 @@ public final class Simulator {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
-                 .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter, .shiftRegister, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .effectsProcessor: return true
+                 .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .logicGate, .flipFlop, .decadeCounter,
+                 .binaryCounter, .shiftRegister, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .effectsProcessor: return true
             default: return false
             }
         }
@@ -2999,7 +3005,7 @@ public final class Simulator {
             case .timer555, .analogMux, .analogSelector:
                 let own = unknowns(i)
                 for a in own { for b in own { pattern[a * m + b] = true } }
-            case .atmega328p, .atmega2560, .attiny85, .rp2040:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
                 for a in unknowns(i) { pattern[a * m + a] = true }
             default:
                 break
@@ -3143,6 +3149,8 @@ public final class Simulator {
                 for k in [4, 5] where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
             case .i2sDac:
                 for k in [3, 4] where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
+            case .codec:
+                for k in [8, 9] where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
             case .i2cDac:
                 if nodes.count > 3 { stampConductance(matrix, m, nodes[3], 0, constants[i].outputConductance) }
                 // SDA pulled low while it acknowledges
@@ -3159,7 +3167,7 @@ public final class Simulator {
                 if let channel = Logic.channel(kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
                     stampConductance(matrix, m, nodes[channel], common, constants[i].onConductance)
                 }
-            case .atmega328p, .atmega2560, .attiny85, .rp2040:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
                 // each output pin drives towards the supply or ground through its resistance; a pull-up is a resistor
                 // to the supply, a pull-down one to ground; other inputs draw nothing
                 guard let states = chipPinStates[i] else { continue }
@@ -3316,6 +3324,11 @@ public final class Simulator {
                 guard nodes.count > 4 else { continue }
                 stampCurrent(r, 0, nodes[3], Logic.i2sOutput(Int32(bitPattern: logicStates[i].latch)) * constants[i].outputConductance)
                 stampCurrent(r, 0, nodes[4], Logic.i2sOutput(Int32(truncatingIfNeeded: logicStates[i].count)) * constants[i].outputConductance)
+            case .codec:
+                guard nodes.count > 9 else { continue }
+                let c = constants[i]
+                stampCurrent(r, 0, nodes[8], Logic.codecOutput(Int32(bitPattern: logicStates[i].latch), c.supply, c.value) * c.outputConductance)
+                stampCurrent(r, 0, nodes[9], Logic.codecOutput(Int32(truncatingIfNeeded: logicStates[i].count), c.supply, c.value) * c.outputConductance)
             case .i2cDac:
                 guard nodes.count > 3 else { continue }
                 stampCurrent(r, 0, nodes[3], Logic.i2cDacOutput(logicStates[i].count, supply: constants[i].supply) * constants[i].outputConductance)
@@ -3331,7 +3344,7 @@ public final class Simulator {
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(constants[i].value))) where high {
                     stampCurrent(r, 0, nodes[k], constants[i].supply * constants[i].outputConductance)
                 }
-            case .atmega328p, .atmega2560, .attiny85, .rp2040:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
                 guard let states = chipPinStates[i] else { continue }
                 for (pin, state) in states.enumerated() where pin < nodes.count {
                     switch state {
@@ -3607,6 +3620,10 @@ public final class Simulator {
             if element.kind == .spiAdc { c.value = Self.choice(p("resolution"), 0...1) >= 1 ? 12 : 10 }
             c.frequency = max(p("fMin"), 0)
             c.high = max(p("fMax"), c.frequency)
+        case .codec:
+            c.supply = max(p("supply"), 0.1)
+            c.value = max(p("fullScale"), 0.01)
+            c.outputConductance = 1 / max(p("outputResistance"), 0.1)
         case .effectsProcessor:
             c.value = Self.choice(p("program"), 0...7)
             c.supply = max(p("supply"), 0.1)
@@ -3616,7 +3633,7 @@ public final class Simulator {
             c.threshold = p("threshold")
             c.beta = max(p("beta"), 1e-9)
             c.value = max(p("lambda"), 0)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
             c.supply = min(max(p("supply"), 0.5), 6)
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
             c.onConductance = 1 / max(p("pullUp"), 1)
@@ -5791,8 +5808,18 @@ public final class Simulator {
             let start = chip.cycles
             // the bus devices wired to it follow its pins as it runs, and answer within the run
             if i < busHandlers.count, let handler = busHandlers[i] { chip.onPinEvent = handler.call }
+            // the codecs wired to an STM32 exchange frames with it as it runs
+            let stm32 = i < codecExchanges.count && (codecExchanges[i] != nil || codecTargets[i] != nil) ? chip as? STM32F405 : nil
+            if let stm32 {
+                stm32.frameExchange = codecExchanges[i]
+                stm32.i2cTarget = codecTargets[i]
+            }
             if whole > 0 { chip.run(cycles: whole) }
             chip.onPinEvent = nil
+            if let stm32 {
+                stm32.frameExchange = nil
+                stm32.i2cTarget = nil
+            }
             // the last instruction may run past the budget: the next step has that much less
             chipCycleCarry[i] = budget - Double(chip.cycles - start)
             let states = chip.pinStates
@@ -5858,6 +5885,72 @@ public final class Simulator {
             // (called only while the chip runs, within `runChips`: the simulator is there)
             if !busByPin.isEmpty { busHandlers[i] = BusHandler { [unowned(unsafe) self] event in self.busEvent(i, event) } }
         }
+        linkCodecs()
+    }
+
+    /// Finds the codecs wired to each STM32's I²S ports and I²C buses, and what the chip calls for them while it runs
+    private func linkCodecs() {
+        codecLinks = Array(repeating: [], count: kinds.count)
+        codecBuses = Array(repeating: [], count: kinds.count)
+        codecExchanges = Array(repeating: nil, count: kinds.count)
+        codecTargets = Array(repeating: nil, count: kinds.count)
+        for i in chipIndices where kinds[i] == .stm32f405 && i < topology.elementNodes.count {
+            let chipNodes = topology.elementNodes[i]
+            for j in kinds.indices where kinds[j] == .codec && j < topology.elementNodes.count {
+                let nodes = topology.elementNodes[j]
+                func wired(_ terminal: Int, _ pins: [Int]) -> Bool {
+                    terminal < nodes.count && nodes[terminal] > 0
+                        && pins.contains { $0 < chipNodes.count && chipNodes[$0] == nodes[terminal] }
+                }
+                // (pins by index: PA0-PA15 0-15, PB0-PB15 16-31, PC0-PC15 32-47) I2S2's CK on PB13 or PB10, I2S3's on
+                // PC10 or PB3; I2C1's SCL on PB6 or PB8, I2C2's on PB10, I2C3's on PA8
+                if wired(1, [29, 26]) { codecLinks[i].append((2, j)) }
+                if wired(1, [42, 19]) { codecLinks[i].append((3, j)) }
+                if wired(6, [22, 24]) { codecBuses[i].append((1, j)) }
+                if wired(6, [26]) { codecBuses[i].append((2, j)) }
+                if wired(6, [8]) { codecBuses[i].append((3, j)) }
+            }
+            // (called only while the chip runs, within `runChips`: the simulator is there)
+            if !codecLinks[i].isEmpty {
+                codecExchanges[i] = { [unowned(unsafe) self] port, left, right in self.codecFrame(i, port, left, right) }
+            }
+            if !codecBuses[i].isEmpty {
+                codecTargets[i] = STM32F405.I2CTarget(
+                    start: { [unowned(unsafe) self] bus, address, _ in
+                        // a WM8731 at 0x1A (CSB low) or 0x1B
+                        (address == 0x1A || address == 0x1B) && self.codecBuses[i].contains { $0.bus == bus }
+                    },
+                    write: { _, _ in true }, read: { _, _ in 0xFF }, stop: { _ in })
+            }
+        }
+    }
+
+    /// A frame an STM32 sends on an I²S port: the codecs on it take it for their outputs, and the first of them gives
+    /// back what its line inputs read
+    private func codecFrame(_ chip: Int, _ port: Int, _ left: Int32, _ right: Int32) -> (left: Int32, right: Int32) {
+        var input: (left: Int32, right: Int32) = (0, 0)
+        var first = true
+        for link in codecLinks[chip] where link.port == port {
+            let j = link.codec
+            logicStates[j].latch = UInt32(bitPattern: left)
+            logicStates[j].count = Int(right)
+            if first {
+                first = false
+                let nodes = topology.elementNodes[j]
+                input = (codecSample(j, nodes, 10), codecSample(j, nodes, 11))
+            }
+        }
+        return input
+    }
+
+    /// A codec's line input as its ADC reads it: about half its supply, full scale at its line level's peak,
+    /// left-justified in 32 bits
+    private func codecSample(_ j: Int, _ nodes: [Int], _ terminal: Int) -> Int32 {
+        guard terminal < nodes.count else { return 0 }
+        let c = constants[j]
+        let x = (voltage(nodes[terminal]) - c.supply / 2) / (c.value * 2.squareRoot())
+        let clamped = min(max(x, -1), 1 - 1 / 2_147_483_648)
+        return Int32((clamped * 2_147_483_648).rounded(.down))
     }
 
     /// A watched pin changing as a chip runs, for the bus devices that follow it: they move on at once, and what they
@@ -6317,7 +6410,7 @@ public final class Simulator {
                 total += kind == .logicGate ? flows[k] : max(flows[k], 0)
             }
             return (total, flows)
-        case .dualDac, .i2sDac, .i2cDac:
+        case .dualDac, .i2sDac, .i2cDac, .codec:
             // into each analog output from its source behind the output resistance
             var flows = [Double](repeating: 0, count: nodes.count)
             let c = constants[i]
@@ -6328,6 +6421,9 @@ public final class Simulator {
                 outputs = (0...1).map { (4 + $0, Logic.dualDacOutput(state.count, channel: $0, supply: c.supply)) }
             case .i2sDac:
                 outputs = [(3, Logic.i2sOutput(Int32(bitPattern: state.latch))), (4, Logic.i2sOutput(Int32(truncatingIfNeeded: state.count)))]
+            case .codec:
+                outputs = [(8, Logic.codecOutput(Int32(bitPattern: state.latch), c.supply, c.value)),
+                           (9, Logic.codecOutput(Int32(truncatingIfNeeded: state.count), c.supply, c.value))]
             default:
                 outputs = [(3, Logic.i2cDacOutput(state.count, supply: c.supply))]
             }
@@ -6355,7 +6451,7 @@ public final class Simulator {
             flows[channel] = -current
             flows[nodes.count - 1] = current
             return (current, flows)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405:
             let c = constants[i]
             var flows = [Double](repeating: 0, count: nodes.count)
             var total = 0.0

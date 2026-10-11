@@ -1,8 +1,8 @@
 import Foundation
 
 /// A firmware image read from a file a toolchain wrote, for a microcontroller part to run: an Intel HEX file (as
-/// avr-objcopy writes, and as Mutable Instruments' and 4ms' makefiles leave for their AVR modules), or a raw image
-/// from the start of flash (a .bin).
+/// avr-objcopy writes, and as Mutable Instruments' and 4ms' makefiles leave for their modules), or a raw image from the
+/// start of flash (a .bin).
 public enum FirmwareFile {
     public enum DecodeError: Error, CustomStringConvertible, Equatable {
         case badRecord(line: Int)
@@ -32,16 +32,18 @@ public enum FirmwareFile {
 
     /// Where the RP2040's flash appears in its address space: a Pico's HEX file places its image there
     static let picoFlash = 0x1000_0000
+    /// Where an STM32's flash does
+    static let stm32Flash = 0x0800_0000
 
     /// Intel HEX: data (00), end of file (01), and the extended segment (02) and linear (04) address records that
-    /// place data past 64 KB; start address records (03, 05) are left out. An image placed in the RP2040's flash is
-    /// taken from the flash's start.
+    /// place data past 64 KB; start address records (03, 05) are left out. An image placed in the RP2040's or an
+    /// STM32's flash is taken from the flash's start.
     static func decodeHex(_ text: String) throws -> Data {
         var chunks: [(address: Int, bytes: ArraySlice<UInt8>)] = []
         var base = 0
         func image() throws -> Data {
             guard let lowest = chunks.map(\.address).min() else { throw DecodeError.empty }
-            let origin = lowest >= picoFlash ? picoFlash : 0
+            let origin = lowest >= picoFlash ? picoFlash : lowest >= stm32Flash ? stm32Flash : 0
             var image: [UInt8] = []
             for chunk in chunks {
                 let at = chunk.address - origin

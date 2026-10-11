@@ -53,6 +53,8 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case timer555, schmittInverter, unbufferedInverter, analogSwitch
     case logicGate, flipFlop, decadeCounter, binaryCounter, analogMux, analogSelector, pll, dac, shiftRegister
     case atmega328p, atmega2560, attiny85, rp2040
+    /// The STM32F405, the chip of Mutable Instruments' Rings, Clouds, Elements, Warps and Marbles (firmware loaded)
+    case stm32f405
     case delayLine, digitalDelay, vactrol
     case memristor
     /// A behavioural source (SPICE's B source, and its E, F, G and H sources): a voltage or current set by an expression
@@ -76,6 +78,9 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     /// Converters a microcontroller drives: the MCP4822 dual SPI DAC, the MCP3008 SPI ADC, the MCP4725 I²C DAC and the
     /// PCM5102 I²S audio DAC
     case dualDac, spiAdc, i2cDac, i2sDac
+    /// The WM8731 audio codec: a stereo ADC and DAC on I²S, set up over I²C (its frames exchanged with an STM32 on its
+    /// I²S pins)
+    case codec
     /// Dynamics and switching: the SSM2166 mic preamp with compression and gating, the THAT4301 (a VCA, an RMS detector
     /// and an op-amp), and a 3PDT footswitch
     case agcPreamp, analogEngine, footswitch
@@ -217,6 +222,7 @@ extension ElementKind {
         case .atmega2560: return "ATmega2560 (Arduino Mega)"
         case .attiny85: return "ATtiny85"
         case .rp2040: return "RP2040 (Raspberry Pi Pico)"
+        case .stm32f405: return "STM32F405"
         case .schmittInverter: return "Schmitt Inverter"
         case .analogSwitch: return "Analog Switch"
         case .logicGate: return "Logic Gate"
@@ -256,6 +262,7 @@ extension ElementKind {
         case .spiAdc: return "SPI ADC"
         case .i2cDac: return "I²C DAC"
         case .i2sDac: return "I²S Audio DAC"
+        case .codec: return "Audio Codec"
         case .agcPreamp: return "Mic Preamp with AGC"
         case .analogEngine: return "VCA and RMS Detector"
         case .footswitch: return "3PDT Footswitch"
@@ -296,9 +303,9 @@ extension ElementKind {
         case .opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .timer555, .schmittInverter, .unbufferedInverter,
              .analogSwitch,
              .atmega328p, .atmega2560,
-             .attiny85, .rp2040: return "U"
+             .attiny85, .rp2040, .stm32f405: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return "U"
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
         case .behavioralSource: return "B"
@@ -334,8 +341,8 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .digitalDelay, .vactrol: return .effects
         case .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch: return .timersAndLogic
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return .timersAndLogic
-        case .atmega328p, .atmega2560, .attiny85, .rp2040: return .microcontrollers
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return .timersAndLogic
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405: return .microcontrollers
         case .memristor: return .memristors
         case .behavioralSource: return .sources
         case .probe, .ammeter, .loopProbe, .speaker, .vuMeter: return .instruments
@@ -382,8 +389,8 @@ extension ElementKind {
         case .njfet, .pjfet, .ota, .schmittInverter, .unbufferedInverter, .analogSwitch, .multiplier, .delayLine, .digitalDelay, .vactrol,
              .triode, .pentode, .transformer:
             return nil
-        case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040: return nil
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return nil
+        case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405: return nil
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return nil
         case .memristor: return "m"
         case .behavioralSource: return nil
         case .probe: return "o"
@@ -480,8 +487,8 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode, .pentode: return 2
         case .ota, .vactrol, .transformer: return 4
         case .timer555: return 5
-        case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.length
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return chipPackage?.length
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405: return board?.length
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return chipPackage?.length
         default: return audioChipPackage?.length
         }
     }
@@ -518,10 +525,10 @@ extension ElementKind {
         case .vactrol: return ["anode", "cathode", "a", "b"]
         case .ota: return ["minus", "plus", "out", "bias"]
         case .timer555: return ["gnd", "trig", "out", "reset", "ctrl", "thr", "dis", "vcc"]
-        case .atmega328p, .atmega2560, .attiny85, .rp2040: return board?.terminalNames ?? []
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405: return board?.terminalNames ?? []
         case .schmittInverter, .unbufferedInverter: return ["in", "out"]
         case .logicGate: return ["in1", "in2", "out"]
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return chipPackage?.terminalNames ?? []
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return chipPackage?.terminalNames ?? []
         case .electretMic: return ["out", "gnd"]
         case .pickup: return ["hot", "gnd"]
         case .vuMeter: return ["plus", "minus"]
@@ -583,8 +590,8 @@ extension ElementKind {
         case .netLabel, .port: return GridPoint(1, 0)
         case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode, .pentode: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040: return GridPoint(0, board?.length ?? 13)
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac: return GridPoint(0, chipPackage?.length ?? 3)
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405: return GridPoint(0, board?.length ?? 13)
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec: return GridPoint(0, chipPackage?.length ?? 3)
         default: return audioChipPackage.map { GridPoint(0, $0.length) } ?? GridPoint(4, 0)
         }
     }
@@ -746,6 +753,13 @@ extension ElementKind {
                 ParamSpec("outputResistance", "Pin output resistance", unit: "Ω", default: 50, range: 1...1000),
                 ParamSpec("pullUp", "Pull-up and pull-down resistance", unit: "Ω", default: 50_000, range: 30_000...80_000),
             ]
+        case .stm32f405:
+            // its pads' drive at 3.3 V (8 mA within 0.4 V); pull-ups and pull-downs of about 40 kΩ
+            return [
+                ParamSpec("supply", "Supply", unit: "V", default: 3.3, range: 1.8...3.6, log: false),
+                ParamSpec("outputResistance", "Pin output resistance", unit: "Ω", default: 40, range: 1...1000),
+                ParamSpec("pullUp", "Pull-up and pull-down resistance", unit: "Ω", default: 40_000, range: 30_000...50_000),
+            ]
         case .timer555:
             return [
                 ParamSpec("highDrop", "Output high drop", unit: "V", default: 1.7, range: 0...3, log: false),
@@ -793,6 +807,13 @@ extension ElementKind {
                 ParamSpec("upper", "Input rising threshold", unit: "× supply", default: 0.7, range: 0.3...0.9, log: false),
                 ParamSpec("lower", "Input falling threshold", unit: "× supply", default: 0.3, range: 0.1...0.7, log: false),
                 ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 100, range: 0.1...1000),
+            ]
+        case .codec:
+            // its line outputs and inputs about VMID (half its analog supply), as a module's board AC-couples them
+            return [
+                ParamSpec("supply", "Supply (AVDD)", unit: "V", default: 3.3, range: 2.7...3.6, log: false),
+                ParamSpec("fullScale", "Line level at full scale", unit: "V RMS", default: 1, range: 0.1...2, log: false),
+                ParamSpec("outputResistance", "Line output resistance", unit: "Ω", default: 100, range: 0.1...10_000),
             ]
         case .unbufferedInverter:
             return [
@@ -1092,8 +1113,8 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
-             .block:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
+             .codec, .block:
             return packagePins
         default:
             return kind.audioChipPackage != nil ? packagePins : [a, b]
@@ -1335,6 +1356,11 @@ extension ElementKind {
                 PartModel(name: "Raspberry Pi Pico", summary: "The RP2040 at 125 MHz with 2 MB of flash: 26 pins, three analog inputs, USB serial",
                           values: ["supply": 3.3]),
             ]
+        case .stm32f405:
+            return [
+                PartModel(name: "STM32F405RG", summary: "Cortex-M4 with its FPU at 168 MHz, 1 MB of flash and 192 KB of RAM: 49 pins, three 12-bit ADCs, two I²S ports, USART1 as its serial port; runs firmware built with its maker's tools",
+                          values: ["supply": 3.3], aliases: ["STM32F405", "STM32F407"]),
+            ]
         case .timer555:
             return [
                 PartModel(name: "NE555", summary: "Bipolar: output high about 1.7 V below VCC",
@@ -1401,6 +1427,11 @@ extension ElementKind {
             return [
                 PartModel(name: "PCM5102", summary: "Stereo audio DAC on I²S (the PCM5102A): 16 to 32 bits a sample, 2.1 V RMS at full scale about ground from its own negative supply; it makes its own clocks from BCK",
                           values: ["upper": 0.7, "lower": 0.3, "outputResistance": 100], aliases: ["PCM5102A", "PCM5101", "PCM5100"]),
+            ]
+        case .codec:
+            return [
+                PartModel(name: "WM8731", summary: "Stereo audio codec (Mutable Instruments' Rings, Clouds, Elements and Warps): 16 to 32 bits on I²S both ways, set up over I²C at 0x1A; line in and out at 1 V RMS full scale about half its supply",
+                          values: ["supply": 3.3, "fullScale": 1, "outputResistance": 100], aliases: ["WM8731L", "WM8731S"]),
             ]
         case .unbufferedInverter:
             return [
