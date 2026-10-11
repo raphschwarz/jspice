@@ -548,7 +548,7 @@ public final class AVR: Microcontroller {
             return interruptCycles
         }
         if interruptDelay > 0 { interruptDelay -= 1 }
-        let used = execute()
+        let used = AVR.decodesAhead ? executeDecoded() : execute()
         tick(used)
         return used
     }
@@ -1582,6 +1582,461 @@ public final class AVR: Microcontroller {
             }
         }
         return 1
+    }
+
+    // MARK: - Decoded ahead
+
+    /// Whether instructions are dispatched through `decodeTable`, one jump to their code, rather than through the
+    /// nested switches of `execute` (off: for comparing the two; both execute the same instructions alike)
+    public static var decodesAhead = true
+
+    /// What an opcode is, worked out once for all 65536 of them (see `decodeTable`): the cases of `executeDecoded`
+    enum Decoded: UInt8 {
+        /// Nothing but its cycle: NOP, the opcodes these chips lack, and SLEEP, WDR, BREAK and SPM
+        case nop
+        case add, sbc, cpc, movw, muls, mulsu, fmul, fmuls, fmulsu
+        case adc, sub, cp, cpse, and, eor, or, mov
+        case cpi, sbci, subi, ori, andi, lddStd, inOut, rjmp, rcall, ldi
+        case branch, bld, bst, sbrc, sbrs
+        case mul, ldsSts, lpmZ, elpmZ, pushPop, ldSt
+        case com, neg, swap, inc, asr, lsr, ror, dec, jmp, call, bset, bclr
+        case ret, reti, lpmR0, elpmR0, ijmp, eijmp, icall, eicall, adiwSbiw, ioBit
+    }
+
+    /// Each opcode's case, as `execute` and `execute9` would decode it
+    static let decodeTable: UnsafeMutablePointer<Decoded> = {
+        let table = UnsafeMutablePointer<Decoded>.allocate(capacity: 0x10000)
+        for op in 0..<0x10000 { (table + op).initialize(to: AVR.decode(op)) }
+        return table
+    }()
+
+    /// `decodeTable`, kept by each chip (a static's every use asks whether it is made yet)
+    private let decoded = AVR.decodeTable
+
+    static func decode(_ op: Int) -> Decoded {
+        switch op >> 12 {
+        case 0x0:
+            if op == 0 { return .nop }
+            switch op & 0xFC00 {
+            case 0x0C00: return .add
+            case 0x0800: return .sbc
+            case 0x0400: return .cpc
+            default: break
+            }
+            switch op & 0xFF00 {
+            case 0x0100: return .movw
+            case 0x0200: return .muls
+            default: break
+            }
+            switch op & 0xFF88 {
+            case 0x0300: return .mulsu
+            case 0x0308: return .fmul
+            case 0x0380: return .fmuls
+            case 0x0388: return .fmulsu
+            default: return .nop
+            }
+        case 0x1:
+            switch op & 0xFC00 {
+            case 0x1C00: return .adc
+            case 0x1800: return .sub
+            case 0x1400: return .cp
+            default: return .cpse
+            }
+        case 0x2:
+            switch op & 0xFC00 {
+            case 0x2000: return .and
+            case 0x2400: return .eor
+            case 0x2800: return .or
+            default: return .mov
+            }
+        case 0x3: return .cpi
+        case 0x4: return .sbci
+        case 0x5: return .subi
+        case 0x6: return .ori
+        case 0x7: return .andi
+        case 0x8, 0xA: return .lddStd
+        case 0x9: return decode9(op)
+        case 0xB: return .inOut
+        case 0xC: return .rjmp
+        case 0xD: return .rcall
+        case 0xE: return .ldi
+        default:
+            if op & 0xF800 == 0xF000 || op & 0xF800 == 0xF400 { return .branch }
+            switch op & 0xFE08 {
+            case 0xF800: return .bld
+            case 0xFA00: return .bst
+            case 0xFC00: return .sbrc
+            case 0xFE00: return .sbrs
+            default: return .nop
+            }
+        }
+    }
+
+    private static func decode9(_ op: Int) -> Decoded {
+        if op & 0xFC00 == 0x9C00 { return .mul }
+        if op & 0xFE00 == 0x9000 || op & 0xFE00 == 0x9200 {
+            let store = op & 0x0200 != 0
+            switch op & 0x0F {
+            case 0x0: return .ldsSts
+            case 0x4, 0x5: return store ? .nop : .lpmZ
+            case 0x6, 0x7: return store ? .nop : .elpmZ
+            case 0xF: return .pushPop
+            case 0x1, 0x2, 0x9, 0xA, 0xC, 0xD, 0xE: return .ldSt
+            default: return .nop
+            }
+        }
+        if op & 0xFE00 == 0x9400 {
+            switch op & 0x0F {
+            case 0x0: return .com
+            case 0x1: return .neg
+            case 0x2: return .swap
+            case 0x3: return .inc
+            case 0x5: return .asr
+            case 0x6: return .lsr
+            case 0x7: return .ror
+            case 0xA: return .dec
+            case 0xC, 0xD: return .jmp
+            case 0xE, 0xF: return .call
+            default: break
+            }
+            if op & 0xFF8F == 0x9408 { return .bset }
+            if op & 0xFF8F == 0x9488 { return .bclr }
+            switch op {
+            case 0x9508: return .ret
+            case 0x9518: return .reti
+            case 0x95C8: return .lpmR0
+            case 0x95D8: return .elpmR0
+            case 0x9409: return .ijmp
+            case 0x9419: return .eijmp
+            case 0x9509: return .icall
+            case 0x9519: return .eicall
+            default: return .nop
+            }
+        }
+        if op & 0xFE00 == 0x9600 { return .adiwSbiw }
+        if op & 0xFC00 == 0x9800 { return .ioBit }
+        return .nop
+    }
+
+    /// `execute`, its opcode's case looked up in `decodeTable` rather than decoded through nested switches: the same
+    /// code for each instruction
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
+    private func executeDecoded() -> Int {
+        let d = data
+        let op = Int(flash[pc])
+        pc = (pc + 1) & pcMask
+        let rd = (op >> 4) & 0x1F
+        let rr = (op & 0x0F) | ((op >> 5) & 0x10)
+        let rdHigh = 16 + ((op >> 4) & 0x0F)
+        let k8 = (op & 0x0F) | ((op >> 4) & 0xF0)
+
+        switch decoded[op] {
+        case .nop:
+            return 1
+        case .add:
+            let a = Int(d[rd]), b = Int(d[rr])
+            d[rd] = flagsAdd(a, b, a + b)
+            return 1
+        case .sbc:
+            let a = Int(d[rd]), b = Int(d[rr]), c = Int(d[AVR.SREG] & AVR.flagC)
+            d[rd] = flagsSubtract(a, b, a - b - c, keepZ: true)
+            return 1
+        case .cpc:
+            let a = Int(d[rd]), b = Int(d[rr]), c = Int(d[AVR.SREG] & AVR.flagC)
+            _ = flagsSubtract(a, b, a - b - c, keepZ: true)
+            return 1
+        case .movw:
+            let to = ((op >> 4) & 0x0F) * 2, from = (op & 0x0F) * 2
+            d[to] = d[from]
+            d[to + 1] = d[from + 1]
+            return 1
+        case .muls:
+            return multiplyResult(signed(d[16 + ((op >> 4) & 0x0F)]) * signed(d[16 + (op & 0x0F)]), fractional: false)
+        case .mulsu:
+            return multiplyResult(signed(d[16 + ((op >> 4) & 7)]) * Int(d[16 + (op & 7)]), fractional: false)
+        case .fmul:
+            return multiplyResult(Int(d[16 + ((op >> 4) & 7)]) * Int(d[16 + (op & 7)]), fractional: true)
+        case .fmuls:
+            return multiplyResult(signed(d[16 + ((op >> 4) & 7)]) * signed(d[16 + (op & 7)]), fractional: true)
+        case .fmulsu:
+            return multiplyResult(signed(d[16 + ((op >> 4) & 7)]) * Int(d[16 + (op & 7)]), fractional: true)
+        case .adc:
+            let a = Int(d[rd]), b = Int(d[rr]), c = Int(d[AVR.SREG] & AVR.flagC)
+            d[rd] = flagsAdd(a, b, a + b + c)
+            return 1
+        case .sub:
+            let a = Int(d[rd]), b = Int(d[rr])
+            d[rd] = flagsSubtract(a, b, a - b)
+            return 1
+        case .cp:
+            let a = Int(d[rd]), b = Int(d[rr])
+            _ = flagsSubtract(a, b, a - b)
+            return 1
+        case .cpse:
+            if d[rd] == d[rr] { return skip() }
+            return 1
+        case .and:
+            d[rd] = flagsLogic(Int(d[rd] & d[rr]))
+            return 1
+        case .eor:
+            d[rd] = flagsLogic(Int(d[rd] ^ d[rr]))
+            return 1
+        case .or:
+            d[rd] = flagsLogic(Int(d[rd] | d[rr]))
+            return 1
+        case .mov:
+            d[rd] = d[rr]
+            return 1
+        case .cpi:
+            let a = Int(d[rdHigh])
+            _ = flagsSubtract(a, k8, a - k8)
+            return 1
+        case .sbci:
+            let a = Int(d[rdHigh]), c = Int(d[AVR.SREG] & AVR.flagC)
+            d[rdHigh] = flagsSubtract(a, k8, a - k8 - c, keepZ: true)
+            return 1
+        case .subi:
+            let a = Int(d[rdHigh])
+            d[rdHigh] = flagsSubtract(a, k8, a - k8)
+            return 1
+        case .ori:
+            d[rdHigh] = flagsLogic(Int(d[rdHigh]) | k8)
+            return 1
+        case .andi:
+            d[rdHigh] = flagsLogic(Int(d[rdHigh]) & k8)
+            return 1
+        case .lddStd:
+            let q = (op & 0x07) | ((op >> 7) & 0x18) | ((op >> 8) & 0x20)
+            let address = pointer(op & 0x08 != 0 ? 28 : 30) + q
+            if op & 0x0200 != 0 {
+                write(address, d[rd])
+            } else {
+                d[rd] = read(address)
+            }
+            return 2
+        case .inOut:
+            let address = (((op >> 5) & 0x30) | (op & 0x0F)) + 0x20
+            if op & 0x0800 != 0 {
+                write(address, d[rd])
+            } else {
+                d[rd] = read(address)
+            }
+            return 1
+        case .rjmp:
+            var k = op & 0x0FFF
+            if k & 0x800 != 0 { k -= 0x1000 }
+            pc = (pc + k) & pcMask
+            if k < 0 && runEnd != 0 { loopedBack(used: 2) }
+            return 2
+        case .rcall:
+            var k = op & 0x0FFF
+            if k & 0x800 != 0 { k -= 0x1000 }
+            pushPC(pc)
+            pc = (pc + k) & pcMask
+            return threeBytePC ? 4 : 3
+        case .ldi:
+            d[rdHigh] = UInt8(k8)
+            return 1
+        case .branch:
+            let bit = UInt8(1) << (op & 7)
+            var k = (op >> 3) & 0x7F
+            if k & 0x40 != 0 { k -= 0x80 }
+            if (d[AVR.SREG] & bit != 0) == (op & 0x0400 == 0) {
+                pc = (pc + k) & pcMask
+                if k < 0 && runEnd != 0 { loopedBack(used: 2) }
+                return 2
+            }
+            return 1
+        case .bld:
+            let bit = op & 7
+            if d[AVR.SREG] & AVR.flagT != 0 { d[rd] |= UInt8(1) << bit } else { d[rd] &= ~(UInt8(1) << bit) }
+            return 1
+        case .bst:
+            setFlags(AVR.flagT, d[rd] >> (op & 7) & 1 != 0 ? AVR.flagT : 0)
+            return 1
+        case .sbrc:
+            return d[rd] >> (op & 7) & 1 == 0 ? skip() : 1
+        case .sbrs:
+            return d[rd] >> (op & 7) & 1 != 0 ? skip() : 1
+        case .mul:
+            return multiplyResult(Int(d[rd]) * Int(d[rr]), fractional: false)
+        case .ldsSts:
+            let address = Int(flash[pc])
+            pc = (pc + 1) & pcMask
+            if op & 0x0200 != 0 { write(address, d[rd]) } else { d[rd] = read(address) }
+            return 2
+        case .lpmZ:
+            let z = pointer(30)
+            d[rd] = programByte(z)
+            if op & 0x0F == 0x5 { setPointer(30, (z + 1) & 0xFFFF) }
+            return 3
+        case .elpmZ:
+            let z = extendedZ()
+            d[rd] = programByte(z)
+            if op & 0x0F == 0x7 {
+                setPointer(30, (z + 1) & 0xFFFF)
+                if threeBytePC { d[AVR.RAMPZ] = UInt8(truncatingIfNeeded: (z + 1) >> 16) }
+            }
+            return 3
+        case .pushPop:
+            if op & 0x0200 != 0 { push(d[rd]) } else { d[rd] = pop() }
+            return 2
+        case .ldSt:
+            let mode = op & 0x0F
+            let base = mode == 0x1 || mode == 0x2 ? 30 : (mode == 0x9 || mode == 0xA ? 28 : 26)
+            let change = mode == 0xC ? 0 : (mode == 0x2 || mode == 0xA || mode == 0xE ? -1 : 1)
+            var p = pointer(base)
+            if change < 0 { p = (p - 1) & 0xFFFF }
+            if op & 0x0200 != 0 { write(p, d[rd]) } else { d[rd] = read(p) }
+            if change > 0 { p = (p + 1) & 0xFFFF }
+            setPointer(base, p)
+            return 2
+        case .com:
+            let r = ~d[rd]
+            let negative = r & 0x80 != 0
+            setFlags(AVR.flagC | AVR.flagZ | AVR.flagN | AVR.flagV | AVR.flagS,
+                     AVR.flagC | (r == 0 ? AVR.flagZ : 0) | (negative ? AVR.flagN | AVR.flagS : 0))
+            d[rd] = r
+            return 1
+        case .neg:
+            let a = d[rd]
+            let r = 0 &- a
+            let overflow = r == 0x80
+            let negative = r & 0x80 != 0
+            var f: UInt8 = 0
+            if r != 0 { f |= AVR.flagC } else { f |= AVR.flagZ }
+            if negative { f |= AVR.flagN }
+            if overflow { f |= AVR.flagV }
+            if (r | a) & 0x08 != 0 { f |= AVR.flagH }
+            if negative != overflow { f |= AVR.flagS }
+            setFlags(AVR.flagC | AVR.flagZ | AVR.flagN | AVR.flagV | AVR.flagS | AVR.flagH, f)
+            d[rd] = r
+            return 1
+        case .swap:
+            let a = d[rd]
+            d[rd] = a << 4 | a >> 4
+            return 1
+        case .inc:
+            let r = d[rd] &+ 1
+            let overflow = r == 0x80
+            let negative = r & 0x80 != 0
+            setFlags(AVR.flagZ | AVR.flagN | AVR.flagV | AVR.flagS,
+                     (r == 0 ? AVR.flagZ : 0) | (negative ? AVR.flagN : 0) | (overflow ? AVR.flagV : 0)
+                         | (negative != overflow ? AVR.flagS : 0))
+            d[rd] = r
+            return 1
+        case .asr:
+            let a = Int(d[rd])
+            return shiftFlags(rd, a, (a >> 1) | (a & 0x80))
+        case .lsr:
+            let a = Int(d[rd])
+            return shiftFlags(rd, a, a >> 1)
+        case .ror:
+            let a = Int(d[rd])
+            return shiftFlags(rd, a, (a >> 1) | (d[AVR.SREG] & AVR.flagC != 0 ? 0x80 : 0))
+        case .dec:
+            let r = d[rd] &- 1
+            let overflow = r == 0x7F
+            let negative = r & 0x80 != 0
+            setFlags(AVR.flagZ | AVR.flagN | AVR.flagV | AVR.flagS,
+                     (r == 0 ? AVR.flagZ : 0) | (negative ? AVR.flagN : 0) | (overflow ? AVR.flagV : 0)
+                         | (negative != overflow ? AVR.flagS : 0))
+            d[rd] = r
+            return 1
+        case .jmp:
+            let k = Int(flash[pc]) | ((op & 0x01F0) << 13) | ((op & 1) << 16)
+            pc = k & pcMask
+            return 3
+        case .call:
+            let k = Int(flash[pc]) | ((op & 0x01F0) << 13) | ((op & 1) << 16)
+            pushPC((pc + 1) & pcMask)
+            pc = k & pcMask
+            return threeBytePC ? 5 : 4
+        case .bset:
+            let bit = (op >> 4) & 7
+            d[AVR.SREG] |= UInt8(1) << bit
+            if bit == 7 { interruptDelay = enableDelay }
+            return 1
+        case .bclr:
+            d[AVR.SREG] &= ~(UInt8(1) << ((op >> 4) & 7))
+            return 1
+        case .ret:
+            pc = popPC()
+            return threeBytePC ? 5 : 4
+        case .reti:
+            pc = popPC()
+            d[AVR.SREG] |= AVR.flagI
+            interruptDelay = enableDelay
+            return threeBytePC ? 5 : 4
+        case .lpmR0:
+            d[0] = programByte(pointer(30))
+            return 3
+        case .elpmR0:
+            d[0] = programByte(extendedZ())
+            return 3
+        case .ijmp:
+            pc = pointer(30) & pcMask
+            return 2
+        case .eijmp:
+            pc = (pointer(30) | (threeBytePC ? Int(d[AVR.EIND]) << 16 : 0)) & pcMask
+            return 2
+        case .icall:
+            pushPC(pc)
+            pc = pointer(30) & pcMask
+            return threeBytePC ? 4 : 3
+        case .eicall:
+            pushPC(pc)
+            pc = (pointer(30) | (threeBytePC ? Int(d[AVR.EIND]) << 16 : 0)) & pcMask
+            return threeBytePC ? 4 : 3
+        case .adiwSbiw:
+            let register = 24 + ((op >> 3) & 0x06)
+            let k = (op & 0x0F) | ((op >> 2) & 0x30)
+            let a = pointer(register)
+            let r: Int
+            let overflow: Bool
+            let carry: Bool
+            if op & 0x0100 == 0 {
+                r = (a + k) & 0xFFFF
+                overflow = ~a & r & 0x8000 != 0
+                carry = ~r & a & 0x8000 != 0
+            } else {
+                r = (a - k) & 0xFFFF
+                overflow = a & ~r & 0x8000 != 0
+                carry = r & ~a & 0x8000 != 0
+            }
+            let negative = r & 0x8000 != 0
+            setFlags(AVR.flagC | AVR.flagZ | AVR.flagN | AVR.flagV | AVR.flagS,
+                     (carry ? AVR.flagC : 0) | (r == 0 ? AVR.flagZ : 0) | (negative ? AVR.flagN : 0) | (overflow ? AVR.flagV : 0)
+                         | (negative != overflow ? AVR.flagS : 0))
+            setPointer(register, r)
+            return 2
+        case .ioBit:
+            let address = 0x20 + ((op >> 3) & 0x1F)
+            let bit = op & 7
+            switch op & 0x0300 {
+            case 0x0000:
+                writeBit(address, bit, false)
+                return 2
+            case 0x0200:
+                writeBit(address, bit, true)
+                return 2
+            case 0x0100:
+                return read(address) >> bit & 1 == 0 ? skip() : 1
+            default:
+                return read(address) >> bit & 1 != 0 ? skip() : 1
+            }
+        }
+    }
+
+    /// Runs `words`, put at the program's start, as one instruction decoded through `decodeTable` or through `execute`'s
+    /// switches (for tests that compare the two); returns the cycles it took and the interrupt delay after it
+    func executeInstruction(_ words: (UInt16, UInt16), decodedAhead: Bool) -> (cycles: Int, interruptDelay: Int) {
+        flash[0] = words.0
+        flash[1] = words.1
+        pc = 0
+        interruptDelay = 0
+        let used = decodedAhead ? executeDecoded() : execute()
+        return (used, interruptDelay)
     }
 
     // MARK: - Inspection

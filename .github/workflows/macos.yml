@@ -63,6 +63,7 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-everywhere 0.25 voice acid mc1496-ring guitar-fuzz tube-screamer bargraph tube-amp lm1036 || true
           # and what bypassing behavioural sources saves them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch decode-ahead 0.25 arduino-fade arduino-knob arduino-melody arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
           # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns
           # keep moving, in the synth voice, the sequenced acid line and the fuzz
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-rejections 0.25 voice acid guitar-fuzz || true
