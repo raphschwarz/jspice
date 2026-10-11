@@ -329,6 +329,10 @@ final class CircuitCanvasView: NSView {
             return live ? String(format: "%+.1f dB", simulator.meterReading(index)) : (element.model?.name ?? "VU")
         case .footswitch:
             return element.closed ? "Effect on" : "Bypassed"
+        case .jack:
+            return element.closed ? "Plugged in" : "Normalled"
+        case .regulator:
+            return element.model?.name ?? "Custom"
         case .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .toneControl, .levelDetector, .springReverb, .agcPreamp,
              .barGraphDriver, .balancedCable:
             return element.model?.name ?? "Custom"
@@ -663,7 +667,7 @@ final class CircuitCanvasView: NSView {
                 drag = .pressing(hit.id)
                 return
             }
-            if (hit.kind == .toggleSwitch || hit.kind == .footswitch) && !event.modifierFlags.contains(.shift) { pendingToggle = hit.id }
+            if (hit.kind == .toggleSwitch || hit.kind == .footswitch || hit.kind == .jack) && !event.modifierFlags.contains(.shift) { pendingToggle = hit.id }
             drag = .moving(start: gridPoint, original: editor.circuit, ids: editor.selection, moved: false)
             needsDisplay = true
             return
@@ -827,6 +831,10 @@ final class CircuitCanvasView: NSView {
         }
         if hit.kind == .footswitch {
             menu.addItem(item(hit.closed ? "Bypass" : "Switch the Effect On") { [weak self] in self?.editor.toggleSwitch(hit.id) })
+            menu.addItem(.separator())
+        }
+        if hit.kind == .jack {
+            menu.addItem(item(hit.closed ? "Unplug the Cable" : "Plug a Cable In") { [weak self] in self?.editor.toggleSwitch(hit.id) })
             menu.addItem(.separator())
         }
         for quantity in scopeQuantities(for: hit.kind) {
@@ -1022,7 +1030,7 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     case .wire, .toggleSwitch, .pushButton, .ammeter, .loopProbe: return [.current]
     case .probe, .netLabel, .speaker, .vuMeter, .electretMic, .pickup: return [.voltage]
     case .ground, .atmega328p, .atmega2560, .attiny85, .rp2040, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
-         .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch,
+         .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch, .jack, .regulator,
          .toneControl, .barGraphDriver, .balancedCable: return []
     case .levelDetector, .springReverb, .agcPreamp: return [.voltage]
     case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .multiplier, .comparator, .delayLine, .digitalDelay, .vco,

@@ -1003,6 +1003,15 @@ public enum Breadboard {
         case .agcPreamp: return "SSM2166: surface-mount, on an adapter board, on 5 V"
         case .analogEngine: return "THAT4301: surface-mount, on an adapter board, on ±15 V"
         case .footswitch: return "3PDT footswitch, in the enclosure, on its nine lugs"
+        case .jack: return "Switched 3.5 mm jack (Thonkiconn), on the panel: tip, sleeve and the normal lug the tip rests on unplugged"
+        case .regulator:
+            let model = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? "Voltage"
+            let pins: [String: String] = [
+                "LM7805": "TO-220: 1 IN, 2 GND, 3 OUT", "LM7812": "TO-220: 1 IN, 2 GND, 3 OUT",
+                "78L05": "TO-92: 1 OUT, 2 GND, 3 IN", "79L05": "TO-92: 1 GND, 2 IN, 3 OUT", "LM7912": "TO-220: 1 GND, 2 IN, 3 OUT",
+                "LM1117-3.3": "TO-220: 1 GND, 2 OUT, 3 IN", "LM317": "TO-220: 1 ADJ, 2 OUT, 3 IN", "LM337": "TO-220: 1 ADJ, 2 IN, 3 OUT",
+            ]
+            return "\(model) regulator (\(pins[model] ?? "by its datasheet's pinout")), with a capacitor at its input and its output"
         case .opAmp:
             let model = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name ?? "Op-amp"
             return model == "TPA6120" ? "TPA6120 headphone amp: surface-mount, on a breakout board" : "\(model) power amp, on a heat sink, wired by leads"

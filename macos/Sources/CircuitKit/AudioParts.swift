@@ -14,7 +14,7 @@ extension ElementKind {
         switch self {
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator, .tappedTransformer,
-             .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .reverbBrick, .analogEngine:
+             .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .reverbBrick, .analogEngine, .regulator:
             return true
         default:
             return false
@@ -102,6 +102,13 @@ extension ElementKind {
             return ChipPackage(name: "3PDT", terminalNames: ["c1", "a1", "b1", "c2", "a2", "b2", "c3", "a3", "b3"],
                                pinLabels: ["1 COM", "1 BYPASS", "1 EFFECT", "2 COM", "2 BYPASS", "2 EFFECT", "3 COM", "3 BYPASS", "3 EFFECT"],
                                pinPlaces: [second(0), first(0), first(1), second(2), first(2), first(3), second(4), first(4), first(5)], length: 5)
+        case .jack:
+            // the jack's three lugs into the module, the cable's plug from outside
+            return ChipPackage(name: "JACK", terminalNames: ["tip", "normal", "sleeve", "plug"], pinLabels: ["TIP", "NORMAL", "SLEEVE", "PLUG"],
+                               pinPlaces: [first(0), first(1), first(2), second(0)], length: 2)
+        case .regulator:
+            return ChipPackage(name: "REG", terminalNames: ["in", "common", "out"], pinLabels: ["IN", "GND/ADJ", "OUT"],
+                               pinPlaces: [second(0), second(2), first(0)], length: 2)
         case .tappedTransformer:
             return ChipPackage(name: "CT", terminalNames: ["a1", "a2", "b1", "ct", "b2"], pinLabels: ["A1", "A2", "B1", "CT", "B2"],
                                pinPlaces: [second(0), second(2), first(0), first(1), first(2)], length: 2)
@@ -266,6 +273,14 @@ extension ElementKind {
                 ParamSpec("supply", "Supply (±)", unit: "V", default: 15, range: 5...18, log: false),
                 ParamSpec("averaging", "RMS detector's time constant (its timing capacitor)", unit: "s", default: 0.035, range: 1e-3...1),
             ]
+        case .regulator:
+            return [
+                ParamSpec("voltage", "Output voltage; an adjustable one's reference, OUT above ADJ", unit: "V", default: 5, range: 1...24, log: false),
+                .choice("adjustable", "Common pin", ["GND: a fixed output", "ADJ: adjustable, set by a divider"]),
+                .choice("negative", "Polarity", ["Positive", "Negative"]),
+                ParamSpec("dropout", "Dropout (the least the input can be past the output)", unit: "V", default: 2, range: 0.1...4, log: false),
+                ParamSpec("quiescent", "Current from IN out of GND (out of ADJ when adjustable)", unit: "A", default: 5e-3, range: 0...0.02, log: false),
+            ]
         case .reverbBrick:
             return [
                 ParamSpec("decay", "Decay time (−60 dB)", unit: "s", default: 2.5, range: 0.5...6),
@@ -333,6 +348,29 @@ extension ElementKind {
                           values: ["gain": 10, "ratio": 3, "rotation": 0.1, "gate": 0.002, "averaging": 0.01, "limit": 2]),
                 PartModel(name: "SSM2167", summary: "Its 3 V sibling with a fixed preamp: ratio and gate set as on the SSM2166, a smaller swing",
                           values: ["gain": 5, "ratio": 3, "rotation": 0.1, "gate": 0.002, "averaging": 0.01, "limit": 1]),
+            ]
+        case .regulator:
+            func fixed(_ name: String, _ volts: Double, negative: Bool = false, dropout: Double, quiescent: Double, _ summary: String,
+                       aliases: [String] = []) -> PartModel {
+                PartModel(name: name, summary: summary, values: [
+                    "voltage": volts, "adjustable": 0, "negative": negative ? 1 : 0, "dropout": dropout, "quiescent": quiescent,
+                ], aliases: aliases)
+            }
+            return [
+                fixed("LM7805", 5, dropout: 2, quiescent: 5e-3, "+5 V at up to 1 A (TO-220) from 7 V and up", aliases: ["7805", "L7805", "MC7805"]),
+                fixed("78L05", 5, dropout: 1.7, quiescent: 3e-3, "+5 V at up to 100 mA (TO-92): the logic and reference supply of many Eurorack modules",
+                      aliases: ["LM78L05", "MC78L05", "L78L05"]),
+                fixed("LM7812", 12, dropout: 2, quiescent: 5e-3, "+12 V at up to 1 A (TO-220)", aliases: ["7812", "L7812", "MC7812"]),
+                fixed("79L05", 5, negative: true, dropout: 1.7, quiescent: 3e-3, "−5 V at up to 100 mA (TO-92), from a negative supply",
+                      aliases: ["LM79L05", "MC79L05", "L79L05"]),
+                fixed("LM7912", 12, negative: true, dropout: 1.5, quiescent: 3e-3, "−12 V at up to 1 A (TO-220), from a negative supply",
+                      aliases: ["7912", "L7912", "MC7912"]),
+                fixed("LM1117-3.3", 3.3, dropout: 1.1, quiescent: 5e-3, "+3.3 V at up to 800 mA from 4.4 V and up: a microcontroller's supply, in Mutable's modules (4ms' use ST's LD1117)",
+                      aliases: ["LD1117-3.3", "AMS1117-3.3", "LD1117V33"]),
+                PartModel(name: "LM317", summary: "Adjustable, positive: OUT is 1.25 V above ADJ, so 240 Ω from OUT to ADJ and R2 from ADJ to ground give 1.25 V × (1 + R2 / 240 Ω); 50 µA out of ADJ",
+                          values: ["voltage": 1.25, "adjustable": 1, "negative": 0, "dropout": 2, "quiescent": 50e-6]),
+                PartModel(name: "LM337", summary: "Adjustable, negative: OUT is 1.25 V below ADJ, the LM317's mirror for a negative supply",
+                          values: ["voltage": 1.25, "adjustable": 1, "negative": 1, "dropout": 2, "quiescent": 65e-6]),
             ]
         case .analogEngine:
             return [
@@ -576,8 +614,17 @@ struct PartExpansion {
     }
 
     mutating func npn(base: GridPoint, collector: GridPoint, emitter: GridPoint, _ suffix: String, _ params: [String: Double]) {
+        bipolar(.npn, base: base, collector: collector, emitter: emitter, suffix, params)
+    }
+
+    mutating func pnp(base: GridPoint, collector: GridPoint, emitter: GridPoint, _ suffix: String, _ params: [String: Double]) {
+        bipolar(.pnp, base: base, collector: collector, emitter: emitter, suffix, params)
+    }
+
+    private mutating func bipolar(_ kind: ElementKind, base: GridPoint, collector: GridPoint, emitter: GridPoint, _ suffix: String,
+                                  _ params: [String: Double]) {
         let a = place()
-        let part = add(.npn, a, a + GridPoint(2, 0), suffix, params)
+        let part = add(kind, a, a + GridPoint(2, 0), suffix, params)
         let posts = part.posts
         add(.wire, posts[0], base, suffix + "b")
         add(.wire, posts[1], collector, suffix + "c")
@@ -1016,6 +1063,32 @@ extension PartExpansion {
             resistor(y, minus, res, "RES")
             inductor(y, minus, lces, "LCES")
             capacitor(y, minus, cmes, "CMES")
+        case .regulator where p.count == 3:
+            // an error amplifier holds OUT at the reference past the common pin (GND, or ADJ), driving a pass transistor
+            // from IN through 10 kΩ. Its base is clamped by a diode at the dropout short of IN (the diode's drop and the
+            // transistor's base-emitter drop cancel), so with too little input the output follows it at the dropout.
+            // The quiescent current goes from IN out of the common pin (an LM317's ADJ current into its divider), and
+            // 100 kΩ from OUT to the common pin keeps the pass transistor on with no load
+            let (input, common, out) = (p[0], p[1], p[2])
+            let negative = param("negative") >= 0.5
+            let (reference, drive, base, clamp) = (node(), node(), node(), node())
+            if negative {
+                add(.dcVoltage, reference, common, "VREF", ["voltage": param("voltage")])
+                add(.dcVoltage, input, clamp, "VDROP", ["voltage": param("dropout")])
+                add(.diode, clamp, base, "DCLAMP")
+                pnp(base: base, collector: input, emitter: out, "QPASS", ["beta": 1000, "saturationCurrent": 1e-13])
+                add(.currentSource, common, input, "IQ", ["current": param("quiescent")])
+            } else {
+                add(.dcVoltage, common, reference, "VREF", ["voltage": param("voltage")])
+                add(.dcVoltage, clamp, input, "VDROP", ["voltage": param("dropout")])
+                add(.diode, base, clamp, "DCLAMP")
+                npn(base: base, collector: input, emitter: out, "QPASS", ["beta": 1000, "saturationCurrent": 1e-13])
+                add(.currentSource, input, common, "IQ", ["current": param("quiescent")])
+            }
+            opAmp(minus: out, plus: reference, out: drive, "EA",
+                  ["gain": 1e5, "limit": 50, "gbw": 1e6, "slewRate": 0, "offset": 0, "noise": 0, "midpoint": 0])
+            resistor(drive, base, 10_000, "RB")
+            resistor(out, common, 100_000, "RBLEED")
         default:
             break
         }

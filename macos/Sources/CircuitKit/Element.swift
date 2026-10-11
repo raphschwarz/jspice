@@ -79,6 +79,8 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     /// Dynamics and switching: the SSM2166 mic preamp with compression and gating, the THAT4301 (a VCA, an RMS detector
     /// and an op-amp), and a 3PDT footswitch
     case agcPreamp, analogEngine, footswitch
+    /// Eurorack parts: a switched (normalled) jack, and a voltage regulator (78xx, 79xx, LM1117, LM317, LM337)
+    case jack, regulator
     /// A block (a circuit used as one part) and the ports that are its pins
     case port, block
 
@@ -257,6 +259,8 @@ extension ElementKind {
         case .agcPreamp: return "Mic Preamp with AGC"
         case .analogEngine: return "VCA and RMS Detector"
         case .footswitch: return "3PDT Footswitch"
+        case .jack: return "Switched Jack"
+        case .regulator: return "Voltage Regulator"
         case .toneControl: return "Tone Control"
         case .levelDetector: return "Level Detector"
         case .springReverb: return "Spring Reverb Tank"
@@ -308,6 +312,8 @@ extension ElementKind {
              .barGraphDriver, .balancedModulator, .mixerOscillator, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay,
              .effectsProcessor, .reverbBrick, .agcPreamp, .analogEngine: return "U"
         case .footswitch: return "S"
+        case .jack: return "J"
+        case .regulator: return "U"
         case .tappedTransformer: return "T"
         case .springReverb: return "RT"
         case .balancedCable: return "CBL"
@@ -340,7 +346,8 @@ extension ElementKind {
         case .nortonAmp: return .amplifiers
         case .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick: return .effects
         case .analogEngine: return .audio
-        case .footswitch: return .switches
+        case .footswitch, .jack: return .switches
+        case .regulator: return .sources
         case .port, .block: return .blocks
         }
     }
@@ -385,7 +392,7 @@ extension ElementKind {
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .agcPreamp, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator,
              .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor,
-             .reverbBrick, .analogEngine, .footswitch: return nil
+             .reverbBrick, .analogEngine, .footswitch, .jack, .regulator: return nil
         }
     }
 
@@ -534,7 +541,7 @@ extension ElementKind {
     /// Sources played from the computer keyboard or a MIDI keyboard
     public var isKeyboard: Bool { self == .keyboardPitch || self == .keyboardGate }
 
-    public var isSwitch: Bool { self == .toggleSwitch || self == .pushButton || self == .footswitch }
+    public var isSwitch: Bool { self == .toggleSwitch || self == .pushButton || self == .footswitch || self == .jack }
 
     /// Parts whose output (the third terminal) is driven like a voltage source to ground: op-amps, multipliers, BBDs,
     /// comparators and the synth chips
@@ -593,7 +600,7 @@ extension ElementKind {
         case .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
              .toneControl, .levelDetector, .springReverb, .agcPreamp, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator,
              .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor,
-             .reverbBrick, .analogEngine, .footswitch:
+             .reverbBrick, .analogEngine, .footswitch, .jack, .regulator:
             return audioParams
         case .resistor:
             return [
@@ -1103,13 +1110,15 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
 
     /// Ideal conductors: their ends are the same node
     public var isConductor: Bool {
-        kind == .wire || kind == .ammeter || (kind.isSwitch && kind != .footswitch && closed)
+        kind == .wire || kind == .ammeter || (kind.isSwitch && kind != .footswitch && kind != .jack && closed)
     }
 
-    /// The terminals that are one node: a conductor's two ends, or each pole of a footswitch with the throw it is set to
-    /// (the second, the effect, when pressed in; the first, the bypass, otherwise)
+    /// The terminals that are one node: a conductor's two ends, each pole of a footswitch with the throw it is set to
+    /// (the second, the effect, when pressed in; the first, the bypass, otherwise), or a jack's tip with the plug's
+    /// tip when a cable is plugged in and with its normal lug when not
     public var joinedTerminals: [(Int, Int)] {
         if kind == .footswitch { return (0..<3).map { (3 * $0, 3 * $0 + (closed ? 2 : 1)) } }
+        if kind == .jack { return [(0, closed ? 3 : 1)] }
         return isConductor ? [(0, 1)] : []
     }
 }

@@ -114,4 +114,63 @@ final class EurorackPartsTests: XCTestCase {
         XCTAssertTrue(package.supplies.contains { $0.pin == 8 && $0.supply == .volts(3.3) }, "\(package.supplies)")
         XCTAssertTrue(package.supplies.contains { $0.pin == 4 && $0.supply == .ground }, "\(package.supplies)")
     }
+
+    func testSwitchedJackNormalsItsTipUntilACableIsPlugged() throws {
+        // an input normalled to 5 V: unplugged it reads the normal, plugged it reads the cable's 1 V
+        func input(plugged: Bool) throws -> Double {
+            try settle([
+                dc("VN", 5, plus: "norm"),
+                dc("VP", 1, plus: "cable"),
+                NetlistPart(kind: .jack, name: "J1", connections: ["tip": "in", "normal": "norm", "sleeve": "GND", "plug": "cable"],
+                            closed: plugged),
+                r("RIN", 100_000, "in", "GND"),
+                probe("IN", "in"),
+            ], watch: "IN")
+        }
+        XCTAssertEqual(try input(plugged: false), 5, accuracy: 1e-6)
+        XCTAssertEqual(try input(plugged: true), 1, accuracy: 1e-6)
+        XCTAssertEqual(ElementKind.jack.terminalNames, ["tip", "normal", "sleeve", "plug"])
+        XCTAssertTrue(ElementKind.jack.isSwitch)
+    }
+
+    /// A regulator's output (and the drop across 1 Ω in its input lead, its input current in amps) from `input` volts
+    private func regulate(_ model: String, input: Double, load: Double, divider: (top: Double, bottom: Double)? = nil) throws -> (out: Double, inputAmps: Double) {
+        let params = try XCTUnwrap(ElementKind.regulator.model(named: model)).values
+        var parts = [
+            dc("VS", input, plus: "supply"),
+            r("RSENSE", 1, "supply", "in"),
+            part(.regulator, "U1", params, ["in": "in", "common": divider == nil ? "GND" : "adj", "out": "out"]),
+            r("RL", load, "out", "GND"),
+            probe("OUT", "out"),
+            probe("SENSE", "supply", "in"),
+        ]
+        if let divider {
+            parts += [r("R1", divider.top, "out", "adj"), r("R2", divider.bottom, "adj", "GND")]
+        }
+        let out = try settle(parts, watch: "OUT")
+        let sense = try settle(parts, watch: "SENSE")
+        return (out, sense)
+    }
+
+    func testFixedRegulatorsHoldTheirOutputsAndDropOutBelowTheirInputs() throws {
+        let lm7805 = try regulate("LM7805", input: 12, load: 100)
+        XCTAssertEqual(lm7805.out, 5, accuracy: 0.005)
+        // the load's 50 mA, the quiescent 5 mA and a little more pass through from the input
+        XCTAssertEqual(lm7805.inputAmps, 0.055, accuracy: 0.001)
+        // from 6 V it is 2 V short: the output follows the input down
+        XCTAssertEqual(try regulate("LM7805", input: 6, load: 100).out, 4, accuracy: 0.15)
+        XCTAssertEqual(try regulate("7805", input: 9, load: 1000).out, 5, accuracy: 0.005, "found by its other name")
+        XCTAssertEqual(try regulate("LM1117-3.3", input: 5, load: 33).out, 3.3, accuracy: 0.005)
+        XCTAssertEqual(try regulate("79L05", input: -12, load: 1000).out, -5, accuracy: 0.005)
+        XCTAssertEqual(try regulate("LM7912", input: -15, load: 120).out, -12, accuracy: 0.005)
+    }
+
+    func testAdjustableRegulatorsSetByTheirDividers() throws {
+        // 1.25 V × (1 + 720 / 240), and the ADJ current's (and the inner 100 kΩ's) drop across 720 Ω: about 5.045 V
+        XCTAssertEqual(try regulate("LM317", input: 12, load: 1000, divider: (240, 720)).out, 5.045, accuracy: 0.01)
+        XCTAssertEqual(try regulate("LM337", input: -12, load: 1000, divider: (240, 720)).out, -5.056, accuracy: 0.01)
+        // the breadboard's parts list gives its pinout
+        let title = Breadboard.offBoardTitle(part(.regulator, "U1", Examples.model(.regulator, "78L05"), [:]))
+        XCTAssertTrue(title.contains("TO-92: 1 OUT, 2 GND, 3 IN"), title)
+    }
 }

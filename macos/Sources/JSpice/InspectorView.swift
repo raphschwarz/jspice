@@ -193,7 +193,7 @@ struct ElementInspector: View {
 
             if element.kind.isSwitch {
                 Section {
-                    Toggle(element.kind == .footswitch ? "Effect on (pressed)" : "Closed",
+                    Toggle(element.kind == .footswitch ? "Effect on (pressed)" : element.kind == .jack ? "Cable plugged in" : "Closed",
                            isOn: Binding(get: { element.closed }, set: { _ in editor.toggleSwitch(element.id) }))
                 } footer: {
                     Text("You can also click the switch on the canvas.")
