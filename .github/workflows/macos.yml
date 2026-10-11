@@ -81,6 +81,8 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch run-stretches 0.25 pico-knob pico-pcm5102 pico-melody || true
           # and a stretch going on past a register rather than ending there
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch stretch-past-registers 0.25 pico-knob pico-pcm5102 pico-melody || true
+          # and the code in flash decoded once rather than at every instruction
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch decode-flash-once 0.25 pico-knob pico-pcm5102 pico-melody || true
           # and PIO delay loops' turns taken directly where they only count down
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch quiet-pio-turns 0.25 pico-melody pico-pcm5102 || true
           # and the interpreters inside their run loops rather than called for each instruction

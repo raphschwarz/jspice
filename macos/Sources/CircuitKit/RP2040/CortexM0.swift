@@ -98,6 +98,33 @@ final class CortexM0 {
     deinit {
         registers.deallocate()
         loopRegisters.deallocate()
+        free(flashOps)
+    }
+
+    /// The kind each halfword of flash decodes to, plus 1 (0: not decoded yet). Code in flash, which only a write
+    /// through the bus changes (forgetting that word's kinds), is decoded once: an instruction's kind is then one load
+    /// from its address, on the way to the jump to it, rather than two (its halfword, then the decoding table).
+    private var flashOps = CortexM0.newFlashOps()
+    private static let flashOpsCount = RP2040.flashSize / 2
+    /// Whether flash is decoded once (off, every instruction decoded as it runs: for comparing)
+    static var decodesFlashOnce = true
+
+    private static func newFlashOps() -> UnsafeMutablePointer<UInt8> {
+        // (zeroed pages, handed out as first touched: a sketch's code touches few)
+        calloc(flashOpsCount, 1)!.assumingMemoryBound(to: UInt8.self)
+    }
+
+    /// Flash filled anew (a reset, a firmware loaded): every kind decoded is forgotten
+    func flashReplaced() {
+        free(flashOps)
+        flashOps = CortexM0.newFlashOps()
+    }
+
+    /// A word of flash written through the bus, at `offset` from its start: the kinds of its halfwords are forgotten
+    func flashWritten(at offset: Int) {
+        for slot in (offset >> 1)...((offset + 3) >> 1) where slot >= 0 && slot < CortexM0.flashOpsCount {
+            flashOps[slot] = 0
+        }
     }
 
     /// Runs instructions from the clock at `base` with the clock left where it is, as many as end short of `limit`
@@ -175,10 +202,11 @@ final class CortexM0 {
     /// were the last time it was taken and nothing counted in `effects` since, the program goes round to the same
     /// effect until the chip's next event (nothing else changes before then), and the rounds that end before it (and
     /// before the run's end) are counted at once
-    @inline(__always) private func loopedBack(used: Int) {
-        // (the first looks, which most backward branches end at, in the interpreter; the rest called)
-        guard PC == loopTarget && effects == loopEffects else {
-            loopTarget = PC
+    @inline(__always) private func loopedBack(at target: UInt32, used: Int) {
+        // (the first looks, which most backward branches end at, in the interpreter; the rest called. The PC as the
+        // branch left it, given rather than read back from where it was just written.)
+        guard target == loopTarget && effects == loopEffects else {
+            loopTarget = target
             loopEffects = effects
             loopSeen = false
             loopStrikes = 0
@@ -815,7 +843,22 @@ final class CortexM0 {
         // there: r(15), the calls)
         var pc = next &+ 2
         PC = pc
-        switch decode[opcode] {
+        let op: Op
+        let inFlash = opcodePC &- RP2040.flashStart
+        if inFlash < CortexM0.flashSize && CortexM0.decodesFlashOnce {
+            // (decoded once: see `flashOps`)
+            let slot = Int(inFlash >> 1)
+            let known = flashOps[slot]
+            if known != 0 {
+                op = Op(rawValue: known &- 1).unsafelyUnwrapped
+            } else {
+                op = decode[opcode]
+                flashOps[slot] = op.rawValue &+ 1
+            }
+        } else {
+            op = decode[opcode]
+        }
+        switch op {
         case .adcs:
             let rm = (opcode >> 3) & 7, rdn = opcode & 7
             registers[rdn] = add(r(rm), r(rdn), carry: C ? 1 : 0)
@@ -883,7 +926,7 @@ final class CortexM0 {
                 PC = pc
                 delta &+= 1
                 // (back to this branch or before it)
-                if imm <= -4 && runEnd != 0 { loopedBack(used: 2) }
+                if imm <= -4 && runEnd != 0 { loopedBack(at: pc, used: 2) }
             }
         case .b:
             var imm = (opcode & 0x7FF) << 1
@@ -891,7 +934,7 @@ final class CortexM0 {
             pc = pc &+ UInt32(bitPattern: Int32(imm + 2))
             PC = pc
             delta &+= 1
-            if imm <= -4 && runEnd != 0 { loopedBack(used: 2) }
+            if imm <= -4 && runEnd != 0 { loopedBack(at: pc, used: 2) }
         case .bics:
             let rdn = opcode & 7
             let result = r(rdn) & ~r((opcode >> 3) & 7)

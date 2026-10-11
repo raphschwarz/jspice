@@ -34,6 +34,11 @@ public final class Pico: Microcontroller {
         get { RP2040.runsStretches }
         set { RP2040.runsStretches = newValue }
     }
+    /// Whether the code in flash is decoded once rather than at every instruction (for comparing)
+    public static var decodesFlashOnce: Bool {
+        get { CortexM0.decodesFlashOnce }
+        set { CortexM0.decodesFlashOnce = newValue }
+    }
     /// Whether a stretch goes on past a register elsewhere than memory (for comparing)
     public static var stretchesPastRegisters: Bool {
         get { RP2040.stretchesPastRegisters }

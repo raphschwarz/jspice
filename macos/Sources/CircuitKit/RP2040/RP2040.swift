@@ -173,11 +173,13 @@ final class RP2040 {
         core.reset()
         pwm.reset()
         flash.initializeMemory(as: UInt8.self, repeating: 0xFF, count: RP2040.flashSize)
+        core.flashReplaced()
     }
 
     /// Puts a flash image (as linked at 0x10000000, boot stage 2 first) in flash
     func loadFlash(_ image: [UInt8]) {
         image.withUnsafeBytes { flash.copyMemory(from: $0.baseAddress!, byteCount: min(image.count, RP2040.flashSize)) }
+        core.flashReplaced()
     }
 
     // MARK: - Clocks
@@ -252,6 +254,7 @@ final class RP2040 {
             // ROM: a stray write (a null pointer in a sketch) changes nothing, as on the chip
         } else if address >= RP2040.flashStart && address < RP2040.flashStart + UInt32(RP2040.flashSize) {
             flash.storeBytes(of: value, toByteOffset: Int(address - RP2040.flashStart), as: UInt32.self)
+            core.flashWritten(at: Int(address - RP2040.flashStart))
         } else if address >= RP2040.ramStart && address < RP2040.ramStart + UInt32(RP2040.sramSize) {
             sram.storeBytes(of: value, toByteOffset: Int(address - RP2040.ramStart), as: UInt32.self)
         } else if address >= RP2040.dpramStart && address < RP2040.dpramStart + UInt32(RP2040.dpramSize) {
