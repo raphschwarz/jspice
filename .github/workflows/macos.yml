@@ -73,6 +73,8 @@ jobs:
           # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns
           # keep moving, in the synth voice, the sequenced acid line and the fuzz
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-rejections 0.25 voice acid guitar-fuzz || true
+          # how many iterations steps take, and what keeps the costliest going: the circuits that take most
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-iterations 0.25 opto-compressor guitar-fuzz rat tube-screamer pickup-fuzz || true
           # bigger circuits: examples drawn 1, 2, 4 and 8 times over in one circuit (the cost a copy should stay flat)
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-scale 0.1 voice acid guitar-fuzz tube-screamer mc1496-ring bargraph tube-amp || true
           # where the time goes, for the synth voice playing its sequence (every iteration factored), and for the ring

@@ -193,6 +193,53 @@ func benchmarkRejections(seconds: Double, ids: [String]) {
     }
 }
 
+/// Simulates each example for `seconds`, tracing it: how many Newton-Raphson iterations its steps took (how many steps
+/// took each count), the trace of its costliest step, and, over the steps that took four or more, the unknown that
+/// moved most at their last iteration (what kept them going)
+func benchmarkIterations(seconds: Double, ids: [String]) {
+    let rate = 48_000.0
+    let steps = max(1, Int(seconds * rate))
+    for id in ids {
+        guard let example = Examples.example(id) else {
+            log("there is no example \(id)")
+            continue
+        }
+        let simulator = Simulator(circuit: example.circuit, timeStep: 1 / rate)
+        simulator.errorControl = false
+        var lines: [String] = []
+        simulator.trace = { lines.append($0) }
+        var counts: [Int: Int] = [:]
+        var worst = (iterations: -1, step: 0, lines: [String]())
+        var mostMoved: [String: Int] = [:]
+        for step in 0..<steps where !simulator.isFailed {
+            lines.removeAll(keepingCapacity: true)
+            let before = simulator.newtonIterations
+            simulator.step()
+            let iterations = simulator.newtonIterations - before
+            counts[iterations, default: 0] += 1
+            // (the first steps settle the circuit from rest)
+            if step >= 100 && iterations > worst.iterations { worst = (iterations, step, lines) }
+            guard iterations >= 4 else { continue }
+            var last = ""
+            for line in lines {
+                if line.hasPrefix("    iteration") { last = line }
+                if line.hasPrefix("  substep"), let at = last.range(of: " at ") {
+                    let moved = String(last[at.upperBound...])
+                    mostMoved[moved.range(of: " (now").map { String(moved[..<$0.lowerBound]) } ?? moved, default: 0] += 1
+                }
+            }
+        }
+        let histogram = counts.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+        print("\(id): iterations a step (steps): \(histogram)")
+        print("\(id): its costliest step after the first 100, step \(worst.step), \(worst.iterations) iterations:")
+        for line in worst.lines.prefix(120) { print(line) }
+        if worst.lines.count > 120 { print("  … \(worst.lines.count - 120) lines more") }
+        for (unknown, count) in mostMoved.sorted(by: { $0.value > $1.value }).prefix(6) {
+            print("    \(count)× moving most at a substep's last iteration, in steps of four or more: \(unknown)")
+        }
+    }
+}
+
 /// Simulates each example (one with a microcontroller) for `seconds`, untimed and then counting the chip's instructions:
 /// prints the time per step, the instructions run a step and the time each took (the circuit's share included), and
 /// the instructions most run, by kind
@@ -559,6 +606,18 @@ if let flag = arguments.firstIndex(of: "--benchmark-rejections") {
         rest.removeFirst()
     }
     benchmarkRejections(seconds: seconds, ids: rest.isEmpty ? ["voice"] : rest)
+    exit(0)
+}
+
+// --benchmark-iterations [seconds] [example…]: how many Newton-Raphson iterations steps take, and what keeps them going
+if let flag = arguments.firstIndex(of: "--benchmark-iterations") {
+    var rest = Array(arguments[(flag + 1)...])
+    var seconds = 0.25
+    if let first = rest.first, let value = Double(first), value > 0, value < 1e4 {
+        seconds = value
+        rest.removeFirst()
+    }
+    benchmarkIterations(seconds: seconds, ids: rest.isEmpty ? ["opto-compressor"] : rest)
     exit(0)
 }
 
