@@ -180,6 +180,45 @@ func benchmarkRejections(seconds: Double, ids: [String]) {
     }
 }
 
+/// Simulates each example (one with a microcontroller) for `seconds`, untimed and then counting the chip's instructions:
+/// prints the time per step, the instructions run a step and the time each took (the circuit's share included), and
+/// the instructions most run, by kind
+func benchmarkInstructions(seconds: Double, ids: [String]) {
+    let rate = 48_000.0
+    let steps = max(1, Int(seconds * rate))
+    for id in ids {
+        guard let example = Examples.example(id) else {
+            log("there is no example \(id)")
+            continue
+        }
+        let timed = Simulator(circuit: example.circuit, timeStep: 1 / rate)
+        timed.errorControl = false
+        let start = DispatchTime.now().uptimeNanoseconds
+        for _ in 0..<steps where !timed.isFailed { timed.step() }
+        let nanosPerStep = Double(DispatchTime.now().uptimeNanoseconds - start) / Double(steps)
+        AVR.instructionCounts = [Int](repeating: 0, count: 256)
+        Pico.instructionCounts = [Int](repeating: 0, count: 256)
+        AVR.countsInstructions = true
+        Pico.countsInstructions = true
+        let counted = Simulator(circuit: example.circuit, timeStep: 1 / rate)
+        counted.errorControl = false
+        for _ in 0..<steps where !counted.isFailed { counted.step() }
+        AVR.countsInstructions = false
+        Pico.countsInstructions = false
+        for (chip, counts, name) in [("AVR", AVR.instructionCounts, AVR.instructionName),
+                                     ("RP2040", Pico.instructionCounts, Pico.instructionName)] {
+            let total = counts.reduce(0, +)
+            guard total > 0 else { continue }
+            let perStep = Double(total) / Double(steps)
+            print("\(id) (\(chip)): " + String(format: "%.2f µs/step, %.0f instructions/step, %.2f ns each", nanosPerStep / 1000,
+                                                    perStep, nanosPerStep / perStep))
+            let most = counts.enumerated().filter { $0.element > 0 }.sorted { $0.element > $1.element }.prefix(16)
+            print("    " + most.map { name($0.offset) + String(format: " %.1f%%", 100 * Double($0.element) / Double(total)) }
+                .joined(separator: ", "))
+        }
+    }
+}
+
 /// The circuit drawn `count` times side by side, each copy on nets of its own (its net labels renamed, but for ground):
 /// a bigger circuit of the same parts, for how the engine's cost grows with a circuit's size
 func copies(of circuit: Circuit, _ count: Int) -> Circuit {
@@ -507,6 +546,18 @@ if let flag = arguments.firstIndex(of: "--benchmark-rejections") {
         rest.removeFirst()
     }
     benchmarkRejections(seconds: seconds, ids: rest.isEmpty ? ["voice"] : rest)
+    exit(0)
+}
+
+// --benchmark-instructions [seconds] [example…]: what the microcontrollers' instructions cost, and which run most
+if let flag = arguments.firstIndex(of: "--benchmark-instructions") {
+    var rest = Array(arguments[(flag + 1)...])
+    var seconds = 0.25
+    if let first = rest.first, let value = Double(first), value > 0, value < 1e4 {
+        seconds = value
+        rest.removeFirst()
+    }
+    benchmarkInstructions(seconds: seconds, ids: rest.isEmpty ? ["pico-knob", "arduino-fade"] : rest)
     exit(0)
 }
 

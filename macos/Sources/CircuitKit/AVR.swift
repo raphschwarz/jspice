@@ -363,13 +363,18 @@ public final class AVR: Microcontroller {
         if AVR.skipsBusyWaits { runEnd = end }
         loopSeen = false
         defer { runEnd = 0 }
+        let counting = AVR.countsInstructions
         guard !watchedPins.isEmpty else {
-            while cycles < end { step() }
+            while cycles < end {
+                if counting { AVR.instructionCounts[Int(decoded[Int(flash[pc])].rawValue)] += 1 }
+                step()
+            }
             return
         }
         // the watched pins' levels after each instruction that wrote an I/O register (or after every instruction,
         // where a timer may be driving one), and at each SPI and TWI event, logged where they change
         while cycles < end {
+            if counting { AVR.instructionCounts[Int(decoded[Int(flash[pc])].rawValue)] += 1 }
             step()
             if ioWritten {
                 ioWritten = false
@@ -578,6 +583,13 @@ public final class AVR: Microcontroller {
 
     /// Whether runs skip busy-waits so (for comparing)
     public static var skipsBusyWaits = true
+    /// Whether runs count the instructions they run, by kind, in `instructionCounts` (for the benchmark's breakdown)
+    public static var countsInstructions = false
+    public static var instructionCounts = [Int](repeating: 0, count: 256)
+    /// The name of each kind counted
+    public static func instructionName(_ kind: Int) -> String {
+        Decoded(rawValue: UInt8(kind)).map { "\($0)" } ?? "?"
+    }
     /// Stores that changed the data space, writes to I/O registers (but the status register's and the stack
     /// pointer's), reads of a data register that change flags, and interrupts entered, counted
     private var effects = 0

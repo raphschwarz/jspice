@@ -363,6 +363,10 @@ final class RP2040 {
     /// Whether runs skip busy-waits (for comparing): see `run(until:)`
     static var skipsBusyWaits = true
 
+    /// Whether runs count the instructions they run, by kind, in `instructionCounts` (for the benchmark's breakdown)
+    static var countsInstructions = false
+    static var instructionCounts = [Int](repeating: 0, count: 256)
+
     /// When a PIO block last ran
     private var pioRanAt = -1.0
 
@@ -393,11 +397,13 @@ final class RP2040 {
         // (the circuit may have changed the pins since the last run: a busy-wait is looked at afresh)
         core.startRun(until: RP2040.skipsBusyWaits ? end : 0)
         defer { core.runEnd = 0 }
+        let counting = RP2040.countsInstructions
         while clock.nanos < end {
             if core.waiting {
                 step(limit: end)
                 continue
             }
+            if counting { RP2040.instructionCounts[Int(core.nextOp.rawValue)] += 1 }
             let cycles = core.executeInstruction()
             clock.tick(Double(cycles) * RP2040.cycleNanos)
             if pio0.running || pio1.running {

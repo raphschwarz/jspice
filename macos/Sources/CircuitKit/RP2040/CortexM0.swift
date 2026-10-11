@@ -561,6 +561,8 @@ final class CortexM0 {
     }()
     /// The table, kept here so each instruction does not go through the static's lazy initialization
     private let decode = CortexM0.decodeTable
+    /// The kind of the instruction at the program counter (for counting)
+    var nextOp: Op { decode[Int(read16(PC & ~1))] }
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
     private static func classify(_ o: Int) -> Op {

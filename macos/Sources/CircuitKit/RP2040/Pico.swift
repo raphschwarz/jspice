@@ -8,6 +8,21 @@ public final class Pico: Microcontroller {
     public static let gpioOfPin: [Int] = Array(0...22) + [26, 27, 28]
     public static let ledGPIO = 25
 
+    /// Whether the chips' runs count the instructions they run, by kind (for the benchmark's breakdown)
+    public static var countsInstructions: Bool {
+        get { RP2040.countsInstructions }
+        set { RP2040.countsInstructions = newValue }
+    }
+    /// The instructions counted, by kind
+    public static var instructionCounts: [Int] {
+        get { RP2040.instructionCounts }
+        set { RP2040.instructionCounts = newValue }
+    }
+    /// The name of each kind counted
+    public static func instructionName(_ kind: Int) -> String {
+        CortexM0.Op(rawValue: UInt8(kind)).map { "\($0)" } ?? "?"
+    }
+
     /// The running chip and what goes with it. The sound thread's Pico and the window's share one (see `adopt`).
     private final class System {
         let chip = RP2040()
