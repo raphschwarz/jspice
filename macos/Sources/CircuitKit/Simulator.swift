@@ -458,7 +458,15 @@ public final class Simulator {
             lastSlopes.deallocate()
         }
     }
-    private var behaviors: [Behavior?] = []
+    private var behaviors: [Behavior?] = [] {
+        didSet {
+            behaviorRefs.deallocate()
+            behaviorRefs = .allocate(capacity: behaviors.count)
+            for (k, b) in behaviors.enumerated() { behaviorRefs[k] = b.map { Unmanaged.passUnretained($0) } }
+        }
+    }
+    /// The same, unretained (the array keeps them): stamping reads one at every iteration without counting references
+    private var behaviorRefs = UnsafeMutableBufferPointer<Unmanaged<Behavior>?>(start: nil, count: 0)
     /// Expressions read and compiled, by their text: a knob turned takes on new values without reading them again
     private var compiledExpressions: [String: (expression: SpiceExpression, program: SpiceExpression.Program)] = [:]
     /// Where a behavioural source's program writes its steps' values (room for `behaviorRegisterRoom`)
@@ -836,6 +844,7 @@ public final class Simulator {
         stampedFlags?.deallocate()
         bipolarRefs.deallocate()
         diodeRefs.deallocate()
+        behaviorRefs.deallocate()
         bipolarSlots.deallocate()
         limitedVoltage.deallocate()
         limitedVoltage2.deallocate()
@@ -4328,7 +4337,11 @@ public final class Simulator {
     /// A behavioural source, linearised at the present solution with its expression's exact slopes: a voltage across + and
     /// − (its own row: v(+) − v(−) = f), or a current from + to − through it
     private func stampBehavior(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
-        guard i < behaviors.count, let b = behaviors[i] else { return }
+        guard i < behaviorRefs.count, let b = behaviorRefs[i] else { return }
+        b._withUnsafeGuaranteedRef { stampBehavior(i, $0, nodes, matrix, rhs, m) }
+    }
+
+    private func stampBehavior(_ i: Int, _ b: Behavior, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
         let count = b.inputCount
         let inputs = b.inputList
         let holds = b.decides && decisionX.count == x.count
@@ -4395,7 +4408,9 @@ public final class Simulator {
         let voltageSource = b.voltage
         // Newton-Raphson's stamps go straight to the plan's slots, worked out once for each plan, rather than through
         // the slot map (as large as the matrix is dense) for every entry: the same additions in the same order
-        let cached = sparseStamping && stampFloor > 0 && slotsUsable(b, row, plus, minus, m)
+        // (worked out once for each plan: called only then)
+        let cached = sparseStamping && stampFloor > 0
+            && (b.slotsSerial == planSerial ? b.slotsUsable : slotsUsable(b, row, plus, minus, m))
         let slots = b.slots
         let recording = recordingStamps, flags = stampedFlags
         func entry(_ j: Int, _ r: Int, _ c: Int, _ value: Double) {
