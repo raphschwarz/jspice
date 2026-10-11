@@ -137,7 +137,8 @@ final class CortexM0 {
     /// were the last time it was taken and nothing counted in `effects` since, the program goes round to the same
     /// effect until the chip's next event (nothing else changes before then), and the rounds that end before it (and
     /// before the run's end) are counted at once
-    private func loopedBack(used: Int) {
+    @inline(__always) private func loopedBack(used: Int) {
+        // (the first looks, which most backward branches end at, in the interpreter; the rest called)
         guard PC == loopTarget && effects == loopEffects else {
             loopTarget = PC
             loopEffects = effects
@@ -150,6 +151,11 @@ final class CortexM0 {
             loopIgnored -= 1
             return
         }
+        loopedBackAlike(used: used)
+    }
+
+    /// `loopedBack` for a branch back to where the last went, with nothing counted in `effects` since
+    @inline(never) private func loopedBackAlike(used: Int) {
         let flags = (N ? 1 : 0) | (Z ? 2 : 0) | (C ? 4 : 0) | (V ? 8 : 0) | (PM ? 16 : 0)
         // (with the stretch's instructions the clock is not yet brought up to)
         let now = clockRef._withUnsafeGuaranteedRef { $0.nanos } + Double(unclocked + used) * RP2040.cycleNanos
