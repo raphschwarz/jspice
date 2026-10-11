@@ -447,6 +447,9 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
                  fastest.isFinite ? fastest / 1e3 : elapsed / Double(done) * 1e6, Double(done) / 48_000 / elapsed,
                  Double(simulator.newtonIterations) / Double(done), simulator.factorings, simulator.reusedFactorings,
                  simulator.restoredFactorings, shape.unknowns, shape.nonlinear, simulator.isFailed ? " FAILED: " + simulator.problems.joined(separator: "; ") : ""))
+    print("\(part): Newton iterations in solves again for decisions that moved: \(simulator.decisionRoundIterations) "
+          + "(\(simulator.failedRoundIterations) in rounds that did not converge), \(simulator.memoryRetryIterations) from a "
+          + "remembered solution; of \(simulator.newtonIterations) in all")
     let cycles = Double(max(done / 48, 1))
     print("\(part): Newton iterations a step by its place in the sine's cycle (48 steps, from the first after 0°): "
           + places.map { String(format: "%.1f", Double($0) / cycles) }.joined(separator: " "))

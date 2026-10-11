@@ -492,6 +492,11 @@ public final class Simulator {
     /// Rounds started again from such a solution, and how many of them then converged
     public private(set) var memoryRetries = 0
     public private(set) var memoryRetriesConverged = 0
+    /// Newton-Raphson iterations spent solving again with the decisions made where a solve ended (and in those rounds
+    /// that did not converge), and from a remembered solution
+    public private(set) var decisionRoundIterations = 0
+    public private(set) var failedRoundIterations = 0
+    public private(set) var memoryRetryIterations = 0
     /// The behavioural sources whose decisions are held
     private var decidingIndices: [Int] = []
     /// Whether Newton-Raphson is damped when its steps stop shrinking: with nonlinear behavioural sources only (their
@@ -1643,7 +1648,10 @@ public final class Simulator {
                 Self.copy(x, into: &decisionX)
                 // (not from the stamps the solve ended on: they were made with the decisions as they were)
                 trace?("   again, with the decisions made where it ended (round \(rounds))")
+                let roundStart = newtonIterations
                 converged = newton(iterations: iterations)
+                decisionRoundIterations += newtonIterations - roundStart
+                if !converged { failedRoundIterations += newtonIterations - roundStart }
                 trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
                 if !converged && !isFailed && Self.retriesFromMemory,
                    let start = rememberedStart(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1]) {
@@ -1651,7 +1659,9 @@ public final class Simulator {
                     trace?("   again from the solution before the sources that moved last decided as they do now")
                     Self.copy(flipSolved[start], into: &x)
                     restoreLimited(savedLimited)
+                    let retryStart = newtonIterations
                     converged = newton(iterations: iterations)
+                    memoryRetryIterations += newtonIterations - retryStart
                     if converged { memoryRetriesConverged += 1 }
                     trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
                 }
