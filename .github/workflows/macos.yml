@@ -172,6 +172,7 @@ jobs:
           python3 scripts/profile-callers.py build/profile-maker.txt 45 || true
           # their behavioural sources' stamps, instruction by instruction: where their own samples fall
           python3 scripts/hot-instructions.py build/profile-maker.txt Simulator.stampBehavior 10 build/hot-maker.lldb || true
+          lldb --batch -s build/hot-maker.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -130 || true
       - name: What Swift's bounds and overflow checks cost (a build without them, for comparing; not shipped)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         continue-on-error: true
