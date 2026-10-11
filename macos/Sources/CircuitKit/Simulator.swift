@@ -340,6 +340,13 @@ public final class Simulator {
     private var codecTargets: [STM32Microcontroller.I2CTarget?] = []
     /// Each CV DAC's outputs' codes, then its input registers'
     private var cvDacCodes: [[UInt16]] = []
+    /// For each STM32, the CV DACs on its SPI ports (their SCLK on the port's SCK pin) and the chip's pin wired to each
+    /// one's SYNC (-1: none); the bits each DAC has taken since its SYNC fell (`bits` past its word: the word taken)
+    private var spiLinks: [[(port: Int, dac: Int, sync: Int)]] = []
+    private var spiExchanges: [STM32Microcontroller.SPIExchange?] = []
+    private var spiWords: [(shift: UInt64, bits: Int)] = []
+    /// An SPI ADC's conversion under way: where its start bit came (-1: not yet), its configuration bits, its result
+    private var spiAdcStates: [(start: Int, config: UInt32, code: Int)] = []
     /// The pin events of a step, from every chip, in the order they happened
     private var stepPinEvents: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
@@ -991,7 +998,7 @@ public final class Simulator {
             switch $0 {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
-                 .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .logicGate, .flipFlop, .decadeCounter,
+                 .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .logicGate, .flipFlop, .decadeCounter,
                  .binaryCounter, .shiftRegister, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor: return true
             default: return false
             }
@@ -3009,7 +3016,7 @@ public final class Simulator {
             case .timer555, .analogMux, .analogSelector:
                 let own = unknowns(i)
                 for a in own { for b in own { pattern[a * m + b] = true } }
-            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103:
                 for a in unknowns(i) { pattern[a * m + a] = true }
             default:
                 break
@@ -3173,7 +3180,7 @@ public final class Simulator {
                 if let channel = Logic.channel(kind, logicStates[i]), let common = nodes.last, channel < nodes.count {
                     stampConductance(matrix, m, nodes[channel], common, constants[i].onConductance)
                 }
-            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103:
                 // each output pin drives towards the supply or ground through its resistance; a pull-up is a resistor
                 // to the supply, a pull-down one to ground; other inputs draw nothing
                 guard let states = chipPinStates[i] else { continue }
@@ -3356,7 +3363,7 @@ public final class Simulator {
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(constants[i].value))) where high {
                     stampCurrent(r, 0, nodes[k], constants[i].supply * constants[i].outputConductance)
                 }
-            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
+            case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103:
                 guard let states = chipPinStates[i] else { continue }
                 for (pin, state) in states.enumerated() where pin < nodes.count {
                     switch state {
@@ -3640,7 +3647,7 @@ public final class Simulator {
             c.supply = max(p("supply"), 0.1)
             c.value = max(p("fullScale"), 0.01)
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
-            c.high = Self.choice(p("format"), 0...1)
+            c.high = Self.choice(p("format"), 0...4)
         case .effectsProcessor:
             c.value = Self.choice(p("program"), 0...7)
             c.supply = max(p("supply"), 0.1)
@@ -3650,7 +3657,7 @@ public final class Simulator {
             c.threshold = p("threshold")
             c.beta = max(p("beta"), 1e-9)
             c.value = max(p("lambda"), 0)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103:
             c.supply = min(max(p("supply"), 0.5), 6)
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
             c.onConductance = 1 / max(p("pullUp"), 1)
@@ -5826,16 +5833,19 @@ public final class Simulator {
             // the bus devices wired to it follow its pins as it runs, and answer within the run
             if i < busHandlers.count, let handler = busHandlers[i] { chip.onPinEvent = handler.call }
             // the codecs wired to an STM32 exchange frames with it as it runs
-            let stm32 = i < codecExchanges.count && (codecExchanges[i] != nil || codecTargets[i] != nil) ? chip as? STM32Microcontroller : nil
+            let linked = i < codecExchanges.count && (codecExchanges[i] != nil || codecTargets[i] != nil || spiExchanges[i] != nil)
+            let stm32 = linked ? chip as? STM32Microcontroller : nil
             if let stm32 {
                 stm32.frameExchange = codecExchanges[i]
                 stm32.i2cTarget = codecTargets[i]
+                stm32.spiExchange = spiExchanges[i]
             }
             if whole > 0 { chip.run(cycles: whole) }
             chip.onPinEvent = nil
             if let stm32 {
                 stm32.frameExchange = nil
                 stm32.i2cTarget = nil
+                stm32.spiExchange = nil
             }
             // the last instruction may run past the budget: the next step has that much less
             chipCycleCarry[i] = budget - Double(chip.cycles - start)
@@ -5911,15 +5921,35 @@ public final class Simulator {
         codecBuses = Array(repeating: [], count: kinds.count)
         codecExchanges = Array(repeating: nil, count: kinds.count)
         codecTargets = Array(repeating: nil, count: kinds.count)
-        for i in chipIndices where (kinds[i] == .stm32f405 || kinds[i] == .stm32f373) && i < topology.elementNodes.count {
-            let f373 = kinds[i] == .stm32f373
+        spiLinks = Array(repeating: [], count: kinds.count)
+        spiExchanges = Array(repeating: nil, count: kinds.count)
+        spiWords = Array(repeating: (0, 0), count: kinds.count)
+        spiAdcStates = Array(repeating: (-1, 0, 0), count: kinds.count)
+        let stm32s: Set<ElementKind> = [.stm32f405, .stm32f373, .stm32f103]
+        for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
+            let f373 = kinds[i] == .stm32f373, f103 = kinds[i] == .stm32f103
             let chipNodes = topology.elementNodes[i]
-            for j in kinds.indices where (kinds[j] == .codec || kinds[j] == .i2sDac || kinds[j] == .cvDac) && j < topology.elementNodes.count {
+            for j in kinds.indices where [.codec, .i2sDac, .cvDac, .spiAdc].contains(kinds[j]) && j < topology.elementNodes.count {
                 let nodes = topology.elementNodes[j]
                 func wired(_ terminal: Int, _ pins: [Int]) -> Bool {
                     terminal < nodes.count && nodes[terminal] > 0
                         && pins.contains { $0 < chipNodes.count && chipNodes[$0] == nodes[terminal] }
                 }
+                // a CV DAC on SPI (or an SPI ADC, its CLK and CS): SPI1's SCK on PA5 or PB3, SPI2's on PB13 or PB10
+                // (the F373's PA8, PB8, PB10 or PD8), SPI3's on PC10 or PB3 (or the F373's PA1); its SYNC on
+                // whichever of the chip's pins
+                let adc = kinds[j] == .spiAdc
+                if adc || (kinds[j] == .cvDac && constants[j].high >= 2) {
+                    let syncTerminal = adc ? 0 : 2, clockTerminal = adc ? 1 : 0
+                    let sync = nodes.count > syncTerminal && nodes[syncTerminal] > 0
+                        ? chipNodes.firstIndex(of: nodes[syncTerminal]) ?? -1 : -1
+                    let ports: [(Int, [Int])] = f103 ? [(1, [5]), (2, [29])]
+                        : f373 ? [(1, [5, 19]), (2, [8, 24, 26, 48]), (3, [1, 19, 42])]
+                        : [(1, [5, 19]), (2, [29, 26]), (3, [42, 19])]
+                    for (port, pins) in ports where wired(clockTerminal, pins) { spiLinks[i].append((port, j, sync)) }
+                    continue
+                }
+                if f103 || adc { continue }
                 // (pins by index: PA0-PA15 0-15, PB0-PB15 16-31, PC0-PC15 32-47, then the F373's PD8 48) I2S2's CK on
                 // PB13 or PB10 (the F373's on PA8, PB8, PB10 or PD8), I2S3's on PC10 or PB3 (or the F373's PA1), at a
                 // codec's BCLK or a PCM5102's BCK; I2C1's SCL on PB6 or PB8, I2C2's on PB10, I2C3's on PA8, at a
@@ -5933,6 +5963,24 @@ public final class Simulator {
                 if wired(6, [8]) { codecBuses[i].append((3, j)) }
             }
             // (called only while the chip runs, within `runChips`: the simulator is there)
+            if !spiLinks[i].isEmpty {
+                spiExchanges[i] = { [unowned(unsafe) self] port, frame, bits in self.spiFrame(i, port, frame, bits) }
+                // its SYNC pins watched: a falling edge starts a word
+                let syncs = spiLinks[i].map(\.sync).filter { $0 >= 0 }
+                if !syncs.isEmpty, let chip = chips[i] {
+                    chip.watchedPins = Array(Set(chip.watchedPins).union(syncs)).sorted()
+                    let previous = busHandlers[i]
+                    busHandlers[i] = BusHandler { [unowned(unsafe) self] event in
+                        if !event.high {
+                            for link in self.spiLinks[i] where link.sync == event.pin {
+                                self.spiWords[link.dac] = (0, 0)
+                                self.spiAdcStates[link.dac] = (-1, 0, 0)
+                            }
+                        }
+                        previous?.call(event)
+                    }
+                }
+            }
             if !codecLinks[i].isEmpty {
                 codecExchanges[i] = { [unowned(unsafe) self] port, left, right in self.codecFrame(i, port, left, right) }
             }
@@ -5957,9 +6005,10 @@ public final class Simulator {
             let j = link.codec
             if kinds[j] == .cvDac {
                 // a DAC8568's SYNC is the frame's left half: a word each frame; a DAC8564's, each PCM word
-                let dac8564 = constants[j].high >= 1
-                Logic.cvDacWord(UInt32(bitPattern: left), dac8564: dac8564, codes: &cvDacCodes[j])
-                if dac8564 { Logic.cvDacWord(UInt32(bitPattern: right), dac8564: true, codes: &cvDacCodes[j]) }
+                let format = Int(constants[j].high)
+                guard format < 2 else { continue }
+                Logic.cvDacWord(UInt32(bitPattern: left), format: format, codes: &cvDacCodes[j])
+                if format == 1 { Logic.cvDacWord(UInt32(bitPattern: right), format: 1, codes: &cvDacCodes[j]) }
                 continue
             }
             logicStates[j].latch = UInt32(bitPattern: left)
@@ -5971,6 +6020,76 @@ public final class Simulator {
             }
         }
         return input
+    }
+
+    /// A frame an STM32 shifts out on an SPI port: each CV DAC on it takes its bits, a word when it has them all since
+    /// its SYNC fell (without a SYNC wired, a word each time it has them); it shifts nothing back
+    private func spiFrame(_ chip: Int, _ port: Int, _ frame: UInt32, _ bits: Int) -> UInt32 {
+        var reply: UInt32 = 0
+        for link in spiLinks[chip] where link.port == port {
+            let j = link.dac
+            if kinds[j] == .spiAdc {
+                reply |= spiAdcFrame(j, frame, bits)
+                continue
+            }
+            let format = Int(constants[j].high), wordBits = Logic.cvDacWordBits(format: format)
+            var (shift, count) = spiWords[j]
+            guard count < wordBits else { continue }
+            shift = (shift << UInt64(bits)) | UInt64(frame & (bits >= 32 ? 0xFFFF_FFFF : (1 << UInt32(bits)) - 1))
+            count += bits
+            if count >= wordBits {
+                let word = UInt32(truncatingIfNeeded: (shift >> UInt64(count - wordBits)) & ((1 << UInt64(wordBits)) - 1))
+                Logic.cvDacWord(word, format: format, codes: &cvDacCodes[j])
+                // the bits past it wait for the next SYNC; with none wired, they start the next word
+                if link.sync < 0 {
+                    count -= wordBits
+                    shift &= (1 << UInt64(count)) - 1
+                } else {
+                    count = wordBits
+                }
+            }
+            spiWords[j] = (shift, count)
+        }
+        return reply
+    }
+
+    /// An SPI ADC (the MCP3008, MCP3204, MCP3208) answering a frame an STM32 shifts out, bit by bit since its CS fell:
+    /// a start bit, SGL and D2-D0 (the channel), then a clock for the sample and the null bit, then its result MSB
+    /// first (10 or 12 bits), the input's voltage against VREF's
+    private func spiAdcFrame(_ j: Int, _ frame: UInt32, _ bits: Int) -> UInt32 {
+        let resolution = Int(constants[j].value) >= 12 ? 12 : 10
+        var state = spiAdcStates[j]
+        var count = spiWords[j].bits
+        var out: UInt32 = 0
+        for k in 0..<bits {
+            let bit = (frame >> UInt32(bits - 1 - k)) & 1
+            var outBit: UInt32 = 0
+            if state.start < 0 {
+                if bit == 1 { state.start = count }
+            } else {
+                let at = count - state.start
+                if at >= 1 && at <= 4 {
+                    state.config = state.config << 1 | bit
+                    if at == 4 { state.code = spiAdcCode(j, channel: Int(state.config & 7), resolution: resolution) }
+                }
+                if at >= 7 && at < 7 + resolution { outBit = UInt32((state.code >> (resolution - 1 - (at - 7))) & 1) }
+                if at >= 6 + resolution { state = (-1, 0, 0) }
+            }
+            out = out << 1 | outBit
+            count += 1
+        }
+        spiAdcStates[j] = state
+        spiWords[j].bits = count
+        return out
+    }
+
+    /// An SPI ADC's result for a channel: 2^bits × its input / VREF, kept within its range
+    private func spiAdcCode(_ j: Int, channel: Int, resolution: Int) -> Int {
+        let nodes = topology.elementNodes[j]
+        guard nodes.count > 5 + channel else { return 0 }
+        let reference = max(voltage(nodes[4]), 1e-3)
+        let code = (voltage(nodes[5 + channel]) / reference * Double(1 << resolution)).rounded(.down)
+        return Int(min(max(code, 0), Double((1 << resolution) - 1)))
     }
 
     /// A codec's line input as its ADC reads it: about half its supply, full scale at its line level's peak,
@@ -6483,7 +6602,7 @@ public final class Simulator {
             flows[channel] = -current
             flows[nodes.count - 1] = current
             return (current, flows)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103:
             let c = constants[i]
             var flows = [Double](repeating: 0, count: nodes.count)
             var total = 0.0

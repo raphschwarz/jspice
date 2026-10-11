@@ -470,14 +470,43 @@ enum Logic {
 
     /// A WM8731's line output for a left-justified 32-bit sample: about half its supply (its VMID), full scale at the
     /// peak of its line level (`fullScale`, V RMS)
-    /// A CV DAC's word, as its maker defines it: the DAC8568's 32 bits (a command in bits 27-24: 0 write a channel's
-    /// input register, 1 update a channel's output from it, 2 write and update all, 3 write and update the channel;
-    /// the channel in 23-20, 15 for all; the code in 19-4), or the DAC8564's 24 (left-justified: its load bits in 21-20,
-    /// 01 update the channel, 10 all; the channel in 18-17; the code in 15-0). `codes` holds the outputs then the
-    /// input registers.
-    static func cvDacWord(_ word: UInt32, dac8564: Bool, codes: inout [UInt16]) {
+    /// The bits of a CV DAC's word, by its format (see `cvDacWord`)
+    static func cvDacWordBits(format: Int) -> Int { format == 4 ? 16 : format == 0 ? 32 : 24 }
+
+    /// A CV DAC's word, as its maker defines it, by its format: 0 the DAC8568's 32 bits (a command in bits 27-24: 0
+    /// write a channel's input register, 1 update a channel's output from it, 2 write and update all, 3 write and
+    /// update the channel; the channel in 23-20, 15 for all; the code in 19-4); 1 the DAC8564's 24 (left-justified: its
+    /// load bits in 21-20, 01 update the channel, 10 all; the channel in 18-17; the code in 15-0); 2 the DAC8552's 24
+    /// (right-justified, as the SPI words below: LDB and LDA in 21-20, the buffer in 18, B when set; the code in 15-0);
+    /// 3 the DAC8551's (its power-down bits in 17-16, the code in 15-0); 4 the DAC7554's 16 (the channel in 15-14, the
+    /// command in 13-12: 00 write, 01 write and update, 10 write and update all, 11 write all and update all; a 12-bit
+    /// code, kept as 16). `codes` holds the outputs then the input registers.
+    static func cvDacWord(_ word: UInt32, format: Int, codes: inout [UInt16]) {
         guard codes.count >= 16 else { return }
-        if dac8564 {
+        switch format {
+        case 2:
+            let buffer = Int((word >> 18) & 1), code = UInt16(truncatingIfNeeded: word)
+            codes[8 + buffer] = code
+            if (word >> 20) & 1 != 0 { codes[0] = codes[8] }
+            if (word >> 21) & 1 != 0 { codes[1] = codes[9] }
+            return
+        case 3:
+            if (word >> 16) & 3 == 0 { codes[0] = UInt16(truncatingIfNeeded: word) }
+            return
+        case 4:
+            let channel = Int((word >> 14) & 3), code = UInt16(truncatingIfNeeded: (word & 0xFFF) << 4)
+            switch (word >> 12) & 3 {
+            case 0: codes[8 + channel] = code
+            case 1: codes[8 + channel] = code; codes[channel] = code
+            case 2:
+                codes[8 + channel] = code
+                for k in 0..<4 { codes[k] = codes[8 + k] }
+            default: for k in 0..<4 { codes[8 + k] = code; codes[k] = code }
+            }
+            return
+        default: break
+        }
+        if format == 1 {
             let control = word >> 24, channel = Int((control >> 1) & 3), code = UInt16(truncatingIfNeeded: word >> 8)
             codes[8 + channel] = code
             switch (control >> 4) & 3 {

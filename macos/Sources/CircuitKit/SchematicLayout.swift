@@ -88,6 +88,7 @@ public enum SchematicLayout {
         .atmega328p: microcontrollerSide(.uno, second: true), .atmega2560: microcontrollerSide(.mega, second: true),
         .attiny85: microcontrollerSide(.attiny85, second: true), .rp2040: microcontrollerSide(.pico, second: true),
         .stm32f405: microcontrollerSide(.stm32f405, second: true), .stm32f373: microcontrollerSide(.stm32f373, second: true),
+        .stm32f103: microcontrollerSide(.stm32f103, second: true),
         .logicGate: ["in1", "in2"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicInputs),
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicInputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicInputs),
@@ -105,6 +106,7 @@ public enum SchematicLayout {
         .atmega328p: microcontrollerSide(.uno, second: false), .atmega2560: microcontrollerSide(.mega, second: false),
         .attiny85: microcontrollerSide(.attiny85, second: false), .rp2040: microcontrollerSide(.pico, second: false),
         .stm32f405: microcontrollerSide(.stm32f405, second: false), .stm32f373: microcontrollerSide(.stm32f373, second: false),
+        .stm32f103: microcontrollerSide(.stm32f103, second: false),
         .logicGate: ["out"], .flipFlop: names(.flipFlop, ElementKind.flipFlop.logicOutputs),
         .decadeCounter: names(.decadeCounter, ElementKind.decadeCounter.logicOutputs),
         .binaryCounter: names(.binaryCounter, ElementKind.binaryCounter.logicOutputs),
@@ -151,7 +153,7 @@ public enum SchematicLayout {
             return frame(0...(e.chipPackage?.length ?? 3), -2...2)
         case .vactrol, .transformer: return frame(1...3, -2...2)
         case .timer555: return frame(0...5, -2...2)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
              .codec, .cvDac, .block:
             return frame(0...(e.chipPackage?.length ?? 13), -2...2)
         default:
@@ -590,7 +592,7 @@ public enum SchematicLayout {
                     case .timer555:
                         put(p, GridPoint(x + 3, vy - 3), GridPoint(x + 3, vy + 2))
                         width = 6
-                    case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
+                    case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux,
                          .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .block:
                         // analog inputs (a logic chip's or a block's inputs) down the left, digital pins (its outputs) down
                         // the right

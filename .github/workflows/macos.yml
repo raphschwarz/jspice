@@ -243,7 +243,7 @@ jobs:
           make -C build/grids-src -f grids/makefile AVRLIB_TOOLS_PATH="$PWD/build/avr-tools/" > build/grids-build.log 2>&1 || { tail -30 build/grids-build.log; exit 1; }
           ls -l build/grids-src/build/grids/grids.hex
           echo "JSPICE_GRIDS_HEX=$PWD/build/grids-src/build/grids/grids.hex" >> "$GITHUB_ENV"
-      - name: Mutable Instruments' Rings, Plaits and Tides 2 firmware (GPL-3.0, built from its repository for emulator tests, not kept)
+      - name: Mutable Instruments' Rings, Plaits, Tides 2 and Braids firmware (GPL-3.0, built from its repository for emulator tests, not kept)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 15
         run: |
@@ -253,7 +253,7 @@ jobs:
           test -n "$gcc_path"
           "$gcc_path" --version | head -1
           ln -sfn "$(dirname "$(dirname "$gcc_path")")" build/arm-toolchain
-          for module in rings plaits tides2; do
+          for module in rings plaits tides2 braids; do
             tools/arm-reference/build-mutable.sh $module "$PWD/build/mutable" "$PWD/build/arm-toolchain/" > build/mutable.out
             hex=$(tail -1 build/mutable.out)
             ls -l "$hex"

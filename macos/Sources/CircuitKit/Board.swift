@@ -10,6 +10,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
     case pico
     case stm32f405
     case stm32f373
+    case stm32f103
 
     public var id: String { rawValue }
 
@@ -21,6 +22,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .rp2040: self = .pico
         case .stm32f405: self = .stm32f405
         case .stm32f373: self = .stm32f373
+        case .stm32f103: self = .stm32f103
         default: return nil
         }
     }
@@ -33,6 +35,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .pico: return .rp2040
         case .stm32f405: return .stm32f405
         case .stm32f373: return .stm32f373
+        case .stm32f103: return .stm32f103
         }
     }
 
@@ -45,6 +48,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .pico: return "Raspberry Pi Pico"
         case .stm32f405: return "STM32F405"
         case .stm32f373: return "STM32F373"
+        case .stm32f103: return "STM32F103"
         }
     }
 
@@ -57,6 +61,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .pico: return "RP2040"
         case .stm32f405: return "STM32F405RG"
         case .stm32f373: return "STM32F373RC"
+        case .stm32f103: return "STM32F103CB"
         }
     }
 
@@ -65,6 +70,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .stm32f405: return STM32_F405
         case .stm32f373: return STM32_F373
+        case .stm32f103: return STM32_F103
         default: return nil
         }
     }
@@ -83,7 +89,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return .atmega328p
         case .mega: return .atmega2560
         case .attiny85: return .attiny85
-        case .pico, .stm32f405, .stm32f373: return nil
+        case .pico, .stm32f405, .stm32f373, .stm32f103: return nil
         }
     }
 
@@ -91,7 +97,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .pico: return 125e6
         case .stm32f405: return 168e6
-        case .stm32f373: return 72e6
+        case .stm32f373, .stm32f103: return 72e6
         default: return avrVariant?.clock ?? 0
         }
     }
@@ -106,7 +112,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return 253_952
         case .attiny85: return 8192
         case .pico: return 2_093_056  // 2 MB, less the last 4 KB (EEPROM emulation)
-        case .stm32f405, .stm32f373: return STM32Microcontroller.flashSize(stm32Model!)
+        case .stm32f405, .stm32f373, .stm32f103: return STM32Microcontroller.flashSize(stm32Model!)
         }
     }
 
@@ -120,7 +126,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return (0...53).map { "d\($0)" } + (0...15).map { "a\($0)" }
         case .attiny85: return (0...5).map { "pb\($0)" }
         case .pico: return Pico.gpioOfPin.map { "gp\($0)" }
-        case .stm32f405, .stm32f373: return STM32Microcontroller.pinNames(stm32Model!)
+        case .stm32f405, .stm32f373, .stm32f103: return STM32Microcontroller.pinNames(stm32Model!)
         }
     }
 
@@ -131,7 +137,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return (0...53).map { "D\($0)" } + (0...15).map { "A\($0)" }
         case .attiny85: return (0...5).map { "PB\($0)" }
         case .pico: return Pico.gpioOfPin.map { "GP\($0)" }
-        case .stm32f405, .stm32f373: return STM32Microcontroller.pinNames(stm32Model!).map { $0.uppercased() }
+        case .stm32f405, .stm32f373, .stm32f103: return STM32Microcontroller.pinNames(stm32Model!).map { $0.uppercased() }
         }
     }
 
@@ -164,6 +170,9 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .stm32f373:
             // PA0-PA15 and PB0-PB10 down one side; PB11-PB15, PC0-PC15, PD8, PE8, PE9, PF6 and PF7 down the other
             return side(false, 0...26) + side(true, 0...25)
+        case .stm32f103:
+            // PA0-PA15 and PB0-PB1 down one side; PB2-PB15 and PC13-PC15 down the other
+            return side(false, 0...17) + side(true, 0...16)
         }
     }
 
@@ -176,6 +185,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .pico: return 15
         case .stm32f405: return 24
         case .stm32f373: return 26
+        case .stm32f103: return 17
         }
     }
 
@@ -190,6 +200,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .stm32f373:
             // ADC1 IN0-IN15 (PA0-PA7, PB0-PB1, PC0-PC5), and the sigma-delta ADCs' PB2, PB14, PB15, PD8, PE8, PE9
             return Array(0...7) + [16, 17, 18, 30, 31] + Array(32...37) + [48, 49, 50]
+        case .stm32f103: return Array(0...7) + [16, 17]  // ADC12 IN0-IN9: PA0-PA7, PB0-PB1
         }
     }
 
@@ -254,7 +265,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .uno: return "atmega328p"
         case .mega: return "atmega2560"
         case .attiny85: return "attiny85"
-        case .pico, .stm32f405, .stm32f373: return ""
+        case .pico, .stm32f405, .stm32f373, .stm32f103: return ""
         }
     }
 
@@ -265,7 +276,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         case .mega: return "-DARDUINO_AVR_MEGA2560"
         case .attiny85: return "-DARDUINO_AVR_ATTINYX5"
         case .pico: return "-DARDUINO_RASPBERRY_PI_PICO"
-        case .stm32f405, .stm32f373: return ""
+        case .stm32f405, .stm32f373, .stm32f103: return ""
         }
     }
 
@@ -274,7 +285,7 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .uno: return "standard"
         case .mega: return "mega"
-        case .attiny85, .pico, .stm32f405, .stm32f373: return nil
+        case .attiny85, .pico, .stm32f405, .stm32f373, .stm32f103: return nil
         }
     }
 

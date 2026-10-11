@@ -29,6 +29,8 @@ final class STM32Tests: XCTestCase {
         XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F405).last, "pd2")
         XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F373).count, 53)
         XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F373).suffix(5), ["pd8", "pe8", "pe9", "pf6", "pf7"])
+        XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F103).count, 35)
+        XCTAssertEqual(STM32Microcontroller.pinNames(STM32_F103).suffix(3), ["pc13", "pc14", "pc15"])
 
         // PA0 at half the reference, PC13 high
         var volts = [Double](repeating: 0, count: chip.pinCount)
@@ -314,6 +316,55 @@ final class STM32Tests: XCTestCase {
         }
         let strongest = stride(from: 20.0, through: 400, by: 1).max { amplitude($0) < amplitude($1) } ?? 0
         XCTAssertEqual(strongest, 100, accuracy: 3)
+    }
+
+    /// Mutable Instruments' Braids from its own firmware (built by CI, not kept here) on the STM32F103 part: its DAC8551
+    /// on SPI2 (SCLK on PB13, DIN on PB15, SYNC on PB12), a 24-bit word each sample at 96 kHz, and its MCP3204 on SPI1
+    /// (CLK on PA5, DIN on PA7, DOUT on PA6, CS on PB0) reading its four CVs, all at half its reference. Its first shape
+    /// (CSAW) plays at 269.5 Hz.
+    func testMutableInstrumentsBraidsPlays() throws {
+        guard let path = ProcessInfo.processInfo.environment["JSPICE_BRAIDS_HEX"] else {
+            throw XCTSkip("JSPICE_BRAIDS_HEX is not set: CI builds Braids' firmware for this test")
+        }
+        var chip = NetlistPart(kind: .stm32f103, name: "U1",
+                               connections: ["pb13": "sclk", "pb15": "din", "pb12": "sync",
+                                             "pa5": "aclk", "pa7": "adin", "pa6": "adout", "pb0": "acs"])
+        chip.firmware = try FirmwareFile.decode(try Data(contentsOf: URL(fileURLWithPath: path)))
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .cvDac, name: "U2", params: ["fullScale": 2.5, "format": 3],
+                        connections: ["sclk": "sclk", "din": "din", "sync": "sync", "outA": "out"]),
+            NetlistPart(kind: .spiAdc, name: "U3", params: ["resolution": 1],
+                        connections: ["cs": "acs", "clk": "aclk", "din": "adin", "dout": "adout", "vref": "ref",
+                                      "ch0": "mid", "ch1": "mid", "ch2": "mid", "ch3": "mid"]),
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 1.65], connections: ["plus": "mid", "minus": "GND"]),
+            NetlistPart(kind: .dcVoltage, name: "V2", params: ["voltage": 3.3], connections: ["plus": "ref", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "OUT", connections: ["plus": "out", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        let probe = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "OUT" })
+        var out: [Double] = []
+        while simulator.time < 0.6 {
+            simulator.step()
+            XCTAssertFalse(simulator.isFailed, simulator.problems.joined(separator: " "))
+            if simulator.isFailed { break }
+            if simulator.time > 0.3 { out.append(simulator.voltageAcross(probe)) }
+        }
+        XCTAssertGreaterThan((out.max() ?? 0) - (out.min() ?? 0), 1, "Braids sounds")
+        let mean = out.reduce(0, +) / Double(max(out.count, 1))
+        let ac = out.map { $0 - mean }
+        func amplitude(_ f: Double) -> Double {
+            var (re, im) = (0.0, 0.0)
+            for (k, x) in ac.enumerated() {
+                let phase = 2 * Double.pi * f * Double(k) / 48000
+                re += x * cos(phase)
+                im += x * sin(phase)
+            }
+            return (re * re + im * im).squareRoot()
+        }
+        let strongest = stride(from: 150.0, through: 400, by: 0.5).max { amplitude($0) < amplitude($1) } ?? 0
+        XCTAssertEqual(strongest, 269.5, accuracy: 3)
     }
 
     func testResetStartsOver() throws {

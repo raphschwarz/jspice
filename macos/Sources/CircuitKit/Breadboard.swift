@@ -988,6 +988,7 @@ public enum Breadboard {
         case .atmega328p, .atmega2560, .rp2040: return (part.kind.board?.title ?? "Board") + ", wired by jumper leads"
         case .stm32f405: return "STM32F405 on an LQFP64 breakout board (with its 8 MHz crystal), wired by jumper leads, on 3.3 V"
         case .stm32f373: return "STM32F373 on an LQFP64 breakout board (with its 8 MHz crystal), wired by jumper leads, on 3.3 V"
+        case .stm32f103: return "STM32F103 on an LQFP48 breakout board (with its 8 MHz crystal), wired by jumper leads, on 3.3 V"
         case .triode, .pentode, .transformer: return "\(part.kind.displayName): not for a breadboard (high voltage), on a turret board or chassis"
         case .microphone: return "Microphone, on an XLR lead"
         case .electretMic: return "Electret capsule, on its two leads"
@@ -1003,7 +1004,9 @@ public enum Breadboard {
         case .reverbBrick: return "Belton reverb brick, on its six pins (5 V supply)"
         case .i2cDac: return "MCP4725 breakout board (I²C), on 5 V"
         case .i2sDac: return "PCM5102 I²S DAC board, on 3.3 V"
-        case .cvDac: return "\(part.params["format"] ?? 0 >= 1 ? "DAC8564" : "DAC8568") CV DAC on a TSSOP breakout board, on 5 V"
+        case .cvDac:
+            let names = ["DAC8568", "DAC8564", "DAC8552", "DAC8551", "DAC7554"]
+            return "\(names[min(max(Int(part.params["format"] ?? 0), 0), names.count - 1)]) CV DAC on a breakout board, on 5 V"
         case .codec: return "WM8731 audio codec board (I²S and I²C, its line in and out AC-coupled), on 3.3 V"
         case .agcPreamp: return "SSM2166: surface-mount, on an adapter board, on 5 V"
         case .analogEngine: return "THAT4301: surface-mount, on an adapter board, on ±15 V"

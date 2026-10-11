@@ -10,19 +10,24 @@ import Foundation
 ///   PC0–PC15, PD2), USART1 on the serial monitor.
 /// - The STM32F373 (Plaits, Stages, Tides 2): 53 pins (PA0–PA15, PB0–PB15, PC0–PC15, PD8, PE8, PE9, PF6, PF7), with
 ///   its sigma-delta ADCs' inputs among them; USART3 (Mutable's debug port) on the serial monitor.
+/// - The STM32F103 (Braids, Peaks, Frames, Streams): 35 pins (PA0–PA15, PB0–PB15, PC13–PC15), USART1 on the serial
+///   monitor; a Cortex-M3, which runs as the M4 does.
 public final class STM32Microcontroller: Microcontroller {
     /// The flash image's address: a firmware file's addresses are taken from here
     public static let flashStart = 0x0800_0000
 
     /// The flash's size
-    public static func flashSize(_ model: STM32Model) -> Int { model == STM32_F373 ? 0x4_0000 : 0x10_0000 }
+    public static func flashSize(_ model: STM32Model) -> Int {
+        model == STM32_F373 ? 0x4_0000 : model == STM32_F103 ? 0x2_0000 : 0x10_0000
+    }
 
-    /// The pins' names, in the order of the part's terminals: "pa0" ... "pc15", then the model's others
+    /// The pins' names, in the order of the part's terminals: "pa0" ... "pb15", then the model's others
     public static func pinNames(_ model: STM32Model) -> [String] {
-        model == STM32_F373 ? f373Pins : f405Pins
+        model == STM32_F373 ? f373Pins : model == STM32_F103 ? f103Pins : f405Pins
     }
     private static let f405Pins = names(STM32_F405)
     private static let f373Pins = names(STM32_F373)
+    private static let f103Pins = names(STM32_F103)
     private static func names(_ model: STM32Model) -> [String] {
         (0..<Int(stm32_pin_count(model))).map { index in
             let port = stm32_pin_port(model, Int32(index)), pin = stm32_pin_number(model, Int32(index))
@@ -36,6 +41,9 @@ public final class STM32Microcontroller: Microcontroller {
     /// An I²S port's partner (a codec): given each frame the chip sends, it gives back the one the chip receives.
     /// Samples are left-justified in 32 bits.
     public typealias FrameExchange = (_ port: Int, _ left: Int32, _ right: Int32) -> (left: Int32, right: Int32)
+    /// An SPI port's partner (a DAC): a frame of `bits` (8 or 16) the chip shifts out as a master, and the frame it
+    /// shifts in
+    public typealias SPIExchange = (_ port: Int, _ frame: UInt32, _ bits: Int) -> UInt32
     /// An I²C target on one of the chip's buses (a codec's control port): a start with its address and direction
     /// (true when it acknowledges), a byte written (acknowledged), a byte read, a stop
     public struct I2CTarget {
@@ -62,6 +70,7 @@ public final class STM32Microcontroller: Microcontroller {
         var onEvent: ((PinEvent) -> Void)?
         var runStart: UInt64 = 0
         var frames: FrameExchange?
+        var spi: SPIExchange?
         var serialUSART: Int32 = 1
         var i2c: I2CTarget?
         var watched: [Int] = []
@@ -103,6 +112,10 @@ public final class STM32Microcontroller: Microcontroller {
                 let (l, r) = frames(Int(port), left, right)
                 inLeft?.pointee = l
                 inRight?.pointee = r
+            }
+            devices.spi_exchange = { context, port, frame, bits in
+                let system = Unmanaged<System>.fromOpaque(context!).takeUnretainedValue()
+                return system.spi?(Int(port), frame, Int(bits)) ?? 0xFFFF
             }
             serialUSART = STM32Microcontroller.serialUSART(model)
             devices.usart_send = { context, usart, byte in
@@ -195,6 +208,12 @@ public final class STM32Microcontroller: Microcontroller {
         set { system.frames = newValue }
     }
 
+    /// What each SPI port sends as a master goes to this, which gives back what it receives (a DAC wired to it)
+    public var spiExchange: SPIExchange? {
+        get { system.spi }
+        set { system.spi = newValue }
+    }
+
     /// The I²C target on its buses (a codec's control port)
     public var i2cTarget: I2CTarget? {
         get { system.i2c }
@@ -249,10 +268,11 @@ public final class STM32Microcontroller: Microcontroller {
     }
 
     public func reset() {
-        let voltages = pinVoltages, frames = system.frames, i2c = system.i2c, watched = system.watched
+        let voltages = pinVoltages, frames = system.frames, spi = system.spi, i2c = system.i2c, watched = system.watched
         let onEvent = system.onEvent
         system = System(model: model, firmware: firmware)
         system.frames = frames
+        system.spi = spi
         system.i2c = i2c
         system.onEvent = onEvent
         if !watched.isEmpty { system.watch(watched) }

@@ -49,6 +49,10 @@ following the probe the same way), and Stages streams DAC8568 words over I2S3 at
 channels. A transmitter whose DMA starts after its I2S (Tides 2's) sends from the next frame's start, as the chip
 does: words are not split.
 
+On the F103 model (`STM32_F103`), Braids plays its first shape at 269.5 Hz into its DAC8551 at 96 kHz with its MCP3204
+answering mid-scale, Peaks sends DAC8552 words for its two channels at 48 kHz, Frames DAC7554 words for its four at
+32 kHz, and Streams its two at 31 kHz.
+
 Unicorn (QEMU) quirks the harness works around: code rewritten in place needs QEMU's translation dropped
 (`ctl_remove_cache`); after a fault it keeps the exception pending, so a fresh instance is made; it runs an IT block
 as one unit whatever the instruction count asked for, so IT blocks run to their end; and it runs the M4 as if it had
