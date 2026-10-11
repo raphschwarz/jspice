@@ -461,6 +461,9 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
     print("\(part)'s model as simulated: \(size.unknowns) unknowns, \(size.nonzeros) nonzeros, \(size.factorEntries) entries "
           + "factored, \(size.nonlinearUnknowns) nonlinear (its factors \(block.lower) below and \(block.upper) right of the "
           + "pivots, \(block.operations) multiply-adds to factor); \(made)")
+    let levels = simulator.substitutionLevels
+    print("\(part): back substitution goes through \(levels.block) levels of the nonlinear block's \(levels.blockSteps) steps, "
+          + "\(levels.linear) of the linear block's \(levels.linearSteps)")
     print(String(format: "%@ %@, 1 kHz at 48 kHz: %.1f µs/step (the fastest fifth %.1f), %.2f× real time, %.2f Newton iterations a step "
                  + "(%ld factored, %ld with kept factors, %ld factorings taken up again), %ld unknowns, %ld in the nonlinear block%@",
                  part, stages > 1 ? "\(stages) followers in a row" : "follower", elapsed / Double(done) * 1e6,

@@ -19,6 +19,9 @@ final class EliminationProgram {
     /// pivot that are this program's, each a level lower), so that steps one after another seldom wait on each other
     /// and the processor overlaps them, rather than last step first. Each step's sum is the same either way.
     let backOrder: UnsafeMutablePointer<Int32>
+    /// The levels of `backOrder`: steps one after another that the longest chain of them passes through (as many as
+    /// `steps` where each needs the one before; few where most can be overlapped)
+    let levels: Int
 
     /// The relative size a pivot must keep, against the largest entry below it, for the program to be replayed: far
     /// below the threshold it was chosen with (`SparsePlan.threshold`), so a program lasts while values move
@@ -82,6 +85,7 @@ final class EliminationProgram {
             level[k] = deepest
         }
         let order = (0..<steps).sorted { level[$0] != level[$1] ? level[$0] < level[$1] : $0 > $1 }
+        levels = (level.max() ?? -1) + 1
         backOrder = .allocate(capacity: max(steps, 1))
         for (i, k) in order.enumerated() { backOrder[i] = Int32(k) }
     }
@@ -609,6 +613,12 @@ final class SparsePlan {
     var blockFactorSize: (lower: Int, upper: Int, operations: Int) {
         guard let order = orders.first else { return (0, 0, 0) }
         return (Int(order.lStart[order.steps]), Int(order.uStart[order.steps]), order.opCount)
+    }
+
+    /// The levels back substitution goes through (see `EliminationProgram.levels`) and its steps, in the nonlinear
+    /// block (by the last pivot order) and in the linear block
+    var substitutionLevels: (block: Int, blockSteps: Int, linear: Int, linearSteps: Int) {
+        (orders.first?.levels ?? 0, orders.first?.steps ?? 0, linear.levels, linear.steps)
     }
 
     /// Puts the base matrix's values back where an iteration can have changed them

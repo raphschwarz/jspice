@@ -6577,6 +6577,12 @@ public final class Simulator {
         plan?.blockFactorSize ?? (0, 0, 0)
     }
 
+    /// The levels back substitution goes through in the nonlinear and the linear block, and their steps: how long the
+    /// chain of rows each waits on is
+    public var substitutionLevels: (block: Int, blockSteps: Int, linear: Int, linearSteps: Int) {
+        plan?.substitutionLevels ?? (0, 0, 0, 0)
+    }
+
     /// Pivot orders the plan has for its nonlinear block (one for each state its parts have been seen in, up to a few)
     public var pivotOrders: Int {
         plan?.orderCount ?? 0
