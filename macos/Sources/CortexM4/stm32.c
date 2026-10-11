@@ -92,6 +92,25 @@ static const uint8_t channel_requests[2][7][4] = {
     },
 };
 
+// The F103's DMA1 channels (RM0008 table 78; medium density: no DMA2)
+static const uint8_t channel_requests_f1[2][7][4] = {
+    {
+        {REQ_ADC1},
+        {REQ_SPI1_RX, REQ_USART3_TX, REQ_TIM2_UP},
+        {REQ_SPI1_TX, REQ_USART3_RX, REQ_TIM3_UP},
+        {REQ_SPI2_RX, REQ_USART1_TX},
+        {REQ_SPI2_TX, REQ_USART1_RX, REQ_TIM1_UP},
+        {REQ_USART2_RX},
+        {REQ_USART2_TX, REQ_TIM4_UP},
+    },
+};
+
+// The F103's timer channels on pins, as without remapping: port, pin, timer, channel
+static const struct { uint8_t port, pin, timer, channel; } timer_pins_f1[] = {
+    {0, 8, 1, 1}, {0, 9, 1, 2}, {0, 10, 1, 3}, {0, 11, 1, 4}, {0, 0, 2, 1}, {0, 1, 2, 2}, {0, 2, 2, 3}, {0, 3, 2, 4},
+    {0, 6, 3, 1}, {0, 7, 3, 2}, {1, 0, 3, 3}, {1, 1, 3, 4}, {1, 6, 4, 1}, {1, 7, 4, 2}, {1, 8, 4, 3}, {1, 9, 4, 4},
+};
+
 // Timer channels on pins, through their alternate functions: port, pin, function, timer, channel
 static const struct { uint8_t port, pin, af, timer, channel; } timer_pins[] = {
     {0, 8, 1, 1, 1}, {0, 9, 1, 1, 2}, {0, 10, 1, 1, 3}, {0, 11, 1, 1, 4},
@@ -122,6 +141,7 @@ static const struct { int8_t port, pin; } adc_pins[16] = {
 
 typedef struct {
     uint32_t moder, otyper, ospeedr, pupdr, odr, lckr, afr[2];
+    uint32_t cr[2];         // the F103's CRL and CRH, of which the fields above are worked out
     uint16_t driven, level;  // the circuit's side
 } Gpio;
 
@@ -205,7 +225,7 @@ struct STM32 {
     double volts[PORTS][16];
     uint32_t exti_imr, exti_emr, exti_rtsr, exti_ftsr, exti_pr;
     uint16_t exti_last[PORTS];
-    uint32_t syscfg_memrmp, syscfg_pmc, syscfg_exticr[4], syscfg_cmpcr;
+    uint32_t syscfg_memrmp, syscfg_pmc, syscfg_exticr[4], syscfg_cmpcr;  // (the F103's AFIO: MAPR in `pmc`)
     uint32_t pwr_cr, pwr_csr;
 
     Stream dma[2][8];
@@ -276,13 +296,15 @@ static inline uint32_t sub_read(uint32_t value, uint32_t address, uint32_t size)
 
 // --------------------------------------------------------------------------------------------------------- clocks
 
-/// The F373's clock tree (RM0313 section 7): HSI at 8 MHz, the PLL from HSI/2 or HSE/PREDIV times 2-16
+/// The F373's clock tree (RM0313 section 7) and the F103's (RM0008 section 7): HSI at 8 MHz, the PLL from HSI/2 or
+/// HSE/PREDIV (the F103's HSE or HSE/2, PLLXTPRE) times 2-16
 static void update_clocks_f3(STM32 *m) {
     uint32_t cr = m->rcc[0], cfgr = m->rcc[1], cfgr2 = m->rcc[0x2C / 4];
     double hsi = 8e6, hse = m->hse;
     uint32_t mul = ((cfgr >> 18) & 0xF) + 2;
     if (mul > 16) mul = 16;
-    double pll = ((cfgr >> 16) & 1 ? hse / ((cfgr2 & 0xF) + 1) : hsi / 2) * mul;
+    double prediv = m->model == STM32_F103 ? ((cfgr >> 17) & 1) + 1 : (cfgr2 & 0xF) + 1;
+    double pll = ((cfgr >> 16) & 1 ? hse / prediv : hsi / 2) * mul;
     double sysclk;
     switch (cfgr & 3) {
     case 1: sysclk = (cr & (1u << 16)) ? hse : hsi; break;
@@ -304,7 +326,7 @@ static void update_clocks_f3(STM32 *m) {
 }
 
 static void update_clocks(STM32 *m) {
-    if (m->model == STM32_F373) { update_clocks_f3(m); return; }
+    if (m->model != STM32_F405) { update_clocks_f3(m); return; }
     uint32_t cr = m->rcc[0], pllcfgr = m->rcc[1], cfgr = m->rcc[2];
     double hsi = 16e6, hse = m->hse;
     double source = (pllcfgr >> 22) & 1 ? hse : hsi;
@@ -335,7 +357,7 @@ static void update_clocks(STM32 *m) {
 /// The clock of the timers on APB1 (`apb2` false) or APB2: twice the bus's when it is divided
 static double timer_clock(const STM32 *m, bool apb2) {
     uint32_t ppre = apb2 ? (m->rcc[2] >> 13) & 7 : (m->rcc[2] >> 10) & 7;
-    if (m->model == STM32_F373) ppre = apb2 ? (m->rcc[1] >> 11) & 7 : (m->rcc[1] >> 8) & 7;
+    if (m->model != STM32_F405) ppre = apb2 ? (m->rcc[1] >> 11) & 7 : (m->rcc[1] >> 8) & 7;
     double pclk = apb2 ? m->pclk2 : m->pclk1;
     return ppre & 4 ? 2 * pclk : pclk;
 }
@@ -514,7 +536,7 @@ static bool channel_transfer(STM32 *m, int d, int c) {
 static void pump_channels(STM32 *m, int request) {
     for (int d = 0; d < 2; d++) {
         for (int c = 0; c < 7; c++) {
-            const uint8_t *requests = channel_requests[d][c];
+            const uint8_t *requests = m->model == STM32_F103 ? channel_requests_f1[d][c] : channel_requests[d][c];
             if (requests[0] != request && requests[1] != request && requests[2] != request && requests[3] != request) {
                 continue;
             }
@@ -563,7 +585,8 @@ static void channel_write(STM32 *m, int d, uint32_t offset, uint32_t value) {
             if ((value >> 14) & 1) {
                 while (channel_transfer(m, d, c)) {}  // memory to memory: all at once
             } else {
-                for (int k = 0; k < 4 && channel_requests[d][c][k]; k++) pump_channels(m, channel_requests[d][c][k]);
+                const uint8_t *requests = m->model == STM32_F103 ? channel_requests_f1[d][c] : channel_requests[d][c];
+                for (int k = 0; k < 4 && requests[k]; k++) pump_channels(m, requests[k]);
             }
         }
         channel_update_irq(m, d, c);
@@ -577,7 +600,7 @@ static void channel_write(STM32 *m, int d, uint32_t offset, uint32_t value) {
 
 /// Serves a peripheral's request while it stands, on whichever stream is set to its channel
 static void pump(STM32 *m, int request) {
-    if (m->model == STM32_F373) { pump_channels(m, request); return; }
+    if (m->model != STM32_F405) { pump_channels(m, request); return; }
     for (int d = 0; d < 2; d++) {
         for (int s = 0; s < 8; s++) {
             if (m->dma_request[d][s][(m->dma[d][s].cr >> 25) & 7] != request) continue;
@@ -647,7 +670,7 @@ static double adc_sample_cycles(const STM32 *m, const Adc *a, int channel) {
     static const double cycles[8] = {3, 15, 28, 56, 84, 112, 144, 480};
     static const double cycles_f3[8] = {1.5, 7.5, 13.5, 28.5, 41.5, 55.5, 71.5, 239.5};
     uint32_t smp = channel >= 10 ? (a->smpr1 >> (3 * (channel - 10))) & 7 : (a->smpr2 >> (3 * channel)) & 7;
-    return m->model == STM32_F373 ? cycles_f3[smp] : cycles[smp];
+    return m->model != STM32_F405 ? cycles_f3[smp] : cycles[smp];
 }
 
 
@@ -665,7 +688,7 @@ static uint32_t adc_value(const STM32 *m, const Adc *a, int channel, bool left_a
     else if (channel == 16) volts = 0.76 + (25 - 25) * 0.0025;  // the temperature sensor at 25 °C
     else if (channel == 17) volts = 1.21;
     else volts = 3.3 / 2;
-    int bits = m->model == STM32_F373 ? 12 : 12 - 2 * (int)((a->cr1 >> 24) & 3);
+    int bits = m->model != STM32_F405 ? 12 : 12 - 2 * (int)((a->cr1 >> 24) & 3);
     double full = (double)((1 << bits) - 1);
     double code = floor(volts / 3.3 * full + 0.5);
     uint32_t value = code < 0 ? 0 : code > full ? (uint32_t)full : (uint32_t)code;
@@ -688,7 +711,7 @@ static void adc_start_conversion(STM32 *m, int i) {
     Adc *a = &m->adc[i];
     int channel = adc_regular_channel(a, a->index);
     double adcclk, ticks;
-    if (m->model == STM32_F373) {
+    if (m->model != STM32_F405) {
         adcclk = m->pclk2 / (2 * (((m->rcc[1] >> 14) & 3) + 1));
         ticks = adc_sample_cycles(m, a, channel) + 12.5;
     } else {
@@ -791,7 +814,7 @@ static void adc_write(STM32 *m, uint32_t offset, uint32_t value) {
     case 0x04: a->cr1 = value; adc_update_irq(m); return;
     case 0x08: {
         uint32_t was = a->cr2;
-        if (m->model == STM32_F373) {
+        if (m->model != STM32_F405) {
             // calibration done at once; SWSTART and JSWSTART start the groups, and ADON written again (nothing else
             // changed) a regular one
             a->cr2 = value & ~((1u << 22) | (1u << 21) | 0xCu);
@@ -1956,7 +1979,7 @@ static void usart_f3_write(STM32 *m, int i, uint32_t offset, uint32_t value) {
     }
 }
 
-// Its flash (RM0313 section 3): 2 KB pages, programmed a halfword at a time
+// Its flash (RM0313 section 3): 2 KB pages, programmed a halfword at a time (the F103's the same, its pages 1 KB)
 
 static void flash_f3_write_register(STM32 *m, uint32_t offset, uint32_t value) {
     switch (offset) {
@@ -1976,8 +1999,9 @@ static void flash_f3_write_register(STM32 *m, uint32_t offset, uint32_t value) {
             if (value & 4) {
                 memset(m->flash, 0xFF, m->flash_bytes);
             } else if (value & 2) {
-                uint32_t page = ((m->flash_ar - FLASH_START) & ~0x7FFu);
-                if (page < m->flash_bytes) memset(m->flash + page, 0xFF, 0x800);
+                uint32_t size = m->model == STM32_F103 ? 0x400 : 0x800;  // (the F103's medium density: 1 KB pages)
+                uint32_t page = ((m->flash_ar - FLASH_START) & ~(size - 1));
+                if (page < m->flash_bytes) memset(m->flash + page, 0xFF, size);
             }
             m->flash_cr &= ~0x40u;
             m->flash_sr |= 0x20;  // EOP
@@ -2041,7 +2065,7 @@ static void rcc_f3_write(STM32 *m, uint32_t offset, uint32_t value) {
     if (offset == 0x0C || offset == 0x10 || offset == 0x28) {
         uint32_t rising = value & ~m->rcc[offset / 4];
         m->rcc[offset / 4] = value;
-        if (rising) reset_peripherals(m, 0x100 + (int)offset, rising);
+        if (rising) reset_peripherals(m, (m->model == STM32_F103 ? 0x200 : 0x100) + (int)offset, rising);
         return;
     }
     if (offset == 0x24 && (value & (1u << 24))) value &= 0x00FFFFFFu;  // RMVF clears the reset flags
@@ -2171,9 +2195,158 @@ static void io_write_f3(STM32 *m, uint32_t address, uint32_t value) {
     }
 }
 
+// ------------------------------------------------------------------------------------------------------ the F103
+
+// Its GPIO (RM0008 section 9): four bits a pin in CRL and CRH (MODE: input, or an output's speed; CNF: analog,
+// floating, pulled (up or down as ODR's bit), or push-pull, open-drain, either as an alternate function), IDR, ODR,
+// BSRR, BRR. They are worked out into the F405's fields, which the rest of the model reads.
+static void gpio_f1_decode(STM32 *m, int port) {
+    Gpio *g = &m->gpio[port];
+    g->moder = g->otyper = g->pupdr = 0;
+    g->afr[0] = g->afr[1] = 0;
+    for (int pin = 0; pin < 16; pin++) {
+        uint32_t field = (g->cr[pin / 8] >> (4 * (pin % 8))) & 0xF, mode = field & 3, cnf = field >> 2;
+        if (mode == 0) {
+            if (cnf == 0) g->moder |= 3u << (2 * pin);  // analog
+            else if (cnf == 2) g->pupdr |= ((g->odr >> pin) & 1 ? 1u : 2u) << (2 * pin);
+        } else {
+            g->moder |= (cnf & 2 ? 2u : 1u) << (2 * pin);
+            if (cnf & 1) g->otyper |= 1u << pin;
+        }
+    }
+}
+
+static uint32_t gpio_f1_read(STM32 *m, int port, uint32_t offset) {
+    Gpio *g = &m->gpio[port];
+    switch (offset) {
+    case 0x00: return g->cr[0];
+    case 0x04: return g->cr[1];
+    case 0x08: return gpio_idr(m, port);
+    case 0x0C: return g->odr;
+    case 0x18: return g->lckr;
+    }
+    return 0;
+}
+
+static void gpio_f1_write(STM32 *m, int port, uint32_t offset, uint32_t value) {
+    Gpio *g = &m->gpio[port];
+    switch (offset) {
+    case 0x00: g->cr[0] = value; break;
+    case 0x04: g->cr[1] = value; break;
+    case 0x0C: g->odr = value & 0xFFFF; break;
+    case 0x10: g->odr = (g->odr | (value & 0xFFFF)) & ~(value >> 16); break;
+    case 0x14: g->odr &= ~(value & 0xFFFF); break;
+    case 0x18: g->lckr = value; return;
+    default: return;
+    }
+    gpio_f1_decode(m, port);  // (an input's pull follows ODR)
+    exti_check(m, port);
+    tell_pins(m, port);
+}
+
+// Its bus (RM0008 table 3): APB1, APB2 with AFIO, EXTI and GPIO, and AHB's DMA1, RCC, flash and CRC; its USARTs, I2C
+// and SPI are the F405's, its ADCs and flash the F373's, its timers 1-4 the F405's
+
+static uint32_t io_read_f1(STM32 *m, uint32_t address, uint32_t size) {
+    uint32_t base = address & ~3u, offset = base & 0x3FF, value = 0;
+    if (address >= 0x40000000u && address < 0x40007400u) {
+        uint32_t block = (address - 0x40000000u) >> 10;
+        if (block < 3) value = timer_read(m, (int)block + 2, offset);
+        else if (block == 0x0E) value = spi_read(m, &m->spi[1], offset);
+        else if (block == 0x11 || block == 0x12) value = usart_read(m, (int)(block - 0x10), offset);
+        else if (block == 0x15 || block == 0x16) value = i2c_read(m, (int)(block - 0x15), offset);
+        else if (block == 0x1C) value = offset == 0 ? m->pwr_cr : offset == 4 ? m->pwr_csr : 0;
+    } else if (address >= 0x40010000u && address < 0x40014000u) {
+        uint32_t block = (address - 0x40010000u) >> 10;
+        switch (block) {
+        case 0x00:
+            if (offset == 0x04) value = m->syscfg_pmc;
+            else if (offset >= 0x08 && offset <= 0x14) value = m->syscfg_exticr[(offset - 8) / 4];
+            break;
+        case 0x01:
+            switch (offset) {
+            case 0x00: value = m->exti_imr; break;
+            case 0x04: value = m->exti_emr; break;
+            case 0x08: value = m->exti_rtsr; break;
+            case 0x0C: value = m->exti_ftsr; break;
+            case 0x14: value = m->exti_pr; break;
+            }
+            break;
+        case 0x02: case 0x03: case 0x04: case 0x05: case 0x06: value = gpio_f1_read(m, (int)block - 2, offset); break;
+        case 0x09: value = adc_read(m, offset); break;
+        case 0x0A: value = adc_read(m, 0x100 + offset); break;
+        case 0x0B: value = timer_read(m, 1, offset); break;
+        case 0x0C: value = spi_read(m, &m->spi[0], offset); break;
+        case 0x0E: value = usart_read(m, 0, offset); break;
+        }
+    } else if (address >= 0x40020000u && address < 0x40023400u) {
+        uint32_t block = (address - 0x40020000u) >> 10;
+        if (block == 0x00) value = channel_read(m, 0, offset);
+        else if (block == 0x04) value = rcc_f3_read(m, offset);
+        else if (block == 0x08) value = flash_f3_read_register(m, offset);
+        else if (block == 0x0C) value = offset == 0 ? m->crc : 0;
+    } else if (address >= 0x1FFFF7E8u && address < 0x1FFFF7F4u) {
+        static const uint32_t id[3] = {0x0567FF32u, 0x34355038u, 0x43117543u};
+        value = id[(base - 0x1FFFF7E8u) / 4];
+    } else if (base == 0x1FFFF7E0u) {
+        value = m->flash_bytes >> 10;  // the flash's size in KB
+    }
+    return sub_read(value, address, size);
+}
+
+static void io_write_f1(STM32 *m, uint32_t address, uint32_t value) {
+    uint32_t base = address & ~3u, offset = base & 0x3FF;
+    if (address >= 0x40000000u && address < 0x40007400u) {
+        uint32_t block = (address - 0x40000000u) >> 10;
+        if (block < 3) timer_write(m, (int)block + 2, offset, value);
+        else if (block == 0x0E) spi_write(m, &m->spi[1], offset, value);
+        else if (block == 0x11 || block == 0x12) usart_write(m, (int)(block - 0x10), offset, value);
+        else if (block == 0x15 || block == 0x16) i2c_write(m, (int)(block - 0x15), offset, value);
+        else if (block == 0x1C) {
+            if (offset == 0) m->pwr_cr = value;
+            else if (offset == 4) m->pwr_csr = value & 0x100;
+        }
+    } else if (address >= 0x40010000u && address < 0x40014000u) {
+        uint32_t block = (address - 0x40010000u) >> 10;
+        switch (block) {
+        case 0x00:
+            if (offset == 0x04) m->syscfg_pmc = value;
+            else if (offset >= 0x08 && offset <= 0x14) m->syscfg_exticr[(offset - 8) / 4] = value & 0xFFFF;
+            break;
+        case 0x01:
+            switch (offset) {
+            case 0x00: m->exti_imr = value & 0x7FFFF; break;
+            case 0x04: m->exti_emr = value & 0x7FFFF; break;
+            case 0x08: m->exti_rtsr = value & 0x7FFFF; break;
+            case 0x0C: m->exti_ftsr = value & 0x7FFFF; break;
+            case 0x10: m->exti_pr |= value & m->exti_imr; break;  // SWIER
+            case 0x14: m->exti_pr &= ~value; break;
+            }
+            exti_update_irqs(m);
+            break;
+        case 0x02: case 0x03: case 0x04: case 0x05: case 0x06: gpio_f1_write(m, (int)block - 2, offset, value); break;
+        case 0x09: adc_write(m, offset, value); break;
+        case 0x0A: adc_write(m, 0x100 + offset, value); break;
+        case 0x0B: timer_write(m, 1, offset, value); break;
+        case 0x0C: spi_write(m, &m->spi[0], offset, value); break;
+        case 0x0E: usart_write(m, 0, offset, value); break;
+        }
+    } else if (address >= 0x40020000u && address < 0x40023400u) {
+        uint32_t block = (address - 0x40020000u) >> 10;
+        if (block == 0x00) channel_write(m, 0, offset, value);
+        else if (block == 0x04) rcc_f3_write(m, offset, value);
+        else if (block == 0x08) flash_f3_write_register(m, offset, value);
+        else if (block == 0x0C) {
+            if (offset == 0x00) m->crc = crc_update(m->crc, value);
+            else if (offset == 0x08 && (value & 1)) m->crc = 0xFFFFFFFFu;
+        }
+    }
+}
+
 static uint32_t io_read(void *context, uint32_t address, uint32_t size) {
     STM32 *m = context;
     if (m->model == STM32_F373) return io_read_f3(m, address, size);
+    if (m->model == STM32_F103) return io_read_f1(m, address, size);
     uint32_t base = address & ~3u, offset;
     uint32_t value = 0;
     if (address >= 0x40000000u && address < 0x40008000u) {
@@ -2244,13 +2417,14 @@ static uint32_t io_read(void *context, uint32_t address, uint32_t size) {
 static void io_write(void *context, uint32_t address, uint32_t value, uint32_t size) {
     STM32 *m = context;
     if (address < FLASH_START + m->flash_bytes && (address >= FLASH_START || address < m->flash_bytes)) {
-        if (m->model == STM32_F373) flash_f3_program(m, address, value, size);
+        if (m->model != STM32_F405) flash_f3_program(m, address, value, size);
         else flash_program(m, address, value, size);
         return;
     }
     uint32_t base = address & ~3u, offset = base & 0x3FF;
     value = lanes(address, value, size);
     if (m->model == STM32_F373) { io_write_f3(m, address, value); return; }
+    if (m->model == STM32_F103) { io_write_f1(m, address, value); return; }
     if (address >= 0x40000000u && address < 0x40008000u) {
         uint32_t block = (address - 0x40000000u) >> 10;
         static const int apb1_timers[9] = {2, 3, 4, 5, 6, 7, 12, 13, 14};
@@ -2381,9 +2555,34 @@ static void reset_gpio(STM32 *m, int port) {
 }
 
 /// The peripherals whose reset bits were just set in AHB1RSTR (0x10) ... APB2RSTR (0x24); the F373's in its
-/// APB2RSTR (0x10C), APB1RSTR (0x110) and AHBRSTR (0x128)
+/// APB2RSTR (0x10C), APB1RSTR (0x110) and AHBRSTR (0x128); the F103's in its APB2RSTR (0x20C) and APB1RSTR (0x210)
 static void reset_peripherals(STM32 *m, int bus, uint32_t bits) {
     switch (bus) {
+    case 0x20C:
+        for (int port = 0; port < 5; port++) {
+            if ((bits >> (2 + port)) & 1) {
+                reset_gpio(m, port);
+                m->gpio[port].cr[0] = m->gpio[port].cr[1] = 0x44444444u;
+                gpio_f1_decode(m, port);
+            }
+        }
+        for (int i = 0; i < 2; i++) {
+            if ((bits >> (9 + i)) & 1) {
+                memset(&m->adc[i], 0, sizeof m->adc[i]);  // (each ADC its own)
+                m->adc[i].done_at = NEVER;
+            }
+        }
+        if (bits & (1u << 11)) reset_timer(&m->tim[1]);
+        if (bits & (1u << 12)) reset_spi(&m->spi[0]);
+        if (bits & (1u << 14)) reset_usart(&m->usart[0]);
+        break;
+    case 0x210:
+        for (int k = 0; k < 3; k++) if ((bits >> k) & 1) reset_timer(&m->tim[2 + k]);
+        if (bits & (1u << 14)) reset_spi(&m->spi[1]);
+        if (bits & (1u << 17)) reset_usart(&m->usart[1]);
+        if (bits & (1u << 18)) reset_usart(&m->usart[2]);
+        for (int k = 0; k < 2; k++) if ((bits >> (21 + k)) & 1) reset_i2c(&m->i2c[k]);
+        break;
     case 0x10C:
         if (bits & (1u << 9)) reset_adcs(m);
         if (bits & (1u << 12)) reset_spi(&m->spi[0]);
@@ -2442,7 +2641,8 @@ static void reset_peripherals(STM32 *m, int bus, uint32_t bits) {
 }
 
 static void reset_all(STM32 *m) {
-    bool f3 = m->model == STM32_F373;
+    bool f3 = m->model != STM32_F405;  // (the F373's and the F103's alike, where they are)
+    bool f1 = m->model == STM32_F103;
     memset(m->rcc, 0, sizeof m->rcc);
     m->rcc[0x00 / 4] = 0x00000083;
     if (f3) {
@@ -2489,6 +2689,14 @@ static void reset_all(STM32 *m) {
     m->syscfg_memrmp = m->syscfg_pmc = m->syscfg_cmpcr = 0;
     memset(m->syscfg_exticr, 0, sizeof m->syscfg_exticr);
     for (int port = 0; port < PORTS; port++) m->exti_last[port] = gpio_idr(m, port);
+    if (f1) {
+        // every pin a floating input; the JTAG pins' pulls as the F103 has them
+        for (int port = 0; port < PORTS; port++) {
+            m->gpio[port].cr[0] = m->gpio[port].cr[1] = 0x44444444u;
+            gpio_f1_decode(m, port);
+        }
+        for (int port = 0; port < PORTS; port++) m->exti_last[port] = gpio_idr(m, port);
+    }
     m->pwr_cr = f3 ? 0 : 0x4000;
     m->pwr_csr = f3 ? 0 : 1u << 14;  // VOSRDY
 
@@ -2589,7 +2797,7 @@ CM4Stop stm32_run(STM32 *m, uint64_t cycles) {
 // ----------------------------------------------------------------------------------------------------------- API
 
 STM32 *stm32_create_model(STM32Model model, double hse_hz) {
-    if (model != STM32_F405 && model != STM32_F373) return NULL;
+    if (model != STM32_F405 && model != STM32_F373 && model != STM32_F103) return NULL;
     STM32 *m = calloc(1, sizeof *m);
     if (!m) return NULL;
     m->core = cm4_create();
@@ -2600,9 +2808,12 @@ STM32 *stm32_create_model(STM32Model model, double hse_hz) {
         m->flash_bytes = 0x100000u;
         m->sram_bytes = 0x20000u;
         m->ccm_bytes = 0x10000u;
-    } else {
+    } else if (model == STM32_F373) {
         m->flash_bytes = 0x40000u;
         m->sram_bytes = 0x8000u;
+    } else {
+        m->flash_bytes = 0x20000u;  // the F103CB's 128 KB (medium density)
+        m->sram_bytes = 0x5000u;
     }
     m->flash = cm4_add_memory(m->core, FLASH_START, m->flash_bytes, false);
     cm4_alias(m->core, 0, FLASH_START);
@@ -2694,6 +2905,16 @@ int stm32_pin_mode(const STM32 *m, int port, int pin) {
 
 static bool timer_pin(const STM32 *m, int port, int pin, int *timer, int *channel) {
     const Gpio *g = &m->gpio[port];
+    if (m->model == STM32_F103) {
+        for (size_t k = 0; k < sizeof timer_pins_f1 / sizeof timer_pins_f1[0]; k++) {
+            if (timer_pins_f1[k].port == port && timer_pins_f1[k].pin == pin) {
+                *timer = timer_pins_f1[k].timer;
+                *channel = timer_pins_f1[k].channel;
+                return true;
+            }
+        }
+        return false;
+    }
     uint32_t af = (g->afr[pin / 8] >> (4 * (pin % 8))) & 0xF;
     for (size_t k = 0; k < sizeof timer_pins / sizeof timer_pins[0]; k++) {
         if (timer_pins[k].port == port && timer_pins[k].pin == pin && timer_pins[k].af == af) {
@@ -2742,30 +2963,37 @@ double stm32_dac_volts(const STM32 *m, int channel) {
 
 // ---------------------------------------------------------------------------------------------------- the package
 
-// The pins on the circuit, in order: PA0-PA15, PB0-PB15, PC0-PC15 on both, then the F405's PD2 (its 64-pin package)
-// or the F373's PD8, PE8, PE9, PF6 and PF7 (its 64-pin package's, with the SDADCs' inputs among them)
-static const uint8_t extra_pins[2][5][2] = {{{3, 2}}, {{3, 8}, {4, 8}, {4, 9}, {5, 6}, {5, 7}}};
-static const int extra_count[2] = {1, 5};
+// The pins on the circuit, in order: PA0-PA15, PB0-PB15, then the F405's PC0-PC15 and PD2 (its 64-pin package),
+// the F373's PC0-PC15, PD8, PE8, PE9, PF6 and PF7 (its 64-pin package's, with the SDADCs' inputs among them), or the
+// F103's PC13-PC15 (its 48-pin package)
+static const uint8_t extra_pins[3][21][2] = {
+    {{2, 0}, {2, 1}, {2, 2}, {2, 3}, {2, 4}, {2, 5}, {2, 6}, {2, 7}, {2, 8}, {2, 9}, {2, 10}, {2, 11}, {2, 12}, {2, 13},
+     {2, 14}, {2, 15}, {3, 2}},
+    {{2, 0}, {2, 1}, {2, 2}, {2, 3}, {2, 4}, {2, 5}, {2, 6}, {2, 7}, {2, 8}, {2, 9}, {2, 10}, {2, 11}, {2, 12}, {2, 13},
+     {2, 14}, {2, 15}, {3, 8}, {4, 8}, {4, 9}, {5, 6}, {5, 7}},
+    {{2, 13}, {2, 14}, {2, 15}},
+};
+static const int extra_count[3] = {17, 21, 3};
 
-int stm32_pin_count(STM32Model model) { return model == STM32_F405 || model == STM32_F373 ? 48 + extra_count[model] : 0; }
+int stm32_pin_count(STM32Model model) { return model >= STM32_F405 && model <= STM32_F103 ? 32 + extra_count[model] : 0; }
 
 /// A pin's place among the package's, or -1
 static int package_index(STM32Model model, int port, int pin) {
-    if (port < 3) return 16 * port + pin;
+    if (port < 2) return 16 * port + pin;
     for (int k = 0; k < extra_count[model]; k++) {
-        if (extra_pins[model][k][0] == port && extra_pins[model][k][1] == pin) return 48 + k;
+        if (extra_pins[model][k][0] == port && extra_pins[model][k][1] == pin) return 32 + k;
     }
     return -1;
 }
 
 int stm32_pin_port(STM32Model model, int index) {
     if (index < 0 || index >= stm32_pin_count(model)) return -1;
-    return index < 48 ? index / 16 : extra_pins[model][index - 48][0];
+    return index < 32 ? index / 16 : extra_pins[model][index - 32][0];
 }
 
 int stm32_pin_number(STM32Model model, int index) {
     if (index < 0 || index >= stm32_pin_count(model)) return -1;
-    return index < 48 ? index % 16 : extra_pins[model][index - 48][1];
+    return index < 32 ? index % 16 : extra_pins[model][index - 32][1];
 }
 
 static void apply_voltage(STM32 *m, int index, double volts, double supply, uint16_t *changed) {

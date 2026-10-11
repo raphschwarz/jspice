@@ -6,6 +6,9 @@
 // - The STM32F373 (RM0313): 256 KB of flash and 32 KB of SRAM at 72 MHz; its clock tree, flash in pages, the same
 //   GPIO, EXTI and timers, DMA in channels, a 12-bit ADC and three 16-bit sigma-delta ADCs, SPI and I2S, USARTs and
 //   DACs. Plaits, Stages, Tides 2.
+// - The STM32F103 (RM0008), medium density: 128 KB of flash and 20 KB of SRAM at 72 MHz; the F1's GPIO (CRL and CRH)
+//   with AFIO, its clock tree, flash in 1 KB pages, DMA1, two ADCs, timers 1-4, SPI, I2C and USARTs. Its core is a
+//   Cortex-M3, which runs as the M4 without its FPU and DSP instructions. Braids, Peaks, Frames, Streams.
 //
 // Registers are modelled as the reference manuals give them, as far as those firmwares reach.
 //
@@ -24,7 +27,7 @@ extern "C" {
 typedef struct STM32 STM32;
 
 /// The chips modelled
-typedef enum { STM32_F405 = 0, STM32_F373 = 1 } STM32Model;
+typedef enum { STM32_F405 = 0, STM32_F373 = 1, STM32_F103 = 2 } STM32Model;
 
 /// The devices on the chip's buses. Each is called as the chip's peripheral does it, during a run; any can be NULL.
 typedef struct {
