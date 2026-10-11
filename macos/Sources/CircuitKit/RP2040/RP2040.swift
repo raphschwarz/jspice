@@ -371,8 +371,9 @@ final class RP2040 {
     /// whole nanoseconds are exact to 2⁵²; from 2⁵², an instruction at a time)
     @inline(__always) static func stretchEnd(_ nanos: Double) -> Double {
         if nanos == 0 { return 0x1p52 }
-        guard nanos > 0 && nanos < 0x1p52 else { return nanos }
-        return Double(sign: .plus, exponent: nanos.exponent + 1, significand: 1)
+        guard nanos >= 0x1p-1000 && nanos < 0x1p52 else { return nanos }
+        // (from the bits: `exponent` is a call into the runtime)
+        return Double(bitPattern: (nanos.bitPattern & 0x7FF0_0000_0000_0000) &+ 0x0010_0000_0000_0000)
     }
 
     /// Whether runs count the instructions they run, by kind, in `instructionCounts` (for the benchmark's breakdown)
