@@ -23,6 +23,9 @@ final class EliminationProgram {
     /// `steps` where each needs the one before; few where most can be overlapped)
     let levels: Int
 
+    /// Whether back substitution takes a level's steps by their entries' count (off, by step: for comparing)
+    static var sortsLevelsByLength = true
+
     /// The relative size a pivot must keep, against the largest entry below it, for the program to be replayed: far
     /// below the threshold it was chosen with (`SparsePlan.threshold`), so a program lasts while values move
     static let replayThreshold = 1e-3
@@ -84,7 +87,15 @@ final class EliminationProgram {
             }
             level[k] = deepest
         }
-        let order = (0..<steps).sorted { level[$0] != level[$1] ? level[$0] < level[$1] : $0 > $1 }
+        // (within a level, the steps by their entries' count: a step's loop then runs as many times as the one before
+        // more often, and its end is foreseen; each step's sum is the same in any order within its level)
+        let length = { (k: Int) in right[k].count }
+        let byLength = EliminationProgram.sortsLevelsByLength
+        let order = (0..<steps).sorted {
+            if level[$0] != level[$1] { return level[$0] < level[$1] }
+            if byLength && length($0) != length($1) { return length($0) < length($1) }
+            return $0 > $1
+        }
         levels = (level.max() ?? -1) + 1
         backOrder = .allocate(capacity: max(steps, 1))
         for (i, k) in order.enumerated() { backOrder[i] = Int32(k) }

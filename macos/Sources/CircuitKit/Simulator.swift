@@ -6577,6 +6577,13 @@ public final class Simulator {
         plan?.blockFactorSize ?? (0, 0, 0)
     }
 
+    /// Whether back substitution takes a level's steps by their entries' count (off, by step: for comparing; read as
+    /// a simulator plans its equations)
+    public static var sortsLevelsByLength: Bool {
+        get { EliminationProgram.sortsLevelsByLength }
+        set { EliminationProgram.sortsLevelsByLength = newValue }
+    }
+
     /// The levels back substitution goes through in the nonlinear and the linear block, and their steps: how long the
     /// chain of rows each waits on is
     public var substitutionLevels: (block: Int, blockSteps: Int, linear: Int, linearSteps: Int) {

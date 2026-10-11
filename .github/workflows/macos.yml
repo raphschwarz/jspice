@@ -196,6 +196,12 @@ jobs:
           # the same with the guess at each substep extrapolated through one whose decisions moved, as before
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker LM358 0.25 1 predict-past-decisions=on | grep -E "follower|by its place|chattering" || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 1 predict-past-decisions=on | grep -E "follower|by its place" || true
+          # back substitution with a level's steps by their entries' count, and by step (two followers, twice each)
+          for setting in off on off on; do
+            echo "sort-levels-by-length=$setting"
+            ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 1 2 sort-levels-by-length=$setting | grep -E "follower" || true
+          done
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch sort-levels-by-length 0.25 voice acid bargraph frequency-shifter mc1496-ring || true
           # two in a row, as a pedal's two op-amps: real time needs them under 20.8 us a step together
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 2 || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA1656 0.5 2 || true
