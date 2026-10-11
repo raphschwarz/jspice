@@ -17,6 +17,10 @@ and run here as it is in the app:
   interrupt using the FPU while the code it interrupted does. `run.py` runs it and computes each expected result
   apart; `CortexM4Tests.swift` holds them.
 
+- `bench/`: a firmware shaped like an audio module's (float biquad and state-variable filters, a wavetable oscillator,
+  Q15 mixing, block copies, under a SysTick interrupt) and a host that runs it on the core and prints its speed:
+  `bench/build.sh` builds both.
+
 ```
 pip install unicorn capstone numpy
 python3 fuzz.py all 5000 1        # kind, trials, seed

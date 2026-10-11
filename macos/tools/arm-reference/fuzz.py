@@ -112,6 +112,9 @@ def unpredictable(code):
     # VMOV between two core registers and two singles or a double: SP or the PC as a core register
     if (hw1 & 0xFFE0) == 0xEC40 and (hw2 & 0x0E00) == 0x0A00 and (rn in (13, 15) or (hw2 >> 12) in (13, 15)):
         return True
+    # VMOV between a core register and a single: SP or the PC as the core register
+    if (hw1 & 0xFFE0) == 0xEE00 and (hw2 & 0x0F7F) == 0x0A10 and (hw2 >> 12) in (13, 15):
+        return True
     # LDM / STM (wide): SP in the list, the PC in a store's, the PC and LR in a load's, writeback with Rn in the list
     if (hw1 & 0xFE40) == 0xE800 and ((hw1 >> 7) & 3) in (1, 2):
         load, writeback = (hw1 >> 4) & 1, (hw1 >> 5) & 1

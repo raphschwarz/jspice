@@ -40,7 +40,7 @@ enum { CONTROL_NPRIV = 1, CONTROL_SPSEL = 2, CONTROL_FPCA = 4 };
 
 // FPSCR bits
 enum { FPSCR_IOC = 1, FPSCR_DZC = 2, FPSCR_OFC = 4, FPSCR_UFC = 8, FPSCR_IXC = 16, FPSCR_IDC = 128,
-       FPSCR_FZ = 1 << 24, FPSCR_DN = 1 << 25, FPSCR_AHP = 1 << 26 };
+       FPSCR_RMODE = 3 << 22, FPSCR_FZ = 1 << 24, FPSCR_DN = 1 << 25, FPSCR_AHP = 1 << 26 };
 #define FPSCR_WRITABLE 0xF7C0009Fu
 
 // CFSR bits (UsageFault in its top half)
@@ -62,7 +62,12 @@ struct CM4 {
 
     Region regions[MAX_REGIONS];
     int region_count;
-    Region *last_region;
+    /// The memory in each megabyte of the address space: NULL where there is none (the peripherals, the system
+    /// space), MIXED where more than one shares it
+    Region *map[4096];
+    /// The memory the code runs from, for fetching: its bytes, where they start, and how far in a word can be read
+    const uint8_t *code;
+    uint32_t code_base, code_words_end;
     CM4Read io_read;
     CM4Write io_write;
     void *io_context;
@@ -112,17 +117,27 @@ struct CM4 {
 static uint32_t system_read(CM4 *c, uint32_t address, uint32_t size);
 static void system_write(CM4 *c, uint32_t address, uint32_t value, uint32_t size);
 
-static inline Region *find_region(CM4 *c, uint32_t address) {
-    Region *last = c->last_region;
-    if (last && address - last->base < last->size) return last;
+#define MIXED ((Region *)1)
+
+static Region *find_region_among(CM4 *c, uint32_t address) {
     for (int i = 0; i < c->region_count; i++) {
         Region *r = &c->regions[i];
-        if (address - r->base < r->size) {
-            c->last_region = r;
-            return r;
-        }
+        if (address - r->base < r->size) return r;
     }
     return NULL;
+}
+
+/// The memory holding `address`, if one does
+static inline Region *find_region(CM4 *c, uint32_t address) {
+    Region *r = c->map[address >> 20];
+    if (__builtin_expect(r == MIXED, 0)) return find_region_among(c, address);
+    return r && address - r->base < r->size ? r : NULL;
+}
+
+static void map_region(CM4 *c, Region *r) {
+    for (uint64_t mb = r->base >> 20; mb <= ((uint64_t)r->base + r->size - 1) >> 20 && mb < 4096; mb++) {
+        c->map[mb] = c->map[mb] && c->map[mb] != r ? MIXED : r;
+    }
 }
 
 static uint32_t io_read(CM4 *c, uint32_t address, uint32_t size) {
@@ -1781,7 +1796,7 @@ static void exec_long_multiply(CM4 *c, uint32_t hw1, uint32_t hw2) {
     c->r[rdhi] = (uint32_t)(result >> 32);
 }
 
-static void exec32(CM4 *c, uint32_t hw1, uint32_t hw2) {
+__attribute__((noinline)) static void exec32(CM4 *c, uint32_t hw1, uint32_t hw2) {
     uint32_t op1 = (hw1 >> 11) & 3, op2 = (hw1 >> 4) & 0x7F;
     if (op1 == 1) {
         if ((op2 & 0x64) == 0x00) {
@@ -1893,7 +1908,27 @@ static uint32_t fp_finish(CM4 *c, float r, double exact, bool inexact) {
     return bits;
 }
 
-static uint32_t fp_add(CM4 *c, uint32_t a, uint32_t b) {
+// The common case, fast: both operands normal numbers, rounding to nearest, and the inexact flag already set (it is
+// sticky, and set by a firmware's first inexact operation). Then the host's result is the FPU's whenever it is a
+// normal number above the smallest binade (where a result tiny before rounding could have rounded up), and it sets no
+// flag that is not set already. Anything else takes the full path.
+static inline bool f_plain(uint32_t x) { return ((x >> 23) & 0xFF) - 1u < 0xFEu; }
+static inline bool fp_plain_operands(const CM4 *c, uint32_t a, uint32_t b) {
+    return (c->fpscr & (FPSCR_RMODE | FPSCR_IXC)) == FPSCR_IXC && f_plain(a) && f_plain(b);
+}
+static inline bool fp_plain_result(uint32_t r) { return ((r >> 23) & 0xFF) - 2u < 0xFDu; }
+
+static uint32_t fp_add_full(CM4 *c, uint32_t a, uint32_t b);
+
+static inline uint32_t fp_add(CM4 *c, uint32_t a, uint32_t b) {
+    if (fp_plain_operands(c, a, b)) {
+        uint32_t r = as_bits(as_float(a) + as_float(b));
+        if (fp_plain_result(r)) return r;
+    }
+    return fp_add_full(c, a, b);
+}
+
+static uint32_t fp_add_full(CM4 *c, uint32_t a, uint32_t b) {
     a = fp_input(c, a);
     b = fp_input(c, b);
     uint32_t result;
@@ -1920,6 +1955,10 @@ static uint32_t fp_add(CM4 *c, uint32_t a, uint32_t b) {
 static inline uint32_t fp_neg(uint32_t a) { return a ^ 0x80000000u; }
 
 static uint32_t fp_sub(CM4 *c, uint32_t a, uint32_t b) {
+    if (fp_plain_operands(c, a, b)) {
+        uint32_t r = as_bits(as_float(a) - as_float(b));
+        if (fp_plain_result(r)) return r;
+    }
     // (NaN processing on the operands as given, before the negation)
     uint32_t a2 = fp_input(c, a), b2 = fp_input(c, b), result;
     if (fp_nans2(c, a2, b2, &result)) return result;
@@ -1927,6 +1966,10 @@ static uint32_t fp_sub(CM4 *c, uint32_t a, uint32_t b) {
 }
 
 static uint32_t fp_mul(CM4 *c, uint32_t a, uint32_t b) {
+    if (fp_plain_operands(c, a, b)) {
+        uint32_t r = as_bits(as_float(a) * as_float(b));
+        if (fp_plain_result(r)) return r;
+    }
     a = fp_input(c, a);
     b = fp_input(c, b);
     uint32_t result;
@@ -1942,6 +1985,10 @@ static uint32_t fp_mul(CM4 *c, uint32_t a, uint32_t b) {
 }
 
 static uint32_t fp_div(CM4 *c, uint32_t a, uint32_t b) {
+    if (fp_plain_operands(c, a, b)) {
+        uint32_t r = as_bits(as_float(a) / as_float(b));
+        if (fp_plain_result(r)) return r;
+    }
     a = fp_input(c, a);
     b = fp_input(c, b);
     uint32_t result;
@@ -1979,6 +2026,10 @@ static uint32_t fp_sqrt(CM4 *c, uint32_t a) {
 
 /// Fused multiply-add: addend + n * m, rounded once
 static uint32_t fp_muladd(CM4 *c, uint32_t addend, uint32_t n, uint32_t m) {
+    if ((c->fpscr & (FPSCR_RMODE | FPSCR_IXC)) == FPSCR_IXC && f_plain(addend) && f_plain(n) && f_plain(m)) {
+        uint32_t r = as_bits(fmaf(as_float(n), as_float(m), as_float(addend)));
+        if (fp_plain_result(r)) return r;
+    }
     addend = fp_input(c, addend);
     n = fp_input(c, n);
     m = fp_input(c, m);
@@ -2067,16 +2118,24 @@ static uint32_t fp_from_double(CM4 *c, double exact) {
 }
 
 /// The fixed-point conversions: to fixed (rounding towards zero, saturating), or from fixed
+/// 2^e as a double (|e| well inside its exponent's range): scaling by it is exact
+static inline double pow2(int e) {
+    uint64_t bits = (uint64_t)(1023 + e) << 52;
+    double d;
+    memcpy(&d, &bits, 8);
+    return d;
+}
+
 static uint32_t fp_to_fixed(CM4 *c, uint32_t a, int size, int fraction, bool is_unsigned) {
     a = fp_input(c, a);
     if (f_is_nan(a)) {
         c->fpscr |= FPSCR_IOC;
         return 0;
     }
-    double x = ldexp((double)as_float(a), fraction);
+    double x = (double)as_float(a) * pow2(fraction);
     double r = trunc(x);
-    double max = is_unsigned ? ldexp(1, size) - 1 : ldexp(1, size - 1) - 1;
-    double min = is_unsigned ? 0 : -ldexp(1, size - 1);
+    double max = is_unsigned ? pow2(size) - 1 : pow2(size - 1) - 1;
+    double min = is_unsigned ? 0 : -pow2(size - 1);
     if (r > max) { c->fpscr |= FPSCR_IOC; r = max; }
     else if (r < min) { c->fpscr |= FPSCR_IOC; r = min; }
     else if (r != x) c->fpscr |= FPSCR_IXC;
@@ -2089,7 +2148,7 @@ static uint32_t fp_from_fixed(CM4 *c, uint32_t bits, int size, int fraction, boo
     int64_t value;
     if (size == 16) value = is_unsigned ? (int64_t)(bits & 0xFFFF) : (int64_t)(int16_t)bits;
     else value = is_unsigned ? (int64_t)bits : (int64_t)(int32_t)bits;
-    return fp_from_double(c, ldexp((double)value, -fraction));
+    return fp_from_double(c, (double)value * pow2(-fraction));
 }
 
 /// Half precision to single (exact); AHP: the alternative format, without infinities or NaNs
@@ -2415,7 +2474,7 @@ static bool wakes(CM4 *c) {
     return number && preempts;
 }
 
-static CM4Stop step(CM4 *c) {
+__attribute__((always_inline)) static inline CM4Stop step(CM4 *c) {
     if (c->cycles >= c->systick_wrap) systick_update(c);
     if (c->check_exceptions && take_exception(c)) return CM4_RAN;
     uint32_t pc = c->r[15];
@@ -2424,10 +2483,29 @@ static CM4Stop step(CM4 *c) {
     c->it_changed = false;
     bool in_block = in_it_block(c);
     bool run = !in_block || condition_passed(c, c->it >> 4);
-    uint32_t hw1 = fetch16(c, pc);
+    // the instruction's first halfword and the next (the second of a 32-bit one): from the code's memory, nearly always
+    uint32_t hw1, hw2, offset = pc - c->code_base;
+    if (__builtin_expect(offset >= c->code_words_end, 0)) {
+        Region *r = find_region(c, pc);
+        if (r && r->size >= 4) {
+            c->code = r->bytes;
+            c->code_base = r->base;
+            c->code_words_end = r->size - 3;
+            offset = pc - r->base;
+        }
+    }
+    if (__builtin_expect(offset < c->code_words_end, 1)) {
+        uint32_t word;
+        memcpy(&word, c->code + offset, 4);
+        hw1 = word & 0xFFFF;
+        hw2 = word >> 16;
+    } else {
+        hw1 = fetch16(c, pc);
+        hw2 = hw1 >= 0xE800 ? fetch16(c, pc + 2) : 0;
+    }
     if (hw1 >= 0xE800) {
         c->next_pc = pc + 4;
-        if (run) exec32(c, hw1, fetch16(c, pc + 2));
+        if (run) exec32(c, hw1, hw2);
     } else {
         c->next_pc = pc + 2;
         if (run) exec16(c, hw1);
@@ -2500,8 +2578,8 @@ uint8_t *cm4_add_memory(CM4 *c, uint32_t base, uint32_t size, bool writable) {
     if (c->region_count >= MAX_REGIONS) return NULL;
     uint8_t *bytes = calloc(1, size);
     if (!bytes) return NULL;
-    c->regions[c->region_count++] = (Region){base, size, bytes, writable, true};
-    c->last_region = NULL;
+    c->regions[c->region_count] = (Region){base, size, bytes, writable, true};
+    map_region(c, &c->regions[c->region_count++]);
     return bytes;
 }
 
@@ -2512,8 +2590,8 @@ void cm4_alias(CM4 *c, uint32_t alias, uint32_t base) {
             Region r = c->regions[i];
             r.base = alias;
             r.owned = false;
-            c->regions[c->region_count++] = r;
-            c->last_region = NULL;
+            c->regions[c->region_count] = r;
+            map_region(c, &c->regions[c->region_count++]);
             return;
         }
     }
