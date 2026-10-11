@@ -566,7 +566,7 @@ public final class AVR: Microcontroller {
             tick(interruptCycles)
             return interruptCycles
         }
-        if interruptDelay > 0 { interruptDelay -= 1 }
+        if interruptDelay > 0 { interruptDelay &-= 1 }
         let used = AVR.decodesAhead ? executeDecoded() : execute()
         tick(used)
         return used
@@ -678,7 +678,8 @@ public final class AVR: Microcontroller {
     }
 
     @inline(__always) private func tick(_ count: Int) {
-        cycles += count
+        // (wrapping: a count of cycles, far from Int's end; the overflow check costs at every instruction)
+        cycles &+= count
         if cycles >= nextService { service() }
     }
 
@@ -1793,7 +1794,7 @@ public final class AVR: Microcontroller {
     @inline(__always) private func executeDecoded() -> Int {
         let d = data
         let op = Int(flash[pc])
-        pc = (pc + 1) & pcMask
+        pc = (pc &+ 1) & pcMask
         let rd = (op >> 4) & 0x1F
         let rr = (op & 0x0F) | ((op >> 5) & 0x10)
         let rdHigh = 16 + ((op >> 4) & 0x0F)
@@ -1931,7 +1932,7 @@ public final class AVR: Microcontroller {
             return multiplyResult(Int(d[rd]) * Int(d[rr]), fractional: false)
         case .ldsSts:
             let address = Int(flash[pc])
-            pc = (pc + 1) & pcMask
+            pc = (pc &+ 1) & pcMask
             if op & 0x0200 != 0 { write(address, d[rd]) } else { d[rd] = read(address) }
             return 2
         case .lpmZ:
@@ -2018,7 +2019,7 @@ public final class AVR: Microcontroller {
             return 3
         case .call:
             let k = Int(flash[pc]) | ((op & 0x01F0) << 13) | ((op & 1) << 16)
-            pushPC((pc + 1) & pcMask)
+            pushPC((pc &+ 1) & pcMask)
             pc = k & pcMask
             return threeBytePC ? 5 : 4
         case .bset:

@@ -110,7 +110,7 @@ final class CortexM0 {
         repeat {
             // (the instruction first: it can bring the clock up, setting `unclocked` to 0)
             let cycles = inlined ? executeInline() : executeInstruction()
-            unclocked += cycles
+            unclocked &+= cycles
         } while !clockedInStretch && !waiting && base + Double(unclocked) * RP2040.cycleNanos < limit
         let cycles = unclocked
         unclocked = 0
@@ -737,7 +737,7 @@ final class CortexM0 {
             let result = left &+ right
             if rdn == 15 {
                 registers[15] = result & ~1
-                delta += 1
+                delta &+= 1
             } else if rdn == 13 {
                 registers[13] = result & ~3
             } else {
@@ -766,7 +766,7 @@ final class CortexM0 {
             if amount == 0 {
                 logicFlags(input)
             } else {
-                let shift = min(amount, 32)
+                let shift = amount < 32 ? amount : 32
                 let result = shift < 32 ? UInt32(bitPattern: Int32(bitPattern: input) >> Int32(shift))
                     : (input & 0x8000_0000 != 0 ? 0xFFFF_FFFF : 0)
                 registers[rdn] = result
@@ -778,7 +778,7 @@ final class CortexM0 {
             if imm & (1 << 8) != 0 { imm = (imm & 0x1FF) - 0x200 }
             if checkCondition((opcode >> 8) & 0xF) {
                 PC = PC &+ UInt32(bitPattern: Int32(imm + 2))
-                delta += 1
+                delta &+= 1
                 // (back to this branch or before it)
                 if imm <= -4 && runEnd != 0 { loopedBack(used: 2) }
             }
@@ -786,7 +786,7 @@ final class CortexM0 {
             var imm = (opcode & 0x7FF) << 1
             if imm & (1 << 11) != 0 { imm = (imm & 0x7FF) - 0x800 }
             PC = PC &+ UInt32(bitPattern: Int32(imm + 2))
-            delta += 1
+            delta &+= 1
             if imm <= -4 && runEnd != 0 { loopedBack(used: 2) }
         case .bics:
             let rdn = opcode & 7
@@ -800,10 +800,10 @@ final class CortexM0 {
             let target = r(rm)
             LR = PC | 1
             PC = target & ~1
-            delta += 1
+            delta &+= 1
         case .bx:
             bxWritePC(r((opcode >> 3) & 0xF))
-            delta += 1
+            delta &+= 1
         case .cmn:
             _ = add(r(opcode & 7), r((opcode >> 3) & 7))
         case .cmpImm:
@@ -831,48 +831,48 @@ final class CortexM0 {
             for i in 0..<8 where list & (1 << i) != 0 {
                 registers[i] = read32(address)
                 address = address &+ 4
-                delta += 1
+                delta &+= 1
             }
             if list & (1 << rn) == 0 { registers[rn] = address }
         case .ldrImm:
             let address = r((opcode >> 3) & 7) &+ UInt32(((opcode >> 6) & 0x1F) << 2)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[opcode & 7] = read32(address)
         case .ldrSP:
             let address = SP &+ UInt32((opcode & 0xFF) << 2)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[(opcode >> 8) & 7] = read32(address)
         case .ldrLiteral:
             let address = ((PC &+ 2) & 0xFFFF_FFFC) &+ UInt32((opcode & 0xFF) << 2)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[(opcode >> 8) & 7] = read32(address)
         case .ldrReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[opcode & 7] = read32(address)
         case .ldrbImm:
             let address = r((opcode >> 3) & 7) &+ UInt32((opcode >> 6) & 0x1F)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[opcode & 7] = UInt32(read8(address))
         case .ldrbReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[opcode & 7] = UInt32(read8(address))
         case .ldrhImm:
             let address = r((opcode >> 3) & 7) &+ UInt32(((opcode >> 6) & 0x1F) << 1)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[opcode & 7] = UInt32(read16(address))
         case .ldrhReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[opcode & 7] = UInt32(read16(address))
         case .ldrsb:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[opcode & 7] = signExtend8(UInt32(read8(address)))
         case .ldrsh:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
-            delta += cyclesIO(address)
+            delta &+= cyclesIO(address)
             registers[opcode & 7] = signExtend16(UInt32(read16(address)))
         case .lslsImm:
             let imm5 = (opcode >> 6) & 0x1F
@@ -909,7 +909,7 @@ final class CortexM0 {
             let rd = ((opcode >> 4) & 0x8) | (opcode & 7)
             var value = rm == 15 ? PC &+ 2 : r(rm)
             if rd == 15 {
-                delta += 1
+                delta &+= 1
                 value &= ~1
             } else if rd == 13 {
                 value &= ~3
@@ -938,12 +938,12 @@ final class CortexM0 {
             for i in 0...7 where opcode & (1 << i) != 0 {
                 registers[i] = read32(address)
                 address = address &+ 4
-                delta += 1
+                delta &+= 1
             }
             if (opcode >> 8) & 1 != 0 {
                 SP = address &+ 4
                 bxWritePC(read32(address))
-                delta += 2
+                delta &+= 2
             } else {
                 SP = address
             }
@@ -953,7 +953,7 @@ final class CortexM0 {
             var address = SP &- 4 * count
             for i in 0...7 where opcode & (1 << i) != 0 {
                 write32(address, registers[i])
-                delta += 1
+                delta &+= 1
                 address = address &+ 4
             }
             if opcode & (1 << 8) != 0 { write32(address, registers[14]) }
@@ -991,36 +991,36 @@ final class CortexM0 {
             for i in 0..<8 where list & (1 << i) != 0 {
                 write32(address, registers[i])
                 address = address &+ 4
-                delta += 1
+                delta &+= 1
             }
             if list & (1 << rn) == 0 { registers[rn] = address }
         case .strImm:
             let address = r((opcode >> 3) & 7) &+ UInt32(((opcode >> 6) & 0x1F) << 2)
-            delta += cyclesIO(address, write: true)
+            delta &+= cyclesIO(address, write: true)
             write32(address, r(opcode & 7))
         case .strSP:
             let address = SP &+ UInt32((opcode & 0xFF) << 2)
-            delta += cyclesIO(address, write: true)
+            delta &+= cyclesIO(address, write: true)
             write32(address, r((opcode >> 8) & 7))
         case .strReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
-            delta += cyclesIO(address, write: true)
+            delta &+= cyclesIO(address, write: true)
             write32(address, r(opcode & 7))
         case .strbImm:
             let address = r((opcode >> 3) & 7) &+ UInt32((opcode >> 6) & 0x1F)
-            delta += cyclesIO(address, write: true)
+            delta &+= cyclesIO(address, write: true)
             write8(address, UInt8(truncatingIfNeeded: r(opcode & 7)))
         case .strbReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
-            delta += cyclesIO(address, write: true)
+            delta &+= cyclesIO(address, write: true)
             write8(address, UInt8(truncatingIfNeeded: r(opcode & 7)))
         case .strhImm:
             let address = r((opcode >> 3) & 7) &+ UInt32(((opcode >> 6) & 0x1F) << 1)
-            delta += cyclesIO(address, write: true)
+            delta &+= cyclesIO(address, write: true)
             write16(address, UInt16(truncatingIfNeeded: r(opcode & 7)))
         case .strhReg:
             let address = r((opcode >> 6) & 7) &+ r((opcode >> 3) & 7)
-            delta += cyclesIO(address, write: true)
+            delta &+= cyclesIO(address, write: true)
             write16(address, UInt16(truncatingIfNeeded: r(opcode & 7)))
         case .subSPImm:
             SP = SP &- UInt32((opcode & 0x7F) << 2)
@@ -1047,11 +1047,11 @@ final class CortexM0 {
         case .uxth:
             registers[opcode & 7] = r((opcode >> 3) & 7) & 0xFFFF
         case .wfe:
-            delta += 1
+            delta &+= 1
             effects &+= 1
             if eventRegistered { eventRegistered = false } else { waiting = true }
         case .wfi:
-            delta += 1
+            delta &+= 1
             effects &+= 1
             waiting = true
         case .wide:
@@ -1075,7 +1075,8 @@ final class CortexM0 {
         case .unknown:
             break
         }
-        cycles += delta
+        // (wrapping: a count of cycles, far from Int's end; the overflow check costs at every instruction)
+        cycles &+= delta
         return delta
     }
 
