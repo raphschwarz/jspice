@@ -26,6 +26,11 @@ final class SpiceDiode {
     var vt = Simulator.thermalVoltage
     /// The forward voltage above which SPICE limits Newton-Raphson's steps
     var critical = 0.0
+    /// The same for the breakdown's own exponential, past the breakdown voltage. SPICE limits there with the forward
+    /// one; with a breakdown emission far below the junction's (a shunt reference's sharp knee) that lets a step from
+    /// a high-resistance feed overshoot by dozens of its e-folds, more than Newton-Raphson's iterations can come back
+    /// from, so a breakdown sharper than the junction is limited by its own (the same as SPICE's otherwise)
+    var breakdownCritical = 0.0
 
     var hasSeriesNode: Bool { rs > 0 }
     var hasCharges: Bool { cj0 > 0 || tt > 0 }
@@ -106,6 +111,8 @@ final class SpiceDiode {
             }
             breakdown = xbv
         }
+        let nbvt = breakdownEmission * vt
+        breakdownCritical = breakdownEmission < emission ? nbvt * log(nbvt / (sqrt(2) * saturation)) : critical
     }
 
     /// The junction's current at `vd` (anode to cathode, inside the series resistance) and its slope, with SPICE's gmin
@@ -165,7 +172,7 @@ final class SpiceDiode {
     func limit(_ new: Double, old: Double, _ limitJunction: (Double, Double, Double, Double) -> Double) -> Double {
         let nbvt = breakdownEmission * vt
         if breakdown > 0 && new < min(0, -breakdown + 10 * nbvt) {
-            let reverse = limitJunction(-(new + breakdown), -(old + breakdown), nbvt, critical)
+            let reverse = limitJunction(-(new + breakdown), -(old + breakdown), nbvt, breakdownCritical)
             return -(reverse + breakdown)
         }
         return limitJunction(new, old, vte, critical)
