@@ -31,7 +31,7 @@ typedef struct {
     /// SPI (1-3) as a master: a frame of `bits` (8 or 16) shifted out, the frame shifted in returned
     uint32_t (*spi_exchange)(void *context, int spi, uint32_t frame, int bits);
     /// I2S (2 or 3): a stereo frame sent, and the one to receive (its full-duplex extension) asked for. Samples are
-    /// as the data format gives them (16, 24 or 32 bits), sign-extended.
+    /// left-justified in 32 bits, whatever the data format (16, 24 or 32 bits).
     void (*i2s_frame)(void *context, int spi, int32_t left, int32_t right, int32_t *in_left, int32_t *in_right);
     /// a USART (1-6) has sent a byte
     void (*usart_send)(void *context, int usart, uint8_t byte);
@@ -71,6 +71,27 @@ bool stm32f4_pin_level(const STM32F4 *chip, int port, int pin);
 bool stm32f4_pin_driven(const STM32F4 *chip, int port, int pin);
 /// The DAC's channel (1 or 2) output, in volts (PA4 and PA5), or a negative value when it is off
 double stm32f4_dac_volts(const STM32F4 *chip, int channel);
+
+// The pins of the 64-pin package (STM32F405RG) as a circuit reaches them, by index: PA0-PA15, PB0-PB15, PC0-PC15,
+// then PD2. The functions below take and give them in that order.
+enum { STM32F4_PIN_COUNT = 49 };
+/// The port (0 for A) and number of the pin at `index`
+int stm32f4_pin_port(int index);
+int stm32f4_pin_number(int index);
+/// The circuit's voltage on each pin: its level read with hysteresis (high above 0.6 of `supply`, low below 0.3, as
+/// it was between), and the voltage the ADCs read
+void stm32f4_set_pin_voltages(STM32F4 *chip, const double *volts, int count, double supply);
+/// One pin's voltage alone (a device answering on a bus while the chip runs)
+void stm32f4_set_pin_voltage(STM32F4 *chip, int index, double volts, double supply);
+/// What each pin does, as the circuit sees it
+enum { STM32F4_FLOATING = 0, STM32F4_PULLED_UP = 1, STM32F4_PULLED_DOWN = 2, STM32F4_DRIVEN_LOW = 3, STM32F4_DRIVEN_HIGH = 4 };
+void stm32f4_pin_states(const STM32F4 *chip, uint8_t *states, int count);
+/// Pins whose driven level is told to `listener` as it changes while the chip runs, with the cycle it changed at
+typedef void (*STM32F4PinListener)(void *context, uint64_t cycle, int index, bool high);
+void stm32f4_watch_pins(STM32F4 *chip, const int *indices, int count, STM32F4PinListener listener, void *context);
+/// Bytes for a USART (1-6) to receive, one at a time at its baud rate, once its receiver is on; how many still wait
+void stm32f4_usart_input(STM32F4 *chip, int usart, const uint8_t *bytes, int count);
+int stm32f4_usart_input_waiting(const STM32F4 *chip, int usart);
 
 #ifdef __cplusplus
 }

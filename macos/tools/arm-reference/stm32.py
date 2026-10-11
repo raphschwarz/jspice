@@ -55,6 +55,10 @@ def build():
         ("stm32f4_set_input", None, [p, i, i, b, b]), ("stm32f4_set_voltage", None, [p, i, i, d]),
         ("stm32f4_pin_mode", i, [p, i, i]), ("stm32f4_pin_level", b, [p, i, i]),
         ("stm32f4_pin_driven", b, [p, i, i]), ("stm32f4_dac_volts", d, [p, i]),
+        ("stm32f4_usart_input", None, [p, i, ctypes.c_char_p, i]), ("stm32f4_usart_input_waiting", i, [p, i]),
+        ("stm32f4_set_pin_voltages", None, [p, ctypes.POINTER(d), i, d]),
+        ("stm32f4_pin_states", None, [p, ctypes.POINTER(ctypes.c_uint8), i]),
+        ("stm32f4_watch_pins", None, [p, ctypes.POINTER(i), i, ctypes.c_void_p, p]),
         ("cm4_reg", u32, [p, i]), ("cm4_cycles", u64, [p]), ("cm4_instructions", u64, [p]),
         ("cm4_read", u32, [p, u32, u32]), ("cm4_xpsr", u32, [p]),
     ]:
@@ -108,10 +112,12 @@ class WM8731:
         return True
 
     def frame(self, left, right):
-        self.out.append((left, right))
+        # (left-justified in 32 bits: kept as 16)
+        self.out.append((left >> 16, right >> 16))
         self.frames += 1
         if self.source:
-            return self.source(self.frames)
+            l, r = self.source(self.frames)
+            return ctypes.c_int32(l << 16).value, ctypes.c_int32(r << 16).value
         return 0, 0
 
 

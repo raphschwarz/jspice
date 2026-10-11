@@ -24,6 +24,10 @@ and run here as it is in the app:
 - `stm32.py`: the STM32F405 model (`Sources/CortexM4/stm32f4.c`) with stand-ins for a module's board: a WM8731 on
   I2C and I2S (its register writes kept, its audio written to a WAV file, its input a sine or following a pin, as an
   unpatched input normalled to a module's probe), SPI and USART logs, pins held and voltages for the ADCs.
+- `stm32test/`: a firmware of ours for the STM32 model, register by register (the PLL, SysTick, GPIO, USART1 both
+  ways, I2C2 to a codec, I2S2 both ways by DMA, ADC1, flash programming): `build.sh` builds it into
+  `Tests/CircuitKitTests/Fixtures/stm32-test.bin`, `run.py` checks what it does on the model, and `STM32Tests.swift`
+  runs it as the app's part.
 - `build-mutable.sh`: builds a Mutable Instruments module's firmware from its repository with today's
   arm-none-eabi-gcc (the code is GPL-3.0, so it is built where it is used, never kept here).
 

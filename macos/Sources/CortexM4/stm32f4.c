@@ -142,6 +142,9 @@ typedef struct {
     bool tx_full, shifting;
     uint8_t shifting_byte;
     uint64_t done_at;
+    uint8_t input[256];         // bytes waiting to be received
+    int input_start, input_count;
+    uint64_t receive_at;        // the next one's arrival, or NEVER
 } Usart;
 
 struct STM32F4 {
@@ -182,6 +185,12 @@ struct STM32F4 {
     uint32_t crc;
 
     bool irq[IRQ_COUNT];
+
+    uint16_t watched[PORTS];        // pins whose driven level is told, by port
+    uint16_t told[PORTS];           // the levels last told
+    STM32F4PinListener listener;
+    void *listener_context;
+    uint16_t input_level[PORTS];    // the levels the circuit's voltages were last read as
 };
 
 // ------------------------------------------------------------------------------------------------------- utilities
@@ -930,20 +939,20 @@ static void i2s_start(STM32F4 *m, int i) {
     schedule(m, p->done_at);
 }
 
+/// A channel's halfwords as a sample left-justified in 32 bits (16, 24 or 32 bits of data)
 static int32_t i2s_sample(const Spi *p, const uint32_t *halfwords) {
     uint32_t datlen = (p->i2scfgr >> 1) & 3;
-    if (datlen == 0) return (int16_t)halfwords[0];
+    if (datlen == 0) return (int32_t)(halfwords[0] << 16);
     uint32_t word = (halfwords[0] << 16) | (halfwords[1] & 0xFFFF);
-    if (datlen == 1) return (int32_t)word >> 8;
+    if (datlen == 1) word &= 0xFFFFFF00u;
     return (int32_t)word;
 }
 
 static void i2s_halfwords(const Spi *p, int32_t sample, uint32_t *halfwords) {
     uint32_t datlen = (p->i2scfgr >> 1) & 3;
-    if (datlen == 0) { halfwords[0] = (uint32_t)sample & 0xFFFF; return; }
-    uint32_t word = datlen == 1 ? (uint32_t)sample << 8 : (uint32_t)sample;
+    uint32_t word = (uint32_t)sample;
     halfwords[0] = word >> 16;
-    halfwords[1] = word & 0xFFFF;
+    if (datlen != 0) halfwords[1] = datlen == 1 ? word & 0xFF00 : word & 0xFFFF;
 }
 
 /// One I2S slot (a halfword each way): the transmitter takes the data register's halfword, the full-duplex
@@ -1056,7 +1065,12 @@ static void spi_write(STM32F4 *m, Spi *p, uint32_t offset, uint32_t value) {
         bool was = (p->i2scfgr >> 10) & 1;
         p->i2scfgr = value & 0x0FBF;
         bool on = (value >> 10) & 1;
-        if (!ext && i2s_mode(p) && on && !was) i2s_start(m, i);
+        if (!ext && i2s_mode(p) && on && !was) {
+            // the transmitter asks for its first data at once, before the first frame starts
+            if (p->cr2 & 2) pump(m, spi_tx_request(i));
+            i2s_start(m, i);
+        }
+        if (ext && on && !was && (p->cr2 & 2)) pump(m, i == 1 ? REQ_I2S2EXT_TX : REQ_I2S3EXT_TX);
         if (!ext && !on) p->done_at = NEVER;
         return;
     }
@@ -1242,6 +1256,33 @@ static void usart_start(STM32F4 *m, int i) {
     schedule(m, u->done_at);
 }
 
+/// The next byte waiting arrives a frame's time after now, if the receiver is on
+static void usart_schedule_receive(STM32F4 *m, int i) {
+    Usart *u = &m->usart[i];
+    if (u->receive_at != NEVER || !u->input_count || (u->cr1 & 0x2004) != 0x2004) return;
+    double divider = u->brr ? (double)u->brr : 16;
+    u->receive_at = now(m) + (uint64_t)ceil(cycles_for(m, 10 * divider, usart_pclk(m, i)));
+    schedule(m, u->receive_at);
+}
+
+static void usart_received(STM32F4 *m, int i) {
+    Usart *u = &m->usart[i];
+    u->receive_at = NEVER;
+    if (!u->input_count) return;
+    if (u->sr & 0x20) u->sr |= 0x08;  // overrun: the last byte not read
+    u->rx = u->input[u->input_start];
+    u->input_start = (u->input_start + 1) % (int)sizeof u->input;
+    u->input_count--;
+    u->sr |= 0x20;  // RXNE
+    if (u->cr3 & 0x40) {
+        static const int requests[6] = {REQ_USART1_RX, REQ_USART2_RX, REQ_USART3_RX, REQ_UART4_RX, REQ_UART5_RX,
+                                        REQ_USART6_RX};
+        pump(m, requests[i]);
+    }
+    usart_update_irq(m, i);
+    usart_schedule_receive(m, i);
+}
+
 static void usart_done(STM32F4 *m, int i) {
     Usart *u = &m->usart[i];
     u->done_at = NEVER;
@@ -1283,7 +1324,7 @@ static void usart_write(STM32F4 *m, int i, uint32_t offset, uint32_t value) {
         usart_update_irq(m, i);
         return;
     case 0x08: u->brr = value & 0xFFFF; return;
-    case 0x0C: u->cr1 = value & 0xBFFF; usart_update_irq(m, i); return;
+    case 0x0C: u->cr1 = value & 0xBFFF; usart_update_irq(m, i); usart_schedule_receive(m, i); return;
     case 0x10: u->cr2 = value; return;
     case 0x14: u->cr3 = value; return;
     case 0x18: u->gtpr = value; return;
@@ -1292,7 +1333,9 @@ static void usart_write(STM32F4 *m, int i, uint32_t offset, uint32_t value) {
 
 static bool usart_request_active(STM32F4 *m, int request) {
     static const int tx[6] = {REQ_USART1_TX, REQ_USART2_TX, REQ_USART3_TX, REQ_UART4_TX, REQ_UART5_TX, REQ_USART6_TX};
+    static const int rx[6] = {REQ_USART1_RX, REQ_USART2_RX, REQ_USART3_RX, REQ_UART4_RX, REQ_UART5_RX, REQ_USART6_RX};
     for (int i = 0; i < 6; i++) {
+        if (request == rx[i]) return (m->usart[i].cr3 & 0x40) && (m->usart[i].sr & 0x20);
         if (request == tx[i]) return (m->usart[i].cr3 & 0x80) && !m->usart[i].tx_full && (m->usart[i].cr1 & 0x2008) == 0x2008;
     }
     return false;
@@ -1491,6 +1534,23 @@ static uint32_t gpio_read(STM32F4 *m, int port, uint32_t offset) {
     return 0;
 }
 
+static uint16_t gpio_driven_levels(const STM32F4 *m, int port);
+
+/// The watched pins whose driven level changed: told to the listener
+static void tell_pins(STM32F4 *m, int port) {
+    if (!m->watched[port] || !m->listener) return;
+    uint16_t levels = gpio_driven_levels(m, port);
+    uint16_t changed = (levels ^ m->told[port]) & m->watched[port];
+    if (!changed) return;
+    m->told[port] = (m->told[port] & ~changed) | (levels & changed);
+    static const int first[PORTS] = {0, 16, 32, 48, 48, 48, 48, 48, 48};
+    for (int pin = 0; pin < 16; pin++) {
+        if (!((changed >> pin) & 1)) continue;
+        int index = port == 3 ? (pin == 2 ? 48 : -1) : port < 3 ? first[port] + pin : -1;
+        if (index >= 0) m->listener(m->listener_context, now(m), index, (levels >> pin) & 1);
+    }
+}
+
 static void gpio_write(STM32F4 *m, int port, uint32_t offset, uint32_t value) {
     Gpio *g = &m->gpio[port];
     switch (offset) {
@@ -1506,6 +1566,7 @@ static void gpio_write(STM32F4 *m, int port, uint32_t offset, uint32_t value) {
     default: return;
     }
     exti_check(m, port);
+    tell_pins(m, port);
 }
 
 static uint32_t io_read(void *context, uint32_t address, uint32_t size) {
@@ -1673,9 +1734,17 @@ static void reset_timer(Timer *tm) {
 }
 
 static void reset_usart(Usart *u) {
+    // (the bytes waiting stay: they come from outside)
+    uint8_t input[sizeof u->input];
+    int start = u->input_start, count = u->input_count;
+    memcpy(input, u->input, sizeof input);
     memset(u, 0, sizeof *u);
     u->sr = 0xC0;
     u->done_at = NEVER;
+    u->receive_at = NEVER;
+    memcpy(u->input, input, sizeof input);
+    u->input_start = start;
+    u->input_count = count;
 }
 
 static void reset_adcs(STM32F4 *m) {
@@ -1824,6 +1893,7 @@ static void service(STM32F4 *m) {
             }
         }
         for (int i = 0; i < 6; i++) if (m->usart[i].done_at <= t) { any = true; usart_done(m, i); }
+        for (int i = 0; i < 6; i++) if (m->usart[i].receive_at <= t) { any = true; usart_received(m, i); }
         if (!any) return;
     }
 }
@@ -1835,7 +1905,10 @@ static uint64_t next_event(const STM32F4 *m) {
         if (m->adc[i].done_at < next) next = m->adc[i].done_at;
     }
     for (int k = 1; k < 15; k++) if (m->tim[k].next < next) next = m->tim[k].next;
-    for (int i = 0; i < 6; i++) if (m->usart[i].done_at < next) next = m->usart[i].done_at;
+    for (int i = 0; i < 6; i++) {
+        if (m->usart[i].done_at < next) next = m->usart[i].done_at;
+        if (m->usart[i].receive_at < next) next = m->usart[i].receive_at;
+    }
     return next;
 }
 
@@ -1994,4 +2067,102 @@ double stm32f4_dac_volts(const STM32F4 *m, int channel) {
     if (channel < 1 || channel > 2) return -1;
     if (!((m->dac_cr >> (16 * (channel - 1))) & 1)) return -1;
     return m->dac_dor[channel - 1] / 4095.0 * 3.3;
+}
+
+// ---------------------------------------------------------------------------------------------------- the package
+
+static const uint8_t package_ports[STM32F4_PIN_COUNT] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3,
+};
+
+int stm32f4_pin_port(int index) { return index >= 0 && index < STM32F4_PIN_COUNT ? package_ports[index] : -1; }
+int stm32f4_pin_number(int index) { return index >= 0 && index < 48 ? index % 16 : index == 48 ? 2 : -1; }
+
+static void apply_voltage(STM32F4 *m, int index, double volts, double supply, uint16_t *changed) {
+    int port = package_ports[index], pin = stm32f4_pin_number(index);
+    uint16_t bit = (uint16_t)(1u << pin);
+    m->volts[port][pin] = volts;
+    bool was = m->input_level[port] & bit;
+    bool level = volts > 0.6 * supply ? true : volts < 0.3 * supply ? false : was;
+    if (level != was) {
+        m->input_level[port] ^= bit;
+        changed[port] |= bit;
+    }
+}
+
+void stm32f4_set_pin_voltages(STM32F4 *m, const double *volts, int count, double supply) {
+    uint16_t changed[PORTS] = {0};
+    if (count > STM32F4_PIN_COUNT) count = STM32F4_PIN_COUNT;
+    for (int index = 0; index < count; index++) apply_voltage(m, index, volts[index], supply, changed);
+    for (int port = 0; port < PORTS; port++) {
+        if (!changed[port]) continue;
+        m->gpio[port].driven = 0xFFFF;
+        m->gpio[port].level = m->input_level[port];
+        exti_check(m, port);
+    }
+}
+
+void stm32f4_set_pin_voltage(STM32F4 *m, int index, double volts, double supply) {
+    if (index < 0 || index >= STM32F4_PIN_COUNT) return;
+    uint16_t changed[PORTS] = {0};
+    apply_voltage(m, index, volts, supply, changed);
+    int port = package_ports[index];
+    if (changed[port]) {
+        m->gpio[port].driven = 0xFFFF;
+        m->gpio[port].level = m->input_level[port];
+        exti_check(m, port);
+    }
+}
+
+/// The levels the port drives on its output pins (and its timers' channels on theirs)
+static uint16_t gpio_driven_levels(const STM32F4 *m, int port) {
+    uint16_t levels = 0;
+    for (int pin = 0; pin < 16; pin++) {
+        if (stm32f4_pin_driven(m, port, pin) && stm32f4_pin_level(m, port, pin)) levels |= (uint16_t)(1u << pin);
+    }
+    return levels;
+}
+
+void stm32f4_pin_states(const STM32F4 *m, uint8_t *states, int count) {
+    if (count > STM32F4_PIN_COUNT) count = STM32F4_PIN_COUNT;
+    for (int index = 0; index < count; index++) {
+        int port = package_ports[index], pin = stm32f4_pin_number(index);
+        const Gpio *g = &m->gpio[port];
+        if (stm32f4_pin_driven(m, port, pin)) {
+            states[index] = stm32f4_pin_level(m, port, pin) ? STM32F4_DRIVEN_HIGH : STM32F4_DRIVEN_LOW;
+            continue;
+        }
+        uint32_t mode = (g->moder >> (2 * pin)) & 3, pull = (g->pupdr >> (2 * pin)) & 3;
+        if (mode == 3) states[index] = STM32F4_FLOATING;
+        else if (pull == 1) states[index] = STM32F4_PULLED_UP;
+        else if (pull == 2) states[index] = STM32F4_PULLED_DOWN;
+        else states[index] = STM32F4_FLOATING;
+    }
+}
+
+void stm32f4_watch_pins(STM32F4 *m, const int *indices, int count, STM32F4PinListener listener, void *context) {
+    memset(m->watched, 0, sizeof m->watched);
+    for (int k = 0; k < count; k++) {
+        int index = indices[k];
+        if (index < 0 || index >= STM32F4_PIN_COUNT) continue;
+        m->watched[package_ports[index]] |= (uint16_t)(1u << stm32f4_pin_number(index));
+    }
+    m->listener = listener;
+    m->listener_context = context;
+    for (int port = 0; port < PORTS; port++) m->told[port] = gpio_driven_levels(m, port);
+}
+
+void stm32f4_usart_input(STM32F4 *m, int usart, const uint8_t *bytes, int count) {
+    if (usart < 1 || usart > 6) return;
+    Usart *u = &m->usart[usart - 1];
+    for (int k = 0; k < count && u->input_count < (int)sizeof u->input; k++) {
+        u->input[(u->input_start + u->input_count) % (int)sizeof u->input] = bytes[k];
+        u->input_count++;
+    }
+    usart_schedule_receive(m, usart - 1);
+}
+
+int stm32f4_usart_input_waiting(const STM32F4 *m, int usart) {
+    return usart >= 1 && usart <= 6 ? m->usart[usart - 1].input_count : 0;
 }
