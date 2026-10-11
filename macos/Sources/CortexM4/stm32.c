@@ -256,6 +256,7 @@ struct STM32 {
     STM32PinListener listener;
     void *listener_context;
     uint16_t input_level[PORTS];    // the levels the circuit's voltages were last read as
+    uint16_t floating[PORTS];       // pins the circuit leaves unconnected (NaN): their pulls set them
 };
 
 // ------------------------------------------------------------------------------------------------------- utilities
@@ -2999,6 +3000,19 @@ int stm32_pin_number(STM32Model model, int index) {
 static void apply_voltage(STM32 *m, int index, double volts, double supply, uint16_t *changed) {
     int port = stm32_pin_port(m->model, index), pin = stm32_pin_number(m->model, index);
     uint16_t bit = (uint16_t)(1u << pin);
+    if (volts != volts) {
+        // NaN: nothing in the circuit holds the pin, which its pull (or its own output) sets as on the chip, at once
+        if (!(m->floating[port] & bit)) {
+            m->floating[port] |= bit;
+            changed[port] |= bit;
+        }
+        m->volts[port][pin] = 0;
+        return;
+    }
+    if (m->floating[port] & bit) {
+        m->floating[port] &= (uint16_t)~bit;
+        changed[port] |= bit;
+    }
     m->volts[port][pin] = volts;
     bool was = m->input_level[port] & bit;
     bool level = volts > 0.6 * supply ? true : volts < 0.3 * supply ? false : was;
@@ -3014,7 +3028,7 @@ void stm32_set_pin_voltages(STM32 *m, const double *volts, int count, double sup
     for (int index = 0; index < count; index++) apply_voltage(m, index, volts[index], supply, changed);
     for (int port = 0; port < PORTS; port++) {
         if (!changed[port]) continue;
-        m->gpio[port].driven = 0xFFFF;
+        m->gpio[port].driven = (uint16_t)~m->floating[port];
         m->gpio[port].level = m->input_level[port];
         exti_check(m, port);
     }
@@ -3026,7 +3040,7 @@ void stm32_set_pin_voltage(STM32 *m, int index, double volts, double supply) {
     apply_voltage(m, index, volts, supply, changed);
     int port = stm32_pin_port(m->model, index);
     if (changed[port]) {
-        m->gpio[port].driven = 0xFFFF;
+        m->gpio[port].driven = (uint16_t)~m->floating[port];
         m->gpio[port].level = m->input_level[port];
         exti_check(m, port);
     }

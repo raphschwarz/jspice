@@ -345,6 +345,9 @@ public final class Simulator {
     private var spiLinks: [[(port: Int, dac: Int, sync: Int)]] = []
     private var spiExchanges: [STM32Microcontroller.SPIExchange?] = []
     private var spiWords: [(shift: UInt64, bits: Int)] = []
+    /// For each STM32, its pins nothing else in the circuit is wired to: the chip is told they float, and its pulls
+    /// set them at once, as on the chip (a firmware reading a pin just after pulling it up)
+    private var floatingChipPins: [[Bool]] = []
     /// An SPI ADC's conversion under way: where its start bit came (-1: not yet), its configuration bits, its result
     private var spiAdcStates: [(start: Int, config: UInt32, code: Int)] = []
     /// The pin events of a step, from every chip, in the order they happened
@@ -5819,8 +5822,11 @@ public final class Simulator {
             let reached = min(chip.pinCount, nodes.count)
             if chip.pinVoltages.count == chip.pinCount {
                 // written in place, in one change the chip sees once (a new array at every step otherwise)
+                let floating = i < floatingChipPins.count ? floatingChipPins[i] : []
                 chip.pinVoltages.withUnsafeMutableBufferPointer { volts in
-                    for pin in volts.indices { volts[pin] = pin < reached ? voltage(nodes[pin]) : 0 }
+                    for pin in volts.indices {
+                        volts[pin] = pin < floating.count && floating[pin] ? .nan : pin < reached ? voltage(nodes[pin]) : 0
+                    }
                 }
             } else {
                 var volts = [Double](repeating: 0, count: chip.pinCount)
@@ -5925,10 +5931,15 @@ public final class Simulator {
         spiExchanges = Array(repeating: nil, count: kinds.count)
         spiWords = Array(repeating: (0, 0), count: kinds.count)
         spiAdcStates = Array(repeating: (-1, 0, 0), count: kinds.count)
+        floatingChipPins = Array(repeating: [], count: kinds.count)
+        // (how many terminals each node joins: an STM32's pin alone on its node floats)
+        var uses = [Int](repeating: 0, count: topology.nodeCount + 1)
+        for nodes in topology.elementNodes { for node in nodes where node < uses.count { uses[node] += 1 } }
         let stm32s: Set<ElementKind> = [.stm32f405, .stm32f373, .stm32f103]
         for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
             let f373 = kinds[i] == .stm32f373, f103 = kinds[i] == .stm32f103
             let chipNodes = topology.elementNodes[i]
+            floatingChipPins[i] = chipNodes.map { $0 > 0 && $0 < uses.count && uses[$0] == 1 }
             for j in kinds.indices where [.codec, .i2sDac, .cvDac, .spiAdc].contains(kinds[j]) && j < topology.elementNodes.count {
                 let nodes = topology.elementNodes[j]
                 func wired(_ terminal: Int, _ pins: [Int]) -> Bool {

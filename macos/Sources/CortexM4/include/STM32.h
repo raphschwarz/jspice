@@ -97,7 +97,8 @@ int stm32_pin_count(STM32Model model);
 int stm32_pin_port(STM32Model model, int index);
 int stm32_pin_number(STM32Model model, int index);
 /// The circuit's voltage on each pin: its level read with hysteresis (high above 0.6 of `supply`, low below 0.3, as
-/// it was between), and the voltage the ADCs read
+/// it was between), and the voltage the ADCs read. NaN for a pin nothing in the circuit holds: its pull sets it, as
+/// it does on the chip at once.
 void stm32_set_pin_voltages(STM32 *chip, const double *volts, int count, double supply);
 /// One pin's voltage alone (a device answering on a bus while the chip runs)
 void stm32_set_pin_voltage(STM32 *chip, int index, double volts, double supply);
