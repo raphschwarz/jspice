@@ -5619,9 +5619,26 @@ public final class Simulator {
             // the last instruction may run past the budget: the next step has that much less
             chipCycleCarry[i] = budget - Double(chip.cycles - start)
             let states = chip.pinStates
-            let kept = chipPinStates[i]
-            if !Self.samePinSetup(states, kept) { matrixSwitched() }
-            if kept != states { chipPinStates[i] = states }
+            let (switched, changed, sameCount): (Bool, Bool, Bool)
+            do {
+                // (the kept states let go before they are written over, below)
+                let kept = chipPinStates[i]
+                (switched, changed, sameCount) = (!Self.samePinSetup(states, kept), kept != states, kept?.count == states.count)
+            }
+            if switched { matrixSwitched() }
+            if changed {
+                // copied into the states kept, in place: holding the chip's own array would have it make a new one
+                // the next time its pins change (at every step while its SPI or two-wire interface clocks a byte)
+                if sameCount {
+                    chipPinStates[i]?.withUnsafeMutableBufferPointer { own in
+                        states.withUnsafeBufferPointer { now in
+                            for k in own.indices { own[k] = now[k] }
+                        }
+                    }
+                } else {
+                    chipPinStates[i] = states
+                }
+            }
         }
         replayPinEvents()
     }
