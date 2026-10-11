@@ -403,10 +403,10 @@ final class CortexM0 {
         }
     }
 
-    @discardableResult
     /// The times `checkForInterrupts` ran (for the benchmark: it should be rare, once after each change it looks for)
     static var interruptChecks = 0
 
+    @discardableResult
     func checkForInterrupts() -> Bool {
         CortexM0.interruptChecks &+= 1
         let current = waiting
