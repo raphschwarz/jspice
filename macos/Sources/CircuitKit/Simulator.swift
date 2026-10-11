@@ -368,7 +368,15 @@ public final class Simulator {
     private var bipolarSlotsSerial: [Int] = []
     private var bipolarSlotsFit: [Bool] = []
     /// Each diode's, Zener diode's and LED's SPICE card at the circuit's temperature
-    private var diodes: [SpiceDiode] = []
+    private var diodes: [SpiceDiode] = [] {
+        didSet {
+            diodeRefs.deallocate()
+            diodeRefs = .allocate(capacity: diodes.count)
+            for (k, d) in diodes.enumerated() { diodeRefs[k] = Unmanaged.passUnretained(d) }
+        }
+    }
+    /// The same, unretained (the array keeps them): stamping reads one at every iteration without counting references
+    private var diodeRefs = UnsafeMutableBufferPointer<Unmanaged<SpiceDiode>>(start: nil, count: 0)
     /// Each JFET's SPICE card at the circuit's temperature
     private var jfets: [SpiceJFET] = []
     /// Each MOSFET's SPICE card at the circuit's temperature, and its gate voltages and half Meyer capacitances at the
@@ -796,6 +804,7 @@ public final class Simulator {
     deinit {
         stampedFlags?.deallocate()
         bipolarRefs.deallocate()
+        diodeRefs.deallocate()
         bipolarSlots.deallocate()
         limitedVoltage.deallocate()
         limitedVoltage2.deallocate()
@@ -3571,8 +3580,7 @@ public final class Simulator {
     /// the charge its forward current stores over the transit time
     private func junctionChargeAndCapacitance(_ i: Int, slot: Int, _ v: Double) -> (charge: Double, capacitance: Double) {
         if kinds[i].isDiode {
-            let d = diodes[i]
-            return d.charge(v, current: d.current(v, gmin: Self.junctionGmin))
+            return diodeRefs[i]._withUnsafeGuaranteedRef { d in d.charge(v, current: d.current(v, gmin: Self.junctionGmin)) }
         }
         let c = constants[i]
         var (q, cap) = slot == 0 ? Self.depletion(v, cj: c.cj0, vj: c.vj0, m: c.m0) : Self.depletion(v, cj: c.cj1, vj: c.vj1, m: c.m1)
@@ -4575,7 +4583,10 @@ public final class Simulator {
     /// A diode's junction (inside its series resistance), linearised at the present solution and limited as SPICE limits
     /// it, with the charging of its stored charge
     private func stampDiode(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
-        let d = diodes[i]
+        diodeRefs[i]._withUnsafeGuaranteedRef { stampDiode(i, $0, nodes, matrix, rhs, m) }
+    }
+
+    private func stampDiode(_ i: Int, _ d: SpiceDiode, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
         let anode = d.hasSeriesNode ? nodes[2] : nodes[0], cathode = nodes[1]
         let raw = voltage(anode) - voltage(cathode)
         let vd = d.limit(raw, old: limitedVoltage[i]) {
