@@ -262,14 +262,17 @@ func benchmarkInstructions(seconds: Double, ids: [String]) {
         }
         let timed = Simulator(circuit: example.circuit, timeStep: 1 / rate)
         timed.errorControl = false
+        Pico.stretches = (0, 0)
         let start = DispatchTime.now().uptimeNanoseconds
         for _ in 0..<steps where !timed.isFailed { timed.step() }
         let nanosPerStep = Double(DispatchTime.now().uptimeNanoseconds - start) / Double(steps)
+        let stretches = Pico.stretches
         AVR.instructionCounts = [Int](repeating: 0, count: 256)
         Pico.instructionCounts = [Int](repeating: 0, count: 256)
         AVR.countsInstructions = true
         Pico.countsInstructions = true
         Pico.interruptChecks = 0
+        Pico.accessTally = [:]
         let counted = Simulator(circuit: example.circuit, timeStep: 1 / rate)
         counted.errorControl = false
         for _ in 0..<steps where !counted.isFailed { counted.step() }
@@ -286,6 +289,15 @@ func benchmarkInstructions(seconds: Double, ids: [String]) {
             let most = counts.enumerated().filter { $0.element > 0 }.sorted { $0.element > $1.element }.prefix(16)
             print("    " + most.map { name($0.offset) + String(format: " %.1f%%", 100 * Double($0.element) / Double(total)) }
                 .joined(separator: ", "))
+            if chip == "RP2040" {
+                // where the core's runs break off: the registers elsewhere than memory it reads and writes most
+                print(String(format: "    %.1f stretches a step, %.1f of them ended at a register; registers a step: ",
+                             Double(stretches.all) / Double(steps), Double(stretches.brokenOff) / Double(steps))
+                      + Pico.accessTally.sorted { $0.value > $1.value }.prefix(14).map {
+                          ($0.key >> 32 != 0 ? "w " : "r ") + String(format: "%08X %.1f", UInt32($0.key & 0xFFFF_FFFF),
+                                                                         Double($0.value) / Double(steps))
+                      }.joined(separator: ", "))
+            }
         }
     }
 }

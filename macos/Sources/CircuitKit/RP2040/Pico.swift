@@ -44,6 +44,20 @@ public final class Pico: Microcontroller {
         get { CortexM0.interruptChecks }
         set { CortexM0.interruptChecks = newValue }
     }
+    /// The stretches the core ran, and those a register elsewhere than memory ended (for the benchmark's breakdown)
+    public static var stretches: (all: Int, brokenOff: Int) {
+        get { (CortexM0.stretches, CortexM0.stretchesBrokenOff) }
+        set {
+            CortexM0.stretches = newValue.all
+            CortexM0.stretchesBrokenOff = newValue.brokenOff
+        }
+    }
+    /// The registers elsewhere than memory read and written while instructions are counted, by address (a write's
+    /// with bit 32 set)
+    public static var accessTally: [UInt64: Int] {
+        get { CortexM0.accessTally }
+        set { CortexM0.accessTally = newValue }
+    }
     /// The name of each kind counted
     public static func instructionName(_ kind: Int) -> String {
         CortexM0.Op(rawValue: UInt8(kind)).map { "\($0)" } ?? "?"

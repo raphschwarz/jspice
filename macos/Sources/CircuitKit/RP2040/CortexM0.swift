@@ -114,6 +114,8 @@ final class CortexM0 {
             let cycles = inlined ? executeInline() : executeInstruction()
             unclocked &+= cycles
         } while !clockedInStretch && !waiting && base + Double(unclocked) * RP2040.cycleNanos < limit
+        CortexM0.stretches &+= 1
+        if clockedInStretch { CortexM0.stretchesBrokenOff &+= 1 }
         let cycles = unclocked
         unclocked = 0
         return cycles
@@ -403,6 +405,18 @@ final class CortexM0 {
         }
     }
 
+    /// The stretches run, and those of them a register elsewhere than memory ended (for the benchmark)
+    static var stretches = 0
+    static var stretchesBrokenOff = 0
+
+    /// The registers elsewhere than memory read and written while instructions are counted, by address (a write's
+    /// with bit 32 set), for the benchmark
+    static var accessTally: [UInt64: Int] = [:]
+
+    @inline(never) static func tally(_ address: UInt32, write: Bool) {
+        accessTally[UInt64(address) | (write ? 1 << 32 : 0), default: 0] += 1
+    }
+
     /// The times `checkForInterrupts` ran (for the benchmark: it should be rare, once after each change it looks for)
     static var interruptChecks = 0
 
@@ -501,6 +515,7 @@ final class CortexM0 {
         if address < CortexM0.bootromSize { return bootrom.load(fromByteOffset: Int(address & ~3), as: UInt32.self) }
         if !CortexM0.pollable(address) { effects &+= 1 }
         bringClockUp()
+        if RP2040.countsInstructions { CortexM0.tally(address, write: false) }
         return chipRef._withUnsafeGuaranteedRef { $0.readUint32(address) }
     }
 
@@ -515,6 +530,7 @@ final class CortexM0 {
         }
         if !CortexM0.pollable(address) { effects &+= 1 }
         bringClockUp()
+        if RP2040.countsInstructions { CortexM0.tally(address, write: false) }
         return chipRef._withUnsafeGuaranteedRef { $0.readUint16(address) }
     }
 
@@ -529,6 +545,7 @@ final class CortexM0 {
         }
         if !CortexM0.pollable(address) { effects &+= 1 }
         bringClockUp()
+        if RP2040.countsInstructions { CortexM0.tally(address, write: false) }
         return chipRef._withUnsafeGuaranteedRef { $0.readUint8(address) }
     }
 
@@ -542,6 +559,7 @@ final class CortexM0 {
         } else {
             effects &+= 1
             bringClockUp()
+            if RP2040.countsInstructions { CortexM0.tally(address, write: true) }
             chipRef._withUnsafeGuaranteedRef { $0.writeUint32(address, value) }
         }
     }
@@ -556,6 +574,7 @@ final class CortexM0 {
         } else {
             effects &+= 1
             bringClockUp()
+            if RP2040.countsInstructions { CortexM0.tally(address, write: true) }
             chipRef._withUnsafeGuaranteedRef { $0.writeUint16(address, value) }
         }
     }
@@ -570,6 +589,7 @@ final class CortexM0 {
         } else {
             effects &+= 1
             bringClockUp()
+            if RP2040.countsInstructions { CortexM0.tally(address, write: true) }
             chipRef._withUnsafeGuaranteedRef { $0.writeUint8(address, value) }
         }
     }
