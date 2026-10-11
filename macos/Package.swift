@@ -16,8 +16,11 @@ let package = Package(
         // Release builds skip Swift's run-time exclusivity checks in the engine: its inner loops touch the simulator's
         // arrays millions of times a second (one step per audio sample with sound on), and the checks cost more than
         // the arithmetic. Debug builds and tests keep them.
-        .target(name: "CircuitKit",
+        .target(name: "CircuitKit", dependencies: ["CortexM4"],
                 swiftSettings: [.unsafeFlags(["-enforce-exclusivity=unchecked"], .when(configuration: .release))]),
+        // An ARM Cortex-M4 core (with its FPU and system control space) in C, for the STM32 parts: an interpreter that is
+        // optimized even in debug builds, as tests run firmware on it.
+        .target(name: "CortexM4", cSettings: [.unsafeFlags(["-O2"])]),
         // Tools for driving circuits from outside: netlists, simulation runs, measurements, and an MCP server for AI agents.
         .target(name: "JSpiceAutomation", dependencies: ["CircuitKit"]),
         // The MCP server on standard input and output.
@@ -28,7 +31,7 @@ let package = Package(
                           linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
         // The macOS app.
         .executableTarget(name: "JSpice", dependencies: ["CircuitKit", "JSpiceAutomation"]),
-        .testTarget(name: "CircuitKitTests", dependencies: ["CircuitKit"], resources: [.copy("Fixtures")]),
+        .testTarget(name: "CircuitKitTests", dependencies: ["CircuitKit", "CortexM4"], resources: [.copy("Fixtures")]),
         .testTarget(name: "JSpiceAutomationTests", dependencies: ["JSpiceAutomation", "CircuitKit"]),
     ]
 )
