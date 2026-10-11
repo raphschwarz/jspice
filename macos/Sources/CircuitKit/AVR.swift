@@ -477,10 +477,14 @@ public final class AVR: Microcontroller {
     }
     private var watchedLevels: [Bool?] = []
     private var pinEvents: [PinEvent] = []
+    /// The events last taken: handed out, and emptied to log the next run's in once taken back (emptying the ones
+    /// handed out, still shared, would make new room at every run)
+    private var takenPinEvents: [PinEvent] = []
 
     public func takePinEvents() -> [PinEvent] {
-        defer { pinEvents.removeAll(keepingCapacity: true) }
-        return pinEvents
+        swap(&pinEvents, &takenPinEvents)
+        pinEvents.removeAll(keepingCapacity: true)
+        return takenPinEvents
     }
 
     /// The level a pin is driven to, or nil while it is an input: what `pinStates` gives it, worked out for one pin

@@ -122,7 +122,9 @@ final class AVRSPI {
             return
         }
         guard enabled && master else { return }
-        let rate = [4, 16, 64, 128][Int(control & 3)] / (data[spec.status] & 1 != 0 ? 2 : 1)
+        // (4, 16, 64, 128 by the two bits, worked out rather than from an array made at every call)
+        let bits = Int(control & 3)
+        let rate = (bits == 3 ? 128 : 4 << (2 * bits)) / (data[spec.status] & 1 != 0 ? 2 : 1)
         halfPeriod = rate / 2
         outgoing = value
         incoming = 0
@@ -245,7 +247,7 @@ final class AVRTWI {
 
     private var halfPeriod: Int {
         let d = data
-        let prescale = [1, 4, 16, 64][Int(d[spec.status] & 3)]
+        let prescale = 1 << (2 * Int(d[spec.status] & 3))  // 1, 4, 16, 64
         return max((16 + 2 * Int(d[spec.rate]) * prescale) / 2, 1)
     }
 
@@ -297,21 +299,31 @@ final class AVRTWI {
         }
     }
 
+    // (the steps appended one by one: an array literal added on is an array made and freed)
+    private func line(sda: Bool?, scl: Bool?) {
+        steps.append(.lines(sda: sda, scl: scl))
+        steps.append(.wait)
+    }
+
     private func sendStart() {
         let repeated = busOwned
         if repeated {
             // let SDA go while SCL is low, raise SCL, then START
-            steps += [.lines(sda: false, scl: nil), .wait, .lines(sda: nil, scl: false), .wait]
+            line(sda: false, scl: nil)
+            line(sda: nil, scl: false)
         }
-        steps += [.lines(sda: true, scl: nil), .wait, .lines(sda: nil, scl: true), .wait,
-                  .done(status: repeated ? 0x10 : 0x08, setsFlag: true)]
+        line(sda: true, scl: nil)
+        line(sda: nil, scl: true)
+        steps.append(.done(status: repeated ? 0x10 : 0x08, setsFlag: true))
         addressNext = true
         busOwned = true
     }
 
     private func sendStop() {
-        steps += [.lines(sda: true, scl: nil), .wait, .lines(sda: nil, scl: false), .wait, .lines(sda: false, scl: nil), .wait,
-                  .done(status: 0xF8, setsFlag: false)]
+        line(sda: true, scl: nil)
+        line(sda: nil, scl: false)
+        line(sda: false, scl: nil)
+        steps.append(.done(status: 0xF8, setsFlag: false))
         busOwned = false
         reading = false
     }
@@ -320,10 +332,15 @@ final class AVRTWI {
         let value = data[spec.dataRegister]
         for bit in (0..<8).reversed() {
             let low = value & (1 << bit) == 0
-            steps += [.lines(sda: low, scl: nil), .wait, .lines(sda: nil, scl: false), .wait, .lines(sda: nil, scl: true)]
+            line(sda: low, scl: nil)
+            line(sda: nil, scl: false)
+            steps.append(.lines(sda: nil, scl: true))
         }
         // the ninth clock: SDA let go, sampled for the acknowledge
-        steps += [.lines(sda: false, scl: nil), .wait, .lines(sda: nil, scl: false), .wait, .sampleBit, .lines(sda: nil, scl: true)]
+        line(sda: false, scl: nil)
+        line(sda: nil, scl: false)
+        steps.append(.sampleBit)
+        steps.append(.lines(sda: nil, scl: true))
         let status: UInt8
         if addressNext {
             reading = value & 1 != 0
@@ -339,9 +356,14 @@ final class AVRTWI {
     private func receiveByte(acknowledge: Bool) {
         shift = 0
         for _ in 0..<8 {
-            steps += [.lines(sda: false, scl: nil), .wait, .lines(sda: nil, scl: false), .wait, .sampleBit, .lines(sda: nil, scl: true)]
+            line(sda: false, scl: nil)
+            line(sda: nil, scl: false)
+            steps.append(.sampleBit)
+            steps.append(.lines(sda: nil, scl: true))
         }
-        steps += [.lines(sda: acknowledge, scl: nil), .wait, .lines(sda: nil, scl: false), .wait, .lines(sda: nil, scl: true)]
+        line(sda: acknowledge, scl: nil)
+        line(sda: nil, scl: false)
+        steps.append(.lines(sda: nil, scl: true))
         steps.append(.done(status: acknowledge ? 0x50 : 0x58, setsFlag: true))
     }
 
@@ -365,7 +387,7 @@ final class AVRTWI {
             case let .done(status, setsFlag):
                 var code = status
                 // a byte sent: the acknowledge decides the status; a byte received: it goes to TWDR
-                if [0x18, 0x40, 0x28].contains(status) && !acknowledged { code += 8 }
+                if (status == 0x18 || status == 0x40 || status == 0x28) && !acknowledged { code += 8 }
                 if status == 0x50 || status == 0x58 { data[spec.dataRegister] = shift }
                 data[spec.status] = code | data[spec.status] & 0x03
                 if setsFlag { data[spec.control] |= 0x80 }
@@ -375,7 +397,8 @@ final class AVRTWI {
             }
             stepIndex += 1
         }
-        steps = []
+        // (its room kept for the next byte's)
+        steps.removeAll(keepingCapacity: true)
         stepIndex = 0
         nextEvent = Int.max
     }

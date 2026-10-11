@@ -52,6 +52,8 @@ public final class Pico: Microcontroller {
         /// The watched pin at each GPIO (-1 for none), the changes to their driven levels, and when the present run started
         var watched = [Int](repeating: -1, count: 30)
         var events: [PinEvent] = []
+        /// The events last taken (see `takePinEvents`)
+        var takenEvents: [PinEvent] = []
         var onEvent: ((PinEvent) -> Void)?
         var runStart = 0.0
 
@@ -186,8 +188,11 @@ public final class Pico: Microcontroller {
     }
 
     public func takePinEvents() -> [PinEvent] {
-        defer { system.events.removeAll(keepingCapacity: true) }
-        return system.events
+        // (handed out from a second array, so that emptying the one logged into never makes new room: see the AVR's)
+        let system = self.system
+        swap(&system.events, &system.takenEvents)
+        system.events.removeAll(keepingCapacity: true)
+        return system.takenEvents
     }
 
     public var onPinEvent: ((PinEvent) -> Void)? {
