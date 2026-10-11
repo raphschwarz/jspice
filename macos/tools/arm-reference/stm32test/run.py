@@ -58,6 +58,7 @@ def main():
         "i2s left": sorted(set(left)) == [-8192, 8192],
         "i2s right": 7900 < max(right) <= 8000,
         "frame rate": abs(len(out) / lib.stm32f4_time(chip.m) - 47990) < 1500,
+        "timer compares": any(f"cc {n}\n" in text for n in range(97, 102)),
     }
     for name, ok in checks.items():
         print(f"{name:18} {'ok' if ok else 'FAILED'}")

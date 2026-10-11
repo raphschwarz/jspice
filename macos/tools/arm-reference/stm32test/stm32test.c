@@ -7,6 +7,8 @@
 //     left out a 1 kHz square wave of +-8192, right out the left input, halved
 //   - reads PA0 with ADC1 every 100 ms and prints it ("adc 2048")
 //   - programs a word into flash sector 11 and prints it back ("flash 12345678")
+//   - counts TIM2's channel 1 compare interrupts (1 MHz, CCR1 250 of a 1 ms period) and prints how many came in the
+//     first 100 ms ("cc 100")
 // Built by build.sh with arm-none-eabi-gcc; CircuitKitTests runs the image it leaves (Fixtures/stm32-test.bin).
 #include <stdint.h>
 
@@ -23,9 +25,11 @@
 #define DMA1 0x40026000u
 #define ADC1 0x40012000u
 #define NVIC_ISER0 0xE000E100u
+#define TIM2 0x40000000u
 #define BLOCK 32
 
 volatile uint32_t milliseconds;
+volatile uint32_t compares;
 static volatile char received[64];
 static volatile uint32_t received_head, received_tail;
 static int16_t tx[4 * BLOCK], rx[4 * BLOCK];
@@ -54,6 +58,11 @@ void usart1_handler(void) {
         received[received_head % 64] = (char)REG(USART1 + 0x04);
         received_head++;
     }
+}
+
+void tim2_handler(void) {
+    REG(TIM2 + 0x10) = ~2u;  // CC1IF cleared
+    compares++;
 }
 
 void systick_handler(void) {
@@ -196,6 +205,15 @@ int main(void) {
     REG(ADC1 + 0x08) = 1;                          // ADON
     flash_test();
     audio_init();
+    REG(RCC + 0x40) |= 1;                          // TIM2: 84 MHz / 84, a period of 1000, CC1 at 250
+    REG(TIM2 + 0x28) = 83;
+    REG(TIM2 + 0x2C) = 999;
+    REG(TIM2 + 0x34) = 250;
+    REG(TIM2 + 0x14) = 1;
+    REG(TIM2 + 0x10) = 0;
+    REG(TIM2 + 0x0C) = 2;
+    REG(NVIC_ISER0) = (1u << 14) | (1u << 28);
+    REG(TIM2 + 0x00) = 1;
     REG(0xE000E014) = 168000 - 1;                  // SysTick every millisecond
     REG(0xE000E018) = 0;
     REG(0xE000E010) = 7;
@@ -220,6 +238,11 @@ int main(void) {
             }
         }
         if (milliseconds >= next_report) {
+            if (next_report == 100) {
+                print("cc ");
+                print_number(compares, 10);
+                put('\n');
+            }
             next_report += 100;
             print("adc ");
             print_number(adc_read(0), 10);
@@ -248,5 +271,6 @@ __attribute__((section(".vectors"), used)) const void *vectors[16 + 82] = {
     &_stack_top, reset, default_handler, default_handler, default_handler, default_handler, default_handler, 0, 0, 0,
     0, default_handler, default_handler, 0, default_handler, systick_handler,
     [16 + 14] = dma1_stream3_handler,
+    [16 + 28] = tim2_handler,
     [16 + 37] = usart1_handler,
 };

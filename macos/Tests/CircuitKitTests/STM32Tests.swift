@@ -60,6 +60,8 @@ final class STM32Tests: XCTestCase {
         let text = String(decoding: chip.serialOutput, as: UTF8.self)
         XCTAssertTrue(text.hasPrefix("boot\ni2c ack\nflash 12345678\n"), text)
         XCTAssertTrue(text.contains("adc 2048\n"), text)
+        // TIM2's compare interrupt once a millisecond
+        XCTAssertTrue((97...101).contains { text.contains("cc \($0)\n") }, text)
         XCTAssertTrue(text.contains("HELLO\n"), text)
         XCTAssertEqual(addressed, [0x1A])
         XCTAssertEqual(written, [6 << 1, 0])
@@ -125,6 +127,30 @@ final class STM32Tests: XCTestCase {
         XCTAssertEqual(Double(crossings), 100, accuracy: 3)
         // the input's 0.5 V peak is half the ADC's full scale at 0.354 of it; halved, and back out: 0.25 V
         XCTAssertEqual((rights.max() ?? 0) - 1.65 * 10_000 / 10_100, 0.25 * 10_000 / 10_100, accuracy: 0.01)
+    }
+
+    /// A PCM5102 on the chip's I²S2 pins takes its frames too: the left output's square at 2.1 V RMS full scale
+    func testThePCM5102TakesTheChipsFrames() throws {
+        var chip = NetlistPart(kind: .stm32f405, name: "U1", connections: ["pb12": "ws", "pb13": "bck", "pb15": "din"])
+        chip.firmware = Data(try firmware())
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .i2sDac, name: "U2", connections: ["bck": "bck", "din": "din", "lrck": "ws", "outL": "left", "outR": "right"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "left", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "LEFT", connections: ["plus": "left", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        let left = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "LEFT" })
+        var lefts: [Double] = []
+        while simulator.time < 0.2 {
+            simulator.step()
+            XCTAssertFalse(simulator.isFailed, simulator.problems.joined(separator: " "))
+            if simulator.isFailed { break }
+            if simulator.time > 0.1 { lefts.append(simulator.voltageAcross(left)) }
+        }
+        let peak = 0.25 * 2.1 * 2.squareRoot() * 10_000 / 10_100
+        XCTAssertEqual(lefts.max() ?? 0, peak, accuracy: 0.01)
+        XCTAssertEqual(lefts.min() ?? 0, -peak, accuracy: 0.01)
     }
 
     /// Mutable Instruments' Rings from its own firmware (GPL-3.0, so CI builds it from Mutable's repository and it is

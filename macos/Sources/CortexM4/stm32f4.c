@@ -114,8 +114,8 @@ typedef struct {
     uint32_t cr1, cr2, smcr, dier, sr, ccmr1, ccmr2, ccer, psc, arr, rcr, ccr[4], bdtr, dcr, or_;
     uint32_t count;     // CNT when the timer stopped, or at `base`
     uint64_t base;      // the cycle `count` was CNT at, while it runs
-    uint64_t next;      // its next update event the chip keeps, or NEVER
-    uint32_t wraps_seen;
+    uint64_t next;      // its next event the chip keeps (an update, or a compare with its interrupt on), or NEVER
+    unsigned next_kind; // which: bit 0 the update, bits 1-4 channels 1-4's compares
 } Timer;
 
 typedef struct {
@@ -714,17 +714,39 @@ static bool timer_watched(const STM32F4 *m, int t) {
     return ((tm->cr2 >> 4) & 7) == 2;  // TRGO on update
 }
 
+/// The timer's next event: its update (when something listens to it) or a channel's compare match (with its interrupt
+/// on), whichever comes first
 static void timer_schedule(STM32F4 *m, int t) {
     Timer *tm = &m->tim[t];
     tm->next = NEVER;
-    if (!(tm->cr1 & 1) || !timer_watched(m, t)) return;
+    tm->next_kind = 0;
+    if (!(tm->cr1 & 1)) return;
     uint64_t period = timer_period(tm);
     if (period == 0) return;
     uint64_t elapsed = timer_elapsed(m, t);
-    uint64_t to_wrap = period - (timer_position(tm, period) + elapsed) % period;
-    double tick = timer_tick(m, t);
-    double at = (double)tm->base + ceil((double)(elapsed + to_wrap) * tick);
-    tm->next = (uint64_t)at;
+    uint64_t position = (timer_position(tm, period) + elapsed) % period;
+    uint64_t best = UINT64_MAX;
+    unsigned kinds = 0;
+    if (timer_watched(m, t)) {
+        best = period - position;
+        kinds = 1;
+    }
+    for (int channel = 0; channel < 4; channel++) {
+        if (!((tm->dier >> (1 + channel)) & 1) || tm->ccr[channel] >= period) continue;
+        // the count reaches CCR at that position counting up, or at the period less it counting down
+        uint64_t at = timer_down(tm) ? period - 1 - tm->ccr[channel] : tm->ccr[channel];
+        uint64_t ticks = (at + period - position) % period;
+        if (ticks == 0) ticks = period;
+        if (ticks < best) {
+            best = ticks;
+            kinds = 1u << (1 + channel);
+        } else if (ticks == best) {
+            kinds |= 1u << (1 + channel);
+        }
+    }
+    if (!kinds) return;
+    tm->next = (uint64_t)((double)tm->base + ceil((double)(elapsed + best) * timer_tick(m, t)));
+    tm->next_kind = kinds;
     schedule(m, tm->next);
 }
 
@@ -1885,10 +1907,15 @@ static void service(STM32F4 *m) {
             Timer *tm = &m->tim[k];
             if (tm->next <= t) {
                 any = true;
-                timer_update_event(m, k);
-                // the count wraps there: the next period from it
-                tm->count = timer_down(tm) ? tm->arr : 0;
-                tm->base = tm->next;
+                unsigned kinds = tm->next_kind;
+                tm->sr |= kinds & 0x1E;  // the channels' compare flags
+                if (kinds & 1) {
+                    timer_update_event(m, k);
+                    // the count wraps there: the next period from it
+                    tm->count = timer_down(tm) ? tm->arr : 0;
+                    tm->base = tm->next;
+                }
+                timer_update_irq(m, k);
                 timer_schedule(m, k);
             }
         }

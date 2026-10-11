@@ -5896,16 +5896,19 @@ public final class Simulator {
         codecTargets = Array(repeating: nil, count: kinds.count)
         for i in chipIndices where kinds[i] == .stm32f405 && i < topology.elementNodes.count {
             let chipNodes = topology.elementNodes[i]
-            for j in kinds.indices where kinds[j] == .codec && j < topology.elementNodes.count {
+            for j in kinds.indices where (kinds[j] == .codec || kinds[j] == .i2sDac) && j < topology.elementNodes.count {
                 let nodes = topology.elementNodes[j]
                 func wired(_ terminal: Int, _ pins: [Int]) -> Bool {
                     terminal < nodes.count && nodes[terminal] > 0
                         && pins.contains { $0 < chipNodes.count && chipNodes[$0] == nodes[terminal] }
                 }
                 // (pins by index: PA0-PA15 0-15, PB0-PB15 16-31, PC0-PC15 32-47) I2S2's CK on PB13 or PB10, I2S3's on
-                // PC10 or PB3; I2C1's SCL on PB6 or PB8, I2C2's on PB10, I2C3's on PA8
-                if wired(1, [29, 26]) { codecLinks[i].append((2, j)) }
-                if wired(1, [42, 19]) { codecLinks[i].append((3, j)) }
+                // PC10 or PB3, at a codec's BCLK or a PCM5102's BCK; I2C1's SCL on PB6 or PB8, I2C2's on PB10, I2C3's
+                // on PA8, at a codec's SCLK
+                let clock = kinds[j] == .codec ? 1 : 0
+                if wired(clock, [29, 26]) { codecLinks[i].append((2, j)) }
+                if wired(clock, [42, 19]) { codecLinks[i].append((3, j)) }
+                guard kinds[j] == .codec else { continue }
                 if wired(6, [22, 24]) { codecBuses[i].append((1, j)) }
                 if wired(6, [26]) { codecBuses[i].append((2, j)) }
                 if wired(6, [8]) { codecBuses[i].append((3, j)) }
@@ -5925,8 +5928,9 @@ public final class Simulator {
         }
     }
 
-    /// A frame an STM32 sends on an I²S port: the codecs on it take it for their outputs, and the first of them gives
-    /// back what its line inputs read
+    /// A frame an STM32 sends on an I²S port: the codecs (and PCM5102s) on it take it for their outputs, both kept
+    /// left-justified (the left in `latch`, the right in `count`), and the first codec gives back what its line inputs
+    /// read
     private func codecFrame(_ chip: Int, _ port: Int, _ left: Int32, _ right: Int32) -> (left: Int32, right: Int32) {
         var input: (left: Int32, right: Int32) = (0, 0)
         var first = true
@@ -5934,7 +5938,7 @@ public final class Simulator {
             let j = link.codec
             logicStates[j].latch = UInt32(bitPattern: left)
             logicStates[j].count = Int(right)
-            if first {
+            if first && kinds[j] == .codec {
                 first = false
                 let nodes = topology.elementNodes[j]
                 input = (codecSample(j, nodes, 10), codecSample(j, nodes, 11))
