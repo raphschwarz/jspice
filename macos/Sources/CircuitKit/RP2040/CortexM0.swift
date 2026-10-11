@@ -22,6 +22,8 @@ final class CortexM0 {
         return pointer
     }()
     var bankedSP: UInt32 = 0xFFFF_FFFC
+    /// The cycles run. Within a stretch, less those of its instructions the clock is not yet brought up to
+    /// (`unclocked`): they are added as the clock is (an instruction's own count is then one add, not two).
     var cycles = 0
 
     var eventRegistered = false
@@ -118,7 +120,7 @@ final class CortexM0 {
         while true {
             repeat {
                 // (the instruction first: it can bring the clock up, setting `unclocked` to 0)
-                let cycles = inlined ? executeInline() : executeInstruction()
+                let cycles = inlined ? executeInline() : executeCalled()
                 unclocked &+= cycles
             } while !clockedInStretch && !waiting && base + Double(unclocked) * RP2040.cycleNanos < limit
             CortexM0.stretches &+= 1
@@ -132,6 +134,7 @@ final class CortexM0 {
             guard base + Double(unclocked) * RP2040.cycleNanos < limit else { break }
         }
         let cycles = unclocked
+        self.cycles &+= cycles
         unclocked = 0
         return cycles
     }
@@ -141,6 +144,7 @@ final class CortexM0 {
     @inline(__always) private func bringClockUp() {
         clockedInStretch = true
         guard unclocked != 0 else { return }
+        cycles &+= unclocked
         let nanos = Double(unclocked) * RP2040.cycleNanos
         unclocked = 0
         clockRef._withUnsafeGuaranteedRef { $0.tick(nanos) }
@@ -178,7 +182,7 @@ final class CortexM0 {
         let flags = (N ? 1 : 0) | (Z ? 2 : 0) | (C ? 4 : 0) | (V ? 8 : 0) | (PM ? 16 : 0)
         // (with the stretch's instructions the clock is not yet brought up to)
         let now = clockRef._withUnsafeGuaranteedRef { $0.nanos } + Double(unclocked + used) * RP2040.cycleNanos
-        let cyclesNow = cycles + used
+        let cyclesNow = cycles + unclocked + used
         let alike = loopSeen && flags == loopFlags && memcmp(registers, loopRegisters, 64) == 0
         if alike && chipRef._withUnsafeGuaranteedRef({ $0.changedAt }) > loopNanos {
             // alike, but an alarm or a PIO block changed the chip within the round: what it read before may have
@@ -757,7 +761,16 @@ final class CortexM0 {
 
     /// Runs one instruction (entering a pending exception first); returns its cycles
     // swiftlint:disable:next cyclomatic_complexity function_body_length
-    func executeInstruction() -> Int { executeInline() }
+    func executeInstruction() -> Int {
+        let delta = executeInline()
+        // (wrapping: a count of cycles, far from Int's end; the overflow check costs at every instruction)
+        cycles &+= delta
+        return delta
+    }
+
+    /// `executeInline` called, for a stretch whose interpreter is outside its loop (for comparing): the stretch counts
+    /// its cycles, as the inlined one's
+    @inline(never) private func executeCalled() -> Int { executeInline() }
 
     /// Whether a stretch has the interpreter inside its loop (off, calling `executeInstruction` for each instruction:
     /// for comparing). The interpreter keeps the most it holds in a frame of its own, set up and taken down at every
@@ -1134,8 +1147,6 @@ final class CortexM0 {
         case .unknown:
             break
         }
-        // (wrapping: a count of cycles, far from Int's end; the overflow check costs at every instruction)
-        cycles &+= delta
         return delta
     }
 
