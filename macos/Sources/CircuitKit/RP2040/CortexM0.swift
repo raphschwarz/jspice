@@ -117,14 +117,19 @@ final class CortexM0 {
         let inlined = CortexM0.inlinesInterpreter
         let goesOn = RP2040.stretchesPastRegisters
         var base = base, limit = limit
-        // (the PC in a register from one instruction to the next, rather than read back from where the last wrote it)
+        // (the PC and `unclocked` in registers from one instruction to the next, rather than read back from where the
+        // last wrote them: each is still written at every instruction, for what reads it there, and read back only
+        // where something else may have moved it)
         var pc = PC
+        var ran = 0
         while true {
             repeat {
-                // (the instruction first: it can bring the clock up, setting `unclocked` to 0)
                 let cycles = inlined ? executeInline(&pc) : executeCalled(&pc)
-                unclocked &+= cycles
-            } while !clockedInStretch && !waiting && base + Double(unclocked) * RP2040.cycleNanos < limit
+                // (an instruction that brought the clock up set `unclocked` to 0)
+                if clockedInStretch { ran = unclocked }
+                ran &+= cycles
+                unclocked = ran
+            } while !clockedInStretch && !waiting && base + Double(ran) * RP2040.cycleNanos < limit
             CortexM0.stretches &+= 1
             guard clockedInStretch else { break }
             CortexM0.stretchesBrokenOff &+= 1
@@ -134,9 +139,9 @@ final class CortexM0 {
             pc = PC
             base = clockRef._withUnsafeGuaranteedRef { $0.nanos }
             limit = chipRef._withUnsafeGuaranteedRef { $0.stretchLimit(from: base, end: end) }
-            guard base + Double(unclocked) * RP2040.cycleNanos < limit else { break }
+            guard base + Double(ran) * RP2040.cycleNanos < limit else { break }
         }
-        let cycles = unclocked
+        let cycles = ran
         self.cycles &+= cycles
         unclocked = 0
         return cycles

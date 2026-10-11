@@ -31,6 +31,7 @@ def main():
 
     leaves = Counter()
     hot = Counter()
+    names = {}
     samples = 0
     for row in root.iter("row"):
         # (the backtrace may sit in the row itself or deeper, as a tagged one, and be a ref to one written before)
@@ -52,8 +53,11 @@ def main():
         address = int(leaf.get("addr", "0"), 16)
         binary = resolved(leaf.find("binary"))
         load = int(binary.get("load-addr", "0"), 16) if binary is not None else 0
-        # (the binary's own address: its text at 0x100000000)
-        hot[0x100000000 + address - load if load else address] += 1
+        # (the binary's own address, its text at 0x100000000; the instruction's, the address given being one past its
+        # start; a function inlined in another names its own instructions)
+        static = (0x100000000 + address - load if load else address) & ~3
+        hot[static] += 1
+        names.setdefault(static, Counter())[name] += 1
     if samples == 0:
         # (for what the table looks like, to read it next time)
         with open(path, errors="replace") as file:
@@ -69,7 +73,7 @@ def main():
     print(f"{wanted}: {sum(hot.values())} samples, by instruction:")
     lldb = []
     for address, count in hot.most_common(rows):
-        print(f"  {count:6d}  [0x{address:x}]")
+        print(f"  {count:6d}  [0x{address:x}]  {names[address].most_common(1)[0][0][:60]}")
         lldb.append(f"disassemble --start-address 0x{max(address - 24, 0):x} --count 10")
     if commands:
         with open(commands, "w") as file:
