@@ -93,6 +93,11 @@ jobs:
           kill $! 2>/dev/null || true
           sed -n '/Sort by top of stack/,$p' build/profile.txt | head -45
           python3 scripts/profile-callers.py build/profile.txt 30 || true
+          # its stamping loop and Newton-Raphson's own, instruction by instruction: where their own samples fall
+          python3 scripts/hot-instructions.py build/profile.txt Simulator.stampNonlinear 8 build/hot-acid-stamp.lldb || true
+          lldb --batch -s build/hot-acid-stamp.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -100 || true
+          python3 scripts/hot-instructions.py build/profile.txt "Simulator.newton(iterations" 8 build/hot-acid-newton.lldb || true
+          lldb --batch -s build/hot-acid-newton.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -100 || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 mc1496-ring > /dev/null &
           sleep 1
           sample $! 3 -file build/profile-ring.txt > /dev/null 2>&1 || true
