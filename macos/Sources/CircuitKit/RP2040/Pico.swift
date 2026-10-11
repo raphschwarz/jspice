@@ -34,6 +34,11 @@ public final class Pico: Microcontroller {
         get { RP2040.runsStretches }
         set { RP2040.runsStretches = newValue }
     }
+    /// Whether a stretch goes on past a register elsewhere than memory (for comparing)
+    public static var stretchesPastRegisters: Bool {
+        get { RP2040.stretchesPastRegisters }
+        set { RP2040.stretchesPastRegisters = newValue }
+    }
     /// The instructions counted, by kind
     public static var instructionCounts: [Int] {
         get { RP2040.instructionCounts }

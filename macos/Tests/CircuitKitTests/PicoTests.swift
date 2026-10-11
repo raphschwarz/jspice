@@ -203,6 +203,13 @@ final class PicoTests: XCTestCase {
         try assertSameRuns { RP2040.runsStretches = $0 }
     }
 
+    /// Stretches that go on past a register, from the clock brought up to it, leave the Pico where ending them there
+    /// and starting the next would
+    func testStretchesPastRegistersLeaveThePicoWhereEndingThemWould() throws {
+        defer { RP2040.stretchesPastRegisters = true }
+        try assertSameRuns { RP2040.stretchesPastRegisters = $0 }
+    }
+
     /// PIO delay loops' turns taken directly, where they only count down, leave the Pico where stepping each would
     func testQuietPIOTurnsLeaveThePicoWhereSteppingEachWould() throws {
         defer { RPPIOMachine.takesQuietTurns = true }

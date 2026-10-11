@@ -374,9 +374,22 @@ final class RP2040 {
         }
     }
 
+    /// Where a stretch from `base` in a run to `end` ends: at the run's end, the next alarm, a running PIO block's
+    /// next instruction or where the clock's sums stop being exact, whichever comes first
+    @inline(__always) func stretchLimit(from base: Double, end: Double) -> Double {
+        var limit = min(end, clock.nextAlarmAt, RP2040.stretchEnd(base))
+        pioTable[0]._withUnsafeGuaranteedRef { if $0.running { limit = min(limit, $0.nextDue) } }
+        pioTable[1]._withUnsafeGuaranteedRef { if $0.running { limit = min(limit, $0.nextDue) } }
+        return limit
+    }
+
     private var pioRunning: Bool {
         pioTable[0]._withUnsafeGuaranteedRef { $0.running } || pioTable[1]._withUnsafeGuaranteedRef { $0.running }
     }
+
+    /// Whether a stretch goes on past a register elsewhere than memory, from the clock brought up to it and to the
+    /// limit as it is then (off, the stretch ends there and the run starts another: for comparing)
+    static var stretchesPastRegisters = true
 
     /// Whether runs skip busy-waits (for comparing): see `run(until:)`
     static var skipsBusyWaits = true
@@ -441,10 +454,7 @@ final class RP2040 {
                 // a running PIO block's next instruction (as ticked after each, it would have done nothing else
                 // before), the clock ticked once for them all
                 let base = clock.nanos
-                var limit = min(end, clock.nextAlarmAt, RP2040.stretchEnd(base))
-                if pio0.running { limit = min(limit, pio0.nextDue) }
-                if pio1.running { limit = min(limit, pio1.nextDue) }
-                cycles = core.runStretch(from: base, to: limit)
+                cycles = core.runStretch(from: base, to: stretchLimit(from: base, end: end), end: end)
             } else {
                 if counting { RP2040.instructionCounts[Int(core.nextOp.rawValue)] += 1 }
                 cycles = core.executeInstruction()

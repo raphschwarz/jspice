@@ -78,7 +78,7 @@ final class CortexM0 {
     /// Nanoseconds counted at once in busy-waits
     private(set) var skippedNanos = 0.0
 
-    // A stretch (see `runStretch(from:to:)`): the cycles run in it since the clock was last brought up to them, and
+    // A stretch (see `runStretch(from:to:end:)`): the cycles run in it since the clock was last brought up to them, and
     // whether an access past memory brought it up
     private var unclocked = 0
     private var clockedInStretch = false
@@ -105,17 +105,32 @@ final class CortexM0 {
     ///
     /// The clock adds the instructions up at once just as it would one at a time, to the bit: within a power of two
     /// from `base` (the caller's `limit` keeps to it) every sum of whole cycles' nanoseconds is exact.
-    func runStretch(from base: Double, to limit: Double) -> Int {
+    ///
+    /// Where a register brought the clock up, the stretch goes on (`RP2040.stretchesPastRegisters`) from there to the
+    /// limit as it is then, in the run to `end`: the register may have set an alarm or started a PIO block. The run
+    /// would have started its next stretch there, with that limit, after ticking the clock for the instruction.
+    func runStretch(from base: Double, to limit: Double, end: Double) -> Int {
         clockedInStretch = false
         unclocked = 0
         let inlined = CortexM0.inlinesInterpreter
-        repeat {
-            // (the instruction first: it can bring the clock up, setting `unclocked` to 0)
-            let cycles = inlined ? executeInline() : executeInstruction()
-            unclocked &+= cycles
-        } while !clockedInStretch && !waiting && base + Double(unclocked) * RP2040.cycleNanos < limit
-        CortexM0.stretches &+= 1
-        if clockedInStretch { CortexM0.stretchesBrokenOff &+= 1 }
+        let goesOn = RP2040.stretchesPastRegisters
+        var base = base, limit = limit
+        while true {
+            repeat {
+                // (the instruction first: it can bring the clock up, setting `unclocked` to 0)
+                let cycles = inlined ? executeInline() : executeInstruction()
+                unclocked &+= cycles
+            } while !clockedInStretch && !waiting && base + Double(unclocked) * RP2040.cycleNanos < limit
+            CortexM0.stretches &+= 1
+            guard clockedInStretch else { break }
+            CortexM0.stretchesBrokenOff &+= 1
+            guard goesOn && !waiting else { break }
+            // (the clock is up to the instruction that reached the register; `unclocked`, that instruction's cycles)
+            clockedInStretch = false
+            base = clockRef._withUnsafeGuaranteedRef { $0.nanos }
+            limit = chipRef._withUnsafeGuaranteedRef { $0.stretchLimit(from: base, end: end) }
+            guard base + Double(unclocked) * RP2040.cycleNanos < limit else { break }
+        }
         let cycles = unclocked
         unclocked = 0
         return cycles
