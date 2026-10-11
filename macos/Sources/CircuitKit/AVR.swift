@@ -315,6 +315,8 @@ public final class AVR: Microcontroller {
         interruptsChanged = true
         nextInterrupt = nil
         servicedAt = cycles
+        timersAt = cycles
+        timersEventAt = 0
         nextService = 0
     }
 
@@ -343,6 +345,8 @@ public final class AVR: Microcontroller {
         adcDoneAt = other.adcDoneAt
         adcFirst = other.adcFirst
         servicedAt = other.servicedAt
+        timersAt = other.timersAt
+        timersEventAt = 0
         nextService = 0
         interruptDelay = other.interruptDelay
         externalPrevious = other.externalPrevious
@@ -571,8 +575,12 @@ public final class AVR: Microcontroller {
 
     /// The cycle at which a peripheral next needs looking at (0: after the next instruction)
     private var nextService = 0
-    /// The cycle the timers' prescalers were last brought up to
+    /// The cycle the peripherals were last looked at (or a counter read: see `loopedBack`)
     private var servicedAt = 0
+    /// The cycle the timers have been brought up to, and the cycle at which one of them next does more than count (0:
+    /// to be worked out, after a register was written; see `skipsQuietTicks`)
+    private var timersAt = 0
+    private var timersEventAt = 0
 
     // A busy-wait (the program polling a flag that an interrupt or a peripheral sets) goes round the same instructions
     // to the same effect until a peripheral next has something to do: nothing else changes in between. Within a run, a
@@ -667,39 +675,49 @@ public final class AVR: Microcontroller {
     /// Brings the timers' prescalers up to now (no timer is due to tick before then), and has the peripherals looked at
     /// after this instruction: called before an I/O register is written, and when something outside changes the chip
     func peripheralsTouched() {
-        let elapsed = cycles - servicedAt
-        if elapsed > 0 {
-            for timer in timerRefs {
-                timer._withUnsafeGuaranteedRef { if $0.prescale != 0 { $0.advance(elapsed) } }
-            }
-        }
+        advanceTimers()
+        // (the register about to be written may change when a timer next does more than count)
+        timersEventAt = 0
         servicedAt = cycles
         nextService = 0
+    }
+
+    /// The timers' prescalers brought up to now
+    private func advanceTimers() {
+        let elapsed = cycles - timersAt
+        timersAt = cycles
+        guard elapsed > 0 else { return }
+        for timer in timerRefs {
+            timer._withUnsafeGuaranteedRef { if $0.prescale != 0 { $0.advance(elapsed) } }
+        }
     }
 
     /// The timers brought up to now, for a read of a counter (between their events they count by themselves; see
     /// `skipsQuietTicks`)
     private func timersUpToDate() {
-        let elapsed = cycles - servicedAt
-        guard elapsed > 0, AVR.skipsQuietTicks else { return }
-        for timer in timerRefs {
-            timer._withUnsafeGuaranteedRef { if $0.prescale != 0 { $0.advance(elapsed) } }
-        }
+        guard cycles > timersAt, AVR.skipsQuietTicks else { return }
+        advanceTimers()
+        // (a busy-wait reading a counter reads another value each round)
         servicedAt = cycles
     }
 
     private func service() {
-        let elapsed = cycles - servicedAt
         servicedAt = cycles
-        // (nothing below changes a timer's prescaler, so when each next does more than count is known now)
-        var next = Int.max
-        for timer in timerRefs {
-            timer._withUnsafeGuaranteedRef { timer in
-                guard timer.prescale != 0 else { return }
-                if elapsed > 0 { timer.advance(elapsed) }
-                next = min(next, cycles + (timer.quietTicks().ticks + 1) * timer.prescale - timer.accumulator)
+        // the timers, at the tick of one that does more than count (between, they are left to count by themselves,
+        // brought up to date where a counter is read or a register written); nothing below changes a prescaler, so
+        // when each next does more than count is known now
+        if cycles >= timersEventAt {
+            advanceTimers()
+            var event = Int.max
+            for timer in timerRefs {
+                timer._withUnsafeGuaranteedRef { timer in
+                    guard timer.prescale != 0 else { return }
+                    event = min(event, cycles + (timer.quietTicks().ticks + 1) * timer.prescale - timer.accumulator)
+                }
             }
+            timersEventAt = event
         }
+        var next = timersEventAt
         for usart in usartRefs {
             usart._withUnsafeGuaranteedRef { if $0.needsUpdate { $0.update() } }
         }

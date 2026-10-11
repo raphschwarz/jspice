@@ -727,7 +727,10 @@ public final class Simulator {
     public static var keepsSwitchedMatrices = true
     /// The switched state the base matrices in `baseCache` are for, and those kept for others
     private var baseSwitched: [Int8] = []
-    private var switchedCaches: [[Int8]: [Int: (values: [Double], version: Int, order: EliminationProgram?)]] = [:]
+    private var switchedCaches: [(state: [Int8], cache: [Int: (values: [Double], version: Int, order: EliminationProgram?)])] = []
+    /// The switched state worked out afresh, kept to be filled again; and the logic parts that switch the base matrix
+    private var switchedScratch: [Int8] = []
+    private var switchingLogic: [Int] = []
     private var hasNonlinear = false
     /// When the only nonlinear parts are VCAs: nearly linear (a soft limit on a gain), solved in one iteration from the
     /// predicted solution, their linearisation there exact to second order
@@ -924,6 +927,7 @@ public final class Simulator {
         effectsProcessors = [:]
         digitalIndices = indices { $0.isDigital }
         chipIndices = indices { $0.isMicrocontroller }
+        switchingLogic = indices { [.i2cDac, .spiAdc, .analogMux, .analogSelector].contains($0) }
         chips = [:]
         chipPinStates = [:]
         pinKey = 0
@@ -2680,13 +2684,18 @@ public final class Simulator {
         if switchedMoved {
             switchedMoved = false
             if matrixIsCurrent {
-                let state = switchedState()
-                if state != baseSwitched {
+                fillSwitchedState()
+                if switchedScratch != baseSwitched {
+                    // (a few states, a bus's lines back and forth: looked through in turn)
                     if switchedCaches.count >= 16 { switchedCaches.removeAll(keepingCapacity: true) }
-                    switchedCaches[baseSwitched] = baseCache
-                    baseCache = switchedCaches.removeValue(forKey: state) ?? [:]
+                    switchedCaches.append((state: baseSwitched, cache: baseCache))
+                    if let k = switchedCaches.firstIndex(where: { $0.state == switchedScratch }) {
+                        baseCache = switchedCaches.remove(at: k).cache
+                    } else {
+                        baseCache = [:]
+                    }
                     baseKey = -1
-                    baseSwitched = state
+                    baseSwitched = switchedScratch
                 }
             }
         }
@@ -2703,7 +2712,10 @@ public final class Simulator {
         }
         buildBaseMatrix()
         guard !isFailed else { return }
-        if baseCache.isEmpty { baseSwitched = switchedState() }
+        if baseCache.isEmpty {
+            fillSwitchedState()
+            baseSwitched = switchedScratch
+        }
         baseKey = key
         baseCache[key] = (baseValues, baseVersion, baseOrder)
     }
@@ -2713,30 +2725,28 @@ public final class Simulator {
         if Self.keepsSwitchedMatrices { switchedMoved = true } else { matrixIsCurrent = false }
     }
 
-    /// What the parts that switch the base matrix have switched into it: each chip pin driven, pulled or bare, each I²C
-    /// target's acknowledge, each ADC's DOUT and each multiplexer's channel (`fillBaseMatrix` stamps no other state of
-    /// theirs)
-    private func switchedState() -> [Int8] {
-        var state: [Int8] = []
+    /// What the parts that switch the base matrix have switched into it, into `switchedScratch`: each chip pin driven,
+    /// pulled or bare, each I²C target's acknowledge, each ADC's DOUT and each multiplexer's channel (`fillBaseMatrix`
+    /// stamps no other state of theirs)
+    private func fillSwitchedState() {
+        switchedScratch.removeAll(keepingCapacity: true)
         for i in chipIndices {
             guard let states = chipPinStates[i] else { continue }
             for pin in states {
                 switch pin {
-                case .output: state.append(0)
-                case .input(pullUp: true), .inputPullDown: state.append(1)
-                case .input: state.append(2)
+                case .output: switchedScratch.append(0)
+                case .input(pullUp: true), .inputPullDown: switchedScratch.append(1)
+                case .input: switchedScratch.append(2)
                 }
             }
         }
-        for i in kinds.indices where i < logicStates.count {
+        for i in switchingLogic where i < logicStates.count {
             switch kinds[i] {
-            case .i2cDac: state.append(Logic.acknowledging(logicStates[i]) ? 1 : 0)
-            case .spiAdc: state.append(Int8(logicStates[i].inputs & 1))
-            case .analogMux, .analogSelector: state.append(Int8(Logic.channel(kinds[i], logicStates[i]) ?? -1))
-            default: break
+            case .i2cDac: switchedScratch.append(Logic.acknowledging(logicStates[i]) ? 1 : 0)
+            case .spiAdc: switchedScratch.append(Int8(logicStates[i].inputs & 1))
+            default: switchedScratch.append(Int8(Logic.channel(kinds[i], logicStates[i]) ?? -1))
             }
         }
-        return state
     }
 
     /// The part of the matrix that only changes with the circuit or the substep, stamped into the plan's slots and its
