@@ -48,10 +48,11 @@ final class CortexM0 {
     /// A BKPT or UDF stopped the program (a crash, or the end of a test)
     var breakpoint: UInt32?
 
-    // the chip's flash and SRAM, which most fetches, loads and stores go to: reached here without going through the
-    // chip object (each call through it costs a retain and a release)
+    // the chip's flash and SRAM, which most fetches, loads and stores go to, and its boot ROM (the float routines a
+    // sketch's sinf() runs, its tables): reached here without going through the chip object
     private let flash: UnsafeMutableRawPointer
     private let sram: UnsafeMutableRawPointer
+    private let bootrom: UnsafeMutableRawPointer
     private let clockRef: Unmanaged<RPClock>
 
     // A busy-wait (see `RP2040.run(until:)`): what would make one round differ from the next, counted (stores that
@@ -87,6 +88,7 @@ final class CortexM0 {
         chipRef = .passUnretained(chip)
         flash = chip.flash
         sram = chip.sram
+        bootrom = chip.bootrom
         clockRef = .passUnretained(chip.clock)
         registers[13] = 0xFFFF_FFFC
     }
@@ -491,8 +493,10 @@ final class CortexM0 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt32.self) }
         if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt32.self) }
+        // (the ROM's word, as the chip reads it)
+        if address < CortexM0.bootromSize { return bootrom.load(fromByteOffset: Int(address & ~3), as: UInt32.self) }
         if !CortexM0.pollable(address) { effects &+= 1 }
-        if address >= CortexM0.bootromSize { bringClockUp() }
+        bringClockUp()
         return chipRef._withUnsafeGuaranteedRef { $0.readUint32(address) }
     }
 
@@ -500,8 +504,13 @@ final class CortexM0 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.loadUnaligned(fromByteOffset: Int(inFlash), as: UInt16.self) }
         if inRAM < CortexM0.sramSize { return sram.loadUnaligned(fromByteOffset: Int(inRAM), as: UInt16.self) }
+        // (the half of the ROM's word, as the chip reads it)
+        if address < CortexM0.bootromSize {
+            let word = bootrom.load(fromByteOffset: Int(address & ~3), as: UInt32.self)
+            return UInt16(truncatingIfNeeded: address & 2 != 0 ? word >> 16 : word)
+        }
         if !CortexM0.pollable(address) { effects &+= 1 }
-        if address >= CortexM0.bootromSize { bringClockUp() }
+        bringClockUp()
         return chipRef._withUnsafeGuaranteedRef { $0.readUint16(address) }
     }
 
@@ -509,8 +518,13 @@ final class CortexM0 {
         let inFlash = address &- RP2040.flashStart, inRAM = address &- RP2040.ramStart
         if inFlash < CortexM0.flashSize { return flash.load(fromByteOffset: Int(inFlash), as: UInt8.self) }
         if inRAM < CortexM0.sramSize { return sram.load(fromByteOffset: Int(inRAM), as: UInt8.self) }
+        // (the byte of the ROM's word, as the chip reads it)
+        if address < CortexM0.bootromSize {
+            let word = bootrom.load(fromByteOffset: Int(address & ~3), as: UInt32.self)
+            return UInt8(truncatingIfNeeded: word >> ((address & 3) * 8))
+        }
         if !CortexM0.pollable(address) { effects &+= 1 }
-        if address >= CortexM0.bootromSize { bringClockUp() }
+        bringClockUp()
         return chipRef._withUnsafeGuaranteedRef { $0.readUint8(address) }
     }
 
