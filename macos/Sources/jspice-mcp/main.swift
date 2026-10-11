@@ -62,6 +62,8 @@ func benchmark(seconds: Double, ids: [String]) {
 
 /// The engine's switches a benchmark can compare, each off against on (all are on as the app runs)
 let switches: [String: (Bool) -> Void] = [
+    // (changes nothing: what the benchmark makes of two settings alike)
+    "nothing": { _ in },
     "reuse-factors": { Simulator.reusesFactors = $0 },
     "bypass": { Simulator.bypassesDevices = $0 },
     "pin-switches": { Simulator.followsPinSwitches = $0 },
@@ -94,34 +96,44 @@ func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
             log("there is no example \(id)")
             continue
         }
-        let simulators = [false, true].map { on -> Simulator in
-            flip(on)
-            let simulator = Simulator(circuit: example.circuit, timeStep: 1 / rate)
-            simulator.errorControl = false
-            return simulator
-        }
+        // each round, both simulators made afresh (the one made first taking turns) and run over the same stretch: a
+        // simulator kept from round to round keeps where its memory fell, which alone made one setting an eighth slower
+        // than the other where the switch changed nothing
         var fastest = [Double.infinity, .infinity]
-        for _ in 0..<5 {
+        var counts = [[Int]](repeating: [Int](repeating: 0, count: 8), count: 2)
+        for round in 0..<5 {
+            var simulators: [Simulator?] = [nil, nil]
+            for k in (round % 2 == 0 ? [0, 1] : [1, 0]) {
+                flip(k == 1)
+                let simulator = Simulator(circuit: example.circuit, timeStep: 1 / rate)
+                simulator.errorControl = false
+                simulators[k] = simulator
+            }
             for k in 0..<2 {
+                guard let simulator = simulators[k] else { continue }
                 flip(k == 1)
                 let start = DispatchTime.now().uptimeNanoseconds
-                for _ in 0..<steps { simulators[k].step() }
+                for _ in 0..<steps { simulator.step() }
                 fastest[k] = min(fastest[k], Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9)
+                let s = simulator
+                for (j, value) in [s.newtonIterations, s.factorings, s.reusedFactorings, s.confirmedWithoutSolving,
+                                   s.reusedStampings, s.restartedSolves, s.substeps, s.rejectedSubsteps].enumerated() {
+                    counts[k][j] += value
+                }
             }
         }
         flip(true)
-        let solves = simulators.map { Double($0.newtonIterations) / Double(5 * steps) }
+        let per = Double(5 * steps)
+        let solves = counts.map { Double($0[0]) / per }
         print(String(format: "%@ %@: off %.2f µs/step (%.2f solves), on %.2f µs/step (%.2f solves), on saves %.1f%%",
                      id.padding(toLength: 18, withPad: " ", startingAt: 0), name, fastest[0] / Double(steps) * 1e6, solves[0],
                      fastest[1] / Double(steps) * 1e6, solves[1], (1 - fastest[1] / fastest[0]) * 100))
         // where the iterations went, a step: factored, solved with kept factors, confirmed without a solve, started from
         // kept stamps, started again, and substeps (rejected)
-        let per = Double(5 * steps)
-        let detail = simulators.map { s in
+        let detail = counts.map { c in
             String(format: "%.2f factored %.2f chord %.2f confirmed %.2f from kept stamps %.3f restarted %.3f substeps (%.3f rejected)",
-                   Double(s.factorings) / per, Double(s.reusedFactorings) / per, Double(s.confirmedWithoutSolving) / per,
-                   Double(s.reusedStampings) / per, Double(s.restartedSolves) / per, Double(s.substeps) / per,
-                   Double(s.rejectedSubsteps) / per)
+                   Double(c[1]) / per, Double(c[2]) / per, Double(c[3]) / per, Double(c[4]) / per, Double(c[5]) / per,
+                   Double(c[6]) / per, Double(c[7]) / per)
         }
         print("    off: \(detail[0])\n    on:  \(detail[1])")
     }

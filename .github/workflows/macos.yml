@@ -57,8 +57,10 @@ jobs:
         timeout-minutes: 5
         run: |
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25
-          # an engine switch off and on, run for run on the same machine (machines differ by half from run to run): the
-          # predictor's choice between line and parabola, which cost the LED bargraph a sixth at the same solves
+          # an engine switch off and on, run for run on the same machine (machines differ by half from run to run): first
+          # one that changes nothing, for what the benchmark makes of two settings alike; then the predictor's choice
+          # between line and parabola, which cost the LED bargraph a sixth at the same solves
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch nothing 0.25 frequency-shifter bargraph voice mc1496-ring || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch choose-predictor 0.25 bargraph voice acid opto-compressor || true
           # and what bypassing behavioural sources saves them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
