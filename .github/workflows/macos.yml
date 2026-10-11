@@ -66,6 +66,8 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch choose-predictor-together 0.25 bargraph voice acid opto-compressor synth vco mc1496-ring guitar-fuzz tube-screamer rat || true
           # junctions turning off taken down through their exponential: the circuits with junctions that switch
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch limit-junctions-down 0.25 opto-compressor guitar-fuzz pickup-fuzz rat tube-screamer fuzz overdrive mc1496-ring sa612-ring voice acid tube-amp power-amp rectifier || true
+          # and junctions turning on from below their critical voltage taken at least to it
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch limit-junctions-to-critical 0.25 opto-compressor guitar-fuzz pickup-fuzz rat tube-screamer fuzz overdrive mc1496-ring sa612-ring voice acid tube-amp power-amp rectifier bargraph diode-ring xr2206 lm386-amp || true
           # and what bypassing behavioural sources and diodes whose junctions have not moved saves
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 bargraph rectifier led zener fuzz rat tube-screamer opto-compressor voice frequency-shifter || true
           # the microcontrollers: their instructions a step, what each costs and which run most; base matrices kept by
