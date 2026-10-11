@@ -7,6 +7,12 @@ public final class Pico: Microcontroller {
     /// The GPIO behind each pin the circuit reaches
     public static let gpioOfPin: [Int] = Array(0...22) + [26, 27, 28]
     public static let ledGPIO = 25
+    /// The pin at each GPIO (-1 for none)
+    static let pinOfGPIO: [Int] = {
+        var table = [Int](repeating: -1, count: 30)
+        for (pin, gpio) in gpioOfPin.enumerated() { table[gpio] = pin }
+        return table
+    }()
 
     /// Whether the chips' runs count the instructions they run, by kind (for the benchmark's breakdown)
     public static var countsInstructions: Bool {
@@ -29,7 +35,10 @@ public final class Pico: Microcontroller {
         let cdc: RPUSBCDC
         var outbox: [UInt8] = []
         var levels = [Bool](repeating: false, count: 30)
+        /// Every pin to be shown afresh (a new chip); and the GPIOs that changed since, with what each is now
         var pinsChanged = true
+        var changedGPIOs: UInt32 = 0
+        var values = [RPPinState](repeating: .input, count: 30)
         /// The watched pin at each GPIO (-1 for none), the changes to their driven levels, and when the present run started
         var watched = [Int](repeating: -1, count: 30)
         var events: [PinEvent] = []
@@ -47,7 +56,8 @@ public final class Pico: Microcontroller {
                 // (the pins are the chip's, which is this system's: they cannot outlive it, and a counted reference
                 // would cost at every change, millions of them a second where PIO clocks a DAC)
                 pin.onChange = { [unowned(unsafe) self] state in
-                    self.pinsChanged = true
+                    self.changedGPIOs |= 1 << UInt32(gpio)
+                    self.values[gpio] = state
                     let watchedPin = self.watched[gpio]
                     guard watchedPin >= 0 else { return }
                     let high: Bool
@@ -213,10 +223,26 @@ public final class Pico: Microcontroller {
             system.outbox = []
             if serial.count > 32_768 { serial.removeFirst(serial.count - 16_384) }
         }
-        guard system.pinsChanged else { return }
-        system.pinsChanged = false
-        shownStates = Pico.gpioOfPin.map { Pico.state(chip.gpio[$0].value) }
-        shownLED = chip.gpio[Pico.ledGPIO].value == .high
+        if system.pinsChanged {
+            system.pinsChanged = false
+            system.changedGPIOs = 0
+            shownStates = Pico.gpioOfPin.map { Pico.state(chip.gpio[$0].value) }
+            shownLED = chip.gpio[Pico.ledGPIO].value == .high
+            return
+        }
+        // only the pins that changed, as they told it (a PWM output changes every few hundred cycles; asking every
+        // pin again for what it does was a twelfth of the Pico knob's time)
+        var changed = system.changedGPIOs
+        guard changed != 0 else { return }
+        system.changedGPIOs = 0
+        while changed != 0 {
+            let gpio = changed.trailingZeroBitCount
+            changed &= changed - 1
+            let value = system.values[gpio]
+            if gpio == Pico.ledGPIO { shownLED = value == .high }
+            let pin = Pico.pinOfGPIO[gpio]
+            if pin >= 0 && pin < shownStates.count { shownStates[pin] = Pico.state(value) }
+        }
     }
 
     private static func state(_ value: RPPinState) -> PinState {
