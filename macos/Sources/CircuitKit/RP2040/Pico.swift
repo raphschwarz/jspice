@@ -54,9 +54,19 @@ public final class Pico: Microcontroller {
         /// Every pin to be shown afresh (a new chip); and the GPIOs that changed since, with what each is now
         var pinsChanged = true
         var changedGPIOs: UInt32 = 0
-        var values = [RPPinState](repeating: .input, count: 30)
+        // (in storage of their own, not arrays: written at every change of a pin, millions of them a second where PIO
+        // clocks a DAC, an array checks it is not shared each time)
+        let values: UnsafeMutablePointer<RPPinState> = {
+            let pointer = UnsafeMutablePointer<RPPinState>.allocate(capacity: 30)
+            pointer.initialize(repeating: .input, count: 30)
+            return pointer
+        }()
         /// The watched pin at each GPIO (-1 for none), the changes to their driven levels, and when the present run started
-        var watched = [Int](repeating: -1, count: 30)
+        let watched: UnsafeMutablePointer<Int> = {
+            let pointer = UnsafeMutablePointer<Int>.allocate(capacity: 30)
+            pointer.initialize(repeating: -1, count: 30)
+            return pointer
+        }()
         var events: [PinEvent] = []
         /// The events last taken (see `takePinEvents`)
         var takenEvents: [PinEvent] = []
@@ -69,14 +79,16 @@ public final class Pico: Microcontroller {
             // as rp2040js's demos do: straight into the flash image's boot stage 2, which sets up XIP and jumps on
             chip.core.PC = RP2040.flashStart
             cdc.onSerialData = { [unowned self] bytes in self.outbox += bytes }
+            let clock = Unmanaged.passUnretained(chip.clock)
+            let (values, watched) = (self.values, self.watched)
             for pin in chip.gpio {
                 let gpio = pin.index
                 // (the pins are the chip's, which is this system's: they cannot outlive it, and a counted reference
                 // would cost at every change, millions of them a second where PIO clocks a DAC)
                 pin.onChange = { [unowned(unsafe) self] state in
                     self.changedGPIOs |= 1 << UInt32(gpio)
-                    self.values[gpio] = state
-                    let watchedPin = self.watched[gpio]
+                    values[gpio] = state
+                    let watchedPin = watched[gpio]
                     guard watchedPin >= 0 else { return }
                     let high: Bool
                     switch state {
@@ -86,7 +98,7 @@ public final class Pico: Microcontroller {
                     case _ where self.chip.gpio[gpio].functionSelect == RPGPIOPin.functionI2C: high = true
                     default: return
                     }
-                    let cycle = Int((self.chip.clock.nanos - self.runStart) / RP2040.cycleNanos)
+                    let cycle = Int((clock._withUnsafeGuaranteedRef { $0.nanos } - self.runStart) / RP2040.cycleNanos)
                     let event = PinEvent(cycle: cycle, pin: watchedPin, high: high)
                     self.events.append(event)
                     self.onEvent?(event)
@@ -97,6 +109,12 @@ public final class Pico: Microcontroller {
             levels[24] = true
             chip.adc.channelValues[3] = 2068
             chip.adc.channelValues[4] = 876
+        }
+
+        deinit {
+            values.deinitialize(count: 30)
+            values.deallocate()
+            watched.deallocate()
         }
     }
 
@@ -186,9 +204,9 @@ public final class Pico: Microcontroller {
     }
 
     public var watchedPins: [Int] {
-        get { system.watched.filter { $0 >= 0 } }
+        get { (0..<30).map { system.watched[$0] }.filter { $0 >= 0 } }
         set {
-            system.watched = [Int](repeating: -1, count: 30)
+            system.watched.update(repeating: -1, count: 30)
             for pin in newValue where pin >= 0 && pin < Pico.gpioOfPin.count { system.watched[Pico.gpioOfPin[pin]] = pin }
         }
     }
