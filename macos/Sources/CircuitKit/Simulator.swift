@@ -3614,6 +3614,13 @@ public final class Simulator {
         return nvt * log(new / nvt)
     }
 
+    /// A junction's step, for the trace, where limiting changed it: from where it was linearised, to where Newton-Raphson
+    /// put it and where the limiting took it
+    private func traceLimit(_ i: Int, _ junction: String, from old: Double, _ raw: Double, to limited: Double) {
+        guard let trace, raw != limited else { return }
+        trace("      " + describePart(i) + " " + junction + String(format: " from %.4g: to %.4g, limited to %.4g", old, raw, limited))
+    }
+
     /// A field-effect transistor's gate voltage limited as SPICE limits it (DEVfetlim): steps that would carry it far
     /// past the threshold `vto` in one iteration are cut back
     private func limitFET(_ new: Double, old: Double, vto: Double) -> Double {
@@ -3787,8 +3794,13 @@ public final class Simulator {
         let p: Double = kinds[i] == .npn ? 1 : -1
         let n = Self.bipolarNodes({ nodes[$0] }, g)
         // in the transistor's own polarity
-        let vbe = limitJunction(p * (voltage(n.bp) - voltage(n.ep)), old: limitedVoltage[i], nvt: vt, critical: g.critical)
-        let vbc = limitJunction(p * (voltage(n.bp) - voltage(n.cp)), old: limitedVoltage2[i], nvt: vt, critical: g.critical)
+        let rawBE = p * (voltage(n.bp) - voltage(n.ep)), rawBC = p * (voltage(n.bp) - voltage(n.cp))
+        let vbe = limitJunction(rawBE, old: limitedVoltage[i], nvt: vt, critical: g.critical)
+        let vbc = limitJunction(rawBC, old: limitedVoltage2[i], nvt: vt, critical: g.critical)
+        if trace != nil {
+            traceLimit(i, "base-emitter", from: limitedVoltage[i], rawBE, to: vbe)
+            traceLimit(i, "base-collector", from: limitedVoltage2[i], rawBC, to: vbc)
+        }
         limitedVoltage[i] = vbe
         limitedVoltage2[i] = vbc
         let vbx = p * (voltage(n.b) - voltage(n.cp))
@@ -4540,9 +4552,11 @@ public final class Simulator {
     private func stampDiode(_ i: Int, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
         let d = diodes[i]
         let anode = d.hasSeriesNode ? nodes[2] : nodes[0], cathode = nodes[1]
-        let vd = d.limit(voltage(anode) - voltage(cathode), old: limitedVoltage[i]) {
+        let raw = voltage(anode) - voltage(cathode)
+        let vd = d.limit(raw, old: limitedVoltage[i]) {
             limitJunction($0, old: $1, nvt: $2, critical: $3)
         }
+        if trace != nil { traceLimit(i, "junction", from: limitedVoltage[i], raw, to: vd) }
         limitedVoltage[i] = vd
         let charged = d.hasCharges && !linearising
         // bypass, as for a behavioural source (and as SPICE bypasses a device): a junction within a billionth of the
@@ -4799,7 +4813,9 @@ public final class Simulator {
 
             case .vactrol:
                 // the LED, like a diode, and the LDR, a resistance set by the light so far
-                let vd = limitJunction(voltage(nodes[0]) - voltage(nodes[1]), old: limitedVoltage[i], nvt: c.nvt, critical: c.critical)
+                let raw = voltage(nodes[0]) - voltage(nodes[1])
+                let vd = limitJunction(raw, old: limitedVoltage[i], nvt: c.nvt, critical: c.critical)
+                if trace != nil { traceLimit(i, "LED", from: limitedVoltage[i], raw, to: vd) }
                 limitedVoltage[i] = vd
                 var (id, gd) = diodeCurrent(vd, saturation: c.saturation, nvt: c.nvt)
                 id += junctionConductance * vd
