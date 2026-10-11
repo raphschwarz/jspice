@@ -210,12 +210,6 @@ final class PicoTests: XCTestCase {
         try assertSameRuns { RP2040.stretchesPastRegisters = $0 }
     }
 
-    /// Flash decoded once leaves the Pico where decoding every instruction as it runs would
-    func testFlashDecodedOnceLeavesThePicoWhereDecodingEachWould() throws {
-        defer { CortexM0.decodesFlashOnce = true }
-        try assertSameRuns { CortexM0.decodesFlashOnce = $0 }
-    }
-
     /// PIO delay loops' turns taken directly, where they only count down, leave the Pico where stepping each would
     func testQuietPIOTurnsLeaveThePicoWhereSteppingEachWould() throws {
         defer { RPPIOMachine.takesQuietTurns = true }

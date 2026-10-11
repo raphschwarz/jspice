@@ -98,33 +98,6 @@ final class CortexM0 {
     deinit {
         registers.deallocate()
         loopRegisters.deallocate()
-        free(flashOps)
-    }
-
-    /// The kind each halfword of flash decodes to, plus 1 (0: not decoded yet). Code in flash, which only a write
-    /// through the bus changes (forgetting that word's kinds), is decoded once: an instruction's kind is then one load
-    /// from its address, on the way to the jump to it, rather than two (its halfword, then the decoding table).
-    private var flashOps = CortexM0.newFlashOps()
-    private static let flashOpsCount = RP2040.flashSize / 2
-    /// Whether flash is decoded once (off, every instruction decoded as it runs: for comparing)
-    static var decodesFlashOnce = true
-
-    private static func newFlashOps() -> UnsafeMutablePointer<UInt8> {
-        // (zeroed pages, handed out as first touched: a sketch's code touches few)
-        calloc(flashOpsCount, 1)!.assumingMemoryBound(to: UInt8.self)
-    }
-
-    /// Flash filled anew (a reset, a firmware loaded): every kind decoded is forgotten
-    func flashReplaced() {
-        free(flashOps)
-        flashOps = CortexM0.newFlashOps()
-    }
-
-    /// A word of flash written through the bus, at `offset` from its start: the kinds of its halfwords are forgotten
-    func flashWritten(at offset: Int) {
-        for slot in (offset >> 1)...((offset + 3) >> 1) where slot >= 0 && slot < CortexM0.flashOpsCount {
-            flashOps[slot] = 0
-        }
     }
 
     /// Runs instructions from the clock at `base` with the clock left where it is, as many as end short of `limit`
@@ -843,22 +816,9 @@ final class CortexM0 {
         // there: r(15), the calls)
         var pc = next &+ 2
         PC = pc
-        let op: Op
-        let inFlash = opcodePC &- RP2040.flashStart
-        if inFlash < CortexM0.flashSize && CortexM0.decodesFlashOnce {
-            // (decoded once: see `flashOps`)
-            let slot = Int(inFlash >> 1)
-            let known = flashOps[slot]
-            if known != 0 {
-                op = Op(rawValue: known &- 1).unsafelyUnwrapped
-            } else {
-                op = decode[opcode]
-                flashOps[slot] = op.rawValue &+ 1
-            }
-        } else {
-            op = decode[opcode]
-        }
-        switch op {
+        // (decoding each instruction as it is met, from its halfword, was faster than keeping flash's decoded in a table
+        // of their own, filled once: CI's comparison in the run, 13% for pico-knob)
+        switch decode[opcode] {
         case .adcs:
             let rm = (opcode >> 3) & 7, rdn = opcode & 7
             registers[rdn] = add(r(rm), r(rdn), carry: C ? 1 : 0)
