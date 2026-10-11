@@ -83,6 +83,36 @@ final class ConverterTests: XCTestCase {
         XCTAssertEqual(state.count, 0)
     }
 
+    func testMCP3208SendsTwelveBitsInTheSameFrame() {
+        // 0x06 (start, single-ended, D2 = 0), 0x40 (D1 D0: channel 1), 0x00: the code is the low four bits of the second
+        // reply byte and the third
+        var state = drive(.spiAdc, [1, 0])
+        var reply: [UInt32] = []
+        for byte: UInt32 in [0x06, 0x40, 0x00] {
+            var received: UInt32 = 0
+            for k in (0..<8).reversed() {
+                let din: UInt32 = byte >> UInt32(k) & 1 != 0 ? 4 : 0
+                state = Logic.next(.spiAdc, state, inputs: din, function: 12)
+                if state.phase >= 0.5 {
+                    XCTAssertEqual(state.shift & 0xF, 0b1001, "single-ended channel 1")
+                    state.latch = 0xA5C
+                    state.phase = 0
+                }
+                received = received << 1 | UInt32(state.count)
+                state = Logic.next(.spiAdc, state, inputs: din | 2, function: 12)
+                if state.phase >= 0.5 {
+                    XCTAssertEqual(state.shift & 0xF, 0b1001, "single-ended channel 1")
+                    state.latch = 0xA5C
+                    state.phase = 0
+                }
+            }
+            reply.append(received)
+        }
+        XCTAssertEqual((reply[1] & 0x0F) << 8 | reply[2], 0xA5C)
+        XCTAssertEqual(reply[1] & 0x10, 0, "the null bit")
+        XCTAssertEqual(ElementKind.spiAdc.model(named: "MCP3204")?.name, "MCP3208")
+    }
+
     /// I²C as a master puts it on SCL (bit 0) and SDA (bit 1), A0 (bit 2) low; returns the target's state and whether
     /// each byte was acknowledged
     private func i2c(_ bytes: [UInt32], from start: LogicState = LogicState(inputs: 3)) -> (LogicState, [Bool]) {

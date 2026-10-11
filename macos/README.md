@@ -72,7 +72,7 @@ A native macOS circuit simulator in the spirit of iCircuit and the Falstad apple
     - Analog selector: one switch of a CD4053 or 74HC4053 (two channels).
     - Shift register: one half of a CD4015, or a 74HC595 with its output latch and enable.
     - SPI DAC: MCP4921 (12 bits). Write 0x3000 plus the code with CS low and OUT goes to VREF × code / 4096. It shifts SDI in on SCK's rising edges and latches the word when CS rises, with LDAC low. The MCP4822 has two, A and B (bit 15), and its own 2.048 V reference.
-    - SPI ADC: MCP3008, eight channels of 10 bits. After a start bit, single-ended or differential and the channel, it samples the input and answers on DOUT, a null bit and then the code, bit by bit as the clock runs.
+    - SPI ADC: MCP3008, eight channels of 10 bits, and the MCP3208 (and the four-channel MCP3204) of 12 bits, as Mutable Instruments' modules read their CVs, the same frame with two more bits. After a start bit, single-ended or differential and the channel, it samples the input and answers on DOUT, a null bit and then the code, bit by bit as the clock runs.
     - I²C DAC: MCP4725 at 0x60 (0x61 with A0 high), in fast mode or with the write-DAC command, acknowledging each byte by holding SDA low.
     - I²S audio DAC: PCM5102, 16 to 32 bits a sample, reading each channel's word one BCK after LRCK changes, 2.1 V RMS at full scale about ground.
     - The ADC and the I²C DAC answer within a transfer: a microcontroller calls back as it logs each change to their pins, so they move on at once, and what they drive back (a DOUT bit, an acknowledge) is what the chip reads from then on.

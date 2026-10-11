@@ -271,8 +271,10 @@ enum Logic {
                     }
                 }
                 if fell(1) && state.bits >= 6 {
+                    // (ten bits, or twelve for the MCP3204 and MCP3208: `function` is the resolution)
+                    let resolution = function >= 12 ? 12 : 10
                     let index = state.bits - 6
-                    state.count = index >= 1 && index <= 10 && state.latch & (1 << UInt32(10 - index)) != 0 ? 1 : 0
+                    state.count = index >= 1 && index <= resolution && state.latch & (1 << UInt32(resolution - index)) != 0 ? 1 : 0
                 }
             }
         case .i2cDac:

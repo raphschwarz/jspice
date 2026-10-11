@@ -3603,6 +3603,8 @@ public final class Simulator {
             c.onConductance = 1 / max(p("onResistance"), 1e-3)
             c.value = Self.choice(p("function"), 0...Double(Logic.gateFunctions.count - 1))
             if element.kind == .shiftRegister { c.value = Self.choice(p("type"), 0...1) }
+            // an SPI ADC's bits
+            if element.kind == .spiAdc { c.value = Self.choice(p("resolution"), 0...1) >= 1 ? 12 : 10 }
             c.frequency = max(p("fMin"), 0)
             c.high = max(p("fMax"), c.frequency)
         case .effectsProcessor:
@@ -5450,8 +5452,9 @@ public final class Simulator {
         let plus = voltage(nodes[5 + channel])
         let minus = configuration & 0x8 != 0 ? 0 : voltage(nodes[5 + (channel ^ 1)])
         guard reference > 1e-6 else { return 0 }
-        let code = ((plus - minus) / reference * 1024).rounded(.down)
-        return UInt32(min(max(code, 0), 1023))
+        let levels = constants[i].value >= 12 ? 4096.0 : 1024.0
+        let code = ((plus - minus) / reference * levels).rounded(.down)
+        return UInt32(min(max(code, 0), levels - 1))
     }
 
     // MARK: - After each step

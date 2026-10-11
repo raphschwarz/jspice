@@ -334,7 +334,8 @@ public enum Breadboard {
                            supplies: [(1, "VDD", .volts(max(p("supply"), 2.7))), (7, "VSS", .ground)],
                            labels: [1: "VDD", 2: "CS", 3: "SCK", 4: "SDI", 5: "LDAC", 6: "VOUT B", 7: "VSS", 8: "VOUT A"])
         case .spiAdc:
-            return Package(title: "MCP3008", pins: 16,
+            // (the MCP3208 has the same pins)
+            return Package(title: model == "MCP3208" ? "MCP3208" : "MCP3008", pins: 16,
                            units: [(0...7).reduce(into: ["cs": 10, "din": 11, "dout": 12, "clk": 13, "vref": 15]) { $0["ch\($1)"] = $1 + 1 }],
                            supplies: [(9, "DGND", .ground), (14, "AGND", .ground), (16, "VDD", .volts(max(p("supply"), 2.7)))],
                            labels: [9: "DGND", 10: "CS", 11: "DIN", 12: "DOUT", 13: "CLK", 14: "AGND", 15: "VREF", 16: "VDD"])

@@ -778,12 +778,15 @@ extension ElementKind {
                 ParamSpec("fMax", "VCO frequency at the supply", unit: "Hz", default: 2000, range: 1...2_000_000),
             ] + Self.logicParams(upper: 0.52, lower: 0.48)
         case .dac, .dualDac, .spiAdc, .i2cDac:
-            return [
+            let converter = [
                 ParamSpec("supply", "Supply (VDD)", unit: "V", default: 5, range: 2.7...5.5, log: false),
                 ParamSpec("upper", "Input rising threshold", unit: "× supply", default: 0.7, range: 0.3...0.9, log: false),
                 ParamSpec("lower", "Input falling threshold", unit: "× supply", default: 0.2, range: 0.1...0.7, log: false),
                 ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 10, range: 0.1...1000),
             ]
+            // (the MCP3008's ten bits, or the MCP3204's and MCP3208's twelve, in the same frame)
+            return self == .spiAdc ? converter + [ParamSpec.choice("resolution", "Resolution", ["10 bits (MCP3008)", "12 bits (MCP3204, MCP3208)"])]
+                                   : converter
         case .i2sDac:
             return [
                 ParamSpec("supply", "Supply (DVDD)", unit: "V", default: 3.3, range: 1.6...3.6, log: false),
@@ -1385,7 +1388,9 @@ extension ElementKind {
         case .spiAdc:
             return [
                 PartModel(name: "MCP3008", summary: "Eight-channel 10-bit ADC on SPI: send 0x01, then 0x80 + channel × 16 (single-ended), then any byte; the code is the low 2 bits of the second reply and the third, CHn / VREF × 1024",
-                          values: ["upper": 0.7, "lower": 0.2, "outputResistance": 10]),
+                          values: ["upper": 0.7, "lower": 0.2, "outputResistance": 10, "resolution": 0]),
+                PartModel(name: "MCP3208", summary: "Eight-channel 12-bit ADC on SPI (the MCP3204 has four), as Mutable Instruments' Braids and Edges read their CVs: send 0x06 + channel / 4 (start, single-ended), then (channel % 4) × 64, then any byte; the code is the low 4 bits of the second reply and the third, CHn / VREF × 4096",
+                          values: ["upper": 0.7, "lower": 0.2, "outputResistance": 10, "resolution": 1], aliases: ["MCP3204"]),
             ]
         case .i2cDac:
             return [
