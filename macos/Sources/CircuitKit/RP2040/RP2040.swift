@@ -61,6 +61,7 @@ final class RP2040 {
     private let pioTable = UnsafeMutablePointer<Unmanaged<RPPIO>>.allocate(capacity: 2)
     private var sioRef: Unmanaged<RPSIO>?
     private var ppbRef: Unmanaged<RPPPB>?
+    private var pwmRef: Unmanaged<RPPWM>?
 
     init() {
         bootrom = .allocate(byteCount: RP2040.bootromSize, alignment: 4)
@@ -92,6 +93,7 @@ final class RP2040 {
         let newPwm = RPPWM(chip: self, name: "PWM_BASE")
         owned.append(newPwm)
         pwm = newPwm
+        pwmRef = .passUnretained(newPwm)
         let newAdc = RPADC(chip: self, name: "ADC")
         owned.append(newAdc)
         adc = newAdc
@@ -312,6 +314,18 @@ final class RP2040 {
     /// The pins PIO block `index` (0 or 1) drives, and their directions
     @inline(__always) func pioPinValues(_ index: Int) -> UInt32 { pioTable[index]._withUnsafeGuaranteedRef { $0.pinValues } }
     @inline(__always) func pioPinDirections(_ index: Int) -> UInt32 { pioTable[index]._withUnsafeGuaranteedRef { $0.pinDirections } }
+
+    /// Works with PIO block `index` (0 or 1) without counting a reference to it
+    @inline(__always) func withPIO<Result>(_ index: Int, _ body: (RPPIO) -> Result) -> Result {
+        pioTable[index]._withUnsafeGuaranteedRef(body)
+    }
+
+    /// The pins SIO and PWM drive, and their directions, read without counting references (a pin looks at them at
+    /// every change)
+    @inline(__always) var sioPinValues: UInt32 { sioRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.gpioValue } }
+    @inline(__always) var sioPinDirections: UInt32 { sioRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.gpioOutputEnable } }
+    @inline(__always) var pwmPinValues: UInt32 { pwmRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.gpioValue } }
+    @inline(__always) var pwmPinDirections: UInt32 { pwmRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.gpioDirection } }
 
     func setInterrupt(_ irq: Int, _ value: Bool) { core.setInterrupt(irq, value) }
 

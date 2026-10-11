@@ -5,6 +5,11 @@ enum RPPinState: Int {
     case low, high, input, inputPullUp, inputPullDown, inputBusKeeper
 }
 
+/// Hears a GPIO pin's changes (see `RPGPIOPin.listener`)
+class RPPinListener {
+    func pinChanged(_ pin: RPGPIOPin, _ state: RPPinState) {}
+}
+
 /// A GPIO pin: its function select and overrides, its pad, its interrupt state, and the level the circuit gives it
 final class RPGPIOPin {
     static let functionSPI: UInt32 = 1, functionI2C: UInt32 = 3
@@ -24,11 +29,22 @@ final class RPGPIOPin {
     var irqStatus: UInt32 = 0
     /// Called when the pin's state changes
     var onChange: ((RPPinState) -> Void)?
+    /// Told of the pin's changes in place of `onChange`, without counting a reference to it (calling a stored closure
+    /// retains and releases what it captures: at every change, millions of them a second where PIO clocks a DAC). What
+    /// listens must outlive the pin.
+    var listener: Unmanaged<RPPinListener>?
+    /// The chip again, reached without counting (at every change)
+    private let chipRef: Unmanaged<RP2040>
 
     init(chip: RP2040, index: Int, qspi: Bool = false) {
         self.chip = chip
+        chipRef = .passUnretained(chip)
         self.index = index
         self.qspi = qspi
+    }
+
+    @inline(__always) private func onChip<Result>(_ body: (RP2040) -> Result) -> Result {
+        chipRef._withUnsafeGuaranteedRef(body)
     }
 
     /// Which SPI or I²C instance a GPIO goes to, and as which of its signals
@@ -61,10 +77,10 @@ final class RPGPIOPin {
             // open drain: driven only to pull the line low
             let (instance, role) = RPGPIOPin.peripheral(RPGPIOPin.functionI2C, index)
             return chip.i2c[instance].pullsLow(role: role)
-        case RPGPIOPin.functionPWM: return chip.pwm.gpioDirection & bit != 0
-        case RPGPIOPin.functionSIO: return chip.sio.gpioOutputEnable & bit != 0
-        case RPGPIOPin.functionPIO0: return chip.pioPinDirections(0) & bit != 0
-        case RPGPIOPin.functionPIO1: return chip.pioPinDirections(1) & bit != 0
+        case RPGPIOPin.functionPWM: return onChip { $0.pwmPinDirections } & bit != 0
+        case RPGPIOPin.functionSIO: return onChip { $0.sioPinDirections } & bit != 0
+        case RPGPIOPin.functionPIO0: return onChip { $0.pioPinDirections(0) } & bit != 0
+        case RPGPIOPin.functionPIO1: return onChip { $0.pioPinDirections(1) } & bit != 0
         default: return false
         }
     }
@@ -75,10 +91,10 @@ final class RPGPIOPin {
         case RPGPIOPin.functionSPI:
             let (instance, role) = RPGPIOPin.peripheral(RPGPIOPin.functionSPI, index)
             return chip.spi[instance].level(role: role)
-        case RPGPIOPin.functionPWM: return chip.pwm.gpioValue & bit != 0
-        case RPGPIOPin.functionSIO: return chip.sio.gpioValue & bit != 0
-        case RPGPIOPin.functionPIO0: return chip.pioPinValues(0) & bit != 0
-        case RPGPIOPin.functionPIO1: return chip.pioPinValues(1) & bit != 0
+        case RPGPIOPin.functionPWM: return onChip { $0.pwmPinValues } & bit != 0
+        case RPGPIOPin.functionSIO: return onChip { $0.sioPinValues } & bit != 0
+        case RPGPIOPin.functionPIO0: return onChip { $0.pioPinValues(0) } & bit != 0
+        case RPGPIOPin.functionPIO1: return onChip { $0.pioPinValues(1) } & bit != 0
         default: return false
         }
     }
@@ -117,12 +133,10 @@ final class RPGPIOPin {
         }
         if irqValue != previous { chip.updateIOInterrupt() }
         if functionSelect == RPGPIOPin.functionPWM { chip.pwm.gpioOnInput(index) }
-        for pio in chip.pio {
-            for machine in pio.machines where machine.enabled && machine.waiting && machine.waitType == .pin
-                && machine.waitIndex == index {
-                machine.checkWait()
-                pio.nextDue = 0
-            }
+        let index = self.index
+        onChip { chip in
+            chip.withPIO(0) { $0.inputChanged(gpio: index) }
+            chip.withPIO(1) { $0.inputChanged(gpio: index) }
         }
     }
 
@@ -130,7 +144,11 @@ final class RPGPIOPin {
         let current = value
         if current != lastValue {
             lastValue = current
-            onChange?(current)
+            if let listener {
+                listener._withUnsafeGuaranteedRef { $0.pinChanged(self, current) }
+            } else {
+                onChange?(current)
+            }
         }
     }
 

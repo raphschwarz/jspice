@@ -771,6 +771,17 @@ final class RPPIO: RPPeripheral {
         }
     }
 
+    /// GPIO `index`'s input changed: the machines waiting on it look again
+    func inputChanged(gpio index: Int) {
+        for machineRef in machineRefs {
+            machineRef._withUnsafeGuaranteedRef { machine in
+                guard machine.enabled && machine.waiting && machine.waitType == .pin && machine.waitIndex == index else { return }
+                machine.checkWait()
+                nextDue = 0
+            }
+        }
+    }
+
     /// Runs the state machines up to `now` (nanoseconds)
     func run(until now: Double) {
         // (a machine woken during the run, by another's IRQ, sets it back to 0)

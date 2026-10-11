@@ -45,8 +45,8 @@ public final class Pico: Microcontroller {
     }
 
     /// The running chip and what goes with it. The sound thread's Pico and the window's share one (see `adopt`).
-    private final class System {
-        let chip = RP2040()
+    private final class System: RPPinListener {
+        let chip: RP2040
         let cdc: RPUSBCDC
         var outbox: [UInt8] = []
         var levels = [Bool](repeating: false, count: 30)
@@ -69,45 +69,51 @@ public final class Pico: Microcontroller {
         var events: [PinEvent] = []
         /// The events last taken (see `takePinEvents`)
         var takenEvents: [PinEvent] = []
-        var onEvent: ((PinEvent) -> Void)?
+        var onEvent: ((PinEvent) -> Void)? {
+            didSet { forwardsEvents = onEvent != nil }
+        }
+        /// (looked at first: an absent closure is still retained and released when it is read)
+        private var forwardsEvents = false
         var runStart = 0.0
+        private let clock: Unmanaged<RPClock>
 
         init(firmware: [UInt8]) {
+            let chip = RP2040()
+            self.chip = chip
             cdc = RPUSBCDC(usb: chip.usbCtrl)
+            clock = .passUnretained(chip.clock)
+            super.init()
             chip.loadFlash(firmware)
             // as rp2040js's demos do: straight into the flash image's boot stage 2, which sets up XIP and jumps on
             chip.core.PC = RP2040.flashStart
             cdc.onSerialData = { [unowned self] bytes in self.outbox += bytes }
-            let clock = Unmanaged.passUnretained(chip.clock)
-            let (values, watched) = (self.values, self.watched)
-            for pin in chip.gpio {
-                let gpio = pin.index
-                // (the pins are the chip's, which is this system's: they cannot outlive it, and a counted reference
-                // would cost at every change, millions of them a second where PIO clocks a DAC)
-                pin.onChange = { [unowned(unsafe) self] state in
-                    self.changedGPIOs |= 1 << UInt32(gpio)
-                    values[gpio] = state
-                    let watchedPin = watched[gpio]
-                    guard watchedPin >= 0 else { return }
-                    let high: Bool
-                    switch state {
-                    case .high: high = true
-                    case .low: high = false
-                    // an I²C line let go: the bus is pulled up
-                    case _ where self.chip.gpio[gpio].functionSelect == RPGPIOPin.functionI2C: high = true
-                    default: return
-                    }
-                    let cycle = Int((clock._withUnsafeGuaranteedRef { $0.nanos } - self.runStart) / RP2040.cycleNanos)
-                    let event = PinEvent(cycle: cycle, pin: watchedPin, high: high)
-                    self.events.append(event)
-                    self.onEvent?(event)
-                }
-            }
+            // (the pins are the chip's, which is this system's: they cannot outlive it)
+            for pin in chip.gpio { pin.listener = .passUnretained(self) }
             // VBUS present (GP24), and the ADC's own inputs: VSYS/3 (5 V from USB) and the temperature sensor at 27 °C
             chip.gpio[24].setInputValue(true)
             levels[24] = true
             chip.adc.channelValues[3] = 2068
             chip.adc.channelValues[4] = 876
+        }
+
+        override func pinChanged(_ pin: RPGPIOPin, _ state: RPPinState) {
+            let gpio = pin.index
+            changedGPIOs |= 1 << UInt32(gpio)
+            values[gpio] = state
+            let watchedPin = watched[gpio]
+            guard watchedPin >= 0 else { return }
+            let high: Bool
+            switch state {
+            case .high: high = true
+            case .low: high = false
+            // an I²C line let go: the bus is pulled up
+            case _ where pin.functionSelect == RPGPIOPin.functionI2C: high = true
+            default: return
+            }
+            let cycle = Int((clock._withUnsafeGuaranteedRef { $0.nanos } - runStart) / RP2040.cycleNanos)
+            let event = PinEvent(cycle: cycle, pin: watchedPin, high: high)
+            events.append(event)
+            if forwardsEvents { onEvent?(event) }
         }
 
         deinit {
