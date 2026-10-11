@@ -39,6 +39,11 @@ public final class Pico: Microcontroller {
         get { RP2040.instructionCounts }
         set { RP2040.instructionCounts = newValue }
     }
+    /// The times the core looked for an interrupt to take (for the benchmark's breakdown)
+    public static var interruptChecks: Int {
+        get { CortexM0.interruptChecks }
+        set { CortexM0.interruptChecks = newValue }
+    }
     /// The name of each kind counted
     public static func instructionName(_ kind: Int) -> String {
         CortexM0.Op(rawValue: UInt8(kind)).map { "\($0)" } ?? "?"

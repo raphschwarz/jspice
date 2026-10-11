@@ -404,7 +404,11 @@ final class CortexM0 {
     }
 
     @discardableResult
+    /// The times `checkForInterrupts` ran (for the benchmark: it should be rare, once after each change it looks for)
+    static var interruptChecks = 0
+
     func checkForInterrupts() -> Bool {
+        CortexM0.interruptChecks &+= 1
         let current = waiting
             ? (PM ? exceptionPriority(Int(IPSR)) : CortexM0.lowestPriority)
             : min(exceptionPriority(Int(IPSR)), PM ? 0 : CortexM0.lowestPriority)

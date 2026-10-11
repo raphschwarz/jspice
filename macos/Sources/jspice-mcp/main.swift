@@ -269,6 +269,7 @@ func benchmarkInstructions(seconds: Double, ids: [String]) {
         Pico.instructionCounts = [Int](repeating: 0, count: 256)
         AVR.countsInstructions = true
         Pico.countsInstructions = true
+        Pico.interruptChecks = 0
         let counted = Simulator(circuit: example.circuit, timeStep: 1 / rate)
         counted.errorControl = false
         for _ in 0..<steps where !counted.isFailed { counted.step() }
@@ -280,7 +281,8 @@ func benchmarkInstructions(seconds: Double, ids: [String]) {
             guard total > 0 else { continue }
             let perStep = Double(total) / Double(steps)
             print("\(id) (\(chip)): " + String(format: "%.2f µs/step, %.0f instructions/step, %.2f ns each", nanosPerStep / 1000,
-                                                    perStep, nanosPerStep / perStep))
+                                                    perStep, nanosPerStep / perStep)
+                  + (chip == "RP2040" ? String(format: ", %.1f looks for an interrupt a step", Double(Pico.interruptChecks) / Double(steps)) : ""))
             let most = counts.enumerated().filter { $0.element > 0 }.sorted { $0.element > $1.element }.prefix(16)
             print("    " + most.map { name($0.offset) + String(format: " %.1f%%", 100 * Double($0.element) / Double(total)) }
                 .joined(separator: ", "))
