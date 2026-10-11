@@ -109,6 +109,17 @@ jobs:
           # its transistors' stamps, instruction by instruction: where their own samples fall
           python3 scripts/hot-instructions.py build/profile-ring.txt Simulator.stampBipolar 10 build/hot-ring.lldb || true
           lldb --batch -s build/hot-ring.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -130 || true
+          # and for the frequency shifter (op-amps' Hilbert networks and multipliers) and the LM3915 level meter, among
+          # the slowest of the rest
+          for id in frequency-shifter bargraph; do
+            ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 $id > /dev/null &
+            sleep 1
+            sample $! 3 -file build/profile-$id.txt > /dev/null 2>&1 || true
+            kill $! 2>/dev/null || true
+            echo "== $id"
+            sed -n '/Sort by top of stack/,$p' build/profile-$id.txt | head -30
+            python3 scripts/profile-callers.py build/profile-$id.txt 25 || true
+          done
           # and for an LED and its resistor, the smallest nonlinear circuit: what every step and iteration costs whatever
           # the circuit
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 led > /dev/null &
