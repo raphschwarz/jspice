@@ -156,6 +156,17 @@ jobs:
           sed -n '/Sort by top of stack/,$p' build/profile-maker.txt | head -70
           # with what each function costs with all it calls, and who calls the runtime's copies and checks
           python3 scripts/profile-callers.py build/profile-maker.txt 45 || true
+      - name: What Swift's bounds and overflow checks cost (a build without them, for comparing; not shipped)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          swift build -c release --product jspice-mcp --scratch-path .build-unchecked -Xswiftc -Ounchecked 2>&1 | tail -3
+          # each example with the shipped build and then without the checks, back to back
+          for id in mc1496-ring voice opto-compressor guitar-fuzz bargraph frequency-shifter arduino-fade attiny85-dimmer pico-knob pico-pcm5102; do
+            ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25 $id | sed 's/^/checked    /'
+            .build-unchecked/release/jspice-mcp --benchmark 0.25 $id | sed 's/^/unchecked  /'
+          done
       - name: Chip support (installs Arduino's AVR toolchain as the app does, compiles a sketch)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 10

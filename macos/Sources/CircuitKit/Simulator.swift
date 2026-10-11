@@ -2645,7 +2645,9 @@ public final class Simulator {
     // MARK: - Equations
 
     @inline(__always) private func voltage(_ node: Int) -> Double {
-        node == 0 ? 0 : x[node - 1]
+        // (without the subscript's bounds check, which the optimiser leaves a call in the larger stamps: a node is
+        // within the unknowns by construction)
+        node == 0 ? 0 : x.withUnsafeBufferPointer { $0[node - 1] }
     }
 
     /// Conductance g between nodes a and b
@@ -3804,7 +3806,7 @@ public final class Simulator {
     }
 
     private func stampBipolar(_ i: Int, _ g: GummelPoon, _ nodes: NodeList, _ matrix: Entries, _ rhs: Entries, _ m: Int) {
-        let p: Double = kinds[i] == .npn ? 1 : -1
+        let p: Double = kinds.withUnsafeBufferPointer { $0[i] } == .npn ? 1 : -1
         let n = Self.bipolarNodes({ nodes[$0] }, g)
         // in the transistor's own polarity
         let rawBE = p * (voltage(n.bp) - voltage(n.ep)), rawBC = p * (voltage(n.bp) - voltage(n.cp))
@@ -3844,13 +3846,14 @@ public final class Simulator {
             // (the step's coefficients and the three slots' histories read once, rather than through the simulator
             // at each of the three)
             let (a0, a1, a2, h) = (self.a0, self.a1, self.a2, self.h)
-            let (now, previous) = (junctionCharge, junctionChargePrevious)
-            @inline(__always) func flow(_ slot: Int, _ charge: Double) -> Double {
-                (a0 * charge + a1 * now[k + slot] + a2 * previous[k + slot]) / h
+            let now = junctionCharge.withUnsafeBufferPointer { ($0[k], $0[k + 1], $0[k + 2]) }
+            let previous = junctionChargePrevious.withUnsafeBufferPointer { ($0[k], $0[k + 1], $0[k + 2]) }
+            @inline(__always) func flow(_ charge: Double, _ now: Double, _ previous: Double) -> Double {
+                (a0 * charge + a1 * now + a2 * previous) / h
             }
             let s = a0 / h
             // base-emitter: b' to e', moving with vbc too
-            let be = flow(0, q.qbe)
+            let be = flow(q.qbe, now.0, previous.0)
             bp.i += be
             bp.be += s * q.capbe
             bp.bc += s * q.dqbeVbc
@@ -3858,13 +3861,13 @@ public final class Simulator {
             ep.be -= s * q.capbe
             ep.bc -= s * q.dqbeVbc
             // base-collector at the internal base: b' to c'
-            let bc = flow(1, q.qbc)
+            let bc = flow(q.qbc, now.1, previous.1)
             bp.i += bc
             bp.bc += s * q.capbc
             cp.i -= bc
             cp.bc -= s * q.capbc
             // and at the external base: b to c'
-            let xc = flow(2, q.qbx)
+            let xc = flow(q.qbx, now.2, previous.2)
             bx.i += xc
             bx.bx += s * q.capbx
             cp.i -= xc
@@ -3915,7 +3918,8 @@ public final class Simulator {
     /// Whether a transistor's slots (see `bipolarSlots`) serve the present plan, working them out from the slot map if
     /// they are for another: those it stamps, in `stampBipolar`'s order
     @inline(__always) private func bipolarSlotsFit(_ i: Int, _ g: GummelPoon, _ n: BipolarNodes, _ m: Int) -> Bool {
-        bipolarSlotsSerial[i] == planSerial ? bipolarSlotsFit[i] : findBipolarSlots(i, g, n, m)
+        bipolarSlotsSerial.withUnsafeBufferPointer { $0[i] } == planSerial
+            ? bipolarSlotsFit.withUnsafeBufferPointer { $0[i] } : findBipolarSlots(i, g, n, m)
     }
 
     /// `bipolarSlotsFit` for a transistor whose slots are for another plan: worked out afresh
