@@ -583,6 +583,10 @@ public final class AVR: Microcontroller {
 
     /// Whether runs skip busy-waits so (for comparing)
     public static var skipsBusyWaits = true
+    /// Whether a timer takes the ticks that only count all at once, the chip looking at it next at the tick that does
+    /// more (a compare match, TOP, BOTTOM or an overflow), and brought up to date when the program reads its count (off:
+    /// looked at at every tick of its prescaler, for comparing)
+    public static var skipsQuietTicks = true
     /// Whether runs count the instructions they run, by kind, in `instructionCounts` (for the benchmark's breakdown)
     public static var countsInstructions = false
     public static var instructionCounts = [Int](repeating: 0, count: 256)
@@ -673,16 +677,27 @@ public final class AVR: Microcontroller {
         nextService = 0
     }
 
+    /// The timers brought up to now, for a read of a counter (between their events they count by themselves; see
+    /// `skipsQuietTicks`)
+    private func timersUpToDate() {
+        let elapsed = cycles - servicedAt
+        guard elapsed > 0, AVR.skipsQuietTicks else { return }
+        for timer in timerRefs {
+            timer._withUnsafeGuaranteedRef { if $0.prescale != 0 { $0.advance(elapsed) } }
+        }
+        servicedAt = cycles
+    }
+
     private func service() {
         let elapsed = cycles - servicedAt
         servicedAt = cycles
-        // (nothing below changes a timer's prescaler, so when each ticks next is known now)
+        // (nothing below changes a timer's prescaler, so when each next does more than count is known now)
         var next = Int.max
         for timer in timerRefs {
             timer._withUnsafeGuaranteedRef { timer in
                 guard timer.prescale != 0 else { return }
                 if elapsed > 0 { timer.advance(elapsed) }
-                next = min(next, cycles + timer.prescale - timer.accumulator)
+                next = min(next, cycles + (timer.quietTicks().ticks + 1) * timer.prescale - timer.accumulator)
             }
         }
         for usart in usartRefs {
@@ -815,10 +830,13 @@ public final class AVR: Microcontroller {
         if address < 0x20 || address >= ioEnd { return address < dataSize ? data[address] : 0 }
         switch handlers[address] {
         case .pin(let port): return pinRegister(port)
-        case .count8(let timer): return UInt8(truncatingIfNeeded: timer.count)
+        case .count8(let timer):
+            timersUpToDate()
+            return UInt8(truncatingIfNeeded: timer.count)
         case .compare8(let timer, let unit): return UInt8(truncatingIfNeeded: timer.ocrBuffer[unit])
         case .top(let timer): return UInt8(truncatingIfNeeded: timer.topC)
         case .count16Low(let timer):
+            timersUpToDate()
             timer.temp = UInt8(truncatingIfNeeded: timer.count >> 8)
             return UInt8(truncatingIfNeeded: timer.count)
         case .capture16Low(let timer):
@@ -2333,10 +2351,44 @@ final class AVRTimer {
 
     @inline(__always) func advance(_ cycles: Int) {
         accumulator += cycles
+        if accumulator >= prescale { catchUp() }
+    }
+
+    /// The ticks due: those that only count all at once, the others one by one
+    private func catchUp() {
         while accumulator >= prescale {
-            accumulator -= prescale
-            tick()
+            let (quiet, step) = quietTicks()
+            let ticks = min(quiet, accumulator / prescale)
+            if ticks > 0 {
+                count += step * ticks
+                accumulator -= ticks * prescale
+            } else {
+                accumulator -= prescale
+                tick()
+            }
         }
+    }
+
+    /// The ticks from now that would only count (up, step 1, or down, -1), before the one that does more: one from a
+    /// compare value, TOP (CTC and fast PWM) or MAX counting up, or in phase correct PWM one that reaches a compare
+    /// value, TOP or BOTTOM. None for the ATtiny85's timer 1 (each of its ticks taken by itself).
+    func quietTicks() -> (ticks: Int, step: Int) {
+        guard AVR.skipsQuietTicks, spec.kind != .tiny1 else { return (0, 1) }
+        let (top, kind, _) = mode()
+        if kind == .phase {
+            if !down {
+                var next = top - count
+                for unit in 0..<units where ocr[unit] > count { next = min(next, ocr[unit] - count) }
+                return (max(next - 1, 0), 1)
+            }
+            var next = count
+            for unit in 0..<units where ocr[unit] < count { next = min(next, count - ocr[unit]) }
+            return (max(next - 1, 0), -1)
+        }
+        var next = maximum - count
+        if (kind == .ctc || kind == .fast) && top >= count { next = min(next, top - count) }
+        for unit in 0..<units where ocr[unit] >= count { next = min(next, ocr[unit] - count) }
+        return (max(next, 0), 1)
     }
 }
 

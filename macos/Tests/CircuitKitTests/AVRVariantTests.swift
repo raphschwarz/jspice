@@ -168,6 +168,40 @@ final class AVRVariantTests: XCTestCase {
         }
     }
 
+    /// Timers that take the ticks which only count all at once, looked at only at their compare matches, TOP, BOTTOM
+    /// and overflows (and brought up to date when the program reads a counter, as micros() does), leave the chips where
+    /// ticking every prescaler period would: the same circuit, step for step, to the bit
+    func testTimersSkippingQuietTicksLeaveTheChipsWhereTickingWould() {
+        defer { AVR.skipsQuietTicks = true }
+        for id in ["arduino-fade", "arduino-blink", "arduino-melody", "attiny85-dimmer", "arduino-mega-bargraph",
+                   "arduino-mcp3008-mcp4725"] {
+            let circuit = Examples.example(id)!.circuit
+            var runs: [(voltages: [Double], chip: (pc: Int, cycles: Int, registers: [UInt8], serial: [UInt8]))] = []
+            for skipping in [false, true] {
+                AVR.skipsQuietTicks = skipping
+                let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
+                simulator.errorControl = false
+                let elements = simulator.circuit.elements
+                let chipIndex = elements.firstIndex { [.atmega328p, .atmega2560, .attiny85].contains($0.kind) }!
+                var voltages: [Double] = []
+                for _ in 0..<1_500 {
+                    simulator.step()
+                    for i in elements.indices where [.probe, .led, .speaker].contains(elements[i].kind) {
+                        voltages.append(simulator.voltageAcross(i))
+                    }
+                }
+                let avr = simulator.chip(chipIndex) as! AVR
+                runs.append((voltages, (avr.pc, avr.cycles, avr.registers, avr.serialOutput)))
+            }
+            XCTAssertEqual(runs[0].chip.pc, runs[1].chip.pc, id)
+            XCTAssertEqual(runs[0].chip.cycles, runs[1].chip.cycles, id)
+            XCTAssertEqual(runs[0].chip.registers, runs[1].chip.registers, id)
+            XCTAssertEqual(runs[0].chip.serial, runs[1].chip.serial, id)
+            XCTAssertEqual(runs[0].voltages.count, runs[1].voltages.count, id)
+            XCTAssertTrue(runs[0].voltages.elementsEqual(runs[1].voltages) { $0.bitPattern == $1.bitPattern }, id)
+        }
+    }
+
     func testEveryBoardsPinsAreDrawnOnTheirSides() {
         for board in Board.allCases {
             let element = Element(kind: board.kind, a: GridPoint(0, 0), b: GridPoint(0, board.length))

@@ -78,6 +78,7 @@ let switches: [String: (Bool) -> Void] = [
     "choose-predictor": { Simulator.choosesPredictor = $0 },
     "reuse-everywhere": { Simulator.reusesFactorsEverywhere = $0 },
     "decode-ahead": { AVR.decodesAhead = $0 },
+    "skip-quiet-ticks": { AVR.skipsQuietTicks = $0 },
     "keep-switched-matrices": { Simulator.keepsSwitchedMatrices = $0 },
 ]
 
