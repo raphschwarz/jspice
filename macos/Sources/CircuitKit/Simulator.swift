@@ -5727,27 +5727,48 @@ public final class Simulator {
     private func replayPinEvents() {
         stepPinEvents.removeAll(keepingCapacity: true)
         var sources = 0
+        // (one chip's events are in order already, and are replayed as they are: an I²S stream's are hundreds a step)
+        var first: (chip: Int, clock: Double, events: [PinEvent]) = (-1, 0, [])
         for i in chipIndices where i < chipWatches.count && (!chipWatches[i].isEmpty || !busWatches[i].isEmpty) {
             guard let chip = chips[i] else { continue }
             // (the bus devices had theirs as the chip ran)
             let taken = chip.takePinEvents()
             guard !chipWatches[i].isEmpty, !taken.isEmpty else { continue }
             sources += 1
+            if sources == 1 {
+                first = (i, chip.clock, taken)
+                continue
+            }
+            if sources == 2 {
+                for event in first.events {
+                    stepPinEvents.append((Double(event.cycle) / first.clock, stepPinEvents.count, first.chip, event))
+                }
+            }
             for event in taken {
                 stepPinEvents.append((Double(event.cycle) / chip.clock, stepPinEvents.count, i, event))
             }
         }
-        // (one chip's events are in order already)
-        if sources > 1 { stepPinEvents.sort { ($0.time, $0.order) < ($1.time, $1.order) } }
-        for (_, _, i, event) in stepPinEvents where event.pin >= 0 && event.pin < chipWatches[i].count {
-            for target in chipWatches[i][event.pin] {
-                let old = logicStates[target.element]
-                let mask = UInt32(1) << UInt32(target.bit)
-                let inputs = event.high ? old.inputs | mask : old.inputs & ~mask
-                guard inputs != old.inputs else { continue }
-                advanceLogic(target.element, old, inputs: inputs)
+        if sources == 1 {
+            let watches = chipWatches[first.chip]
+            for event in first.events where event.pin >= 0 && event.pin < watches.count {
+                for target in watches[event.pin] { replayPinEvent(target, high: event.high) }
             }
+            return
         }
+        guard sources > 1 else { return }
+        stepPinEvents.sort { ($0.time, $0.order) < ($1.time, $1.order) }
+        for (_, _, i, event) in stepPinEvents where event.pin >= 0 && event.pin < chipWatches[i].count {
+            for target in chipWatches[i][event.pin] { replayPinEvent(target, high: event.high) }
+        }
+    }
+
+    /// A chip's pin going high or low, into a logic part's input wired to it
+    @inline(__always) private func replayPinEvent(_ target: (element: Int, bit: Int), high: Bool) {
+        let old = logicStates[target.element]
+        let mask = UInt32(1) << UInt32(target.bit)
+        let inputs = high ? old.inputs | mask : old.inputs & ~mask
+        guard inputs != old.inputs else { return }
+        advanceLogic(target.element, old, inputs: inputs)
     }
 
     /// Whether two pin states need the same matrix: each pin an output, an input with pull-up or pull-down, or a bare input
