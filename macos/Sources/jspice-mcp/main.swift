@@ -74,6 +74,7 @@ let switches: [String: (Bool) -> Void] = [
     "rest-reuse": { Simulator.restsReuse = $0 },
     "retry-from-memory": { Simulator.retriesFromMemory = $0 },
     "memory-first": { Simulator.triesMemoryFirst = $0 },
+    "skip-known-cycles": { Simulator.skipsKnownCycles = $0 },
     "quadratic-predictor": { Simulator.predictsQuadratically = $0 },
     "rest-chords": { Simulator.restsChords = $0 },
     "choose-predictor": { Simulator.choosesPredictor = $0 },
@@ -429,7 +430,8 @@ func benchmarkMaker(_ part: String, seconds: Double, stages: Int = 1) throws {
           + "; \(simulator.limitedIterations) iterations limited, \(simulator.dampedIterations) damped, "
           + "\(simulator.convergenceFailures) convergence failures, \(simulator.substeps) substeps (\(simulator.rejectedSubsteps) rejected); "
           + "\(heavy) steps of more than 10 iterations, the most \(heaviest); \(simulator.decisionSolves) solves again for decisions "
-          + "that moved, \(simulator.chatteringSolves) left chattering, \(simulator.memoryRetries) started again from a solution "
+          + "that moved, \(simulator.chatteringSolves) left chattering (\(simulator.knownCycleSkips) at once, their flip known to go "
+          + "round in a cycle), \(simulator.memoryRetries) started again from a solution "
           + "before the decisions moved (\(simulator.memoryRetriesConverged) converged, \(simulator.memoryFirstRounds) of them at once); "
           + "\(simulator.bypassedEvaluations) behavioural sources' "
           + "evaluations bypassed (\(simulator.straightBypasses) on straight stretches); \(simulator.confirmedWithoutSolving) iterations confirmed without a solve; "

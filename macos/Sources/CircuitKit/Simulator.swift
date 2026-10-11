@@ -505,6 +505,16 @@ public final class Simulator {
     public static var triesMemoryFirst = true
     /// Rounds started from a remembered solution at once (counted in `memoryRetries` too)
     public private(set) var memoryFirstRounds = 0
+    /// Flips (see `flipSignature`) at a solve's first round whose rounds went round in a cycle back to that first
+    /// round's decisions, the times in a row they did: the crossover detector of a maker's model at the crossings, its
+    /// sign flipping, which turns off the stage, which flips it back. Once one has done so twice, its decisions stay
+    /// as the solve held them at once (the very outcome of the cycle: they switch at the next substep), but for one
+    /// time in eight, when the rounds are solved as before (a flip whose rounds settle is forgotten).
+    private var cyclingFlips: [[Int]: Int] = [:]
+    private var cyclingFlipsSeen = 0
+    public static var skipsKnownCycles = true
+    /// Solves whose decisions stayed at once for a flip known to go round in a cycle
+    public private(set) var knownCycleSkips = 0
     /// The limited voltages where a solve ended, for a round from there after one from memory did not converge
     private var endLimited = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
     /// The behavioural sources whose decisions are held
@@ -1637,6 +1647,7 @@ public final class Simulator {
                 Self.copy(x, into: &solvedRounds[kept])
                 kept += 1
             }
+            var firstFlip: [Int] = []
             while rounds < Self.decisionRounds && decisionsMoved() {
                 // (the round just solved, kept only now that another may follow)
                 keepRound()
@@ -1647,6 +1658,10 @@ public final class Simulator {
                 // two), its decisions as they were: they switch at the next substep, which starts from there.
                 if let k = cycleRound(kept) {
                     trace?("   the decisions go round in a cycle: back to those of round \(k)")
+                    if k == 0 && !firstFlip.isEmpty {
+                        if cyclingFlips.count >= 64 { cyclingFlips.removeAll() }
+                        cyclingFlips[firstFlip, default: 0] += 1
+                    }
                     Self.copy(heldRounds[k], into: &decisionX)
                     Self.copy(solvedRounds[k], into: &x)
                     cycled = true
@@ -1654,15 +1669,29 @@ public final class Simulator {
                     trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
                     break
                 }
+                // the flip into this round: the decisions moved from where they were held to where the solve ended
+                let flip = (Self.retriesFromMemory && Self.triesMemoryFirst) || Self.skipsKnownCycles
+                    ? flipSignature(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1], now: x) : []
+                if rounds == 0 {
+                    firstFlip = flip
+                    // one known to go round in a cycle back to these decisions: they stay (see `cyclingFlips`)
+                    if Self.skipsKnownCycles && !flip.isEmpty, let times = cyclingFlips[flip], times >= 2 {
+                        cyclingFlipsSeen &+= 1
+                        if cyclingFlipsSeen % 8 != 0 {
+                            trace?("   the decisions went round in a cycle back to these the last times: they stay")
+                            knownCycleSkips += 1
+                            cycled = true
+                            break
+                        }
+                    }
+                }
                 rounds += 1
                 decisionSolves += 1
                 Self.copy(x, into: &decisionX)
                 // a flip that did not converge from where the solve ended the last time, but did from memory, starts
                 // from memory at once (see `flipsFailingFromEnd`)
-                let flip = Self.retriesFromMemory && Self.triesMemoryFirst
-                    ? flipSignature(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1]) : []
                 var triedMemory = false
-                if !flip.isEmpty && flipsFailingFromEnd.contains(flip),
+                if Self.retriesFromMemory && Self.triesMemoryFirst && !flip.isEmpty && flipsFailingFromEnd.contains(flip),
                    let start = rememberedStart(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1]) {
                     triedMemory = true
                     memoryRetries += 1
@@ -1704,7 +1733,7 @@ public final class Simulator {
                         memoryRetryIterations += newtonIterations - retryStart
                         if converged {
                             memoryRetriesConverged += 1
-                            if !flip.isEmpty {
+                            if Self.triesMemoryFirst && !flip.isEmpty {
                                 if flipsFailingFromEnd.count >= 64 { flipsFailingFromEnd.removeAll() }
                                 flipsFailingFromEnd.insert(flip)
                             }
@@ -1717,6 +1746,10 @@ public final class Simulator {
             if converged && (cycled || rounds == Self.decisionRounds) {
                 chatteringSolves += 1
                 solveChattered = true
+            }
+            // a first flip whose rounds settled: not one that goes round in a cycle (any more)
+            if converged && !cycled && rounds > 0 && rounds < Self.decisionRounds && !firstFlip.isEmpty {
+                cyclingFlips[firstFlip] = nil
             }
         }
         if converged || isFailed || !hasNonlinear { return !isFailed }
@@ -4506,13 +4539,13 @@ public final class Simulator {
         return nil
     }
 
-    /// The sources whose decisions moved from `previous` to the present `decisionX` (compared at the solution `point`),
-    /// each with the sense its value moved in: what a flip is known by from one crossing to the next
-    private func flipSignature(previous: [Double], at point: [Double]) -> [Int] {
-        guard point.count == x.count, previous.count == x.count else { return [] }
+    /// The sources whose decisions moved from `previous` to `made` (compared at the solution `point`), each with the
+    /// sense its value moved in: what a flip is known by from one crossing to the next
+    private func flipSignature(previous: [Double], at point: [Double], now made: [Double]) -> [Int] {
+        guard point.count == x.count, previous.count == x.count, made.count == x.count else { return [] }
         var signature: [Int] = []
         for i in decidingIndices {
-            let before = decides(i, at: point, previous), now = decides(i, at: point, decisionX)
+            let before = decides(i, at: point, previous), now = decides(i, at: point, made)
             if before != now { signature.append(2 * i + (now > before ? 1 : 0)) }
         }
         return signature
