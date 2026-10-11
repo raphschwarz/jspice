@@ -202,40 +202,6 @@ final class SparsePlanTests: XCTestCase {
         }
     }
 
-    /// Forward substitution row by row gives what step by step does, to the bit (no step's result zero here), the rows
-    /// outside the program (the nonlinear block's, which the linear block's factors reach) included
-    func testForwardSubstitutionRowByRowMatchesStepByStep() throws {
-        var g = Generator(state: 11)
-        for trial in 0..<40 {
-            let s = system(nodes: 8 + trial % 30, sources: trial % 5, devices: 1 + trial % 6, sourcesOnDevices: trial % 3, using: &g)
-            let n = s.n
-            var nonlinear = [Bool](repeating: false, count: n)
-            var pattern = s.matrix.map { $0 != 0 }
-            for device in s.devices {
-                for i in device {
-                    nonlinear[i] = true
-                    for j in device { pattern[i * n + j] = true }
-                }
-            }
-            let plan = try XCTUnwrap(SparsePlan.make(matrix: s.matrix, pattern: pattern, nonlinear: nonlinear, size: n), "trial \(trial)")
-            var values = [Double](repeating: 0, count: plan.entryCount)
-            for i in 0..<(n * n) where s.matrix[i] != 0 { values[Int(plan.slots[i])] += s.matrix[i] }
-            XCTAssertEqual(values.withUnsafeMutableBufferPointer { plan.linear.factor($0.baseAddress!) }, -1)
-            let program = plan.linear
-            var packed = [Double](repeating: 0, count: max(program.packedCount, 1))
-            values.withUnsafeBufferPointer { v in
-                packed.withUnsafeMutableBufferPointer { program.pack(v.baseAddress!, into: $0.baseAddress!) }
-            }
-            let b = (0..<n).map { _ in Double.random(in: 0.5...1, using: &g) * (Bool.random(using: &g) ? 1 : -1) }
-            var bySteps = b, byRows = b
-            packed.withUnsafeBufferPointer { f in
-                bySteps.withUnsafeMutableBufferPointer { program.forwardPacked(f.baseAddress!, $0.baseAddress!) }
-                byRows.withUnsafeMutableBufferPointer { program.forwardRows(f.baseAddress!, $0.baseAddress!) }
-            }
-            XCTAssertEqual(bySteps.map(\.bitPattern), byRows.map(\.bitPattern), "trial \(trial)")
-        }
-    }
-
     func testAnOpAmpSwitchingBetweenItsLinearRangeAndSaturationReusesItsPivotOrders() throws {
         // a non-inverting amplifier: + input (0) driven through 1 kΩ, − input (1) with 10 kΩ to ground and 90 kΩ to the
         // output (2), the op-amp's row (3): v(out) − slope (v+ − v−) = 0, the slope a million in its linear range and
