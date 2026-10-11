@@ -538,7 +538,12 @@ final class RPPIOMachine {
 final class RPPIO: RPPeripheral {
     let index: Int
     private let firstIRQ: Int
-    var instructions = [UInt32](repeating: 0, count: 32)
+    /// (in storage of its own: a machine reads its instruction from it at every step, without counting a reference)
+    let instructions: UnsafeMutablePointer<UInt32> = {
+        let pointer = UnsafeMutablePointer<UInt32>.allocate(capacity: 32)
+        pointer.initialize(repeating: 0, count: 32)
+        return pointer
+    }()
     private(set) var machines: [RPPIOMachine] = []
     /// The same, held by `machines`, and the chip, reached without counting: the block runs at each of its
     /// instructions (some thirty times a step where it clocks an I2S DAC)
@@ -571,7 +576,10 @@ final class RPPIO: RPPeripheral {
         chipRef = .passUnretained(chip)
     }
 
-    deinit { machineRefs.deallocate() }
+    deinit {
+        machineRefs.deallocate()
+        instructions.deallocate()
+    }
 
     /// Whether any state machine runs
     private(set) var running = false

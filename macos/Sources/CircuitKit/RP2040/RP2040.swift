@@ -353,12 +353,16 @@ final class RP2040 {
             clock.tick(Double(cycles) * RP2040.cycleNanos)
         }
         if pioRunning {
-            for block in pio where block.running { block.run(until: clock.nanos) }
-            pioRanAt = clock.nanos
+            let now = clock.nanos
+            pioTable[0]._withUnsafeGuaranteedRef { if $0.running { $0.run(until: now) } }
+            pioTable[1]._withUnsafeGuaranteedRef { if $0.running { $0.run(until: now) } }
+            pioRanAt = now
         }
     }
 
-    private var pioRunning: Bool { pio[0].running || pio[1].running }
+    private var pioRunning: Bool {
+        pioTable[0]._withUnsafeGuaranteedRef { $0.running } || pioTable[1]._withUnsafeGuaranteedRef { $0.running }
+    }
 
     /// Whether runs skip busy-waits (for comparing): see `run(until:)`
     static var skipsBusyWaits = true
