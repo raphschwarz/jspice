@@ -96,6 +96,8 @@ struct CM4 {
     uint64_t cycles;
     uint64_t instructions;
     uint64_t deadline;
+    /// Where the run in progress ends: its length, or the deadline if that comes first (and is set during it)
+    uint64_t run_end;
     bool sleeping, event, locked_up;
     /// Exclusive monitor for LDREX/STREX
     bool exclusive;
@@ -191,7 +193,11 @@ uint32_t cm4_read(CM4 *c, uint32_t address, uint32_t size) {
 void cm4_write(CM4 *c, uint32_t address, uint32_t value, uint32_t size) {
     Region *r = find_region(c, address);
     if (r && address - r->base <= r->size - size) {
-        if (!r->writable) return;
+        if (!r->writable) {
+            // a read-only memory's writes go to the chip (a flash being programmed)
+            if (c->io_write) c->io_write(c->io_context, address, value, size);
+            return;
+        }
         uint8_t *p = r->bytes + (address - r->base);
         if (size == 4) memcpy(p, &value, 4);
         else if (size == 2) { uint16_t h = (uint16_t)value; memcpy(p, &h, 2); }
@@ -2534,7 +2540,9 @@ CM4Stop cm4_step(CM4 *c) {
 CM4Stop cm4_run(CM4 *c, uint64_t cycles) {
     uint64_t end = c->cycles + cycles;
     if (c->deadline < end) end = c->deadline > c->cycles ? c->deadline : c->cycles;
-    while (c->cycles < end) {
+    c->run_end = end;
+    while (c->cycles < c->run_end) {
+        end = c->run_end;
         if (c->locked_up) return CM4_LOCKUP;
         if (c->sleeping) {
             if (c->cycles >= c->systick_wrap) systick_update(c);
@@ -2644,7 +2652,11 @@ void cm4_reset(CM4 *c) {
 
 uint64_t cm4_cycles(const CM4 *c) { return c->cycles; }
 uint64_t cm4_instructions(const CM4 *c) { return c->instructions; }
-void cm4_set_deadline(CM4 *c, uint64_t cycle) { c->deadline = cycle; }
+void cm4_set_deadline(CM4 *c, uint64_t cycle) {
+    c->deadline = cycle;
+    // (from a peripheral during a run: the run stops there, after the instruction in progress)
+    if (cycle < c->run_end) c->run_end = cycle > c->cycles ? cycle : c->cycles;
+}
 
 void cm4_set_irq(CM4 *c, int line, bool level) {
     if (line < 0 || line >= c->interrupts) return;

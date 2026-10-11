@@ -39,7 +39,8 @@ void cm4_destroy(CM4 *cpu);
 uint8_t *cm4_add_memory(CM4 *cpu, uint32_t base, uint32_t size, bool writable);
 /// The memory added at `base` seen at `alias` as well
 void cm4_alias(CM4 *cpu, uint32_t alias, uint32_t base);
-/// Everything that is neither a memory nor the system control space: the chip's peripherals
+/// Everything that is neither a memory nor the system control space: the chip's peripherals. Writes to a read-only
+/// memory come here too (a flash being programmed).
 void cm4_set_io(CM4 *cpu, CM4Read read, CM4Write write, void *context);
 /// The chip's number of external interrupt lines (up to 240) and the bits of priority it implements (4 on an STM32)
 void cm4_configure(CM4 *cpu, int interrupts, int priority_bits);
@@ -52,7 +53,8 @@ CM4Stop cm4_run(CM4 *cpu, uint64_t cycles);
 CM4Stop cm4_step(CM4 *cpu);
 /// Cycles run since reset
 uint64_t cm4_cycles(const CM4 *cpu);
-/// The cycle a run stops at, at the latest, for the chip to update its peripherals (a timer's next event)
+/// The cycle a run stops at, at the latest, for the chip to update its peripherals (a timer's next event); set during
+/// a run (from a peripheral's register being written), the run stops there
 void cm4_set_deadline(CM4 *cpu, uint64_t cycle);
 
 /// An external interrupt line (0 is exception 16) raised or lowered by a peripheral: raising it makes it pending
