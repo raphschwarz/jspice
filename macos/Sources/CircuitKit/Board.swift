@@ -152,6 +152,26 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         return AVR(firmware: firmware, variant: avrVariant ?? .atmega328p)
     }
 
+    /// A chip running `firmware` as its part sets it up: an Uno's chip the one it is set to, at its clock
+    public func makeChip(firmware: [UInt8], for element: Element) -> Microcontroller {
+        if self == .pico { return Pico(firmware: firmware) }
+        return AVR(firmware: firmware, variant: avrVariant(for: element) ?? .atmega328p)
+    }
+
+    /// Bytes of flash a sketch can use on the chip its part is set to (all of a bare 168's or 88's: no bootloader)
+    public func flashSize(for element: Element) -> Int {
+        guard let variant = avrVariant(for: element), variant.name != chip else { return flashSize }
+        return variant.flashBytes
+    }
+
+    /// The AVR layout a part runs: an Uno's chip the 328P, 168 or 88 its part is set to, at the part's clock
+    public func avrVariant(for element: Element) -> AVRVariant? {
+        guard self == .uno else { return avrVariant }
+        let chips: [AVRVariant] = [.atmega328p, .atmega168, .atmega88]
+        let chip = chips[min(max(Int(element[param: "chip"].rounded()), 0), chips.count - 1)]
+        return chip.clocked(at: min(max(element[param: "clock"], 1e6), 20e6))
+    }
+
     /// The sketch a new part starts with
     public var blinkSketch: String {
         let pin = self == .attiny85 ? "1" : "LED_BUILTIN"

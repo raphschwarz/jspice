@@ -55,6 +55,8 @@ struct MicrocontrollerSection: View {
                 Button("Restart") { editor.simulation.reset() }
                     .help("Start the circuit, and the chip, from the beginning")
             }
+            Button("Load Firmware…") { editor.loadFirmware(element.id) }
+                .help("Load a firmware file built elsewhere (Intel HEX or a raw image), as a programmer flashes it")
             if let family = element.kind.board?.family, !ChipSupport.isAvailable(family) {
                 Text("Compiling sketches needs chip support: \(family.summary).")
                     .font(.caption)
@@ -72,7 +74,7 @@ struct MicrocontrollerSection: View {
     private var statusText: String {
         switch editor.sketchStatus[element.id] {
         case .building?: return "Compiling…"
-        case .uploaded(let bytes)?: return "Uploaded: \(bytes.formatted()) of \((element.kind.board?.flashSize ?? 32_256).formatted()) bytes"
+        case .uploaded(let bytes)?: return "Uploaded: \(bytes.formatted()) of \((element.kind.board?.flashSize(for: element) ?? 32_256).formatted()) bytes"
         case .failed(let errors, _)?: return errors.isEmpty ? "The sketch did not build" : "\(errors.count) error\(errors.count == 1 ? "" : "s")"
         case nil:
             if let firmware = element.firmware { return "Running its sketch (\(firmware.count.formatted()) bytes)" }

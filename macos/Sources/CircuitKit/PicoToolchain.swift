@@ -51,12 +51,13 @@ public struct PicoToolchain: Sendable, Equatable {
 }
 
 extension SketchBuilder {
-    /// Builds a sketch for `board` with the toolchain installed for its family; without one the result says to install it
-    public static func build(_ source: String, board: Board) -> Result {
+    /// Builds a sketch for `board` (an AVR one's part set to `chip`) with the toolchain installed for its family; without
+    /// one the result says to install it
+    public static func build(_ source: String, board: Board, chip: AVRVariant? = nil) -> Result {
         switch board.family {
         case .avr:
             guard let toolchain = AVRToolchain.find() else { return missingToolchain(board) }
-            return build(source, board: board, toolchain: toolchain)
+            return build(source, board: board, chip: chip, toolchain: toolchain)
         case .rp2040:
             guard let toolchain = PicoToolchain.find() else { return missingToolchain(board) }
             return build(source, board: board, toolchain: toolchain)

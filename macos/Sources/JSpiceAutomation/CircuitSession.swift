@@ -143,6 +143,11 @@ public final class CircuitSession {
              inputSchema: schema(["part": string("Name of a microcontroller part"), "code": string("The sketch's source")],
                                  required: ["part", "code"]),
              run: { session, arguments in try session.uploadSketch(arguments) }),
+        Tool(name: "load_firmware",
+             description: "Loads a firmware file a toolchain built into a microcontroller part, as a programmer flashes it: an Intel HEX file (.hex, as avr-objcopy writes and as Mutable Instruments' and 4ms' AVR makefiles leave) or a raw flash image (.bin). The chip runs it from reset in simulate. For an atmega328p part set to another chip (set_parameter chip: 0 ATmega328P, 1 ATmega168, 2 ATmega88) or clock (Hz; Mutable Instruments' modules run at 20 MHz), set those first.",
+             inputSchema: schema(["part": string("Name of a microcontroller part"), "path": string("The firmware file's path")],
+                                 required: ["part", "path"]),
+             run: { session, arguments in try session.loadFirmware(arguments) }),
         Tool(name: "read_serial",
              description: "What a microcontroller has printed on its serial port (Serial.print) in the simulation so far; optionally sends it text, which it receives in the next simulate with continue true.",
              inputSchema: schema(["part": string("Name of a microcontroller part"), "send": string("Text to send to the chip")],
@@ -770,6 +775,20 @@ public final class CircuitSession {
         return index
     }
 
+    func loadFirmware(_ arguments: [String: Any]) throws -> Any {
+        let index = try microcontroller(arguments)
+        let path = (try Self.text(arguments, "path") as NSString).expandingTildeInPath
+        guard let data = FileManager.default.contents(atPath: path) else { throw ToolError("cannot read \(path)") }
+        let firmware = try FirmwareFile.decode(data)
+        let element = circuit.elements[index]
+        let room = element.kind.board?.flashSize(for: element) ?? firmware.count
+        guard firmware.count <= room else {
+            throw ToolError("the firmware takes \(firmware.count) bytes; \(element.name) has room for \(room)")
+        }
+        change("Load Firmware") { circuit in circuit.elements[index].firmware = firmware }
+        return ["loaded": true, "part": circuit.elements[index].name, "bytes": firmware.count, "flash": room]
+    }
+
     func uploadSketch(_ arguments: [String: Any]) throws -> Any {
         let index = try microcontroller(arguments)
         let code = try Self.text(arguments, "code")
@@ -778,7 +797,7 @@ public final class CircuitSession {
             throw ToolError("No compiler for the \(board.chip) is installed: call install_chip_support with family "
                             + "\(board.family.rawValue) first (or install it from JSpice's Chip Support window)")
         }
-        let result = SketchBuilder.build(code, board: board)
+        let result = SketchBuilder.build(code, board: board, chip: board.avrVariant(for: circuit.elements[index]))
         guard let firmware = result.firmware else {
             let errors = result.errors.map { ["line": $0.line, "column": $0.column, "message": $0.message] as [String: Any] }
             return ["uploaded": false, "errors": errors, "log": String(result.log.suffix(4000))]
@@ -787,7 +806,7 @@ public final class CircuitSession {
             circuit.elements[index].code = code
             circuit.elements[index].firmware = firmware
         }
-        return ["uploaded": true, "part": circuit.elements[index].name, "bytes": firmware.count, "flash": board.flashSize]
+        return ["uploaded": true, "part": circuit.elements[index].name, "bytes": firmware.count, "flash": board.flashSize(for: circuit.elements[index])]
     }
 
     func readSerial(_ arguments: [String: Any]) throws -> Any {

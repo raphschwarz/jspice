@@ -99,16 +99,16 @@ public struct AVRVariant: Sendable {
         public let bit: Int
     }
 
-    public let name: String
-    public let clock: Double
-    let flashWords: Int
-    let dataSize: Int
-    let eepromSize: Int
+    public internal(set) var name: String
+    public internal(set) var clock: Double
+    var flashWords: Int
+    var dataSize: Int
+    var eepromSize: Int
     /// Where SRAM starts: addresses from 0x20 up to here are I/O registers
     let ioEnd: Int
     /// Bytes of the return address (3 on chips with more than 128 KB of flash)
     let pcBytes: Int
-    let vectorWords: Int
+    var vectorWords: Int
     /// The PINx address of each port (DDRx and PORTx follow it)
     let ports: [Int]
     /// The board's pins, in order
@@ -130,6 +130,13 @@ public struct AVRVariant: Sendable {
 
     public var pinCount: Int { pins.count }
     public var flashBytes: Int { flashWords * 2 }
+
+    /// The same chip run from another clock (a 328P at 20 MHz, as in Mutable Instruments' modules)
+    public func clocked(at hertz: Double) -> AVRVariant {
+        var variant = self
+        variant.clock = hertz
+        return variant
+    }
 
     private static let standardPrescalers = [0, 1, 8, 64, 256, 1024, 0, 0]
     private static let timer2Prescalers = [0, 1, 8, 32, 64, 128, 256, 1024]
@@ -190,6 +197,27 @@ public struct AVRVariant: Sendable {
             maskRegisters: [0x6E, 0x6F, 0x70, 0x3D, 0x68],
             spi: SPI(control: 0x4C, vector: 17, sck: 13, mosi: 11, miso: 12, ss: 10),
             twi: TWI(rate: 0xB8, vector: 24, sda: 18, scl: 19))
+    }()
+
+    /// The ATmega168: the ATmega328P with half its flash, 1 KB of SRAM and 512 bytes of EEPROM (the 4ms Rotating Clock
+    /// Divider's chip, the Arduino Diecimila's)
+    public static let atmega168: AVRVariant = {
+        var variant = atmega328p
+        variant.name = "ATmega168"
+        variant.flashWords = 8192
+        variant.dataSize = 0x500
+        variant.eepromSize = 512
+        return variant
+    }()
+
+    /// The ATmega88: the ATmega168 with 8 KB of flash, its interrupt vectors a word each (an RJMP; Mutable
+    /// Instruments' Branches)
+    public static let atmega88: AVRVariant = {
+        var variant = atmega168
+        variant.name = "ATmega88"
+        variant.flashWords = 4096
+        variant.vectorWords = 1
+        return variant
     }()
 
     /// The Arduino Mega 2560's pins D0-D69 (A0-A15 are D54-D69), as port and bit

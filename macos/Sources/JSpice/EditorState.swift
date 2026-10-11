@@ -840,10 +840,11 @@ final class EditorState: ObservableObject {
             showChipSupport = true
             return
         }
+        let chip = circuit[id].flatMap { board.avrVariant(for: $0) }
         sketchStatus[id] = .building
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                SketchBuilder.build(code, board: board)
+                SketchBuilder.build(code, board: board, chip: chip)
             }.value
             self?.finishUpload(id, code: code, result: result)
         }
@@ -863,6 +864,35 @@ final class EditorState: ObservableObject {
         // the same firmware again: restart the chip, as uploading to a board does
         if unchanged, let index = circuit.index(of: id) { simulation.resetChip(index) }
         sketchStatus[id] = .uploaded(bytes: firmware.count)
+    }
+
+    /// Loads a firmware file a toolchain built (Intel HEX, or a raw image) into a microcontroller part, which restarts
+    func loadFirmware(_ id: UUID) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ["hex", "ihex", "bin"].compactMap { UTType(filenameExtension: $0) } + [.data]
+        panel.message = "Choose firmware: an Intel HEX file (.hex) or a raw flash image (.bin)"
+        guard panel.runModal() == .OK, let url = panel.url, let element = circuit[id] else { return }
+        do {
+            let firmware = try FirmwareFile.decode(try Data(contentsOf: url))
+            let room = element.kind.board?.flashSize(for: element) ?? firmware.count
+            guard firmware.count <= room else {
+                throw FirmwareTooLarge(bytes: firmware.count, room: room)
+            }
+            let unchanged = element.firmware == firmware
+            edit("Load Firmware") { $0.update(id) { $0.firmware = firmware } }
+            if unchanged, let index = circuit.index(of: id) { simulation.resetChip(index) }
+            sketchStatus[id] = .uploaded(bytes: firmware.count)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "That firmware can't be loaded"
+            alert.informativeText = "\(error)"
+            alert.runModal()
+        }
+    }
+
+    private struct FirmwareTooLarge: Error, CustomStringConvertible {
+        let bytes: Int, room: Int
+        var description: String { "It takes \(bytes) bytes; the chip has room for \(room)." }
     }
 
     /// The selected part, if it is a microcontroller

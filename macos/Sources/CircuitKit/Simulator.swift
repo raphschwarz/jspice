@@ -1014,12 +1014,15 @@ public final class Simulator {
         chipCycleCarry = Array(repeating: 0, count: kinds.count)
         for i in chipIndices {
             let element = flat.elements[i]
+            // (a chip kept while its part is still that chip at that clock)
+            let variant = element.kind.board?.avrVariant(for: element)
             if let previous = previousChips[element.id], previous.firmware == element.firmware,
-               previous.chip.pinCount == element.kind.board?.terminalNames.count {
+               previous.chip.pinCount == element.kind.board?.terminalNames.count,
+               (previous.chip as? AVR).map({ $0.variant.name == variant?.name && $0.clock == variant?.clock }) ?? true {
                 chips[i] = previous.chip
                 chipCycleCarry[i] = previous.carry
             } else if let firmware = element.firmware, let board = element.kind.board {
-                chips[i] = board.makeChip(firmware: [UInt8](firmware))
+                chips[i] = board.makeChip(firmware: [UInt8](firmware), for: element)
             }
             chips[i]?.supply = constants[i].supply
             chipPinStates[i] = chips[i]?.pinStates

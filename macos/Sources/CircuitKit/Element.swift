@@ -730,12 +730,15 @@ extension ElementKind {
                 ParamSpec("biasDrop", "Bias pin junctions", unit: "", default: 2, range: 1...2, log: false),
                 ParamSpec("headroom", "Output headroom", unit: "V", default: 1.5, range: 0.1...5, log: false),
             ]
-        case .atmega328p, .atmega2560, .attiny85:
-            return [
-                ParamSpec("supply", "Supply", unit: "V", default: 5, range: 1.8...5.5, log: false),
-                ParamSpec("outputResistance", "Pin output resistance", unit: "Ω", default: 25, range: 1...1000),
-                ParamSpec("pullUp", "Pull-up resistance", unit: "Ω", default: 35_000, range: 20_000...50_000),
+        case .atmega328p:
+            // (the chips the Uno's socket takes: the 328P, or the 168 and 88, with less memory)
+            return Self.avrParams + [
+                ParamSpec.choice("chip", "Chip", ["ATmega328P", "ATmega168", "ATmega88"]),
+                ParamSpec("clock", "Clock (16 MHz on an Uno, 20 MHz in Mutable Instruments' modules)", unit: "Hz", default: 16e6,
+                          range: 1e6...20e6),
             ]
+        case .atmega2560, .attiny85:
+            return Self.avrParams
         case .rp2040:
             // 4 mA drive (the pads' default); pull-ups and pull-downs of about 50 kΩ
             return [
@@ -1210,6 +1213,12 @@ extension ElementKind {
     ]
 
     /// The rest of a diode's SPICE model card (diodes, Zener diodes and LEDs alike)
+    static let avrParams: [ParamSpec] = [
+        ParamSpec("supply", "Supply", unit: "V", default: 5, range: 1.8...5.5, log: false),
+        ParamSpec("outputResistance", "Pin output resistance", unit: "Ω", default: 25, range: 1...1000),
+        ParamSpec("pullUp", "Pull-up resistance", unit: "Ω", default: 35_000, range: 20_000...50_000),
+    ]
+
     static let diodeCardParams: [ParamSpec] = [
         ParamSpec("rs", "Series resistance (RS)", unit: "Ω", default: 0, range: 0...100, log: false, advanced: true),
         ParamSpec("vj", "Junction potential (VJ)", unit: "V", default: 1, range: 0.2...1.5, log: false, advanced: true),
@@ -1301,8 +1310,12 @@ extension ElementKind {
             ]
         case .atmega328p:
             return [
-                PartModel(name: "ATmega328P", summary: "The Arduino Uno's chip at 16 MHz: write a sketch, upload it, and it runs",
-                          values: ["supply": 5]),
+                PartModel(name: "ATmega328P", summary: "The Arduino Uno's chip at 16 MHz: write a sketch, upload it, and it runs (Mutable Instruments' Grids runs one at 20 MHz)",
+                          values: ["supply": 5, "chip": 0]),
+                PartModel(name: "ATmega168", summary: "The 328P with 16 KB of flash and 1 KB of RAM (the Arduino Diecimila's chip; the 4ms Rotating Clock Divider's)",
+                          values: ["supply": 5, "chip": 1]),
+                PartModel(name: "ATmega88", summary: "The 328P with 8 KB of flash and 1 KB of RAM, its interrupt vectors a word each (Mutable Instruments' Branches)",
+                          values: ["supply": 5, "chip": 2]),
             ]
         case .atmega2560:
             return [
