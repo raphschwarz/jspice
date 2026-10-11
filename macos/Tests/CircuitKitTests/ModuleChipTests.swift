@@ -127,4 +127,69 @@ final class ModuleChipTests: XCTestCase {
         XCTAssertEqual(Board.uno.avrVariant(for: element)?.clock, 20e6)
         XCTAssertEqual(Board.uno.flashSize(for: element), 8192)
     }
+
+    /// The bytes Mutable Instruments' Grids writes to its 74HC595 in its first 1.5 s, clocked at 48 Hz with X and Y at
+    /// the middle of the map, no randomness and every density at its most: its clock bit (0x40) and the common output
+    /// (0x10) at each step, BD, SD and HH (0x01-0x04) where the map fires them, the random bit (0x80), each cleared
+    /// again after its pulse. Recorded from tools/avr-reference/avr.py (the model this emulator was ported from, checked
+    /// against simavr) running the firmware built by CI.
+    static let gridsReference: [UInt8] = [
+        127, 0, 80, 0, 208, 0, 208, 0, 80, 0, 80, 0, 85, 0, 208, 0, 208, 0, 80, 0, 208, 0, 208, 0,
+        95, 0, 80, 0, 80, 0, 208, 0, 208, 0, 208, 0, 87, 0, 80, 0, 208, 0, 208, 0, 80, 0, 80, 0,
+        223, 0, 208, 0, 80, 0, 80, 0, 80, 0, 80, 0, 85, 0, 208, 0, 80, 0, 80, 0, 80, 0, 80, 0,
+        95, 0, 80, 0, 80, 0, 208, 0, 208, 0, 208, 0, 213, 0, 80, 0, 208, 0, 208, 0, 80, 0, 208, 0,
+        95, 0, 80, 0, 208, 0, 208, 0, 80, 0, 208, 0, 85, 0, 80, 0, 208, 0, 80, 0, 80, 0, 208, 0,
+        95, 0, 208, 0, 208, 0, 80, 0, 208, 0, 208, 0, 87, 0, 208, 0, 80, 0, 80, 0, 80, 0, 80, 0,
+    ]
+
+    func testMutableInstrumentsGridsPlaysFromItsOwnFirmware() throws {
+        // Grids' firmware (GPL-3.0) is not kept here: CI builds it from Mutable Instruments' repository, at 20 MHz
+        guard let path = ProcessInfo.processInfo.environment["JSPICE_GRIDS_HEX"] else {
+            throw XCTSkip("JSPICE_GRIDS_HEX is not set: CI builds Grids' firmware for this test")
+        }
+        let image = try FirmwareFile.decode(try Data(contentsOf: URL(fileURLWithPath: path)))
+        let chip = AVR(firmware: [UInt8](image), variant: AVRVariant.atmega328p.clocked(at: 20e6))
+        var volts = [Double](repeating: 0, count: chip.pinCount)
+        // A0-A5: X, Y, randomness, BD, SD and HH density, through the module's inverting inputs (0 V: the most); its
+        // tempo pot is on ADC6, which the Uno's pins leave at 0 V, so it follows its clock input
+        for (pin, value) in zip(14...19, [2.5, 2.5, 5, 0, 0, 0]) { volts[pin] = value }
+        // CLOCK, RESET and the button, held high by the pull-ups
+        for pin in 1...3 { volts[pin] = 5 }
+        chip.pinVoltages = volts
+        // the shift register's latch (PB2, D10), data (MOSI, D11) and clock (SCK, D13)
+        chip.watchedPins = [10, 11, 13]
+        var bytes: [UInt8] = []
+        var (sck, mosi, latch) = (false, false, false)
+        var shift = 0
+        var bits = 0
+        let half = Int(20e6 / 48 / 2)
+        var clockHigh = false
+        while chip.cycles < 30_000_000 {
+            chip.run(cycles: half)
+            for event in chip.takePinEvents() {
+                switch event.pin {
+                case 11:
+                    mosi = event.high
+                case 13:
+                    if event.high && !sck {
+                        shift = shift << 1 | (mosi ? 1 : 0)
+                        bits += 1
+                    }
+                    sck = event.high
+                case 10:
+                    if event.high && !latch && bits >= 8 { bytes.append(UInt8(truncatingIfNeeded: shift)) }
+                    if event.high != latch { bits = 0 }
+                    latch = event.high
+                default:
+                    break
+                }
+            }
+            // the clock jack through Grids' inverting transistor: its pin low while the clock is high
+            clockHigh.toggle()
+            volts[1] = clockHigh ? 0 : 5
+            chip.pinVoltages = volts
+        }
+        XCTAssertEqual(bytes.count, Self.gridsReference.count)
+        XCTAssertEqual(bytes, Self.gridsReference)
+    }
 }

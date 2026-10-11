@@ -228,6 +228,19 @@ jobs:
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/kitchen.ino build/kitchen.bin
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/mega.ino build/mega.bin --board mega
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/tiny.ino build/tiny.bin --board attiny85
+      - name: Mutable Instruments' Grids firmware (GPL-3.0, built from its repository for an emulator test, not kept)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 10
+        run: |
+          gcc_path=$(find "$HOME/Library/Application Support/JSpice" -path '*bin/avr-gcc' -type f | head -1)
+          test -n "$gcc_path"
+          rm -rf build/grids-src
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/pichenettes/eurorack build/grids-src
+          git -C build/grids-src sparse-checkout set grids
+          git clone -q --depth 1 https://github.com/pichenettes/avril build/grids-src/avrlib
+          make -C build/grids-src -f grids/makefile AVRLIB_TOOLS_PATH="$(dirname "$gcc_path")/" > build/grids-build.log 2>&1 || { tail -30 build/grids-build.log; exit 1; }
+          ls -l build/grids-src/build/grids/grids.hex
+          echo "JSPICE_GRIDS_HEX=$PWD/build/grids-src/build/grids/grids.hex" >> "$GITHUB_ENV"
       - name: Chip support for the Pico (installs arduino-pico and its gcc as the app does, compiles a sketch)
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 25
