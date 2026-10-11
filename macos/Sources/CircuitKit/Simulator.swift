@@ -513,12 +513,13 @@ public final class Simulator {
     public static var triesMemoryFirst = true
     /// Rounds started from a remembered solution at once (counted in `memoryRetries` too)
     public private(set) var memoryFirstRounds = 0
-    /// Flips (see `flipSignature`) at a solve's first round whose rounds went round in a cycle back to that first
-    /// round's decisions, the times in a row they did: the crossover detector of a maker's model at the crossings, its
-    /// sign flipping, which turns off the stage, which flips it back. Once one has done so twice, its decisions stay
-    /// as the solve held them at once (the very outcome of the cycle: they switch at the next substep), but for one
-    /// time in eight, when the rounds are solved as before (a flip whose rounds settle is forgotten).
-    private var cyclingFlips: [[Int]: Int] = [:]
+    /// Flips (see `flipSignature`) at a solve's first round whose rounds went round in a cycle back to the decisions of
+    /// the solve's start (round 0) or of the round after it (1), which of those, and the times in a row they did: the
+    /// crossover detector of a maker's model at the crossings, its sign flipping, which turns off the stage, which
+    /// flips it back. Once one has done so twice, the outcome of the cycle comes at once: the decisions stay as the
+    /// solve held them, or as the first round made them once it is solved (they switch at the next substep); but for
+    /// one time in eight, when the rounds are solved as before (a flip whose rounds settle is forgotten).
+    private var cyclingFlips: [[Int]: (round: Int, times: Int)] = [:]
     private var cyclingFlipsSeen = 0
     public static var skipsKnownCycles = true
     /// Solves whose decisions stayed at once for a flip known to go round in a cycle
@@ -1657,6 +1658,7 @@ public final class Simulator {
                 kept += 1
             }
             var firstFlip: [Int] = []
+            var stopsAfterRound = false
             while rounds < Self.decisionRounds && decisionsMoved() {
                 // (the round just solved, kept only now that another may follow)
                 keepRound()
@@ -1667,9 +1669,10 @@ public final class Simulator {
                 // two), its decisions as they were: they switch at the next substep, which starts from there.
                 if let k = cycleRound(kept) {
                     trace?("   the decisions go round in a cycle: back to those of round \(k)")
-                    if k == 0 && !firstFlip.isEmpty {
+                    if k <= 1 && !firstFlip.isEmpty {
                         if cyclingFlips.count >= 64 { cyclingFlips.removeAll() }
-                        cyclingFlips[firstFlip, default: 0] += 1
+                        let known = cyclingFlips[firstFlip]
+                        cyclingFlips[firstFlip] = (k, known?.round == k ? (known?.times ?? 0) + 1 : 1)
                     }
                     Self.copy(heldRounds[k], into: &decisionX)
                     Self.copy(solvedRounds[k], into: &x)
@@ -1683,14 +1686,18 @@ public final class Simulator {
                     ? flipSignature(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1], now: x) : []
                 if rounds == 0 {
                     firstFlip = flip
-                    // one known to go round in a cycle back to these decisions: they stay (see `cyclingFlips`)
-                    if Self.skipsKnownCycles && !flip.isEmpty, let times = cyclingFlips[flip], times >= 2 {
+                    // one known to go round in a cycle back to these decisions, or to those this round makes: they
+                    // stay, now or once it is solved (see `cyclingFlips`)
+                    if Self.skipsKnownCycles && !flip.isEmpty, let known = cyclingFlips[flip], known.times >= 2 {
                         cyclingFlipsSeen &+= 1
                         if cyclingFlipsSeen % 8 != 0 {
-                            trace?("   the decisions went round in a cycle back to these the last times: they stay")
-                            knownCycleSkips += 1
-                            cycled = true
-                            break
+                            if known.round == 0 {
+                                trace?("   the decisions went round in a cycle back to these the last times: they stay")
+                                knownCycleSkips += 1
+                                cycled = true
+                                break
+                            }
+                            stopsAfterRound = true
                         }
                     }
                 }
@@ -1751,6 +1758,12 @@ public final class Simulator {
                     }
                 }
                 if !converged || isFailed { break }
+                if stopsAfterRound {
+                    trace?("   the decisions went round in a cycle back to these the last times: they stay")
+                    knownCycleSkips += 1
+                    cycled = true
+                    break
+                }
             }
             if converged && (cycled || rounds == Self.decisionRounds) {
                 chatteringSolves += 1
