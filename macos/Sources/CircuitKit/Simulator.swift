@@ -715,6 +715,10 @@ public final class Simulator {
     private var newtonFromSolveStart = false
     /// The limited voltages where the solve started (see `saveLimited`)
     private var savedLimited = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
+    /// The junctions' charges as `updateDynamicStates` works them out, and their slots (room for `chargeRoom`)
+    private var chargeSlotsFound = UnsafeMutablePointer<Int>.allocate(capacity: 1)
+    private var chargeValuesFound = UnsafeMutablePointer<Double>.allocate(capacity: 1)
+    private var chargeRoom = 1
 
     private var matrixIsCurrent = false {
         didSet { if !matrixIsCurrent { switchedCaches.removeAll(keepingCapacity: true) } }
@@ -801,6 +805,8 @@ public final class Simulator {
         behaviorRates.deallocate()
         behaviorValues.deallocate()
         behaviorDecisions.deallocate()
+        chargeSlotsFound.deallocate()
+        chargeValuesFound.deallocate()
     }
 
     public init(circuit: Circuit = Circuit(), timeStep: Double = 1e-5) {
@@ -5253,15 +5259,44 @@ public final class Simulator {
     /// After each substep: the state of capacitors, inductors, op-amps' internal stages, vactrols and memristors
     private func updateDynamicStates() {
         let lists = nodeLists
+        // the junctions' charges, each slot's from its own history alone, all worked out before any is stored; then
+        // their histories moved on in one pass (rather than through the arrays at every slot)
+        let room = junctionIndices.count * Self.chargeSlots
+        if chargeRoom < room {
+            chargeSlotsFound.deallocate()
+            chargeValuesFound.deallocate()
+            chargeRoom = room
+            chargeSlotsFound = .allocate(capacity: room)
+            chargeValuesFound = .allocate(capacity: room)
+        }
+        let found = chargeSlotsFound, charges = chargeValuesFound
+        var count = 0
         for i in junctionIndices {
-            // (each slot's charge is worked out from its own history alone, all before any is stored)
             forEachStoredCharge(i, lists[i]) { slot, charge in
-                let k = Self.chargeSlots * i + slot
-                junctionCurrent[k] = (a0 * charge + a1 * junctionCharge[k] + a2 * junctionChargePrevious[k]) / h
-                junctionChargeOlder[k] = junctionChargePrevious[k]
-                junctionChargePrevious[k] = junctionCharge[k]
-                junctionCharge[k] = charge
+                found[count] = Self.chargeSlots * i + slot
+                charges[count] = charge
+                count += 1
             }
+        }
+        if count > 0 {
+            let (h, a0, a1, a2) = (self.h, self.a0, self.a1, self.a2)
+            junctionCurrent.withUnsafeMutableBufferPointer { current in
+                junctionCharge.withUnsafeMutableBufferPointer { now in
+                    junctionChargePrevious.withUnsafeMutableBufferPointer { previous in
+                        junctionChargeOlder.withUnsafeMutableBufferPointer { older in
+                            for j in 0..<count {
+                                let k = found[j], charge = charges[j]
+                                current[k] = (a0 * charge + a1 * now[k] + a2 * previous[k]) / h
+                                older[k] = previous[k]
+                                previous[k] = now[k]
+                                now[k] = charge
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for i in junctionIndices {
             if kinds[i].isMOSFET {
                 // the gate voltages and half capacitances the next step's Meyer charges start from
                 let (vgs, vds, vbs) = (limitedVoltage[i], limitedVoltage2[i], limitedVoltage3[i])
