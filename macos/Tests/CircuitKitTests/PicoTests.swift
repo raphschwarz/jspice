@@ -200,11 +200,23 @@ final class PicoTests: XCTestCase {
     /// instruction would: the same circuits step for step, the same pin events, registers, cycles and time, to the bit
     func testStretchesLeaveThePicoWhereTickingEachInstructionWould() throws {
         defer { RP2040.runsStretches = true }
+        try assertSameRuns { RP2040.runsStretches = $0 }
+    }
+
+    /// A waiting core passing over the small steps in which no state machine has an instruction due leaves the Pico
+    /// where taking each of them would
+    func testSkippedIdlePIOStepsLeaveThePicoWhereTakingEachWould() throws {
+        defer { RP2040.skipsIdlePIOSteps = true }
+        try assertSameRuns { RP2040.skipsIdlePIOSteps = $0 }
+    }
+
+    /// Runs the Pico examples and the reference sketches with a setting off and on, and compares them to the bit
+    private func assertSameRuns(_ setting: (Bool) -> Void, file: StaticString = #filePath, line: UInt = #line) throws {
         for id in ["pico-pcm5102", "pico-knob", "pico-melody"] {
             let circuit = Examples.example(id)!.circuit
             var runs: [(voltages: [Double], registers: [UInt32], cycles: Int, nanos: Double, serial: [UInt8])] = []
-            for stretching in [false, true] {
-                RP2040.runsStretches = stretching
+            for on in [false, true] {
+                setting(on)
                 let simulator = Simulator(circuit: circuit, timeStep: 1 / 48_000)
                 simulator.errorControl = false
                 let elements = simulator.circuit.elements
@@ -221,20 +233,21 @@ final class PicoTests: XCTestCase {
                 runs.append((voltages, (0..<16).map { core.registers[$0] }, pico.cycles, pico.rp2040.clock.nanos,
                              pico.serialOutput))
             }
-            XCTAssertEqual(runs[0].registers, runs[1].registers, id)
-            XCTAssertEqual(runs[0].cycles, runs[1].cycles, id)
-            XCTAssertEqual(runs[0].nanos.bitPattern, runs[1].nanos.bitPattern, id)
-            XCTAssertEqual(runs[0].serial, runs[1].serial, id)
-            XCTAssertEqual(runs[0].voltages.count, runs[1].voltages.count, id)
-            XCTAssertTrue(runs[0].voltages.elementsEqual(runs[1].voltages) { $0.bitPattern == $1.bitPattern }, id)
+            XCTAssertEqual(runs[0].registers, runs[1].registers, id, file: file, line: line)
+            XCTAssertEqual(runs[0].cycles, runs[1].cycles, id, file: file, line: line)
+            XCTAssertEqual(runs[0].nanos.bitPattern, runs[1].nanos.bitPattern, id, file: file, line: line)
+            XCTAssertEqual(runs[0].serial, runs[1].serial, id, file: file, line: line)
+            XCTAssertEqual(runs[0].voltages.count, runs[1].voltages.count, id, file: file, line: line)
+            XCTAssertTrue(runs[0].voltages.elementsEqual(runs[1].voltages) { $0.bitPattern == $1.bitPattern }, id,
+                          file: file, line: line)
         }
         // and sketches on their own (timer interrupts, PWM, the ADC, USB serial, PIO, SPI and I2C), every pin watched
         for name in ["pico-kitchen", "pico-tone", "pico-buses", "pico-blink"] {
             let firmware = try image(name)
             var runs: [(events: [PinEvent], states: [[PinState]], registers: [UInt32], cycles: Int, nanos: Double,
                         serial: [UInt8])] = []
-            for stretching in [false, true] {
-                RP2040.runsStretches = stretching
+            for on in [false, true] {
+                setting(on)
                 let pico = Pico(firmware: firmware)
                 pico.watchedPins = Array(0..<pico.pinCount)
                 var events: [PinEvent] = []
@@ -248,13 +261,13 @@ final class PicoTests: XCTestCase {
                 runs.append((events, states, (0..<16).map { core.registers[$0] }, pico.cycles, pico.rp2040.clock.nanos,
                              pico.serialOutput))
             }
-            XCTAssertGreaterThan(runs[1].events.count, 0, name)
-            XCTAssertEqual(runs[0].events, runs[1].events, name)
-            XCTAssertEqual(runs[0].states, runs[1].states, name)
-            XCTAssertEqual(runs[0].registers, runs[1].registers, name)
-            XCTAssertEqual(runs[0].cycles, runs[1].cycles, name)
-            XCTAssertEqual(runs[0].nanos.bitPattern, runs[1].nanos.bitPattern, name)
-            XCTAssertEqual(runs[0].serial, runs[1].serial, name)
+            XCTAssertGreaterThan(runs[1].events.count, 0, name, file: file, line: line)
+            XCTAssertEqual(runs[0].events, runs[1].events, name, file: file, line: line)
+            XCTAssertEqual(runs[0].states, runs[1].states, name, file: file, line: line)
+            XCTAssertEqual(runs[0].registers, runs[1].registers, name, file: file, line: line)
+            XCTAssertEqual(runs[0].cycles, runs[1].cycles, name, file: file, line: line)
+            XCTAssertEqual(runs[0].nanos.bitPattern, runs[1].nanos.bitPattern, name, file: file, line: line)
+            XCTAssertEqual(runs[0].serial, runs[1].serial, name, file: file, line: line)
         }
     }
 

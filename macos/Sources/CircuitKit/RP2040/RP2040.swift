@@ -346,7 +346,7 @@ final class RP2040 {
             var target = limit
             if clock.hasAlarm { target = min(target, clock.nanos + clock.nanosToNextAlarm) }
             // running state machines can wake the core: let them run in small steps
-            if pioRunning { target = min(target, clock.nanos + 1000) }
+            if pioRunning { target = min(target, pioWaitEnd()) }
             clock.tick(max(target - clock.nanos, 0))
         } else {
             let cycles = core.executeInstruction()
@@ -359,6 +359,27 @@ final class RP2040 {
     }
 
     private var pioRunning: Bool { pio[0].running || pio[1].running }
+
+    /// Whether a waiting core passes over the small steps in which no state machine has an instruction due (off,
+    /// taking every one: for comparing)
+    static var skipsIdlePIOSteps = true
+
+    /// Where a waiting core's small step ends, with the state machines running: a microsecond on, or (the steps
+    /// before it changing nothing: no instruction is due in them) the end of the first step by which one is due.
+    /// Only from a whole nanosecond, where the steps' ends come out the same added at once as one at a time.
+    private func pioWaitEnd() -> Double {
+        let now = clock.nanos
+        let step = 1000.0
+        guard RP2040.skipsIdlePIOSteps, now == now.rounded(), now >= 0, now < 0x1p50 else { return now + step }
+        var due = Double.infinity
+        if pio[0].running { due = min(due, pio[0].nextDue) }
+        if pio[1].running { due = min(due, pio[1].nextDue) }
+        guard due > now + step, due.isFinite else { return now + step }
+        // (a step short rather than past: one that changes nothing costs only itself)
+        var steps = max(((due - now) / step).rounded(.up) - 1, 1)
+        while steps > 1 && now + (steps - 1) * step >= due { steps -= 1 }
+        return now + steps * step
+    }
 
     /// Whether runs skip busy-waits (for comparing): see `run(until:)`
     static var skipsBusyWaits = true
