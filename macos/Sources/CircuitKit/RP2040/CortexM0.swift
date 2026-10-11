@@ -117,10 +117,12 @@ final class CortexM0 {
         let inlined = CortexM0.inlinesInterpreter
         let goesOn = RP2040.stretchesPastRegisters
         var base = base, limit = limit
+        // (the PC in a register from one instruction to the next, rather than read back from where the last wrote it)
+        var pc = PC
         while true {
             repeat {
                 // (the instruction first: it can bring the clock up, setting `unclocked` to 0)
-                let cycles = inlined ? executeInline() : executeCalled()
+                let cycles = inlined ? executeInline(&pc) : executeCalled(&pc)
                 unclocked &+= cycles
             } while !clockedInStretch && !waiting && base + Double(unclocked) * RP2040.cycleNanos < limit
             CortexM0.stretches &+= 1
@@ -129,6 +131,7 @@ final class CortexM0 {
             guard goesOn && !waiting else { break }
             // (the clock is up to the instruction that reached the register; `unclocked`, that instruction's cycles)
             clockedInStretch = false
+            pc = PC
             base = clockRef._withUnsafeGuaranteedRef { $0.nanos }
             limit = chipRef._withUnsafeGuaranteedRef { $0.stretchLimit(from: base, end: end) }
             guard base + Double(unclocked) * RP2040.cycleNanos < limit else { break }
@@ -762,7 +765,8 @@ final class CortexM0 {
     /// Runs one instruction (entering a pending exception first); returns its cycles
     // swiftlint:disable:next cyclomatic_complexity function_body_length
     func executeInstruction() -> Int {
-        let delta = executeInline()
+        var pc = PC
+        let delta = executeInline(&pc)
         // (wrapping: a count of cycles, far from Int's end; the overflow check costs at every instruction)
         cycles &+= delta
         return delta
@@ -770,22 +774,30 @@ final class CortexM0 {
 
     /// `executeInline` called, for a stretch whose interpreter is outside its loop (for comparing): the stretch counts
     /// its cycles, as the inlined one's
-    @inline(never) private func executeCalled() -> Int { executeInline() }
+    @inline(never) private func executeCalled(_ pc: inout UInt32) -> Int { executeInline(&pc) }
 
     /// Whether a stretch has the interpreter inside its loop (off, calling `executeInstruction` for each instruction:
     /// for comparing). The interpreter keeps the most it holds in a frame of its own, set up and taken down at every
     /// call; inside the loop, once a stretch.
     static var inlinesInterpreter = true
 
-    /// `executeInstruction`, for a stretch's loop to take inside it
-    @inline(__always) private func executeInline() -> Int {
-        if interruptsUpdated && checkForInterrupts() { waiting = false }
-        let opcodePC = PC & ~1
+    /// `executeInstruction`, for a stretch's loop to take inside it. `next` is the PC as `PC` holds it (the loop keeps
+    /// it in a register, rather than reading back what the last instruction wrote); left at the next instruction's.
+    @inline(__always) private func executeInline(_ next: inout UInt32) -> Int {
+        if interruptsUpdated && checkForInterrupts() {
+            waiting = false
+            // (an exception taken: its handler's first instruction)
+            next = PC
+        }
+        let opcodePC = next & ~1
         let opcode = Int(read16(opcodePC))
         var delta = 1
         let file = registers
         @inline(__always) func r(_ index: Int) -> UInt32 { file[index] }
-        PC = PC &+ 2
+        // (the PC the instruction reads and leaves, held here and written to `PC` at every change, for what reads it
+        // there: r(15), the calls)
+        var pc = next &+ 2
+        PC = pc
         switch decode[opcode] {
         case .adcs:
             let rm = (opcode >> 3) & 7, rdn = opcode & 7
@@ -804,11 +816,12 @@ final class CortexM0 {
         case .addReg:
             let rm = (opcode >> 3) & 0xF
             let rdn = ((opcode & 0x80) >> 4) | (opcode & 7)
-            let left = rdn == 15 ? PC &+ 2 : r(rdn)
-            let right = rm == 15 ? PC &+ 2 : r(rm)
+            let left = rdn == 15 ? pc &+ 2 : r(rdn)
+            let right = rm == 15 ? pc &+ 2 : r(rm)
             let result = left &+ right
             if rdn == 15 {
-                registers[15] = result & ~1
+                pc = result & ~1
+                PC = pc
                 delta &+= 1
             } else if rdn == 13 {
                 registers[13] = result & ~3
@@ -849,7 +862,8 @@ final class CortexM0 {
             var imm = (opcode & 0xFF) << 1
             if imm & (1 << 8) != 0 { imm = (imm & 0x1FF) - 0x200 }
             if checkCondition((opcode >> 8) & 0xF) {
-                PC = PC &+ UInt32(bitPattern: Int32(imm + 2))
+                pc = pc &+ UInt32(bitPattern: Int32(imm + 2))
+                PC = pc
                 delta &+= 1
                 // (back to this branch or before it)
                 if imm <= -4 && runEnd != 0 { loopedBack(used: 2) }
@@ -857,7 +871,8 @@ final class CortexM0 {
         case .b:
             var imm = (opcode & 0x7FF) << 1
             if imm & (1 << 11) != 0 { imm = (imm & 0x7FF) - 0x800 }
-            PC = PC &+ UInt32(bitPattern: Int32(imm + 2))
+            pc = pc &+ UInt32(bitPattern: Int32(imm + 2))
+            PC = pc
             delta &+= 1
             if imm <= -4 && runEnd != 0 { loopedBack(used: 2) }
         case .bics:
@@ -870,11 +885,13 @@ final class CortexM0 {
         case .blx:
             let rm = (opcode >> 3) & 0xF
             let target = r(rm)
-            LR = PC | 1
-            PC = target & ~1
+            LR = pc | 1
+            pc = target & ~1
+            PC = pc
             delta &+= 1
         case .bx:
             bxWritePC(r((opcode >> 3) & 0xF))
+            pc = PC
             delta &+= 1
         case .cmn:
             _ = add(r(opcode & 7), r((opcode >> 3) & 7))
@@ -915,7 +932,7 @@ final class CortexM0 {
             delta &+= cyclesIO(address)
             registers[(opcode >> 8) & 7] = read32(address)
         case .ldrLiteral:
-            let address = ((PC &+ 2) & 0xFFFF_FFFC) &+ UInt32((opcode & 0xFF) << 2)
+            let address = ((pc &+ 2) & 0xFFFF_FFFC) &+ UInt32((opcode & 0xFF) << 2)
             delta &+= cyclesIO(address)
             registers[(opcode >> 8) & 7] = read32(address)
         case .ldrReg:
@@ -979,10 +996,11 @@ final class CortexM0 {
         case .mov:
             let rm = (opcode >> 3) & 0xF
             let rd = ((opcode >> 4) & 0x8) | (opcode & 7)
-            var value = rm == 15 ? PC &+ 2 : r(rm)
+            var value = rm == 15 ? pc &+ 2 : r(rm)
             if rd == 15 {
                 delta &+= 1
                 value &= ~1
+                pc = value
             } else if rd == 13 {
                 value &= ~3
             }
@@ -1015,6 +1033,7 @@ final class CortexM0 {
             if (opcode >> 8) & 1 != 0 {
                 SP = address &+ 4
                 bxWritePC(read32(address))
+                pc = PC
                 delta &+= 2
             } else {
                 SP = address
@@ -1138,15 +1157,18 @@ final class CortexM0 {
                 let i1 = 1 - (s ^ j1)
                 let i2 = 1 - (s ^ j2)
                 let imm32 = Int32(bitPattern: UInt32((s != 0 ? 0xFF : 0) << 24 | i1 << 23 | i2 << 22 | imm10 << 12 | imm11 << 1))
-                LR = (PC &+ 2) | 1
-                PC = PC &+ 2 &+ UInt32(bitPattern: imm32)
+                LR = (pc &+ 2) | 1
+                pc = pc &+ 2 &+ UInt32(bitPattern: imm32)
+                PC = pc
                 delta = 3
             } else {
                 delta = executeWide(opcode, opcode2)
+                pc = PC
             }
         case .unknown:
             break
         }
+        next = pc
         return delta
     }
 
