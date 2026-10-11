@@ -26,6 +26,12 @@ final class EliminationProgram {
     /// Whether back substitution takes a level's steps by their entries' count (off, by step: for comparing)
     static var sortsLevelsByLength = true
 
+    /// Forward substitution row by row (`forwardRows`): the rows it writes, by level, then the rows outside the
+    /// program's own; for each, its entries of L (into the packed factors) and the rows whose results they multiply,
+    /// in the order the steps reach them
+    private let forwardRowCount: Int
+    private let fRow, fStart, fEntry, fSource: UnsafeMutablePointer<Int32>
+
     /// The relative size a pivot must keep, against the largest entry below it, for the program to be replayed: far
     /// below the threshold it was chosen with (`SparsePlan.threshold`), so a program lasts while values move
     static let replayThreshold = 1e-3
@@ -99,10 +105,55 @@ final class EliminationProgram {
         levels = (level.max() ?? -1) + 1
         backOrder = .allocate(capacity: max(steps, 1))
         for (i, k) in order.enumerated() { backOrder[i] = Int32(k) }
+        // forward substitution by rows: each row's entries of L as the steps (in order) subtract them from it
+        let rows = (pivots.map(\.row).max() ?? -1) + 1
+        var stepOfRow = [Int](repeating: -1, count: max(rows, 0))
+        for (k, pivot) in pivots.enumerated() { stepOfRow[pivot.row] = k }
+        // (the pivots' rows and the entries' rows as locals: the closures below may not capture self yet)
+        let pivotRows = pivots.map { Int32($0.row) }
+        var incoming: [Int32: [Int32]] = [:]
+        var columnOfEntry = [Int](repeating: 0, count: lCount)
+        var j = 0
+        for k in 0..<steps {
+            for r in below[k] {
+                incoming[r, default: []].append(Int32(j))
+                columnOfEntry[j] = k
+                j += 1
+            }
+        }
+        // (a step's row by level: the levels of the steps whose results it subtracts, one more; rows that are no
+        // step's of this program after them all)
+        var forwardLevel = [Int](repeating: 0, count: steps)
+        for k in 0..<steps {
+            guard let entries = incoming[pivotRows[k]] else { continue }
+            forwardLevel[k] = (entries.map { forwardLevel[columnOfEntry[Int($0)]] }.max() ?? -1) + 1
+        }
+        let ownRows = (0..<steps).filter { incoming[pivotRows[$0]] != nil }
+            .sorted { forwardLevel[$0] != forwardLevel[$1] ? forwardLevel[$0] < forwardLevel[$1] : $0 < $1 }
+            .map { pivotRows[$0] }
+        let otherRows = incoming.keys.filter { Int($0) >= rows || stepOfRow[Int($0)] < 0 }.sorted()
+        let written = ownRows + otherRows
+        forwardRowCount = written.count
+        fRow = .allocate(capacity: max(written.count, 1))
+        fStart = .allocate(capacity: written.count + 1)
+        fEntry = .allocate(capacity: max(lCount, 1))
+        fSource = .allocate(capacity: max(lCount, 1))
+        var e = 0
+        for (n, row) in written.enumerated() {
+            fRow[n] = row
+            fStart[n] = Int32(e)
+            for entry in incoming[row] ?? [] {
+                fEntry[e] = entry
+                fSource[e] = pivotRows[columnOfEntry[Int(entry)]]
+                e += 1
+            }
+        }
+        fStart[written.count] = Int32(e)
     }
 
     deinit {
-        for pointer in [pivotRow, pivotColumn, diagonal, lStart, uStart, opStart, lRow, lSlot, uColumn, uSlot, target, backOrder] {
+        for pointer in [pivotRow, pivotColumn, diagonal, lStart, uStart, opStart, lRow, lSlot, uColumn, uSlot, target, backOrder,
+                        fRow, fStart, fEntry, fSource] {
             pointer.deallocate()
         }
     }
@@ -198,6 +249,29 @@ final class EliminationProgram {
             k += 1
         }
     }
+
+    /// `forwardPacked` row by row: each row its entries subtracted in the order the steps would, in a register rather
+    /// than its place in `b` updated by each step, and rows of one level, which need none of each other's results, one
+    /// after another (the processor overlaps them). The same subtractions in the same order, so the same results,
+    /// but for a zero's sign where `forwardPacked` skips a step whose result is zero (this subtracts its zero products).
+    func forwardRows(_ packed: UnsafePointer<Double>, _ b: UnsafeMutablePointer<Double>) {
+        var n = 0
+        while n < forwardRowCount {
+            let row = Int(fRow[n])
+            var v = b[row]
+            var e = Int(fStart[n])
+            let e1 = Int(fStart[n + 1])
+            while e < e1 {
+                v -= packed[Int(fEntry[e])] * b[Int(fSource[e])]
+                e += 1
+            }
+            b[row] = v
+            n += 1
+        }
+    }
+
+    /// Whether the chord step's forward substitution goes row by row (`forwardRows`; off, step by step: for comparing)
+    static var forwardsByRows = true
 
     /// `back` with factors packed by `pack`: each row's entries summed in two halves at once (so each multiply-add
     /// does not wait on the one before) and multiplied by its pivot's reciprocal; the same to within rounding

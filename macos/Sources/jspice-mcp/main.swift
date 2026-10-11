@@ -77,6 +77,7 @@ let switches: [String: (Bool) -> Void] = [
     "skip-known-cycles": { Simulator.skipsKnownCycles = $0 },
     "predict-past-decisions": { Simulator.predictsPastDecisions = $0 },
     "sort-levels-by-length": { Simulator.sortsLevelsByLength = $0 },
+    "forward-by-rows": { Simulator.forwardsByRows = $0 },
     "quadratic-predictor": { Simulator.predictsQuadratically = $0 },
     "rest-chords": { Simulator.restsChords = $0 },
     "choose-predictor": { Simulator.choosesPredictor = $0 },

@@ -2676,7 +2676,11 @@ public final class Simulator {
         }
         return keptFactors.withUnsafeBufferPointer { f -> Double in
             residual.withUnsafeMutableBufferPointer { r -> Double in
-                order.forwardPacked(f.baseAddress!, r.baseAddress!)
+                if EliminationProgram.forwardsByRows {
+                    order.forwardRows(f.baseAddress!, r.baseAddress!)
+                } else {
+                    order.forwardPacked(f.baseAddress!, r.baseAddress!)
+                }
                 return x.withUnsafeMutableBufferPointer { x -> Double in order.backPacked(f.baseAddress!, r.baseAddress!, x.baseAddress!) }
             }
         }
@@ -6575,6 +6579,12 @@ public final class Simulator {
     /// The nonlinear block's factors as last factored: entries of L and U, and the multiply-adds of factoring
     public var blockFactorSize: (lower: Int, upper: Int, operations: Int) {
         plan?.blockFactorSize ?? (0, 0, 0)
+    }
+
+    /// Whether the chord step's forward substitution goes row by row (off, step by step: for comparing)
+    public static var forwardsByRows: Bool {
+        get { EliminationProgram.forwardsByRows }
+        set { EliminationProgram.forwardsByRows = newValue }
     }
 
     /// Whether back substitution takes a level's steps by their entries' count (off, by step: for comparing; read as
