@@ -149,6 +149,9 @@ jobs:
             --launch -- ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-knob > build/xctrace.log 2>&1 || tail -5 build/xctrace.log
           perl -e 'alarm 90; exec @ARGV' xcrun xctrace export --input build/pico.trace \
             --xpath '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]' > build/pico-time.xml 2> build/xctrace-export.log || tail -5 build/xctrace-export.log
+          # (the tables the trace holds, in case the profile's is not where the export looked)
+          perl -e 'alarm 60; exec @ARGV' xcrun xctrace export --input build/pico.trace --toc 2>&1 | grep -E "<table|<run|schema" | head -40 || true
+          ls -la build/pico-time.xml || true
           python3 scripts/xctrace-hot.py build/pico-time.xml CortexM0.runStretch 16 build/hot-pico-tp.lldb || true
           lldb --batch -s build/hot-pico-tp.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -200 || true
           # and for the Pico driving an I2S DAC from PIO

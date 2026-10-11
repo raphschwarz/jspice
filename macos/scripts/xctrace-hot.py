@@ -33,10 +33,12 @@ def main():
     hot = Counter()
     samples = 0
     for row in root.iter("row"):
-        backtrace = resolved(row.find("backtrace"))
+        # (the backtrace may sit in the row itself or deeper, as a tagged one, and be a ref to one written before)
+        backtrace = next((resolved(element) for element in row.iter() if element.tag.endswith("backtrace")), None)
         if backtrace is None:
             continue
-        frames = backtrace.findall("frame")
+        frames = [resolved(frame) for frame in backtrace.iter("frame")]
+        frames = [frame for frame in frames if frame is not None]
         if not frames:
             continue
         samples += 1
@@ -52,6 +54,12 @@ def main():
         load = int(binary.get("load-addr", "0"), 16) if binary is not None else 0
         # (the binary's own address: its text at 0x100000000)
         hot[0x100000000 + address - load if load else address] += 1
+    if samples == 0:
+        # (for what the table looks like, to read it next time)
+        with open(path, errors="replace") as file:
+            print(file.read(3000))
+        rows_seen = sum(1 for _ in root.iter("row"))
+        print(f"{rows_seen} rows, tags: {sorted({element.tag for element in root.iter()})[:40]}")
     print(f"{samples} samples; the functions they fell in, most first:")
     for name, count in leaves.most_common(16):
         print(f"  {count:6d}  {name[:110]}")
