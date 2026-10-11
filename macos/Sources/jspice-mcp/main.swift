@@ -102,7 +102,7 @@ func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
         // simulator kept from round to round keeps where its memory fell, which alone made one setting an eighth slower
         // than the other where the switch changed nothing
         var fastest = [Double.infinity, .infinity]
-        var counts = [[Int]](repeating: [Int](repeating: 0, count: 8), count: 2)
+        var counts = [[Int]](repeating: [Int](repeating: 0, count: 9), count: 2)
         for round in 0..<5 {
             var simulators: [Simulator?] = [nil, nil]
             for k in (round % 2 == 0 ? [0, 1] : [1, 0]) {
@@ -119,7 +119,8 @@ func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
                 fastest[k] = min(fastest[k], Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9)
                 let s = simulator
                 for (j, value) in [s.newtonIterations, s.factorings, s.reusedFactorings, s.confirmedWithoutSolving,
-                                   s.reusedStampings, s.restartedSolves, s.substeps, s.rejectedSubsteps].enumerated() {
+                                   s.reusedStampings, s.restartedSolves, s.substeps, s.rejectedSubsteps,
+                                   s.bypassedEvaluations].enumerated() {
                     counts[k][j] += value
                 }
             }
@@ -131,11 +132,11 @@ func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
                      id.padding(toLength: 18, withPad: " ", startingAt: 0), name, fastest[0] / Double(steps) * 1e6, solves[0],
                      fastest[1] / Double(steps) * 1e6, solves[1], (1 - fastest[1] / fastest[0]) * 100))
         // where the iterations went, a step: factored, solved with kept factors, confirmed without a solve, started from
-        // kept stamps, started again, and substeps (rejected)
+        // kept stamps, started again, and substeps (rejected); and devices bypassed (their inputs unmoved)
         let detail = counts.map { c in
-            String(format: "%.2f factored %.2f chord %.2f confirmed %.2f from kept stamps %.3f restarted %.3f substeps (%.3f rejected)",
+            String(format: "%.2f factored %.2f chord %.2f confirmed %.2f from kept stamps %.3f restarted %.3f substeps (%.3f rejected) %.2f bypassed",
                    Double(c[1]) / per, Double(c[2]) / per, Double(c[3]) / per, Double(c[4]) / per, Double(c[5]) / per,
-                   Double(c[6]) / per, Double(c[7]) / per)
+                   Double(c[6]) / per, Double(c[7]) / per, Double(c[8]) / per)
         }
         print("    off: \(detail[0])\n    on:  \(detail[1])")
     }
