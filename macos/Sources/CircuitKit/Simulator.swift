@@ -709,7 +709,18 @@ public final class Simulator {
     /// The limited voltages where the solve started (see `saveLimited`)
     private var savedLimited = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
 
-    private var matrixIsCurrent = false
+    private var matrixIsCurrent = false {
+        didSet { if !matrixIsCurrent { switchedCaches.removeAll(keepingCapacity: true) } }
+    }
+    /// A chip's pin, an I²C target's acknowledge, an ADC's DOUT or a multiplexer's channel switched what the base matrix
+    /// holds (and nothing else changed it): its matrices for the parts' switched state, kept from the last time they
+    /// were so, serve again (a bus flips its lines at nearly every step)
+    private var switchedMoved = false
+    /// Whether base matrices are kept by switched state so (off: built afresh at every switch, for comparing)
+    public static var keepsSwitchedMatrices = true
+    /// The switched state the base matrices in `baseCache` are for, and those kept for others
+    private var baseSwitched: [Int8] = []
+    private var switchedCaches: [[Int8]: [Int: (values: [Double], version: Int, order: EliminationProgram?)]] = [:]
     private var hasNonlinear = false
     /// When the only nonlinear parts are VCAs: nearly linear (a soft limit on a gain), solved in one iteration from the
     /// predicted solution, their linearisation there exact to second order
@@ -2670,6 +2681,19 @@ public final class Simulator {
         if plan == nil || needsPlan {
             guard replan() else { return }
         }
+        if switchedMoved {
+            switchedMoved = false
+            if matrixIsCurrent {
+                let state = switchedState()
+                if state != baseSwitched {
+                    if switchedCaches.count >= 16 { switchedCaches.removeAll(keepingCapacity: true) }
+                    switchedCaches[baseSwitched] = baseCache
+                    baseCache = switchedCaches.removeValue(forKey: state) ?? [:]
+                    baseKey = -1
+                    baseSwitched = state
+                }
+            }
+        }
         let key = substepLevel << 4 | lastLevel
         if matrixIsCurrent {
             if key == baseKey { return }
@@ -2683,8 +2707,40 @@ public final class Simulator {
         }
         buildBaseMatrix()
         guard !isFailed else { return }
+        if baseCache.isEmpty { baseSwitched = switchedState() }
         baseKey = key
         baseCache[key] = (baseValues, baseVersion, baseOrder)
+    }
+
+    /// A part switched what the base matrix holds (see `switchedMoved`)
+    private func matrixSwitched() {
+        if Self.keepsSwitchedMatrices { switchedMoved = true } else { matrixIsCurrent = false }
+    }
+
+    /// What the parts that switch the base matrix have switched into it: each chip pin driven, pulled or bare, each I²C
+    /// target's acknowledge, each ADC's DOUT and each multiplexer's channel (`fillBaseMatrix` stamps no other state of
+    /// theirs)
+    private func switchedState() -> [Int8] {
+        var state: [Int8] = []
+        for i in chipIndices {
+            guard let states = chipPinStates[i] else { continue }
+            for pin in states {
+                switch pin {
+                case .output: state.append(0)
+                case .input(pullUp: true), .inputPullDown: state.append(1)
+                case .input: state.append(2)
+                }
+            }
+        }
+        for i in kinds.indices where i < logicStates.count {
+            switch kinds[i] {
+            case .i2cDac: state.append(Logic.acknowledging(logicStates[i]) ? 1 : 0)
+            case .spiAdc: state.append(Int8(logicStates[i].inputs & 1))
+            case .analogMux, .analogSelector: state.append(Int8(Logic.channel(kinds[i], logicStates[i]) ?? -1))
+            default: break
+            }
+        }
+        return state
     }
 
     /// The part of the matrix that only changes with the circuit or the substep, stamped into the plan's slots and its
@@ -5101,15 +5157,15 @@ public final class Simulator {
         var next = Logic.next(kind, old, inputs: inputs, function: Int(constants[i].value))
         switch kind {
         case .analogMux, .analogSelector:
-            if Logic.channel(kind, next) != Logic.channel(kind, old) { matrixIsCurrent = false }
+            if Logic.channel(kind, next) != Logic.channel(kind, old) { matrixSwitched() }
         case .spiAdc:
             if next.phase >= 0.5 {
                 next.phase = 0
                 next.latch = adcCode(i, configuration: next.shift)
             }
-            if (next.inputs ^ old.inputs) & 1 != 0 { matrixIsCurrent = false }
+            if (next.inputs ^ old.inputs) & 1 != 0 { matrixSwitched() }
         case .i2cDac:
-            if Logic.acknowledging(next) != Logic.acknowledging(old) { matrixIsCurrent = false }
+            if Logic.acknowledging(next) != Logic.acknowledging(old) { matrixSwitched() }
         default:
             break
         }
@@ -5441,7 +5497,7 @@ public final class Simulator {
             chipCycleCarry[i] = budget - Double(chip.cycles - start)
             let states = chip.pinStates
             let kept = chipPinStates[i]
-            if !Self.samePinSetup(states, kept) { matrixIsCurrent = false }
+            if !Self.samePinSetup(states, kept) { matrixSwitched() }
             if kept != states { chipPinStates[i] = states }
         }
         replayPinEvents()

@@ -66,6 +66,7 @@ jobs:
           # and what bypassing behavioural sources saves them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-instructions 0.25 pico-knob pico-pcm5102 pico-melody arduino-fade arduino-blink arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch keep-switched-matrices 0.25 arduino-mcp3008-mcp4725 arduino-mcp4822 arduino-dac || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch decode-ahead 0.25 arduino-fade arduino-knob arduino-melody arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
           # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns
           # keep moving, in the synth voice, the sequenced acid line and the fuzz
