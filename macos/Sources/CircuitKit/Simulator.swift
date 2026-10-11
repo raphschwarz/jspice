@@ -3620,25 +3620,12 @@ public final class Simulator {
         }
         guard new > critical && abs(new - old) > 2 * nvt else { return new }
         limiting = true
-        var limited = critical
         if old > 0 {
             let argument = 1 + (new - old) / nvt
-            if argument > 0 { limited = old + nvt * log(argument) }
-        } else {
-            limited = nvt * log(new / nvt)
+            return argument > 0 ? old + nvt * log(argument) : critical
         }
-        // (from below the critical voltage, no nearer it than that: its current there is moderate whatever the part)
-        if Self.limitsJunctionsToCritical && old < critical { limited = max(limited, critical) }
-        return limited
+        return nvt * log(new / nvt)
     }
-
-    /// Whether a junction turning on from below its critical voltage, Newton-Raphson putting it above, goes at least
-    /// to the critical voltage (off: by nVt times the log of the step, as SPICE limits it, for comparing). From well
-    /// below, the log of the step is a few nVt an iteration: CI's traces of the opto compressor's LED (critical 1.87 V,
-    /// a quarter volt an iteration from 0) and the guitar fuzz's transistors (a tenth of a volt), eight iterations to
-    /// turn on, a substep given up and halved, and again. At the critical voltage, where the junction's exponential
-    /// bends most, its current is nVt/√2 amperes whatever its saturation current: a guess to linearise at, not a leap.
-    public static var limitsJunctionsToCritical = true
 
     /// A junction's step, for the trace, where limiting changed it: from where it was linearised, to where Newton-Raphson
     /// put it and where the limiting took it
