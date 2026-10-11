@@ -12,8 +12,8 @@ public final class STM32F405: Microcontroller {
     public static let flashSize = 0x10_0000
 
     /// The pins' names, in the order of the part's terminals: "pa0" ... "pc15", "pd2"
-    public static let pinNames: [String] = (0..<Int(STM32F4_PIN_COUNT)).map { index in
-        let port = stm32f4_pin_port(Int32(index)), pin = stm32f4_pin_number(Int32(index))
+    public static let pinNames: [String] = (0..<Int(stm32_pin_count(STM32_F405))).map { index in
+        let port = stm32_pin_port(STM32_F405, Int32(index)), pin = stm32_pin_number(STM32_F405, Int32(index))
         return "p" + String(UnicodeScalar(UInt8(97 + port))) + String(pin)
     }
 
@@ -50,14 +50,14 @@ public final class STM32F405: Microcontroller {
         var watched: [Int] = []
 
         init(firmware: [UInt8]) {
-            chip = stm32f4_create(8e6)!
-            let flash = stm32f4_flash(chip)!
+            chip = stm32_create(8e6)!
+            let flash = stm32_flash(chip)!
             let offset = STM32F405.placement(of: firmware)
             let count = min(firmware.count, STM32F405.flashSize - offset)
             firmware.withUnsafeBufferPointer { bytes in
                 if let base = bytes.baseAddress { (flash + offset).update(from: base, count: count) }
             }
-            var devices = STM32F4Devices()
+            var devices = STM32Devices()
             devices.context = Unmanaged.passUnretained(self).toOpaque()
             devices.i2c_start = { context, bus, address, read in
                 let system = Unmanaged<System>.fromOpaque(context!).takeUnretainedValue()
@@ -90,8 +90,8 @@ public final class STM32F405: Microcontroller {
                 let system = Unmanaged<System>.fromOpaque(context!).takeUnretainedValue()
                 if usart == 1 { system.outbox.append(byte) }
             }
-            stm32f4_set_devices(chip, &devices)
-            stm32f4_reset(chip)
+            stm32_set_devices(chip, &devices)
+            stm32_reset(chip)
         }
 
         /// Watches the pins (the circuit's indices), each change to their driven level logged and forwarded
@@ -99,7 +99,7 @@ public final class STM32F405: Microcontroller {
             watched = pins
             let context = Unmanaged.passUnretained(self).toOpaque()
             pins.map { Int32($0) }.withUnsafeBufferPointer { indices in
-                stm32f4_watch_pins(chip, indices.baseAddress, Int32(indices.count), { context, cycle, index, high in
+                stm32_watch_pins(chip, indices.baseAddress, Int32(indices.count), { context, cycle, index, high in
                     let system = Unmanaged<System>.fromOpaque(context!).takeUnretainedValue()
                     let event = PinEvent(cycle: Int(cycle &- system.runStart), pin: Int(index), high: high)
                     system.events.append(event)
@@ -108,7 +108,7 @@ public final class STM32F405: Microcontroller {
             }
         }
 
-        deinit { stm32f4_destroy(chip) }
+        deinit { stm32_destroy(chip) }
     }
 
     /// Where in flash a raw image goes: at its start, unless it is an application linked to run behind a bootloader
@@ -150,7 +150,7 @@ public final class STM32F405: Microcontroller {
 
     public var pinCount: Int { STM32F405.pinNames.count }
     /// The core's clock as the firmware has set it up: 16 MHz from reset, 168 MHz once it has started its PLL
-    public var clock: Double { stm32f4_hclk(system.chip) }
+    public var clock: Double { stm32_hclk(system.chip) }
     public var cycles: Int { shownCycles }
     public var supply = 3.3
     public var pinStates: [PinState] { shownStates }
@@ -160,7 +160,7 @@ public final class STM32F405: Microcontroller {
         get { [] }
         set {
             newValue.withUnsafeBufferPointer { bytes in
-                stm32f4_usart_input(system.chip, 1, bytes.baseAddress, Int32(bytes.count))
+                stm32_usart_input(system.chip, 1, bytes.baseAddress, Int32(bytes.count))
             }
         }
     }
@@ -186,7 +186,7 @@ public final class STM32F405: Microcontroller {
 
     private func applyVoltages() {
         pinVoltages.withUnsafeBufferPointer { volts in
-            stm32f4_set_pin_voltages(system.chip, volts.baseAddress, Int32(volts.count), supply)
+            stm32_set_pin_voltages(system.chip, volts.baseAddress, Int32(volts.count), supply)
         }
     }
 
@@ -197,7 +197,7 @@ public final class STM32F405: Microcontroller {
         settingOnePin = true
         pinVoltages[pin] = volts
         settingOnePin = false
-        stm32f4_set_pin_voltage(system.chip, Int32(pin), volts, supply)
+        stm32_set_pin_voltage(system.chip, Int32(pin), volts, supply)
     }
 
     public var watchedPins: [Int] {
@@ -219,8 +219,8 @@ public final class STM32F405: Microcontroller {
 
     public func run(cycles count: Int) {
         let chip = system.chip
-        system.runStart = cm4_cycles(stm32f4_core(chip))
-        if count > 0 { _ = stm32f4_run(chip, UInt64(count)) }
+        system.runStart = cm4_cycles(stm32_core(chip))
+        if count > 0 { _ = stm32_run(chip, UInt64(count)) }
         publish()
     }
 
@@ -249,22 +249,22 @@ public final class STM32F405: Microcontroller {
 
     private func publish() {
         let chip = system.chip
-        shownCycles = Int(cm4_cycles(stm32f4_core(chip)))
+        shownCycles = Int(cm4_cycles(stm32_core(chip)))
         if !system.outbox.isEmpty {
             serial += system.outbox
             system.outbox = []
             if serial.count > 32_768 { serial.removeFirst(serial.count - 16_384) }
         }
         stateCodes.withUnsafeMutableBufferPointer { codes in
-            stm32f4_pin_states(chip, codes.baseAddress, Int32(codes.count))
+            stm32_pin_states(chip, codes.baseAddress, Int32(codes.count))
         }
         for index in stateCodes.indices {
             let state: PinState
             switch Int(stateCodes[index]) {
-            case Int(STM32F4_DRIVEN_HIGH): state = .output(high: true)
-            case Int(STM32F4_DRIVEN_LOW): state = .output(high: false)
-            case Int(STM32F4_PULLED_UP): state = .input(pullUp: true)
-            case Int(STM32F4_PULLED_DOWN): state = .inputPullDown
+            case Int(STM32_DRIVEN_HIGH): state = .output(high: true)
+            case Int(STM32_DRIVEN_LOW): state = .output(high: false)
+            case Int(STM32_PULLED_UP): state = .input(pullUp: true)
+            case Int(STM32_PULLED_DOWN): state = .inputPullDown
             default: state = .input(pullUp: false)
             }
             if shownStates[index] != state { shownStates[index] = state }

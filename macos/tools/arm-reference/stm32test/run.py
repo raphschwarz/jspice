@@ -16,31 +16,31 @@ LISTENER = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_int
 def main():
     chip = stm32.Chip()
     lib = chip.lib
-    flash = lib.stm32f4_flash(chip.m)
+    flash = lib.stm32_flash(chip.m)
     data = open(IMAGE, "rb").read()
     ctypes.memmove(flash, data, len(data))
-    lib.stm32f4_reset(chip.m)
+    lib.stm32_reset(chip.m)
     # PA0 at half the reference; PC13 left to its pull-up
     volts = (ctypes.c_double * 49)()
     volts[0] = 1.65
     volts[45] = 3.3
-    lib.stm32f4_set_pin_voltages(chip.m, volts, 49, 3.3)
+    lib.stm32_set_pin_voltages(chip.m, volts, 49, 3.3)
     events = []
     listener = LISTENER(lambda _, cycle, index, high: events.append((cycle, index, high)))
     pins = (ctypes.c_int * 2)(5, 6)
-    lib.stm32f4_watch_pins(chip.m, pins, 2, ctypes.cast(listener, ctypes.c_void_p), None)
+    lib.stm32_watch_pins(chip.m, pins, 2, ctypes.cast(listener, ctypes.c_void_p), None)
     chip.codec.source = lambda frame: (int(16000 * math.sin(2 * math.pi * 440 * frame / 48000)), 0)
     chip.run_for(0.25)
-    lib.stm32f4_usart_input(chip.m, 1, b"hello\n", 6)
+    lib.stm32_usart_input(chip.m, 1, b"hello\n", 6)
     chip.run_for(0.1)
     volts[45] = 0
-    lib.stm32f4_set_pin_voltages(chip.m, volts, 49, 3.3)
+    lib.stm32_set_pin_voltages(chip.m, volts, 49, 3.3)
     chip.run_for(0.05)
     text = bytes(chip.usart_log).decode()
     print(repr(text[:200]))
     toggles = [e for e in events if e[1] == 5]
     pa6 = [e for e in events if e[1] == 6]
-    hclk = lib.stm32f4_hclk(chip.m)
+    hclk = lib.stm32_hclk(chip.m)
     period = (toggles[-1][0] - toggles[10][0]) / (len(toggles) - 11) / hclk if len(toggles) > 12 else 0
     out = chip.codec.out
     left = [l for l, r in out[1000:2000]]
@@ -57,7 +57,7 @@ def main():
         "pa6 follows pc13": bool(pa6) and pa6[-1][2] is False,
         "i2s left": sorted(set(left)) == [-8192, 8192],
         "i2s right": 7900 < max(right) <= 8000,
-        "frame rate": abs(len(out) / lib.stm32f4_time(chip.m) - 47990) < 1500,
+        "frame rate": abs(len(out) / lib.stm32_time(chip.m) - 47990) < 1500,
         "timer compares": any(f"cc {n}\n" in text for n in range(97, 102)),
     }
     for name, ok in checks.items():

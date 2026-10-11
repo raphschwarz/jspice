@@ -253,7 +253,8 @@ jobs:
           test -n "$gcc_path"
           "$gcc_path" --version | head -1
           ln -sfn "$(dirname "$(dirname "$gcc_path")")" build/arm-toolchain
-          hex=$(tools/arm-reference/build-mutable.sh rings "$PWD/build/mutable" "$PWD/build/arm-toolchain/" | tail -1)
+          tools/arm-reference/build-mutable.sh rings "$PWD/build/mutable" "$PWD/build/arm-toolchain/" > build/mutable.out
+          hex=$(tail -1 build/mutable.out)
           ls -l "$hex"
           echo "JSPICE_RINGS_HEX=$hex" >> "$GITHUB_ENV"
       - name: Chip support for the Pico (installs arduino-pico and its gcc as the app does, compiles a sketch)

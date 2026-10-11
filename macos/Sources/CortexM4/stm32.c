@@ -1,10 +1,10 @@
-// The STM32F405/407 around the Cortex-M4 core: see STM32F4.h. Peripherals are modelled at their registers, as RM0090
+// The STM32F405/407 around the Cortex-M4 core: see STM32.h. Peripherals are modelled at their registers, as RM0090
 // describes them, and in time: each has its next event (an I2S slot, an ADC conversion's end, a timer's update, a
 // byte shifted out) and the core runs until the earliest, when the chip brings its peripherals up to date. DMA streams
 // move data as the peripherals ask for it, through the same bus the core uses, so that reading or writing a
 // peripheral's data register has the same effects from either.
 
-#include "STM32F4.h"
+#include "STM32.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -13,9 +13,7 @@
 // ------------------------------------------------------------------------------------------------------- constants
 
 enum {
-    FLASH_START = 0x08000000u, FLASH_BYTES = 0x100000u,
-    SRAM_START = 0x20000000u, SRAM_BYTES = 0x20000u,
-    CCM_START = 0x10000000u, CCM_BYTES = 0x10000u,
+    FLASH_START = 0x08000000u, SRAM_START = 0x20000000u, CCM_START = 0x10000000u,
 };
 
 // Interrupt lines (positions in the vector table after the system exceptions)
@@ -147,10 +145,12 @@ typedef struct {
     uint64_t receive_at;        // the next one's arrival, or NEVER
 } Usart;
 
-struct STM32F4 {
+struct STM32 {
     CM4 *core;
+    STM32Model model;
     uint8_t *flash, *sram, *ccm;
-    STM32F4Devices devices;
+    uint32_t flash_bytes, sram_bytes, ccm_bytes;
+    STM32Devices devices;
     double hse;
     double sysclk, hclk, pclk1, pclk2;
     double time_base;
@@ -188,29 +188,29 @@ struct STM32F4 {
 
     uint16_t watched[PORTS];        // pins whose driven level is told, by port
     uint16_t told[PORTS];           // the levels last told
-    STM32F4PinListener listener;
+    STM32PinListener listener;
     void *listener_context;
     uint16_t input_level[PORTS];    // the levels the circuit's voltages were last read as
 };
 
 // ------------------------------------------------------------------------------------------------------- utilities
 
-static inline uint64_t now(const STM32F4 *m) { return cm4_cycles(m->core); }
+static inline uint64_t now(const STM32 *m) { return cm4_cycles(m->core); }
 
-static void set_irq(STM32F4 *m, int line, bool level) {
+static void set_irq(STM32 *m, int line, bool level) {
     if (m->irq[line] == level) return;
     m->irq[line] = level;
     cm4_set_irq(m->core, line, level);
 }
 
 /// A run ends at the earliest peripheral event: one scheduled during it (a register written) shortens it
-static void schedule(STM32F4 *m, uint64_t at) { cm4_set_deadline(m->core, at); }
+static void schedule(STM32 *m, uint64_t at) { cm4_set_deadline(m->core, at); }
 
 /// Core cycles for `ticks` of a clock at `hz`
-static inline double cycles_for(const STM32F4 *m, double ticks, double hz) { return ticks * m->hclk / hz; }
+static inline double cycles_for(const STM32 *m, double ticks, double hz) { return ticks * m->hclk / hz; }
 
-static uint32_t bus_read(STM32F4 *m, uint32_t address, uint32_t size) { return cm4_read(m->core, address, size); }
-static void bus_write(STM32F4 *m, uint32_t address, uint32_t value, uint32_t size) {
+static uint32_t bus_read(STM32 *m, uint32_t address, uint32_t size) { return cm4_read(m->core, address, size); }
+static void bus_write(STM32 *m, uint32_t address, uint32_t value, uint32_t size) {
     cm4_write(m->core, address, value, size);
 }
 
@@ -231,7 +231,7 @@ static inline uint32_t sub_read(uint32_t value, uint32_t address, uint32_t size)
 
 // --------------------------------------------------------------------------------------------------------- clocks
 
-static void update_clocks(STM32F4 *m) {
+static void update_clocks(STM32 *m) {
     uint32_t cr = m->rcc[0], pllcfgr = m->rcc[1], cfgr = m->rcc[2];
     double hsi = 16e6, hse = m->hse;
     double source = (pllcfgr >> 22) & 1 ? hse : hsi;
@@ -260,14 +260,14 @@ static void update_clocks(STM32F4 *m) {
 }
 
 /// The clock of the timers on APB1 (`apb2` false) or APB2: twice the bus's when it is divided
-static double timer_clock(const STM32F4 *m, bool apb2) {
+static double timer_clock(const STM32 *m, bool apb2) {
     uint32_t ppre = apb2 ? (m->rcc[2] >> 13) & 7 : (m->rcc[2] >> 10) & 7;
     double pclk = apb2 ? m->pclk2 : m->pclk1;
     return ppre & 4 ? 2 * pclk : pclk;
 }
 
 /// I2S's clock: PLLI2S (from the main PLL's input, divided by PLLM) or the external I2S_CKIN
-static double i2s_clock(const STM32F4 *m) {
+static double i2s_clock(const STM32 *m) {
     uint32_t pllcfgr = m->rcc[1], plli2s = m->rcc[0x84 / 4];
     double source = (pllcfgr >> 22) & 1 ? m->hse : 16e6;
     uint32_t pllm = pllcfgr & 0x3F, n = (plli2s >> 6) & 0x1FF, r = (plli2s >> 28) & 7;
@@ -277,7 +277,7 @@ static double i2s_clock(const STM32F4 *m) {
 
 // ----------------------------------------------------------------------------------------------------------- GPIO
 
-static uint16_t gpio_idr(const STM32F4 *m, int port) {
+static uint16_t gpio_idr(const STM32 *m, int port) {
     const Gpio *g = &m->gpio[port];
     uint16_t idr = 0;
     for (int pin = 0; pin < 16; pin++) {
@@ -299,11 +299,11 @@ static uint16_t gpio_idr(const STM32F4 *m, int port) {
     return idr;
 }
 
-static void exti_check(STM32F4 *m, int port);
+static void exti_check(STM32 *m, int port);
 
 // ----------------------------------------------------------------------------------------------------------- EXTI
 
-static void exti_update_irqs(STM32F4 *m) {
+static void exti_update_irqs(STM32 *m) {
     uint32_t active = m->exti_pr & m->exti_imr;
     set_irq(m, IRQ_EXTI0, active & 1);
     set_irq(m, IRQ_EXTI1, active & 2);
@@ -315,7 +315,7 @@ static void exti_update_irqs(STM32F4 *m) {
 }
 
 /// Edges on the lines routed from this port
-static void exti_check(STM32F4 *m, int port) {
+static void exti_check(STM32 *m, int port) {
     uint16_t idr = gpio_idr(m, port), old = m->exti_last[port];
     m->exti_last[port] = idr;
     uint16_t changed = idr ^ old;
@@ -334,9 +334,9 @@ static void exti_check(STM32F4 *m, int port) {
 
 // ------------------------------------------------------------------------------------------------------------ DMA
 
-static bool request_active(STM32F4 *m, int request);
+static bool request_active(STM32 *m, int request);
 
-static void dma_update_irq(STM32F4 *m, int d, int s) {
+static void dma_update_irq(STM32 *m, int d, int s) {
     Stream *st = &m->dma[d][s];
     int shift = (s & 1 ? 6 : 0) + (s & 2 ? 16 : 0);
     uint32_t flags = (m->dma_isr[d][s >> 2] >> shift) & 0x3D;
@@ -349,13 +349,13 @@ static void dma_update_irq(STM32F4 *m, int d, int s) {
     set_irq(m, dma_irq[d][s], (flags & enabled) != 0);
 }
 
-static void dma_flag(STM32F4 *m, int d, int s, uint32_t flag) {
+static void dma_flag(STM32 *m, int d, int s, uint32_t flag) {
     int shift = (s & 1 ? 6 : 0) + (s & 2 ? 16 : 0);
     m->dma_isr[d][s >> 2] |= flag << shift;
 }
 
 /// One data item moved by a stream; false when it is not enabled
-static bool dma_transfer(STM32F4 *m, int d, int s) {
+static bool dma_transfer(STM32 *m, int d, int s) {
     Stream *st = &m->dma[d][s];
     uint32_t cr = st->cr;
     if (!(cr & 1) || st->ndtr == 0) return false;
@@ -399,7 +399,7 @@ static bool dma_transfer(STM32F4 *m, int d, int s) {
 }
 
 /// Serves a peripheral's request while it stands, on whichever stream is set to its channel
-static void pump(STM32F4 *m, int request) {
+static void pump(STM32 *m, int request) {
     for (int d = 0; d < 2; d++) {
         for (int s = 0; s < 8; s++) {
             if (m->dma_request[d][s][(m->dma[d][s].cr >> 25) & 7] != request) continue;
@@ -409,7 +409,7 @@ static void pump(STM32F4 *m, int request) {
     }
 }
 
-static uint32_t dma_read(STM32F4 *m, int d, uint32_t offset) {
+static uint32_t dma_read(STM32 *m, int d, uint32_t offset) {
     if (offset == 0x00) return m->dma_isr[d][0];
     if (offset == 0x04) return m->dma_isr[d][1];
     if (offset < 0x10 || offset >= 0x10 + 8 * 0x18) return 0;
@@ -426,7 +426,7 @@ static uint32_t dma_read(STM32F4 *m, int d, uint32_t offset) {
     return 0;
 }
 
-static void dma_write(STM32F4 *m, int d, uint32_t offset, uint32_t value) {
+static void dma_write(STM32 *m, int d, uint32_t offset, uint32_t value) {
     if (offset == 0x08 || offset == 0x0C) {
         int half = offset == 0x0C;
         m->dma_isr[d][half] &= ~(value & 0x0F7D0F7Du);
@@ -479,7 +479,7 @@ static int adc_regular_channel(const Adc *a, int index) {
 
 static int adc_length(const Adc *a) { return a->cr1 & (1u << 8) ? (int)((a->sqr1 >> 20) & 0xF) + 1 : 1; }
 
-static uint32_t adc_value(const STM32F4 *m, const Adc *a, int channel, bool left_align) {
+static uint32_t adc_value(const STM32 *m, const Adc *a, int channel, bool left_align) {
     double volts;
     if (channel < 16) volts = m->volts[adc_pins[channel].port][adc_pins[channel].pin];
     else if (channel == 16) volts = 0.76 + (25 - 25) * 0.0025;  // the temperature sensor at 25 °C
@@ -493,7 +493,7 @@ static uint32_t adc_value(const STM32F4 *m, const Adc *a, int channel, bool left
     return value;
 }
 
-static void adc_update_irq(STM32F4 *m) {
+static void adc_update_irq(STM32 *m) {
     bool any = false;
     for (int i = 0; i < 3; i++) {
         Adc *a = &m->adc[i];
@@ -504,7 +504,7 @@ static void adc_update_irq(STM32F4 *m) {
     set_irq(m, IRQ_ADC, any);
 }
 
-static void adc_start_conversion(STM32F4 *m, int i) {
+static void adc_start_conversion(STM32 *m, int i) {
     Adc *a = &m->adc[i];
     int channel = adc_regular_channel(a, a->index);
     int bits = 12 - 2 * (int)((a->cr1 >> 24) & 3);
@@ -515,14 +515,14 @@ static void adc_start_conversion(STM32F4 *m, int i) {
     schedule(m, a->done_at);
 }
 
-static void adc_start(STM32F4 *m, int i) {
+static void adc_start(STM32 *m, int i) {
     Adc *a = &m->adc[i];
     if (!(a->cr2 & 1) || a->done_at != NEVER) return;
     a->index = 0;
     adc_start_conversion(m, i);
 }
 
-static void adc_conversion_done(STM32F4 *m, int i) {
+static void adc_conversion_done(STM32 *m, int i) {
     Adc *a = &m->adc[i];
     a->done_at = NEVER;
     int channel = adc_regular_channel(a, a->index);
@@ -545,7 +545,7 @@ static void adc_conversion_done(STM32F4 *m, int i) {
 }
 
 /// Injected conversions: done at once, into JDR1-4
-static void adc_injected(STM32F4 *m, int i) {
+static void adc_injected(STM32 *m, int i) {
     Adc *a = &m->adc[i];
     int length = (int)((a->jsqr >> 20) & 3) + 1;
     for (int k = 0; k < length; k++) {
@@ -556,7 +556,7 @@ static void adc_injected(STM32F4 *m, int i) {
     adc_update_irq(m);
 }
 
-static uint32_t adc_read(STM32F4 *m, uint32_t offset) {
+static uint32_t adc_read(STM32 *m, uint32_t offset) {
     if (offset >= 0x300) {
         if (offset == 0x300) {
             uint32_t csr = 0;
@@ -592,7 +592,7 @@ static uint32_t adc_read(STM32F4 *m, uint32_t offset) {
     return 0;
 }
 
-static void adc_write(STM32F4 *m, uint32_t offset, uint32_t value) {
+static void adc_write(STM32 *m, uint32_t offset, uint32_t value) {
     if (offset >= 0x300) {
         if (offset == 0x304) m->adc_ccr = value;
         return;
@@ -630,7 +630,7 @@ static void adc_write(STM32F4 *m, uint32_t offset, uint32_t value) {
 }
 
 /// An external trigger from a timer event (EXTSEL's code) starts the ADCs set to it
-static void adc_trigger(STM32F4 *m, uint32_t extsel, bool injected) {
+static void adc_trigger(STM32 *m, uint32_t extsel, bool injected) {
     for (int i = 0; i < 3; i++) {
         Adc *a = &m->adc[i];
         if (!(a->cr2 & 1)) continue;
@@ -645,7 +645,7 @@ static bool timer_on_apb2(int t) { return t == 1 || t == 8 || t == 9 || t == 10 
 static bool timer_32bit(int t) { return t == 2 || t == 5; }
 
 /// Core cycles per count
-static double timer_tick(const STM32F4 *m, int t) {
+static double timer_tick(const STM32 *m, int t) {
     return (double)(m->tim[t].psc + 1) * m->hclk / timer_clock(m, timer_on_apb2(t));
 }
 
@@ -659,13 +659,13 @@ static uint64_t timer_position(const Timer *tm, uint64_t period) {
 }
 
 /// Counts since `base` (while it runs)
-static uint64_t timer_elapsed(const STM32F4 *m, int t) {
+static uint64_t timer_elapsed(const STM32 *m, int t) {
     const Timer *tm = &m->tim[t];
     if (!(tm->cr1 & 1)) return 0;
     return (uint64_t)((double)(now(m) - tm->base) / timer_tick(m, t));
 }
 
-static uint32_t timer_count(const STM32F4 *m, int t) {
+static uint32_t timer_count(const STM32 *m, int t) {
     const Timer *tm = &m->tim[t];
     if (!(tm->cr1 & 1)) return tm->count;
     uint64_t period = timer_period(tm);
@@ -675,7 +675,7 @@ static uint32_t timer_count(const STM32F4 *m, int t) {
     return (uint32_t)((tm->count + elapsed) % period);
 }
 
-static void timer_update_irq(STM32F4 *m, int t) {
+static void timer_update_irq(STM32 *m, int t) {
     Timer *tm = &m->tim[t];
     bool update = (tm->sr & 1) && (tm->dier & 1);
     bool compare = (tm->sr & tm->dier & 0x1E) != 0;
@@ -708,7 +708,7 @@ static void timer_update_irq(STM32F4 *m, int t) {
 
 /// Whether anything listens to the timer's update events (its interrupt, DMA, or a trigger output to an ADC or the
 /// DAC): only then does the chip keep them as events; otherwise its flag is worked out when read
-static bool timer_watched(const STM32F4 *m, int t) {
+static bool timer_watched(const STM32 *m, int t) {
     const Timer *tm = &m->tim[t];
     if (tm->dier & 0x101) return true;
     return ((tm->cr2 >> 4) & 7) == 2;  // TRGO on update
@@ -716,7 +716,7 @@ static bool timer_watched(const STM32F4 *m, int t) {
 
 /// The timer's next event: its update (when something listens to it) or a channel's compare match (with its interrupt
 /// on), whichever comes first
-static void timer_schedule(STM32F4 *m, int t) {
+static void timer_schedule(STM32 *m, int t) {
     Timer *tm = &m->tim[t];
     tm->next = NEVER;
     tm->next_kind = 0;
@@ -750,10 +750,10 @@ static void timer_schedule(STM32F4 *m, int t) {
     schedule(m, tm->next);
 }
 
-static void dac_trigger(STM32F4 *m, uint32_t tsel);
+static void dac_trigger(STM32 *m, uint32_t tsel);
 
 /// The timer's update event: its flag, interrupt, DMA request and trigger output
-static void timer_update_event(STM32F4 *m, int t) {
+static void timer_update_event(STM32 *m, int t) {
     Timer *tm = &m->tim[t];
     tm->sr |= 1;
     timer_update_irq(m, t);
@@ -775,7 +775,7 @@ static void timer_update_event(STM32F4 *m, int t) {
 }
 
 /// Brings the timer's count to now (its `base` moved up), before its settings change
-static void timer_settle(STM32F4 *m, int t) {
+static void timer_settle(STM32 *m, int t) {
     Timer *tm = &m->tim[t];
     if (!(tm->cr1 & 1)) return;
     uint64_t elapsed = timer_elapsed(m, t);
@@ -786,7 +786,7 @@ static void timer_settle(STM32F4 *m, int t) {
     tm->base += (uint64_t)((double)elapsed * timer_tick(m, t));
 }
 
-static uint32_t timer_read(STM32F4 *m, int t, uint32_t offset) {
+static uint32_t timer_read(STM32 *m, int t, uint32_t offset) {
     Timer *tm = &m->tim[t];
     switch (offset) {
     case 0x00: return tm->cr1;
@@ -811,7 +811,7 @@ static uint32_t timer_read(STM32F4 *m, int t, uint32_t offset) {
     return 0;
 }
 
-static void timer_write(STM32F4 *m, int t, uint32_t offset, uint32_t value) {
+static void timer_write(STM32 *m, int t, uint32_t offset, uint32_t value) {
     Timer *tm = &m->tim[t];
     uint32_t mask = timer_32bit(t) ? 0xFFFFFFFFu : 0xFFFFu;
     timer_settle(m, t);
@@ -852,7 +852,7 @@ static void timer_write(STM32F4 *m, int t, uint32_t offset, uint32_t value) {
 }
 
 /// A timer channel's output: its level now, and its duty (the fraction of the period it is high)
-static double timer_output_duty(const STM32F4 *m, int t, int channel, bool *level) {
+static double timer_output_duty(const STM32 *m, int t, int channel, bool *level) {
     const Timer *tm = &m->tim[t];
     uint32_t ccmr = channel <= 2 ? tm->ccmr1 : tm->ccmr2;
     uint32_t mode = (ccmr >> (channel & 1 ? 4 : 12)) & 7;
@@ -881,7 +881,7 @@ static double timer_output_duty(const STM32F4 *m, int t, int channel, bool *leve
 
 // ----------------------------------------------------------------------------------------------------- SPI and I2S
 
-static void spi_update_irq(STM32F4 *m, int i) {
+static void spi_update_irq(STM32 *m, int i) {
     Spi *p = &m->spi[i];
     bool any = ((p->cr2 & 0x80) && !p->tx_full) || ((p->cr2 & 0x40) && p->rx_full) ||
                ((p->cr2 & 0x20) && (p->sr & 0x68));
@@ -899,7 +899,7 @@ static int spi_tx_request(int i) { static const int r[3] = {REQ_SPI1_TX, REQ_SPI
 static bool i2s_mode(const Spi *p) { return (p->i2scfgr >> 11) & 1; }
 
 /// SPI as a master: a frame starts shifting
-static void spi_start_frame(STM32F4 *m, int i) {
+static void spi_start_frame(STM32 *m, int i) {
     Spi *p = &m->spi[i];
     p->shifting = p->tx;
     p->tx_full = false;
@@ -910,7 +910,7 @@ static void spi_start_frame(STM32F4 *m, int i) {
     schedule(m, p->done_at);
 }
 
-static void spi_frame_done(STM32F4 *m, int i) {
+static void spi_frame_done(STM32 *m, int i) {
     Spi *p = &m->spi[i];
     int bits = (p->cr1 >> 11) & 1 ? 16 : 8;
     uint32_t in = m->devices.spi_exchange ? m->devices.spi_exchange(m->devices.context, i + 1, p->shifting, bits)
@@ -929,7 +929,7 @@ static void spi_frame_done(STM32F4 *m, int i) {
 }
 
 /// I2S: the frame rate and slots per frame as configured; 0 when it is not running
-static double i2s_slot_cycles(const STM32F4 *m, const Spi *p, int *slots) {
+static double i2s_slot_cycles(const STM32 *m, const Spi *p, int *slots) {
     uint32_t cfg = p->i2scfgr, pr = p->i2spr;
     bool chlen32 = cfg & 1;
     uint32_t datlen = (cfg >> 1) & 3;
@@ -950,7 +950,7 @@ static double i2s_slot_cycles(const STM32F4 *m, const Spi *p, int *slots) {
     return m->hclk / fs / *slots;
 }
 
-static void i2s_start(STM32F4 *m, int i) {
+static void i2s_start(STM32 *m, int i) {
     Spi *p = &m->spi[i];
     int slots;
     double cycles = i2s_slot_cycles(m, p, &slots);
@@ -979,7 +979,7 @@ static void i2s_halfwords(const Spi *p, int32_t sample, uint32_t *halfwords) {
 
 /// One I2S slot (a halfword each way): the transmitter takes the data register's halfword, the full-duplex
 /// extension's receiver gets the next one in; after a frame's last, the codec is given it and gives one back
-static void i2s_slot(STM32F4 *m, int i) {
+static void i2s_slot(STM32 *m, int i) {
     Spi *p = &m->spi[i];
     Spi *e = (i == 1 || i == 2) ? &m->ext[i - 1] : NULL;
     int slots;
@@ -1032,7 +1032,7 @@ static void i2s_slot(STM32F4 *m, int i) {
     }
 }
 
-static uint32_t spi_read(STM32F4 *m, Spi *p, uint32_t offset) {
+static uint32_t spi_read(STM32 *m, Spi *p, uint32_t offset) {
     bool ext = p >= m->ext && p < m->ext + 2;
     int i = ext ? (int)(p - m->ext) + 1 : (int)(p - m->spi);
     switch (offset) {
@@ -1059,7 +1059,7 @@ static uint32_t spi_read(STM32F4 *m, Spi *p, uint32_t offset) {
     return 0;
 }
 
-static void spi_write(STM32F4 *m, Spi *p, uint32_t offset, uint32_t value) {
+static void spi_write(STM32 *m, Spi *p, uint32_t offset, uint32_t value) {
     bool ext = p >= m->ext && p < m->ext + 2;
     int i = ext ? (int)(p - m->ext) + 1 : (int)(p - m->spi);
     switch (offset) {
@@ -1100,7 +1100,7 @@ static void spi_write(STM32F4 *m, Spi *p, uint32_t offset, uint32_t value) {
     }
 }
 
-static bool spi_request_active(STM32F4 *m, int request) {
+static bool spi_request_active(STM32 *m, int request) {
     switch (request) {
     case REQ_SPI1_RX: case REQ_SPI2_RX: case REQ_SPI3_RX: {
         Spi *p = &m->spi[(request - REQ_SPI1_RX) / 2];
@@ -1127,7 +1127,7 @@ static bool spi_request_active(STM32F4 *m, int request) {
 // I2C as a master, its bytes taking no time: the flags the standard peripheral library waits on are set as the
 // register accesses that cause them are made
 
-static void i2c_update_irq(STM32F4 *m, int i) {
+static void i2c_update_irq(STM32 *m, int i) {
     I2c *b = &m->i2c[i];
     bool event = (b->cr2 & (1u << 9)) && (b->sr1 & 0x1F);
     bool buffer = (b->cr2 & (1u << 9)) && (b->cr2 & (1u << 10)) && (b->sr1 & 0xC0);
@@ -1137,14 +1137,14 @@ static void i2c_update_irq(STM32F4 *m, int i) {
     set_irq(m, er[i], error);
 }
 
-static void i2c_receive(STM32F4 *m, int i) {
+static void i2c_receive(STM32 *m, int i) {
     I2c *b = &m->i2c[i];
     bool ack = (b->cr1 >> 10) & 1;
     b->dr = m->devices.i2c_read ? m->devices.i2c_read(m->devices.context, i + 1, ack) : 0xFF;
     b->sr1 |= 0x40;  // RXNE
 }
 
-static uint32_t i2c_read(STM32F4 *m, int i, uint32_t offset) {
+static uint32_t i2c_read(STM32 *m, int i, uint32_t offset) {
     I2c *b = &m->i2c[i];
     switch (offset) {
     case 0x00: return b->cr1;
@@ -1178,7 +1178,7 @@ static uint32_t i2c_read(STM32F4 *m, int i, uint32_t offset) {
     return 0;
 }
 
-static void i2c_write(STM32F4 *m, int i, uint32_t offset, uint32_t value) {
+static void i2c_write(STM32 *m, int i, uint32_t offset, uint32_t value) {
     I2c *b = &m->i2c[i];
     switch (offset) {
     case 0x00:
@@ -1254,7 +1254,7 @@ static int usart_irq(int i) {
     return lines[i];
 }
 
-static void usart_update_irq(STM32F4 *m, int i) {
+static void usart_update_irq(STM32 *m, int i) {
     Usart *u = &m->usart[i];
     uint32_t sr = u->sr;
     bool any = ((u->cr1 & 0x80) && (sr & 0x80)) || ((u->cr1 & 0x40) && (sr & 0x40)) ||
@@ -1262,9 +1262,9 @@ static void usart_update_irq(STM32F4 *m, int i) {
     set_irq(m, usart_irq(i), any);
 }
 
-static double usart_pclk(const STM32F4 *m, int i) { return (i == 0 || i == 5) ? m->pclk2 : m->pclk1; }
+static double usart_pclk(const STM32 *m, int i) { return (i == 0 || i == 5) ? m->pclk2 : m->pclk1; }
 
-static void usart_start(STM32F4 *m, int i) {
+static void usart_start(STM32 *m, int i) {
     Usart *u = &m->usart[i];
     u->shifting_byte = (uint8_t)u->tx;
     u->tx_full = false;
@@ -1279,7 +1279,7 @@ static void usart_start(STM32F4 *m, int i) {
 }
 
 /// The next byte waiting arrives a frame's time after now, if the receiver is on
-static void usart_schedule_receive(STM32F4 *m, int i) {
+static void usart_schedule_receive(STM32 *m, int i) {
     Usart *u = &m->usart[i];
     if (u->receive_at != NEVER || !u->input_count || (u->cr1 & 0x2004) != 0x2004) return;
     double divider = u->brr ? (double)u->brr : 16;
@@ -1287,7 +1287,7 @@ static void usart_schedule_receive(STM32F4 *m, int i) {
     schedule(m, u->receive_at);
 }
 
-static void usart_received(STM32F4 *m, int i) {
+static void usart_received(STM32 *m, int i) {
     Usart *u = &m->usart[i];
     u->receive_at = NEVER;
     if (!u->input_count) return;
@@ -1305,7 +1305,7 @@ static void usart_received(STM32F4 *m, int i) {
     usart_schedule_receive(m, i);
 }
 
-static void usart_done(STM32F4 *m, int i) {
+static void usart_done(STM32 *m, int i) {
     Usart *u = &m->usart[i];
     u->done_at = NEVER;
     u->shifting = false;
@@ -1320,7 +1320,7 @@ static void usart_done(STM32F4 *m, int i) {
     usart_update_irq(m, i);
 }
 
-static uint32_t usart_read(STM32F4 *m, int i, uint32_t offset) {
+static uint32_t usart_read(STM32 *m, int i, uint32_t offset) {
     Usart *u = &m->usart[i];
     switch (offset) {
     case 0x00: return u->sr;
@@ -1334,7 +1334,7 @@ static uint32_t usart_read(STM32F4 *m, int i, uint32_t offset) {
     return 0;
 }
 
-static void usart_write(STM32F4 *m, int i, uint32_t offset, uint32_t value) {
+static void usart_write(STM32 *m, int i, uint32_t offset, uint32_t value) {
     Usart *u = &m->usart[i];
     switch (offset) {
     case 0x00: u->sr &= value | ~0x360u; usart_update_irq(m, i); return;  // rc_w0 on CTS, LBD, TC, RXNE
@@ -1353,7 +1353,7 @@ static void usart_write(STM32F4 *m, int i, uint32_t offset, uint32_t value) {
     }
 }
 
-static bool usart_request_active(STM32F4 *m, int request) {
+static bool usart_request_active(STM32 *m, int request) {
     static const int tx[6] = {REQ_USART1_TX, REQ_USART2_TX, REQ_USART3_TX, REQ_UART4_TX, REQ_UART5_TX, REQ_USART6_TX};
     static const int rx[6] = {REQ_USART1_RX, REQ_USART2_RX, REQ_USART3_RX, REQ_UART4_RX, REQ_UART5_RX, REQ_USART6_RX};
     for (int i = 0; i < 6; i++) {
@@ -1365,19 +1365,19 @@ static bool usart_request_active(STM32F4 *m, int request) {
 
 // ------------------------------------------------------------------------------------------------------------ DAC
 
-static void dac_load(STM32F4 *m, int channel) {
+static void dac_load(STM32 *m, int channel) {
     m->dac_dor[channel] = m->dac_dhr[channel] & 0xFFF;
     if (m->dac_cr & (1u << (12 + 16 * channel))) pump(m, channel ? REQ_DAC2 : REQ_DAC1);
 }
 
-static void dac_trigger(STM32F4 *m, uint32_t tsel) {
+static void dac_trigger(STM32 *m, uint32_t tsel) {
     for (int channel = 0; channel < 2; channel++) {
         uint32_t cr = m->dac_cr >> (16 * channel);
         if ((cr & 1) && (cr & 4) && ((cr >> 3) & 7) == tsel) dac_load(m, channel);
     }
 }
 
-static void dac_write(STM32F4 *m, uint32_t offset, uint32_t value) {
+static void dac_write(STM32 *m, uint32_t offset, uint32_t value) {
     switch (offset) {
     case 0x00: m->dac_cr = value & 0x3FFF3FFF; return;
     case 0x04:
@@ -1406,7 +1406,7 @@ static void dac_write(STM32F4 *m, uint32_t offset, uint32_t value) {
     }
 }
 
-static uint32_t dac_read(STM32F4 *m, uint32_t offset) {
+static uint32_t dac_read(STM32 *m, uint32_t offset) {
     switch (offset) {
     case 0x00: return m->dac_cr;
     case 0x08: return m->dac_dhr[0];
@@ -1418,7 +1418,7 @@ static uint32_t dac_read(STM32F4 *m, uint32_t offset) {
     return 0;
 }
 
-static bool dac_request_active(STM32F4 *m, int request) {
+static bool dac_request_active(STM32 *m, int request) {
     // a request is made on each trigger and served at once: none stands
     (void)m;
     (void)request;
@@ -1433,7 +1433,7 @@ static const uint32_t flash_sectors[12][2] = {
     {0xC0000, 0x20000}, {0xE0000, 0x20000},
 };
 
-static void flash_write_register(STM32F4 *m, uint32_t offset, uint32_t value) {
+static void flash_write_register(STM32 *m, uint32_t offset, uint32_t value) {
     switch (offset) {
     case 0x00: m->flash_acr = value & 0x1F07; return;
     case 0x04:
@@ -1454,7 +1454,7 @@ static void flash_write_register(STM32F4 *m, uint32_t offset, uint32_t value) {
         if (value & (1u << 16)) {
             // STRT: a sector or the whole flash erased, done at once
             if (value & 4) {
-                memset(m->flash, 0xFF, FLASH_BYTES);
+                memset(m->flash, 0xFF, m->flash_bytes);
             } else if (value & 2) {
                 uint32_t sector = (value >> 3) & 0xF;
                 if (sector < 12) memset(m->flash + flash_sectors[sector][0], 0xFF, flash_sectors[sector][1]);
@@ -1468,7 +1468,7 @@ static void flash_write_register(STM32F4 *m, uint32_t offset, uint32_t value) {
     }
 }
 
-static uint32_t flash_read_register(STM32F4 *m, uint32_t offset) {
+static uint32_t flash_read_register(STM32 *m, uint32_t offset) {
     switch (offset) {
     case 0x00: return m->flash_acr;
     case 0x0C: return m->flash_sr;
@@ -1479,23 +1479,23 @@ static uint32_t flash_read_register(STM32F4 *m, uint32_t offset) {
 }
 
 /// A write to the flash's memory: programmed (bits only cleared) while PG is set and it is unlocked
-static void flash_program(STM32F4 *m, uint32_t address, uint32_t value, uint32_t size) {
+static void flash_program(STM32 *m, uint32_t address, uint32_t value, uint32_t size) {
     if ((m->flash_cr & 0x80000001u) != 1) {
         m->flash_sr |= 0x80;  // PGSERR
         return;
     }
     uint32_t offset = address - FLASH_START;
     if (address < FLASH_START) offset = address;  // through the alias at 0
-    if (offset + size > FLASH_BYTES) return;
+    if (offset + size > m->flash_bytes) return;
     for (uint32_t k = 0; k < size; k++) m->flash[offset + k] &= (uint8_t)(value >> (8 * k));
     m->flash_sr |= 1;
 }
 
 // ------------------------------------------------------------------------------------------------------- RCC etc.
 
-static void reset_peripherals(STM32F4 *m, int bus, uint32_t bits);
+static void reset_peripherals(STM32 *m, int bus, uint32_t bits);
 
-static uint32_t rcc_read(STM32F4 *m, uint32_t offset) {
+static uint32_t rcc_read(STM32 *m, uint32_t offset) {
     if (offset > 0x88) return 0;
     uint32_t value = m->rcc[offset / 4];
     if (offset == 0x00) {
@@ -1508,7 +1508,7 @@ static uint32_t rcc_read(STM32F4 *m, uint32_t offset) {
     return value;
 }
 
-static void rcc_write(STM32F4 *m, uint32_t offset, uint32_t value) {
+static void rcc_write(STM32 *m, uint32_t offset, uint32_t value) {
     if (offset > 0x88) return;
     switch (offset) {
     case 0x10: case 0x14: case 0x18: case 0x20: case 0x24: {
@@ -1529,7 +1529,7 @@ static uint32_t crc_update(uint32_t crc, uint32_t data) {
     return crc;
 }
 
-static uint32_t rng_next(STM32F4 *m) {
+static uint32_t rng_next(STM32 *m) {
     uint32_t x = m->rng_state;
     x ^= x << 13;
     x ^= x >> 17;
@@ -1539,7 +1539,7 @@ static uint32_t rng_next(STM32F4 *m) {
 
 // ------------------------------------------------------------------------------------------------------- the bus
 
-static uint32_t gpio_read(STM32F4 *m, int port, uint32_t offset) {
+static uint32_t gpio_read(STM32 *m, int port, uint32_t offset) {
     Gpio *g = &m->gpio[port];
     switch (offset) {
     case 0x00: return g->moder;
@@ -1556,10 +1556,10 @@ static uint32_t gpio_read(STM32F4 *m, int port, uint32_t offset) {
     return 0;
 }
 
-static uint16_t gpio_driven_levels(const STM32F4 *m, int port);
+static uint16_t gpio_driven_levels(const STM32 *m, int port);
 
 /// The watched pins whose driven level changed: told to the listener
-static void tell_pins(STM32F4 *m, int port) {
+static void tell_pins(STM32 *m, int port) {
     if (!m->watched[port] || !m->listener) return;
     uint16_t levels = gpio_driven_levels(m, port);
     uint16_t changed = (levels ^ m->told[port]) & m->watched[port];
@@ -1573,7 +1573,7 @@ static void tell_pins(STM32F4 *m, int port) {
     }
 }
 
-static void gpio_write(STM32F4 *m, int port, uint32_t offset, uint32_t value) {
+static void gpio_write(STM32 *m, int port, uint32_t offset, uint32_t value) {
     Gpio *g = &m->gpio[port];
     switch (offset) {
     case 0x00: g->moder = value; break;
@@ -1592,7 +1592,7 @@ static void gpio_write(STM32F4 *m, int port, uint32_t offset, uint32_t value) {
 }
 
 static uint32_t io_read(void *context, uint32_t address, uint32_t size) {
-    STM32F4 *m = context;
+    STM32 *m = context;
     uint32_t base = address & ~3u, offset;
     uint32_t value = 0;
     if (address >= 0x40000000u && address < 0x40008000u) {
@@ -1661,8 +1661,8 @@ static uint32_t io_read(void *context, uint32_t address, uint32_t size) {
 }
 
 static void io_write(void *context, uint32_t address, uint32_t value, uint32_t size) {
-    STM32F4 *m = context;
-    if (address < FLASH_START + FLASH_BYTES && (address >= FLASH_START || address < FLASH_BYTES)) {
+    STM32 *m = context;
+    if (address < FLASH_START + m->flash_bytes && (address >= FLASH_START || address < m->flash_bytes)) {
         flash_program(m, address, value, size);
         return;
     }
@@ -1727,7 +1727,7 @@ static void io_write(void *context, uint32_t address, uint32_t value, uint32_t s
     }
 }
 
-static bool request_active(STM32F4 *m, int request) {
+static bool request_active(STM32 *m, int request) {
     if (request >= REQ_ADC1 && request <= REQ_ADC3) {
         Adc *a = &m->adc[request - REQ_ADC1];
         return a->dma_pending && (a->cr2 & (1u << 8));
@@ -1769,7 +1769,7 @@ static void reset_usart(Usart *u) {
     u->input_count = count;
 }
 
-static void reset_adcs(STM32F4 *m) {
+static void reset_adcs(STM32 *m) {
     for (int i = 0; i < 3; i++) {
         memset(&m->adc[i], 0, sizeof m->adc[i]);
         m->adc[i].done_at = NEVER;
@@ -1783,7 +1783,7 @@ static void reset_i2c(I2c *b) {
 }
 
 /// The peripherals whose reset bits were just set in AHB1RSTR (0x10) ... APB2RSTR (0x24)
-static void reset_peripherals(STM32F4 *m, int bus, uint32_t bits) {
+static void reset_peripherals(STM32 *m, int bus, uint32_t bits) {
     switch (bus) {
     case 0x10:
         for (int port = 0; port < PORTS; port++) {
@@ -1826,7 +1826,7 @@ static void reset_peripherals(STM32F4 *m, int bus, uint32_t bits) {
     }
 }
 
-static void reset_all(STM32F4 *m) {
+static void reset_all(STM32 *m) {
     memset(m->rcc, 0, sizeof m->rcc);
     m->rcc[0x00 / 4] = 0x00000083;
     m->rcc[0x04 / 4] = 0x24003010;
@@ -1890,7 +1890,7 @@ static void reset_all(STM32F4 *m) {
 // ------------------------------------------------------------------------------------------------------ running
 
 /// The peripherals' events due by now, in turn
-static void service(STM32F4 *m) {
+static void service(STM32 *m) {
     for (int round = 0; round < 64; round++) {
         uint64_t t = now(m);
         bool any = false;
@@ -1925,7 +1925,7 @@ static void service(STM32F4 *m) {
     }
 }
 
-static uint64_t next_event(const STM32F4 *m) {
+static uint64_t next_event(const STM32 *m) {
     uint64_t next = NEVER;
     for (int i = 0; i < 3; i++) {
         if (m->spi[i].done_at < next) next = m->spi[i].done_at;
@@ -1939,7 +1939,7 @@ static uint64_t next_event(const STM32F4 *m) {
     return next;
 }
 
-CM4Stop stm32f4_run(STM32F4 *m, uint64_t cycles) {
+CM4Stop stm32_run(STM32 *m, uint64_t cycles) {
     uint64_t end = now(m) + cycles;
     CM4Stop stop = CM4_RAN;
     for (;;) {
@@ -1960,62 +1960,78 @@ CM4Stop stm32f4_run(STM32F4 *m, uint64_t cycles) {
 
 // ----------------------------------------------------------------------------------------------------------- API
 
-STM32F4 *stm32f4_create(double hse_hz) {
-    STM32F4 *m = calloc(1, sizeof *m);
+STM32 *stm32_create_model(STM32Model model, double hse_hz) {
+    if (model != STM32_F405 && model != STM32_F373) return NULL;
+    STM32 *m = calloc(1, sizeof *m);
     if (!m) return NULL;
     m->core = cm4_create();
     if (!m->core) { free(m); return NULL; }
+    m->model = model;
     m->hse = hse_hz > 0 ? hse_hz : 8e6;
-    m->flash = cm4_add_memory(m->core, FLASH_START, FLASH_BYTES, false);
+    if (model == STM32_F405) {
+        m->flash_bytes = 0x100000u;
+        m->sram_bytes = 0x20000u;
+        m->ccm_bytes = 0x10000u;
+    } else {
+        m->flash_bytes = 0x40000u;
+        m->sram_bytes = 0x8000u;
+    }
+    m->flash = cm4_add_memory(m->core, FLASH_START, m->flash_bytes, false);
     cm4_alias(m->core, 0, FLASH_START);
-    m->ccm = cm4_add_memory(m->core, CCM_START, CCM_BYTES, true);
-    m->sram = cm4_add_memory(m->core, SRAM_START, SRAM_BYTES, true);
-    if (!m->flash || !m->ccm || !m->sram) { stm32f4_destroy(m); return NULL; }
-    memset(m->flash, 0xFF, FLASH_BYTES);
+    m->sram = cm4_add_memory(m->core, SRAM_START, m->sram_bytes, true);
+    if (m->ccm_bytes) m->ccm = cm4_add_memory(m->core, CCM_START, m->ccm_bytes, true);
+    if (!m->flash || !m->sram || (m->ccm_bytes && !m->ccm)) { stm32_destroy(m); return NULL; }
+    memset(m->flash, 0xFF, m->flash_bytes);
     cm4_configure(m->core, IRQ_COUNT, 4);
     cm4_set_io(m->core, io_read, io_write, m);
     // which request each stream's channel serves
     for (size_t k = 0; k < sizeof dma_map / sizeof dma_map[0]; k++) {
         m->dma_request[dma_map[k].dma][dma_map[k].stream][dma_map[k].channel] = (int8_t)dma_map[k].request;
     }
-    m->hclk = 16e6;
-    stm32f4_reset(m);
+    m->hclk = model == STM32_F405 ? 16e6 : 8e6;
+    stm32_reset(m);
     return m;
 }
 
-void stm32f4_destroy(STM32F4 *m) {
+STM32 *stm32_create(double hse_hz) { return stm32_create_model(STM32_F405, hse_hz); }
+
+STM32Model stm32_model(const STM32 *m) { return m->model; }
+
+uint32_t stm32_flash_size(const STM32 *m) { return m->flash_bytes; }
+
+void stm32_destroy(STM32 *m) {
     if (!m) return;
     cm4_destroy(m->core);
     free(m);
 }
 
-CM4 *stm32f4_core(STM32F4 *m) { return m->core; }
-uint8_t *stm32f4_flash(STM32F4 *m) { return m->flash; }
+CM4 *stm32_core(STM32 *m) { return m->core; }
+uint8_t *stm32_flash(STM32 *m) { return m->flash; }
 
-void stm32f4_set_devices(STM32F4 *m, const STM32F4Devices *devices) {
+void stm32_set_devices(STM32 *m, const STM32Devices *devices) {
     if (devices) m->devices = *devices;
     else memset(&m->devices, 0, sizeof m->devices);
 }
 
-static uint32_t flash_word(const STM32F4 *m, uint32_t offset) {
+static uint32_t flash_word(const STM32 *m, uint32_t offset) {
     uint32_t v;
     memcpy(&v, m->flash + offset, 4);
     return v;
 }
 
-void stm32f4_reset(STM32F4 *m) {
-    memset(m->sram, 0, SRAM_BYTES);
-    memset(m->ccm, 0, CCM_BYTES);
+void stm32_reset(STM32 *m) {
+    memset(m->sram, 0, m->sram_bytes);
+    if (m->ccm) memset(m->ccm, 0, m->ccm_bytes);
     cm4_set_deadline(m->core, NEVER);
     cm4_reset(m->core);
     m->cycle_base = now(m);
     reset_all(m);
     if (flash_word(m, 0) == 0xFFFFFFFFu) {
         // no bootloader where the chip boots: the first vector table found after it
-        for (uint32_t offset = 0x4000; offset < FLASH_BYTES; offset += 0x4000) {
+        for (uint32_t offset = 0x4000; offset < m->flash_bytes; offset += 0x4000) {
             uint32_t sp = flash_word(m, offset), pc = flash_word(m, offset + 4);
-            bool stack = (sp > SRAM_START && sp <= SRAM_START + SRAM_BYTES) || (sp > CCM_START && sp <= CCM_START + CCM_BYTES);
-            if (stack && (pc & 1) && pc >= FLASH_START + offset && pc < FLASH_START + FLASH_BYTES) {
+            bool stack = (sp > SRAM_START && sp <= SRAM_START + m->sram_bytes) || (m->ccm_bytes && sp > CCM_START && sp <= CCM_START + m->ccm_bytes);
+            if (stack && (pc & 1) && pc >= FLASH_START + offset && pc < FLASH_START + m->flash_bytes) {
                 cm4_set_special(m->core, CM4_MSP, sp);
                 cm4_set_reg(m->core, 15, pc & ~1u);
                 cm4_write(m->core, 0xE000ED08, FLASH_START + offset, 4);
@@ -2025,11 +2041,11 @@ void stm32f4_reset(STM32F4 *m) {
     }
 }
 
-double stm32f4_hclk(const STM32F4 *m) { return m->hclk; }
+double stm32_hclk(const STM32 *m) { return m->hclk; }
 
-double stm32f4_time(const STM32F4 *m) { return m->time_base + (double)(now(m) - m->cycle_base) / m->hclk; }
+double stm32_time(const STM32 *m) { return m->time_base + (double)(now(m) - m->cycle_base) / m->hclk; }
 
-void stm32f4_set_input(STM32F4 *m, int port, int pin, bool driven, bool high) {
+void stm32_set_input(STM32 *m, int port, int pin, bool driven, bool high) {
     if (port < 0 || port >= PORTS || pin < 0 || pin > 15) return;
     Gpio *g = &m->gpio[port];
     uint16_t bit = (uint16_t)(1u << pin);
@@ -2038,17 +2054,17 @@ void stm32f4_set_input(STM32F4 *m, int port, int pin, bool driven, bool high) {
     exti_check(m, port);
 }
 
-void stm32f4_set_voltage(STM32F4 *m, int port, int pin, double volts) {
+void stm32_set_voltage(STM32 *m, int port, int pin, double volts) {
     if (port < 0 || port >= PORTS || pin < 0 || pin > 15) return;
     m->volts[port][pin] = volts;
 }
 
-int stm32f4_pin_mode(const STM32F4 *m, int port, int pin) {
-    if (port < 0 || port >= PORTS || pin < 0 || pin > 15) return STM32F4_INPUT;
+int stm32_pin_mode(const STM32 *m, int port, int pin) {
+    if (port < 0 || port >= PORTS || pin < 0 || pin > 15) return STM32_INPUT;
     return (int)((m->gpio[port].moder >> (2 * pin)) & 3);
 }
 
-static bool timer_pin(const STM32F4 *m, int port, int pin, int *timer, int *channel) {
+static bool timer_pin(const STM32 *m, int port, int pin, int *timer, int *channel) {
     const Gpio *g = &m->gpio[port];
     uint32_t af = (g->afr[pin / 8] >> (4 * (pin % 8))) & 0xF;
     for (size_t k = 0; k < sizeof timer_pins / sizeof timer_pins[0]; k++) {
@@ -2061,12 +2077,12 @@ static bool timer_pin(const STM32F4 *m, int port, int pin, int *timer, int *chan
     return false;
 }
 
-bool stm32f4_pin_level(const STM32F4 *m, int port, int pin) {
+bool stm32_pin_level(const STM32 *m, int port, int pin) {
     if (port < 0 || port >= PORTS || pin < 0 || pin > 15) return false;
     const Gpio *g = &m->gpio[port];
-    int mode = stm32f4_pin_mode(m, port, pin);
-    if (mode == STM32F4_OUTPUT) return (g->odr >> pin) & 1;
-    if (mode == STM32F4_ALTERNATE) {
+    int mode = stm32_pin_mode(m, port, pin);
+    if (mode == STM32_OUTPUT) return (g->odr >> pin) & 1;
+    if (mode == STM32_ALTERNATE) {
         int timer, channel;
         if (timer_pin(m, port, pin, &timer, &channel)) {
             bool level;
@@ -2078,19 +2094,19 @@ bool stm32f4_pin_level(const STM32F4 *m, int port, int pin) {
     return (gpio_idr(m, port) >> pin) & 1;
 }
 
-bool stm32f4_pin_driven(const STM32F4 *m, int port, int pin) {
+bool stm32_pin_driven(const STM32 *m, int port, int pin) {
     if (port < 0 || port >= PORTS || pin < 0 || pin > 15) return false;
     const Gpio *g = &m->gpio[port];
-    int mode = stm32f4_pin_mode(m, port, pin);
-    if (mode == STM32F4_OUTPUT) return !((g->otyper >> pin) & 1) || !((g->odr >> pin) & 1);
-    if (mode == STM32F4_ALTERNATE) {
+    int mode = stm32_pin_mode(m, port, pin);
+    if (mode == STM32_OUTPUT) return !((g->otyper >> pin) & 1) || !((g->odr >> pin) & 1);
+    if (mode == STM32_ALTERNATE) {
         int timer, channel;
         return timer_pin(m, port, pin, &timer, &channel);
     }
     return false;
 }
 
-double stm32f4_dac_volts(const STM32F4 *m, int channel) {
+double stm32_dac_volts(const STM32 *m, int channel) {
     if (channel < 1 || channel > 2) return -1;
     if (!((m->dac_cr >> (16 * (channel - 1))) & 1)) return -1;
     return m->dac_dor[channel - 1] / 4095.0 * 3.3;
@@ -2098,16 +2114,25 @@ double stm32f4_dac_volts(const STM32F4 *m, int channel) {
 
 // ---------------------------------------------------------------------------------------------------- the package
 
-static const uint8_t package_ports[STM32F4_PIN_COUNT] = {
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3,
-};
+// The pins on the circuit, in order: PA0-PA15, PB0-PB15, PC0-PC15 on both, then the F405's PD2 (its 64-pin package)
+// or the F373's PD8, PE8, PE9, PF6 and PF7 (its 64-pin package's, with the SDADCs' inputs among them)
+static const uint8_t extra_pins[2][5][2] = {{{3, 2}}, {{3, 8}, {4, 8}, {4, 9}, {5, 6}, {5, 7}}};
+static const int extra_count[2] = {1, 5};
 
-int stm32f4_pin_port(int index) { return index >= 0 && index < STM32F4_PIN_COUNT ? package_ports[index] : -1; }
-int stm32f4_pin_number(int index) { return index >= 0 && index < 48 ? index % 16 : index == 48 ? 2 : -1; }
+int stm32_pin_count(STM32Model model) { return model == STM32_F405 || model == STM32_F373 ? 48 + extra_count[model] : 0; }
 
-static void apply_voltage(STM32F4 *m, int index, double volts, double supply, uint16_t *changed) {
-    int port = package_ports[index], pin = stm32f4_pin_number(index);
+int stm32_pin_port(STM32Model model, int index) {
+    if (index < 0 || index >= stm32_pin_count(model)) return -1;
+    return index < 48 ? index / 16 : extra_pins[model][index - 48][0];
+}
+
+int stm32_pin_number(STM32Model model, int index) {
+    if (index < 0 || index >= stm32_pin_count(model)) return -1;
+    return index < 48 ? index % 16 : extra_pins[model][index - 48][1];
+}
+
+static void apply_voltage(STM32 *m, int index, double volts, double supply, uint16_t *changed) {
+    int port = stm32_pin_port(m->model, index), pin = stm32_pin_number(m->model, index);
     uint16_t bit = (uint16_t)(1u << pin);
     m->volts[port][pin] = volts;
     bool was = m->input_level[port] & bit;
@@ -2118,9 +2143,9 @@ static void apply_voltage(STM32F4 *m, int index, double volts, double supply, ui
     }
 }
 
-void stm32f4_set_pin_voltages(STM32F4 *m, const double *volts, int count, double supply) {
+void stm32_set_pin_voltages(STM32 *m, const double *volts, int count, double supply) {
     uint16_t changed[PORTS] = {0};
-    if (count > STM32F4_PIN_COUNT) count = STM32F4_PIN_COUNT;
+    if (count > stm32_pin_count(m->model)) count = stm32_pin_count(m->model);
     for (int index = 0; index < count; index++) apply_voltage(m, index, volts[index], supply, changed);
     for (int port = 0; port < PORTS; port++) {
         if (!changed[port]) continue;
@@ -2130,11 +2155,11 @@ void stm32f4_set_pin_voltages(STM32F4 *m, const double *volts, int count, double
     }
 }
 
-void stm32f4_set_pin_voltage(STM32F4 *m, int index, double volts, double supply) {
-    if (index < 0 || index >= STM32F4_PIN_COUNT) return;
+void stm32_set_pin_voltage(STM32 *m, int index, double volts, double supply) {
+    if (index < 0 || index >= stm32_pin_count(m->model)) return;
     uint16_t changed[PORTS] = {0};
     apply_voltage(m, index, volts, supply, changed);
-    int port = package_ports[index];
+    int port = stm32_pin_port(m->model, index);
     if (changed[port]) {
         m->gpio[port].driven = 0xFFFF;
         m->gpio[port].level = m->input_level[port];
@@ -2143,44 +2168,44 @@ void stm32f4_set_pin_voltage(STM32F4 *m, int index, double volts, double supply)
 }
 
 /// The levels the port drives on its output pins (and its timers' channels on theirs)
-static uint16_t gpio_driven_levels(const STM32F4 *m, int port) {
+static uint16_t gpio_driven_levels(const STM32 *m, int port) {
     uint16_t levels = 0;
     for (int pin = 0; pin < 16; pin++) {
-        if (stm32f4_pin_driven(m, port, pin) && stm32f4_pin_level(m, port, pin)) levels |= (uint16_t)(1u << pin);
+        if (stm32_pin_driven(m, port, pin) && stm32_pin_level(m, port, pin)) levels |= (uint16_t)(1u << pin);
     }
     return levels;
 }
 
-void stm32f4_pin_states(const STM32F4 *m, uint8_t *states, int count) {
-    if (count > STM32F4_PIN_COUNT) count = STM32F4_PIN_COUNT;
+void stm32_pin_states(const STM32 *m, uint8_t *states, int count) {
+    if (count > stm32_pin_count(m->model)) count = stm32_pin_count(m->model);
     for (int index = 0; index < count; index++) {
-        int port = package_ports[index], pin = stm32f4_pin_number(index);
+        int port = stm32_pin_port(m->model, index), pin = stm32_pin_number(m->model, index);
         const Gpio *g = &m->gpio[port];
-        if (stm32f4_pin_driven(m, port, pin)) {
-            states[index] = stm32f4_pin_level(m, port, pin) ? STM32F4_DRIVEN_HIGH : STM32F4_DRIVEN_LOW;
+        if (stm32_pin_driven(m, port, pin)) {
+            states[index] = stm32_pin_level(m, port, pin) ? STM32_DRIVEN_HIGH : STM32_DRIVEN_LOW;
             continue;
         }
         uint32_t mode = (g->moder >> (2 * pin)) & 3, pull = (g->pupdr >> (2 * pin)) & 3;
-        if (mode == 3) states[index] = STM32F4_FLOATING;
-        else if (pull == 1) states[index] = STM32F4_PULLED_UP;
-        else if (pull == 2) states[index] = STM32F4_PULLED_DOWN;
-        else states[index] = STM32F4_FLOATING;
+        if (mode == 3) states[index] = STM32_FLOATING;
+        else if (pull == 1) states[index] = STM32_PULLED_UP;
+        else if (pull == 2) states[index] = STM32_PULLED_DOWN;
+        else states[index] = STM32_FLOATING;
     }
 }
 
-void stm32f4_watch_pins(STM32F4 *m, const int *indices, int count, STM32F4PinListener listener, void *context) {
+void stm32_watch_pins(STM32 *m, const int *indices, int count, STM32PinListener listener, void *context) {
     memset(m->watched, 0, sizeof m->watched);
     for (int k = 0; k < count; k++) {
         int index = indices[k];
-        if (index < 0 || index >= STM32F4_PIN_COUNT) continue;
-        m->watched[package_ports[index]] |= (uint16_t)(1u << stm32f4_pin_number(index));
+        if (index < 0 || index >= stm32_pin_count(m->model)) continue;
+        m->watched[stm32_pin_port(m->model, index)] |= (uint16_t)(1u << stm32_pin_number(m->model, index));
     }
     m->listener = listener;
     m->listener_context = context;
     for (int port = 0; port < PORTS; port++) m->told[port] = gpio_driven_levels(m, port);
 }
 
-void stm32f4_usart_input(STM32F4 *m, int usart, const uint8_t *bytes, int count) {
+void stm32_usart_input(STM32 *m, int usart, const uint8_t *bytes, int count) {
     if (usart < 1 || usart > 6) return;
     Usart *u = &m->usart[usart - 1];
     for (int k = 0; k < count && u->input_count < (int)sizeof u->input; k++) {
@@ -2190,6 +2215,6 @@ void stm32f4_usart_input(STM32F4 *m, int usart, const uint8_t *bytes, int count)
     usart_schedule_receive(m, usart - 1);
 }
 
-int stm32f4_usart_input_waiting(const STM32F4 *m, int usart) {
+int stm32_usart_input_waiting(const STM32 *m, int usart) {
     return usart >= 1 && usart <= 6 ? m->usart[usart - 1].input_count : 0;
 }

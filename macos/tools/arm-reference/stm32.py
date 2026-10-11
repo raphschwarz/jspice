@@ -1,4 +1,4 @@
-"""The STM32F405 model (Sources/CortexM4/stm32f4.c, around the core) through ctypes, with stand-ins for what a
+"""The STM32F405 model (Sources/CortexM4/stm32.c, around the core) through ctypes, with stand-ins for what a
 module's board connects it to: a WM8731 codec on I2C and I2S, an SPI device, a USART's receiver. For running
 Mutable Instruments' firmware here, where the model is developed:
 
@@ -38,27 +38,27 @@ class Devices(ctypes.Structure):
 
 
 def build():
-    out = os.path.join(tempfile.gettempdir(), "jspice-cm4", "libstm32f4.so")
+    out = os.path.join(tempfile.gettempdir(), "jspice-cm4", "libstm32.so")
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    sources = [os.path.join(SOURCE, f) for f in ("cortex_m4.c", "stm32f4.c")]
-    headers = [os.path.join(SOURCE, "include", f) for f in ("CortexM4.h", "STM32F4.h")]
+    sources = [os.path.join(SOURCE, f) for f in ("cortex_m4.c", "stm32.c")]
+    headers = [os.path.join(SOURCE, "include", f) for f in ("CortexM4.h", "STM32.h")]
     if not os.path.exists(out) or any(os.path.getmtime(s) > os.path.getmtime(out) for s in sources + headers):
         subprocess.check_call([os.environ.get("CC", "gcc"), "-O2", "-g", "-shared", "-fPIC", "-I",
                                os.path.join(SOURCE, "include")] + sources + ["-o", out, "-lm"])
     lib = ctypes.CDLL(out)
     p, u32, u64, b, i, d = ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_bool, ctypes.c_int, ctypes.c_double
     for name, res, args in [
-        ("stm32f4_create", p, [d]), ("stm32f4_destroy", None, [p]), ("stm32f4_core", p, [p]),
-        ("stm32f4_set_devices", None, [p, ctypes.POINTER(Devices)]),
-        ("stm32f4_flash", ctypes.POINTER(ctypes.c_uint8), [p]), ("stm32f4_reset", None, [p]),
-        ("stm32f4_run", i, [p, u64]), ("stm32f4_hclk", d, [p]), ("stm32f4_time", d, [p]),
-        ("stm32f4_set_input", None, [p, i, i, b, b]), ("stm32f4_set_voltage", None, [p, i, i, d]),
-        ("stm32f4_pin_mode", i, [p, i, i]), ("stm32f4_pin_level", b, [p, i, i]),
-        ("stm32f4_pin_driven", b, [p, i, i]), ("stm32f4_dac_volts", d, [p, i]),
-        ("stm32f4_usart_input", None, [p, i, ctypes.c_char_p, i]), ("stm32f4_usart_input_waiting", i, [p, i]),
-        ("stm32f4_set_pin_voltages", None, [p, ctypes.POINTER(d), i, d]),
-        ("stm32f4_pin_states", None, [p, ctypes.POINTER(ctypes.c_uint8), i]),
-        ("stm32f4_watch_pins", None, [p, ctypes.POINTER(i), i, ctypes.c_void_p, p]),
+        ("stm32_create", p, [d]), ("stm32_create_model", p, [i, d]), ("stm32_destroy", None, [p]), ("stm32_core", p, [p]),
+        ("stm32_set_devices", None, [p, ctypes.POINTER(Devices)]),
+        ("stm32_flash", ctypes.POINTER(ctypes.c_uint8), [p]), ("stm32_reset", None, [p]),
+        ("stm32_run", i, [p, u64]), ("stm32_hclk", d, [p]), ("stm32_time", d, [p]),
+        ("stm32_set_input", None, [p, i, i, b, b]), ("stm32_set_voltage", None, [p, i, i, d]),
+        ("stm32_pin_mode", i, [p, i, i]), ("stm32_pin_level", b, [p, i, i]),
+        ("stm32_pin_driven", b, [p, i, i]), ("stm32_dac_volts", d, [p, i]),
+        ("stm32_usart_input", None, [p, i, ctypes.c_char_p, i]), ("stm32_usart_input_waiting", i, [p, i]),
+        ("stm32_set_pin_voltages", None, [p, ctypes.POINTER(d), i, d]),
+        ("stm32_pin_states", None, [p, ctypes.POINTER(ctypes.c_uint8), i]),
+        ("stm32_watch_pins", None, [p, ctypes.POINTER(i), i, ctypes.c_void_p, p]),
         ("cm4_reg", u32, [p, i]), ("cm4_cycles", u64, [p]), ("cm4_instructions", u64, [p]),
         ("cm4_read", u32, [p, u32, u32]), ("cm4_xpsr", u32, [p]),
     ]:
@@ -124,10 +124,12 @@ class WM8731:
 class Chip:
     PORTS = "ABCDEFGHI"
 
-    def __init__(self, hse=8e6):
+    F405, F373 = 0, 1
+
+    def __init__(self, hse=8e6, model=0):
         self.lib = build()
-        self.m = self.lib.stm32f4_create(hse)
-        self.core = self.lib.stm32f4_core(self.m)
+        self.m = self.lib.stm32_create_model(model, hse)
+        self.core = self.lib.stm32_core(self.m)
         self.codec = WM8731()
         self.spi_log = []
         self.usart_log = bytearray()
@@ -148,7 +150,7 @@ class Chip:
             pass
 
         def spi_exchange(_, spi, frame, bits):
-            self.spi_log.append((spi, frame, bits, lib.stm32f4_time(self.m)))
+            self.spi_log.append((spi, frame, bits, lib.stm32_time(self.m)))
             return 0
 
         def i2s_frame(_, spi, left, right, in_left, in_right):
@@ -162,36 +164,36 @@ class Chip:
         self.callbacks = [I2C_START(i2c_start), I2C_WRITE(i2c_write), I2C_READ(i2c_read), I2C_STOP(i2c_stop),
                           SPI_EXCHANGE(spi_exchange), I2S_FRAME(i2s_frame), USART_SEND(usart_send)]
         self.devices = Devices(None, *self.callbacks)
-        lib.stm32f4_set_devices(self.m, ctypes.byref(self.devices))
+        lib.stm32_set_devices(self.m, ctypes.byref(self.devices))
 
     def load(self, path):
-        flash = self.lib.stm32f4_flash(self.m)
+        flash = self.lib.stm32_flash(self.m)
         if path.endswith(".hex"):
             for address, data in read_hex(path).items():
                 ctypes.memmove(ctypes.addressof(flash.contents) + address - FLASH, data, len(data))
         else:
             data = open(path, "rb").read()
             ctypes.memmove(ctypes.addressof(flash.contents) + 0x8000, data, len(data))
-        self.lib.stm32f4_reset(self.m)
+        self.lib.stm32_reset(self.m)
 
     def pin(self, name):
         return self.PORTS.index(name[0].upper()), int(name[1:])
 
     def set_input(self, name, level, driven=True):
         port, pin = self.pin(name)
-        self.lib.stm32f4_set_input(self.m, port, pin, driven, level)
+        self.lib.stm32_set_input(self.m, port, pin, driven, level)
 
     def set_voltage(self, name, volts):
         port, pin = self.pin(name)
-        self.lib.stm32f4_set_voltage(self.m, port, pin, volts)
+        self.lib.stm32_set_voltage(self.m, port, pin, volts)
 
     def run_for(self, seconds):
         lib = self.lib
-        target = lib.stm32f4_time(self.m) + seconds
-        while lib.stm32f4_time(self.m) < target:
-            remaining = target - lib.stm32f4_time(self.m)
-            cycles = max(1, int(min(remaining, 0.001) * lib.stm32f4_hclk(self.m)))
-            stop = lib.stm32f4_run(self.m, cycles)
+        target = lib.stm32_time(self.m) + seconds
+        while lib.stm32_time(self.m) < target:
+            remaining = target - lib.stm32_time(self.m)
+            cycles = max(1, int(min(remaining, 0.001) * lib.stm32_hclk(self.m)))
+            stop = lib.stm32_run(self.m, cycles)
             if stop >= 2:
                 return stop
         return 0
@@ -237,7 +239,7 @@ def main():
         chip.set_input(args.trigger, True)
     if args.normal:
         port, pin = chip.pin(args.normal)
-        chip.codec.source = lambda frame: (-8192, -8192) if chip.lib.stm32f4_pin_level(chip.m, port, pin) else (8192, 8192)
+        chip.codec.source = lambda frame: (-8192, -8192) if chip.lib.stm32_pin_level(chip.m, port, pin) else (8192, 8192)
 
     started = time.time()
     t, step = 0.0, 0.01
@@ -259,9 +261,9 @@ def main():
     lib = chip.lib
     out = chip.codec.out
     print(f"{args.seconds} s in {elapsed:.1f} s ({args.seconds / elapsed:.2f}x real time), "
-          f"{lib.cm4_instructions(chip.core) / elapsed / 1e6:.0f} M instructions/s, HCLK {lib.stm32f4_hclk(chip.m) / 1e6:.0f} MHz")
+          f"{lib.cm4_instructions(chip.core) / elapsed / 1e6:.0f} M instructions/s, HCLK {lib.stm32_hclk(chip.m) / 1e6:.0f} MHz")
     print(f"codec registers: { {k: hex(v) for k, v in sorted(chip.codec.registers.items())} }")
-    print(f"{len(out)} frames sent ({len(out) / max(lib.stm32f4_time(chip.m), 1e-9):.0f} a second)")
+    print(f"{len(out)} frames sent ({len(out) / max(lib.stm32_time(chip.m), 1e-9):.0f} a second)")
     if out:
         peak = max(max(abs(l), abs(r)) for l, r in out)
         rms = math.sqrt(sum(l * l + r * r for l, r in out) / (2 * len(out)))

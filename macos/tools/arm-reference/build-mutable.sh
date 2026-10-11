@@ -18,12 +18,22 @@ if [ ! -d "$checkout/stmlib" ]; then
     git clone -q --depth 1 https://github.com/pichenettes/stmlib "$checkout/stmlib"
 fi
 cd "$checkout"
+# (a submodule some modules include: Plaits' user data comes in through its decoder)
+if [ ! -f stm_audio_bootloader/fsk/packet_decoder.h ]; then
+    rm -rf stm_audio_bootloader
+    git clone -q --depth 1 https://github.com/pichenettes/stm-audio-bootloader stm_audio_bootloader
+fi
 # the generated resources are in the repository: not regenerated (their generator is Python 2)
 touch "$module"/resources.cc "$module"/resources.h 2>/dev/null || true
 for script in stmlib/linker_scripts/*.ld; do
     grep -q 'ARM.exidx' "$script" || printf '\nSECTIONS\n{\n  /DISCARD/ : { *(.ARM.exidx*) *(.ARM.extab*) }\n}\n' >> "$script"
 done
+# the family's flags, as stmlib's makefile gives them, with warnings not fatal
+case $(sed -n 's/^FAMILY *= *//p' "$module"/makefile) in
+    f37x) arch="-mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mthumb-interwork -funroll-loops --specs=nano.specs" ;;
+    f10x) arch="-mcpu=cortex-m3 -mthumb -fno-unroll-loops" ;;
+    *) arch="-mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mthumb-interwork -funroll-loops" ;;
+esac
 make -f "$module"/makefile TOOLCHAIN_PATH="$prefix" CPPFLAGS="-fno-exceptions -fno-rtti -std=gnu++98" \
-    ARCHFLAGS="-mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mthumb-interwork -funroll-loops -Wno-error" \
-    -j4 > "build-$module.log" 2>&1 || { grep -v '^/' "build-$module.log" | tail -20; exit 1; }
+    ARCHFLAGS="$arch -Wno-error" -j4 > "build-$module.log" 2>&1 || { grep -i -A3 'error\|undefined\|overflow' "build-$module.log" | tail -40 >&2; exit 1; }
 echo "$checkout/build/$module/$module.hex"
