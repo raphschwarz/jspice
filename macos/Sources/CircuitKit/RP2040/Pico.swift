@@ -112,7 +112,19 @@ public final class Pico: Microcontroller {
     private var settingOnePin = false
 
     private func applyVoltages() {
-        for pin in Pico.gpioOfPin.indices where pin < pinVoltages.count { applyVoltage(pin) }
+        // (at every step: what each pin looks up is looked up once)
+        let system = self.system, gpios = Pico.gpioOfPin, volts = pinVoltages
+        let high = 0.6 * supply, low = 0.3 * supply
+        for pin in 0..<min(gpios.count, volts.count) {
+            let gpio = gpios[pin], v = volts[pin]
+            let was = system.levels[gpio]
+            let level = v > high ? true : (v < low ? false : was)
+            if level != was {
+                system.levels[gpio] = level
+                system.chip.gpio[gpio].setInputValue(level)
+            }
+            if gpio >= 26 { setADC(gpio, v) }
+        }
     }
 
     private func applyVoltage(_ pin: Int) {
@@ -125,10 +137,13 @@ public final class Pico: Microcontroller {
             system.levels[gpio] = level
             chip.gpio[gpio].setInputValue(level)
         }
-        if gpio >= 26 {
-            let code = (v / max(supply, 0.1) * 4095).rounded()
-            chip.adc.channelValues[gpio - 26] = UInt32(min(max(code, 0), 4095))
-        }
+        if gpio >= 26 { setADC(gpio, v) }
+    }
+
+    /// The ADC's reading of GP26–GP28 at `v`
+    private func setADC(_ gpio: Int, _ v: Double) {
+        let code = (v / max(supply, 0.1) * 4095).rounded()
+        system.chip.adc.channelValues[gpio - 26] = UInt32(min(max(code, 0), 4095))
     }
 
     public func pinVoltage(_ pin: Int) -> Double { pin >= 0 && pin < pinVoltages.count ? pinVoltages[pin] : 0 }

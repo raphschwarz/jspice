@@ -61,6 +61,8 @@ jobs:
           # built-in op-amps saves (or costs) them, and reusing factors (made for makers' models) transistor circuits
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch damp-op-amps 0.25 voice acid synth vco vcf wind tube-screamer rat overdrive lfo compressor lm1036 || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-everywhere 0.25 voice acid mc1496-ring guitar-fuzz tube-screamer bargraph tube-amp lm1036 || true
+          # the predictor's choice between line and parabola, which cost the LED bargraph a sixth at the same solves
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch choose-predictor 0.25 bargraph voice acid opto-compressor || true
           # and what bypassing behavioural sources saves them
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 voice mc1496-ring frequency-shifter || true
           ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-instructions 0.25 pico-knob pico-pcm5102 pico-melody arduino-fade arduino-blink arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
