@@ -497,6 +497,16 @@ public final class Simulator {
     public private(set) var decisionRoundIterations = 0
     public private(set) var failedRoundIterations = 0
     public private(set) var memoryRetryIterations = 0
+    /// Flips (see `flipSignature`) whose last round from where the solve ended did not converge and whose round from a
+    /// remembered solution then did: the end of a maker's model's crossover dead zone, at every crossing of the same
+    /// sense. Their rounds start from the remembered solution at once (and from where the solve ended if that does not
+    /// converge), rather than spending a few iterations swinging between the output stage's corners first.
+    private var flipsFailingFromEnd = Set<[Int]>()
+    public static var triesMemoryFirst = true
+    /// Rounds started from a remembered solution at once (counted in `memoryRetries` too)
+    public private(set) var memoryFirstRounds = 0
+    /// The limited voltages where a solve ended, for a round from there after one from memory did not converge
+    private var endLimited = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
     /// The behavioural sources whose decisions are held
     private var decidingIndices: [Int] = []
     /// Whether Newton-Raphson is damped when its steps stop shrinking: with nonlinear behavioural sources only (their
@@ -821,6 +831,7 @@ public final class Simulator {
         limitedVoltage2.deallocate()
         limitedVoltage3.deallocate()
         savedLimited.deallocate()
+        endLimited.deallocate()
         rejectLimited.deallocate()
         lineGuess.deallocate()
         parabolaGuess.deallocate()
@@ -1646,24 +1657,60 @@ public final class Simulator {
                 rounds += 1
                 decisionSolves += 1
                 Self.copy(x, into: &decisionX)
-                // (not from the stamps the solve ended on: they were made with the decisions as they were)
-                trace?("   again, with the decisions made where it ended (round \(rounds))")
-                let roundStart = newtonIterations
-                converged = newton(iterations: iterations)
-                decisionRoundIterations += newtonIterations - roundStart
-                if !converged { failedRoundIterations += newtonIterations - roundStart }
-                trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
-                if !converged && !isFailed && Self.retriesFromMemory,
+                // a flip that did not converge from where the solve ended the last time, but did from memory, starts
+                // from memory at once (see `flipsFailingFromEnd`)
+                let flip = Self.retriesFromMemory && Self.triesMemoryFirst
+                    ? flipSignature(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1]) : []
+                var triedMemory = false
+                if !flip.isEmpty && flipsFailingFromEnd.contains(flip),
                    let start = rememberedStart(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1]) {
+                    triedMemory = true
                     memoryRetries += 1
-                    trace?("   again from the solution before the sources that moved last decided as they do now")
+                    memoryFirstRounds += 1
+                    trace?("   again from the solution before the sources that moved last decided as they do now (round "
+                           + "\(rounds): from where it ended, this flip did not converge the last time)")
+                    saveLimited(&endLimited)
                     Self.copy(flipSolved[start], into: &x)
                     restoreLimited(savedLimited)
                     let retryStart = newtonIterations
                     converged = newton(iterations: iterations)
                     memoryRetryIterations += newtonIterations - retryStart
-                    if converged { memoryRetriesConverged += 1 }
                     trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
+                    if converged {
+                        memoryRetriesConverged += 1
+                    } else if !isFailed {
+                        // (where the solve ended, as the round would have started)
+                        flipsFailingFromEnd.remove(flip)
+                        Self.copy(solvedRounds[kept - 1], into: &x)
+                        restoreLimited(endLimited)
+                    }
+                }
+                if !triedMemory || (!converged && !isFailed) {
+                    // (not from the stamps the solve ended on: they were made with the decisions as they were)
+                    trace?("   again, with the decisions made where it ended (round \(rounds))")
+                    let roundStart = newtonIterations
+                    converged = newton(iterations: iterations)
+                    decisionRoundIterations += newtonIterations - roundStart
+                    if !converged { failedRoundIterations += newtonIterations - roundStart }
+                    trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
+                    if !triedMemory && !converged && !isFailed && Self.retriesFromMemory,
+                       let start = rememberedStart(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1]) {
+                        memoryRetries += 1
+                        trace?("   again from the solution before the sources that moved last decided as they do now")
+                        Self.copy(flipSolved[start], into: &x)
+                        restoreLimited(savedLimited)
+                        let retryStart = newtonIterations
+                        converged = newton(iterations: iterations)
+                        memoryRetryIterations += newtonIterations - retryStart
+                        if converged {
+                            memoryRetriesConverged += 1
+                            if !flip.isEmpty {
+                                if flipsFailingFromEnd.count >= 64 { flipsFailingFromEnd.removeAll() }
+                                flipsFailingFromEnd.insert(flip)
+                            }
+                        }
+                        trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
+                    }
                 }
                 if !converged || isFailed { break }
             }
@@ -4457,6 +4504,18 @@ public final class Simulator {
             if moved.allSatisfy({ decides($0, at: point, flipHeld[k]) == decides($0, at: point, decisionX) }) { return k }
         }
         return nil
+    }
+
+    /// The sources whose decisions moved from `previous` to the present `decisionX` (compared at the solution `point`),
+    /// each with the sense its value moved in: what a flip is known by from one crossing to the next
+    private func flipSignature(previous: [Double], at point: [Double]) -> [Int] {
+        guard point.count == x.count, previous.count == x.count else { return [] }
+        var signature: [Int] = []
+        for i in decidingIndices {
+            let before = decides(i, at: point, previous), now = decides(i, at: point, decisionX)
+            if before != now { signature.append(2 * i + (now > before ? 1 : 0)) }
+        }
+        return signature
     }
 
     /// A behavioural source's value with its inputs read from `point` and its decisions made at `held`: two held
