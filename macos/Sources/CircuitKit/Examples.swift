@@ -7,7 +7,37 @@ public struct Example: Identifiable, Sendable {
     public let summary: String
     /// SF Symbol name for the library
     public let symbol: String
-    public let circuit: Circuit
+    /// The circuit, built (and most laid out from a netlist) the first time it is asked for: the library lists every
+    /// example's title, and building them all took half a second
+    public var circuit: Circuit { made.circuit }
+    private let made: LazyCircuit
+
+    init(id: String, title: String, summary: String, symbol: String, circuit: @autoclosure @escaping () -> Circuit) {
+        self.id = id
+        self.title = title
+        self.summary = summary
+        self.symbol = symbol
+        made = LazyCircuit(circuit)
+    }
+}
+
+/// A circuit made once, when first asked for (from any thread)
+private final class LazyCircuit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var made: Circuit?
+    private var make: (() -> Circuit)?
+
+    init(_ make: @escaping () -> Circuit) { self.make = make }
+
+    var circuit: Circuit {
+        lock.lock()
+        defer { lock.unlock() }
+        if let made { return made }
+        let circuit = make?() ?? Circuit()
+        made = circuit
+        make = nil
+        return circuit
+    }
 }
 
 /// Builds circuits from grid coordinates.
