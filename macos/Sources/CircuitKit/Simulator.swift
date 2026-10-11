@@ -4619,8 +4619,10 @@ public final class Simulator {
         let lists = nodeLists
         for i in nonlinearIndices {
             let nodes = lists[i]
-            let c = constants[i]
-            switch kinds[i] {
+            // (through the buffers: the subscripts' bounds checks are calls the optimiser leaves in this loop, at every
+            // part of every iteration; `i` is a part's own index)
+            let c = constants.withUnsafeBufferPointer { $0[i] }
+            switch kinds.withUnsafeBufferPointer({ $0[i] }) {
             case .diode, .led, .zener:
                 stampDiode(i, nodes, matrix, rhs, m)
 
