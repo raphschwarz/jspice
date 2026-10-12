@@ -257,6 +257,7 @@ struct STM32 {
     void *listener_context;
     uint16_t input_level[PORTS];    // the levels the circuit's voltages were last read as
     uint16_t floating[PORTS];       // pins the circuit leaves unconnected (NaN): their pulls set them
+    uint32_t generation;            // counts changes to the pins' functions and the buses' settings
 };
 
 // ------------------------------------------------------------------------------------------------------- utilities
@@ -1300,6 +1301,8 @@ static uint32_t spi_read(STM32 *m, Spi *p, uint32_t offset) {
 }
 
 static void spi_write(STM32 *m, Spi *p, uint32_t offset, uint32_t value) {
+    // (counted only when they change: a firmware writes its control registers at every transfer)
+    if ((offset == 0x00 && value != p->cr1) || (offset == 0x1C && value != p->i2scfgr)) m->generation++;
     bool ext = p >= m->ext && p < m->ext + 2;
     int i = ext ? (int)(p - m->ext) + 1 : (int)(p - m->spi);
     switch (offset) {
@@ -1419,6 +1422,7 @@ static uint32_t i2c_read(STM32 *m, int i, uint32_t offset) {
 }
 
 static void i2c_write(STM32 *m, int i, uint32_t offset, uint32_t value) {
+    if (offset == 0x00 && ((value ^ m->i2c[i].cr1) & 1)) m->generation++;  // PE
     I2c *b = &m->i2c[i];
     switch (offset) {
     case 0x00:
@@ -1575,6 +1579,7 @@ static uint32_t usart_read(STM32 *m, int i, uint32_t offset) {
 }
 
 static void usart_write(STM32 *m, int i, uint32_t offset, uint32_t value) {
+    if (offset == 0x0C && ((value ^ m->usart[i].cr1) >> 13 & 1)) m->generation++;  // UE
     Usart *u = &m->usart[i];
     switch (offset) {
     case 0x00: u->sr &= value | ~0x360u; usart_update_irq(m, i); return;  // rc_w0 on CTS, LBD, TC, RXNE
@@ -1814,6 +1819,7 @@ static void tell_pins(STM32 *m, int port) {
 }
 
 static void gpio_write(STM32 *m, int port, uint32_t offset, uint32_t value) {
+    if (offset == 0x00 || offset == 0x04 || offset == 0x20 || offset == 0x24) m->generation++;
     Gpio *g = &m->gpio[port];
     switch (offset) {
     case 0x00: g->moder = value; break;
@@ -2230,6 +2236,7 @@ static uint32_t gpio_f1_read(STM32 *m, int port, uint32_t offset) {
 }
 
 static void gpio_f1_write(STM32 *m, int port, uint32_t offset, uint32_t value) {
+    if (offset == 0x00 || offset == 0x04) m->generation++;
     Gpio *g = &m->gpio[port];
     switch (offset) {
     case 0x00: g->cr[0] = value; break;
@@ -2311,7 +2318,7 @@ static void io_write_f1(STM32 *m, uint32_t address, uint32_t value) {
         uint32_t block = (address - 0x40010000u) >> 10;
         switch (block) {
         case 0x00:
-            if (offset == 0x04) m->syscfg_pmc = value;
+            if (offset == 0x04) { m->syscfg_pmc = value; m->generation++; }  // MAPR: the remaps
             else if (offset >= 0x08 && offset <= 0x14) m->syscfg_exticr[(offset - 8) / 4] = value & 0xFFFF;
             break;
         case 0x01:
@@ -2962,6 +2969,117 @@ double stm32_dac_volts(const STM32 *m, int channel) {
     return m->dac_dor[channel - 1] / 4095.0 * 3.3;
 }
 
+// ------------------------------------------------------------------------------------------- the pins' functions
+
+// The bus signals the packages' pins carry, by alternate function (or the F103's remap): ST's pin data
+enum { PIN_SPI = 1, PIN_I2C, PIN_USART };
+enum { ROLE_SCK = 1, ROLE_MISO, ROLE_MOSI, ROLE_NSS, ROLE_MCK, ROLE_EXTSD, ROLE_SCL, ROLE_SDA, ROLE_TX, ROLE_RX };
+static const struct {
+    uint8_t model, port, pin;
+    int8_t af, remap_shift;
+    uint8_t remap, kind, instance, role;
+} pin_functions[] = {
+#include "stm32_pins.inc"
+};
+
+/// Whether the peripheral is switched on (an F103 pin shared by two of them carries the one that is)
+static bool peripheral_on(const STM32 *m, int kind, int instance) {
+    if (instance < 1) return false;
+    switch (kind) {
+    case PIN_SPI:
+        if (instance > 3) return false;
+        return i2s_mode(&m->spi[instance - 1]) ? (m->spi[instance - 1].i2scfgr >> 10) & 1 : (m->spi[instance - 1].cr1 >> 6) & 1;
+    case PIN_I2C: return instance <= 3 && (m->i2c[instance - 1].cr1 & 1);
+    case PIN_USART: return instance <= 6 && ((m->usart[instance - 1].cr1 >> 13) & 1);
+    }
+    return false;
+}
+
+STM32Signal stm32_pin_signal(const STM32 *m, int index, int *instance) {
+    if (instance) *instance = 0;
+    int port = stm32_pin_port(m->model, index), pin = stm32_pin_number(m->model, index);
+    if (port < 0) return STM32_SIGNAL_INPUT;
+    int mode = stm32_pin_mode(m, port, pin);
+    if (mode == STM32_ANALOG) return STM32_SIGNAL_ANALOG;
+    if (mode == STM32_OUTPUT) return STM32_SIGNAL_OUTPUT;
+    bool f1 = m->model == STM32_F103;
+    // (the F103's peripherals take their inputs through a pin set as an input)
+    if (mode == STM32_INPUT && !f1) return STM32_SIGNAL_INPUT;
+    uint32_t af = (m->gpio[port].afr[pin / 8] >> (4 * (pin % 8))) & 0xF;
+    int found = -1;
+    for (size_t k = 0; k < sizeof pin_functions / sizeof pin_functions[0]; k++) {
+        if (pin_functions[k].model != m->model || pin_functions[k].port != port || pin_functions[k].pin != pin) continue;
+        if (f1) {
+            int shift = pin_functions[k].remap_shift;
+            uint32_t field = shift < 0 ? 0 : (m->syscfg_pmc >> shift) & (shift == 4 ? 3u : 1u);
+            if (shift >= 0 && field != pin_functions[k].remap) continue;
+            int role = pin_functions[k].role;
+            bool input_role = role == ROLE_MISO || role == ROLE_RX;
+            bool on = peripheral_on(m, pin_functions[k].kind, pin_functions[k].instance);
+            if ((mode == STM32_INPUT) != input_role) continue;
+            // (a pin carries a peripheral's signal only while that peripheral is on: the F103 has no AF numbers to
+            // tell one pin's functions apart, its timers' outputs among them)
+            if (!on) continue;
+            found = (int)k;
+            break;
+        } else if ((uint32_t)pin_functions[k].af == af) {
+            found = (int)k;
+            break;
+        }
+    }
+    if (found < 0) return mode == STM32_INPUT ? STM32_SIGNAL_INPUT : STM32_SIGNAL_ALTERNATE;
+    int n = pin_functions[found].instance, role = pin_functions[found].role;
+    if (instance) *instance = n;
+    switch (pin_functions[found].kind) {
+    case PIN_SPI: {
+        bool i2s = n >= 1 && n <= 3 && i2s_mode(&m->spi[n - 1]);
+        switch (role) {
+        case ROLE_SCK: return i2s ? STM32_SIGNAL_I2S_CK : STM32_SIGNAL_SPI_SCK;
+        // (in full-duplex I2S, the extension's input comes in on the port's MISO pin as well as on its own: Mutable's
+        // F405 boards take I2S2ext_SD on PB14 through SPI2's AF5, where the datasheet gives it AF6)
+        case ROLE_MISO: return i2s && m->model == STM32_F405 && ((m->ext[n == 3 ? 1 : 0].i2scfgr >> 11) & 1) && n >= 2
+                                   ? STM32_SIGNAL_I2S_EXTSD : STM32_SIGNAL_SPI_MISO;
+        case ROLE_MOSI: return i2s ? STM32_SIGNAL_I2S_SD : STM32_SIGNAL_SPI_MOSI;
+        case ROLE_NSS: return i2s ? STM32_SIGNAL_I2S_WS : STM32_SIGNAL_SPI_NSS;
+        case ROLE_MCK: return STM32_SIGNAL_I2S_MCK;
+        case ROLE_EXTSD: return STM32_SIGNAL_I2S_EXTSD;
+        }
+        break;
+    }
+    case PIN_I2C: return role == ROLE_SCL ? STM32_SIGNAL_I2C_SCL : STM32_SIGNAL_I2C_SDA;
+    case PIN_USART: return role == ROLE_TX ? STM32_SIGNAL_USART_TX : STM32_SIGNAL_USART_RX;
+    }
+    return STM32_SIGNAL_ALTERNATE;
+}
+
+bool stm32_spi_config(const STM32 *m, int instance, STM32SPIConfig *config) {
+    if (instance < 1 || instance > 3 || !config) return false;
+    const Spi *p = &m->spi[instance - 1];
+    memset(config, 0, sizeof *config);
+    config->i2s = i2s_mode(p);
+    if (config->i2s) {
+        uint32_t cfg = p->i2scfgr, mode = (cfg >> 8) & 3;
+        config->enabled = (cfg >> 10) & 1;
+        config->master = mode >= 2;
+        config->transmitting = mode == 0 || mode == 2;
+        config->i2s_standard = (int)((cfg >> 4) & 3);
+        static const int data_bits[4] = {16, 24, 32, 0};
+        config->i2s_data_bits = data_bits[(cfg >> 1) & 3];
+        config->i2s_channel_bits = (cfg & 1) ? 32 : 16;
+        config->cpol = (int)((cfg >> 3) & 1);
+    } else {
+        config->enabled = (p->cr1 >> 6) & 1;
+        config->master = (p->cr1 >> 2) & 1;
+        config->cpol = (int)((p->cr1 >> 1) & 1);
+        config->cpha = (int)(p->cr1 & 1);
+        config->lsb_first = (p->cr1 >> 7) & 1;
+        config->bits = spi_bits(m, p);
+    }
+    return true;
+}
+
+uint32_t stm32_config_generation(const STM32 *m) { return m->generation; }
+
 // ---------------------------------------------------------------------------------------------------- the package
 
 // The pins on the circuit, in order: PA0-PA15, PB0-PB15, then the F405's PC0-PC15 and PD2 (its 64-pin package),
@@ -2999,6 +3117,7 @@ int stm32_pin_number(STM32Model model, int index) {
 
 static void apply_voltage(STM32 *m, int index, double volts, double supply, uint16_t *changed) {
     int port = stm32_pin_port(m->model, index), pin = stm32_pin_number(m->model, index);
+    if (port < 0) return;
     uint16_t bit = (uint16_t)(1u << pin);
     if (volts != volts) {
         // NaN: nothing in the circuit holds the pin, which its pull (or its own output) sets as on the chip, at once

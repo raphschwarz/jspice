@@ -332,8 +332,20 @@ public final class Simulator {
         let call: (PinEvent) -> Void
         init(_ call: @escaping (PinEvent) -> Void) { self.call = call }
     }
-    /// For each STM32, the codecs wired to its I²S ports (a codec's BCLK on the port's CK pin) and I²C buses (its SCLK on
-    /// the bus's SCL pin): its frames go to them and theirs come back, its writes to their control port are answered
+    /// For each STM32, the converters wired to its pins: each part, and the chip's pin on each of its terminals' nodes
+    /// (-1: none). Which of its ports each one is on is found from how the firmware has set the chip up (`STM32BusCheck`),
+    /// again whenever it changes that
+    private var busWirings: [[(part: Int, pins: [Int])]] = []
+    private var busChips: [STM32Microcontroller?] = []
+    private var busGenerations: [UInt32] = []
+    /// For each part wired to an STM32, why its bus does not reach it (nil: it does, or nothing is wired); said once
+    /// frames flow on the chip's ports, so that a firmware still setting up its pins is not taken for a wrong board
+    private var busIssues: [String?] = []
+    private var busIssuesPending: [Bool] = []
+    /// What `busIssues` has said, among the circuit's problems
+    private var busProblems: [String] = []
+    /// For each STM32, the codecs on its I²S ports and I²C buses: its frames go to them and theirs come back, its writes
+    /// to their control port are answered
     private var codecLinks: [[(port: Int, codec: Int)]] = []
     private var codecBuses: [[(bus: Int, codec: Int)]] = []
     private var codecExchanges: [STM32Microcontroller.FrameExchange?] = []
@@ -1146,7 +1158,7 @@ public final class Simulator {
         valuesVersion = -1
         matrixIsCurrent = false
         isFailed = false
-        problems = topology.problems + behaviorProblems
+        problems = topology.problems + behaviorProblems + busProblems
         configureScopes(window: traces.values.first?.window ?? 1)
         currentsAreStale = true
     }
@@ -1331,7 +1343,10 @@ public final class Simulator {
         for i in flat.elements.indices { initialiseState(i) }
         x = Array(repeating: 0, count: topology.matrixSize)
         isFailed = false
-        problems = topology.problems + behaviorProblems
+        // (the chips start over: what their buses do not reach is said again once their frames flow)
+        busProblems = []
+        for i in busIssuesPending.indices where !busWirings[i].isEmpty { busIssuesPending[i] = true }
+        problems = topology.problems + behaviorProblems + busProblems
         for trace in traces.values { trace.clear() }
         delayHistory = [:]
         springTanks = [:]
@@ -1390,7 +1405,7 @@ public final class Simulator {
         // a simulation that failed tries again with the new values (from where it was, unless that was not finite)
         if isFailed {
             isFailed = false
-            problems = topology.problems + behaviorProblems
+            problems = topology.problems + behaviorProblems + busProblems
             if x.contains(where: { !$0.isFinite }) { x = [Double](repeating: 0, count: topology.matrixSize) }
         }
         return true
@@ -2807,7 +2822,7 @@ public final class Simulator {
 
     private func fail() {
         isFailed = true
-        problems = topology.problems + behaviorProblems + ["The circuit can't be solved. Look for voltage sources in parallel, a loop of sources and wires, or a current source with nowhere to go."]
+        problems = topology.problems + behaviorProblems + busProblems + ["The circuit can't be solved. Look for voltage sources in parallel, a loop of sources and wires, or a current source with nowhere to go."]
     }
 
     // MARK: - Equations
@@ -5935,81 +5950,116 @@ public final class Simulator {
         // (how many terminals each node joins: an STM32's pin alone on its node floats)
         var uses = [Int](repeating: 0, count: topology.nodeCount + 1)
         for nodes in topology.elementNodes { for node in nodes where node < uses.count { uses[node] += 1 } }
+        busWirings = Array(repeating: [], count: kinds.count)
+        busChips = Array(repeating: nil, count: kinds.count)
+        busGenerations = Array(repeating: 0, count: kinds.count)
+        busIssues = Array(repeating: nil, count: kinds.count)
+        busIssuesPending = Array(repeating: false, count: kinds.count)
+        busProblems = []
         let stm32s: Set<ElementKind> = [.stm32f405, .stm32f373, .stm32f103]
         for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
-            let f373 = kinds[i] == .stm32f373, f103 = kinds[i] == .stm32f103
             let chipNodes = topology.elementNodes[i]
             floatingChipPins[i] = chipNodes.map { $0 > 0 && $0 < uses.count && uses[$0] == 1 }
             for j in kinds.indices where [.codec, .i2sDac, .cvDac, .spiAdc].contains(kinds[j]) && j < topology.elementNodes.count {
-                let nodes = topology.elementNodes[j]
-                func wired(_ terminal: Int, _ pins: [Int]) -> Bool {
-                    terminal < nodes.count && nodes[terminal] > 0
-                        && pins.contains { $0 < chipNodes.count && chipNodes[$0] == nodes[terminal] }
-                }
-                // a CV DAC on SPI (or an SPI ADC, its CLK and CS): SPI1's SCK on PA5 or PB3, SPI2's on PB13 or PB10
-                // (the F373's PA8, PB8, PB10 or PD8), SPI3's on PC10 or PB3 (or the F373's PA1); its SYNC on
-                // whichever of the chip's pins
-                let adc = kinds[j] == .spiAdc
-                if adc || (kinds[j] == .cvDac && constants[j].high >= 2) {
-                    let syncTerminal = adc ? 0 : 2, clockTerminal = adc ? 1 : 0
-                    let sync = nodes.count > syncTerminal && nodes[syncTerminal] > 0
-                        ? chipNodes.firstIndex(of: nodes[syncTerminal]) ?? -1 : -1
-                    let ports: [(Int, [Int])] = f103 ? [(1, [5]), (2, [29])]
-                        : f373 ? [(1, [5, 19]), (2, [8, 24, 26, 48]), (3, [1, 19, 42])]
-                        : [(1, [5, 19]), (2, [29, 26]), (3, [42, 19])]
-                    for (port, pins) in ports where wired(clockTerminal, pins) { spiLinks[i].append((port, j, sync)) }
-                    continue
-                }
-                if f103 || adc { continue }
-                // (pins by index: PA0-PA15 0-15, PB0-PB15 16-31, PC0-PC15 32-47, then the F373's PD8 48) I2S2's CK on
-                // PB13 or PB10 (the F373's on PA8, PB8, PB10 or PD8), I2S3's on PC10 or PB3 (or the F373's PA1), at a
-                // codec's BCLK or a PCM5102's BCK; I2C1's SCL on PB6 or PB8, I2C2's on PB10, I2C3's on PA8, at a
-                // codec's SCLK (the F405's: the F373's I2C is not run)
-                let clock = kinds[j] == .codec ? 1 : 0
-                if wired(clock, f373 ? [8, 24, 26, 48] : [29, 26]) { codecLinks[i].append((2, j)) }
-                if wired(clock, f373 ? [42, 19, 1] : [42, 19]) { codecLinks[i].append((3, j)) }
-                guard kinds[j] == .codec, !f373 else { continue }
-                if wired(6, [22, 24]) { codecBuses[i].append((1, j)) }
-                if wired(6, [26]) { codecBuses[i].append((2, j)) }
-                if wired(6, [8]) { codecBuses[i].append((3, j)) }
+                let pins = topology.elementNodes[j].map { node in node > 0 ? chipNodes.firstIndex(of: node) ?? -1 : -1 }
+                if pins.contains(where: { $0 >= 0 }) { busWirings[i].append((j, pins)) }
+            }
+            guard !busWirings[i].isEmpty else { continue }
+            busChips[i] = chips[i] as? STM32Microcontroller
+            busGenerations[i] = 0
+            if let stm32 = busChips[i] { resolveBuses(i, stm32) }
+            // the pins that frame SPI words (a DAC's SYNC, an ADC's CS), whichever port they turn out to be on
+            let syncs = busWirings[i].compactMap { wiring -> Int? in
+                let part = wiring.part
+                let terminal = kinds[part] == .spiAdc ? 0 : kinds[part] == .cvDac && constants[part].high >= 2 ? 2 : -1
+                return terminal >= 0 && terminal < wiring.pins.count && wiring.pins[terminal] >= 0 ? wiring.pins[terminal] : nil
             }
             // (called only while the chip runs, within `runChips`: the simulator is there)
-            if !spiLinks[i].isEmpty {
-                spiExchanges[i] = { [unowned(unsafe) self] port, frame, bits in self.spiFrame(i, port, frame, bits) }
-                // its SYNC pins watched: a falling edge starts a word
-                let syncs = spiLinks[i].map(\.sync).filter { $0 >= 0 }
-                if !syncs.isEmpty, let chip = chips[i] {
-                    chip.watchedPins = Array(Set(chip.watchedPins).union(syncs)).sorted()
-                    let previous = busHandlers[i]
-                    busHandlers[i] = BusHandler { [unowned(unsafe) self] event in
-                        if !event.high {
-                            for link in self.spiLinks[i] where link.sync == event.pin {
-                                self.spiWords[link.dac] = (0, 0)
-                                self.spiAdcStates[link.dac] = (-1, 0, 0)
-                            }
+            spiExchanges[i] = { [unowned(unsafe) self] port, frame, bits in self.spiFrame(i, port, frame, bits) }
+            // its SYNC pins watched: a falling edge starts a word
+            if !syncs.isEmpty, let chip = chips[i] {
+                chip.watchedPins = Array(Set(chip.watchedPins).union(syncs)).sorted()
+                let previous = busHandlers[i]
+                busHandlers[i] = BusHandler { [unowned(unsafe) self] event in
+                    if !event.high {
+                        self.refreshBuses(i)
+                        for link in self.spiLinks[i] where link.sync == event.pin {
+                            self.spiWords[link.dac] = (0, 0)
+                            self.spiAdcStates[link.dac] = (-1, 0, 0)
                         }
-                        previous?.call(event)
                     }
+                    previous?.call(event)
                 }
             }
-            if !codecLinks[i].isEmpty {
-                codecExchanges[i] = { [unowned(unsafe) self] port, left, right in self.codecFrame(i, port, left, right) }
-            }
-            if !codecBuses[i].isEmpty {
+            codecExchanges[i] = { [unowned(unsafe) self] port, left, right in self.codecFrame(i, port, left, right) }
+            if busWirings[i].contains(where: { kinds[$0.part] == .codec }) {
                 codecTargets[i] = STM32Microcontroller.I2CTarget(
                     start: { [unowned(unsafe) self] bus, address, _ in
+                        self.refreshBuses(i)
                         // a WM8731 at 0x1A (CSB low) or 0x1B
-                        (address == 0x1A || address == 0x1B) && self.codecBuses[i].contains { $0.bus == bus }
+                        return (address == 0x1A || address == 0x1B) && self.codecBuses[i].contains { $0.bus == bus }
                     },
                     write: { _, _ in true }, read: { _, _ in 0xFF }, stop: { _ in })
             }
         }
     }
 
+    /// Which of an STM32's ports reach the parts wired to it, as its firmware has set it up now; why not, for those they
+    /// do not
+    private func resolveBuses(_ i: Int, _ stm32: STM32Microcontroller) {
+        busGenerations[i] = stm32_config_generation(stm32.chip)
+        codecLinks[i] = []
+        codecBuses[i] = []
+        spiLinks[i] = []
+        let check = STM32BusCheck(chip: stm32, pinNames: STM32Microcontroller.pinNames(stm32.model))
+        var pending = false, settled = false
+        for (j, pins) in busWirings[i] {
+            let element = flat.elements[j]
+            let (links, issue) = check.resolve(part: kinds[j], name: element.name.isEmpty ? kinds[j].displayName : element.name,
+                                               model: element.model?.name ?? kinds[j].displayName,
+                                               format: Int(constants[j].high), pins: pins)
+            for link in links {
+                switch link {
+                case .i2s(let port): codecLinks[i].append((port, j))
+                case .i2c(let bus): codecBuses[i].append((bus, j))
+                case .spi(let port, let sync): spiLinks[i].append((port, j, sync))
+                }
+            }
+            if busIssues[j] != issue {
+                // (what it said before, no longer so, is taken back)
+                if let old = busIssues[j], busProblems.contains(old) {
+                    busProblems.removeAll { $0 == old }
+                    settled = true
+                }
+                busIssues[j] = issue
+            }
+            if let issue, !busProblems.contains(issue) { pending = true }
+        }
+        busIssuesPending[i] = pending
+        if settled { problems = topology.problems + behaviorProblems + busProblems }
+    }
+
+    /// The firmware set an STM32's pins or ports up anew (as it runs): which of them reach what
+    @inline(__always) private func refreshBuses(_ i: Int) {
+        guard let stm32 = busChips[i], stm32_config_generation(stm32.chip) != busGenerations[i] else { return }
+        resolveBuses(i, stm32)
+    }
+
+    /// Frames flow on an STM32's ports: what does not reach the parts wired to it is said now
+    private func reportBusIssues(_ i: Int) {
+        busIssuesPending[i] = false
+        for (j, _) in busWirings[i] {
+            if let issue = busIssues[j], !busProblems.contains(issue) { busProblems.append(issue) }
+        }
+        problems = topology.problems + behaviorProblems + busProblems
+    }
+
     /// A frame an STM32 sends on an I²S port: the codecs (and PCM5102s) on it take it for their outputs, both kept
     /// left-justified (the left in `latch`, the right in `count`), and the first codec gives back what its line inputs
     /// read
     private func codecFrame(_ chip: Int, _ port: Int, _ left: Int32, _ right: Int32) -> (left: Int32, right: Int32) {
+        refreshBuses(chip)
+        if busIssuesPending[chip] { reportBusIssues(chip) }
         var input: (left: Int32, right: Int32) = (0, 0)
         var first = true
         for link in codecLinks[chip] where link.port == port {
@@ -6036,6 +6086,9 @@ public final class Simulator {
     /// A frame an STM32 shifts out on an SPI port: each CV DAC on it takes its bits, a word when it has them all since
     /// its SYNC fell (without a SYNC wired, a word each time it has them); it shifts nothing back
     private func spiFrame(_ chip: Int, _ port: Int, _ frame: UInt32, _ bits: Int) -> UInt32 {
+        refreshBuses(chip)
+        if busIssuesPending[chip] { reportBusIssues(chip) }
+        guard spiLinks[chip].contains(where: { $0.port == port }) else { return 0xFFFF }
         var reply: UInt32 = 0
         for link in spiLinks[chip] where link.port == port {
             let j = link.dac

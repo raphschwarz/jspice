@@ -96,6 +96,35 @@ int stm32_pin_count(STM32Model model);
 /// The port (0 for A) and number of the pin at `index`
 int stm32_pin_port(STM32Model model, int index);
 int stm32_pin_number(STM32Model model, int index);
+/// What a pin carries now, as the firmware has set it up: a plain input or output, analog, or a bus's signal through
+/// its alternate function (by ST's pin data: the AF number, or the F103's remap), its peripheral's number in
+/// `instance` (SPI2's clock: STM32_SIGNAL_SPI_SCK, 2; I2S's when that SPI is in I2S mode). STM32_SIGNAL_ALTERNATE: an
+/// alternate function that is none of the buses' (a timer's, say).
+typedef enum {
+    STM32_SIGNAL_INPUT = 0, STM32_SIGNAL_OUTPUT, STM32_SIGNAL_ANALOG, STM32_SIGNAL_ALTERNATE,
+    STM32_SIGNAL_SPI_SCK, STM32_SIGNAL_SPI_MISO, STM32_SIGNAL_SPI_MOSI, STM32_SIGNAL_SPI_NSS,
+    STM32_SIGNAL_I2S_CK, STM32_SIGNAL_I2S_SD, STM32_SIGNAL_I2S_WS, STM32_SIGNAL_I2S_MCK, STM32_SIGNAL_I2S_EXTSD,
+    STM32_SIGNAL_I2C_SCL, STM32_SIGNAL_I2C_SDA, STM32_SIGNAL_USART_TX, STM32_SIGNAL_USART_RX,
+} STM32Signal;
+STM32Signal stm32_pin_signal(const STM32 *chip, int index, int *instance);
+
+/// An SPI port's settings (1-3), as SPI or as I2S
+typedef struct {
+    bool enabled;           // SPE (I2SE in I2S mode)
+    bool i2s;
+    bool master;
+    int cpol, cpha;         // SPI's clock polarity and phase; I2S's CKPOL in cpol
+    bool lsb_first;
+    int bits;               // an SPI frame's: 8 or 16
+    int i2s_standard;       // 0 Philips, 1 MSB-justified, 2 LSB-justified, 3 PCM
+    int i2s_data_bits;      // 16, 24 or 32
+    int i2s_channel_bits;   // 16 or 32
+    bool transmitting;      // I2S: the port sends (as master or slave)
+} STM32SPIConfig;
+bool stm32_spi_config(const STM32 *chip, int instance, STM32SPIConfig *config);
+/// A count that changes whenever the firmware changes a pin's function or a bus's settings
+uint32_t stm32_config_generation(const STM32 *chip);
+
 /// The circuit's voltage on each pin: its level read with hysteresis (high above 0.6 of `supply`, low below 0.3, as
 /// it was between), and the voltage the ADCs read. NaN for a pin nothing in the circuit holds: its pull sets it, as
 /// it does on the chip at once.

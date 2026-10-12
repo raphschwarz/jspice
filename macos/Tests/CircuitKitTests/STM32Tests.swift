@@ -156,6 +156,46 @@ final class STM32Tests: XCTestCase {
         let peak = 0.25 * 2.1 * 2.squareRoot() * 10_000 / 10_100
         XCTAssertEqual(lefts.max() ?? 0, peak, accuracy: 0.01)
         XCTAssertEqual(lefts.min() ?? 0, -peak, accuracy: 0.01)
+        XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
+    }
+
+    /// A DAC wired where the firmware does not send its frames gets none, and the simulator says why: here the
+    /// PCM5102's DIN on PB14, which the firmware has as I2S2's full-duplex input, not on PB15, its data out
+    func testAMiswiredDACIsToldOfAndGetsNothing() throws {
+        var chip = NetlistPart(kind: .stm32f405, name: "U1", connections: ["pb12": "ws", "pb13": "bck", "pb14": "din"])
+        chip.firmware = Data(try firmware())
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .i2sDac, name: "U2", connections: ["bck": "bck", "din": "din", "lrck": "ws", "outL": "left", "outR": "right"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "left", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "LEFT", connections: ["plus": "left", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        let left = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "LEFT" })
+        var lefts: [Double] = []
+        while simulator.time < 0.2 {
+            simulator.step()
+            if simulator.isFailed { break }
+            if simulator.time > 0.1 { lefts.append(simulator.voltageAcross(left)) }
+        }
+        XCTAssertLessThan(lefts.map(abs).max() ?? 1, 0.001, "no frames reach it")
+        let said = simulator.problems.filter { $0.hasPrefix("U2") }
+        XCTAssertEqual(said, ["U2 (PCM5102): its DIN is on PB14, which the firmware has as I2S2's full-duplex SD (I2S2ext), not as I2S2's SD."])
+    }
+
+    /// The same with its clock on a pin the firmware leaves as an input (PC10, where I2S3 could have its CK)
+    func testADACOnAnUnusedClockPinIsToldOf() throws {
+        var chip = NetlistPart(kind: .stm32f405, name: "U1", connections: ["pb12": "ws", "pc10": "bck", "pb15": "din"])
+        chip.firmware = Data(try firmware())
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .i2sDac, name: "U2", connections: ["bck": "bck", "din": "din", "lrck": "ws", "outL": "left", "outR": "right"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "left", "b": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        while simulator.time < 0.1 && !simulator.isFailed { simulator.step() }
+        XCTAssertEqual(simulator.problems.filter { $0.hasPrefix("U2") },
+                       ["U2 (PCM5102): its BCK is on PC10, which the firmware has as a GPIO input, not as an I2S port's clock. No data reaches it."])
     }
 
     /// Mutable Instruments' Rings from its own firmware (GPL-3.0, so CI builds it from Mutable's repository and it is
@@ -211,6 +251,7 @@ final class STM32Tests: XCTestCase {
         }
         let strongest = stride(from: 200.0, through: 600, by: 5).max { amplitude($0) < amplitude($1) } ?? 0
         XCTAssertEqual(strongest, 380, accuracy: 10)
+        XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
     }
 
     /// Mutable Instruments' Plaits from its own firmware (GPL-3.0: built by CI from Mutable's repository, not kept here)
@@ -365,6 +406,7 @@ final class STM32Tests: XCTestCase {
         }
         let strongest = stride(from: 150.0, through: 400, by: 0.5).max { amplitude($0) < amplitude($1) } ?? 0
         XCTAssertEqual(strongest, 269.5, accuracy: 3)
+        XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") || $0.hasPrefix("U3") }, simulator.problems.joined(separator: " "))
     }
 
     func testResetStartsOver() throws {
