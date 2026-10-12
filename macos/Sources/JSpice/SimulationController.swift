@@ -286,6 +286,25 @@ final class SimulationController: ObservableObject {
     /// The STM32 of the microcontroller at `index`, as it runs
     func stm32(_ index: Int) -> STM32Microcontroller? { simulator.chip(index) as? STM32Microcontroller }
 
+    /// The GDB servers started for STM32 parts, by part
+    @Published private(set) var gdbServers: [UUID: GDBServer] = [:]
+
+    /// Starts a GDB server for the STM32 part at `index` (its element `id`) on `port`, or says why it could not
+    func startGDBServer(_ id: UUID, index: Int, port: UInt16) -> String? {
+        guard let chip = stm32(index) else { return "Run the circuit first: the chip starts with it." }
+        do {
+            gdbServers[id] = try GDBServer(target: chip, port: port)
+            return nil
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    func stopGDBServer(_ id: UUID) {
+        gdbServers[id]?.stop()
+        gdbServers[id] = nil
+    }
+
     /// Sends text to the chip's serial port, as the Arduino IDE's serial monitor does
     func sendSerial(_ index: Int, _ text: String) {
         let bytes = Array(text.utf8)

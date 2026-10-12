@@ -81,6 +81,7 @@ struct MicrocontrollerSection: View {
         if element.kind.board?.compilesSketches == false, let index = editor.circuit.index(of: element.id) {
             BusTrace(simulation: editor.simulation, index: index)
             PinFunctions(simulation: editor.simulation, index: index)
+            DebuggerSection(simulation: editor.simulation, index: index, id: element.id)
         }
     }
 
@@ -214,6 +215,55 @@ struct PinFunctions: View {
             }
         } header: {
             Text("Pins")
+        }
+    }
+}
+
+/// A GDB server for the chip: arm-none-eabi-gdb (or an IDE's debugger) connects to it as to a probe's server
+struct DebuggerSection: View {
+    @ObservedObject var simulation: SimulationController
+    let index: Int
+    let id: UUID
+    @State private var port = 3333
+    @State private var problem: String?
+
+    var body: some View {
+        Section {
+            if let server = simulation.gdbServers[id] {
+                TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                    let chip = simulation.stm32(index)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(server.isConnected ? "GDB is connected on port \(server.port)." : "Listening on port \(server.port).")
+                            .font(.callout)
+                        if let chip, chip.isHalted {
+                            Text(String(format: "Halted at 0x%08X", chip.programCounter)).font(.caption.monospaced())
+                        }
+                        Text("arm-none-eabi-gdb firmware.elf -ex \"target extended-remote localhost:\(server.port)\"")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    // (a chip made anew, the circuit rebuilt, keeps its debugger)
+                    .onChange(of: chip.map { ObjectIdentifier($0) }) { _, _ in if let chip { server.retarget(chip) } }
+                }
+                Button("Stop GDB Server") { simulation.stopGDBServer(id) }
+            } else {
+                HStack {
+                    TextField("Port", value: $port, format: .number.grouping(.never))
+                        .frame(width: 70)
+                    Button("Start GDB Server") {
+                        problem = simulation.startGDBServer(id, index: index, port: UInt16(clamping: port))
+                    }
+                }
+                Text("Debug the firmware as it runs in the circuit: breakpoints, stepping, registers, memory. While halted, the chip's clock and peripherals run on with the circuit.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let problem {
+                Text(problem).font(.caption).foregroundStyle(.red)
+            }
+        } header: {
+            Text("Debugger")
         }
     }
 }

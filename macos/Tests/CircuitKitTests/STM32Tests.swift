@@ -471,6 +471,56 @@ final class STM32Tests: XCTestCase {
         XCTAssertTrue(chip.busEvents().isEmpty)
     }
 
+    /// The GDB server's side of the remote protocol, as arm-none-eabi-gdb would drive it: halting, the target
+    /// description, registers, memory, stepping, a breakpoint hit as the circuit runs the chip, a write to RAM
+    func testTheGDBServerDebugsTheFirmware() throws {
+        let image = try firmware()
+        let chip = STM32Microcontroller(firmware: image)
+        let server = try GDBServer(target: chip, port: 0)
+        defer { server.stop() }
+        func hex(_ text: String) -> String { GDBServer.hex(Array(text.utf8)) }
+        XCTAssertEqual(server.respond(to: "qRcmd," + hex("halt")), "OK")
+        XCTAssertTrue(chip.isHalted)
+        XCTAssertTrue(server.respond(to: "qSupported:multiprocess+;swbreak+")?.contains("qXfer:features:read+") ?? false)
+        XCTAssertTrue(server.respond(to: "qXfer:features:read:target.xml:0,ffff")?.hasPrefix("l<?xml") ?? false)
+        XCTAssertEqual(server.respond(to: "?"), "S05")
+        // r0-r12, sp, lr, pc, xpsr, d0-d15, fpscr, msp, psp, primask, basepri, faultmask, control
+        let registers = try XCTUnwrap(server.respond(to: "g"))
+        XCTAssertEqual(registers.count, 2 * (17 * 4 + 16 * 8 + 4 + 6 * 4))
+        func pc() -> UInt32 {
+            let bytes = GDBServer.bytes(server.respond(to: "pf") ?? "")
+            return bytes.count == 4 ? bytes.enumerated().reduce(0) { $0 | UInt32($1.element) << (8 * $1.offset) } : 0
+        }
+        XCTAssertEqual(pc(), chip.programCounter)
+        // the vector table, as the chip's flash holds it
+        XCTAssertEqual(server.respond(to: "m8000000,8"), GDBServer.hex(Array(image.prefix(8))))
+        // three steps from reset, each run by the chip as the circuit would run it
+        XCTAssertTrue(server.respond(to: "qRcmd," + hex("reset"))?.isEmpty == false)
+        let start = pc()
+        for _ in 0..<3 {
+            XCTAssertEqual(server.respond(to: "s"), "")
+            run(chip, for: 1e-5)
+            XCTAssertTrue(chip.isHalted)
+        }
+        let third = pc()
+        XCTAssertNotEqual(third, start)
+        // from reset again, a breakpoint there: running, the chip halts on it
+        _ = server.respond(to: "qRcmd," + hex("reset"))
+        XCTAssertEqual(pc(), start)
+        XCTAssertEqual(server.respond(to: "Z0,\(String(third, radix: 16)),2"), "OK")
+        XCTAssertEqual(server.respond(to: "c"), "")
+        XCTAssertFalse(chip.isHalted)
+        run(chip, for: 1e-4)
+        XCTAssertTrue(chip.isHalted)
+        XCTAssertEqual(pc(), third)
+        XCTAssertEqual(server.respond(to: "z0,\(String(third, radix: 16)),2"), "OK")
+        // RAM written and read back
+        XCTAssertEqual(server.respond(to: "M20001000,4:78563412"), "OK")
+        XCTAssertEqual(server.respond(to: "m20001000,4"), "78563412")
+        XCTAssertEqual(server.respond(to: "qRcmd," + hex("resume")), "OK")
+        XCTAssertFalse(chip.isHalted)
+    }
+
     func testResetStartsOver() throws {
         let chip = STM32Microcontroller(firmware: try firmware())
         run(chip, for: 0.05)

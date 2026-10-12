@@ -20,6 +20,8 @@ public final class CircuitSession {
     public var onChange: ((Circuit, String) -> Void)?
     /// The simulator kept between `simulate` calls that continue instead of starting over
     private var liveSimulator: Simulator?
+    /// GDB servers started on parts (by part index), retargeted as each simulate makes the chips anew
+    private var gdbServers: [Int: GDBServer] = [:]
     /// Blocks made with define_block, by name
     private var blocks: [String: BlockDefinition] = [:]
 
@@ -164,6 +166,12 @@ public final class CircuitSession {
              description: "An STM32 part's state as its firmware has set it up: what each pin carries now (a GPIO input or output, an analog input, or a bus signal such as SPI2's SCK, by the pin's alternate function), its clock, how often it reset itself (watchdog, SYSRESETREQ), and what the firmware has reached that the model does not run.",
              inputSchema: schema(["part": string("Name of an STM32 part")], required: ["part"]),
              run: { session, arguments in try session.readChipState(arguments) }),
+        Tool(name: "gdb_server",
+             description: "Starts (or stops) a GDB server for an STM32 part, as a debug probe's server: arm-none-eabi-gdb firmware.elf -ex \"target extended-remote localhost:3333\" then debugs its firmware (breakpoints, stepping, registers, memory, load, monitor reset). The chip runs only within simulate (with continue true to go on): a continue or step in GDB waits for it. Call simulate first, so the chip exists.",
+             inputSchema: schema(["part": string("Name of an STM32 part"), "port": ["type": "integer", "description": "TCP port on localhost (3333 by default)"],
+                                  "stop": ["type": "boolean", "description": "Stop the part's server"]],
+                                 required: ["part"]),
+             run: { session, arguments in try session.gdbServer(arguments) }),
         Tool(name: "install_chip_support",
              description: "Downloads and installs what compiling sketches takes, if it is not installed yet: for avr (the Uno, Mega and ATtiny85) avr-gcc and the Arduino AVR core, about 40 MB from Arduino's package index; for rp2040 (the Pico) arm-none-eabi-gcc and arduino-pico, about 240 MB from arduino-pico's index.",
              inputSchema: schema(["family": string("avr (the default) or rp2040")]),
@@ -868,6 +876,22 @@ public final class CircuitSession {
         return ["events": shown, "matching": total, "shown": shown.count, "time": liveSimulator?.time ?? 0]
     }
 
+    func gdbServer(_ arguments: [String: Any]) throws -> Any {
+        let index = try microcontroller(arguments)
+        if arguments["stop"] as? Bool == true {
+            gdbServers[index]?.stop()
+            gdbServers[index] = nil
+            return ["stopped": true]
+        }
+        let chip = try stm32(arguments)
+        let port = UInt16(clamping: (arguments["port"] as? NSNumber)?.intValue ?? 3333)
+        gdbServers[index]?.stop()
+        let server = try GDBServer(target: chip, port: port)
+        gdbServers[index] = server
+        return ["listening": "localhost:\(port)", "halted": chip.isHalted,
+                "connect": "arm-none-eabi-gdb firmware.elf -ex \"target extended-remote localhost:\(port)\""]
+    }
+
     func readChipState(_ arguments: [String: Any]) throws -> Any {
         let chip = try stm32(arguments)
         let pins = chip.pinFunctions.map { ["pin": $0.pin, "carries": $0.function] }
@@ -1078,8 +1102,11 @@ public final class CircuitSession {
         }
         liveSimulator = simulator
         if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
-        // (STM32s keep their buses' transactions, for read_bus_trace)
+        // (STM32s keep their buses' transactions, for read_bus_trace; their debuggers follow them)
         for i in circuit.elements.indices { (simulator.chip(i) as? STM32Microcontroller)?.tracesBuses = true }
+        for (i, server) in gdbServers {
+            if let chip = simulator.chip(i) as? STM32Microcontroller { server.retarget(chip) }
+        }
 
         let events = try Self.keyboardEvents(arguments["keyboard"])
         let knobs = try knobMotions(arguments["knobs"])

@@ -30,6 +30,7 @@ typedef enum {
     CM4_BREAKPOINT = 2,///< a BKPT instruction
     CM4_LOCKUP = 3,    ///< a fault in a fault handler: the core has stopped
     CM4_RESET = 4,     ///< the firmware asked for a system reset (SYSRESETREQ): the core has reset itself
+    CM4_HALTED = 5,    ///< halted by a debugger (a breakpoint, a step done): its clock ran on, no instructions
 } CM4Stop;
 
 CM4 *cm4_create(void);
@@ -52,6 +53,15 @@ void cm4_reset(CM4 *cpu);
 CM4Stop cm4_run(CM4 *cpu, uint64_t cycles);
 /// One instruction (or one exception entry); returns why it stopped, CM4_RAN when it did not
 CM4Stop cm4_step(CM4 *cpu);
+/// A debugger's control: halting the core (before its next instruction: its clock runs on, the chip's peripherals
+/// with it, it runs no instructions), resuming it (past the breakpoint it halted at), having the next run run one
+/// instruction (or one exception entry) and halt again, and breakpoints (up to 16 instructions' addresses), where it
+/// halts before running the instruction. A reset leaves all of them as they are.
+void cm4_halt(CM4 *cpu);
+void cm4_resume(CM4 *cpu);
+bool cm4_halted(const CM4 *cpu);
+void cm4_step_once(CM4 *cpu);
+bool cm4_set_breakpoint(CM4 *cpu, uint32_t address, bool on);
 /// Cycles run since reset
 uint64_t cm4_cycles(const CM4 *cpu);
 /// The cycle a run stops at, at the latest, for the chip to update its peripherals (a timer's next event); set during

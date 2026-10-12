@@ -78,6 +78,8 @@ public final class STM32Microcontroller: Microcontroller {
         /// thread runs the chip, the window reads them
         var tracing = false
         let traceLock = NSLock()
+        /// Held while the chip runs, and by a debugger (`GDBServer`) looking at it or changing it
+        let runLock = NSLock()
         var trace: [BusEvent] = []
         private var taking = [STM32BusEvent](repeating: STM32BusEvent(), count: 1024)
 
@@ -348,11 +350,27 @@ public final class STM32Microcontroller: Microcontroller {
     }
 
     public func run(cycles count: Int) {
-        let chip = system.chip
+        let system = self.system, chip = system.chip
+        system.runLock.lock()
         system.runStart = cm4_cycles(stm32_core(chip))
         if count > 0 { _ = stm32_run(chip, UInt64(count)) }
+        system.runLock.unlock()
         publish()
     }
+
+    /// The chip (and an identity for it, which a reset changes) to a debugger, while it does not run
+    func debug<T>(_ body: (OpaquePointer, ObjectIdentifier) -> T) -> T {
+        let system = self.system
+        system.runLock.lock()
+        defer { system.runLock.unlock() }
+        return body(system.chip, ObjectIdentifier(system))
+    }
+
+    /// Halted by a debugger: its core runs no instructions (its clock and peripherals run on)
+    public var isHalted: Bool { cm4_halted(stm32_core(system.chip)) }
+
+    /// Where its core is in the firmware
+    public var programCounter: UInt32 { cm4_reg(stm32_core(system.chip), 15) }
 
     public func reset() {
         let voltages = pinVoltages, frames = system.frames, spi = system.spi, i2c = system.i2c, watched = system.watched

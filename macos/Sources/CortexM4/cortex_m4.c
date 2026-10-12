@@ -116,6 +116,11 @@ struct CM4 {
     /// Where the run in progress ends: its length, or the deadline if that comes first (and is set during it)
     uint64_t run_end;
     bool reset_requested;   // SYSRESETREQ written: the run returns CM4_RESET
+    // a debugger's: the core halted (its clock runs on, it runs no instructions), one instruction to run before it
+    // halts again, the breakpoints (addresses of instructions), and one to run past (where it halted)
+    bool halted, step_once, past_breakpoint;
+    int breakpoint_count;
+    uint32_t breakpoints[16];
     bool sleeping, event, locked_up;
     /// Exclusive monitor for LDREX/STREX
     bool exclusive;
@@ -2712,7 +2717,22 @@ CM4Stop cm4_run(CM4 *c, uint64_t cycles) {
     c->run_end = end;
     while (c->cycles < c->run_end) {
         end = c->run_end;
+        if (c->halted) {
+            c->cycles = end;
+            return CM4_HALTED;
+        }
         if (c->locked_up) return CM4_LOCKUP;
+        if (c->breakpoint_count && !c->sleeping) {
+            if (!c->past_breakpoint) {
+                for (int k = 0; k < c->breakpoint_count; k++) {
+                    if (c->breakpoints[k] == c->r[15]) {
+                        c->halted = true;
+                        return CM4_HALTED;
+                    }
+                }
+            }
+            c->past_breakpoint = false;
+        }
         if (c->sleeping) {
             if (c->cycles >= c->systick_wrap) systick_update(c);
             if (wakes(c)) {
@@ -2726,6 +2746,11 @@ CM4Stop cm4_run(CM4 *c, uint64_t cycles) {
             continue;
         }
         CM4Stop stop = step(c);
+        if (c->step_once) {
+            c->step_once = false;
+            c->halted = true;
+            return stop != CM4_RAN ? stop : CM4_HALTED;
+        }
         if (stop != CM4_RAN) return stop;
     }
     if (c->reset_requested) {
@@ -2736,6 +2761,36 @@ CM4Stop cm4_run(CM4 *c, uint64_t cycles) {
 }
 
 // ------------------------------------------------------------------------------------------------------------ API
+
+void cm4_halt(CM4 *c) { c->halted = true; }
+
+void cm4_resume(CM4 *c) {
+    if (!c->halted) return;
+    c->halted = false;
+    c->past_breakpoint = true;
+}
+
+bool cm4_halted(const CM4 *c) { return c->halted; }
+
+void cm4_step_once(CM4 *c) {
+    if (!c->halted) return;
+    c->halted = false;
+    c->past_breakpoint = true;
+    c->step_once = true;
+}
+
+bool cm4_set_breakpoint(CM4 *c, uint32_t address, bool on) {
+    address &= ~1u;
+    for (int k = 0; k < c->breakpoint_count; k++) {
+        if (c->breakpoints[k] != address) continue;
+        if (!on) c->breakpoints[k] = c->breakpoints[--c->breakpoint_count];
+        return true;
+    }
+    if (!on) return true;
+    if (c->breakpoint_count >= (int)(sizeof c->breakpoints / sizeof c->breakpoints[0])) return false;
+    c->breakpoints[c->breakpoint_count++] = address;
+    return true;
+}
 
 CM4 *cm4_create(void) {
     CM4 *c = calloc(1, sizeof(CM4));
