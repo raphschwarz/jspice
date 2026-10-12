@@ -22,6 +22,8 @@ public final class GDBServer: @unchecked Sendable {
     private var armed: ObjectIdentifier?
     /// Waiting for the core to halt, after a continue or a step, to tell GDB
     private var waiting = false
+    /// Halted by GDB's Ctrl-C while it waited: it is told SIGINT, not a trap
+    private var interrupted = false
 
     /// Whether a debugger is connected
     public var isConnected: Bool {
@@ -148,6 +150,7 @@ public final class GDBServer: @unchecked Sendable {
                 if first == 0x03 {
                     input.removeFirst()
                     withChip { core, _ in cm4_halt(core) }
+                    if waiting { interrupted = true }
                     continue
                 }
                 if first != UInt8(ascii: "$") {
@@ -164,7 +167,8 @@ public final class GDBServer: @unchecked Sendable {
             // a continue or step done: the core halted
             if waiting, withChip({ core, _ in cm4_halted(core) }) {
                 waiting = false
-                sendPacket(fd, "S05")
+                sendPacket(fd, interrupted ? "S02" : "S05")
+                interrupted = false
             }
             lock.lock()
             let done = stopping
