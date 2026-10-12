@@ -115,6 +115,7 @@ struct CM4 {
     uint64_t deadline;
     /// Where the run in progress ends: its length, or the deadline if that comes first (and is set during it)
     uint64_t run_end;
+    bool reset_requested;   // SYSRESETREQ written: the run returns CM4_RESET
     bool sleeping, event, locked_up;
     /// Exclusive monitor for LDREX/STREX
     bool exclusive;
@@ -829,7 +830,11 @@ static void system_write_word(CM4 *c, uint32_t address, uint32_t value) {
     case 0xE000ED0C:
         if ((value >> 16) == 0x05FA) {
             c->prigroup = (value >> 8) & 7;
-            if (value & 4) cm4_reset(c);  // SYSRESETREQ
+            if (value & 4) {  // SYSRESETREQ: the core resets, and the run stops for the chip around it to
+                cm4_reset(c);
+                c->reset_requested = true;
+                c->run_end = c->cycles;
+            }
         }
         return;
     case 0xE000ED10: c->scr = value & 0x16; return;
@@ -2722,6 +2727,10 @@ CM4Stop cm4_run(CM4 *c, uint64_t cycles) {
         }
         CM4Stop stop = step(c);
         if (stop != CM4_RAN) return stop;
+    }
+    if (c->reset_requested) {
+        c->reset_requested = false;
+        return CM4_RESET;
     }
     return CM4_RAN;
 }

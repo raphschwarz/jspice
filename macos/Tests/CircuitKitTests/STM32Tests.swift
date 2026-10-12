@@ -409,6 +409,45 @@ final class STM32Tests: XCTestCase {
         XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") || $0.hasPrefix("U3") }, simulator.problems.joined(separator: " "))
     }
 
+    /// A firmware that starts the independent watchdog (its shortest prescaler, its longest reload) and then never
+    /// reloads it: the chip resets itself when it runs out, 4 × 4096 ticks of its LSI (0.512 s on the F405's 32 kHz,
+    /// 0.41 s on the others' 40 kHz), and says so
+    func testTheWatchdogResetsAChipWhoseFirmwareStopsReloadingIt() {
+        // KR = 0x5555, PR = 0, KR = 0xCCCC, then a loop
+        let firmware: [UInt8] = [
+            0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x04, 0x48, 0x45, 0xF2, 0x55, 0x51, 0x01, 0x60, 0x00, 0x21,
+            0x41, 0x60, 0x4C, 0xF6, 0xCC, 0x41, 0x01, 0x60, 0xFE, 0xE7, 0x00, 0x30, 0x00, 0x40,
+        ]
+        for (model, first) in [(STM32_F405, 0.512), (STM32_F373, 0.4096), (STM32_F103, 0.4096)] {
+            let chip = STM32Microcontroller(model: model, firmware: firmware)
+            run(chip, for: first - 0.01)
+            XCTAssertEqual(stm32_watchdog_resets(chip.chip), 0)
+            XCTAssertTrue(chip.notices.isEmpty, chip.notices.joined(separator: " "))
+            run(chip, for: 0.02)
+            XCTAssertEqual(stm32_watchdog_resets(chip.chip), 1)
+            XCTAssertEqual(chip.notices, ["its watchdog ran out and reset it once: the firmware stopped reloading it in time."])
+        }
+    }
+
+    /// A firmware that writes CAN1 (which the model leaves out), reads a reserved address, and asks for a system reset
+    /// twice, counting its boots in RAM (which a reset keeps): each is said
+    func testWhatTheModelDoesNotRunIsSaid() {
+        let firmware: [UInt8] = [
+            0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x07, 0x48, 0x01, 0x21, 0x01, 0x60, 0x07, 0x48, 0x01, 0x68,
+            0x07, 0x48, 0x07, 0x49, 0x4F, 0xF0, 0x00, 0x52, 0x13, 0x68, 0x01, 0x33, 0x13, 0x60, 0x03, 0x2B, 0x00, 0xDA,
+            0x01, 0x60, 0xFE, 0xE7, 0x00, 0x64, 0x00, 0x40, 0x00, 0x60, 0x00, 0x40, 0x0C, 0xED, 0x00, 0xE0, 0x04, 0x00,
+            0xFA, 0x05,
+        ]
+        let chip = STM32Microcontroller(firmware: firmware)
+        run(chip, for: 0.01)
+        XCTAssertEqual(stm32_software_resets(chip.chip), 2, "the third boot finds its count at 3")
+        XCTAssertEqual(chip.notices, [
+            "the firmware writes CAN1 (first at 0x40006400, from about 0x0800000C), which the model does not run: it reads 0 there, and what it writes is lost.",
+            "the firmware reads 0x40006000 (from about 0x08000010), where the chip has nothing: a bus fault on the chip, 0 here.",
+            "its firmware reset it 2 times (SYSRESETREQ).",
+        ])
+    }
+
     func testResetStartsOver() throws {
         let chip = STM32Microcontroller(firmware: try firmware())
         run(chip, for: 0.05)

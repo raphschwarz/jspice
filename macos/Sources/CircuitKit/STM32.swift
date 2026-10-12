@@ -184,6 +184,42 @@ public final class STM32Microcontroller: Microcontroller {
     /// The chip in C (for tests)
     var chip: OpaquePointer { system.chip }
 
+    /// What the firmware has reached that the model does not run (a peripheral it leaves out, one whose registers it
+    /// keeps without running them, an address where the chip has nothing), and how often the chip has reset itself
+    /// (its watchdog running out, its firmware asking): a firmware that does any of it does not run here as on the chip,
+    /// or does not run well there
+    public var notices: [String] {
+        let chip = system.chip
+        var said: [String] = []
+        for k in 0..<Int(stm32_unmodelled_count(chip)) {
+            var u = STM32Unmodelled()
+            guard stm32_unmodelled(chip, Int32(k), &u) else { continue }
+            let what = u.reads > 0 && u.writes > 0 ? "reads and writes" : u.writes > 0 ? "writes" : "reads"
+            let at = String(format: "0x%08X, from about 0x%08X", u.first_address, u.pc)
+            if let name = u.name.map({ String(cString: $0) }) {
+                said.append(u.kept
+                    ? "the firmware \(what) \(name) (first at \(at)), whose registers the model keeps without running them: nothing it asks of them happens."
+                    : "the firmware \(what) \(name) (first at \(at)), which the model does not run: it reads 0 there, and what it writes is lost.")
+            } else {
+                said.append("the firmware \(what) \(String(format: "0x%08X", u.first_address)) (from about \(String(format: "0x%08X", u.pc))), where the chip has nothing: a bus fault on the chip, 0 here.")
+            }
+        }
+        let watchdog = Int(stm32_watchdog_resets(chip)), software = Int(stm32_software_resets(chip))
+        if watchdog > 0 {
+            said.append("its watchdog ran out and reset it \(watchdog == 1 ? "once" : "\(watchdog) times"): the firmware stopped reloading it in time.")
+        }
+        if software > 0 {
+            said.append("its firmware reset it \(software == 1 ? "once" : "\(software) times") (SYSRESETREQ).")
+        }
+        return said
+    }
+
+    /// Changes whenever `notices` gains one (not as their counts grow)
+    var noticeCount: Int {
+        let chip = system.chip
+        return Int(stm32_unmodelled_count(chip)) + Int(stm32_watchdog_resets(chip)) + Int(stm32_software_resets(chip))
+    }
+
     public var pinCount: Int { pinVoltages.count }
     /// The core's clock as the firmware has set it up: the F405's 16 MHz from reset (168 MHz once it has started its
     /// PLL), the F373's 8 MHz (72 MHz)

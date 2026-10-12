@@ -258,6 +258,16 @@ struct STM32 {
     uint16_t input_level[PORTS];    // the levels the circuit's voltages were last read as
     uint16_t floating[PORTS];       // pins the circuit leaves unconnected (NaN): their pulls set them
     uint32_t generation;            // counts changes to the pins' functions and the buses' settings
+    uint8_t block_status[512];      // what each 1 KB block from 0x40000000 is (the peripherals' map)
+    uint8_t block_entry[512];
+    STM32Unmodelled unmodelled[32]; // the blocks the firmware reached that the model does not run
+    int unmodelled_count;
+    // the independent watchdog: started, its registers open to writes (0x5555), its prescaler and reload, when it
+    // was last reloaded and when it runs out (in seconds of the chip's time)
+    bool iwdg_running, iwdg_open;
+    uint32_t iwdg_pr, iwdg_rlr, iwdg_winr;
+    double iwdg_deadline;
+    uint32_t watchdog_resets, software_resets;
 };
 
 // ------------------------------------------------------------------------------------------------------- utilities
@@ -2088,6 +2098,49 @@ static uint32_t i2c_f3_read(STM32 *m, int i, uint32_t offset) {
 
 // Its bus: AHB2's GPIO, AHB1's DMA, RCC, flash and CRC, APB1 and APB2 (RM0313 table 2)
 
+// ------------------------------------------------------------------------------------------------------ the IWDG
+
+// The independent watchdog (RM0090 section 21, RM0313 section 19, RM0008 section 19), the same on all three: started by
+// 0xCCCC in KR, reloaded by 0xAAAA, PR and RLR writable after 0x5555; it counts RLR+1 ticks of its LSI (32 kHz on the
+// F405, 40 kHz on the others) over 4 << PR, and resets the chip when they run out. (Its counter is not kept: the
+// deadline is; the F373's window is kept, not checked.)
+static double iwdg_period(const STM32 *m) {
+    double lsi = m->model == STM32_F405 ? 32000.0 : 40000.0;
+    return (double)(4u << (m->iwdg_pr > 6 ? 6 : m->iwdg_pr)) * (double)(m->iwdg_rlr + 1) / lsi;
+}
+
+static uint32_t iwdg_read(STM32 *m, uint32_t offset) {
+    switch (offset) {
+    case 0x04: return m->iwdg_pr;
+    case 0x08: return m->iwdg_rlr;
+    case 0x0C: return 0;  // its updates take no time here
+    case 0x10: return m->model == STM32_F373 ? m->iwdg_winr : 0;
+    }
+    return 0;
+}
+
+static double stm32_now(const STM32 *m);
+static void system_reset(STM32 *m, uint32_t flag);
+
+static void iwdg_write(STM32 *m, uint32_t offset, uint32_t value) {
+    switch (offset) {
+    case 0x00:
+        value &= 0xFFFF;
+        m->iwdg_open = value == 0x5555;
+        if (value == 0xCCCC) m->iwdg_running = true;
+        if (value == 0xCCCC || value == 0xAAAA) m->iwdg_deadline = stm32_now(m) + iwdg_period(m);
+        return;
+    case 0x04: if (m->iwdg_open) m->iwdg_pr = value & 7; return;
+    case 0x08: if (m->iwdg_open) m->iwdg_rlr = value & 0xFFF; return;
+    case 0x10:
+        if (m->iwdg_open && m->model == STM32_F373) {
+            m->iwdg_winr = value & 0xFFF;
+            if (m->iwdg_running) m->iwdg_deadline = stm32_now(m) + iwdg_period(m);  // (writing it reloads)
+        }
+        return;
+    }
+}
+
 static uint32_t io_read_f3(STM32 *m, uint32_t address, uint32_t size) {
     uint32_t base = address & ~3u, offset = base & 0x3FF, value = 0;
     if (address >= 0x48000000u && address < 0x48001800u) {
@@ -2096,6 +2149,7 @@ static uint32_t io_read_f3(STM32 *m, uint32_t address, uint32_t size) {
         uint32_t block = (address - 0x40000000u) >> 10;
         static const int apb1_timers[9] = {2, 3, 4, 5, 6, 7, 12, 13, 14};
         if (block < 9) value = timer_read(m, apb1_timers[block], offset);
+        else if (block == 0x0C) value = iwdg_read(m, offset);
         else if (block == 0x0E) value = spi_read(m, &m->spi[1], offset);
         else if (block == 0x0F) value = spi_read(m, &m->spi[2], offset);
         else if (block == 0x11 || block == 0x12) value = usart_f3_read(m, (int)(block - 0x10), offset);
@@ -2152,6 +2206,7 @@ static void io_write_f3(STM32 *m, uint32_t address, uint32_t value) {
         uint32_t block = (address - 0x40000000u) >> 10;
         static const int apb1_timers[9] = {2, 3, 4, 5, 6, 7, 12, 13, 14};
         if (block < 9) timer_write(m, apb1_timers[block], offset, value);
+        else if (block == 0x0C) iwdg_write(m, offset, value);
         else if (block == 0x0E) spi_write(m, &m->spi[1], offset, value);
         else if (block == 0x0F) spi_write(m, &m->spi[2], offset, value);
         else if (block == 0x11 || block == 0x12) usart_f3_write(m, (int)(block - 0x10), offset, value);
@@ -2260,6 +2315,7 @@ static uint32_t io_read_f1(STM32 *m, uint32_t address, uint32_t size) {
     if (address >= 0x40000000u && address < 0x40007400u) {
         uint32_t block = (address - 0x40000000u) >> 10;
         if (block < 3) value = timer_read(m, (int)block + 2, offset);
+        else if (block == 0x0C) value = iwdg_read(m, offset);
         else if (block == 0x0E) value = spi_read(m, &m->spi[1], offset);
         else if (block == 0x11 || block == 0x12) value = usart_read(m, (int)(block - 0x10), offset);
         else if (block == 0x15 || block == 0x16) value = i2c_read(m, (int)(block - 0x15), offset);
@@ -2307,6 +2363,7 @@ static void io_write_f1(STM32 *m, uint32_t address, uint32_t value) {
     if (address >= 0x40000000u && address < 0x40007400u) {
         uint32_t block = (address - 0x40000000u) >> 10;
         if (block < 3) timer_write(m, (int)block + 2, offset, value);
+        else if (block == 0x0C) iwdg_write(m, offset, value);
         else if (block == 0x0E) spi_write(m, &m->spi[1], offset, value);
         else if (block == 0x11 || block == 0x12) usart_write(m, (int)(block - 0x10), offset, value);
         else if (block == 0x15 || block == 0x16) i2c_write(m, (int)(block - 0x15), offset, value);
@@ -2351,8 +2408,165 @@ static void io_write_f1(STM32 *m, uint32_t address, uint32_t value) {
     }
 }
 
+// ----------------------------------------------------------------------------------------- what the model does not run
+
+// The peripherals' map (RM0090 table 1, RM0313 table 2, RM0008 table 3): those the model leaves out are named, so that
+// a firmware reaching one is said to (what it reads there is 0, what it writes is lost); those whose registers it keeps
+// without running them, too. Anything else in the peripherals' space not in it is reserved: a bus fault on the chip.
+enum { BLOCK_RUN = 0, BLOCK_NOT_RUN, BLOCK_KEPT, BLOCK_RESERVED };
+static const struct { uint8_t model; uint32_t base, size; const char *name; uint8_t status; } peripheral_map[] = {
+    // the F405 (APB1, APB2, AHB1, AHB2, FSMC)
+    {STM32_F405, 0x40000000u, 0x2400, "TIM2-TIM7, TIM12-TIM14", BLOCK_RUN},
+    {STM32_F405, 0x40002800u, 0x400, "RTC and its backup registers", BLOCK_NOT_RUN},
+    {STM32_F405, 0x40002C00u, 0x400, "WWDG (the window watchdog)", BLOCK_NOT_RUN},
+    {STM32_F405, 0x40003000u, 0x400, "IWDG (the independent watchdog)", BLOCK_RUN},
+    {STM32_F405, 0x40003400u, 0x1400, "SPI2, SPI3 and their I2S extensions, USART2", BLOCK_RUN},
+    {STM32_F405, 0x40004800u, 0x1800, "USART3, UART4, UART5, I2C1-I2C3", BLOCK_RUN},
+    {STM32_F405, 0x40006400u, 0x400, "CAN1", BLOCK_NOT_RUN},
+    {STM32_F405, 0x40006800u, 0x400, "CAN2", BLOCK_NOT_RUN},
+    {STM32_F405, 0x40007000u, 0x800, "PWR, DAC", BLOCK_RUN},
+    {STM32_F405, 0x40010000u, 0x800, "TIM1, TIM8", BLOCK_RUN},
+    {STM32_F405, 0x40011000u, 0x800, "USART1, USART6", BLOCK_RUN},
+    {STM32_F405, 0x40012000u, 0x400, "ADC1-ADC3", BLOCK_RUN},
+    {STM32_F405, 0x40012C00u, 0x400, "SDIO (the SD card interface)", BLOCK_NOT_RUN},
+    {STM32_F405, 0x40013000u, 0x400, "SPI1", BLOCK_RUN},
+    {STM32_F405, 0x40013800u, 0x1C00, "SYSCFG, EXTI, TIM9-TIM11", BLOCK_RUN},
+    {STM32_F405, 0x40020000u, 0x2400, "GPIOA-GPIOI", BLOCK_RUN},
+    {STM32_F405, 0x40023000u, 0x400, "CRC", BLOCK_RUN},
+    {STM32_F405, 0x40023800u, 0x800, "RCC, the flash interface", BLOCK_RUN},
+    {STM32_F405, 0x40024000u, 0x1000, "the backup SRAM", BLOCK_NOT_RUN},
+    {STM32_F405, 0x40026000u, 0x800, "DMA1, DMA2", BLOCK_RUN},
+    {STM32_F405, 0x40028000u, 0x1400, "Ethernet", BLOCK_NOT_RUN},
+    {STM32_F405, 0x40040000u, 0x40000, "USB OTG HS", BLOCK_NOT_RUN},
+    {STM32_F405, 0x50000000u, 0x40000, "USB OTG FS", BLOCK_NOT_RUN},
+    {STM32_F405, 0x50050000u, 0x400, "DCMI (the camera interface)", BLOCK_NOT_RUN},
+    {STM32_F405, 0x50060800u, 0x400, "RNG", BLOCK_RUN},
+    {STM32_F405, 0xA0000000u, 0x1000, "FSMC (the external memory controller)", BLOCK_NOT_RUN},
+    // the F373
+    {STM32_F373, 0x40000000u, 0x2400, "TIM2-TIM7, TIM12-TIM14", BLOCK_RUN},
+    {STM32_F373, 0x40002800u, 0x400, "RTC and its backup registers", BLOCK_NOT_RUN},
+    {STM32_F373, 0x40002C00u, 0x400, "WWDG (the window watchdog)", BLOCK_NOT_RUN},
+    {STM32_F373, 0x40003000u, 0x400, "IWDG (the independent watchdog)", BLOCK_RUN},
+    {STM32_F373, 0x40003800u, 0x800, "SPI2, SPI3", BLOCK_RUN},
+    {STM32_F373, 0x40004400u, 0x800, "USART2, USART3", BLOCK_RUN},
+    {STM32_F373, 0x40005400u, 0x800, "I2C1, I2C2", BLOCK_KEPT},
+    {STM32_F373, 0x40005C00u, 0x800, "USB and its SRAM", BLOCK_NOT_RUN},
+    {STM32_F373, 0x40006400u, 0x400, "CAN", BLOCK_NOT_RUN},
+    {STM32_F373, 0x40007000u, 0x800, "PWR, DAC1", BLOCK_RUN},
+    {STM32_F373, 0x40007800u, 0x400, "HDMI-CEC", BLOCK_NOT_RUN},
+    {STM32_F373, 0x40009800u, 0x400, "DAC2", BLOCK_NOT_RUN},
+    {STM32_F373, 0x40009C00u, 0x400, "TIM18", BLOCK_RUN},
+    {STM32_F373, 0x40010000u, 0x800, "SYSCFG and the comparators, EXTI", BLOCK_RUN},
+    {STM32_F373, 0x40012400u, 0x400, "ADC1", BLOCK_RUN},
+    {STM32_F373, 0x40013000u, 0x400, "SPI1", BLOCK_RUN},
+    {STM32_F373, 0x40013800u, 0x400, "USART1", BLOCK_RUN},
+    {STM32_F373, 0x40014000u, 0xC00, "TIM15-TIM17", BLOCK_RUN},
+    {STM32_F373, 0x40015C00u, 0x400, "TIM19", BLOCK_RUN},
+    {STM32_F373, 0x40016000u, 0xC00, "SDADC1-SDADC3", BLOCK_RUN},
+    {STM32_F373, 0x40020000u, 0x800, "DMA1, DMA2", BLOCK_RUN},
+    {STM32_F373, 0x40021000u, 0x400, "RCC", BLOCK_RUN},
+    {STM32_F373, 0x40022000u, 0x400, "the flash interface", BLOCK_RUN},
+    {STM32_F373, 0x40023000u, 0x400, "CRC", BLOCK_RUN},
+    {STM32_F373, 0x40024000u, 0x400, "TSC (the touch sensing controller)", BLOCK_NOT_RUN},
+    {STM32_F373, 0x48000000u, 0x1800, "GPIOA-GPIOF", BLOCK_RUN},
+    // the F103
+    {STM32_F103, 0x40000000u, 0xC00, "TIM2-TIM4", BLOCK_RUN},
+    {STM32_F103, 0x40000C00u, 0xC00, "TIM5-TIM7", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40002800u, 0x400, "RTC", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40002C00u, 0x400, "WWDG (the window watchdog)", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40003000u, 0x400, "IWDG (the independent watchdog)", BLOCK_RUN},
+    {STM32_F103, 0x40003800u, 0x400, "SPI2", BLOCK_RUN},
+    {STM32_F103, 0x40003C00u, 0x400, "SPI3", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40004400u, 0x800, "USART2, USART3", BLOCK_RUN},
+    {STM32_F103, 0x40004C00u, 0x800, "UART4, UART5", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40005400u, 0x800, "I2C1, I2C2", BLOCK_RUN},
+    {STM32_F103, 0x40005C00u, 0x800, "USB and its SRAM", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40006400u, 0x400, "CAN", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40006C00u, 0x400, "BKP (the backup registers)", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40007000u, 0x400, "PWR", BLOCK_RUN},
+    {STM32_F103, 0x40007400u, 0x400, "DAC", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40010000u, 0x1C00, "AFIO, EXTI, GPIOA-GPIOE", BLOCK_RUN},
+    {STM32_F103, 0x40011C00u, 0x800, "GPIOF, GPIOG", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40012400u, 0x1000, "ADC1, ADC2, TIM1, SPI1", BLOCK_RUN},
+    {STM32_F103, 0x40013400u, 0x400, "TIM8", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40013800u, 0x400, "USART1", BLOCK_RUN},
+    {STM32_F103, 0x40013C00u, 0x400, "ADC3", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40018000u, 0x400, "SDIO (the SD card interface)", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40020000u, 0x400, "DMA1", BLOCK_RUN},
+    {STM32_F103, 0x40020400u, 0x400, "DMA2", BLOCK_NOT_RUN},
+    {STM32_F103, 0x40021000u, 0x400, "RCC", BLOCK_RUN},
+    {STM32_F103, 0x40022000u, 0x400, "the flash interface", BLOCK_RUN},
+    {STM32_F103, 0x40023000u, 0x400, "CRC", BLOCK_RUN},
+    {STM32_F103, 0x50000000u, 0x40000, "USB OTG FS", BLOCK_NOT_RUN},
+    {STM32_F103, 0xA0000000u, 0x1000, "FSMC (the external memory controller)", BLOCK_NOT_RUN},
+};
+
+// (the first 512 KB of the peripherals' space, block by block; the rest looked up)
+static void map_blocks(STM32 *m) {
+    memset(m->block_status, BLOCK_RESERVED, sizeof m->block_status);
+    memset(m->block_entry, 0xFF, sizeof m->block_entry);
+    for (size_t k = 0; k < sizeof peripheral_map / sizeof peripheral_map[0]; k++) {
+        if (peripheral_map[k].model != m->model || peripheral_map[k].base < 0x40000000u) continue;
+        for (uint32_t a = peripheral_map[k].base; a < peripheral_map[k].base + peripheral_map[k].size; a += 0x400) {
+            uint32_t block = (a - 0x40000000u) >> 10;
+            if (block >= 512) break;
+            m->block_status[block] = peripheral_map[k].status;
+            m->block_entry[block] = (uint8_t)k;
+        }
+    }
+}
+
+static void note_unmodelled(STM32 *m, uint32_t address, bool write, int entry, int status) {
+    uint32_t base = entry >= 0 ? peripheral_map[entry].base : address & ~0x3FFu;
+    for (int k = 0; k < m->unmodelled_count; k++) {
+        STM32Unmodelled *u = &m->unmodelled[k];
+        if (u->base == base) {
+            if (write) u->writes++; else u->reads++;
+            return;
+        }
+    }
+    if (m->unmodelled_count >= (int)(sizeof m->unmodelled / sizeof m->unmodelled[0])) return;
+    STM32Unmodelled *u = &m->unmodelled[m->unmodelled_count++];
+    u->base = base;
+    u->name = entry >= 0 ? peripheral_map[entry].name : NULL;
+    u->kept = status == BLOCK_KEPT;
+    u->reads = write ? 0 : 1;
+    u->writes = write ? 1 : 0;
+    u->first_address = address;
+    u->pc = cm4_reg(m->core, 15);
+}
+
+// Whether the model runs what is at an address the core sends it (outside its memories); noted if not
+static inline void check_access(STM32 *m, uint32_t address, bool write) {
+    uint32_t block = (address - 0x40000000u) >> 10;
+    if (block < 512) {
+        int status = m->block_status[block];
+        if (status != BLOCK_RUN) note_unmodelled(m, address, write, m->block_entry[block] == 0xFF ? -1 : m->block_entry[block], status);
+        return;
+    }
+    if (m->model == STM32_F373 && address - 0x48000000u < 0x1800u) return;  // its GPIO
+    // the chip's system memory (its unique ID, its flash size) and the core's own space are answered elsewhere
+    if (address - 0x1FFF0000u < 0x10000u || address >= 0xE0000000u) return;
+    for (size_t k = 0; k < sizeof peripheral_map / sizeof peripheral_map[0]; k++) {
+        if (peripheral_map[k].model == m->model && address - peripheral_map[k].base < peripheral_map[k].size) {
+            if (peripheral_map[k].status != BLOCK_RUN) note_unmodelled(m, address, write, (int)k, peripheral_map[k].status);
+            return;
+        }
+    }
+    note_unmodelled(m, address, write, -1, BLOCK_RESERVED);
+}
+
+int stm32_unmodelled_count(const STM32 *m) { return m->unmodelled_count; }
+
+bool stm32_unmodelled(const STM32 *m, int index, STM32Unmodelled *out) {
+    if (index < 0 || index >= m->unmodelled_count || !out) return false;
+    *out = m->unmodelled[index];
+    return true;
+}
+
 static uint32_t io_read(void *context, uint32_t address, uint32_t size) {
     STM32 *m = context;
+    check_access(m, address, false);
     if (m->model == STM32_F373) return io_read_f3(m, address, size);
     if (m->model == STM32_F103) return io_read_f1(m, address, size);
     uint32_t base = address & ~3u, offset;
@@ -2362,6 +2576,7 @@ static uint32_t io_read(void *context, uint32_t address, uint32_t size) {
         offset = base & 0x3FF;
         static const int apb1_timers[9] = {2, 3, 4, 5, 6, 7, 12, 13, 14};
         if (block < 9) value = timer_read(m, apb1_timers[block], offset);
+        else if (block == 0x0C) value = iwdg_read(m, offset);
         else if (block == 0x0D) value = spi_read(m, &m->ext[0], offset);
         else if (block == 0x0E) value = spi_read(m, &m->spi[1], offset);
         else if (block == 0x0F) value = spi_read(m, &m->spi[2], offset);
@@ -2429,6 +2644,7 @@ static void io_write(void *context, uint32_t address, uint32_t value, uint32_t s
         else flash_program(m, address, value, size);
         return;
     }
+    check_access(m, address, true);
     uint32_t base = address & ~3u, offset = base & 0x3FF;
     value = lanes(address, value, size);
     if (m->model == STM32_F373) { io_write_f3(m, address, value); return; }
@@ -2437,6 +2653,7 @@ static void io_write(void *context, uint32_t address, uint32_t value, uint32_t s
         uint32_t block = (address - 0x40000000u) >> 10;
         static const int apb1_timers[9] = {2, 3, 4, 5, 6, 7, 12, 13, 14};
         if (block < 9) timer_write(m, apb1_timers[block], offset, value);
+        else if (block == 0x0C) iwdg_write(m, offset, value);
         else if (block == 0x0D) spi_write(m, &m->ext[0], offset, value);
         else if (block == 0x0E) spi_write(m, &m->spi[1], offset, value);
         else if (block == 0x0F) spi_write(m, &m->spi[2], offset, value);
@@ -2673,6 +2890,11 @@ static void reset_all(STM32 *m) {
     m->hclk = f3 ? 8e6 : 16e6;
     update_clocks(m);
 
+    m->iwdg_running = m->iwdg_open = false;
+    m->iwdg_pr = 0;
+    m->iwdg_rlr = m->iwdg_winr = 0xFFF;
+    m->iwdg_deadline = INFINITY;
+
     m->flash_acr = f3 ? 0x30 : 0;
     m->flash_sr = 0;
     m->flash_cr = f3 ? 0x80u : 0x80000000u;
@@ -2770,6 +2992,10 @@ static void service(STM32 *m) {
 
 static uint64_t next_event(const STM32 *m) {
     uint64_t next = NEVER;
+    if (m->iwdg_running) {
+        double left = (m->iwdg_deadline - stm32_now(m)) * m->hclk;
+        next = left <= 0 ? now(m) : now(m) + (uint64_t)ceil(left);
+    }
     for (int i = 0; i < 3; i++) {
         if (m->spi[i].done_at < next) next = m->spi[i].done_at;
         if (m->adc[i].done_at < next) next = m->adc[i].done_at;
@@ -2787,6 +3013,10 @@ CM4Stop stm32_run(STM32 *m, uint64_t cycles) {
     uint64_t end = now(m) + cycles;
     CM4Stop stop = CM4_RAN;
     for (;;) {
+        if (m->iwdg_running && stm32_now(m) >= m->iwdg_deadline) {
+            m->watchdog_resets++;
+            system_reset(m, 1u << 29);  // IWDGRSTF
+        }
         service(m);
         uint64_t t = now(m);
         if (t >= end) return stop;
@@ -2795,6 +3025,12 @@ CM4Stop stm32_run(STM32 *m, uint64_t cycles) {
         if (next <= t) next = t + 1;
         cm4_set_deadline(m->core, next);
         stop = cm4_run(m->core, next - t);
+        if (stop == CM4_RESET) {
+            m->software_resets++;
+            system_reset(m, 1u << 28);  // SFTRSTF
+            stop = CM4_RAN;
+            continue;
+        }
         if (stop == CM4_BREAKPOINT || stop == CM4_LOCKUP) {
             cm4_set_deadline(m->core, NEVER);
             return stop;
@@ -2831,6 +3067,7 @@ STM32 *stm32_create_model(STM32Model model, double hse_hz) {
     memset(m->flash, 0xFF, m->flash_bytes);
     cm4_configure(m->core, IRQ_COUNT, 4);
     cm4_set_io(m->core, io_read, io_write, m);
+    map_blocks(m);
     // which request each stream's channel serves
     for (size_t k = 0; k < sizeof dma_map / sizeof dma_map[0]; k++) {
         m->dma_request[dma_map[k].dma][dma_map[k].stream][dma_map[k].channel] = (int8_t)dma_map[k].request;
@@ -2866,13 +3103,14 @@ static uint32_t flash_word(const STM32 *m, uint32_t offset) {
     return v;
 }
 
-void stm32_reset(STM32 *m) {
-    memset(m->sram, 0, m->sram_bytes);
-    if (m->ccm) memset(m->ccm, 0, m->ccm_bytes);
+// The core reset and started where the chip boots (from flash, or, with no bootloader there, the first vector table
+// after it)
+static void boot(STM32 *m) {
     cm4_set_deadline(m->core, NEVER);
     cm4_reset(m->core);
     m->cycle_base = now(m);
     reset_all(m);
+    m->generation++;
     if (flash_word(m, 0) == 0xFFFFFFFFu) {
         // no bootloader where the chip boots: the first vector table found after it
         for (uint32_t offset = 0x4000; offset < m->flash_bytes; offset += 0x4000) {
@@ -2888,9 +3126,33 @@ void stm32_reset(STM32 *m) {
     }
 }
 
+void stm32_reset(STM32 *m) {
+    memset(m->sram, 0, m->sram_bytes);
+    if (m->ccm) memset(m->ccm, 0, m->ccm_bytes);
+    m->unmodelled_count = 0;
+    m->watchdog_resets = m->software_resets = 0;
+    boot(m);
+}
+
+// A reset from within (the watchdog's, the firmware's): the RAM kept, the reset flags in RCC_CSR kept and the cause's
+// set (with PINRSTF: the chip pulls its NRST pin low), its time going on
+static void system_reset(STM32 *m, uint32_t flag) {
+    int csr = m->model == STM32_F405 ? 0x74 / 4 : 0x24 / 4;
+    uint32_t flags = m->rcc[csr] & 0xFF000000u;
+    double time = stm32_now(m);
+    boot(m);
+    m->rcc[csr] = (m->rcc[csr] & 0x00FFFFFFu) | flags | flag | (1u << 26);
+    m->time_base = time;
+    m->cycle_base = now(m);
+}
+
+uint32_t stm32_watchdog_resets(const STM32 *m) { return m->watchdog_resets; }
+uint32_t stm32_software_resets(const STM32 *m) { return m->software_resets; }
+
 double stm32_hclk(const STM32 *m) { return m->hclk; }
 
-double stm32_time(const STM32 *m) { return m->time_base + (double)(now(m) - m->cycle_base) / m->hclk; }
+static double stm32_now(const STM32 *m) { return m->time_base + (double)(now(m) - m->cycle_base) / m->hclk; }
+double stm32_time(const STM32 *m) { return stm32_now(m); }
 
 void stm32_set_input(STM32 *m, int port, int pin, bool driven, bool high) {
     if (port < 0 || port >= PORTS || pin < 0 || pin > 15) return;

@@ -344,6 +344,11 @@ public final class Simulator {
     private var busIssuesPending: [Bool] = []
     /// What `busIssues` has said, among the circuit's problems
     private var busProblems: [String] = []
+    /// What each STM32 says of itself (`notices`: what its firmware reached that the model does not run, how often it
+    /// reset itself), among the circuit's problems; looked at when their number changes
+    private var chipNotices: [[String]] = []
+    private var chipNoticeCounts: [Int] = []
+    private var chipProblems: [String] { busProblems + chipNotices.flatMap { $0 } }
     /// For each STM32, the codecs on its I²S ports and I²C buses: its frames go to them and theirs come back, its writes
     /// to their control port are answered
     private var codecLinks: [[(port: Int, codec: Int)]] = []
@@ -1158,7 +1163,7 @@ public final class Simulator {
         valuesVersion = -1
         matrixIsCurrent = false
         isFailed = false
-        problems = topology.problems + behaviorProblems + busProblems
+        problems = topology.problems + behaviorProblems + chipProblems
         configureScopes(window: traces.values.first?.window ?? 1)
         currentsAreStale = true
     }
@@ -1345,8 +1350,9 @@ public final class Simulator {
         isFailed = false
         // (the chips start over: what their buses do not reach is said again once their frames flow)
         busProblems = []
+        for i in chipNotices.indices { (chipNotices[i], chipNoticeCounts[i]) = ([], 0) }
         for i in busIssuesPending.indices where !busWirings[i].isEmpty { busIssuesPending[i] = true }
-        problems = topology.problems + behaviorProblems + busProblems
+        problems = topology.problems + behaviorProblems + chipProblems
         for trace in traces.values { trace.clear() }
         delayHistory = [:]
         springTanks = [:]
@@ -1405,7 +1411,7 @@ public final class Simulator {
         // a simulation that failed tries again with the new values (from where it was, unless that was not finite)
         if isFailed {
             isFailed = false
-            problems = topology.problems + behaviorProblems + busProblems
+            problems = topology.problems + behaviorProblems + chipProblems
             if x.contains(where: { !$0.isFinite }) { x = [Double](repeating: 0, count: topology.matrixSize) }
         }
         return true
@@ -2822,7 +2828,7 @@ public final class Simulator {
 
     private func fail() {
         isFailed = true
-        problems = topology.problems + behaviorProblems + busProblems + ["The circuit can't be solved. Look for voltage sources in parallel, a loop of sources and wires, or a current source with nowhere to go."]
+        problems = topology.problems + behaviorProblems + chipProblems + ["The circuit can't be solved. Look for voltage sources in parallel, a loop of sources and wires, or a current source with nowhere to go."]
     }
 
     // MARK: - Equations
@@ -5868,6 +5874,7 @@ public final class Simulator {
                 stm32.i2cTarget = nil
                 stm32.spiExchange = nil
             }
+            if i < chipNoticeCounts.count, let stm32 = chip as? STM32Microcontroller { noteChip(i, stm32) }
             // the last instruction may run past the budget: the next step has that much less
             chipCycleCarry[i] = budget - Double(chip.cycles - start)
             let states = chip.pinStates
@@ -5956,6 +5963,9 @@ public final class Simulator {
         busIssues = Array(repeating: nil, count: kinds.count)
         busIssuesPending = Array(repeating: false, count: kinds.count)
         busProblems = []
+        // (a chip kept from before says its notices again)
+        chipNotices = Array(repeating: [], count: kinds.count)
+        chipNoticeCounts = Array(repeating: 0, count: kinds.count)
         let stm32s: Set<ElementKind> = [.stm32f405, .stm32f373, .stm32f103]
         for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
             let chipNodes = topology.elementNodes[i]
@@ -6036,7 +6046,7 @@ public final class Simulator {
             if let issue, !busProblems.contains(issue) { pending = true }
         }
         busIssuesPending[i] = pending
-        if settled { problems = topology.problems + behaviorProblems + busProblems }
+        if settled { problems = topology.problems + behaviorProblems + chipProblems }
     }
 
     /// The firmware set an STM32's pins or ports up anew (as it runs): which of them reach what
@@ -6045,13 +6055,24 @@ public final class Simulator {
         resolveBuses(i, stm32)
     }
 
+    /// What an STM32 says of itself, among the circuit's problems when it has something new to say
+    private func noteChip(_ i: Int, _ stm32: STM32Microcontroller) {
+        let count = stm32.noticeCount
+        guard count != chipNoticeCounts[i] else { return }
+        chipNoticeCounts[i] = count
+        let element = flat.elements[i]
+        let who = "\(element.name.isEmpty ? kinds[i].displayName : element.name) (\(kinds[i].displayName))"
+        chipNotices[i] = stm32.notices.map { "\(who): \($0)" }
+        problems = topology.problems + behaviorProblems + chipProblems
+    }
+
     /// Frames flow on an STM32's ports: what does not reach the parts wired to it is said now
     private func reportBusIssues(_ i: Int) {
         busIssuesPending[i] = false
         for (j, _) in busWirings[i] {
             if let issue = busIssues[j], !busProblems.contains(issue) { busProblems.append(issue) }
         }
-        problems = topology.problems + behaviorProblems + busProblems
+        problems = topology.problems + behaviorProblems + chipProblems
     }
 
     /// A frame an STM32 sends on an I²S port: the codecs (and PCM5102s) on it take it for their outputs, both kept

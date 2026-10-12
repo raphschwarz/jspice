@@ -29,6 +29,7 @@ typedef enum {
     CM4_SLEEPING = 1,  ///< in WFI or WFE with nothing to wake it before the end of the run
     CM4_BREAKPOINT = 2,///< a BKPT instruction
     CM4_LOCKUP = 3,    ///< a fault in a fault handler: the core has stopped
+    CM4_RESET = 4,     ///< the firmware asked for a system reset (SYSRESETREQ): the core has reset itself
 } CM4Stop;
 
 CM4 *cm4_create(void);

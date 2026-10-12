@@ -125,6 +125,24 @@ bool stm32_spi_config(const STM32 *chip, int instance, STM32SPIConfig *config);
 /// A count that changes whenever the firmware changes a pin's function or a bus's settings
 uint32_t stm32_config_generation(const STM32 *chip);
 
+/// A part of the chip the firmware reached that the model does not run (since reset; up to 32): a peripheral it leaves
+/// out (`name`; reads give 0, writes are lost), one whose registers it keeps without running it (`kept`), or an
+/// address with nothing there (`name` NULL: a bus fault on the chip). `pc`: about where the firmware first did.
+typedef struct {
+    uint32_t base;
+    const char *name;
+    bool kept;
+    uint32_t reads, writes;
+    uint32_t first_address;
+    uint32_t pc;
+} STM32Unmodelled;
+int stm32_unmodelled_count(const STM32 *chip);
+/// How often since `stm32_reset` the chip reset itself: its independent watchdog ran out, or its firmware asked
+/// (SYSRESETREQ). Its RAM is kept, RCC_CSR says why, as on the chip.
+uint32_t stm32_watchdog_resets(const STM32 *chip);
+uint32_t stm32_software_resets(const STM32 *chip);
+bool stm32_unmodelled(const STM32 *chip, int index, STM32Unmodelled *out);
+
 /// The circuit's voltage on each pin: its level read with hysteresis (high above 0.6 of `supply`, low below 0.3, as
 /// it was between), and the voltage the ADCs read. NaN for a pin nothing in the circuit holds: its pull sets it, as
 /// it does on the chip at once.
