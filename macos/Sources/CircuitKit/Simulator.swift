@@ -6017,7 +6017,7 @@ public final class Simulator {
     /// Which of an STM32's ports reach the parts wired to it, as its firmware has set it up now; why not, for those they
     /// do not
     private func resolveBuses(_ i: Int, _ stm32: STM32Microcontroller) {
-        busGenerations[i] = stm32_config_generation(stm32.chip)
+        busGenerations[i] = stm32.configGeneration
         codecLinks[i] = []
         codecBuses[i] = []
         spiLinks[i] = []
@@ -6051,7 +6051,7 @@ public final class Simulator {
 
     /// The firmware set an STM32's pins or ports up anew (as it runs): which of them reach what
     @inline(__always) private func refreshBuses(_ i: Int) {
-        guard let stm32 = busChips[i], stm32_config_generation(stm32.chip) != busGenerations[i] else { return }
+        guard let stm32 = busChips[i], stm32.configGeneration != busGenerations[i] else { return }
         resolveBuses(i, stm32)
     }
 

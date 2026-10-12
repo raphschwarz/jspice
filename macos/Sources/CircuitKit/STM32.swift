@@ -262,6 +262,9 @@ public final class STM32Microcontroller: Microcontroller {
         return names.indices.map { (names[$0].uppercased(), check.describe($0)) }
     }
 
+    /// Changes whenever the firmware changes a pin's function or a bus's settings
+    var configGeneration: UInt32 { stm32_config_generation(system.chip) }
+
     /// Changes whenever `notices` gains one (not as their counts grow)
     var noticeCount: Int {
         let chip = system.chip
@@ -422,12 +425,10 @@ public struct BusEvent: Equatable, Sendable {
         kind = Kind(rawValue: Int(e.kind)) ?? .spi
         port = Int(e.port)
         bits = Int(e.bits)
-        (a, b, c, d) = (e.a, e.b, e.c, e.d)
-    }
-
-    public init(time: Double, kind: Kind, port: Int, bits: Int, a: UInt32, b: UInt32 = 0, c: UInt32 = 0, d: UInt32 = 0) {
-        (self.time, self.kind, self.port, self.bits) = (time, kind, port, bits)
-        (self.a, self.b, self.c, self.d) = (a, b, c, d)
+        a = e.a
+        b = e.b
+        c = e.c
+        d = e.d
     }
 
     /// "SPI2", "I2C1", "USART3"
