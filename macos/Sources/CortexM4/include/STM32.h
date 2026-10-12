@@ -140,6 +140,26 @@ int stm32_unmodelled_count(const STM32 *chip);
 /// How often since `stm32_reset` the chip reset itself: its independent watchdog ran out, or its firmware asked
 /// (SYSRESETREQ). Its RAM is kept, RCC_CSR says why, as on the chip.
 uint32_t stm32_watchdog_resets(const STM32 *chip);
+
+/// A transaction on one of the chip's buses, as a logic analyzer would decode it, at `time` (seconds of the chip's
+/// time): an SPI frame (`a` shifted out, `b` in, `bits` long), an I2S frame (`a`, `b` sent left and right, `c`, `d`
+/// received, left-justified in 32 bits), an I2C address (`a` the 7-bit address, `b` 1 to read, `c` 1 if acknowledged),
+/// byte written (`a`, `b` acknowledged) or read (`a`, `b` acknowledged by the chip), stop; a USART byte sent or received
+typedef enum {
+    STM32_BUS_SPI = 0, STM32_BUS_I2S, STM32_BUS_I2C_START, STM32_BUS_I2C_WRITE, STM32_BUS_I2C_READ, STM32_BUS_I2C_STOP,
+    STM32_BUS_USART_TX, STM32_BUS_USART_RX,
+} STM32BusKind;
+typedef struct {
+    double time;
+    uint8_t kind;   // STM32BusKind
+    uint8_t port;   // SPI1 1, I2C2 2, USART3 3...
+    uint8_t bits;
+    uint32_t a, b, c, d;
+} STM32BusEvent;
+/// Starts (afresh) or stops keeping the buses' transactions: the last 4096 are kept until taken
+void stm32_trace_buses(STM32 *chip, bool on);
+/// Takes up to `max` of the transactions kept, oldest first; how many
+int stm32_take_bus_events(STM32 *chip, STM32BusEvent *events, int max);
 uint32_t stm32_software_resets(const STM32 *chip);
 bool stm32_unmodelled(const STM32 *chip, int index, STM32Unmodelled *out);
 

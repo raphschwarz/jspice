@@ -448,6 +448,29 @@ final class STM32Tests: XCTestCase {
         ])
     }
 
+    /// With its buses traced, the chip keeps what goes over them as a logic analyzer would decode it: the test
+    /// firmware's "boot" on USART1, its write to a codec's register 6 on I2C2, then I2S2's frames at 48 kHz
+    func testTheBusesAreTraced() throws {
+        let chip = STM32Microcontroller(firmware: try firmware())
+        chip.i2cTarget = STM32Microcontroller.I2CTarget(start: { _, address, _ in address == 0x1A }, write: { _, _ in true },
+                                                        read: { _, _ in 0xFF }, stop: { _ in })
+        chip.tracesBuses = true
+        run(chip, for: 0.05)
+        let events = chip.busEvents()
+        XCTAssertEqual(events.filter { $0.kind == .usartSend }.prefix(5).map { UInt8($0.a) }, Array("boot\n".utf8))
+        XCTAssertEqual(events.filter { $0.bus == "USART1" }.first?.summary, "sends 0x62 'b'")
+        XCTAssertEqual(events.filter { $0.bus == "I2C2" }.map(\.summary),
+                       ["start 0x1A write, ACK", "write 0x0C, ACK", "write 0x00, ACK", "stop"])
+        let frames = events.filter { $0.kind == .i2s && $0.port == 2 }
+        let span = (frames.last?.time ?? 0) - (frames.first?.time ?? 0)
+        XCTAssertEqual(Double(frames.count - 1) / span, 47_991, accuracy: 50)
+        XCTAssertEqual(chip.busEvents(since: events.last!.time).count, 1)
+        XCTAssertEqual(chip.pinFunctions.first { $0.pin == "PB13" }?.function, "I2S2's CK")
+        XCTAssertEqual(chip.pinFunctions.first { $0.pin == "PB10" }?.function, "I2C2's SCL")
+        chip.tracesBuses = false
+        XCTAssertTrue(chip.busEvents().isEmpty)
+    }
+
     func testResetStartsOver() throws {
         let chip = STM32Microcontroller(firmware: try firmware())
         run(chip, for: 0.05)

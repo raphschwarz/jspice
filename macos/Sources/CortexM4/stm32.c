@@ -268,11 +268,31 @@ struct STM32 {
     uint32_t iwdg_pr, iwdg_rlr, iwdg_winr;
     double iwdg_deadline;
     uint32_t watchdog_resets, software_resets;
+    // the buses' transactions, while traced: a ring of the last ones
+    bool tracing;
+    STM32BusEvent trace[4096];
+    uint32_t trace_next, trace_taken;
 };
 
 // ------------------------------------------------------------------------------------------------------- utilities
 
 static inline uint64_t now(const STM32 *m) { return cm4_cycles(m->core); }
+
+static double stm32_now(const STM32 *m);
+
+// One transaction on a bus, kept while the buses are traced (the oldest dropped when the ring is full)
+static void trace(STM32 *m, STM32BusKind kind, int port, uint32_t a, uint32_t b, uint32_t c, uint32_t d, int bits) {
+    if (!m->tracing) return;
+    const uint32_t size = sizeof m->trace / sizeof m->trace[0];
+    STM32BusEvent *e = &m->trace[m->trace_next % size];
+    e->time = stm32_now(m);
+    e->kind = kind;
+    e->port = (uint8_t)port;
+    e->bits = (uint8_t)bits;
+    e->a = a; e->b = b; e->c = c; e->d = d;
+    m->trace_next++;
+    if (m->trace_next - m->trace_taken > size) m->trace_taken = m->trace_next - size;
+}
 
 static void set_irq(STM32 *m, int line, bool level) {
     if (m->irq[line] == level) return;
@@ -1161,6 +1181,7 @@ static void spi_frame_done(STM32 *m, int i) {
     uint32_t in = m->devices.spi_exchange ? m->devices.spi_exchange(m->devices.context, i + 1, p->shifting, bits)
                                           : 0xFFFF;
     in &= bits == 16 ? 0xFFFFu : 0xFFu;
+    trace(m, STM32_BUS_SPI, i + 1, p->shifting, in, 0, 0, bits);
     p->done_at = NEVER;
     if (!((p->cr1 >> 10) & 1) || 1) {
         if (p->rx_full) p->sr |= 0x40;  // OVR
@@ -1270,6 +1291,7 @@ static void i2s_slot(STM32 *m, int i) {
         int32_t left = i2s_sample(p, &p->out[0]), right = i2s_sample(p, &p->out[half]);
         int32_t in_left = 0, in_right = 0;
         if (m->devices.i2s_frame) m->devices.i2s_frame(m->devices.context, i + 1, left, right, &in_left, &in_right);
+        trace(m, STM32_BUS_I2S, i + 1, (uint32_t)left, (uint32_t)right, (uint32_t)in_left, (uint32_t)in_right, 32);
         i2s_halfwords(p, in_left, &p->in[0]);
         i2s_halfwords(p, in_right, &p->in[half]);
     }
@@ -1394,6 +1416,7 @@ static void i2c_receive(STM32 *m, int i) {
     I2c *b = &m->i2c[i];
     bool ack = (b->cr1 >> 10) & 1;
     b->dr = m->devices.i2c_read ? m->devices.i2c_read(m->devices.context, i + 1, ack) : 0xFF;
+    trace(m, STM32_BUS_I2C_READ, i + 1, b->dr, ack, 0, 0, 8);
     b->sr1 |= 0x40;  // RXNE
 }
 
@@ -1458,6 +1481,7 @@ static void i2c_write(STM32 *m, int i, uint32_t offset, uint32_t value) {
         if (value & (1u << 9)) {
             // STOP
             if (m->devices.i2c_stop && (b->sr2 & 1)) m->devices.i2c_stop(m->devices.context, i + 1);
+            if (b->sr2 & 1) trace(m, STM32_BUS_I2C_STOP, i + 1, 0, 0, 0, 0, 0);
             b->sr2 = 0;
             b->sr1 &= ~0x87u;
             b->reading = false;
@@ -1475,6 +1499,7 @@ static void i2c_write(STM32 *m, int i, uint32_t offset, uint32_t value) {
             bool read = value & 1;
             bool ack = m->devices.i2c_start ? m->devices.i2c_start(m->devices.context, i + 1, (uint8_t)(value >> 1), read)
                                             : false;
+            trace(m, STM32_BUS_I2C_START, i + 1, (value >> 1) & 0x7F, read, ack, 0, 8);
             if (ack) {
                 b->sr1 |= 2;  // ADDR
                 b->reading = read;
@@ -1488,6 +1513,7 @@ static void i2c_write(STM32 *m, int i, uint32_t offset, uint32_t value) {
             }
         } else if (b->sr2 & 4) {
             bool ack = m->devices.i2c_write ? m->devices.i2c_write(m->devices.context, i + 1, (uint8_t)value) : false;
+            trace(m, STM32_BUS_I2C_WRITE, i + 1, value & 0xFF, ack, 0, 0, 8);
             b->sr1 |= 0x84;  // TXE, BTF: shifted out at once
             if (!ack) b->sr1 |= 0x400;
         }
@@ -1547,6 +1573,7 @@ static void usart_received(STM32 *m, int i) {
     if (!u->input_count) return;
     if (u->sr & 0x20) u->sr |= 0x08;  // overrun: the last byte not read
     u->rx = u->input[u->input_start];
+    trace(m, STM32_BUS_USART_RX, i + 1, u->rx, 0, 0, 0, 8);
     u->input_start = (u->input_start + 1) % (int)sizeof u->input;
     u->input_count--;
     u->sr |= 0x20;  // RXNE
@@ -1564,6 +1591,7 @@ static void usart_done(STM32 *m, int i) {
     u->done_at = NEVER;
     u->shifting = false;
     if (m->devices.usart_send) m->devices.usart_send(m->devices.context, i + 1, u->shifting_byte);
+    trace(m, STM32_BUS_USART_TX, i + 1, u->shifting_byte, 0, 0, 0, 8);
     if (u->tx_full) usart_start(m, i);
     else u->sr |= 0x40;  // TC
     if (u->cr3 & 0x80) {
@@ -2119,7 +2147,6 @@ static uint32_t iwdg_read(STM32 *m, uint32_t offset) {
     return 0;
 }
 
-static double stm32_now(const STM32 *m);
 static void system_reset(STM32 *m, uint32_t flag);
 
 static void iwdg_write(STM32 *m, uint32_t offset, uint32_t value) {
@@ -3147,6 +3174,18 @@ static void system_reset(STM32 *m, uint32_t flag) {
 }
 
 uint32_t stm32_watchdog_resets(const STM32 *m) { return m->watchdog_resets; }
+
+void stm32_trace_buses(STM32 *m, bool on) {
+    if (on && !m->tracing) m->trace_next = m->trace_taken = 0;
+    m->tracing = on;
+}
+
+int stm32_take_bus_events(STM32 *m, STM32BusEvent *events, int max) {
+    const uint32_t size = sizeof m->trace / sizeof m->trace[0];
+    int n = 0;
+    while (n < max && m->trace_taken != m->trace_next) events[n++] = m->trace[m->trace_taken++ % size];
+    return n;
+}
 uint32_t stm32_software_resets(const STM32 *m) { return m->software_resets; }
 
 double stm32_hclk(const STM32 *m) { return m->hclk; }

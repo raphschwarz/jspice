@@ -78,6 +78,10 @@ struct MicrocontrollerSection: View {
         if element.kind.board?.hasSerial ?? true, let index = editor.circuit.index(of: element.id) {
             SerialMonitor(simulation: editor.simulation, index: index)
         }
+        if element.kind.board?.compilesSketches == false, let index = editor.circuit.index(of: element.id) {
+            BusTrace(simulation: editor.simulation, index: index)
+            PinFunctions(simulation: editor.simulation, index: index)
+        }
     }
 
     private var statusText: String {
@@ -129,6 +133,88 @@ struct SerialMonitor: View {
     private func send() {
         simulation.sendSerial(index, input + "\n")
         input = ""
+    }
+}
+
+/// What has gone over an STM32's buses, decoded as a logic analyzer would: its SPI and I²S frames, I²C transfers and
+/// USART bytes, the latest last
+struct BusTrace: View {
+    @ObservedObject var simulation: SimulationController
+    let index: Int
+    @State private var tracing = false
+    @State private var bus = "All"
+
+    var body: some View {
+        Section {
+            Toggle("Trace the buses", isOn: $tracing)
+                .onChange(of: tracing) { _, on in simulation.stm32(index)?.tracesBuses = on }
+                .onAppear { tracing = simulation.stm32(index)?.tracesBuses ?? false }
+            if tracing {
+                TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                    let events = simulation.stm32(index)?.busEvents() ?? []
+                    let buses = ["All"] + Set(events.map(\.bus)).sorted()
+                    let shown = Array((bus == "All" ? events : events.filter { $0.bus == bus }).suffix(200))
+                    VStack(alignment: .leading) {
+                        Picker("Bus", selection: $bus) {
+                            ForEach(buses, id: \.self) { Text($0).tag($0) }
+                        }
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 1) {
+                                    ForEach(Array(shown.enumerated()), id: \.offset) { _, event in
+                                        Text(String(format: "%9.6f  ", event.time) + "\(event.bus)  \(event.summary)")
+                                            .font(.caption2.monospaced())
+                                            .lineLimit(1)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                                Color.clear.frame(height: 1).id("end")
+                            }
+                            .frame(height: 180)
+                            .onChange(of: shown.last?.time) { _, _ in proxy.scrollTo("end") }
+                        }
+                        if shown.isEmpty {
+                            Text("Nothing yet: run the circuit.").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Bus Trace")
+        }
+    }
+}
+
+/// What each of an STM32's pins carries as its firmware has set it up, and what the chip says of itself
+struct PinFunctions: View {
+    @ObservedObject var simulation: SimulationController
+    let index: Int
+
+    var body: some View {
+        Section {
+            TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                let chip = simulation.stm32(index)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(chip?.notices ?? [], id: \.self) { notice in
+                        Text(notice).font(.caption).foregroundStyle(.orange)
+                    }
+                    // (the pins the firmware has given a function, its plain inputs left out)
+                    let pins = (chip?.pinFunctions ?? []).filter { $0.function != "a GPIO input" }
+                    ForEach(Array(pins.enumerated()), id: \.offset) { _, pin in
+                        HStack {
+                            Text(pin.pin).font(.caption.monospaced()).frame(width: 44, alignment: .leading)
+                            Text(pin.function).font(.caption)
+                        }
+                    }
+                    if chip == nil {
+                        Text("Run the circuit to see what the firmware makes of each pin.").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } header: {
+            Text("Pins")
+        }
     }
 }
 

@@ -283,6 +283,9 @@ final class SimulationController: ObservableObject {
         return String(decoding: chip.serialOutput.suffix(8192), as: UTF8.self)
     }
 
+    /// The STM32 of the microcontroller at `index`, as it runs
+    func stm32(_ index: Int) -> STM32Microcontroller? { simulator.chip(index) as? STM32Microcontroller }
+
     /// Sends text to the chip's serial port, as the Arduino IDE's serial monitor does
     func sendSerial(_ index: Int, _ text: String) {
         let bytes = Array(text.utf8)

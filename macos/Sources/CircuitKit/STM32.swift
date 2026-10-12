@@ -74,6 +74,25 @@ public final class STM32Microcontroller: Microcontroller {
         var serialUSART: Int32 = 1
         var i2c: I2CTarget?
         var watched: [Int] = []
+        /// The buses' transactions taken from the chip while traced (the last 8192), under `traceLock`: the sound
+        /// thread runs the chip, the window reads them
+        var tracing = false
+        let traceLock = NSLock()
+        var trace: [BusEvent] = []
+        private var taking = [STM32BusEvent](repeating: STM32BusEvent(), count: 1024)
+
+        /// Moves what the chip has kept of its buses into `trace`
+        func takeTrace() {
+            guard tracing else { return }
+            traceLock.lock()
+            defer { traceLock.unlock() }
+            while true {
+                let count = Int(taking.withUnsafeMutableBufferPointer { stm32_take_bus_events(chip, $0.baseAddress, Int32($0.count)) })
+                for k in 0..<count { trace.append(BusEvent(taking[k])) }
+                if count < taking.count { break }
+            }
+            if trace.count > 8192 { trace.removeFirst(trace.count - 8192) }
+        }
 
         init(model: STM32Model, firmware: [UInt8]) {
             chip = stm32_create_model(model, 8e6)!
@@ -214,6 +233,35 @@ public final class STM32Microcontroller: Microcontroller {
         return said
     }
 
+    /// Whether the chip keeps its buses' transactions (`busEvents`), as a logic analyzer on its pins would decode them
+    public var tracesBuses: Bool {
+        get { system.tracing }
+        set {
+            guard newValue != system.tracing else { return }
+            system.traceLock.lock()
+            system.tracing = newValue
+            system.trace = []
+            system.traceLock.unlock()
+            stm32_trace_buses(system.chip, newValue)
+        }
+    }
+
+    /// The buses' transactions kept since tracing began (the last 8192), oldest first, from `time` on
+    public func busEvents(since time: Double = -.infinity) -> [BusEvent] {
+        system.traceLock.lock()
+        defer { system.traceLock.unlock() }
+        guard let first = system.trace.firstIndex(where: { $0.time >= time }) else { return [] }
+        return Array(system.trace[first...])
+    }
+
+    /// What each pin carries now, as the firmware has set it up ("SPI2's SCK", "a GPIO output"), by the pin's alternate
+    /// function and ST's pin data
+    public var pinFunctions: [(pin: String, function: String)] {
+        let names = STM32Microcontroller.pinNames(model)
+        let check = STM32BusCheck(chip: self, pinNames: names)
+        return names.indices.map { (names[$0].uppercased(), check.describe($0)) }
+    }
+
     /// Changes whenever `notices` gains one (not as their counts grow)
     var noticeCount: Int {
         let chip = system.chip
@@ -305,8 +353,9 @@ public final class STM32Microcontroller: Microcontroller {
 
     public func reset() {
         let voltages = pinVoltages, frames = system.frames, spi = system.spi, i2c = system.i2c, watched = system.watched
-        let onEvent = system.onEvent
+        let onEvent = system.onEvent, tracing = system.tracing
         system = System(model: model, firmware: firmware)
+        if tracing { tracesBuses = true }
         system.frames = frames
         system.spi = spi
         system.i2c = i2c
@@ -330,6 +379,7 @@ public final class STM32Microcontroller: Microcontroller {
     private func publish() {
         let chip = system.chip
         shownCycles = Int(cm4_cycles(stm32_core(chip)))
+        system.takeTrace()
         if !system.outbox.isEmpty {
             serial += system.outbox
             system.outbox = []
@@ -348,6 +398,62 @@ public final class STM32Microcontroller: Microcontroller {
             default: state = .input(pullUp: false)
             }
             if shownStates[index] != state { shownStates[index] = state }
+        }
+    }
+}
+
+/// A transaction on one of an STM32's buses, as a logic analyzer on its pins would decode it
+public struct BusEvent: Equatable, Sendable {
+    public enum Kind: Int, Sendable {
+        case spi, i2s, i2cStart, i2cWrite, i2cRead, i2cStop, usartSend, usartReceive
+    }
+    /// Seconds of the chip's time
+    public let time: Double
+    public let kind: Kind
+    /// SPI1 1, I2C2 2, USART3 3...
+    public let port: Int
+    public let bits: Int
+    /// SPI: shifted out, shifted in. I²S: sent left and right, received left and right (left-justified in 32 bits).
+    /// I²C: the address, 1 to read, 1 if acknowledged; a byte and whether it was acknowledged. USART: the byte.
+    public let a: UInt32, b: UInt32, c: UInt32, d: UInt32
+
+    init(_ e: STM32BusEvent) {
+        time = e.time
+        kind = Kind(rawValue: Int(e.kind)) ?? .spi
+        port = Int(e.port)
+        bits = Int(e.bits)
+        (a, b, c, d) = (e.a, e.b, e.c, e.d)
+    }
+
+    public init(time: Double, kind: Kind, port: Int, bits: Int, a: UInt32, b: UInt32 = 0, c: UInt32 = 0, d: UInt32 = 0) {
+        (self.time, self.kind, self.port, self.bits) = (time, kind, port, bits)
+        (self.a, self.b, self.c, self.d) = (a, b, c, d)
+    }
+
+    /// "SPI2", "I2C1", "USART3"
+    public var bus: String {
+        switch kind {
+        case .spi: return "SPI\(port)"
+        case .i2s: return "I2S\(port)"
+        case .i2cStart, .i2cWrite, .i2cRead, .i2cStop: return "I2C\(port)"
+        case .usartSend, .usartReceive: return "USART\(port)"
+        }
+    }
+
+    /// What happened, as a logic analyzer's decoder shows it: "→ 0x6E00 ← 0x0123", "start 0x1A write, ACK"
+    public var summary: String {
+        func hex(_ v: UInt32, _ bits: Int) -> String { String(format: "0x%0\((bits + 3) / 4)X", v) }
+        func ack(_ v: UInt32) -> String { v != 0 ? "ACK" : "NACK" }
+        switch kind {
+        case .spi: return "→ \(hex(a, bits)) ← \(hex(b, bits))"
+        case .i2s: return "→ L \(hex(a, 32)) R \(hex(b, 32))   ← L \(hex(c, 32)) R \(hex(d, 32))"
+        case .i2cStart: return "start \(hex(a, 7)) \(b != 0 ? "read" : "write"), \(ack(c))"
+        case .i2cWrite: return "write \(hex(a, 8)), \(ack(b))"
+        case .i2cRead: return "read \(hex(a, 8)), \(ack(b))"
+        case .i2cStop: return "stop"
+        case .usartSend, .usartReceive:
+            let character = a >= 0x20 && a < 0x7F ? " '\(Character(UnicodeScalar(UInt8(a))))'" : ""
+            return "\(kind == .usartSend ? "sends" : "receives") \(hex(a, 8))\(character)"
         }
     }
 }

@@ -153,6 +153,17 @@ public final class CircuitSession {
              inputSchema: schema(["part": string("Name of a microcontroller part"), "send": string("Text to send to the chip")],
                                  required: ["part"]),
              run: { session, arguments in try session.readSerial(arguments) }),
+        Tool(name: "read_bus_trace",
+             description: "What went over an STM32 part's buses in the simulation so far, as a logic analyzer on its pins would decode it: each SPI frame (shifted out and in), I2S frame (sent and received, left and right, left-justified in 32 bits), I2C address, byte and stop (with ACK or NACK), USART byte, with its time. STM32 parts in simulate keep their last 8192. Returns the latest `limit` (200 by default), optionally only one bus's (SPI2, I2S2, I2C1, USART3...) and only from a time on.",
+             inputSchema: schema(["part": string("Name of an STM32 part"), "bus": string("Only this bus: SPI1, I2S2, I2C2, USART1..."),
+                                  "since": ["type": "number", "description": "Only from this simulation time on, in seconds"],
+                                  "limit": ["type": "integer", "description": "At most this many, the latest (200 by default)"]],
+                                 required: ["part"]),
+             run: { session, arguments in try session.readBusTrace(arguments) }),
+        Tool(name: "read_chip_state",
+             description: "An STM32 part's state as its firmware has set it up: what each pin carries now (a GPIO input or output, an analog input, or a bus signal such as SPI2's SCK, by the pin's alternate function), its clock, how often it reset itself (watchdog, SYSRESETREQ), and what the firmware has reached that the model does not run.",
+             inputSchema: schema(["part": string("Name of an STM32 part")], required: ["part"]),
+             run: { session, arguments in try session.readChipState(arguments) }),
         Tool(name: "install_chip_support",
              description: "Downloads and installs what compiling sketches takes, if it is not installed yet: for avr (the Uno, Mega and ATtiny85) avr-gcc and the Arduino AVR core, about 40 MB from Arduino's package index; for rp2040 (the Pico) arm-none-eabi-gcc and arduino-pico, about 240 MB from arduino-pico's index.",
              inputSchema: schema(["family": string("avr (the default) or rp2040")]),
@@ -821,6 +832,48 @@ public final class CircuitSession {
         return ["output": String(decoding: chip.serialOutput.suffix(16_384), as: UTF8.self), "time": liveSimulator?.time ?? 0]
     }
 
+    private func stm32(_ arguments: [String: Any]) throws -> STM32Microcontroller {
+        let index = try microcontroller(arguments)
+        guard let chip = liveSimulator?.chip(index) else {
+            throw ToolError("Nothing simulated yet (or the part has no firmware): call simulate first")
+        }
+        guard let stm32 = chip as? STM32Microcontroller else { throw ToolError("\(circuit.elements[index].name) is not an STM32") }
+        return stm32
+    }
+
+    func readBusTrace(_ arguments: [String: Any]) throws -> Any {
+        let chip = try stm32(arguments)
+        let since = try Self.number(arguments["since"], "since") ?? -.infinity
+        let limit = max(1, (arguments["limit"] as? NSNumber)?.intValue ?? 200)
+        let bus = (arguments["bus"] as? String)?.uppercased()
+        var events = chip.busEvents(since: since)
+        if let bus { events = events.filter { $0.bus == bus } }
+        let total = events.count
+        let kinds: [BusEvent.Kind: String] = [.spi: "frame", .i2s: "frame", .i2cStart: "start", .i2cWrite: "write",
+                                              .i2cRead: "read", .i2cStop: "stop", .usartSend: "send", .usartReceive: "receive"]
+        let shown = events.suffix(limit).map { event -> [String: Any] in
+            var entry: [String: Any] = ["time": event.time, "bus": event.bus, "kind": kinds[event.kind] ?? "", "decoded": event.summary]
+            switch event.kind {
+            case .spi: entry["out"] = event.a; entry["in"] = event.b; entry["bits"] = event.bits
+            case .i2s:
+                entry["out"] = [Int32(bitPattern: event.a), Int32(bitPattern: event.b)]
+                entry["in"] = [Int32(bitPattern: event.c), Int32(bitPattern: event.d)]
+            case .i2cStart: entry["address"] = event.a; entry["read"] = event.b != 0; entry["ack"] = event.c != 0
+            case .i2cWrite, .i2cRead: entry["byte"] = event.a; entry["ack"] = event.b != 0
+            case .i2cStop: break
+            case .usartSend, .usartReceive: entry["byte"] = event.a
+            }
+            return entry
+        }
+        return ["events": shown, "matching": total, "shown": shown.count, "time": liveSimulator?.time ?? 0]
+    }
+
+    func readChipState(_ arguments: [String: Any]) throws -> Any {
+        let chip = try stm32(arguments)
+        let pins = chip.pinFunctions.map { ["pin": $0.pin, "carries": $0.function] }
+        return ["pins": pins, "clock": chip.clock, "notices": chip.notices, "time": liveSimulator?.time ?? 0]
+    }
+
     func installChipSupport(_ arguments: [String: Any]) throws -> Any {
         let name = arguments["family"] as? String ?? ChipFamily.avr.rawValue
         guard let family = ChipFamily(rawValue: name) else {
@@ -1025,6 +1078,8 @@ public final class CircuitSession {
         }
         liveSimulator = simulator
         if simulator.isFailed { throw ToolError(simulator.problems.joined(separator: " ")) }
+        // (STM32s keep their buses' transactions, for read_bus_trace)
+        for i in circuit.elements.indices { (simulator.chip(i) as? STM32Microcontroller)?.tracesBuses = true }
 
         let events = try Self.keyboardEvents(arguments["keyboard"])
         let knobs = try knobMotions(arguments["knobs"])
