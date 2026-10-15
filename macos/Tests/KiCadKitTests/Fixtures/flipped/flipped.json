@@ -1,0 +1,290 @@
+[
+{
+"ref": "X0",
+"lib": "R_0805_2012Metric",
+"rotation": 0,
+"back": false
+},
+{
+"ref": "X1",
+"lib": "R_0805_2012Metric",
+"rotation": 90,
+"back": false
+},
+{
+"ref": "X2",
+"lib": "R_0805_2012Metric",
+"rotation": 37,
+"back": false
+},
+{
+"ref": "X3",
+"lib": "R_0805_2012Metric",
+"rotation": 0,
+"back": true
+},
+{
+"ref": "X4",
+"lib": "R_0805_2012Metric",
+"rotation": 90,
+"back": true
+},
+{
+"ref": "X5",
+"lib": "R_0805_2012Metric",
+"rotation": -143,
+"back": true
+},
+{
+"ref": "X10",
+"lib": "DIP-8_W7.62mm",
+"rotation": 0,
+"back": false
+},
+{
+"ref": "X11",
+"lib": "DIP-8_W7.62mm",
+"rotation": 90,
+"back": false
+},
+{
+"ref": "X12",
+"lib": "DIP-8_W7.62mm",
+"rotation": 37,
+"back": false
+},
+{
+"ref": "X13",
+"lib": "DIP-8_W7.62mm",
+"rotation": 0,
+"back": true
+},
+{
+"ref": "X14",
+"lib": "DIP-8_W7.62mm",
+"rotation": 90,
+"back": true
+},
+{
+"ref": "X15",
+"lib": "DIP-8_W7.62mm",
+"rotation": -143,
+"back": true
+},
+{
+"ref": "X20",
+"lib": "TO-92_Inline",
+"rotation": 0,
+"back": false
+},
+{
+"ref": "X21",
+"lib": "TO-92_Inline",
+"rotation": 90,
+"back": false
+},
+{
+"ref": "X22",
+"lib": "TO-92_Inline",
+"rotation": 37,
+"back": false
+},
+{
+"ref": "X23",
+"lib": "TO-92_Inline",
+"rotation": 0,
+"back": true
+},
+{
+"ref": "X24",
+"lib": "TO-92_Inline",
+"rotation": 90,
+"back": true
+},
+{
+"ref": "X25",
+"lib": "TO-92_Inline",
+"rotation": -143,
+"back": true
+},
+{
+"ref": "X30",
+"lib": "CP_Radial_D5.0mm_P2.00mm",
+"rotation": 0,
+"back": false
+},
+{
+"ref": "X31",
+"lib": "CP_Radial_D5.0mm_P2.00mm",
+"rotation": 90,
+"back": false
+},
+{
+"ref": "X32",
+"lib": "CP_Radial_D5.0mm_P2.00mm",
+"rotation": 37,
+"back": false
+},
+{
+"ref": "X33",
+"lib": "CP_Radial_D5.0mm_P2.00mm",
+"rotation": 0,
+"back": true
+},
+{
+"ref": "X34",
+"lib": "CP_Radial_D5.0mm_P2.00mm",
+"rotation": 90,
+"back": true
+},
+{
+"ref": "X35",
+"lib": "CP_Radial_D5.0mm_P2.00mm",
+"rotation": -143,
+"back": true
+},
+{
+"ref": "X40",
+"lib": "LED_D5.0mm",
+"rotation": 0,
+"back": false
+},
+{
+"ref": "X41",
+"lib": "LED_D5.0mm",
+"rotation": 90,
+"back": false
+},
+{
+"ref": "X42",
+"lib": "LED_D5.0mm",
+"rotation": 37,
+"back": false
+},
+{
+"ref": "X43",
+"lib": "LED_D5.0mm",
+"rotation": 0,
+"back": true
+},
+{
+"ref": "X44",
+"lib": "LED_D5.0mm",
+"rotation": 90,
+"back": true
+},
+{
+"ref": "X45",
+"lib": "LED_D5.0mm",
+"rotation": -143,
+"back": true
+},
+{
+"ref": "X50",
+"lib": "Mounting_Wuerth_WA-SMSI-M2.5_H3.5mm_9774035151",
+"rotation": 0,
+"back": false
+},
+{
+"ref": "X51",
+"lib": "Mounting_Wuerth_WA-SMSI-M2.5_H3.5mm_9774035151",
+"rotation": 90,
+"back": false
+},
+{
+"ref": "X52",
+"lib": "Mounting_Wuerth_WA-SMSI-M2.5_H3.5mm_9774035151",
+"rotation": 37,
+"back": false
+},
+{
+"ref": "X53",
+"lib": "Mounting_Wuerth_WA-SMSI-M2.5_H3.5mm_9774035151",
+"rotation": 0,
+"back": true
+},
+{
+"ref": "X54",
+"lib": "Mounting_Wuerth_WA-SMSI-M2.5_H3.5mm_9774035151",
+"rotation": 90,
+"back": true
+},
+{
+"ref": "X55",
+"lib": "Mounting_Wuerth_WA-SMSI-M2.5_H3.5mm_9774035151",
+"rotation": -143,
+"back": true
+},
+{
+"ref": "X60",
+"lib": "SW_DIP_SPSTx01_Slide_6.7x4.1mm_W8.61mm_P2.54mm_LowProfile",
+"rotation": 0,
+"back": false
+},
+{
+"ref": "X61",
+"lib": "SW_DIP_SPSTx01_Slide_6.7x4.1mm_W8.61mm_P2.54mm_LowProfile",
+"rotation": 90,
+"back": false
+},
+{
+"ref": "X62",
+"lib": "SW_DIP_SPSTx01_Slide_6.7x4.1mm_W8.61mm_P2.54mm_LowProfile",
+"rotation": 37,
+"back": false
+},
+{
+"ref": "X63",
+"lib": "SW_DIP_SPSTx01_Slide_6.7x4.1mm_W8.61mm_P2.54mm_LowProfile",
+"rotation": 0,
+"back": true
+},
+{
+"ref": "X64",
+"lib": "SW_DIP_SPSTx01_Slide_6.7x4.1mm_W8.61mm_P2.54mm_LowProfile",
+"rotation": 90,
+"back": true
+},
+{
+"ref": "X65",
+"lib": "SW_DIP_SPSTx01_Slide_6.7x4.1mm_W8.61mm_P2.54mm_LowProfile",
+"rotation": -143,
+"back": true
+},
+{
+"ref": "X70",
+"lib": "DSUB-9_Pins_Horizontal_P2.77x2.84mm_EdgePinOffset14.56mm_Housed_MountingHolesOffset8.20mm",
+"rotation": 0,
+"back": false
+},
+{
+"ref": "X71",
+"lib": "DSUB-9_Pins_Horizontal_P2.77x2.84mm_EdgePinOffset14.56mm_Housed_MountingHolesOffset8.20mm",
+"rotation": 90,
+"back": false
+},
+{
+"ref": "X72",
+"lib": "DSUB-9_Pins_Horizontal_P2.77x2.84mm_EdgePinOffset14.56mm_Housed_MountingHolesOffset8.20mm",
+"rotation": 37,
+"back": false
+},
+{
+"ref": "X73",
+"lib": "DSUB-9_Pins_Horizontal_P2.77x2.84mm_EdgePinOffset14.56mm_Housed_MountingHolesOffset8.20mm",
+"rotation": 0,
+"back": true
+},
+{
+"ref": "X74",
+"lib": "DSUB-9_Pins_Horizontal_P2.77x2.84mm_EdgePinOffset14.56mm_Housed_MountingHolesOffset8.20mm",
+"rotation": 90,
+"back": true
+},
+{
+"ref": "X75",
+"lib": "DSUB-9_Pins_Horizontal_P2.77x2.84mm_EdgePinOffset14.56mm_Housed_MountingHolesOffset8.20mm",
+"rotation": -143,
+"back": true
+}
+]
