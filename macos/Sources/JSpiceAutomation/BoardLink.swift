@@ -153,7 +153,7 @@ public final class BoardLink {
     }
 
     /// The schematic's parts each footprint of `board` stands for: top-level parts (the block for a part inside one)
-    static func parts(_ result: PCBSync.Result, _ board: KiCadBoard, _ circuit: Circuit) -> [String: [UUID]] {
+    public static func parts(_ result: PCBSync.Result, _ board: KiCadBoard, _ circuit: Circuit) -> [String: [UUID]] {
         let top = topLevel(circuit)
         var byPath: [String: [UUID]] = [:]
         for component in result.netlist.components {

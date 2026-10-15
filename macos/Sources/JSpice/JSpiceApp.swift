@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import CircuitKit
+import KiCadKit
 
 @main
 enum Launcher {
@@ -32,7 +33,7 @@ enum Launcher {
 struct JSpiceApp: App {
     var body: some Scene {
         DocumentGroup(newDocument: { CircuitDocument() }) { file in
-            EditorView(document: file.document)
+            EditorView(document: file.document, fileURL: file.fileURL)
         }
         .defaultSize(width: 1320, height: 840)
         .commands { CircuitCommands() }
@@ -117,8 +118,6 @@ struct CircuitCommands: Commands {
             Button("Forget Anthropic API Key") { APIKeyStore.remove() }
             Button("Export SPICE Netlist…") { editor?.exportSpice() }
                 .disabled(editor == nil)
-            Button("Export KiCad Netlist…") { editor?.exportKiCad() }
-                .disabled(editor == nil)
             Divider()
             Menu("Examples") {
                 ForEach(Examples.all) { example in
@@ -126,6 +125,33 @@ struct CircuitCommands: Commands {
                 }
             }
             .disabled(editor == nil)
+        }
+        CommandMenu("PCB") {
+            Button(editor?.board == .pcb ? "Show Schematic" : "Show PCB") {
+                editor?.board = editor?.board == .pcb ? .schematic : .pcb
+            }
+            .keyboardShortcut("b", modifiers: [.command, .option])
+            .disabled(editor == nil)
+            Divider()
+            Button("Update Board from Schematic") { editor?.pcbCommand { Task { await $0.update() } } }
+                .keyboardShortcut("u", modifiers: [.command, .option])
+                .disabled(editor == nil)
+            Button("Edit Board in KiCad") { editor?.pcbCommand { $0.openInKiCad() } }
+                .keyboardShortcut("k", modifiers: [.command, .option])
+                .disabled(editor == nil)
+            Button("Check Design Rules") { editor?.pcbCommand { $0.checkDesignRules() } }
+                .disabled(editor == nil)
+            Menu("Fabrication Files") {
+                ForEach(KiCadFabrication.Maker.allCases.filter { $0 != .generic }) { maker in
+                    Button(maker.title + "…") { editor?.pcbCommand { $0.fabricate(maker) } }
+                }
+                Divider()
+                Button(KiCadFabrication.Maker.generic.title + "…") { editor?.pcbCommand { $0.fabricate(.generic) } }
+            }
+            .disabled(editor == nil)
+            Divider()
+            Button("Export KiCad Netlist…") { editor?.exportKiCad() }
+                .disabled(editor == nil)
         }
         CommandGroup(after: .pasteboard) {
             Button("Duplicate") { editor?.duplicateSelection() }

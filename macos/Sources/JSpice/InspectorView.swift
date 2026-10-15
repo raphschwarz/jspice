@@ -200,6 +200,8 @@ struct ElementInspector: View {
                 }
             }
 
+            PCBPartSection(editor: editor, board: editor.pcb, element: element)
+
             if element.kind != .ground {
                 Section("Measurements") {
                     LiveReadings(simulation: editor.simulation, elementID: element.id)
@@ -806,6 +808,7 @@ struct CircuitInspector: View {
                 LabeledContent("Parts", value: "\(partCount)")
                 LabeledContent("Nodes", value: "\(simulation.simulator.nodeCount)")
             }
+            PCBDesignSection(editor: editor, board: editor.pcb)
             Section {
                 Text("Select a part to edit it. To add one, pick it in the library and click or drag on the canvas.")
                     .foregroundStyle(.secondary)

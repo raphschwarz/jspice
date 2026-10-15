@@ -6,9 +6,12 @@ struct EditorView: View {
     @ObservedObject var document: CircuitDocument
     @StateObject private var editor: EditorState
     @Environment(\.undoManager) private var undoManager
+    /// Where the circuit is saved, once it is
+    var fileURL: URL?
 
-    init(document: CircuitDocument) {
+    init(document: CircuitDocument, fileURL: URL? = nil) {
         self.document = document
+        self.fileURL = fileURL
         _editor = StateObject(wrappedValue: EditorState(document: document))
     }
 
@@ -28,6 +31,7 @@ struct EditorView: View {
                 case .breadboard: BreadboardView(editor: editor, circuit: document.circuit)
                 case .stripboard: StripboardView(editor: editor, circuit: document.circuit)
                 case .perfboard: PerfboardView(editor: editor, circuit: document.circuit)
+                case .pcb: PCBView(editor: editor, board: editor.pcb, circuit: document.circuit)
                 }
                 // a board is for building: the panel and scopes give it their room
                 let onBoard = editor.board != .schematic && !document.circuit.elements.isEmpty
@@ -54,11 +58,23 @@ struct EditorView: View {
         }
         .sheet(isPresented: $editor.showShortcuts) { ShortcutsSheet(editor: editor) }
         .focusedSceneObject(editor)
-        .onAppear { editor.undoManager = undoManager }
-        // closing the window silences it
-        .onDisappear { editor.simulation.setSound(false) }
+        .onAppear {
+            editor.undoManager = undoManager
+            editor.fileURL = fileURL
+        }
+        // closing the window silences it, and lets its board go
+        .onDisappear {
+            editor.simulation.setSound(false)
+            editor.pcb.close()
+        }
         .onChange(of: undoManager) { _, manager in editor.undoManager = manager }
-        .onChange(of: document.circuit) { _, circuit in editor.simulation.load(circuit) }
+        .onChange(of: fileURL) { _, url in editor.fileURL = url }
+        .onChange(of: document.circuit) { _, circuit in
+            editor.simulation.load(circuit)
+            editor.pcb.circuitChanged()
+        }
+        // what is selected in the schematic is selected on the board in KiCad
+        .onChange(of: editor.selection) { _, selection in editor.pcb.selectionChanged(selection) }
     }
 
     /// The schematic, with its welcome, tool and zoom overlays
@@ -147,9 +163,10 @@ struct EditorToolbar: ToolbarContent {
                 Label("Breadboard", systemImage: "circle.grid.3x3").tag(BoardKind.breadboard)
                 Label("Stripboard", systemImage: "line.3.horizontal").tag(BoardKind.stripboard)
                 Label("Perfboard", systemImage: "circle.grid.2x2").tag(BoardKind.perfboard)
+                Label("PCB", systemImage: "cpu").tag(BoardKind.pcb)
             }
             .pickerStyle(.segmented)
-            .help("Show the schematic, or the circuit built on a solderless breadboard (full or half size), stripboard or perfboard, with its bill of materials")
+            .help("Show the schematic, the circuit built on a solderless breadboard (full or half size), stripboard or perfboard with its bill of materials, or its printed circuit board, laid out in KiCad")
             Toggle(isOn: $editor.showPanel) {
                 Label("Panel", systemImage: "slider.horizontal.3")
             }

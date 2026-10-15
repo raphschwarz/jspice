@@ -10,7 +10,13 @@ import CircuitKit
 final class EditorState: ObservableObject {
     let document: CircuitDocument
     let simulation: SimulationController
+    /// The circuit's printed circuit board, laid out in KiCad and kept in step with the schematic
+    let pcb: BoardController
     weak var undoManager: UndoManager?
+    /// Where the circuit is saved, once it is: its board goes beside it
+    var fileURL: URL? {
+        didSet { if fileURL != oldValue { pcb.setFile(fileURL) } }
+    }
     /// The schematic view, for exporting it as an image
     weak var canvas: NSView?
 
@@ -61,6 +67,8 @@ final class EditorState: ObservableObject {
     init(document: CircuitDocument) {
         self.document = document
         simulation = SimulationController(circuit: document.circuit)
+        pcb = BoardController()
+        pcb.editor = self
     }
 
     var circuit: Circuit { document.circuit }
@@ -82,6 +90,30 @@ final class EditorState: ObservableObject {
         let previous = document.circuit
         document.circuit = next
         registerUndo(restoring: previous, actionName: actionName)
+    }
+
+    /// Takes what the circuit keeps of its board as the board now has it (PCBDesign's record of the last update, its
+    /// chips' packages and references): bookkeeping that follows the edits rather than being one, so no undo step
+    func keepBoardRecord(_ circuit: Circuit) {
+        if circuit != document.circuit { document.circuit = circuit }
+    }
+
+    /// Changes the circuit's board design: its footprints, parts off the board or not fitted, style and layers
+    func editBoard(_ actionName: String, _ change: (inout PCBDesign) -> Void) {
+        edit(actionName) { circuit in
+            var design = circuit.pcb ?? PCBDesign()
+            change(&design)
+            circuit.pcb = design
+        }
+    }
+
+    /// A PCB menu command: done on the board, or, while there is none, the PCB view shown, which says how to make one
+    func pcbCommand(_ command: (BoardController) -> Void) {
+        guard pcb.availability == .board else {
+            board = .pcb
+            return
+        }
+        command(pcb)
     }
 
     /// Starts a change made over several events (dragging, sliders); it becomes one undo step in `endInteraction`
@@ -128,6 +160,15 @@ final class EditorState: ObservableObject {
             if restored.elements[i].kind == .potentiometer && !typedWiper {
                 restored.elements[i][param: "position"] = live[param: "position"]
             }
+        }
+        // what the circuit keeps of its board is the board's as it now is, whatever is undone: undoing a value taken to
+        // the board then takes the old value back to it, rather than finding the board changed
+        if let now = current.pcb {
+            var design = restored.pcb ?? PCBDesign()
+            design.synced = now.synced
+            design.units.merge(now.units) { _, current in current }
+            design.references.merge(now.references) { _, current in current }
+            restored.pcb = design
         }
         let circuit = restored
         document.circuit = circuit
@@ -1087,5 +1128,7 @@ final class EditorState: ObservableObject {
 /// The circuit drawn as a schematic, or as it would be built
 enum BoardKind: String, CaseIterable, Identifiable {
     case schematic = "Schematic", breadboard = "Breadboard", stripboard = "Stripboard", perfboard = "Perfboard"
+    /// The printed circuit board, laid out in KiCad
+    case pcb = "PCB"
     var id: Self { self }
 }
