@@ -3,10 +3,18 @@ import XCTest
 
 /// Boards JSpice writes, checked by KiCad itself (kicad-cli), where KiCad is installed
 final class KiCadIntegrationTests: XCTestCase {
-    /// The KiCad to check against, or a skip where there is none
+    /// The KiCad to check against, or a skip where there is none (a failure where JSPICE_REQUIRE_KICAD is set, as in CI's
+    /// KiCad job, so that the checks cannot pass by being skipped)
     static func kicad() throws -> KiCadInstallation {
-        guard let installation = KiCadInstallation.find() else { throw XCTSkip("KiCad is not installed") }
-        if let problem = installation.problem { throw XCTSkip(problem) }
+        let required = ProcessInfo.processInfo.environment["JSPICE_REQUIRE_KICAD"] != nil
+        guard let installation = KiCadInstallation.find() else {
+            if required { XCTFail("KiCad is not installed") }
+            throw XCTSkip("KiCad is not installed")
+        }
+        if let problem = installation.problem {
+            if required { XCTFail(problem) }
+            throw XCTSkip(problem)
+        }
         return installation
     }
 
