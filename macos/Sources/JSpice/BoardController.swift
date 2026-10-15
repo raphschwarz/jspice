@@ -61,7 +61,8 @@ final class BoardController: ObservableObject {
     @Published private(set) var apiEnabled = true
 
     weak var editor: EditorState?
-    private let worker = BoardWorker()
+    /// Where the board's work is done, one piece at a time (AI agents' board tools too, through the automation bridge)
+    let worker = BoardWorker()
     private(set) var fileURL: URL?
     private var debounce: Task<Void, Never>?
     private var watcher: Task<Void, Never>?
@@ -191,7 +192,8 @@ final class BoardController: ObservableObject {
         isLive = done.live
         isOpenInKiCad = done.open
         removed = result.removed
-        warnings = result.warnings
+        // what KiCad's netlist updater could not do (a footprint its libraries lack), and what could not come back
+        warnings = (result.report.errors + result.report.warnings).map(\.text) + result.warnings
         pending = []
         var lines = result.applied.map { "From the board: \($0)" } + result.report.actions.map(\.text)
         if done.outcome.live == .reloaded { lines.append("KiCad's PCB editor read the board again from its file") }
@@ -498,7 +500,7 @@ private struct Seen {
 
 /// The board's work, off the main thread and one piece at a time: KiCad's API, the board's files and kicad-cli all
 /// take their time
-final class BoardWorker: @unchecked Sendable {
+final class BoardWorker: @unchecked Sendable, BoardHost {
     /// KiCad as installed, looked for once
     static let installation = KiCadInstallation.find()
 
@@ -525,6 +527,17 @@ final class BoardWorker: @unchecked Sendable {
         fingerprint = link.fingerprint()
         let live = outcome.live != nil || link.live() != nil
         return Done(outcome: outcome, picture: KiCadBoardPicture(outcome.board), live: live, open: link.isOpenInKiCad)
+    }
+
+    /// The window's board for an AI agent's board tool, in turn with the window's own work on it
+    func withBoard<T>(_ body: (BoardLink) throws -> T) throws -> T {
+        try queue.sync {
+            guard let link else {
+                throw ToolError(Self.installation == nil ? "KiCad is not installed: JSpice lays out boards with KiCad 10 or later"
+                                                         : "Save the circuit first: its board goes beside its file")
+            }
+            return try body(link)
+        }
     }
 
     func library() throws -> KiCadFootprintLibrary? {

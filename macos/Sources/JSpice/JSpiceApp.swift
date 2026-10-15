@@ -133,7 +133,7 @@ struct CircuitCommands: Commands {
             .keyboardShortcut("b", modifiers: [.command, .option])
             .disabled(editor == nil)
             Divider()
-            Button("Update Board from Schematic") { editor?.pcbCommand { Task { await $0.update() } } }
+            Button("Update Board from Schematic") { editor?.pcbCommand { board in Task { await board.update() } } }
                 .keyboardShortcut("u", modifiers: [.command, .option])
                 .disabled(editor == nil)
             Button("Edit Board in KiCad") { editor?.pcbCommand { $0.openInKiCad() } }

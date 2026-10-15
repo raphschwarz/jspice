@@ -3,6 +3,12 @@ import CircuitKit
 import KiCadKit
 import KiCadLink
 
+/// Where a circuit's board is changed when something else holds it too: an app window's own link to its board, through
+/// which a session driving that window changes the board, so that the two never change it at once
+public protocol BoardHost: AnyObject {
+    func withBoard<T>(_ body: (BoardLink) throws -> T) throws -> T
+}
+
 /// A circuit's printed circuit board: a KiCad project beside the circuit's file (circuit.kicad_pcb and
 /// circuit.kicad_pro), kept in step with the circuit both ways (PCBSync). While KiCad's PCB editor has the board open
 /// (with KiCad's API on), the board is changed there, as one undoable change, and read from there; otherwise its file
@@ -258,6 +264,11 @@ public final class BoardLink {
     /// KiCad's design rules check of the board (saved first, if the editor has it)
     public func drc() throws -> KiCadFabrication.DRCReport {
         try KiCadFabrication(installation: kicad()).drc(saved())
+    }
+
+    /// A picture of the board as made, from above or below (KiCad's 3D view, ray traced)
+    public func render(to file: URL, side: String = "top") throws {
+        try KiCadFabrication(installation: kicad()).render(saved(), to: file, side: side)
     }
 
     /// The files a board house needs, in `folder`

@@ -24,6 +24,12 @@ public final class CircuitSession {
     private var gdbServers: [Int: GDBServer] = [:]
     /// Blocks made with define_block, by name
     private var blocks: [String: BlockDefinition] = [:]
+    /// Where the circuit is saved (save_circuit, open_circuit, or the app's window): its board is kept beside it
+    public var fileURL: URL?
+    /// The app's window, when the session drives one: its board is changed through the window's own link to it
+    public weak var boardHost: BoardHost?
+    /// The board of the jspice-mcp server's circuit
+    var ownBoard: BoardLink?
 
     public init(circuit: Circuit = Circuit()) {
         self.circuit = circuit
@@ -56,7 +62,12 @@ public final class CircuitSession {
     or by a step sequence (set_sequence). Synth chips (vco, vcf, envelope, vca, sampleHold, comparator, divider) model \
     the AS3340, AS3320, AS3310, SSM2164, LF398, LM393 and CD4013 and patch together like modules. \
     A circuit can be made into a block with define_block (its "port" parts are its pins) and used as one part, as often \
-    as needed: {"kind": "block", "block": "name", "connections": {...}}.
+    as needed: {"kind": "block", "block": "name", "connections": {...}}. \
+    For a printed circuit board, KiCad (10 or later) lays it out: save the circuit, then pcb_create makes its board, a \
+    KiCad project beside the circuit's file, with each part on a footprint from KiCad's libraries (pcb_part changes \
+    one, pcb_footprints searches them). The board is laid out and routed in KiCad's PCB editor (pcb_open); pcb_update \
+    keeps it and the schematic in step both ways, pcb_status says how they stand, pcb_drc checks the design rules and \
+    pcb_fabricate makes the Gerbers, drill and assembly files for a board house.
     """
 
     public static let tools: [Tool] = [
@@ -397,7 +408,7 @@ public final class CircuitSession {
              description: "Opens a .jspice file.",
              inputSchema: schema(["path": string("File path")], required: ["path"]),
              run: { session, arguments in try session.open(arguments) }),
-    ]
+    ] + pcbTools
 
     public func call(_ name: String, arguments: [String: Any]) throws -> Any {
         guard let tool = Self.tools.first(where: { $0.name == name }) else { throw ToolError("Unknown tool \(name)") }
@@ -432,7 +443,7 @@ public final class CircuitSession {
 
     // MARK: - Argument helpers
 
-    private static func number(_ value: Any?, _ what: String) throws -> Double? {
+    static func number(_ value: Any?, _ what: String) throws -> Double? {
         guard let value else { return nil }
         if let text = value as? String {
             guard let parsed = SI.parse(text) else { throw ToolError("\(what): can't read \"\(text)\" as a number") }
@@ -457,7 +468,7 @@ public final class CircuitSession {
         return value
     }
 
-    private static func text(_ arguments: [String: Any], _ key: String) throws -> String {
+    static func text(_ arguments: [String: Any], _ key: String) throws -> String {
         guard let value = arguments[key] as? String, !value.isEmpty else { throw ToolError("Missing \"\(key)\"") }
         return value
     }
@@ -472,7 +483,7 @@ public final class CircuitSession {
         return GridPoint(Int(x.rounded()), Int(y.rounded()))
     }
 
-    private func index(ofPart name: String) throws -> Int {
+    func index(ofPart name: String) throws -> Int {
         guard let index = circuit.elements.firstIndex(where: { $0.name == name && $0.kind != .netLabel }) else {
             let names = circuit.elements.filter { $0.kind != .wire && $0.kind != .ground && $0.kind != .netLabel }.map(\.name)
             throw ToolError("No part named \(name). Parts: \(names.joined(separator: ", "))")
@@ -586,12 +597,12 @@ public final class CircuitSession {
                 "parts": block.circuit.elements.filter { ![.wire, .ground, .netLabel, .port].contains($0.kind) }.count]
     }
 
-    private func replace(_ next: Circuit, _ action: String) {
+    func replace(_ next: Circuit, _ action: String) {
         circuit = next
         onChange?(next, action)
     }
 
-    private func change(_ action: String, _ body: (inout Circuit) throws -> Void) rethrows {
+    func change(_ action: String, _ body: (inout Circuit) throws -> Void) rethrows {
         var next = circuit
         try body(&next)
         replace(next, action)
@@ -2287,6 +2298,7 @@ public final class CircuitSession {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(circuit).write(to: URL(fileURLWithPath: path))
+        if boardHost == nil { fileURL = URL(fileURLWithPath: path) }
         return ["saved": path]
     }
 
@@ -2294,6 +2306,7 @@ public final class CircuitSession {
         let path = (try Self.text(arguments, "path") as NSString).expandingTildeInPath
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
         replace(try JSONDecoder().decode(Circuit.self, from: data), "Open")
+        if boardHost == nil { fileURL = URL(fileURLWithPath: path) }
         return describe()
     }
 }

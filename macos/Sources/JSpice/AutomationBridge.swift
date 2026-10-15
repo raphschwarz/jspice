@@ -64,12 +64,19 @@ final class AutomationBridge {
         server.perform = { body in
             var current: Circuit?
             weak var window: EditorState?
+            var file: URL?
+            var board: BoardWorker?
             DispatchQueue.main.sync {
                 MainActor.assumeIsolated {
                     window = EditorRegistry.active
                     current = window?.document.circuit
+                    file = window?.fileURL
+                    board = window?.pcb.worker
                 }
             }
+            // the window's board, changed through the window's own link to it
+            session.fileURL = file
+            session.boardHost = board
             guard let current else {
                 return Result<Any, Error>.failure(ToolError("No circuit window is open in JSpice. Open or create one (File ▸ New), then try again."))
             }
