@@ -18,6 +18,9 @@ public struct NetlistUpdater {
     public struct Options: Sendable, Hashable {
         /// Remove footprints whose parts are gone from the schematic (unless they are board-only or locked)
         public var deleteUnusedFootprints = true
+        /// Remove only footprints that were the schematic's (linked to a part), keeping those put on the board without
+        /// it (mounting holes, logos, test points) as if they were board-only
+        public var deleteOnlyLinked = false
         /// Exchange a footprint for the part's new one when the part's footprint changes
         public var replaceFootprints = true
         /// Make the footprints' fields the parts' fields
@@ -99,14 +102,21 @@ public struct NetlistUpdater {
         var used = Set<ObjectIdentifier>()
         var footprintOf: [Int: KiCadFootprint] = [:]
 
+        // footprints linked to no part of the schematic: one may still be a part's by its reference (a package whose
+        // first unit, the one it was linked to, has gone, its other units staying)
+        let claimed = Set(netlist.components.flatMap(\.paths))
+        let orphans = preexisting.filter { !claimed.contains($0.path ?? "") }
         for (index, component) in netlist.components.enumerated() where !component.excludeFromBoard {
             let fpid = component.footprint
             if !fpid.isEmpty && !fpid.contains(":") {
                 say(.warning, "\(component.reference) has a footprint without its library ('\(fpid)'); give it as Library:Name.", component.reference)
             }
-            let matching = preexisting.filter { footprint in
+            var matching = preexisting.filter { footprint in
                 options.matchByID ? component.paths.contains(footprint.path ?? "")
                     : footprint.reference.caseInsensitiveCompare(component.reference) == .orderedSame
+            }
+            if matching.isEmpty && options.matchByID {
+                matching = orphans.filter { $0.reference == component.reference && !used.contains(ObjectIdentifier($0.node)) }
             }
             var base = matching.first { !used.contains(ObjectIdentifier($0.node)) && !fpid.isEmpty && Self.equivalent($0.libID, fpid) }
             if fpid.isEmpty, base == nil { base = matching.first { !used.contains(ObjectIdentifier($0.node)) } }
@@ -139,6 +149,7 @@ public struct NetlistUpdater {
                 if let component, !component.excludeFromBoard { matched = true }
             }
             var delete = options.deleteUnusedFootprints && !footprint.attributes.contains("board_only")
+                && !(options.deleteOnlyLinked && footprint.path == nil)
             if delete && !matched && footprint.isLocked && !options.overrideLocks {
                 say(.warning, "Cannot remove unused footprint \(footprint.reference) (locked).", footprint.reference)
                 delete = false

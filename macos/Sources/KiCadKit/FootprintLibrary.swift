@@ -159,7 +159,7 @@ public final class KiCadFootprintLibrary: @unchecked Sendable {
             if !seen.insert(name).inserted { node.remove(item) }
         }
         for pad in node.all("pad") {
-            for primitive in pad["primitives"]?.items ?? [] where ["gr_circle", "gr_rect", "gr_poly"].contains(primitive.head ?? "") {
+            for primitive in pad["primitives"]?.arguments ?? [] where ["gr_circle", "gr_rect", "gr_poly"].contains(primitive.head ?? "") {
                 if primitive["fill"] == nil { primitive.items.append(SExpr("fill", Keyword("no"))) }
             }
         }

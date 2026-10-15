@@ -689,7 +689,9 @@ public enum Breadboard {
         }
     }
 
-    static func plan(_ circuit: Circuit) -> Plan {
+    /// `packing` keeps chips' units where a board already has them (each unit part's package and unit there), so that
+    /// adding or removing an op-amp never moves another one to a different package
+    static func plan(_ circuit: Circuit, packing: [UUID: (package: String, unit: Int)] = [:]) -> Plan {
         var flat = circuit.flattened(expandingModels: false)
         // a loop probe is a link in the built circuit
         for k in flat.elements.indices where flat.elements[k].kind == .loopProbe {
@@ -708,15 +710,12 @@ public enum Breadboard {
         }
 
         // chips: units packed into packages
+        var chips: [(part: NetlistPart, package: Package, key: String)] = []
         for part in plan.parts {
             if let package = package(part) {
                 let shared = package.shared.keys.sorted().map { part.connections[$0] ?? "-" }.joined(separator: ",")
                 let key = package.title + "|" + shared + "|" + package.supplies.map { "\($0.supply)" }.joined(separator: ",")
-                if let k = plan.packs.firstIndex(where: { $0.key == key && $0.units.count < $0.package.units.count }) {
-                    plan.packs[k].units.append((part, plan.packs[k].units.count))
-                } else {
-                    plan.packs.append(Pack(package: package, key: key, units: [(part, 0)]))
-                }
+                chips.append((part, package, key))
                 continue
             }
             switch part.kind {
@@ -730,6 +729,28 @@ public enum Breadboard {
                 plan.off.append(part)
             }
         }
+        // the units a board already has in their packages and places, then the rest each in the first package of its
+        // kind with a unit free
+        var placed = Set<UUID>()
+        for chip in chips {
+            guard let id = chip.part.id, let place = packing[id], place.unit < chip.package.units.count else { continue }
+            if let k = plan.packs.firstIndex(where: { $0.name == place.package }) {
+                guard plan.packs[k].key == chip.key, !plan.packs[k].units.contains(where: { $0.unit == place.unit }) else { continue }
+                plan.packs[k].units.append((chip.part, place.unit))
+            } else {
+                plan.packs.append(Pack(package: chip.package, key: chip.key, units: [(chip.part, place.unit)], name: place.package))
+            }
+            placed.insert(id)
+        }
+        for chip in chips where !(chip.part.id.map(placed.contains) ?? false) {
+            if let k = plan.packs.firstIndex(where: { $0.key == chip.key && $0.units.count < $0.package.units.count }),
+               let free = (0..<plan.packs[k].package.units.count).first(where: { u in !plan.packs[k].units.contains { $0.unit == u } }) {
+                plan.packs[k].units.append((chip.part, free))
+            } else {
+                plan.packs.append(Pack(package: chip.package, key: chip.key, units: [(chip.part, 0)]))
+            }
+        }
+        for k in plan.packs.indices { plan.packs[k].units.sort { $0.unit < $1.unit } }
         // the supplies the chips need: one of the circuit's at that voltage, or one added for them
         for pack in plan.packs {
             for supply in pack.package.supplies {
@@ -739,11 +760,13 @@ public enum Breadboard {
                 plan.supplies.append((name, v))
             }
         }
-        // the packages' names: U1, U2… for shared ones, the part's own for a chip alone
-        let usedNames = Set(plan.parts.map(\.name))
+        // the packages' names: U1, U2… for shared ones, the part's own for a chip alone (a package a board already
+        // has keeps its name)
+        let kept = Set(plan.packs.map(\.name).filter { !$0.isEmpty })
+        let usedNames = Set(plan.parts.map(\.name)).union(kept)
         var number = 0
-        for k in plan.packs.indices {
-            if plan.packs[k].units.count == 1 {
+        for k in plan.packs.indices where plan.packs[k].name.isEmpty {
+            if plan.packs[k].units.count == 1 && !kept.contains(plan.packs[k].units[0].part.name) {
                 plan.packs[k].name = plan.packs[k].units[0].part.name
                 continue
             }

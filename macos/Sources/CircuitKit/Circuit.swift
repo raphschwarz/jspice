@@ -146,6 +146,8 @@ public struct Circuit: Codable, Hashable, Sendable {
     public var sequence: StepSequence?
     /// MIDI controllers mapped to the circuit's knobs and switches
     public var midiMappings: [MIDIMapping]
+    /// Its printed circuit board: footprints chosen, parts left off it, chips' units as the board has them
+    public var pcb: PCBDesign?
 
     public init(elements: [Element] = [], scopes: [ScopeSpec] = [], settings: SimulationSettings = SimulationSettings(),
                 netNames: [String: String] = [:], sequence: StepSequence? = nil, midiMappings: [MIDIMapping] = []) {
@@ -165,6 +167,7 @@ public struct Circuit: Codable, Hashable, Sendable {
         netNames = try container.decodeIfPresent([String: String].self, forKey: .netNames) ?? [:]
         sequence = try container.decodeIfPresent(StepSequence.self, forKey: .sequence)
         midiMappings = try container.decodeIfPresent([MIDIMapping].self, forKey: .midiMappings) ?? []
+        pcb = try container.decodeIfPresent(PCBDesign.self, forKey: .pcb)
     }
 
     public subscript(id: UUID) -> Element? {

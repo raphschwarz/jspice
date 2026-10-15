@@ -282,7 +282,7 @@ public struct KiCadFootprint {
                     let swap = ["top_left": "bottom_left", "bottom_left": "top_left", "top_right": "bottom_right", "bottom_right": "top_right"]
                     for i in 1..<chamfer.items.count { chamfer.items[i] = SExpr(symbol: swap[chamfer.items[i].text] ?? chamfer.items[i].text) }
                 }
-                for primitive in child["primitives"]?.items ?? [] { mirrorPoints(primitive) }
+                for primitive in child["primitives"]?.arguments ?? [] { mirrorPoints(primitive) }
                 flipLayers(child)
             case "property", "fp_text":
                 if let a = child["at"], let x = a.number(at: 0), let y = a.number(at: 1) {
@@ -536,7 +536,7 @@ public struct KiCadPad {
         case "custom":
             // the anchor and the primitives drawn on it
             var points = KiCadPolygon.roundedRect(center: center, width: w, height: h, rotation: angle)
-            for primitive in node["primitives"]?.items ?? [] {
+            for primitive in node["primitives"]?.arguments ?? [] {
                 let local = KiCadDrawing(primitive, placement: KiCadPlacement(position: center, rotation: angle)).points
                 points += local
             }

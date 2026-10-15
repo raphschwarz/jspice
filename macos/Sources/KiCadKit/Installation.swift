@@ -146,14 +146,15 @@ public enum KiCadCLI {
         process.standardError = err
         try process.run()
         // read both pipes as the tool writes, so a full one cannot stall it
-        var outData = Data(), errData = Data()
+        final class Collected: @unchecked Sendable { var data = Data() }
+        let output = Collected()
         let group = DispatchGroup()
         group.enter()
-        DispatchQueue.global().async { outData = out.fileHandleForReading.readDataToEndOfFile(); group.leave() }
-        errData = err.fileHandleForReading.readDataToEndOfFile()
+        DispatchQueue.global().async { output.data = out.fileHandleForReading.readDataToEndOfFile(); group.leave() }
+        let errData = err.fileHandleForReading.readDataToEndOfFile()
         group.wait()
         process.waitUntilExit()
-        return Result(status: process.terminationStatus, output: String(decoding: outData, as: UTF8.self),
+        return Result(status: process.terminationStatus, output: String(decoding: output.data, as: UTF8.self),
                       error: String(decoding: errData, as: UTF8.self))
     }
 }

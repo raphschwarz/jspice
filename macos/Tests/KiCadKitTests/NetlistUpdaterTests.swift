@@ -178,4 +178,20 @@ final class NetlistUpdaterTests: XCTestCase {
         let u1 = try XCTUnwrap(tree["components"]?.all("comp").first { $0.value("ref") == "U1" })
         XCTAssertEqual(u1.value("tstamps"), "\(Self.ua) \(Self.ub)")
     }
+
+    func testAPackageWhoseFirstUnitWentIsFoundByItsReference() throws {
+        let (board, _) = Self.newBoard()
+        let u1 = try XCTUnwrap(board.footprints.first { $0.reference == "U1" })
+        u1.move(to: KiCadPoint(70, 20), rotation: 0)
+        // unit A's part deleted: the package stands for unit B's part alone
+        var netlist = Self.netlist()
+        netlist.components[1].ids = [Self.ub]
+        let report = NetlistUpdater.update(board, to: netlist, library: FixtureFootprints())
+        XCTAssertEqual(report.added, [])
+        XCTAssertEqual(report.removed, [])
+        let kept = try XCTUnwrap(board.footprints.first { $0.reference == "U1" })
+        XCTAssertEqual(kept.uuid, u1.uuid)
+        XCTAssertEqual(kept.position, KiCadPoint(70, 20))
+        XCTAssertEqual(kept.path, "/" + Self.ub)
+    }
 }
