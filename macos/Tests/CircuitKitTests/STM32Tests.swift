@@ -134,6 +134,34 @@ final class STM32Tests: XCTestCase {
         XCTAssertEqual((rights.max() ?? 0) - 1.65 * 10_000 / 10_100, 0.25 * 10_000 / 10_100, accuracy: 0.01)
     }
 
+    /// A codec answers on its control port at its own address: the firmware's write to 0x1A reaches a WM8731 there,
+    /// and a CS4270 (0x48 + its AD pins) leaves it unacknowledged, as on a board with the wrong codec
+    func testACodecAnswersAtItsOwnAddress() throws {
+        func trace(_ model: String) throws -> [String] {
+            var chip = NetlistPart(kind: .stm32f405, name: "U1",
+                                   connections: ["pb12": "ws", "pb13": "bclk", "pb15": "dacdat", "pc6": "mclk",
+                                                 "pb10": "scl", "pb11": "sda"])
+            chip.firmware = Data(try firmware())
+            let codec = try XCTUnwrap(ElementKind.codec.model(named: model))
+            let circuit = try SchematicLayout.layout([
+                chip,
+                NetlistPart(kind: .codec, name: "U2", params: codec.values,
+                            connections: ["mclk": "mclk", "bclk": "bclk", "dacdat": "dacdat", "daclrc": "ws",
+                                          "sclk": "scl", "sdin": "sda", "lout": "left", "rout": "right"]),
+                NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "left", "b": "GND"]),
+            ])
+            let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+            let index = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "U1" })
+            let stm32 = try XCTUnwrap(simulator.chip(index) as? STM32Microcontroller)
+            stm32.tracesBuses = true
+            while simulator.time < 0.02 && !simulator.isFailed { simulator.step() }
+            XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
+            return stm32.busEvents().filter { $0.bus == "I2C2" }.map(\.summary)
+        }
+        XCTAssertEqual(try trace("WM8731").first, "start 0x1A write, ACK")
+        XCTAssertEqual(try trace("CS4270").first, "start 0x1A write, NACK")
+    }
+
     /// A PCM5102 on the chip's I²S2 pins takes its frames too: the left output's square at 2.1 V RMS full scale
     func testThePCM5102TakesTheChipsFrames() throws {
         var chip = NetlistPart(kind: .stm32f405, name: "U1", connections: ["pb12": "ws", "pb13": "bck", "pb15": "din"])

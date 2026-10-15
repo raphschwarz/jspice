@@ -1015,7 +1015,11 @@ public enum Breadboard {
         case .cvDac:
             let names = ["DAC8568", "DAC8564", "DAC8552", "DAC8551", "DAC7554"]
             return "\(names[min(max(Int(part.params["format"] ?? 0), 0), names.count - 1)]) CV DAC on a breakout board, on 5 V"
-        case .codec: return "WM8731 audio codec board (I²S and I²C, its line in and out AC-coupled), on 3.3 V"
+        case .codec:
+            let element = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params)
+            let model = element.model?.name ?? "Audio"
+            let control = element[param: "address"] == 0 ? "I²S, set up by its pins" : "I²S and I²C"
+            return "\(model) codec board (\(control), its line in and out AC-coupled), on \(SI.format(element[param: "supply"], unit: "V"))"
         case .agcPreamp: return "SSM2166: surface-mount, on an adapter board, on 5 V"
         case .analogEngine: return "THAT4301: surface-mount, on an adapter board, on ±15 V"
         case .footswitch: return "3PDT footswitch, in the enclosure, on its nine lugs"

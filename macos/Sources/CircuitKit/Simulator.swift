@@ -3693,6 +3693,8 @@ public final class Simulator {
             c.supply = max(p("supply"), 0.1)
             c.value = max(p("fullScale"), 0.01)
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
+            // its control port's I²C address (0: none)
+            c.high = min(max(p("address"), 0), 127).rounded()
         case .cvDac:
             c.supply = max(p("supply"), 0.1)
             c.value = max(p("fullScale"), 0.01)
@@ -6082,12 +6084,13 @@ public final class Simulator {
         }
     }
 
-    /// An STM32 addressing a target on one of its I²C buses: a WM8731 at 0x1A (CSB low) or 0x1B, an MCP4725 at 0x60
+    /// An STM32 addressing a target on one of its I²C buses: a codec at its address (a WM8731 at 0x1A), an MCP4725 at 0x60
     /// or 0x61 (its A0 pin); whether one acknowledges
     private func i2cStart(_ i: Int, _ bus: Int, _ address: UInt8, _ read: Bool) -> Bool {
         refreshBuses(i)
         i2cTransfer[i] = (-1, 0, 0, false)
-        if address == 0x1A || address == 0x1B { return codecBuses[i].contains { $0.bus == bus } }
+        // a codec at its address (the WM8731's 0x1A or 0x1B, a CS4270's 0x48...)
+        if codecBuses[i].contains(where: { $0.bus == bus && Int(constants[$0.codec].high) == Int(address) }) { return true }
         for device in i2cDevices[i] where device.bus == bus {
             let nodes = topology.elementNodes[device.part]
             func high(_ terminal: Int) -> Bool { nodes.count > terminal && voltage(nodes[terminal]) > constants[device.part].supply / 2 }

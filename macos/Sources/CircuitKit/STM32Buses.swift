@@ -92,7 +92,8 @@ struct STM32BusCheck {
             // firmware writes the codec's registers before it starts its frames)
             var control: [STM32BusLink] = []
             var controlIssue: String?
-            if codec && pin(6) >= 0 {
+            // (a codec set up by its pins alone, address 0, has none)
+            if codec && format != 0 && pin(6) >= 0 {
                 let (scl, bus) = self.signal(pin(6))
                 if chip.model == STM32_F373 {
                     controlIssue = "\(who): the model does not run the STM32F373's I²C, so its control port cannot be reached."
@@ -125,7 +126,7 @@ struct STM32BusCheck {
                     if pin(4) >= 0, let issue = expect(4, label: "ADCDAT", STM32_SIGNAL_I2S_EXTSD, port, as: "\(i2s)'s full-duplex SD (I2S\(port)ext)") {
                         return (nil, issue)
                     }
-                    if let issue = expect(0, label: "MCLK", STM32_SIGNAL_I2S_MCK, port, as: "\(i2s)'s MCK (the WM8731 runs from its master clock)") {
+                    if let issue = expect(0, label: "MCLK", STM32_SIGNAL_I2S_MCK, port, as: "\(i2s)'s MCK (the \(model) runs from its master clock)") {
                         return (nil, issue)
                     }
                 }

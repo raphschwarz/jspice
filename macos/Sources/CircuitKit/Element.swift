@@ -86,8 +86,8 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     /// Converters a microcontroller drives: the MCP4822 dual SPI DAC, the MCP3008 SPI ADC, the MCP4725 I²C DAC and the
     /// PCM5102 I²S audio DAC
     case dualDac, spiAdc, i2cDac, i2sDac
-    /// The WM8731 audio codec: a stereo ADC and DAC on I²S, set up over I²C (its frames exchanged with an STM32 on its
-    /// I²S pins)
+    /// An audio codec (the WM8731, CS4270, PCM3060, AK4558 or AK4556): a stereo ADC and DAC on I²S, set up over I²C at
+    /// its address or by its pins (its frames exchanged with an STM32 on its I²S pins)
     case codec
     /// A CV DAC (the octal DAC8568, the quad DAC8564 and DAC7554, the dual DAC8552, the DAC8551): words of a channel and
     /// a code, given it whole by an STM32's I²S port (Mutable's Stages and Tides 2) or SPI port, framed by its SYNC
@@ -850,9 +850,11 @@ extension ElementKind {
         case .codec:
             // its line outputs and inputs about VMID (half its analog supply), as a module's board AC-couples them
             return [
-                ParamSpec("supply", "Supply (AVDD)", unit: "V", default: 3.3, range: 2.7...3.6, log: false),
+                ParamSpec("supply", "Supply (AVDD)", unit: "V", default: 3.3, range: 2.7...5.5, log: false),
                 ParamSpec("fullScale", "Line level at full scale", unit: "V RMS", default: 1, range: 0.1...2, log: false),
                 ParamSpec("outputResistance", "Line output resistance", unit: "Ω", default: 100, range: 0.1...10_000),
+                ParamSpec("address", "I²C address of its control port (0: set up by its pins)", unit: "", default: 0x1A, range: 0...127,
+                          log: false),
             ]
         case .unbufferedInverter:
             return [
@@ -1492,8 +1494,16 @@ extension ElementKind {
             ]
         case .codec:
             return [
-                PartModel(name: "WM8731", summary: "Stereo audio codec (Mutable Instruments' Rings, Clouds, Elements and Warps): 16 to 32 bits on I²S both ways, set up over I²C at 0x1A; line in and out at 1 V RMS full scale about half its supply",
-                          values: ["supply": 3.3, "fullScale": 1, "outputResistance": 100], aliases: ["WM8731L", "WM8731S"]),
+                PartModel(name: "WM8731", summary: "Stereo audio codec (Mutable Instruments' Rings, Clouds, Elements and Warps): 16 to 32 bits on I²S both ways, set up over I²C at 0x1A (0x1B with CSB high: set the address); line in and out at 1 V RMS full scale about half its supply",
+                          values: ["supply": 3.3, "fullScale": 1, "outputResistance": 100, "address": 0x1A], aliases: ["WM8731L", "WM8731S"]),
+                PartModel(name: "CS4270", summary: "Stereo 24-bit codec (the CS4271 is its 192 kHz sibling; 4ms modules use it): I²S or left-justified both ways from its master clock, set up over I²C at 0x48 + AD2–AD0; on 5 V, about 1.2 V RMS full scale",
+                          values: ["supply": 5, "fullScale": 1.24, "outputResistance": 100, "address": 0x48], aliases: ["CS4271"]),
+                PartModel(name: "PCM3060", summary: "Stereo 24-bit codec: I²S or left-justified both ways from its system clock, set up over I²C at 0x46 (0x47 with ADR high); on 5 V, about 1.4 V RMS out at full scale",
+                          values: ["supply": 5, "fullScale": 1.41, "outputResistance": 100, "address": 0x46]),
+                PartModel(name: "AK4558", summary: "Stereo 32-bit codec: I²S, left- or right-justified both ways from its master clock, set up over I²C at 0x10 + CAD1–CAD0; on 3.3 V, about 1 V RMS full scale",
+                          values: ["supply": 3.3, "fullScale": 1.0, "outputResistance": 100, "address": 0x10]),
+                PartModel(name: "AK4556", summary: "Stereo 24-bit codec set up by its pins alone (no control port): I²S or left-justified both ways from its master clock; on 3.3 V, about 0.7 V RMS full scale",
+                          values: ["supply": 3.3, "fullScale": 0.7, "outputResistance": 100, "address": 0]),
             ]
         case .unbufferedInverter:
             return [
