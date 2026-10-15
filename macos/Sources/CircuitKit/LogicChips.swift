@@ -48,6 +48,10 @@ extension ElementKind {
             return ChipPackage(name: "PCA9685", terminalNames: ["scl", "sda", "oe"] + (0...5).map { "a\($0)" } + (0...15).map { "led\($0)" },
                                pinLabels: ["SCL", "SDA", "OE"] + (0...5).map { "A\($0)" } + (0...15).map { "LED\($0)" },
                                pinPlaces: (0...8).map(second) + (0...15).map(first), length: 15)
+        case .ledSink:
+            return ChipPackage(name: "TLC5947", terminalNames: ["sin", "sclk", "xlat", "blank"] + (0...23).map { "out\($0)" } + ["sout"],
+                               pinLabels: ["SIN", "SCLK", "XLAT", "BLANK"] + (0...23).map { "OUT\($0)" } + ["SOUT"],
+                               pinPlaces: (0...3).map(second) + (0...23).map(first) + [second(5)], length: 23)
         case .shiftIn:
             return ChipPackage(name: "74HC165", terminalNames: ["sh_ld", "clk", "clk_inh", "ser"] + (0...7).map { "d\($0)" } + ["qh", "qh_bar"],
                                pinLabels: ["SH/LD", "CLK", "CLK INH", "SER"] + (0...7).map { "D\($0)" } + ["QH", "QH"],
@@ -108,7 +112,7 @@ extension ElementKind {
     /// state changes when an input crosses one, and their outputs drive towards the hidden supply or ground.
     public var isLogic: Bool {
         switch self {
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac,
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac,
              .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return true
         default: return false
         }
@@ -128,6 +132,7 @@ extension ElementKind {
         case .shiftRegister: return [0, 1, 2, 3, 4]
         case .shiftIn: return Array(0...11)
         case .ledDriver: return Array(0...8)
+        case .ledSink: return [0, 1, 2, 3]
         case .analogMux: return [8, 9, 10, 11]
         case .analogSelector: return [2, 3]
         case .pll: return [0, 1, 3]
@@ -146,6 +151,7 @@ extension ElementKind {
         case .binaryCounter: return Array(2...13)
         case .shiftRegister: return Array(5...13)
         case .shiftIn: return [12, 13]
+        case .ledSink: return [28]
         case .pll: return [4, 5]
         default: return []
         }
@@ -316,6 +322,13 @@ enum Logic {
         case .ledDriver:
             // SCL, SDA, OE, A0-A5: a PCA9685 at 0x40 + A5-A0 (or 0x70 while its all-call is on)
             state = i2cWriter(old, inputs: inputs, address: 0x40 | (inputs >> 3 & 0x3F))
+        case .ledSink:
+            // SIN, SCLK, XLAT, BLANK: a TLC5947's 288-bit shift register and grayscale latches are the circuit's (more
+            // than this state holds); here only what happened, in `bits`: 1 SCLK rose (SIN to be shifted in), 2 XLAT
+            // rose (the register latched), 4 BLANK fell (its PWM cycle restarting), 8 SCLK fell (SOUT taking the
+            // register's last bit, half a clock after it moved: a TLC5947 chained after it takes it cleanly on the
+            // next rising edge). `shift`'s bit 0 is SOUT.
+            state.bits = (rose(1) ? 1 : 0) | (rose(2) ? 2 : 0) | (fell(3) ? 4 : 0) | (fell(1) ? 8 : 0)
         case .i2sDac:
             // BCK, DIN, LRCK (I²S): DIN is read on each rising edge of BCK, MSB first, a word for each half of LRCK's
             // cycle (low the left channel, high the right), starting one BCK after LRCK changes: so the first bit read
@@ -380,6 +393,9 @@ enum Logic {
         case .shiftIn:
             // QH, the last stage, and its complement
             return [state.shift & 0x80 != 0, state.shift & 0x80 == 0]
+        case .ledSink:
+            // SOUT, the shift register's last bit
+            return [state.shift & 1 != 0]
         case .pll:
             // the VCO (stopped low while inhibited), and phase comparator 1: the XOR of the signal and comparator inputs
             return [!level(2) && state.phase < 0.5, level(0) != level(1)]
@@ -482,6 +498,34 @@ enum Logic {
             }
             if invert { high.toggle() }
             return high
+        }
+    }
+
+    /// A TLC5947's grayscale counter, `elapsed` seconds after BLANK last fell, at its oscillator's `frequency`: each
+    /// output is on while it is below the output's level (nil while BLANK is high: all off)
+    static func sinkCount(elapsed: Double, frequency: Double, blank: Bool) -> Int? {
+        guard !blank else { return nil }
+        let cycles = max(elapsed, 0) * frequency / 4096
+        return min(Int((cycles - cycles.rounded(.down)) * 4096), 4095)
+    }
+
+    /// A TLC5947's output sinking `full` with `v` across it, and its slope: the full current down to its knee (about
+    /// 0.4 V), falling off below it to nothing at 0 V, and like a resistor below ground
+    static func sinkCurrent(_ v: Double, full: Double) -> (current: Double, slope: Double) {
+        let knee = 0.2
+        guard v > 0 else { return (full * v / knee, full / knee) }
+        let t = tanh(v / knee)
+        return (full * t, full / knee * (1 - t * t))
+    }
+
+    /// A TLC5947's 288-bit shift register (`levels[0..<24]`, OUT0's twelve bits first) taking `bit` on SCLK's rising
+    /// edge: every channel's bits move up one, OUT23's MSB going out
+    static func sinkShift(_ levels: inout [UInt16], bit: Bool) {
+        var carry: UInt16 = bit ? 1 : 0
+        for k in 0..<24 {
+            let out = levels[k] >> 11 & 1
+            levels[k] = (levels[k] << 1 | carry) & 0xFFF
+            carry = out
         }
     }
 

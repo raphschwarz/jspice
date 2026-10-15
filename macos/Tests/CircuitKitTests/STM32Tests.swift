@@ -703,6 +703,79 @@ final class STM32Tests: XCTestCase {
         XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
     }
 
+    /// A firmware sending a TLC5947 its 288 bits through SPI1 (mode 0, MSB first, PA5 SCK, PA7 MOSI), OUT23's first:
+    /// OUT1 at 4095, OUT0 at 2048, the rest 0; then XLAT (PA4) high and low
+    static let ledSinkFirmware: [UInt8] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x1D, 0x48, 0x01, 0x68, 0x41, 0xF0, 0x01, 0x01, 0x01, 0x60,
+        0x1C, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x80, 0x51, 0x01, 0x60, 0x1A, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x29, 0x41,
+        0x01, 0x60, 0x19, 0x49, 0x01, 0x62, 0x4F, 0xF4, 0x80, 0x11, 0x81, 0x61, 0x17, 0x4A, 0x4F, 0xF4, 0x57, 0x71,
+        0x11, 0x60, 0x08, 0xA3, 0x24, 0x25, 0x13, 0xF8, 0x01, 0x1B, 0xD1, 0x60, 0x94, 0x68, 0x14, 0xF0, 0x01, 0x0F,
+        0xFB, 0xD0, 0xD1, 0x68, 0x01, 0x3D, 0xF5, 0xD1, 0x10, 0x21, 0x81, 0x61, 0x4F, 0xF4, 0x80, 0x11, 0x81, 0x61,
+        0xFE, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF,
+        0xF8, 0x00, 0x30, 0x38, 0x02, 0x40, 0x44, 0x38, 0x02, 0x40, 0x00, 0x00, 0x02, 0x40, 0x00, 0x00, 0x50, 0x55,
+        0x00, 0x30, 0x01, 0x40,
+    ]
+
+    /// A TLC5947 on the chip's SPI1 lights its LEDs from their own 5 V supply through 100 Ω each: OUT1 sinks its full
+    /// 41 × 1.2 V / 3.3 kΩ (14.9 mA) nearly all the time, OUT0 the same half the time, at its 976 Hz, and OUT2 nothing
+    func testATLC5947OnTheChipsSPIPortSinksItsLEDsCurrents() throws {
+        var chip = NetlistPart(kind: .stm32f405, name: "U1", connections: ["pa4": "xlat", "pa5": "sclk", "pa7": "sin"])
+        chip.firmware = Data(Self.ledSinkFirmware)
+        var parts = [
+            chip,
+            NetlistPart(kind: .ledSink, name: "U2", params: ["supply": 3.3, "iref": 3300],
+                        connections: ["sin": "sin", "sclk": "sclk", "xlat": "xlat", "blank": "GND", "out0": "k0", "out1": "k1", "out2": "k2"]),
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 5], connections: ["plus": "vled", "minus": "GND"]),
+        ]
+        for k in 0...2 {
+            parts.append(NetlistPart(kind: .resistor, name: "R\(k)", params: ["resistance": 100], connections: ["a": "vled", "b": "a\(k)"]))
+            parts.append(NetlistPart(kind: .led, name: "D\(k)", connections: ["anode": "a\(k)", "cathode": "k\(k)"]))
+            parts.append(NetlistPart(kind: .probe, name: "I\(k)", connections: ["plus": "vled", "minus": "a\(k)"]))
+        }
+        let circuit = try SchematicLayout.layout(parts)
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 96000)
+        let probes = try (0...2).map { k in try XCTUnwrap(circuit.elements.firstIndex { $0.name == "I\(k)" }) }
+        let full = 41 * 1.2 / 3300
+        var on = [0, 0, 0], samples = 0, peak = [0.0, 0.0, 0.0]
+        while simulator.time < 0.03 && !simulator.isFailed {
+            simulator.step()
+            guard simulator.time > 0.005 else { continue }
+            samples += 1
+            for k in 0...2 {
+                let current = simulator.voltageAcross(probes[k]) / 100
+                peak[k] = max(peak[k], current)
+                if current > full / 2 { on[k] += 1 }
+            }
+        }
+        XCTAssertFalse(simulator.isFailed, simulator.problems.joined(separator: " "))
+        XCTAssertEqual(peak[1], full, accuracy: full * 0.01, "the full current, set by IREF")
+        XCTAssertEqual(Double(on[1]) / Double(samples), 1, accuracy: 0.01)
+        XCTAssertEqual(peak[0], full, accuracy: full * 0.01)
+        XCTAssertEqual(Double(on[0]) / Double(samples), 0.5, accuracy: 0.03)
+        XCTAssertLessThan(peak[2], 1e-6, "OUT2 stays off")
+        XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
+    }
+
+    /// A TLC5947's register, counter and sinks: 288 bits shifted in, OUT23's MSB first; its counter's cycle at its
+    /// oscillator; its current at and below its knee
+    func testTLC5947Logic() {
+        var levels = [UInt16](repeating: 0, count: 48)
+        let wanted: [UInt16] = (0..<24).map { UInt16(($0 * 171 + 5) & 0xFFF) }
+        for channel in (0..<24).reversed() {
+            for bit in (0..<12).reversed() { Logic.sinkShift(&levels, bit: wanted[channel] >> UInt16(bit) & 1 != 0) }
+        }
+        XCTAssertEqual(Array(levels[0..<24]), wanted)
+        XCTAssertNil(Logic.sinkCount(elapsed: 1e-3, frequency: 4e6, blank: true))
+        XCTAssertEqual(Logic.sinkCount(elapsed: 0, frequency: 4e6, blank: false), 0)
+        XCTAssertEqual(Logic.sinkCount(elapsed: 2048.5 / 4e6, frequency: 4e6, blank: false), 2048)
+        XCTAssertEqual(Logic.sinkCount(elapsed: (4096 + 10.5) / 4e6, frequency: 4e6, blank: false), 10)
+        XCTAssertEqual(Logic.sinkCurrent(1.0, full: 0.02).current, 0.02, accuracy: 1e-5)
+        XCTAssertEqual(Logic.sinkCurrent(0.4, full: 0.02).current, 0.02 * tanh(2), accuracy: 1e-9)
+        XCTAssertEqual(Logic.sinkCurrent(0, full: 0.02).current, 0)
+        XCTAssertLessThan(Logic.sinkCurrent(-0.1, full: 0.02).current, 0)
+    }
+
     /// A PCA9685's outputs from its registers: asleep from reset, then on and off counts, fully on, inverted
     func testPCA9685Outputs() {
         var registers = Logic.pwmReset()

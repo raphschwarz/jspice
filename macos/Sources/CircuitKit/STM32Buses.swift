@@ -137,18 +137,20 @@ struct STM32BusCheck {
         case .spiAdc where pin(1) >= 0 && self.signal(pin(1)).0 == STM32_SIGNAL_OUTPUT:
             // (clocked by the firmware's own GPIO writes: it follows the pins bit by bit)
             return ([], nil)
-        case .dac, .dualDac, .shiftRegister:
+        case .dac, .dualDac, .shiftRegister, .ledSink:
             // parts that take their bits from the pins edge by edge (an MCP4921 or MCP4822: CS, SCK, SDI, LDAC; a
-            // 74HC595: SER, SRCLK, RCLK), on SCK's rising edge: clocked by the firmware's GPIO writes, or by an SPI
-            // port, whose frames reach the pins edge by edge, in a mode that has the data steady on the rising edge
-            let shift = part == .shiftRegister
+            // 74HC595: SER, SRCLK, RCLK; a TLC5947: SIN, SCLK, XLAT, BLANK), on SCK's rising edge: clocked by the
+            // firmware's GPIO writes, or by an SPI port, whose frames reach the pins edge by edge, in a mode that has
+            // the data steady on the rising edge
+            let sink = part == .ledSink
+            let shift = part == .shiftRegister || sink
             let (clock, data) = shift ? (1, 0) : (1, 2)
-            let clockLabel = shift ? "SRCLK" : "SCK", dataLabel = shift ? "SER" : "SDI"
+            let clockLabel = sink ? "SCLK" : shift ? "SRCLK" : "SCK", dataLabel = sink ? "SIN" : shift ? "SER" : "SDI"
             let c = pin(clock)
             guard c >= 0 else { return ([], nil) }
             let (signal, port) = self.signal(c)
             // its latch (CS or RCLK) and LDAC: the firmware's to drive (a CD4015 has none)
-            let latches = shift ? (model.hasPrefix("CD4015") ? [] : [(2, "RCLK")]) : [(0, "CS"), (3, "LDAC")]
+            let latches = sink ? [(2, "XLAT"), (3, "BLANK")] : shift ? (model.hasPrefix("CD4015") ? [] : [(2, "RCLK")]) : [(0, "CS"), (3, "LDAC")]
             for (terminal, label) in latches where pin(terminal) >= 0 {
                 let (latch, _) = self.signal(pin(terminal))
                 if latch != STM32_SIGNAL_OUTPUT && latch != STM32_SIGNAL_SPI_NSS {
@@ -166,8 +168,8 @@ struct STM32BusCheck {
             if mode == 1 || mode == 2 {
                 return ([], "\(who): \(spi) runs in SPI mode \(mode) (CPOL \(settings.cpol), CPHA \(settings.cpha)), changing its data on SCK's rising edge, where the \(model) takes it: mode 0 or 3 has it steady there.")
             }
-            if !shift && settings.lsb_first {
-                return ([], "\(who): \(spi) sends LSB first; the \(model) takes its words MSB first.")
+            if (!shift || sink) && settings.lsb_first {
+                return ([], "\(who): \(spi) sends LSB first; the \(model) takes \(sink ? "its levels, OUT23's" : "its words") MSB first.")
             }
             return ([], nil)
         case .shiftIn:

@@ -56,6 +56,8 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case shiftIn
     /// A PCA9685: sixteen 12-bit PWM outputs on I²C (LEDs, a panel's lights)
     case ledDriver
+    /// A TLC5947: twenty-four 12-bit PWM constant-current sinks, their levels shifted in over SPI (a panel's LEDs)
+    case ledSink
     case atmega328p, atmega2560, attiny85, rp2040
     /// The STM32F405, the chip of Mutable Instruments' Rings, Clouds, Elements, Warps and Marbles (firmware loaded)
     case stm32f405
@@ -246,6 +248,7 @@ extension ElementKind {
         case .shiftRegister: return "Shift Register"
         case .shiftIn: return "Shift Register (Parallel In)"
         case .ledDriver: return "PWM LED Driver"
+        case .ledSink: return "Constant-Current LED Driver"
         case .analogMux: return "Analog Multiplexer"
         case .analogSelector: return "Analog Selector"
         case .pll: return "Phase-Locked Loop"
@@ -322,7 +325,7 @@ extension ElementKind {
              .atmega328p, .atmega2560,
              .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return "U"
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
         case .behavioralSource: return "B"
@@ -358,7 +361,7 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .digitalDelay, .vactrol: return .effects
         case .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch: return .timersAndLogic
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return .timersAndLogic
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return .timersAndLogic
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return .microcontrollers
         case .memristor: return .memristors
         case .behavioralSource: return .sources
@@ -407,7 +410,7 @@ extension ElementKind {
              .triode, .pentode, .transformer:
             return nil
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return nil
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return nil
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return nil
         case .memristor: return "m"
         case .behavioralSource: return nil
         case .probe: return "o"
@@ -505,7 +508,7 @@ extension ElementKind {
         case .ota, .vactrol, .transformer: return 4
         case .timer555: return 5
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return board?.length
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.length
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.length
         default: return audioChipPackage?.length
         }
     }
@@ -545,7 +548,7 @@ extension ElementKind {
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return board?.terminalNames ?? []
         case .schmittInverter, .unbufferedInverter: return ["in", "out"]
         case .logicGate: return ["in1", "in2", "out"]
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.terminalNames ?? []
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.terminalNames ?? []
         case .electretMic: return ["out", "gnd"]
         case .pickup: return ["hot", "gnd"]
         case .vuMeter: return ["plus", "minus"]
@@ -608,7 +611,7 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode, .pentode: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return GridPoint(0, board?.length ?? 13)
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return GridPoint(0, chipPackage?.length ?? 3)
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return GridPoint(0, chipPackage?.length ?? 3)
         default: return audioChipPackage.map { GridPoint(0, $0.length) } ?? GridPoint(4, 0)
         }
     }
@@ -805,6 +808,14 @@ extension ElementKind {
                 ParamSpec("upper", "Input rising threshold", unit: "× supply", default: 0.7, range: 0.3...0.9, log: false),
                 ParamSpec("lower", "Input falling threshold", unit: "× supply", default: 0.3, range: 0.1...0.7, log: false),
                 ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 25, range: 1...10_000),
+            ]
+        case .ledSink:
+            return [
+                ParamSpec("supply", "Supply (VCC)", unit: "V", default: 3.3, range: 3...5.5, log: false),
+                ParamSpec("upper", "Input rising threshold", unit: "× supply", default: 0.7, range: 0.3...0.9, log: false),
+                ParamSpec("lower", "Input falling threshold", unit: "× supply", default: 0.3, range: 0.1...0.7, log: false),
+                ParamSpec("outputResistance", "SOUT output resistance", unit: "Ω", default: 50, range: 1...10_000),
+                ParamSpec("iref", "IREF resistor (each output sinks 41 × 1.2 V over it)", unit: "Ω", default: 3300, range: 1640...25_000),
             ]
         case .shiftIn:
             return [
@@ -1154,7 +1165,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
              .codec, .cvDac, .block:
             return packagePins
         default:
@@ -1528,6 +1539,11 @@ extension ElementKind {
             return [
                 PartModel(name: "PCA9685", summary: "Sixteen-channel 12-bit PWM driver on I²C at 0x40 + A5–A0 (and 0x70, all call): each output on from its ON count to its OFF count of 4096, at 25 MHz / 4096 / (PRE_SCALE + 1) (200 Hz from reset); it wakes asleep, MODE1's SLEEP bit set, its outputs off until cleared; OE high turns them off",
                           values: ["supply": 3.3, "upper": 0.7, "lower": 0.3, "outputResistance": 25]),
+            ]
+        case .ledSink:
+            return [
+                PartModel(name: "TLC5947", summary: "Twenty-four-channel 12-bit PWM constant-current LED driver: 288 bits shifted in on SIN at SCLK's rising edges, OUT23's MSB first, taken by XLAT's rising edge; each output sinks 41 × 1.2 V / IREF (2 to 30 mA) for its grayscale count of 4096 at its 4 MHz oscillator (976 Hz), all off while BLANK is high; SOUT carries the register's last bit on to the next one",
+                          values: ["supply": 3.3, "upper": 0.7, "lower": 0.3, "outputResistance": 50]),
             ]
         case .shiftIn:
             return [

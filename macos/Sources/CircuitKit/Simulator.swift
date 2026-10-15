@@ -364,6 +364,9 @@ public final class Simulator {
     /// Each PCA9685's registers, and the one its next byte written goes to
     private var pwmRegisters: [[UInt8]] = []
     private var pwmPointer: [Int] = []
+    /// Each TLC5947's shift register's twenty-four 12-bit levels, then its latched ones; and when BLANK last fell
+    private var sinkLevels: [[UInt16]] = []
+    private var sinkStart: [Double] = []
     /// For each STM32, the CV DACs on its SPI ports (their SCLK on the port's SCK pin) and the chip's pin wired to each
     /// one's SYNC (-1: none); the bits each DAC has taken since its SYNC fell (`bits` past its word: the word taken)
     private var spiLinks: [[(port: Int, dac: Int, sync: Int)]] = []
@@ -1000,6 +1003,8 @@ public final class Simulator {
         cvDacCodes = Array(repeating: [UInt16](repeating: 0, count: 16), count: count)
         pwmRegisters = Array(repeating: [], count: count)
         pwmPointer = Array(repeating: 0, count: count)
+        sinkLevels = Array(repeating: [], count: count)
+        sinkStart = Array(repeating: 0, count: count)
         moduleStates = Array(repeating: ModuleState(), count: count)
         noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
@@ -1017,7 +1022,7 @@ public final class Simulator {
         nonlinearIndices = indices {
             switch $0 {
             case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .pjfet, .opAmp, .ota, .analogSwitch, .multiplier, .vactrol,
-                 .unbufferedInverter, .pll, .triode, .pentode, .vca, .behavioralSource: return true
+                 .unbufferedInverter, .pll, .triode, .pentode, .vca, .behavioralSource, .ledSink: return true
             default: return false
             }
         }
@@ -1028,7 +1033,7 @@ public final class Simulator {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor: return true
+                 .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor: return true
             default: return false
             }
         }
@@ -1208,6 +1213,10 @@ public final class Simulator {
             pwmPointer[i] = 0
             // (its all-call address answered from reset)
             if element.kind == .ledDriver { logicStates[i].latch = Logic.i2cAllCall }
+        }
+        if i < sinkLevels.count {
+            sinkLevels[i] = element.kind == .ledSink ? [UInt16](repeating: 0, count: 48) : []
+            sinkStart[i] = 0
         }
         // a keyboard's pitch starts at the present note rather than gliding up from 0 V
         if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
@@ -3186,8 +3195,8 @@ public final class Simulator {
             case .schmittInverter:
                 // output drives towards the hidden supply or ground through its output resistance
                 stampConductance(matrix, m, nodes[1], 0, constants[i].outputConductance)
-            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .pll:
-                // each output likewise; the inputs draw nothing
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledSink, .pll:
+                // each output likewise (a TLC5947's SOUT; its sinks are nonlinear); the inputs draw nothing
                 for k in kind.logicOutputs where k < nodes.count {
                     stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance)
                 }
@@ -3408,7 +3417,7 @@ public final class Simulator {
                 guard nodes.count > 5, let processor = effectsProcessors[i] else { continue }
                 stampCurrent(r, 0, nodes[4], processor.left * constants[i].outputConductance)
                 stampCurrent(r, 0, nodes[5], processor.right * constants[i].outputConductance)
-            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .pll:
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledSink, .pll:
                 let kind = kinds[i]
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(constants[i].value))) where high {
                     stampCurrent(r, 0, nodes[k], constants[i].supply * constants[i].outputConductance)
@@ -3677,7 +3686,7 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac:
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac:
             c.supply = max(p("supply"), 0.1)
             c.upper = p("upper") * c.supply
             c.lower = min(p("lower"), p("upper")) * c.supply
@@ -3689,6 +3698,12 @@ public final class Simulator {
             if element.kind == .spiAdc { c.value = Self.choice(p("resolution"), 0...1) >= 1 ? 12 : 10 }
             c.frequency = max(p("fMin"), 0)
             c.high = max(p("fMax"), c.frequency)
+            if element.kind == .ledSink {
+                // a TLC5947's oscillator, and each output's current: 41 times IREF's 1.2 V over its resistor
+                c.value = 0
+                c.frequency = 4e6
+                c.high = 41 * 1.2 / max(p("iref"), 100)
+            }
         case .codec:
             c.supply = max(p("supply"), 0.1)
             c.value = max(p("fullScale"), 0.01)
@@ -4927,6 +4942,19 @@ public final class Simulator {
                 add(matrix, m, output - 1, output - 1, -dOut)
                 rhs[output - 1] += current - dIn * vin - dOut * vout
 
+            case .ledSink:
+                // each output on sinks its current through its knee; off, its leakage (a nanosiemens: a node only its
+                // LED reaches is not left floating), shunted further while gmin stepping
+                let count = sinkCount(i)
+                for k in 0..<24 where 4 + k < nodes.count && nodes[4 + k] > 0 {
+                    let node = nodes[4 + k]
+                    let v = voltage(node)
+                    let (current, slope) = count.map { $0 < Int(sinkLevels[i][24 + k]) } == true
+                        ? Logic.sinkCurrent(v, full: c.high) : (current: 0.0, slope: 0.0)
+                    stampConductance(matrix, m, node, 0, slope + 1e-9 + junctionConductance)
+                    stampCurrent(rhs, node, 0, current - slope * v)
+                }
+
             case .pll:
                 // phase comparator 2: driven high while pumping up, low while pumping down, and otherwise let go
                 let pump = logicStates[i].count
@@ -5537,11 +5565,40 @@ public final class Simulator {
                 pwmByte(i, index: next.count >> 8, byte: UInt8(next.count & 0xFF))
                 next = logicStates[i]
             }
+        case .ledSink:
+            // XLAT takes the register as it was before an SCLK edge at the same moment, as a 74HC595's RCLK does
+            if next.bits & 2 != 0 {
+                for k in 0..<24 { sinkLevels[i][24 + k] = sinkLevels[i][k] }
+                next.count &+= 1
+            }
+            if next.bits & 1 != 0 { Logic.sinkShift(&sinkLevels[i], bit: next.inputs & 1 != 0) }
+            if next.bits & 8 != 0 { next.shift = sinkLevels[i][23] >> 11 & 1 != 0 ? 1 : 0 }
+            if next.bits & 4 != 0 { sinkStart[i] = time }
+            // (BLANK turns every output off or lets them run)
+            if (next.inputs ^ old.inputs) & 8 != 0 { next.count &+= 1 }
+            next.bits = 0
         default:
             break
         }
         logicStates[i] = next
         return next
+    }
+
+    /// A TLC5947's grayscale counter now (nil while BLANK is high)
+    private func sinkCount(_ i: Int) -> Int? {
+        guard i < sinkLevels.count, sinkLevels[i].count == 48 else { return nil }
+        return Logic.sinkCount(elapsed: time - sinkStart[i], frequency: constants[i].frequency,
+                               blank: logicStates[i].inputs & 8 != 0)
+    }
+
+    /// The current each of a TLC5947's outputs sinks now, with the circuit's voltages `v`
+    private func sinkCurrents(_ i: Int, _ v: (Int) -> Double) -> [Double] {
+        let nodes = topology.elementNodes[i]
+        let count = sinkCount(i)
+        return (0..<24).map { k in
+            guard 4 + k < nodes.count, let count, count < Int(sinkLevels[i][24 + k]) else { return 0 }
+            return Logic.sinkCurrent(v(nodes[4 + k]), full: constants[i].high).current
+        }
     }
 
     /// A byte written to a PCA9685 after its address: the first sets the register written next, the rest are written
@@ -6041,7 +6098,7 @@ public final class Simulator {
         for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
             let chipNodes = topology.elementNodes[i]
             floatingChipPins[i] = chipNodes.map { $0 > 0 && $0 < uses.count && uses[$0] == 1 }
-            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .shiftIn, .ledDriver, .i2cDac]
+            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cDac]
             for j in kinds.indices where wired.contains(kinds[j]) && j < topology.elementNodes.count {
                 let pins = topology.elementNodes[j].map { node in node > 0 ? chipNodes.firstIndex(of: node) ?? -1 : -1 }
                 if pins.contains(where: { $0 >= 0 }) { busWirings[i].append((j, pins)) }
@@ -6781,8 +6838,9 @@ public final class Simulator {
         case .unbufferedInverter:
             let current = inverterCurrent(i, vin: v(nodes[0]), vout: v(nodes[1])).current
             return (current, [0, current])
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .pll:
-            // the main current: what the outputs supply (for a gate, what its output puts out)
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledSink, .pll:
+            // the main current: what the outputs supply (for a gate, what its output puts out; for a TLC5947, what its
+            // outputs sink)
             let c = constants[i]
             let kind = element.kind
             var flows = [Double](repeating: 0, count: nodes.count)
@@ -6790,6 +6848,13 @@ public final class Simulator {
             for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where k < nodes.count {
                 flows[k] = ((high ? c.supply : 0) - v(nodes[k])) * c.outputConductance
                 total += kind == .logicGate ? flows[k] : max(flows[k], 0)
+            }
+            if kind == .ledSink {
+                total = 0
+                for (k, sunk) in sinkCurrents(i, v).enumerated() where 4 + k < nodes.count {
+                    flows[4 + k] = -sunk
+                    total += sunk
+                }
             }
             return (total, flows)
         case .dualDac, .i2sDac, .i2cDac, .codec, .cvDac, .ledDriver:

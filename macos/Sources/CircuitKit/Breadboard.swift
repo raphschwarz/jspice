@@ -1011,6 +1011,7 @@ public enum Breadboard {
         case .reverbBrick: return "Belton reverb brick, on its six pins (5 V supply)"
         case .i2cDac: return "MCP4725 breakout board (I²C), on 5 V"
         case .ledDriver: return "PCA9685 16-channel PWM breakout board (I²C), on 3.3 V"
+        case .ledSink: return "TLC5947 24-channel LED driver breakout board (SPI), its IREF resistor on the board, its LEDs from their own supply"
         case .i2sDac: return "PCM5102 I²S DAC board, on 3.3 V"
         case .cvDac:
             let names = ["DAC8568", "DAC8564", "DAC8552", "DAC8551", "DAC7554"]
