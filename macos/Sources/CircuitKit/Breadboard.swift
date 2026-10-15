@@ -333,6 +333,11 @@ public enum Breadboard {
                            supplies: [(8, "VSS", .ground), (16, "VDD", .volts(cmos))],
                            labels: [1: "PHASE PULSES", 6: "C1A", 7: "C1B", 10: "DEMOD", 11: "R1", 12: "R2", 15: "ZENER"],
                            note: "Its VCO's range is set by parts on pins 6–7 (C1), 11 (R1) and 12 (R2): choose them from the datasheet for \(SI.format(p("fMin"), unit: "Hz")) to \(SI.format(p("fMax"), unit: "Hz"))")
+        case .i2cEeprom:
+            // (the A pins and WP pulled down inside when left open)
+            return Package(title: model ?? "24LC256", pins: 8, units: [["a0": 1, "a1": 2, "a2": 3, "sda": 5, "scl": 6, "wp": 7]],
+                           supplies: [(4, "VSS", .ground), (8, "VCC", .volts(max(p("supply"), 1.7)))],
+                           labels: [1: "A0", 2: "A1", 3: "A2", 4: "VSS", 5: "SDA", 6: "SCL", 7: "WP", 8: "VCC"])
         case .dac:
             return Package(title: "MCP4921", pins: 8, units: [["cs": 2, "sck": 3, "sdi": 4, "ldac": 5, "vref": 6, "out": 8]],
                            supplies: [(1, "VDD", .volts(max(p("supply"), 2.7))), (7, "AVSS", .ground)])

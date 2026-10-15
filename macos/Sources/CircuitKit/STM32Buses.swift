@@ -198,12 +198,14 @@ struct STM32BusCheck {
                 return ([], "\(who): \(spi) runs in SPI mode \(mode) (CPOL \(settings.cpol), CPHA \(settings.cpha)), reading MISO on SCK's falling edge, after the \(model) has shifted on the rising one: it would miss D7. Mode 0 or 3 reads QH before each shift.")
             }
             return ([.misoFromPin(port: port)], nil)
-        case .i2cDac, .ledDriver:
-            // an MCP4725 or a PCA9685: SCL and SDA on one of the chip's I²C buses (or GPIO pins, the firmware
-            // bit-banging them)
+        case .i2cDac, .ledDriver, .i2cEeprom:
+            // an MCP4725, a PCA9685 or an EEPROM: SCL and SDA on one of the chip's I²C buses (or GPIO pins, the
+            // firmware bit-banging them: the EEPROM is modelled only on an I²C port)
             guard pin(0) >= 0 else { return ([], nil) }
             let (scl, bus) = self.signal(pin(0))
-            if scl == STM32_SIGNAL_OUTPUT { return ([], nil) }
+            if scl == STM32_SIGNAL_OUTPUT {
+                return ([], part == .i2cEeprom ? "\(who): its SCL is on \(self.name(pin(0))), a GPIO output; the model answers for the \(model) only on one of the chip's I²C ports, not bit by bit." : nil)
+            }
             if chip.model == STM32_F373 {
                 return ([], "\(who): the model does not run the STM32F373's I²C, so the \(model) cannot be reached.")
             }

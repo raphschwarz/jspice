@@ -367,6 +367,12 @@ public final class Simulator {
     /// Each TLC5947's shift register's twenty-four 12-bit levels, then its latched ones; and when BLANK last fell
     private var sinkLevels: [[UInt16]] = []
     private var sinkStart: [Double] = []
+    /// Each EEPROM's memory (made as it is first reached), its address pointer, the bytes of the page write under way
+    /// (written at its STOP), and when its write cycle ends
+    private var eepromData: [[UInt8]] = []
+    private var eepromPointer: [Int] = []
+    private var eepromPending: [[(address: Int, byte: UInt8)]] = []
+    private var eepromBusy: [Double] = []
     /// For each STM32, the CV DACs on its SPI ports (their SCLK on the port's SCK pin) and the chip's pin wired to each
     /// one's SYNC (-1: none); the bits each DAC has taken since its SYNC fell (`bits` past its word: the word taken)
     private var spiLinks: [[(port: Int, dac: Int, sync: Int)]] = []
@@ -1005,6 +1011,10 @@ public final class Simulator {
         pwmPointer = Array(repeating: 0, count: count)
         sinkLevels = Array(repeating: [], count: count)
         sinkStart = Array(repeating: 0, count: count)
+        eepromData = Array(repeating: [], count: count)
+        eepromPointer = Array(repeating: 0, count: count)
+        eepromPending = Array(repeating: [], count: count)
+        eepromBusy = Array(repeating: 0, count: count)
         moduleStates = Array(repeating: ModuleState(), count: count)
         noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
@@ -1217,6 +1227,13 @@ public final class Simulator {
         if i < sinkLevels.count {
             sinkLevels[i] = element.kind == .ledSink ? [UInt16](repeating: 0, count: 48) : []
             sinkStart[i] = 0
+        }
+        if i < eepromData.count {
+            // (an EEPROM from the factory: every byte erased, 0xFF)
+            eepromData[i] = []
+            eepromPointer[i] = 0
+            eepromPending[i] = []
+            eepromBusy[i] = 0
         }
         // a keyboard's pitch starts at the present note rather than gliding up from 0 V
         if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
@@ -3710,6 +3727,12 @@ public final class Simulator {
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
             // its control port's I²C address (0: none)
             c.high = min(max(p("address"), 0), 127).rounded()
+        case .i2cEeprom:
+            c.supply = max(p("supply"), 0.1)
+            // its size and page size, powers of two, and its write cycle
+            c.value = pow(2, log2(min(max(p("size"), 256), 131_072)).rounded())
+            c.high = pow(2, log2(min(max(p("page"), 8), 256)).rounded())
+            c.frequency = max(p("writeTime"), 0)
         case .cvDac:
             c.supply = max(p("supply"), 0.1)
             c.value = max(p("fullScale"), 0.01)
@@ -6098,7 +6121,8 @@ public final class Simulator {
         for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
             let chipNodes = topology.elementNodes[i]
             floatingChipPins[i] = chipNodes.map { $0 > 0 && $0 < uses.count && uses[$0] == 1 }
-            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cDac]
+            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cDac,
+                                           .i2cEeprom]
             for j in kinds.indices where wired.contains(kinds[j]) && j < topology.elementNodes.count {
                 let pins = topology.elementNodes[j].map { node in node > 0 ? chipNodes.firstIndex(of: node) ?? -1 : -1 }
                 if pins.contains(where: { $0 >= 0 }) { busWirings[i].append((j, pins)) }
@@ -6131,18 +6155,18 @@ public final class Simulator {
                 }
             }
             codecExchanges[i] = { [unowned(unsafe) self] port, left, right in self.codecFrame(i, port, left, right) }
-            if busWirings[i].contains(where: { [.codec, .i2cDac, .ledDriver].contains(kinds[$0.part]) }) {
+            if busWirings[i].contains(where: { [.codec, .i2cDac, .ledDriver, .i2cEeprom].contains(kinds[$0.part]) }) {
                 codecTargets[i] = STM32Microcontroller.I2CTarget(
                     start: { [unowned(unsafe) self] bus, address, read in self.i2cStart(i, bus, address, read) },
                     write: { [unowned(unsafe) self] _, byte in self.i2cWrite(i, byte) },
                     read: { [unowned(unsafe) self] _, _ in self.i2cRead(i) },
-                    stop: { [unowned(unsafe) self] _ in self.i2cTransfer[i].part = -1 })
+                    stop: { [unowned(unsafe) self] _ in self.i2cStop(i) })
             }
         }
     }
 
     /// An STM32 addressing a target on one of its I²C buses: a codec at its address (a WM8731 at 0x1A), an MCP4725 at 0x60
-    /// or 0x61 (its A0 pin); whether one acknowledges
+    /// or 0x61 (its A0 pin), a PCA9685, an EEPROM; whether one acknowledges
     private func i2cStart(_ i: Int, _ bus: Int, _ address: UInt8, _ read: Bool) -> Bool {
         refreshBuses(i)
         i2cTransfer[i] = (-1, 0, 0, false)
@@ -6151,6 +6175,21 @@ public final class Simulator {
         for device in i2cDevices[i] where device.bus == bus {
             let nodes = topology.elementNodes[device.part]
             func high(_ terminal: Int) -> Bool { nodes.count > terminal && voltage(nodes[terminal]) > constants[device.part].supply / 2 }
+            if kinds[device.part] == .i2cEeprom {
+                // at 0x50 + A2-A0; a 24LC04 to 24LC16 takes the block of 256 bytes in those bits instead
+                let size = Int(constants[device.part].value)
+                let blockBits = size > 256 && size <= 2048 ? Int(log2(Double(size / 256))) : 0
+                let blocks = (1 << blockBits) - 1
+                let pins = (0...2).reduce(0) { $0 | (high(3 + $1) ? 1 << $1 : 0) }
+                guard Int(address) & ~blocks == (0x50 | pins) & ~blocks else { continue }
+                // in its write cycle it answers nothing: a firmware polls for its acknowledge until it does
+                if time < eepromBusy[device.part] { return false }
+                if eepromData[device.part].count != size { eepromData[device.part] = [UInt8](repeating: 0xFF, count: size) }
+                eepromPending[device.part] = []
+                i2cTransfer[i].part = device.part
+                i2cTransfer[i].data = UInt32(Int(address) & blocks)
+                return true
+            }
             if kinds[device.part] == .ledDriver {
                 // a PCA9685 at 0x40 + A5-A0, or 0x70 while its all-call is on
                 let pins = (0...5).reduce(0) { $0 | (high(3 + $1) ? 1 << $1 : 0) }
@@ -6169,9 +6208,15 @@ public final class Simulator {
         return false
     }
 
-    /// A byte the chip reads from the target it addressed: a PCA9685's register (the next one with MODE1's AI set)
+    /// A byte the chip reads from the target it addressed: a PCA9685's register (the next one with MODE1's AI set), an
+    /// EEPROM's next byte (on through its whole memory, round to the start)
     private func i2cRead(_ i: Int) -> UInt8 {
         let part = i2cTransfer[i].part
+        if part >= 0, kinds[part] == .i2cEeprom, !eepromData[part].isEmpty {
+            let at = eepromPointer[part] % eepromData[part].count
+            eepromPointer[part] = (at + 1) % eepromData[part].count
+            return eepromData[part][at]
+        }
         guard part >= 0, kinds[part] == .ledDriver, part < pwmRegisters.count, pwmRegisters[part].count == 256 else { return 0xFF }
         let register = pwmPointer[part]
         let byte = pwmRegisters[part][register]
@@ -6187,6 +6232,11 @@ public final class Simulator {
         guard transfer.part >= 0 else { return true }  // (a codec's register writes)
         if kinds[transfer.part] == .ledDriver {
             pwmByte(transfer.part, index: transfer.index, byte: byte)
+            i2cTransfer[i].index += 1
+            return true
+        }
+        if kinds[transfer.part] == .i2cEeprom {
+            eepromByte(transfer.part, index: transfer.index, block: Int(transfer.data), byte: byte)
             i2cTransfer[i].index += 1
             return true
         }
@@ -6209,6 +6259,44 @@ public final class Simulator {
         transfer.index += 1
         i2cTransfer[i] = transfer
         return true
+    }
+
+    /// A byte written to an EEPROM after its address: its memory address first (two bytes, high first; or one, with the
+    /// block from the device address), then the page write's data, the address wrapping round within its page
+    private func eepromByte(_ part: Int, index: Int, block: Int, byte: UInt8) {
+        let size = Int(constants[part].value), page = Int(constants[part].high)
+        let addressBytes = size > 2048 ? 2 : 1
+        if index < addressBytes {
+            if addressBytes == 2 && index == 0 {
+                eepromPointer[part] = Int(byte) << 8
+            } else {
+                eepromPointer[part] = ((addressBytes == 2 ? eepromPointer[part] : block << 8) | Int(byte)) % size
+            }
+            return
+        }
+        let at = eepromPointer[part]
+        eepromPending[part].append((at, byte))
+        eepromPointer[part] = at / page * page + (at + 1) % page
+    }
+
+    /// A STOP on an STM32's I²C bus: an EEPROM written to starts its write cycle, its page written as it ends (unless
+    /// WP is high: then nothing is written, and it is ready at once)
+    private func i2cStop(_ i: Int) {
+        let part = i2cTransfer[i].part
+        i2cTransfer[i].part = -1
+        guard part >= 0, kinds[part] == .i2cEeprom, !eepromPending[part].isEmpty else { return }
+        let pending = eepromPending[part]
+        eepromPending[part] = []
+        let nodes = topology.elementNodes[part]
+        if nodes.count > 2 && voltage(nodes[2]) > constants[part].supply / 2 { return }
+        for (address, byte) in pending where address < eepromData[part].count { eepromData[part][address] = byte }
+        eepromBusy[part] = time + constants[part].frequency
+    }
+
+    /// What an EEPROM holds (nil for another part, or one nothing has reached yet: every byte still 0xFF)
+    public func eepromContents(_ index: Int) -> [UInt8]? {
+        guard index < eepromData.count, index < kinds.count, kinds[index] == .i2cEeprom, !eepromData[index].isEmpty else { return nil }
+        return eepromData[index]
     }
 
     /// Which of an STM32's ports reach the parts wired to it, as its firmware has set it up now; why not, for those they

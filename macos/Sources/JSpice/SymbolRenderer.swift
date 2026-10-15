@@ -78,7 +78,7 @@ enum SymbolRenderer {
         switch kind {
         case .wire, .ground, .netLabel, .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .digitalDelay,
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cEeprom, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .digitalDelay,
              .port, .block, .triode, .pentode, .transformer, .behavioralSource,
              .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch, .jack, .regulator, .toneControl, .levelDetector,
              .springReverb, .agcPreamp, .barGraphDriver, .balancedCable:
@@ -128,7 +128,7 @@ enum SymbolRenderer {
             }
         case .timer555:
             drawTimer(posts: posts, at: a, b, unit: u, style: style, in: ctx)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac:
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cEeprom, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac:
             if let package = element.kind.chipPackage {
                 drawChip(package, title: element.kind.isMicrocontroller ? package.name : element.model?.name ?? package.name,
                          led: element.kind == .rp2040, posts: posts, at: a, b, unit: u, style: style, in: ctx)
@@ -376,7 +376,7 @@ enum SymbolRenderer {
             path.addLine(to: CGPoint(x: x0 + 0.6 * u, y: -0.2 * u))
         case .wire, .ground, .netLabel, .port, .block, .behavioralSource, .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .opAmp, .ota, .timer555, .multiplier, .delayLine, .vactrol,
              .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103,
-             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .digitalDelay,
+             .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cEeprom, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .digitalDelay,
              .triode, .pentode, .transformer,
              .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch, .jack, .regulator, .toneControl, .levelDetector,
              .springReverb, .agcPreamp, .barGraphDriver, .balancedCable:
@@ -1430,7 +1430,7 @@ enum SymbolRenderer {
         case .ota:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 4 ? [(posts[0], posts[1]), (a, b), (middle, posts[3])] : [(a, b)]
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac,
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cEeprom, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac,
              .block, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch, .jack, .regulator, .toneControl,
              .barGraphDriver, .balancedCable:
             guard let package = element.chipPackage, let box = chipBox(package, posts: posts, at: a, b, unit: u) else {

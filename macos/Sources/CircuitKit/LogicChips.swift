@@ -48,6 +48,10 @@ extension ElementKind {
             return ChipPackage(name: "PCA9685", terminalNames: ["scl", "sda", "oe"] + (0...5).map { "a\($0)" } + (0...15).map { "led\($0)" },
                                pinLabels: ["SCL", "SDA", "OE"] + (0...5).map { "A\($0)" } + (0...15).map { "LED\($0)" },
                                pinPlaces: (0...8).map(second) + (0...15).map(first), length: 15)
+        case .i2cEeprom:
+            return ChipPackage(name: "24LC256", terminalNames: ["scl", "sda", "wp", "a0", "a1", "a2"],
+                               pinLabels: ["SCL", "SDA", "WP", "A0", "A1", "A2"],
+                               pinPlaces: (0...2).map(second) + (0...2).map(first), length: 2)
         case .ledSink:
             return ChipPackage(name: "TLC5947", terminalNames: ["sin", "sclk", "xlat", "blank"] + (0...23).map { "out\($0)" } + ["sout"],
                                pinLabels: ["SIN", "SCLK", "XLAT", "BLANK"] + (0...23).map { "OUT\($0)" } + ["SOUT"],

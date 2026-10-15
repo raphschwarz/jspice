@@ -340,7 +340,7 @@ final class CircuitCanvasView: NSView {
             return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
         case .opAmp, .ota, .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch, .njfet, .pjfet, .multiplier, .delayLine,
              .digitalDelay, .vactrol, .comparator, .triode, .pentode, .transformer,
-             .vcf, .envelope, .vca, .sampleHold, .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac:
+             .vcf, .envelope, .vca, .sampleHold, .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cEeprom, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac:
             // the real part it behaves like
             return element.model?.name ?? "Custom"
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103:
@@ -447,7 +447,7 @@ final class CircuitCanvasView: NSView {
             switch element.kind {
             // a vertical transistor's collector and emitter leads reach two units to the side
             case _ where element.kind.isTransistor || element.kind.isTube: offset = alongX ? 0.4 * unit : 2.3 * unit
-            case .timer555, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux,
+            case .timer555, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cEeprom, .analogMux,
                  .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: offset = 0
             case _ where element.kind.drivesOutput || element.kind == .ota || element.kind == .logicGate: offset = 1.9 * unit
             case .vactrol, .transformer: offset = 1.9 * unit
@@ -1029,7 +1029,7 @@ func scopeQuantities(for kind: ElementKind) -> [Quantity] {
     case .memristor: return [.voltage, .current, .resistance, .power]
     case .wire, .toggleSwitch, .pushButton, .ammeter, .loopProbe: return [.current]
     case .probe, .netLabel, .speaker, .vuMeter, .electretMic, .pickup: return [.voltage]
-    case .ground, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .analogMux,
+    case .ground, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cEeprom, .analogMux,
          .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch, .jack, .regulator,
          .toneControl, .barGraphDriver, .balancedCable: return []
     case .levelDetector, .springReverb, .agcPreamp: return [.voltage]
