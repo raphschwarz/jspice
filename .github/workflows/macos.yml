@@ -247,9 +247,20 @@ jobs:
         if: hashFiles('macos/scripts/bundle.sh') != ''
         timeout-minutes: 15
         run: |
-          # Arm's own toolchain (with newlib), as the modules are built with
-          brew install --cask gcc-arm-embedded > build/arm-toolchain.log 2>&1 || { tail -20 build/arm-toolchain.log; exit 1; }
-          gcc_path=$(command -v arm-none-eabi-gcc || find /Applications -path '*bin/arm-none-eabi-gcc' -type f | head -1)
+          # Arm's own toolchain (with newlib), as the modules are built with: its 15.2.rel1 release from Arm, checked
+          # against the checksum Arm publishes (Homebrew's cask follows Arm's newest, and its checksum has lagged a
+          # re-published download); on an Intel runner, the cask
+          if [ "$(uname -m)" = arm64 ]; then
+            archive=arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi
+            curl -fsSL --retry 3 -o "build/$archive.tar.xz" \
+              "https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/$archive.tar.xz"
+            echo "1938a84b7105c192e3fb4fa5e893ba25f425f7ddab40515ae608cd40f68669a8  build/$archive.tar.xz" | shasum -a 256 -c -
+            tar -xJf "build/$archive.tar.xz" -C build
+            gcc_path="$PWD/build/$archive/bin/arm-none-eabi-gcc"
+          else
+            brew install --cask gcc-arm-embedded > build/arm-toolchain.log 2>&1 || { tail -20 build/arm-toolchain.log; exit 1; }
+            gcc_path=$(command -v arm-none-eabi-gcc || find /Applications -path '*bin/arm-none-eabi-gcc' -type f | head -1)
+          fi
           test -n "$gcc_path"
           "$gcc_path" --version | head -1
           ln -sfn "$(dirname "$(dirname "$gcc_path")")" build/arm-toolchain
