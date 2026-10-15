@@ -37,7 +37,7 @@ let package = Package(
         // (Generated: KiCad 10.0.7's API messages, made by tools/kicad-api/generate.sh)
         .target(name: "KiCadLink", dependencies: ["KiCadKit", .product(name: "SwiftProtobuf", package: "swift-protobuf")]),
         // Tools for driving circuits from outside: netlists, simulation runs, measurements, and an MCP server for AI agents.
-        .target(name: "JSpiceAutomation", dependencies: ["CircuitKit"]),
+        .target(name: "JSpiceAutomation", dependencies: ["CircuitKit", "KiCadKit", "KiCadLink"]),
         // The MCP server on standard input and output.
         .executableTarget(name: "jspice-mcp", dependencies: ["JSpiceAutomation", "CircuitKit"]),
         // The Audio Unit (an app extension inside the app): a circuit as an effect or instrument in any music app. Its
@@ -45,9 +45,9 @@ let package = Package(
         .executableTarget(name: "JSpiceAudioUnit", dependencies: ["CircuitKit"],
                           linkerSettings: [.unsafeFlags(["-Xlinker", "-e", "-Xlinker", "_NSExtensionMain"])]),
         // The macOS app.
-        .executableTarget(name: "JSpice", dependencies: ["CircuitKit", "JSpiceAutomation"]),
+        .executableTarget(name: "JSpice", dependencies: ["CircuitKit", "JSpiceAutomation", "KiCadKit", "KiCadLink"]),
         .testTarget(name: "CircuitKitTests", dependencies: ["CircuitKit", "CortexM4", "KiCadKit"], resources: [.copy("Fixtures")]),
-        .testTarget(name: "JSpiceAutomationTests", dependencies: ["JSpiceAutomation", "CircuitKit"]),
+        .testTarget(name: "JSpiceAutomationTests", dependencies: ["JSpiceAutomation", "CircuitKit", "KiCadKit"]),
         .testTarget(name: "KiCadKitTests", dependencies: ["KiCadKit"], resources: [.copy("Fixtures")]),
         .testTarget(name: "KiCadLinkTests", dependencies: ["KiCadLink", "KiCadKit"]),
     ]
