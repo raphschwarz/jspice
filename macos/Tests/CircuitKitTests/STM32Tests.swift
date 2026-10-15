@@ -521,6 +521,80 @@ final class STM32Tests: XCTestCase {
         XCTAssertFalse(chip.isHalted)
     }
 
+    /// A firmware writing 0x3800 (gain 1, on, mid-scale) to an MCP4921 through SPI1 as a master (mode 0, 16 bits,
+    /// PA5 SCK, PA7 MOSI), with CS on PA4
+    static let spiDACFirmware: [UInt8] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x13, 0x48, 0x01, 0x68, 0x41, 0xF0, 0x01, 0x01, 0x01, 0x60,
+        0x12, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x80, 0x51, 0x01, 0x60, 0x10, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x09, 0x41,
+        0x01, 0x60, 0x0F, 0x49, 0x01, 0x62, 0x10, 0x21, 0x81, 0x61, 0x0E, 0x4A, 0x40, 0xF6, 0x5C, 0x31, 0x11, 0x60,
+        0x4F, 0xF4, 0x80, 0x11, 0x81, 0x61, 0x4F, 0xF4, 0x60, 0x51, 0xD1, 0x60, 0x93, 0x68, 0x13, 0xF0, 0x02, 0x0F,
+        0xFB, 0xD0, 0x93, 0x68, 0x13, 0xF0, 0x80, 0x0F, 0xFB, 0xD1, 0x10, 0x21, 0x81, 0x61, 0xFE, 0xE7, 0x30, 0x38,
+        0x02, 0x40, 0x44, 0x38, 0x02, 0x40, 0x00, 0x00, 0x02, 0x40, 0x00, 0x00, 0x50, 0x50, 0x00, 0x30, 0x01, 0x40,
+    ]
+
+    /// A firmware writing 0x08 0x00 (fast mode: on, mid-scale) to an MCP4725 at 0x60 through I2C2 (PB10, PB11)
+    static let i2cDACFirmware: [UInt8] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x1E, 0x48, 0x01, 0x68, 0x41, 0xF0, 0x02, 0x01, 0x01, 0x60,
+        0x1D, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x80, 0x01, 0x01, 0x60, 0x1B, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x20, 0x01,
+        0x01, 0x60, 0x41, 0x68, 0x41, 0xF4, 0x40, 0x61, 0x41, 0x60, 0x4F, 0xF4, 0x88, 0x41, 0x41, 0x62, 0x16, 0x4A,
+        0x10, 0x21, 0x51, 0x60, 0x50, 0x21, 0xD1, 0x61, 0x01, 0x21, 0x11, 0x60, 0x11, 0x68, 0x41, 0xF4, 0x80, 0x71,
+        0x11, 0x60, 0x53, 0x69, 0x13, 0xF0, 0x01, 0x0F, 0xFB, 0xD0, 0xC0, 0x21, 0x11, 0x61, 0x53, 0x69, 0x13, 0xF0,
+        0x02, 0x0F, 0xFB, 0xD0, 0x93, 0x69, 0x08, 0x21, 0x11, 0x61, 0x53, 0x69, 0x13, 0xF0, 0x80, 0x0F, 0xFB, 0xD0,
+        0x00, 0x21, 0x11, 0x61, 0x53, 0x69, 0x13, 0xF0, 0x04, 0x0F, 0xFB, 0xD0, 0x11, 0x68, 0x41, 0xF4, 0x00, 0x71,
+        0x11, 0x60, 0xFE, 0xE7, 0x00, 0x00, 0x30, 0x38, 0x02, 0x40, 0x40, 0x38, 0x02, 0x40, 0x00, 0x04, 0x02, 0x40,
+        0x00, 0x58, 0x00, 0x40,
+    ]
+
+    /// The SPI port's frames reach a part that takes its bits from the pins edge by edge: the MCP4921 goes to half
+    /// its reference
+    func testAnSPIDACOnTheChipsSPIPortTakesItsWord() throws {
+        let (simulator, out) = try dacCircuit(sdi: "pa7")
+        XCTAssertEqual(simulator.voltageAcross(out), 2.048 / 2 * 10_000 / 10_010, accuracy: 0.005)
+        XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
+    }
+
+    /// Its SDI on a pin the firmware leaves as an input: it gets nothing, and the simulator says why
+    func testAnSPIDACWhoseDataPinIsNotMOSIIsToldOf() throws {
+        let (simulator, out) = try dacCircuit(sdi: "pa6")
+        XCTAssertEqual(simulator.voltageAcross(out), 0, accuracy: 0.001)
+        XCTAssertEqual(simulator.problems.filter { $0.hasPrefix("U2") },
+                       ["U2 (MCP4921): its SDI is on PA6, which the firmware has as a GPIO input, not as SPI1's MOSI."])
+    }
+
+    func dacCircuit(sdi: String) throws -> (Simulator, Int) {
+        var chip = NetlistPart(kind: .stm32f405, name: "U1", connections: ["pa4": "cs", "pa5": "sck", sdi: "sdi"])
+        chip.firmware = Data(Self.spiDACFirmware)
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .dac, name: "U2", params: ["supply": 3.3],
+                        connections: ["cs": "cs", "sck": "sck", "sdi": "sdi", "ldac": "GND", "vref": "ref", "out": "out"]),
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 2.048], connections: ["plus": "ref", "minus": "GND"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "OUT", connections: ["plus": "out", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        while simulator.time < 0.01 && !simulator.isFailed { simulator.step() }
+        return (simulator, try XCTUnwrap(circuit.elements.firstIndex { $0.name == "OUT" }))
+    }
+
+    /// An MCP4725 on the chip's I2C2 pins answers its address and takes its code: half its supply
+    func testAnI2CDACOnTheChipsI2CBusTakesItsCode() throws {
+        var chip = NetlistPart(kind: .stm32f405, name: "U1", connections: ["pb10": "scl", "pb11": "sda"])
+        chip.firmware = Data(Self.i2cDACFirmware)
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .i2cDac, name: "U2", params: ["supply": 3.3],
+                        connections: ["scl": "scl", "sda": "sda", "a0": "GND", "out": "out"]),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "out", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "OUT", connections: ["plus": "out", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        while simulator.time < 0.01 && !simulator.isFailed { simulator.step() }
+        let out = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "OUT" })
+        XCTAssertEqual(simulator.voltageAcross(out), 3.3 / 2 * 10_000 / 10_010, accuracy: 0.005)
+        XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
+    }
+
     func testResetStartsOver() throws {
         let chip = STM32Microcontroller(firmware: try firmware())
         run(chip, for: 0.05)

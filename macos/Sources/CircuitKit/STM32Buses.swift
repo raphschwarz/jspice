@@ -12,6 +12,8 @@ enum STM32BusLink: Equatable {
     case spi(port: Int, sync: Int)
     /// A codec's control port on an I²C bus
     case i2c(bus: Int)
+    /// An I²C target (an MCP4725) answering on a bus
+    case i2cDevice(bus: Int)
 }
 
 struct STM32BusCheck {
@@ -129,6 +131,55 @@ struct STM32BusCheck {
             }
             let (link, issue) = audio()
             return ((link.map { [$0] } ?? []) + control, issue ?? controlIssue)
+        case .spiAdc where pin(1) >= 0 && self.signal(pin(1)).0 == STM32_SIGNAL_OUTPUT:
+            // (clocked by the firmware's own GPIO writes: it follows the pins bit by bit)
+            return ([], nil)
+        case .dac, .dualDac, .shiftRegister:
+            // parts that take their bits from the pins edge by edge (an MCP4921 or MCP4822: CS, SCK, SDI, LDAC; a
+            // 74HC595: SER, SRCLK, RCLK), on SCK's rising edge: clocked by the firmware's GPIO writes, or by an SPI
+            // port, whose frames reach the pins edge by edge, in a mode that has the data steady on the rising edge
+            let shift = part == .shiftRegister
+            let (clock, data) = shift ? (1, 0) : (1, 2)
+            let clockLabel = shift ? "SRCLK" : "SCK", dataLabel = shift ? "SER" : "SDI"
+            let c = pin(clock)
+            guard c >= 0 else { return ([], nil) }
+            let (signal, port) = self.signal(c)
+            // its latch (CS or RCLK) and LDAC: the firmware's to drive (a CD4015 has none)
+            let latches = shift ? (model.hasPrefix("CD4015") ? [] : [(2, "RCLK")]) : [(0, "CS"), (3, "LDAC")]
+            for (terminal, label) in latches where pin(terminal) >= 0 {
+                let (latch, _) = self.signal(pin(terminal))
+                if latch != STM32_SIGNAL_OUTPUT && latch != STM32_SIGNAL_SPI_NSS {
+                    return ([], "\(who): its \(label) is on \(self.name(pin(terminal))), which the firmware has as \(describe(pin(terminal))), not as a pin it drives.")
+                }
+            }
+            if signal == STM32_SIGNAL_OUTPUT { return ([], nil) }
+            guard signal == STM32_SIGNAL_SPI_SCK else {
+                return ([], "\(who): its \(clockLabel) is on \(self.name(c)), which the firmware has as \(describe(c)), neither an SPI port's SCK nor a GPIO output: nothing clocks it.")
+            }
+            let spi = "SPI\(port)"
+            if let issue = expect(data, label: dataLabel, STM32_SIGNAL_SPI_MOSI, port, as: "\(spi)'s MOSI") { return ([], issue) }
+            let settings = config(port)
+            let mode = Int(settings.cpol) * 2 + Int(settings.cpha)
+            if mode == 1 || mode == 2 {
+                return ([], "\(who): \(spi) runs in SPI mode \(mode) (CPOL \(settings.cpol), CPHA \(settings.cpha)), changing its data on SCK's rising edge, where the \(model) takes it: mode 0 or 3 has it steady there.")
+            }
+            if !shift && settings.lsb_first {
+                return ([], "\(who): \(spi) sends LSB first; the \(model) takes its words MSB first.")
+            }
+            return ([], nil)
+        case .i2cDac:
+            // an MCP4725: SCL and SDA on one of the chip's I²C buses (or both GPIO pins, the firmware bit-banging them)
+            guard pin(0) >= 0 else { return ([], nil) }
+            let (scl, bus) = self.signal(pin(0))
+            if scl == STM32_SIGNAL_OUTPUT { return ([], nil) }
+            if chip.model == STM32_F373 {
+                return ([], "\(who): the model does not run the STM32F373's I²C, so the \(model) cannot be reached.")
+            }
+            guard scl == STM32_SIGNAL_I2C_SCL else {
+                return ([], "\(who): its SCL is on \(self.name(pin(0))), which the firmware has as \(describe(pin(0))), not as an I²C bus's SCL.")
+            }
+            if let issue = expect(1, label: "SDA", STM32_SIGNAL_I2C_SDA, bus, as: "I2C\(bus)'s SDA") { return ([], issue) }
+            return ([.i2cDevice(bus: bus)], nil)
         case .cvDac, .spiAdc:
             let adc = part == .spiAdc
             let (found, issue) = clockPort(adc ? 1 : 0, label: adc ? "CLK" : "SCLK", want: STM32_SIGNAL_SPI_SCK, bus: "an SPI port")

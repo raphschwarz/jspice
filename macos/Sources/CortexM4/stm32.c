@@ -258,6 +258,10 @@ struct STM32 {
     uint16_t input_level[PORTS];    // the levels the circuit's voltages were last read as
     uint16_t floating[PORTS];       // pins the circuit leaves unconnected (NaN): their pulls set them
     uint32_t generation;            // counts changes to the pins' functions and the buses' settings
+    // the SPI ports' pins, as masters drive them: the pins they drive (SCK at its idle level, MOSI at the last bit
+    // shifted out) and their levels; for each port, the pins (package indices, -1 none) carrying SCK and MOSI
+    uint16_t bus_driven[PORTS], bus_level[PORTS];
+    int8_t spi_sck[3][2], spi_mosi[3][2];
     uint8_t block_status[512];      // what each 1 KB block from 0x40000000 is (the peripherals' map)
     uint8_t block_entry[512];
     STM32Unmodelled unmodelled[32]; // the blocks the firmware reached that the model does not run
@@ -1163,6 +1167,60 @@ static int spi_bits(const STM32 *m, const Spi *p) {
     return (p->cr1 >> 11) & 1 ? 16 : 8;
 }
 
+static bool pin_watched(const STM32 *m, int index) {
+    if (index < 0) return false;
+    int port = stm32_pin_port(m->model, index);
+    return port >= 0 && port < PORTS && ((m->watched[port] >> stm32_pin_number(m->model, index)) & 1);
+}
+
+/// The pins in `list` (an SPI port's SCK or MOSI) driven to `level` at cycle `at`: a pin watched is told of it
+static void set_bus_pins(STM32 *m, const int8_t list[2], bool level, uint64_t at) {
+    for (int k = 0; k < 2; k++) {
+        if (list[k] < 0) continue;
+        int port = stm32_pin_port(m->model, list[k]), pin = stm32_pin_number(m->model, list[k]);
+        if (port < 0 || port >= PORTS) continue;
+        uint16_t bit = (uint16_t)(1u << pin);
+        if (((m->bus_level[port] & bit) != 0) == level) continue;
+        m->bus_level[port] = level ? m->bus_level[port] | bit : m->bus_level[port] & ~bit;
+        if ((m->watched[port] & bit) && m->listener) {
+            m->told[port] = level ? m->told[port] | bit : m->told[port] & ~bit;
+            m->listener(m->listener_context, at, list[k], level);
+        }
+    }
+}
+
+/// A frame shifted out by a master, onto its pins edge by edge as its mode (CPOL, CPHA, LSBFIRST) has them, over the
+/// cycles it takes: the logic parts wired to them (a 74HC595, an MCP4921) take it bit by bit, as they would the chip's
+static void spi_drive_frame(STM32 *m, int i, uint32_t word, int bits, uint64_t start, uint64_t end) {
+    Spi *p = &m->spi[i];
+    bool cpol = p->cr1 & 2, cpha = p->cr1 & 1, lsb = p->cr1 & 0x80;
+    const int8_t *sck = m->spi_sck[i], *mosi = m->spi_mosi[i];
+    bool watched = false;
+    for (int k = 0; k < 2; k++) watched = watched || pin_watched(m, sck[k]) || pin_watched(m, mosi[k]);
+    int last = lsb ? (word >> (bits - 1)) & 1 : word & 1;
+    if (!watched || !m->listener) {
+        // (nothing follows them edge by edge: they end as the frame leaves them)
+        set_bus_pins(m, mosi, last, start);
+        return;
+    }
+    double period = (double)(end - start) / bits;
+    for (int k = 0; k < bits; k++) {
+        bool bit = (lsb ? word >> k : word >> (bits - 1 - k)) & 1;
+        uint64_t t0 = start + (uint64_t)(k * period), half = start + (uint64_t)((k + 0.5) * period);
+        if (!cpha) {
+            // the data before the leading edge, which samples it; the trailing edge back to idle
+            set_bus_pins(m, mosi, bit, t0);
+            set_bus_pins(m, sck, !cpol, half);
+            set_bus_pins(m, sck, cpol, start + (uint64_t)((k + 1) * period));
+        } else {
+            // the data on the leading edge; the trailing edge samples it
+            set_bus_pins(m, sck, !cpol, t0);
+            set_bus_pins(m, mosi, bit, t0);
+            set_bus_pins(m, sck, cpol, half);
+        }
+    }
+}
+
 /// SPI as a master: a frame starts shifting
 static void spi_start_frame(STM32 *m, int i) {
     Spi *p = &m->spi[i];
@@ -1171,7 +1229,9 @@ static void spi_start_frame(STM32 *m, int i) {
     int bits = spi_bits(m, p);
     double pclk = i == 0 ? m->pclk2 : m->pclk1;
     double divider = (double)(2 << ((p->cr1 >> 3) & 7));
-    p->done_at = now(m) + (uint64_t)ceil(cycles_for(m, bits * divider, pclk));
+    uint64_t start = now(m);
+    p->done_at = start + (uint64_t)ceil(cycles_for(m, bits * divider, pclk));
+    spi_drive_frame(m, i, p->shifting, bits, start, p->done_at);
     schedule(m, p->done_at);
 }
 
@@ -2664,8 +2724,18 @@ static uint32_t io_read(void *context, uint32_t address, uint32_t size) {
     return sub_read(value, address, size);
 }
 
+static void io_write_register(STM32 *m, uint32_t address, uint32_t value, uint32_t size);
+static void bus_pins_changed(STM32 *m);
+
 static void io_write(void *context, uint32_t address, uint32_t value, uint32_t size) {
     STM32 *m = context;
+    uint32_t generation = m->generation;
+    io_write_register(m, address, value, size);
+    // (a pin's function or a bus's settings changed: the pins the buses drive with it)
+    if (m->generation != generation) bus_pins_changed(m);
+}
+
+static void io_write_register(STM32 *m, uint32_t address, uint32_t value, uint32_t size) {
     if (address < FLASH_START + m->flash_bytes && (address >= FLASH_START || address < m->flash_bytes)) {
         if (m->model != STM32_F405) flash_f3_program(m, address, value, size);
         else flash_program(m, address, value, size);
@@ -3138,6 +3208,7 @@ static void boot(STM32 *m) {
     m->cycle_base = now(m);
     reset_all(m);
     m->generation++;
+    bus_pins_changed(m);
     if (flash_word(m, 0) == 0xFFFFFFFFu) {
         // no bootloader where the chip boots: the first vector table found after it
         for (uint32_t offset = 0x4000; offset < m->flash_bytes; offset += 0x4000) {
@@ -3241,6 +3312,7 @@ bool stm32_pin_level(const STM32 *m, int port, int pin) {
     int mode = stm32_pin_mode(m, port, pin);
     if (mode == STM32_OUTPUT) return (g->odr >> pin) & 1;
     if (mode == STM32_ALTERNATE) {
+        if ((m->bus_driven[port] >> pin) & 1) return (m->bus_level[port] >> pin) & 1;
         int timer, channel;
         if (timer_pin(m, port, pin, &timer, &channel)) {
             bool level;
@@ -3258,6 +3330,7 @@ bool stm32_pin_driven(const STM32 *m, int port, int pin) {
     int mode = stm32_pin_mode(m, port, pin);
     if (mode == STM32_OUTPUT) return !((g->otyper >> pin) & 1) || !((g->odr >> pin) & 1);
     if (mode == STM32_ALTERNATE) {
+        if ((m->bus_driven[port] >> pin) & 1) return true;
         int timer, channel;
         return timer_pin(m, port, pin, &timer, &channel);
     }
@@ -3380,6 +3453,31 @@ bool stm32_spi_config(const STM32 *m, int instance, STM32SPIConfig *config) {
 }
 
 uint32_t stm32_config_generation(const STM32 *m) { return m->generation; }
+
+// Which pins the SPI ports drive as masters (enabled, not in I2S mode), and SCK's idle level (CPOL); MOSI keeps the
+// last bit shifted out. Watched pins whose level changes are told.
+static void bus_pins_changed(STM32 *m) {
+    memset(m->bus_driven, 0, sizeof m->bus_driven);
+    memset(m->spi_sck, -1, sizeof m->spi_sck);
+    memset(m->spi_mosi, -1, sizeof m->spi_mosi);
+    for (int index = 0; index < stm32_pin_count(m->model); index++) {
+        int n;
+        STM32Signal signal = stm32_pin_signal(m, index, &n);
+        if ((signal != STM32_SIGNAL_SPI_SCK && signal != STM32_SIGNAL_SPI_MOSI) || n < 1 || n > 3) continue;
+        const Spi *p = &m->spi[n - 1];
+        if (!((p->cr1 >> 6) & 1) || !((p->cr1 >> 2) & 1)) continue;  // SPE, MSTR
+        int port = stm32_pin_port(m->model, index), pin = stm32_pin_number(m->model, index);
+        if (port < 0 || port >= PORTS) continue;
+        m->bus_driven[port] |= (uint16_t)(1u << pin);
+        int8_t *list = signal == STM32_SIGNAL_SPI_SCK ? m->spi_sck[n - 1] : m->spi_mosi[n - 1];
+        if (list[0] < 0) list[0] = (int8_t)index; else if (list[1] < 0) list[1] = (int8_t)index;
+        if (signal == STM32_SIGNAL_SPI_SCK) {
+            if (p->cr1 & 2) m->bus_level[port] |= (uint16_t)(1u << pin);
+            else m->bus_level[port] &= (uint16_t)~(1u << pin);
+        }
+    }
+    for (int port = 0; port < PORTS; port++) tell_pins(m, port);
+}
 
 // ---------------------------------------------------------------------------------------------------- the package
 

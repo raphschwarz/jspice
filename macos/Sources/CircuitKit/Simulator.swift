@@ -353,6 +353,10 @@ public final class Simulator {
     /// to their control port are answered
     private var codecLinks: [[(port: Int, codec: Int)]] = []
     private var codecBuses: [[(bus: Int, codec: Int)]] = []
+    /// For each STM32, the MCP4725s on its I²C buses, and the one its transfer under way addresses (part, bytes since
+    /// its address, the first data byte, a write command rather than fast mode); for the part, its code is `count`
+    private var i2cDevices: [[(bus: Int, part: Int)]] = []
+    private var i2cTransfer: [(part: Int, index: Int, data: UInt32, command: Bool)] = []
     private var codecExchanges: [STM32Microcontroller.FrameExchange?] = []
     private var codecTargets: [STM32Microcontroller.I2CTarget?] = []
     /// Each CV DAC's outputs' codes, then its input registers'
@@ -5947,6 +5951,8 @@ public final class Simulator {
     private func linkCodecs() {
         codecLinks = Array(repeating: [], count: kinds.count)
         codecBuses = Array(repeating: [], count: kinds.count)
+        i2cDevices = Array(repeating: [], count: kinds.count)
+        i2cTransfer = Array(repeating: (-1, 0, 0, false), count: kinds.count)
         codecExchanges = Array(repeating: nil, count: kinds.count)
         codecTargets = Array(repeating: nil, count: kinds.count)
         spiLinks = Array(repeating: [], count: kinds.count)
@@ -5970,7 +5976,8 @@ public final class Simulator {
         for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
             let chipNodes = topology.elementNodes[i]
             floatingChipPins[i] = chipNodes.map { $0 > 0 && $0 < uses.count && uses[$0] == 1 }
-            for j in kinds.indices where [.codec, .i2sDac, .cvDac, .spiAdc].contains(kinds[j]) && j < topology.elementNodes.count {
+            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .i2cDac]
+            for j in kinds.indices where wired.contains(kinds[j]) && j < topology.elementNodes.count {
                 let pins = topology.elementNodes[j].map { node in node > 0 ? chipNodes.firstIndex(of: node) ?? -1 : -1 }
                 if pins.contains(where: { $0 >= 0 }) { busWirings[i].append((j, pins)) }
             }
@@ -6002,16 +6009,58 @@ public final class Simulator {
                 }
             }
             codecExchanges[i] = { [unowned(unsafe) self] port, left, right in self.codecFrame(i, port, left, right) }
-            if busWirings[i].contains(where: { kinds[$0.part] == .codec }) {
+            if busWirings[i].contains(where: { kinds[$0.part] == .codec || kinds[$0.part] == .i2cDac }) {
                 codecTargets[i] = STM32Microcontroller.I2CTarget(
-                    start: { [unowned(unsafe) self] bus, address, _ in
-                        self.refreshBuses(i)
-                        // a WM8731 at 0x1A (CSB low) or 0x1B
-                        return (address == 0x1A || address == 0x1B) && self.codecBuses[i].contains { $0.bus == bus }
-                    },
-                    write: { _, _ in true }, read: { _, _ in 0xFF }, stop: { _ in })
+                    start: { [unowned(unsafe) self] bus, address, read in self.i2cStart(i, bus, address, read) },
+                    write: { [unowned(unsafe) self] _, byte in self.i2cWrite(i, byte) },
+                    read: { _, _ in 0xFF },
+                    stop: { [unowned(unsafe) self] _ in self.i2cTransfer[i].part = -1 })
             }
         }
+    }
+
+    /// An STM32 addressing a target on one of its I²C buses: a WM8731 at 0x1A (CSB low) or 0x1B, an MCP4725 at 0x60
+    /// or 0x61 (its A0 pin); whether one acknowledges
+    private func i2cStart(_ i: Int, _ bus: Int, _ address: UInt8, _ read: Bool) -> Bool {
+        refreshBuses(i)
+        i2cTransfer[i] = (-1, 0, 0, false)
+        if address == 0x1A || address == 0x1B { return codecBuses[i].contains { $0.bus == bus } }
+        for device in i2cDevices[i] where device.bus == bus {
+            let nodes = topology.elementNodes[device.part]
+            let a0 = nodes.count > 2 && voltage(nodes[2]) > constants[device.part].supply / 2
+            if address == 0x60 | (a0 ? 1 : 0) {
+                if !read { i2cTransfer[i].part = device.part }
+                return true
+            }
+        }
+        return false
+    }
+
+    /// A byte the chip writes to the target it addressed: an MCP4725 takes its code from them (fast mode: pairs of
+    /// bytes, PD1 PD0 and the code's top four bits, then its low eight; or a write command, then the code's top eight
+    /// bits, then its low four), as its bit-level model does
+    private func i2cWrite(_ i: Int, _ byte: UInt8) -> Bool {
+        var transfer = i2cTransfer[i]
+        guard transfer.part >= 0 else { return true }  // (a codec's register writes)
+        let value = UInt32(byte)
+        if transfer.index == 0 {
+            transfer.command = value >> 6 != 0
+            transfer.data = value
+        } else if !transfer.command {
+            if transfer.index % 2 == 0 {
+                transfer.data = value
+            } else {
+                logicStates[transfer.part].count = Int((transfer.data >> 4 & 0x3) << 12 | (transfer.data & 0xF) << 8 | value)
+            }
+        } else if transfer.index == 1 {
+            transfer.data = transfer.data << 8 | value
+        } else if transfer.index == 2 {
+            let command = transfer.data >> 8
+            logicStates[transfer.part].count = Int((command >> 1 & 0x3) << 12 | (transfer.data & 0xFF) << 4 | value >> 4)
+        }
+        transfer.index += 1
+        i2cTransfer[i] = transfer
+        return true
     }
 
     /// Which of an STM32's ports reach the parts wired to it, as its firmware has set it up now; why not, for those they
@@ -6020,6 +6069,7 @@ public final class Simulator {
         busGenerations[i] = stm32.configGeneration
         codecLinks[i] = []
         codecBuses[i] = []
+        i2cDevices[i] = []
         spiLinks[i] = []
         let check = STM32BusCheck(chip: stm32, pinNames: STM32Microcontroller.pinNames(stm32.model))
         var pending = false, settled = false
@@ -6032,6 +6082,7 @@ public final class Simulator {
                 switch link {
                 case .i2s(let port): codecLinks[i].append((port, j))
                 case .i2c(let bus): codecBuses[i].append((bus, j))
+                case .i2cDevice(let bus): i2cDevices[i].append((bus, j))
                 case .spi(let port, let sync): spiLinks[i].append((port, j, sync))
                 }
             }
