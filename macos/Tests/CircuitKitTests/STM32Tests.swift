@@ -595,6 +595,36 @@ final class STM32Tests: XCTestCase {
         XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
     }
 
+    /// A firmware loading a 74HC165 (SH/LD low then high on PA4) and reading it through SPI1 (mode 0, 8 bits, PA5
+    /// SCK, PA6 MISO) into the word at 0x20000000, over and over
+    static let shiftInFirmware: [UInt8] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x13, 0x48, 0x01, 0x68, 0x41, 0xF0, 0x01, 0x01, 0x01, 0x60,
+        0x12, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x80, 0x51, 0x01, 0x60, 0x10, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x29, 0x41,
+        0x01, 0x60, 0x0F, 0x49, 0x01, 0x62, 0x10, 0x21, 0x81, 0x61, 0x0E, 0x4A, 0x4F, 0xF4, 0x57, 0x71, 0x11, 0x60,
+        0x4F, 0xF0, 0x00, 0x54, 0x4F, 0xF4, 0x80, 0x11, 0x81, 0x61, 0x10, 0x21, 0x81, 0x61, 0x00, 0x21, 0xD1, 0x60,
+        0x93, 0x68, 0x13, 0xF0, 0x01, 0x0F, 0xFB, 0xD0, 0xD1, 0x68, 0x21, 0x60, 0xF1, 0xE7, 0x00, 0x00, 0x30, 0x38,
+        0x02, 0x40, 0x44, 0x38, 0x02, 0x40, 0x00, 0x00, 0x02, 0x40, 0x00, 0x00, 0x50, 0x55, 0x00, 0x30, 0x01, 0x40,
+    ]
+
+    /// The SPI port reads what a 74HC165 shifts out on its MISO, bit by bit: its eight inputs, D7 first
+    func testA74HC165OnTheChipsSPIPortIsRead() throws {
+        var chip = NetlistPart(kind: .stm32f405, name: "U1", connections: ["pa4": "load", "pa5": "clk", "pa6": "qh"])
+        chip.firmware = Data(Self.shiftInFirmware)
+        var connections = ["sh_ld": "load", "clk": "clk", "clk_inh": "GND", "ser": "GND", "qh": "qh"]
+        for k in 0...7 { connections["d\(k)"] = 0xA5 >> k & 1 == 1 ? "high" : "GND" }
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .shiftIn, name: "U2", params: ["supply": 3.3], connections: connections),
+            NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": 3.3], connections: ["plus": "high", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 48000)
+        while simulator.time < 0.01 && !simulator.isFailed { simulator.step() }
+        let index = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "U1" })
+        let stm32 = try XCTUnwrap(simulator.chip(index) as? STM32Microcontroller)
+        XCTAssertEqual(cm4_read(stm32_core(stm32.chip), 0x2000_0000, 4), 0xA5)
+        XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
+    }
+
     func testResetStartsOver() throws {
         let chip = STM32Microcontroller(firmware: try firmware())
         run(chip, for: 0.05)

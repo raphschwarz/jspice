@@ -124,6 +124,9 @@ typedef struct {
 bool stm32_spi_config(const STM32 *chip, int instance, STM32SPIConfig *config);
 /// A count that changes whenever the firmware changes a pin's function or a bus's settings
 uint32_t stm32_config_generation(const STM32 *chip);
+/// Whether an SPI port (1-3) as a master takes what it receives from its MISO pin's level just before each sampling
+/// edge (a part on the pins that shifts its output on SCK, a 74HC165), rather than from `spi_exchange`
+void stm32_spi_sample_miso(STM32 *chip, int port, bool on);
 
 /// A part of the chip the firmware reached that the model does not run (since reset; up to 32): a peripheral it leaves
 /// out (`name`; reads give 0, writes are lost), one whose registers it keeps without running it (`kept`), or an

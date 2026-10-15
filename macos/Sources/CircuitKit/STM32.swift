@@ -267,6 +267,10 @@ public final class STM32Microcontroller: Microcontroller {
     /// Changes whenever the firmware changes a pin's function or a bus's settings
     var configGeneration: UInt32 { stm32_config_generation(system.chip) }
 
+    /// Has an SPI port (1-3) take what it receives from its MISO pin, bit by bit, as a part shifting on its clock
+    /// (a 74HC165) drives it
+    func sampleMISO(port: Int, _ on: Bool) { stm32_spi_sample_miso(system.chip, Int32(port), on) }
+
     /// Changes whenever `notices` gains one (not as their counts grow)
     var noticeCount: Int {
         let chip = system.chip

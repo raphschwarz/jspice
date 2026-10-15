@@ -1023,7 +1023,7 @@ public final class Simulator {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter, .shiftRegister, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor: return true
+                 .binaryCounter, .shiftRegister, .shiftIn, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor: return true
             default: return false
             }
         }
@@ -3175,7 +3175,7 @@ public final class Simulator {
             case .schmittInverter:
                 // output drives towards the hidden supply or ground through its output resistance
                 stampConductance(matrix, m, nodes[1], 0, constants[i].outputConductance)
-            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .pll:
                 // each output likewise; the inputs draw nothing
                 for k in kind.logicOutputs where k < nodes.count {
                     stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance)
@@ -3386,7 +3386,7 @@ public final class Simulator {
                 guard nodes.count > 5, let processor = effectsProcessors[i] else { continue }
                 stampCurrent(r, 0, nodes[4], processor.left * constants[i].outputConductance)
                 stampCurrent(r, 0, nodes[5], processor.right * constants[i].outputConductance)
-            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
+            case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .pll:
                 let kind = kinds[i]
                 for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(constants[i].value))) where high {
                     stampCurrent(r, 0, nodes[k], constants[i].supply * constants[i].outputConductance)
@@ -3655,7 +3655,7 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac:
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac:
             c.supply = max(p("supply"), 0.1)
             c.upper = p("upper") * c.supply
             c.lower = min(p("lower"), p("upper")) * c.supply
@@ -5933,7 +5933,7 @@ public final class Simulator {
                     }
                 }
                 // the line a bus device drives back: an ADC's DOUT, an I²C target's SDA
-                let line = kinds[j] == .spiAdc ? 3 : 1
+                let line = kinds[j] == .spiAdc ? 3 : kinds[j] == .shiftIn ? 12 : 1
                 if bus, line < nodes.count, nodes[line] > 0 {
                     for (pin, node) in chipNodes.enumerated() where node == nodes[line] { busLines[j].append((i, pin)) }
                 }
@@ -5976,7 +5976,7 @@ public final class Simulator {
         for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
             let chipNodes = topology.elementNodes[i]
             floatingChipPins[i] = chipNodes.map { $0 > 0 && $0 < uses.count && uses[$0] == 1 }
-            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .i2cDac]
+            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .shiftIn, .i2cDac]
             for j in kinds.indices where wired.contains(kinds[j]) && j < topology.elementNodes.count {
                 let pins = topology.elementNodes[j].map { node in node > 0 ? chipNodes.firstIndex(of: node) ?? -1 : -1 }
                 if pins.contains(where: { $0 >= 0 }) { busWirings[i].append((j, pins)) }
@@ -6073,6 +6073,7 @@ public final class Simulator {
         spiLinks[i] = []
         let check = STM32BusCheck(chip: stm32, pinNames: STM32Microcontroller.pinNames(stm32.model))
         var pending = false, settled = false
+        var sampled = Set<Int>()
         for (j, pins) in busWirings[i] {
             let element = flat.elements[j]
             let (links, issue) = check.resolve(part: kinds[j], name: element.name.isEmpty ? kinds[j].displayName : element.name,
@@ -6083,6 +6084,7 @@ public final class Simulator {
                 case .i2s(let port): codecLinks[i].append((port, j))
                 case .i2c(let bus): codecBuses[i].append((bus, j))
                 case .i2cDevice(let bus): i2cDevices[i].append((bus, j))
+                case .misoFromPin(let port): sampled.insert(port)
                 case .spi(let port, let sync): spiLinks[i].append((port, j, sync))
                 }
             }
@@ -6096,6 +6098,7 @@ public final class Simulator {
             }
             if let issue, !busProblems.contains(issue) { pending = true }
         }
+        for port in 1...3 { stm32.sampleMISO(port: port, sampled.contains(port)) }
         busIssuesPending[i] = pending
         if settled { problems = topology.problems + behaviorProblems + chipProblems }
     }
@@ -6256,6 +6259,9 @@ public final class Simulator {
                     // DOUT while CS is low; let go, it stays as the circuit last had it
                     guard next.inputs & 1 == 0 else { continue }
                     volts = next.count != 0 ? chip.supply : 0
+                case .shiftIn:
+                    // QH, the last stage, always driven
+                    volts = next.shift & 0x80 != 0 ? chip.supply : 0
                 default:
                     // SDA held low while it acknowledges, else pulled up
                     volts = Logic.acknowledging(next) ? 0 : chip.supply
@@ -6684,7 +6690,7 @@ public final class Simulator {
         case .unbufferedInverter:
             let current = inverterCurrent(i, vin: v(nodes[0]), vout: v(nodes[1])).current
             return (current, [0, current])
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .pll:
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .pll:
             // the main current: what the outputs supply (for a gate, what its output puts out)
             let c = constants[i]
             let kind = element.kind

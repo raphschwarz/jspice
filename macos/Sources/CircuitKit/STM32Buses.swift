@@ -14,6 +14,8 @@ enum STM32BusLink: Equatable {
     case i2c(bus: Int)
     /// An I²C target (an MCP4725) answering on a bus
     case i2cDevice(bus: Int)
+    /// A part shifting its output onto an SPI port's MISO on SCK's edges (a 74HC165): the port reads the pin
+    case misoFromPin(port: Int)
 }
 
 struct STM32BusCheck {
@@ -167,6 +169,32 @@ struct STM32BusCheck {
                 return ([], "\(who): \(spi) sends LSB first; the \(model) takes its words MSB first.")
             }
             return ([], nil)
+        case .shiftIn:
+            // a 74HC165: SH/LD, CLK, CLK INH, SER, D0-D7, QH. Its loads and its clock inhibit are the firmware's to
+            // drive; its clock an SPI port's SCK, with QH on that port's MISO, read in mode 0 or 3 (QH read before each
+            // rising edge shifts the next stage onto it), or a GPIO output, the firmware reading QH itself
+            for (terminal, label) in [(0, "SH/LD"), (2, "CLK INH")] where pin(terminal) >= 0 {
+                let (load, _) = self.signal(pin(terminal))
+                if load != STM32_SIGNAL_OUTPUT {
+                    return ([], "\(who): its \(label) is on \(self.name(pin(terminal))), which the firmware has as \(describe(pin(terminal))), not as a pin it drives.")
+                }
+            }
+            let c = pin(1)
+            guard c >= 0 else { return ([], nil) }
+            let (clock, port) = self.signal(c)
+            if clock == STM32_SIGNAL_OUTPUT { return ([], nil) }
+            guard clock == STM32_SIGNAL_SPI_SCK else {
+                return ([], "\(who): its CLK is on \(self.name(c)), which the firmware has as \(describe(c)), neither an SPI port's SCK nor a GPIO output: nothing clocks it.")
+            }
+            let spi = "SPI\(port)"
+            guard pin(12) >= 0 else { return ([], nil) }
+            if let issue = expect(12, label: "QH", STM32_SIGNAL_SPI_MISO, port, as: "\(spi)'s MISO") { return ([], issue) }
+            let settings = config(port)
+            let mode = Int(settings.cpol) * 2 + Int(settings.cpha)
+            if mode == 1 || mode == 2 {
+                return ([], "\(who): \(spi) runs in SPI mode \(mode) (CPOL \(settings.cpol), CPHA \(settings.cpha)), reading MISO on SCK's falling edge, after the \(model) has shifted on the rising one: it would miss D7. Mode 0 or 3 reads QH before each shift.")
+            }
+            return ([.misoFromPin(port: port)], nil)
         case .i2cDac:
             // an MCP4725: SCL and SDA on one of the chip's I²C buses (or both GPIO pins, the firmware bit-banging them)
             guard pin(0) >= 0 else { return ([], nil) }

@@ -305,6 +305,13 @@ public enum Breadboard {
                            supplies: [(8, "GND", .ground), (16, "VCC", .volts(cmos))],
                            labels: [1: "Q1", 2: "Q2", 3: "Q3", 4: "Q4", 5: "Q5", 6: "Q6", 7: "Q7", 8: "GND", 9: "Q7S", 10: "SRCLR",
                                     11: "SRCLK", 12: "RCLK", 13: "OE", 14: "SER", 15: "Q0", 16: "VCC"])
+        case .shiftIn:
+            return Package(title: "74HC165", pins: 16,
+                           units: [["sh_ld": 1, "clk": 2, "d4": 3, "d5": 4, "d6": 5, "d7": 6, "qh_bar": 7, "qh": 9, "ser": 10, "d0": 11,
+                                    "d1": 12, "d2": 13, "d3": 14, "clk_inh": 15]],
+                           supplies: [(8, "GND", .ground), (16, "VCC", .volts(max(p("supply"), 2)))],
+                           labels: [1: "SH/LD", 2: "CLK", 3: "E", 4: "F", 5: "G", 6: "H", 7: "QH", 8: "GND", 9: "QH", 10: "SER",
+                                    11: "A", 12: "B", 13: "C", 14: "D", 15: "CLK INH", 16: "VCC"])
         case .decadeCounter:
             return Package(title: model ?? "CD4017", pins: 16,
                            units: [["clock": 14, "inhibit": 13, "reset": 15, "q0": 3, "q1": 2, "q2": 4, "q3": 7, "q4": 10, "q5": 1,

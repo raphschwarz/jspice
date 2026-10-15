@@ -181,6 +181,7 @@ typedef struct {
     uint32_t tx, rx;            // the data register's two sides
     bool tx_full, rx_full;      // (TXE and RXNE, inverted and as is)
     uint32_t shifting;          // SPI: the frame being shifted
+    uint32_t sampled;           // SPI: what MISO read at each of its sampling edges, when it is read from the pin
     uint64_t done_at;           // SPI: when it is shifted; I2S: the next slot
     double slot_time;           // I2S: the next slot's cycle, exactly
     int slot;                   // I2S: the slot in the frame
@@ -261,7 +262,8 @@ struct STM32 {
     // the SPI ports' pins, as masters drive them: the pins they drive (SCK at its idle level, MOSI at the last bit
     // shifted out) and their levels; for each port, the pins (package indices, -1 none) carrying SCK and MOSI
     uint16_t bus_driven[PORTS], bus_level[PORTS];
-    int8_t spi_sck[3][2], spi_mosi[3][2];
+    int8_t spi_sck[3][2], spi_mosi[3][2], spi_miso[3][2];
+    bool spi_sample[3];             // the port takes what it receives from MISO's level, bit by bit
     uint8_t block_status[512];      // what each 1 KB block from 0x40000000 is (the peripherals' map)
     uint8_t block_entry[512];
     STM32Unmodelled unmodelled[32]; // the blocks the firmware reached that the model does not run
@@ -1198,9 +1200,16 @@ static void spi_drive_frame(STM32 *m, int i, uint32_t word, int bits, uint64_t s
     bool watched = false;
     for (int k = 0; k < 2; k++) watched = watched || pin_watched(m, sck[k]) || pin_watched(m, mosi[k]);
     int last = lsb ? (word >> (bits - 1)) & 1 : word & 1;
+    // MISO as the port reads it, just before each sampling edge (a part shifting on that edge has not moved yet)
+    int miso = m->spi_miso[i][0];
+    bool sampling = m->spi_sample[i] && miso >= 0;
+    int miso_port = sampling ? stm32_pin_port(m->model, miso) : -1, miso_pin = sampling ? stm32_pin_number(m->model, miso) : 0;
+    if (miso_port < 0 || miso_port >= PORTS) sampling = false;
+    uint32_t sampled = 0;
     if (!watched || !m->listener) {
-        // (nothing follows them edge by edge: they end as the frame leaves them)
+        // (nothing follows them edge by edge: they end as the frame leaves them, MISO read as it is)
         set_bus_pins(m, mosi, last, start);
+        if (sampling) p->sampled = (gpio_idr(m, miso_port) >> miso_pin) & 1 ? 0xFFFFu : 0;
         return;
     }
     double period = (double)(end - start) / bits;
@@ -1210,15 +1219,18 @@ static void spi_drive_frame(STM32 *m, int i, uint32_t word, int bits, uint64_t s
         if (!cpha) {
             // the data before the leading edge, which samples it; the trailing edge back to idle
             set_bus_pins(m, mosi, bit, t0);
+            if (sampling) sampled |= (uint32_t)((gpio_idr(m, miso_port) >> miso_pin) & 1) << (lsb ? k : bits - 1 - k);
             set_bus_pins(m, sck, !cpol, half);
             set_bus_pins(m, sck, cpol, start + (uint64_t)((k + 1) * period));
         } else {
             // the data on the leading edge; the trailing edge samples it
             set_bus_pins(m, sck, !cpol, t0);
             set_bus_pins(m, mosi, bit, t0);
+            if (sampling) sampled |= (uint32_t)((gpio_idr(m, miso_port) >> miso_pin) & 1) << (lsb ? k : bits - 1 - k);
             set_bus_pins(m, sck, cpol, half);
         }
     }
+    if (sampling) p->sampled = sampled;
 }
 
 /// SPI as a master: a frame starts shifting
@@ -1240,6 +1252,7 @@ static void spi_frame_done(STM32 *m, int i) {
     int bits = spi_bits(m, p);
     uint32_t in = m->devices.spi_exchange ? m->devices.spi_exchange(m->devices.context, i + 1, p->shifting, bits)
                                           : 0xFFFF;
+    if (m->spi_sample[i] && m->spi_miso[i][0] >= 0) in = p->sampled;
     in &= bits == 16 ? 0xFFFFu : 0xFFu;
     trace(m, STM32_BUS_SPI, i + 1, p->shifting, in, 0, 0, bits);
     p->done_at = NEVER;
@@ -3454,20 +3467,31 @@ bool stm32_spi_config(const STM32 *m, int instance, STM32SPIConfig *config) {
 
 uint32_t stm32_config_generation(const STM32 *m) { return m->generation; }
 
+void stm32_spi_sample_miso(STM32 *m, int port, bool on) {
+    if (port >= 1 && port <= 3) m->spi_sample[port - 1] = on;
+}
+
 // Which pins the SPI ports drive as masters (enabled, not in I2S mode), and SCK's idle level (CPOL); MOSI keeps the
 // last bit shifted out. Watched pins whose level changes are told.
 static void bus_pins_changed(STM32 *m) {
     memset(m->bus_driven, 0, sizeof m->bus_driven);
     memset(m->spi_sck, -1, sizeof m->spi_sck);
     memset(m->spi_mosi, -1, sizeof m->spi_mosi);
+    memset(m->spi_miso, -1, sizeof m->spi_miso);
     for (int index = 0; index < stm32_pin_count(m->model); index++) {
         int n;
         STM32Signal signal = stm32_pin_signal(m, index, &n);
-        if ((signal != STM32_SIGNAL_SPI_SCK && signal != STM32_SIGNAL_SPI_MOSI) || n < 1 || n > 3) continue;
+        if ((signal != STM32_SIGNAL_SPI_SCK && signal != STM32_SIGNAL_SPI_MOSI && signal != STM32_SIGNAL_SPI_MISO) || n < 1 || n > 3) continue;
         const Spi *p = &m->spi[n - 1];
         if (!((p->cr1 >> 6) & 1) || !((p->cr1 >> 2) & 1)) continue;  // SPE, MSTR
         int port = stm32_pin_port(m->model, index), pin = stm32_pin_number(m->model, index);
         if (port < 0 || port >= PORTS) continue;
+        if (signal == STM32_SIGNAL_SPI_MISO) {
+            // (an input: read, not driven)
+            int8_t *in = m->spi_miso[n - 1];
+            if (in[0] < 0) in[0] = (int8_t)index; else if (in[1] < 0) in[1] = (int8_t)index;
+            continue;
+        }
         m->bus_driven[port] |= (uint16_t)(1u << pin);
         int8_t *list = signal == STM32_SIGNAL_SPI_SCK ? m->spi_sck[n - 1] : m->spi_mosi[n - 1];
         if (list[0] < 0) list[0] = (int8_t)index; else if (list[1] < 0) list[1] = (int8_t)index;

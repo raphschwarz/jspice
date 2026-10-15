@@ -639,6 +639,10 @@ struct LiveReadings: View {
                     reading("Phase comparator 2", pump > 0 ? "Pumping up" : pump < 0 ? "Pumping down" : "Off (locked)")
                 } else if kind == .decadeCounter || kind == .binaryCounter {
                     reading("Count", "\(simulator.logicCount(index))")
+                } else if kind == .shiftIn {
+                    // the stages, QH (D7 as loaded) on the left
+                    let bits = String(simulator.logicCount(index), radix: 2)
+                    reading("Stages", String(repeating: "0", count: max(0, 8 - bits.count)) + bits)
                 } else if kind == .shiftRegister {
                     // the outputs, first stage on the right
                     let bits = String(simulator.logicCount(index), radix: 2)

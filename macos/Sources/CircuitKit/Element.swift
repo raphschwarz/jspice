@@ -52,6 +52,8 @@ public enum ElementKind: String, Codable, CaseIterable, Sendable, Identifiable {
     case vco, vcf, envelope, vca, sampleHold, divider
     case timer555, schmittInverter, unbufferedInverter, analogSwitch
     case logicGate, flipFlop, decadeCounter, binaryCounter, analogMux, analogSelector, pll, dac, shiftRegister
+    /// A 74HC165: eight inputs loaded in parallel, shifted out serially (buttons and switches read over SPI)
+    case shiftIn
     case atmega328p, atmega2560, attiny85, rp2040
     /// The STM32F405, the chip of Mutable Instruments' Rings, Clouds, Elements, Warps and Marbles (firmware loaded)
     case stm32f405
@@ -240,6 +242,7 @@ extension ElementKind {
         case .decadeCounter: return "Decade Counter"
         case .binaryCounter: return "Binary Counter"
         case .shiftRegister: return "Shift Register"
+        case .shiftIn: return "Shift Register (Parallel In)"
         case .analogMux: return "Analog Multiplexer"
         case .analogSelector: return "Analog Selector"
         case .pll: return "Phase-Locked Loop"
@@ -316,7 +319,7 @@ extension ElementKind {
              .atmega328p, .atmega2560,
              .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return "U"
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return "U"
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return "U"
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return "U"
         case .vactrol: return "VTL"
         case .memristor: return "MR"
         case .behavioralSource: return "B"
@@ -352,7 +355,7 @@ extension ElementKind {
         case .vco, .vcf, .envelope, .vca, .sampleHold, .divider: return .synth
         case .delayLine, .digitalDelay, .vactrol: return .effects
         case .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch: return .timersAndLogic
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return .timersAndLogic
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return .timersAndLogic
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return .microcontrollers
         case .memristor: return .memristors
         case .behavioralSource: return .sources
@@ -401,7 +404,7 @@ extension ElementKind {
              .triode, .pentode, .transformer:
             return nil
         case .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return nil
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return nil
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return nil
         case .memristor: return "m"
         case .behavioralSource: return nil
         case .probe: return "o"
@@ -499,7 +502,7 @@ extension ElementKind {
         case .ota, .vactrol, .transformer: return 4
         case .timer555: return 5
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return board?.length
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.length
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.length
         default: return audioChipPackage?.length
         }
     }
@@ -539,7 +542,7 @@ extension ElementKind {
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return board?.terminalNames ?? []
         case .schmittInverter, .unbufferedInverter: return ["in", "out"]
         case .logicGate: return ["in1", "in2", "out"]
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.terminalNames ?? []
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return chipPackage?.terminalNames ?? []
         case .electretMic: return ["out", "gnd"]
         case .pickup: return ["hot", "gnd"]
         case .vuMeter: return ["plus", "minus"]
@@ -602,7 +605,7 @@ extension ElementKind {
         case .nmos, .pmos, .npn, .pnp, .njfet, .pjfet, .triode, .pentode: return GridPoint(2, 0)
         case .timer555: return GridPoint(0, 5)
         case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103: return GridPoint(0, board?.length ?? 13)
-        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return GridPoint(0, chipPackage?.length ?? 3)
+        case .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return GridPoint(0, chipPackage?.length ?? 3)
         default: return audioChipPackage.map { GridPoint(0, $0.length) } ?? GridPoint(4, 0)
         }
     }
@@ -793,6 +796,13 @@ extension ElementKind {
             return [ParamSpec.choice("function", "Function", Logic.gateFunctions)] + Self.logicParams(upper: 0.59, lower: 0.39)
         case .flipFlop, .decadeCounter, .binaryCounter:
             return Self.logicParams(upper: 0.52, lower: 0.48)
+        case .shiftIn:
+            return [
+                ParamSpec("supply", "Supply", unit: "V", default: 3.3, range: 2...6, log: false),
+                ParamSpec("upper", "Input rising threshold", unit: "× supply", default: 0.7, range: 0.3...0.9, log: false),
+                ParamSpec("lower", "Input falling threshold", unit: "× supply", default: 0.3, range: 0.1...0.7, log: false),
+                ParamSpec("outputResistance", "Output resistance", unit: "Ω", default: 50, range: 1...10_000),
+            ]
         case .shiftRegister:
             return [.choice("type", "Chip", ["CD4015 (one half): four stages, reset high",
                                              "74HC595: eight stages and a latch, clear low, outputs on while OE is low"])]
@@ -1132,7 +1142,7 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
             return [a - perpendicular, a + perpendicular, b, biasInput]
         case .timer555:
             return timerPins
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
+        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac,
              .codec, .cvDac, .block:
             return packagePins
         default:
@@ -1493,6 +1503,11 @@ extension ElementKind {
                           values: ["upper": 0.52, "lower": 0.48, "outputResistance": 400]),
                 PartModel(name: "74HC4017", summary: "The fast decade counter, for 2 to 6 V supplies",
                           values: ["upper": 0.52, "lower": 0.48, "outputResistance": 50]),
+            ]
+        case .shiftIn:
+            return [
+                PartModel(name: "74HC165", summary: "Eight-stage parallel-in shift register: SH/LD low loads D0–D7, each rising CLK (CLK INH low) shifts them out on QH, D7 first, SER coming in behind (buttons and switches read on an SPI port's MISO)",
+                          values: ["supply": 3.3, "upper": 0.7, "lower": 0.3, "outputResistance": 50], aliases: ["SN74HC165", "CD74HC165"]),
             ]
         case .shiftRegister:
             return [

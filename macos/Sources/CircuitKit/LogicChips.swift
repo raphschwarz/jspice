@@ -44,6 +44,10 @@ extension ElementKind {
             return ChipPackage(name: "CD4040", terminalNames: ["clock", "reset"] + (1...12).map { "q\($0)" },
                                pinLabels: ["CLK", "RST"] + (1...12).map { "Q\($0)" },
                                pinPlaces: [second(0), second(1)] + (0...11).map(first), length: 11)
+        case .shiftIn:
+            return ChipPackage(name: "74HC165", terminalNames: ["sh_ld", "clk", "clk_inh", "ser"] + (0...7).map { "d\($0)" } + ["qh", "qh_bar"],
+                               pinLabels: ["SH/LD", "CLK", "CLK INH", "SER"] + (0...7).map { "D\($0)" } + ["QH", "QH"],
+                               pinPlaces: (0...11).map(second) + (0...1).map(first), length: 11)
         case .shiftRegister:
             return ChipPackage(name: "74HC595", terminalNames: ["ser", "srclk", "rclk", "oe", "srclr"] + (0...7).map { "q\($0)" } + ["q7s"],
                                pinLabels: ["SER", "SRCLK", "RCLK", "OE", "SRCLR"] + (0...7).map { "Q\($0)" } + ["Q7S"],
@@ -100,7 +104,7 @@ extension ElementKind {
     /// state changes when an input crosses one, and their outputs drive towards the hidden supply or ground.
     public var isLogic: Bool {
         switch self {
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .analogMux, .analogSelector, .pll, .dac,
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac,
              .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return true
         default: return false
         }
@@ -108,7 +112,7 @@ extension ElementKind {
 
     /// Converters a microcontroller talks to that answer within a transfer (an ADC's DOUT, an I²C target's
     /// acknowledge): they follow the chip's pins as it runs, and what they drive back reaches it at once
-    public var isBusDevice: Bool { self == .spiAdc || self == .i2cDac }
+    public var isBusDevice: Bool { self == .spiAdc || self == .i2cDac || self == .shiftIn }
 
     /// The terminals a logic part reads as logic inputs, as indices into its terminals
     var logicInputs: [Int] {
@@ -118,6 +122,7 @@ extension ElementKind {
         case .decadeCounter: return [0, 1, 2]
         case .binaryCounter: return [0, 1]
         case .shiftRegister: return [0, 1, 2, 3, 4]
+        case .shiftIn: return Array(0...11)
         case .analogMux: return [8, 9, 10, 11]
         case .analogSelector: return [2, 3]
         case .pll: return [0, 1, 3]
@@ -135,6 +140,7 @@ extension ElementKind {
         case .decadeCounter: return Array(3...13)
         case .binaryCounter: return Array(2...13)
         case .shiftRegister: return Array(5...13)
+        case .shiftIn: return [12, 13]
         case .pll: return [4, 5]
         default: return []
         }
@@ -219,6 +225,17 @@ enum Logic {
                 if rose(2) { state.latch = old.shift }
                 state.count = Int(state.latch)
             }
+        case .shiftIn:
+            // SH/LD, CLK, CLK INH, SER, D0-D7: SH/LD low loads D0-D7 into the stages (D7 the last, on QH) and holds
+            // them there; with it high, each rising edge of CLK while CLK INH is low (or of CLK INH while CLK is low)
+            // moves them along one, SER coming into the first
+            let parallel = (0...7).reduce(UInt32(0)) { $0 | (level(4 + $1) ? 1 << UInt32($1) : 0) }
+            if !level(0) {
+                state.shift = parallel
+            } else if (rose(1) && !level(2)) || (fell(2) && level(1)) {
+                state.shift = (old.shift << 1 | (level(3) ? 1 : 0)) & 0xFF
+            }
+            state.count = Int(state.shift)
         case .binaryCounter:
             // CLK, RST: counts on the clock's falling edge; reset holds it at 0
             if level(1) {
@@ -352,6 +369,9 @@ enum Logic {
             // low), and Q7S, the last stage, always
             let enabled = !level(3)
             return (0..<8).map { enabled && state.latch & (UInt32(1) << UInt32($0)) != 0 } + [state.shift & 0x80 != 0]
+        case .shiftIn:
+            // QH, the last stage, and its complement
+            return [state.shift & 0x80 != 0, state.shift & 0x80 == 0]
         case .pll:
             // the VCO (stopped low while inhibited), and phase comparator 1: the XOR of the signal and comparator inputs
             return [!level(2) && state.phase < 0.5, level(0) != level(1)]
