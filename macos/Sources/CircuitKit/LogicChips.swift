@@ -44,6 +44,10 @@ extension ElementKind {
             return ChipPackage(name: "CD4040", terminalNames: ["clock", "reset"] + (1...12).map { "q\($0)" },
                                pinLabels: ["CLK", "RST"] + (1...12).map { "Q\($0)" },
                                pinPlaces: [second(0), second(1)] + (0...11).map(first), length: 11)
+        case .ledDriver:
+            return ChipPackage(name: "PCA9685", terminalNames: ["scl", "sda", "oe"] + (0...5).map { "a\($0)" } + (0...15).map { "led\($0)" },
+                               pinLabels: ["SCL", "SDA", "OE"] + (0...5).map { "A\($0)" } + (0...15).map { "LED\($0)" },
+                               pinPlaces: (0...8).map(second) + (0...15).map(first), length: 15)
         case .shiftIn:
             return ChipPackage(name: "74HC165", terminalNames: ["sh_ld", "clk", "clk_inh", "ser"] + (0...7).map { "d\($0)" } + ["qh", "qh_bar"],
                                pinLabels: ["SH/LD", "CLK", "CLK INH", "SER"] + (0...7).map { "D\($0)" } + ["QH", "QH"],
@@ -104,7 +108,7 @@ extension ElementKind {
     /// state changes when an input crosses one, and their outputs drive towards the hidden supply or ground.
     public var isLogic: Bool {
         switch self {
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac,
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac,
              .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac: return true
         default: return false
         }
@@ -112,7 +116,7 @@ extension ElementKind {
 
     /// Converters a microcontroller talks to that answer within a transfer (an ADC's DOUT, an I²C target's
     /// acknowledge): they follow the chip's pins as it runs, and what they drive back reaches it at once
-    public var isBusDevice: Bool { self == .spiAdc || self == .i2cDac || self == .shiftIn }
+    public var isBusDevice: Bool { self == .spiAdc || self == .i2cDac || self == .shiftIn || self == .ledDriver }
 
     /// The terminals a logic part reads as logic inputs, as indices into its terminals
     var logicInputs: [Int] {
@@ -123,6 +127,7 @@ extension ElementKind {
         case .binaryCounter: return [0, 1]
         case .shiftRegister: return [0, 1, 2, 3, 4]
         case .shiftIn: return Array(0...11)
+        case .ledDriver: return Array(0...8)
         case .analogMux: return [8, 9, 10, 11]
         case .analogSelector: return [2, 3]
         case .pll: return [0, 1, 3]
@@ -308,6 +313,9 @@ enum Logic {
             }
         case .i2cDac:
             state = i2cTarget(old, inputs: inputs)
+        case .ledDriver:
+            // SCL, SDA, OE, A0-A5: a PCA9685 at 0x40 + A5-A0 (or 0x70 while its all-call is on)
+            state = i2cWriter(old, inputs: inputs, address: 0x40 | (inputs >> 3 & 0x3F))
         case .i2sDac:
             // BCK, DIN, LRCK (I²S): DIN is read on each rising edge of BCK, MSB first, a word for each half of LRCK's
             // cycle (low the left channel, high the right), starting one BCK after LRCK changes: so the first bit read
@@ -393,6 +401,101 @@ enum Logic {
     /// (bits 0–7), whether it was addressed (8), whether it is holding SDA low (9), whether a START began it (10), the
     /// write-DAC command rather than fast mode (11), and the data bytes so far (16–31)
     static let i2cAddressed: UInt32 = 1 << 8, i2cAcknowledging: UInt32 = 1 << 9, i2cActive: UInt32 = 1 << 10, i2cWriteCommand: UInt32 = 1 << 11
+
+    /// For a register-file I²C target (a PCA9685): its all-call address (0x70) answered (its MODE1's ALLCALL)
+    static let i2cAllCall: UInt32 = 1 << 12
+
+    /// An I²C target that takes whatever it is written, byte by byte, at `address` (or 0x70 with `i2cAllCall` set in
+    /// `latch`): as the MCP4725's model reads the bus, but each data byte is handed on rather than decoded here, in
+    /// `count` (its number after the address in bits 8 and up, the byte below) with `phase` 1, for the circuit to put
+    /// into the chip's registers. Reads are not answered (the address with its read bit is not acknowledged).
+    private static func i2cWriter(_ old: LogicState, inputs: UInt32, address: UInt32) -> LogicState {
+        var state = old
+        state.inputs = inputs
+        let holding = old.latch & i2cAcknowledging != 0
+        let allCall = old.latch & i2cAllCall
+        let sclWas = old.inputs & 1 != 0, scl = inputs & 1 != 0
+        let sdaWas = old.inputs & 2 != 0 && !holding, sda = inputs & 2 != 0 && !holding
+        if sclWas && scl && sdaWas != sda {
+            if !sda {
+                state.latch = i2cActive | allCall
+                state.bits = 0
+                state.shift = 0
+            } else {
+                state.latch &= ~(i2cActive | i2cAcknowledging)
+            }
+            return state
+        }
+        guard old.latch & i2cActive != 0 else { return state }
+        if !sclWas && scl && state.bits < 8 {
+            state.shift = state.shift << 1 | (sda ? 1 : 0)
+            state.bits += 1
+        } else if sclWas && !scl {
+            if state.bits == 8 {
+                let byte = state.shift & 0xFF
+                let index = state.latch & 0xFF
+                if index == 0 {
+                    let to = byte >> 1
+                    guard (to == address || (allCall != 0 && to == 0x70)) && byte & 1 == 0 else {
+                        state.latch = allCall
+                        return state
+                    }
+                } else {
+                    state.count = Int(index - 1) << 8 | Int(byte)
+                    state.phase = 1
+                }
+                state.latch = state.latch & ~UInt32(0xFF) | (index + 1) & 0xFF | i2cAcknowledging
+                state.bits = 9
+            } else if state.bits == 9 {
+                state.latch &= ~i2cAcknowledging
+                state.bits = 0
+                state.shift = 0
+            }
+        }
+        return state
+    }
+
+    /// A PCA9685's sixteen outputs at `time` from its registers: each on from its ON count to its OFF count of the 4096
+    /// in a period of 4096 × (PRE_SCALE + 1) / 25 MHz (or fully on, or fully off, OFF winning), inverted by MODE2's
+    /// INVRT; all off while it sleeps (MODE1's SLEEP) or OE is high
+    static func pwmOutputs(_ registers: [UInt8], time: Double, enabled: Bool) -> [Bool] {
+        guard registers.count >= 256 else { return Array(repeating: false, count: 16) }
+        let invert = registers[1] & 0x10 != 0
+        guard enabled, registers[0] & 0x10 == 0 else { return Array(repeating: false, count: 16) }
+        let period = 4096 * (Double(max(registers[0xFE], 3)) + 1) / 25e6
+        let count = Int((time / period - (time / period).rounded(.down)) * 4096)
+        return (0..<16).map { k in
+            let base = 6 + 4 * k
+            let on = Int(registers[base]) | Int(registers[base + 1] & 0x0F) << 8
+            let off = Int(registers[base + 2]) | Int(registers[base + 3] & 0x0F) << 8
+            var high: Bool
+            if registers[base + 3] & 0x10 != 0 {
+                high = false
+            } else if registers[base + 1] & 0x10 != 0 {
+                high = true
+            } else if on == off {
+                high = false
+            } else if on < off {
+                high = count >= on && count < off
+            } else {
+                high = count >= on || count < off
+            }
+            if invert { high.toggle() }
+            return high
+        }
+    }
+
+    /// A PCA9685's registers from reset: MODE1 asleep with all-call on, MODE2's totem-pole outputs, every channel fully
+    /// off, PRE_SCALE 30 (200 Hz)
+    static func pwmReset() -> [UInt8] {
+        var registers = [UInt8](repeating: 0, count: 256)
+        registers[0] = 0x11
+        registers[1] = 0x04
+        for k in 0..<16 { registers[6 + 4 * k + 3] = 0x10 }
+        registers[0xFD] = 0x10
+        registers[0xFE] = 0x1E
+        return registers
+    }
 
     /// Whether an I²C target holds SDA low
     static func acknowledging(_ state: LogicState) -> Bool { state.latch & i2cAcknowledging != 0 }

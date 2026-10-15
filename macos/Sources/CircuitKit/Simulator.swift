@@ -361,6 +361,9 @@ public final class Simulator {
     private var codecTargets: [STM32Microcontroller.I2CTarget?] = []
     /// Each CV DAC's outputs' codes, then its input registers'
     private var cvDacCodes: [[UInt16]] = []
+    /// Each PCA9685's registers, and the one its next byte written goes to
+    private var pwmRegisters: [[UInt8]] = []
+    private var pwmPointer: [Int] = []
     /// For each STM32, the CV DACs on its SPI ports (their SCLK on the port's SCK pin) and the chip's pin wired to each
     /// one's SYNC (-1: none); the bits each DAC has taken since its SYNC fell (`bits` past its word: the word taken)
     private var spiLinks: [[(port: Int, dac: Int, sync: Int)]] = []
@@ -995,6 +998,8 @@ public final class Simulator {
         digitalState = Array(repeating: false, count: count)
         logicStates = Array(repeating: LogicState(), count: count)
         cvDacCodes = Array(repeating: [UInt16](repeating: 0, count: 16), count: count)
+        pwmRegisters = Array(repeating: [], count: count)
+        pwmPointer = Array(repeating: 0, count: count)
         moduleStates = Array(repeating: ModuleState(), count: count)
         noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
@@ -1023,7 +1028,7 @@ public final class Simulator {
             case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .capacitor, .inductor, .timer555,
                  .schmittInverter, .keyboardPitch, .keyboardGate, .delayLine, .digitalDelay, .comparator, .vco, .vcf, .envelope, .vca,
                  .sampleHold, .divider, .levelDetector, .springReverb, .agcPreamp, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .logicGate, .flipFlop, .decadeCounter,
-                 .binaryCounter, .shiftRegister, .shiftIn, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor: return true
+                 .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor: return true
             default: return false
             }
         }
@@ -1043,7 +1048,7 @@ public final class Simulator {
         effectsProcessors = [:]
         digitalIndices = indices { $0.isDigital }
         chipIndices = indices { $0.isMicrocontroller }
-        switchingLogic = indices { [.i2cDac, .spiAdc, .analogMux, .analogSelector].contains($0) }
+        switchingLogic = indices { [.i2cDac, .ledDriver, .spiAdc, .analogMux, .analogSelector].contains($0) }
         chips = [:]
         chipPinStates = [:]
         pinKey = 0
@@ -1198,6 +1203,12 @@ public final class Simulator {
         digitalState[i] = element.kind == .schmittInverter
         logicStates[i] = LogicState()
         if i < cvDacCodes.count { cvDacCodes[i] = [UInt16](repeating: 0, count: 16) }
+        if i < pwmRegisters.count {
+            pwmRegisters[i] = element.kind == .ledDriver ? Logic.pwmReset() : []
+            pwmPointer[i] = 0
+            // (its all-call address answered from reset)
+            if element.kind == .ledDriver { logicStates[i].latch = Logic.i2cAllCall }
+        }
         // a keyboard's pitch starts at the present note rather than gliding up from 0 V
         if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
         // each noise source has its own sequence, the same every run
@@ -2956,7 +2967,7 @@ public final class Simulator {
         }
         for i in switchingLogic where i < logicStates.count {
             switch kinds[i] {
-            case .i2cDac: switchedScratch.append(Logic.acknowledging(logicStates[i]) ? 1 : 0)
+            case .i2cDac, .ledDriver: switchedScratch.append(Logic.acknowledging(logicStates[i]) ? 1 : 0)
             case .spiAdc: switchedScratch.append(Int8(logicStates[i].inputs & 1))
             default: switchedScratch.append(Int8(Logic.channel(kinds[i], logicStates[i]) ?? -1))
             }
@@ -3198,6 +3209,12 @@ public final class Simulator {
                 if Logic.acknowledging(logicStates[i]), nodes.count > 1 {
                     stampConductance(matrix, m, nodes[1], 0, constants[i].outputConductance)
                 }
+            case .ledDriver:
+                // its sixteen outputs, each driven high or low through its output resistance; SDA as the MCP4725's
+                for k in 9..<25 where k < nodes.count { stampConductance(matrix, m, nodes[k], 0, constants[i].outputConductance) }
+                if Logic.acknowledging(logicStates[i]), nodes.count > 1 {
+                    stampConductance(matrix, m, nodes[1], 0, constants[i].outputConductance)
+                }
             case .spiAdc:
                 // DOUT driven while CS is low, and let go otherwise
                 if logicStates[i].inputs & 1 == 0, nodes.count > 3 {
@@ -3379,6 +3396,11 @@ public final class Simulator {
             case .i2cDac:
                 guard nodes.count > 3 else { continue }
                 stampCurrent(r, 0, nodes[3], Logic.i2cDacOutput(logicStates[i].count, supply: constants[i].supply) * constants[i].outputConductance)
+            case .ledDriver:
+                let outputs = pwmOutputs(i)
+                for (k, high) in outputs.enumerated() where high && 9 + k < nodes.count {
+                    stampCurrent(r, 0, nodes[9 + k], constants[i].supply * constants[i].outputConductance)
+                }
             case .spiAdc:
                 guard nodes.count > 3, logicStates[i].inputs & 1 == 0, logicStates[i].count != 0 else { continue }
                 stampCurrent(r, 0, nodes[3], constants[i].supply * constants[i].outputConductance)
@@ -3655,7 +3677,7 @@ public final class Simulator {
             c.upper = p("upper") * c.supply
             c.lower = p("lower") * c.supply
             c.outputConductance = 1 / max(p("outputResistance"), 0.1)
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac:
+        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledDriver, .analogMux, .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac:
             c.supply = max(p("supply"), 0.1)
             c.upper = p("upper") * c.supply
             c.lower = min(p("lower"), p("upper")) * c.supply
@@ -5504,11 +5526,52 @@ public final class Simulator {
             if (next.inputs ^ old.inputs) & 1 != 0 { matrixSwitched() }
         case .i2cDac:
             if Logic.acknowledging(next) != Logic.acknowledging(old) { matrixSwitched() }
+        case .ledDriver:
+            if Logic.acknowledging(next) != Logic.acknowledging(old) { matrixSwitched() }
+            // a byte written: into its registers
+            if next.phase >= 0.5 {
+                next.phase = 0
+                logicStates[i] = next
+                pwmByte(i, index: next.count >> 8, byte: UInt8(next.count & 0xFF))
+                next = logicStates[i]
+            }
         default:
             break
         }
         logicStates[i] = next
         return next
+    }
+
+    /// A byte written to a PCA9685 after its address: the first sets the register written next, the rest are written
+    /// there, one register on for each with MODE1's AI set. PRE_SCALE takes a write only while it sleeps; ALL_LED's
+    /// registers write every channel's
+    private func pwmByte(_ i: Int, index: Int, byte: UInt8) {
+        guard i < pwmRegisters.count, pwmRegisters[i].count == 256 else { return }
+        if index == 0 {
+            pwmPointer[i] = Int(byte)
+            return
+        }
+        let register = pwmPointer[i]
+        switch register {
+        case 0xFE:
+            if pwmRegisters[i][0] & 0x10 != 0 { pwmRegisters[i][0xFE] = byte }
+        case 0xFA...0xFD:
+            pwmRegisters[i][register] = byte
+            for k in 0..<16 { pwmRegisters[i][6 + 4 * k + register - 0xFA] = byte }
+        case 0:
+            pwmRegisters[i][0] = byte
+            // ALLCALL: whether it answers at 0x70
+            if byte & 1 != 0 { logicStates[i].latch |= Logic.i2cAllCall } else { logicStates[i].latch &= ~Logic.i2cAllCall }
+        default:
+            pwmRegisters[i][register] = byte
+        }
+        if pwmRegisters[i][0] & 0x20 != 0 { pwmPointer[i] = (register + 1) & 0xFF }
+    }
+
+    /// A PCA9685's sixteen outputs now (all off while OE is high)
+    private func pwmOutputs(_ i: Int) -> [Bool] {
+        guard i < pwmRegisters.count else { return [] }
+        return Logic.pwmOutputs(pwmRegisters[i], time: time, enabled: logicStates[i].inputs & 4 == 0)
     }
 
     /// An MCP3008's conversion: SGL/DIFF and D2–D0 pick the input (single-ended against ground, or a pair: CH2k and
@@ -5976,7 +6039,7 @@ public final class Simulator {
         for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
             let chipNodes = topology.elementNodes[i]
             floatingChipPins[i] = chipNodes.map { $0 > 0 && $0 < uses.count && uses[$0] == 1 }
-            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .shiftIn, .i2cDac]
+            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .shiftIn, .ledDriver, .i2cDac]
             for j in kinds.indices where wired.contains(kinds[j]) && j < topology.elementNodes.count {
                 let pins = topology.elementNodes[j].map { node in node > 0 ? chipNodes.firstIndex(of: node) ?? -1 : -1 }
                 if pins.contains(where: { $0 >= 0 }) { busWirings[i].append((j, pins)) }
@@ -6009,11 +6072,11 @@ public final class Simulator {
                 }
             }
             codecExchanges[i] = { [unowned(unsafe) self] port, left, right in self.codecFrame(i, port, left, right) }
-            if busWirings[i].contains(where: { kinds[$0.part] == .codec || kinds[$0.part] == .i2cDac }) {
+            if busWirings[i].contains(where: { [.codec, .i2cDac, .ledDriver].contains(kinds[$0.part]) }) {
                 codecTargets[i] = STM32Microcontroller.I2CTarget(
                     start: { [unowned(unsafe) self] bus, address, read in self.i2cStart(i, bus, address, read) },
                     write: { [unowned(unsafe) self] _, byte in self.i2cWrite(i, byte) },
-                    read: { _, _ in 0xFF },
+                    read: { [unowned(unsafe) self] _, _ in self.i2cRead(i) },
                     stop: { [unowned(unsafe) self] _ in self.i2cTransfer[i].part = -1 })
             }
         }
@@ -6027,13 +6090,33 @@ public final class Simulator {
         if address == 0x1A || address == 0x1B { return codecBuses[i].contains { $0.bus == bus } }
         for device in i2cDevices[i] where device.bus == bus {
             let nodes = topology.elementNodes[device.part]
-            let a0 = nodes.count > 2 && voltage(nodes[2]) > constants[device.part].supply / 2
-            if address == 0x60 | (a0 ? 1 : 0) {
+            func high(_ terminal: Int) -> Bool { nodes.count > terminal && voltage(nodes[terminal]) > constants[device.part].supply / 2 }
+            if kinds[device.part] == .ledDriver {
+                // a PCA9685 at 0x40 + A5-A0, or 0x70 while its all-call is on
+                let pins = (0...5).reduce(0) { $0 | (high(3 + $1) ? 1 << $1 : 0) }
+                let allCall = logicStates[device.part].latch & Logic.i2cAllCall != 0
+                if Int(address) == 0x40 | pins || (allCall && address == 0x70) {
+                    i2cTransfer[i].part = device.part
+                    // (a read starts at the register written last)
+                    if read { i2cTransfer[i].index = 1 }
+                    return true
+                }
+            } else if address == 0x60 | (high(2) ? 1 : 0) {
                 if !read { i2cTransfer[i].part = device.part }
                 return true
             }
         }
         return false
+    }
+
+    /// A byte the chip reads from the target it addressed: a PCA9685's register (the next one with MODE1's AI set)
+    private func i2cRead(_ i: Int) -> UInt8 {
+        let part = i2cTransfer[i].part
+        guard part >= 0, kinds[part] == .ledDriver, part < pwmRegisters.count, pwmRegisters[part].count == 256 else { return 0xFF }
+        let register = pwmPointer[part]
+        let byte = pwmRegisters[part][register]
+        if pwmRegisters[part][0] & 0x20 != 0 { pwmPointer[part] = (register + 1) & 0xFF }
+        return byte
     }
 
     /// A byte the chip writes to the target it addressed: an MCP4725 takes its code from them (fast mode: pairs of
@@ -6042,6 +6125,11 @@ public final class Simulator {
     private func i2cWrite(_ i: Int, _ byte: UInt8) -> Bool {
         var transfer = i2cTransfer[i]
         guard transfer.part >= 0 else { return true }  // (a codec's register writes)
+        if kinds[transfer.part] == .ledDriver {
+            pwmByte(transfer.part, index: transfer.index, byte: byte)
+            i2cTransfer[i].index += 1
+            return true
+        }
         let value = UInt32(byte)
         if transfer.index == 0 {
             transfer.command = value >> 6 != 0
@@ -6701,7 +6789,7 @@ public final class Simulator {
                 total += kind == .logicGate ? flows[k] : max(flows[k], 0)
             }
             return (total, flows)
-        case .dualDac, .i2sDac, .i2cDac, .codec, .cvDac:
+        case .dualDac, .i2sDac, .i2cDac, .codec, .cvDac, .ledDriver:
             // into each analog output from its source behind the output resistance
             var flows = [Double](repeating: 0, count: nodes.count)
             let c = constants[i]
@@ -6717,6 +6805,8 @@ public final class Simulator {
                            (9, Logic.codecOutput(Int32(truncatingIfNeeded: state.count), c.supply, c.value))]
             case .cvDac:
                 outputs = (0..<8).map { (3 + $0, i < cvDacCodes.count ? Double(cvDacCodes[i][$0]) / 65536 * c.value : 0) }
+            case .ledDriver:
+                outputs = pwmOutputs(i).enumerated().map { (9 + $0.offset, $0.element ? c.supply : 0) }
             default:
                 outputs = [(3, Logic.i2cDacOutput(state.count, supply: c.supply))]
             }

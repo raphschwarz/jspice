@@ -195,8 +195,9 @@ struct STM32BusCheck {
                 return ([], "\(who): \(spi) runs in SPI mode \(mode) (CPOL \(settings.cpol), CPHA \(settings.cpha)), reading MISO on SCK's falling edge, after the \(model) has shifted on the rising one: it would miss D7. Mode 0 or 3 reads QH before each shift.")
             }
             return ([.misoFromPin(port: port)], nil)
-        case .i2cDac:
-            // an MCP4725: SCL and SDA on one of the chip's I²C buses (or both GPIO pins, the firmware bit-banging them)
+        case .i2cDac, .ledDriver:
+            // an MCP4725 or a PCA9685: SCL and SDA on one of the chip's I²C buses (or GPIO pins, the firmware
+            // bit-banging them)
             guard pin(0) >= 0 else { return ([], nil) }
             let (scl, bus) = self.signal(pin(0))
             if scl == STM32_SIGNAL_OUTPUT { return ([], nil) }

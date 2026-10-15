@@ -1010,6 +1010,7 @@ public enum Breadboard {
         case .effectsProcessor: return "FV-1: surface-mount, on a module board with its crystal and EEPROM socket"
         case .reverbBrick: return "Belton reverb brick, on its six pins (5 V supply)"
         case .i2cDac: return "MCP4725 breakout board (I²C), on 5 V"
+        case .ledDriver: return "PCA9685 16-channel PWM breakout board (I²C), on 3.3 V"
         case .i2sDac: return "PCM5102 I²S DAC board, on 3.3 V"
         case .cvDac:
             let names = ["DAC8568", "DAC8564", "DAC8552", "DAC8551", "DAC7554"]

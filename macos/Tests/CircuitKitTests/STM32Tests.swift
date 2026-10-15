@@ -625,6 +625,75 @@ final class STM32Tests: XCTestCase {
         XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
     }
 
+    /// A firmware writing a PCA9685 at 0x40 through I2C2, in one transfer: MODE1 0x20 (awake, auto-increment), MODE2
+    /// 0x04, then LED0 on at count 0 and off at 2048
+    static let pwmFirmware: [UInt8] = [
+        0x00, 0x10, 0x00, 0x20, 0x09, 0x00, 0x00, 0x08, 0x22, 0x48, 0x01, 0x68, 0x41, 0xF0, 0x02, 0x01, 0x01, 0x60,
+        0x21, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x80, 0x01, 0x01, 0x60, 0x1F, 0x48, 0x01, 0x68, 0x41, 0xF4, 0x20, 0x01,
+        0x01, 0x60, 0x41, 0x68, 0x41, 0xF4, 0x40, 0x61, 0x41, 0x60, 0x4F, 0xF4, 0x88, 0x41, 0x41, 0x62, 0x1A, 0x4A,
+        0x10, 0x21, 0x51, 0x60, 0x50, 0x21, 0xD1, 0x61, 0x01, 0x21, 0x11, 0x60, 0x11, 0x68, 0x41, 0xF4, 0x80, 0x71,
+        0x11, 0x60, 0x53, 0x69, 0x13, 0xF0, 0x01, 0x0F, 0xFB, 0xD0, 0x80, 0x21, 0x11, 0x61, 0x53, 0x69, 0x13, 0xF0,
+        0x02, 0x0F, 0xFB, 0xD0, 0x93, 0x69, 0x09, 0xA4, 0x0B, 0x25, 0x14, 0xF8, 0x01, 0x1B, 0x11, 0x61, 0x53, 0x69,
+        0x13, 0xF0, 0x80, 0x0F, 0xFB, 0xD0, 0x01, 0x3D, 0xF6, 0xD1, 0x53, 0x69, 0x13, 0xF0, 0x04, 0x0F, 0xFB, 0xD0,
+        0x11, 0x68, 0x41, 0xF4, 0x00, 0x71, 0x11, 0x60, 0xFE, 0xE7, 0x00, 0x20, 0x04, 0x00, 0x00, 0x00, 0xE0, 0x00,
+        0x00, 0x00, 0x08, 0x00, 0x30, 0x38, 0x02, 0x40, 0x40, 0x38, 0x02, 0x40, 0x00, 0x04, 0x02, 0x40, 0x00, 0x58,
+        0x00, 0x40,
+    ]
+
+    /// The PCA9685 wakes, and LED0 puts out half duty at its reset rate: 25 MHz / 4096 / 31, 196.9 Hz
+    func testAPCA9685OnTheChipsI2CBusDrivesItsLEDs() throws {
+        var chip = NetlistPart(kind: .stm32f405, name: "U1", connections: ["pb10": "scl", "pb11": "sda"])
+        chip.firmware = Data(Self.pwmFirmware)
+        var connections = ["scl": "scl", "sda": "sda", "oe": "GND", "led0": "led", "led1": "dark"]
+        for k in 0...5 { connections["a\(k)"] = "GND" }
+        let circuit = try SchematicLayout.layout([
+            chip,
+            NetlistPart(kind: .ledDriver, name: "U2", params: ["supply": 3.3], connections: connections),
+            NetlistPart(kind: .resistor, name: "RL", params: ["resistance": 10_000], connections: ["a": "led", "b": "GND"]),
+            NetlistPart(kind: .resistor, name: "RD", params: ["resistance": 10_000], connections: ["a": "dark", "b": "GND"]),
+            NetlistPart(kind: .probe, name: "LED", connections: ["plus": "led", "minus": "GND"]),
+            NetlistPart(kind: .probe, name: "DARK", connections: ["plus": "dark", "minus": "GND"]),
+        ])
+        let simulator = Simulator(circuit: circuit, timeStep: 1.0 / 96000)
+        let led = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "LED" })
+        let dark = try XCTUnwrap(circuit.elements.firstIndex { $0.name == "DARK" })
+        var high = 0, samples = 0, rises: [Double] = [], last = false, darkest = 0.0
+        while simulator.time < 0.06 && !simulator.isFailed {
+            simulator.step()
+            guard simulator.time > 0.01 else { continue }
+            let on = simulator.voltageAcross(led) > 1.65
+            if on && !last { rises.append(simulator.time) }
+            last = on
+            if on { high += 1 }
+            samples += 1
+            darkest = max(darkest, simulator.voltageAcross(dark))
+        }
+        XCTAssertEqual(Double(high) / Double(samples), 0.5, accuracy: 0.03)
+        let period = ((rises.last ?? 0) - (rises.first ?? 0)) / Double(max(rises.count - 1, 1))
+        XCTAssertEqual(period, 4096 * 31 / 25e6, accuracy: 2e-5)
+        XCTAssertLessThan(darkest, 0.01, "LED1 stays fully off, as from reset")
+        XCTAssertFalse(simulator.problems.contains { $0.hasPrefix("U2") }, simulator.problems.joined(separator: " "))
+    }
+
+    /// A PCA9685's outputs from its registers: asleep from reset, then on and off counts, fully on, inverted
+    func testPCA9685Outputs() {
+        var registers = Logic.pwmReset()
+        XCTAssertEqual(Logic.pwmOutputs(registers, time: 0.001, enabled: true), Array(repeating: false, count: 16), "asleep")
+        registers[0] = 0x20
+        // LED1 on 1024 to 3072; LED2 on from 3072, round to 1024; LED3 fully on
+        registers[6 + 4 + 0] = 0x00; registers[6 + 4 + 1] = 0x04; registers[6 + 4 + 2] = 0x00; registers[6 + 4 + 3] = 0x0C
+        registers[6 + 8 + 0] = 0x00; registers[6 + 8 + 1] = 0x0C; registers[6 + 8 + 2] = 0x00; registers[6 + 8 + 3] = 0x04
+        registers[6 + 12 + 1] = 0x10; registers[6 + 12 + 3] = 0x00
+        let period = 4096 * 31 / 25e6
+        let at = { (count: Double) in Logic.pwmOutputs(registers, time: 3 * period + count / 4096 * period, enabled: true) }
+        XCTAssertEqual(Array(at(512)[1...3]), [false, true, true])
+        XCTAssertEqual(Array(at(2048)[1...3]), [true, false, true])
+        XCTAssertFalse(at(2048)[0], "LED0 fully off from reset")
+        XCTAssertEqual(Logic.pwmOutputs(registers, time: 3 * period + 0.5 * period, enabled: false)[3], false, "OE high")
+        registers[1] |= 0x10
+        XCTAssertEqual(Array(at(2048)[0...3]), [true, false, true, false], "inverted")
+    }
+
     func testResetStartsOver() throws {
         let chip = STM32Microcontroller(firmware: try firmware())
         run(chip, for: 0.05)
