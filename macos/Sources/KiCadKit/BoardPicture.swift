@@ -77,6 +77,8 @@ public struct KiCadBoardPicture: Sendable {
     public var bounds = KiCadBox(minX: 0, minY: 0, maxX: 100, maxY: 80)
     /// The board's own extent: its outline, if it has one
     public var boardSize: (width: Double, height: Double)?
+    /// Its outline's corners' radius (mm), when the outline is one rectangle (as a new board's is)
+    public var outlineCornerRadius: Double?
 
     public init() {}
 
@@ -95,6 +97,7 @@ public struct KiCadBoardPicture: Sendable {
             for q in p { if box == nil { box = KiCadBox(minX: q.x, minY: q.y, maxX: q.x, maxY: q.y) } else { box!.include(q) } }
         }
         outline = board.outline.compactMap(line)
+        outlineCornerRadius = board.outlineRectangle?.radius
         for d in board.drawings where d.layer.hasSuffix("SilkS") { if let l = line(d) { silkscreen.append(l) } }
         for footprint in board.footprints {
             for d in footprint.drawings where d.layer.hasSuffix("SilkS") { if let l = line(d) { silkscreen.append(l) } }

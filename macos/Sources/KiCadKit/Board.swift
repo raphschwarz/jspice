@@ -61,6 +61,17 @@ public final class KiCadBoard {
         drawings.filter { $0.layer == "Edge.Cuts" } + footprints.flatMap { $0.drawings.filter { $0.layer == "Edge.Cuts" } }
     }
 
+    /// The board's outline when it is one rectangle drawn as one (round cut-outs and polygons aside): its corners, and
+    /// its corners' radius (mm, 0 if square)
+    public var outlineRectangle: (box: KiCadBox, radius: Double)? {
+        let edges = root.items.filter { KiCadDrawing.heads.contains($0.head ?? "") && $0.value("layer") == "Edge.Cuts" }
+        let rects = edges.filter { $0.head == "gr_rect" }
+        guard rects.count == 1, edges.allSatisfy({ ["gr_rect", "gr_circle", "gr_poly"].contains($0.head ?? "") }),
+              let rect = rects.first, let s = rect["start"], let e = rect["end"],
+              let x0 = s.number(at: 0), let y0 = s.number(at: 1), let x1 = e.number(at: 0), let y1 = e.number(at: 1) else { return nil }
+        return (KiCadBox(minX: min(x0, x1), minY: min(y0, y1), maxX: max(x0, x1), maxY: max(y0, y1)), rect["radius"]?.number(at: 0) ?? 0)
+    }
+
     /// The box round the board's edge (GetBoardEdgesBoundingBox), or round everything on it if it has no edge yet
     public var edgeBounds: KiCadBox? {
         var box: KiCadBox?
@@ -810,8 +821,26 @@ public struct KiCadDrawing {
         case "rect":
             guard let s = node["start"], let e = node["end"] else { return [] }
             let (x0, y0, x1, y1) = (s.number(at: 0) ?? 0, s.number(at: 1) ?? 0, e.number(at: 0) ?? 0, e.number(at: 1) ?? 0)
-            let corners = [KiCadPoint(x0, y0), KiCadPoint(x1, y0), KiCadPoint(x1, y1), KiCadPoint(x0, y1)]
-            return corners.map { placement?.apply($0) ?? $0 }
+            let r = cornerRadius
+            guard r > 0 else {
+                let corners = [KiCadPoint(x0, y0), KiCadPoint(x1, y0), KiCadPoint(x1, y1), KiCadPoint(x0, y1)]
+                return corners.map { placement?.apply($0) ?? $0 }
+            }
+            // its sides and its corners' quarter circles, clockwise from the top left
+            let (l, t, rt, b) = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+            let k = r * (1 - 1 / 2.0.squareRoot())
+            let corners: [(KiCadPoint, KiCadPoint, KiCadPoint)] = [
+                (KiCadPoint(rt - r, t), KiCadPoint(rt - k, t + k), KiCadPoint(rt, t + r)),
+                (KiCadPoint(rt, b - r), KiCadPoint(rt - k, b - k), KiCadPoint(rt - r, b)),
+                (KiCadPoint(l + r, b), KiCadPoint(l + k, b - k), KiCadPoint(l, b - r)),
+                (KiCadPoint(l, t + r), KiCadPoint(l + k, t + k), KiCadPoint(l + r, t)),
+            ]
+            var pts: [KiCadPoint] = []
+            for (a, m, c) in corners {
+                for p in KiCadPolygon.arc(start: a, mid: m, end: c, segments: 8) where pts.last != p { pts.append(p) }
+            }
+            if pts.first == pts.last { pts.removeLast() }
+            return pts.map { placement?.apply($0) ?? $0 }
         case "circle":
             guard let c = point("center"), let e = point("end") else { return [] }
             return KiCadPolygon.circle(center: c, radius: c.distance(to: e), segments: 32)
@@ -834,4 +863,11 @@ public struct KiCadDrawing {
 
     /// Whether its points close on themselves
     public var isClosed: Bool { kind == "rect" || kind == "circle" || kind == "poly" }
+
+    /// A rectangle's rounded corners' radius (mm; no more than half its shorter side, as KiCad keeps it), 0 if square
+    public var cornerRadius: Double {
+        guard kind == "rect", let r = node["radius"]?.number(at: 0), r > 0, let s = node["start"], let e = node["end"] else { return 0 }
+        let w = abs((e.number(at: 0) ?? 0) - (s.number(at: 0) ?? 0)), h = abs((e.number(at: 1) ?? 0) - (s.number(at: 1) ?? 0))
+        return min(r, min(w, h) / 2)
+    }
 }

@@ -2,7 +2,10 @@
 // syncGraphicalItem), pcbnew/pad.cpp (BuildEffectiveShapes, TransformShapeToPolygon, FlashLayer, IsOnCopperLayer,
 // GetClearanceOverrides), common/eda_shape.cpp (makeEffectiveShapes, SetArcGeometry, GetArcAngle, rotate),
 // pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp (how a board's items are read: units, pad and drawing
-// placement), pcbnew/board_design_settings.cpp and common/project/net_settings.cpp (the rules and net classes).
+// placement), pcbnew/board_design_settings.cpp and common/project/net_settings.cpp (the rules and net classes),
+// libs/kimath/src/geometry/roundrect.cpp and shape_utils.cpp (ROUNDRECT::TransformToPolygon, KIGEOM::MakeArcCw90 and
+// MakeArcCw180) and shape_line_chain.cpp (how an outline keeps its arcs: Append, mergeFirstLastPointIfNeeded,
+// fixIndicesRotation, IsArcSegment).
 // Copyright (C) 2013-2016 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -558,6 +561,8 @@ public struct BoardWorld {
         var width = 0
         var filled = false
         var polyHasArcs = false
+        /// A rectangle's rounded corners (EDA_SHAPE::GetCornerRadius)
+        var cornerRadius = 0
 
         /// The arc's angle from its start round to its end (EDA_SHAPE::GetArcAngle)
         var arcAngle: EDAAngle {
@@ -585,7 +590,14 @@ public struct BoardWorld {
             d = Drawing(kind: .segment, start: Self.point(node["start"]), end: Self.point(node["end"]))
         case "rect":
             d = Drawing(kind: .rect, start: Self.point(node["start"]), end: Self.point(node["end"]))
-            if (node["radius"]?.number(at: 0) ?? 0) > 0 { return nil }
+            if let r = node["radius"] {
+                // (SetCornerRadius: no more than half the shorter side)
+                d.cornerRadius = max(0, min(Self.iu(r, 0), min(abs(d.end.x - d.start.x), abs(d.end.y - d.start.y)) / 2))
+                // (one turned off square becomes a polygon, its corners lost: not made here)
+                if d.cornerRadius > 0, let placement, placement.orientation.normalized.degrees.truncatingRemainder(dividingBy: 90) != 0 {
+                    return nil
+                }
+            }
             if placement == nil {
                 // (KiCad normalizes a board's rectangle as it reads it, a footprint's not)
                 let (s, e) = (d.start, d.end)
@@ -655,6 +667,28 @@ public struct BoardWorld {
             return [.arc(ShapeArc(center: d.center, start: d.start, angle: d.arcAngle, width: w))]
         case .segment:
             return [.segment(Seg(d.start, d.end), width: w)]
+        case .rect where d.cornerRadius > 0:
+            // ROUNDRECT::TransformToPolygon's outline, its straight sides as segments and its corners as arcs
+            let outline = Self.roundRect(start: d.start, width: d.end.x - d.start.x, height: d.end.y - d.start.y,
+                                         radius: d.cornerRadius, maxError: rules.maxError / 5)
+            var out: [Shape] = []
+            if d.filled { out.append(.simple(LineChain(outline.points, closed: true))) }
+            if w > 0 || !d.filled {
+                var handled = Set<Int>()
+                for i in 0..<outline.segmentCount {
+                    if outline.isArcSegment(i) {
+                        let a = outline.arcIndex(i)
+                        if handled.insert(a).inserted {
+                            var arc = outline.arcs[a]
+                            arc.width = w
+                            out.append(.arc(arc))
+                        }
+                    } else {
+                        out.append(.segment(outline.segment(i), width: w))
+                    }
+                }
+            }
+            return out
         case .rect:
             let pts = [d.start, IPoint(d.end.x, d.start.y), d.end, IPoint(d.start.x, d.end.y)]
             var out: [Shape] = []
@@ -892,4 +926,155 @@ struct NetClasses {
 extension BoardWorld {
     /// A project file's net class millimetres as KiCad reads them (mmToIU: rounded half away from zero)
     static func iuMM(_ mm: Double) -> Int { Int(mm < 0 ? mm * 1_000_000 - 0.5 : mm * 1_000_000 + 0.5) }
+}
+
+// MARK: - Rounded rectangles (ROUNDRECT)
+
+extension BoardWorld {
+    /// A rectangle with rounded corners as KiCad's ROUNDRECT::TransformToPolygon outlines it (from its corner `start`,
+    /// `width` by `height`): its sides and its corners' arcs (KIGEOM::MakeArcCw90 and MakeArcCw180), the arcs cut into
+    /// points no more than `maxError` off them, in an outline closed from the start, as SHAPE_POLY_SET::NewOutline
+    /// makes it
+    static func roundRect(start: IPoint, width: Int, height: Int, radius: Int, maxError: Int) -> ArcChain {
+        var p0 = start, w = width, h = height
+        // (a rectangle drawn the other way round normalized first)
+        if w < 0 || h < 0 {
+            p0 = IPoint(min(p0.x, p0.x + w), min(p0.y, p0.y + h))
+            w = abs(w)
+            h = abs(h)
+        }
+        let r = max(0, min(radius, abs(min(w, h)) / 2))
+        var outline = ArcChain()
+        let xEdge = w - 2 * r, yEdge = h - 2 * r
+        guard xEdge >= 0, yEdge >= 0, w > 0, h > 0 else { return outline }
+        if r == 0 {
+            for p in [p0, p0 + IPoint(w, 0), p0 + IPoint(w, h), p0 + IPoint(0, h)] { outline.append(p) }
+            return outline
+        }
+        if xEdge == 0 && yEdge == 0 {
+            outline.append(ShapeArc(center: p0 + IPoint(r, r), start: p0 + IPoint(0, r), angle: .a360), maxError: maxError)
+            return outline
+        }
+        // the corners of the rectangle inside, which the arcs are drawn about
+        let inner = p0 + IPoint(r, r)
+        func corner(_ c: IPoint, _ start: IPoint) -> ShapeArc { ShapeArc(center: c, start: c + start, angle: .a90) }
+        func side(_ c: IPoint, _ start: IPoint) -> ShapeArc { ShapeArc(center: c, start: c + start, angle: .a180) }
+        if xEdge > 0 {
+            outline.append(p0 + IPoint(r, 0))
+            outline.append(p0 + IPoint(r + xEdge, 0))
+            if yEdge > 0 {
+                outline.append(corner(inner + IPoint(xEdge, 0), IPoint(0, -r)), maxError: maxError)
+                outline.append(p0 + IPoint(w, r + yEdge))
+                outline.append(corner(inner + IPoint(xEdge, yEdge), IPoint(r, 0)), maxError: maxError)
+            } else {
+                outline.append(side(inner + IPoint(xEdge, yEdge / 2), IPoint(0, -r)), maxError: maxError)
+            }
+            outline.append(p0 + IPoint(r, h))
+            if yEdge > 0 {
+                outline.append(corner(inner + IPoint(0, yEdge), IPoint(0, r)), maxError: maxError)
+                outline.append(p0 + IPoint(0, r))
+                outline.append(corner(inner, IPoint(-r, 0)), maxError: maxError)
+            } else {
+                outline.append(side(inner + IPoint(0, yEdge / 2), IPoint(0, r)), maxError: maxError)
+            }
+        } else {
+            outline.append(p0 + IPoint(0, r))
+            outline.append(side(inner + IPoint(xEdge / 2, 0), IPoint(-r, 0)), maxError: maxError)
+            outline.append(p0 + IPoint(w, r + yEdge))
+            outline.append(side(inner + IPoint(xEdge / 2, yEdge), IPoint(r, 0)), maxError: maxError)
+        }
+        return outline
+    }
+
+    /// A closed SHAPE_LINE_CHAIN with arcs in it, as far as a rounded rectangle's outline takes one: its points, the
+    /// arc each is on (and the second arc, at a point two share; -1 for none), and how KiCad keeps them as arcs and
+    /// points are appended, and as it merges a last point that comes back to the first and turns the chain to start
+    /// where an arc starts
+    struct ArcChain {
+        var points: [IPoint] = []
+        var shapes: [(Int, Int)] = []
+        var arcs: [ShapeArc] = []
+
+        /// A point, unless it is the last one again
+        mutating func append(_ p: IPoint) {
+            guard points.last != p else { return }
+            points.append(p)
+            shapes.append((-1, -1))
+        }
+
+        /// An arc, cut into points no more than `maxError` off it (two points, if it is that small, a segment)
+        mutating func append(_ arc: ShapeArc, maxError: Int) {
+            let pts = arc.convertToPolyline(maxError).points
+            var a = arc
+            a.width = 0
+            let onArc = pts.count > 2
+            append(pts, Array(repeating: (onArc ? 0 : -1, -1), count: pts.count), onArc ? [a] : [])
+        }
+
+        /// Another chain's points and arcs (SHAPE_LINE_CHAIN::Append( const SHAPE_LINE_CHAIN& ))
+        private mutating func append(_ pts: [IPoint], _ sh: [(Int, Int)], _ other: [ShapeArc]) {
+            guard let first = pts.first else { return }
+            let n = arcs.count
+            arcs += other
+            func fixed(_ s: (Int, Int)) -> (Int, Int) { (s.0 == -1 ? -1 : s.0 + n, s.1 == -1 ? -1 : s.1 + n) }
+            func otherIndex(_ i: Int) -> Int { sh[i].0 != -1 && sh[i].1 != -1 ? sh[i].1 : sh[i].0 }
+            if points.last != first {
+                points.append(first)
+                shapes.append(fixed(sh[0]))
+            } else if pts.count > 1 && sh[0] != (-1, -1) && otherIndex(0) == sh[1].0 {
+                // (the arc taken on from the last point)
+                if shapes[shapes.count - 1] == (-1, -1) { shapes[shapes.count - 1].0 = sh[0].0 + n } else { shapes[shapes.count - 1].1 = sh[0].0 + n }
+            }
+            for i in 1..<pts.count {
+                points.append(pts[i])
+                shapes.append(otherIndex(i) != -1 ? fixed(sh[i]) : (-1, -1))
+            }
+            mergeFirstLastPoint()
+        }
+
+        /// A last point the same as the first merged into it, and the chain turned to start where an arc starts
+        /// (mergeFirstLastPointIfNeeded and fixIndicesRotation, the chain being closed)
+        private mutating func mergeFirstLastPoint() {
+            guard points.count > 1, points.first == points.last else { return }
+            let last = arcIndex(shapes.count - 1)
+            if last != -1 {
+                shapes[0].1 = shapes[0].0
+                shapes[0].0 = last
+            }
+            points.removeLast()
+            shapes.removeLast()
+            guard shapes.count > 1 else { return }
+            var rotations = 0
+            while arcIndex(0) != -1 && !isArcStart(0) {
+                points.insert(points.removeLast(), at: 0)
+                shapes.insert(shapes.removeLast(), at: 0)
+                // (KiCad's guard against going round for ever, as it counts)
+                if rotations > shapes.count { return }
+                rotations += 1
+            }
+        }
+
+        var segmentCount: Int { points.count }
+
+        func segment(_ i: Int) -> Seg { Seg(points[i], points[(i + 1) % points.count]) }
+
+        func isSharedPoint(_ i: Int) -> Bool { i < shapes.count && shapes[i].0 != -1 && shapes[i].1 != -1 }
+
+        func arcIndex(_ i: Int) -> Int { isSharedPoint(i) ? shapes[i].1 : shapes[i].0 }
+
+        /// Whether the segment from point `i` to the next is a piece of an arc
+        func isArcSegment(_ i: Int) -> Bool {
+            var next = i + 1
+            if next > shapes.count - 1 {
+                guard next == shapes.count && isSharedPoint(0) else { return false }
+                next = 0
+            }
+            return shapes[i] != (-1, -1) && arcIndex(i) == shapes[next].0
+        }
+
+        func isArcStart(_ i: Int) -> Bool {
+            guard isArcSegment(i) else { return false }
+            return isSharedPoint(i) || arcs[arcIndex(i)].start == points[i]
+        }
+    }
 }

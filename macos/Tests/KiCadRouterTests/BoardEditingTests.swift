@@ -243,6 +243,44 @@ final class BoardEditingTests: XCTestCase {
         XCTAssertEqual(elsewhere.zones.first { $0.uuid == zone.uuid }?.outline.map(\.x).max(), box.maxX)
     }
 
+    /// The outline given a size and rounded corners: KiCad's rectangle with a corner radius, whose corners the
+    /// router's world has as KiCad's has them (arcs, BoardWorldTests checking them against KiCad's), and which
+    /// KiCad's DRC takes for a good outline
+    func testTheOutlineIsSizedAndRounded() throws {
+        let file = try XCTUnwrap(Self.boards().first)
+        let board = try KiCadBoard.read(file)
+        // (a footprint's own lines on the edge, which leave KiCad an outline not closed, taken away)
+        for footprint in board.root.items where footprint.head == "footprint" {
+            footprint.items.removeAll { ($0.head ?? "").hasPrefix("fp_") && $0.value("layer") == "Edge.Cuts" }
+        }
+        let session = BoardEditing(board: board, project: Self.project(file))
+        let (was, _) = try XCTUnwrap(BoardEditing.outlineRectangle(session.board))
+        let edit = try XCTUnwrap(session.setOutline(width: was.width + 4, height: was.height + 2, radius: 3))
+        XCTAssertEqual(edit.name, "Change Board Outline")
+        XCTAssertTrue(edit.outline)
+        let (box, radius) = try XCTUnwrap(BoardEditing.outlineRectangle(edit.after))
+        XCTAssertEqual(box, KiCadBox(minX: was.minX, minY: was.minY, maxX: was.minX + was.width + 4, maxY: was.minY + was.height + 2))
+        XCTAssertEqual(radius, 3)
+        XCTAssertEqual(edit.after.outline.first?.cornerRadius, 3)
+        let uuid = try XCTUnwrap(edit.after.root.items.first { $0.head == "gr_rect" }?.value("uuid"))
+        let edges = session.router.world.items.filter { $0.kind == .edge && $0.source == uuid }.compactMap(\.shape)
+        XCTAssertEqual(edges.filter { if case .arc = $0 { return true } else { return false } }.count, 4, "its corners' arcs")
+        XCTAssertEqual(edges.filter { if case .segment = $0 { return true } else { return false } }.count, 4, "its sides")
+        XCTAssertNil(session.setOutline(width: was.width + 4, height: was.height + 2, radius: 3), "already so")
+        let square = try XCTUnwrap(session.setOutline(width: was.width + 4, height: was.height + 2, radius: 0))
+        XCTAssertNil(square.after.root.items.first { $0.head == "gr_rect" }?["radius"])
+        // KiCad reads the rounded outline as a board's edge
+        if let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor {
+            let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-outline-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: work) }
+            let copy = work.appendingPathComponent(file.lastPathComponent)
+            try edit.after.write(to: copy)
+            let report = try KiCadFabrication(installation: kicad).drc(copy, refillZones: false)
+            XCTAssertFalse(report.violations.contains { $0.type == "invalid_outline" }, report.violations.map(\.description).joined(separator: "; "))
+        }
+    }
+
     /// A keepout zone and another net's arc track in the way of a track: kept clear of (the port's stand-ins for
     /// KiCad's keepout triangles and arc items)
     func testKeepoutsAndArcTracksAreKeptClearOf() throws {

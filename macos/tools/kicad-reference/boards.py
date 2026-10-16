@@ -57,7 +57,8 @@ def vec(x, y):
 
 
 def outline(rng, board, x0, y0, x1, y1):
-    """The board's edge: a rectangle drawn as one, as lines, or with rounded corners; now and then round cut-outs"""
+    """The board's edge: a rectangle drawn as one (now and then with its corners rounded), as lines, or with arcs at
+    its corners; now and then round cut-outs"""
     def shape(kind):
         s = pcbnew.PCB_SHAPE(board)
         s.SetShape(kind)
@@ -66,11 +67,13 @@ def outline(rng, board, x0, y0, x1, y1):
         board.Add(s)
         return s
 
-    style = rng.choice(["rect", "lines", "rounded", "rounded"])
-    if style == "rect":
+    style = rng.choice(["rect", "lines", "rounded", "rounded", "roundrect"])
+    if style in ("rect", "roundrect"):
         s = shape(pcbnew.SHAPE_T_RECTANGLE)
         s.SetStart(vec(x0, y0))
         s.SetEnd(vec(x1, y1))
+        if style == "roundrect":
+            s.SetCornerRadius(rng.randint(1, 50) * MM // 10)
     elif style == "lines":
         c = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
         for i in range(4):

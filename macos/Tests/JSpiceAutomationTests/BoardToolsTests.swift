@@ -108,6 +108,18 @@ final class BoardToolsTests: XCTestCase {
         let zones = try XCTUnwrap(poured["zones"] as? [[String: Any]])
         XCTAssertTrue(zones.contains { $0["net"] as? String == "GND" && $0["filled"] as? Bool == true })
         XCTAssertLessThan(try XCTUnwrap(poured["unrouted"] as? Int), try XCTUnwrap(call("pcb_status")["unrouted"] as? Int) + 1)
+
+        // the outline made larger, its corners rounded; the pour follows it, filled again
+        let outline = try XCTUnwrap(call("pcb_outline")["outline"] as? [String: Any])
+        let width = try XCTUnwrap(outline["width_mm"] as? Double), height = try XCTUnwrap(outline["height_mm"] as? Double)
+        let shaped = try XCTUnwrap(call("pcb_outline", ["width_mm": width + 4, "height_mm": height + 2, "corner_radius_mm": 3])["outline"] as? [String: Any])
+        XCTAssertEqual(shaped["width_mm"] as? Double, width + 4)
+        XCTAssertEqual(shaped["corner_radius_mm"] as? Double, 3)
+        let reshaped = try KiCadBoard.read(folder.appendingPathComponent("blinker.kicad_pcb"))
+        XCTAssertEqual(reshaped.outlineRectangle?.radius, 3)
+        XCTAssertTrue(reshaped.zones.contains { $0.net == "GND" && !$0.fills.isEmpty })
+        XCTAssertEqual(reshaped.zones.first { $0.net == "GND" }?.outline.map(\.x).max(), (outline["x_mm"] as? Double ?? 0) + width + 4)
+        XCTAssertThrowsError(try session.call("pcb_outline", arguments: ["corner_radius_mm": 1000]))
         XCTAssertThrowsError(try session.call("pcb_pour", arguments: ["layers": ["In7.Cu"]]))
 
         // KiCad finds nothing wrong with the tracks

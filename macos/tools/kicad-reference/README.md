@@ -41,7 +41,8 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
 - `boards.py`: random boards made by KiCad itself (`boards.py OUTDIR COUNT [SEED]`): footprints from KiCad's own
   libraries with every kind of pad, turned and flipped, on two or four layers; nets in net classes chosen by
   pattern, of different priorities; pads' and footprints' own clearances; tracks, vias, drawings on copper; outlines
-  with rounded corners and round cut-outs. Each is saved with its project, and `board-scene.py` run on it.
+  with rounded corners (arcs, or a rectangle's own corner radius) and round cut-outs. Each is saved with its
+  project, and `board-scene.py` run on it.
   `Tests/KiCadRouterTests/Fixtures/boards` holds three; `KICAD_BOARD_REFERENCE` names another folder of them.
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
   turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them

@@ -315,32 +315,68 @@ public final class BoardEditing {
     // MARK: - The outline
 
     /// The board's outline made the rectangle round its parts, `margin` (mm) away, its corners on whole millimetres
-    /// (as a new board's is), and the pours drawn to the old outline drawn to the new; nil when the outline is not one
-    /// rectangle (or the board has none, when one is drawn) or is already so
+    /// (as a new board's is; rounded as they were), and the pours drawn to the old outline drawn to the new; nil when
+    /// the outline is not one rectangle (or the board has none, when one is drawn) or is already so
     public func fitOutline(margin: Double = 5) -> Edit? {
-        guard !isRouting else { return nil }
+        guard !isRouting, let parts = Self.partsBox(router.board) else { return nil }
+        let box = KiCadBox(minX: (parts.minX - margin).rounded(.down), minY: (parts.minY - margin).rounded(.down),
+                           maxX: (parts.maxX + margin).rounded(.up), maxY: (parts.maxY + margin).rounded(.up))
+        return reshapeOutline(to: box, radius: nil, name: "Fit Outline to Parts")
+    }
+
+    /// The board's outline made a rectangle `width` by `height` (mm), its corners rounded to `radius` (mm; 0 square),
+    /// its top left corner where it was (if the board has no outline yet, a whole millimetre or more from the parts'),
+    /// and the pours drawn to the old outline drawn to the new; nil when the outline is not one rectangle, or is
+    /// already so
+    public func setOutline(width: Double, height: Double, radius: Double) -> Edit? {
+        guard !isRouting, width > 0, height > 0, radius >= 0 else { return nil }
         let board = router.board
-        guard let parts = board.footprints.compactMap(\.bounds).reduce(nil, { (u: KiCadBox?, b: KiCadBox) -> KiCadBox? in
+        let origin: KiCadPoint
+        if let rect = Self.outlineRectangle(board) {
+            origin = KiCadPoint(rect.box.minX, rect.box.minY)
+        } else if board.outline.isEmpty, let parts = Self.partsBox(board) {
+            origin = KiCadPoint((parts.minX - 5).rounded(.down), (parts.minY - 5).rounded(.down))
+        } else {
+            return nil
+        }
+        let box = KiCadBox(minX: origin.x, minY: origin.y, maxX: origin.x + width, maxY: origin.y + height)
+        return reshapeOutline(to: box, radius: radius, name: "Change Board Outline")
+    }
+
+    /// The board's outline when it is one rectangle (round cut-outs and polygons aside): its corners and its corners'
+    /// radius (mm)
+    public static func outlineRectangle(_ board: KiCadBoard) -> (box: KiCadBox, radius: Double)? { board.outlineRectangle }
+
+    /// The box round the board's parts
+    private static func partsBox(_ board: KiCadBoard) -> KiCadBox? {
+        board.footprints.compactMap(\.bounds).reduce(nil) { (u: KiCadBox?, b: KiCadBox) -> KiCadBox? in
             guard var u else { return b }
             u.include(KiCadPoint(b.minX, b.minY))
             u.include(KiCadPoint(b.maxX, b.maxY))
             return u
-        }) else { return nil }
-        let box = KiCadBox(minX: (parts.minX - margin).rounded(.down), minY: (parts.minY - margin).rounded(.down),
-                           maxX: (parts.maxX + margin).rounded(.up), maxY: (parts.maxY + margin).rounded(.up))
+        }
+    }
+
+    /// The outline made the rectangle `box`, its corners rounded to `radius` (nil: as they were), as one change
+    private func reshapeOutline(to box: KiCadBox, radius: Double?, name: String) -> Edit? {
+        let board = router.board
         let edges = board.root.items.filter { KiCadDrawing.heads.contains($0.head ?? "") && $0.value("layer") == "Edge.Cuts" }
         let old: KiCadBox?
         if edges.isEmpty {
             old = nil
             KiCadProject.addOutline(board, box)
         } else {
-            guard edges.count == 1, let rect = edges.first, rect.head == "gr_rect", let s = rect["start"], let e = rect["end"],
-                  let x0 = s.number(at: 0), let y0 = s.number(at: 1), let x1 = e.number(at: 0), let y1 = e.number(at: 1) else { return nil }
-            let was = KiCadBox(minX: min(x0, x1), minY: min(y0, y1), maxX: max(x0, x1), maxY: max(y0, y1))
-            guard was.minX != box.minX || was.minY != box.minY || was.maxX != box.maxX || was.maxY != box.maxY else { return nil }
+            guard let (was, r) = Self.outlineRectangle(board) else { return nil }
+            guard was.minX != box.minX || was.minY != box.minY || was.maxX != box.maxX || was.maxY != box.maxY
+                    || (radius.map { $0 != r } ?? false) else { return nil }
             old = was
-            rect.set(SExpr("start", box.minX, box.minY))
-            rect.set(SExpr("end", box.maxX, box.maxY))
+        }
+        guard let rect = board.root.items.first(where: { $0.head == "gr_rect" && $0.value("layer") == "Edge.Cuts" }) else { return nil }
+        rect.set(SExpr("start", box.minX, box.minY))
+        rect.set(SExpr("end", box.maxX, box.maxY))
+        if let radius {
+            rect.remove("radius")
+            if radius > 0 { rect.insert(SExpr("radius", radius), after: ["end"]) }
         }
         // pours drawn to the old outline follow it
         if let old {
@@ -355,7 +391,7 @@ public final class BoardEditing {
             }
         }
         router.boardChanged()
-        return change("Fit Outline to Parts", outline: true)
+        return change(name, outline: true)
     }
 
     // MARK: - Placing

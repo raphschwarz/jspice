@@ -718,6 +718,73 @@ struct PCBNetClassRow: View {
     }
 }
 
+/// The board's size and its corners' radius, typed in beside it when its outline is one rectangle (as a new board's
+/// is): the outline is drawn again from its top left corner
+struct PCBOutlineRow: View {
+    @ObservedObject var editing: PCBEditing
+    let width: Double
+    let height: Double
+    /// nil: an outline other than one rectangle, shown as it is
+    let radius: Double?
+    let layers: Int
+    @State private var edited: (width: Double, height: Double, radius: Double)
+
+    init(editing: PCBEditing, width: Double, height: Double, radius: Double?, layers: Int) {
+        self.editing = editing
+        self.width = width
+        self.height = height
+        self.radius = radius
+        self.layers = layers
+        _edited = State(initialValue: (width, height, radius ?? 0))
+    }
+
+    var body: some View {
+        if radius != nil {
+            LabeledContent("Board") {
+                HStack(spacing: 4) {
+                    field(\.width, "Its width")
+                    Text("×").foregroundStyle(.secondary)
+                    field(\.height, "Its height")
+                    Text("mm").foregroundStyle(.secondary)
+                }
+            }
+            .onChange(of: width) { _, value in edited.width = value }
+            .onChange(of: height) { _, value in edited.height = value }
+            .onChange(of: radius) { _, value in edited.radius = value ?? 0 }
+            LabeledContent("Corners") {
+                HStack(spacing: 4) {
+                    field(\.radius, "Its corners' radius, 0 for square corners")
+                    Text("mm").foregroundStyle(.secondary)
+                }
+            }
+            LabeledContent("Copper layers", value: "\(layers)")
+        } else {
+            LabeledContent("Board", value: String(format: "%.1f × %.1f mm, %d layers", width, height, layers))
+        }
+    }
+
+    private func field(_ key: WritableKeyPath<(width: Double, height: Double, radius: Double), Double>, _ help: String) -> some View {
+        TextField("", value: Binding(get: { edited[keyPath: key] }, set: { edited[keyPath: key] = $0 }),
+                  format: .number.precision(.fractionLength(0...2)))
+            .labelsHidden()
+            .multilineTextAlignment(.trailing)
+            .frame(width: 52)
+            .onSubmit { commit() }
+            .help(help + " (mm)")
+    }
+
+    private func commit() {
+        let e = edited
+        guard e.width != width || e.height != height || e.radius != (radius ?? 0) else { return }
+        guard e.width > 0, e.height > 0, e.radius >= 0, e.radius <= min(e.width, e.height) / 2 else {
+            NSSound.beep()
+            edited = (width, height, radius ?? 0)
+            return
+        }
+        editing.setOutline(width: e.width, height: e.height, radius: e.radius)
+    }
+}
+
 /// What the PCB view shows where it has no board to show
 struct PCBEmptyState<Actions: View>: View {
     let symbol: String
@@ -890,7 +957,8 @@ struct PCBSidePanel: View {
                 Label(unrouted == 0 ? "Every connection routed" : "\(unrouted) connection\(unrouted == 1 ? "" : "s") to route",
                       systemImage: unrouted == 0 ? "checkmark.circle" : "point.topleft.down.to.point.bottomright.curvepath")
                 if let size = picture.boardSize {
-                    LabeledContent("Board", value: String(format: "%.1f × %.1f mm, %d layers", size.width, size.height, picture.copperLayers.count))
+                    PCBOutlineRow(editing: board.editing, width: size.width, height: size.height, radius: picture.outlineCornerRadius,
+                                  layers: picture.copperLayers.count)
                 }
             }
         }

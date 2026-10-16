@@ -30,6 +30,13 @@ extension CircuitSession {
                                   "via_diameter_mm": ["type": "number"], "via_drill_mm": ["type": "number"],
                                   "nets": ["type": "array", "items": ["type": "string"], "description": "The nets the class takes, by name or pattern"]]),
              run: { session, arguments in try session.pcbNetClass(arguments) }),
+        Tool(name: "pcb_outline",
+             description: "The board's outline, a rectangle: with fit, drawn round the parts (margin_mm away, 5 by default, its corners on whole millimetres); else width_mm by height_mm from its top left corner (a board with no outline gets one beside its parts), its corners rounded to corner_radius_mm (0: square; by default as they are). Pours drawn to the outline follow it and are filled again. Refused when the outline is not one rectangle (round cut-outs aside). The change goes to the board as pcb_route's do. With no arguments, describes the outline.",
+             inputSchema: schema(["fit": ["type": "boolean", "description": "Draw it round the parts"],
+                                  "margin_mm": ["type": "number", "description": "With fit, how far from the parts (default 5)"],
+                                  "width_mm": ["type": "number"], "height_mm": ["type": "number"],
+                                  "corner_radius_mm": ["type": "number", "description": "Its corners' radius, 0 for square corners"]]),
+             run: { session, arguments in try session.pcbOutline(arguments) }),
         Tool(name: "pcb_unroute",
              description: "Takes tracks and vias off the board: those of the nets named, or all of them. As one change, as pcb_route makes its own.",
              inputSchema: schema(["nets": ["type": "array", "items": ["type": "string"], "description": "The nets whose tracks and vias to take off"],
@@ -142,6 +149,52 @@ extension CircuitSession {
             }
             try link.setNetClass(nc)
             return ["net_classes": describe(link.netClasses()), "next": "pcb_route routes with them"]
+        }
+    }
+
+    func pcbOutline(_ arguments: [String: Any]) throws -> Any {
+        let fit = arguments["fit"] as? Bool ?? false
+        let margin = try Self.number(arguments["margin_mm"], "margin_mm") ?? 5
+        let width = try Self.number(arguments["width_mm"], "width_mm")
+        let height = try Self.number(arguments["height_mm"], "height_mm")
+        let radius = try Self.number(arguments["corner_radius_mm"], "corner_radius_mm")
+        func describe(_ board: KiCadBoard) -> [String: Any] {
+            if let (box, r) = board.outlineRectangle {
+                return ["x_mm": box.minX, "y_mm": box.minY, "width_mm": box.width, "height_mm": box.height, "corner_radius_mm": r]
+            }
+            guard let box = board.edgeBounds, !board.outline.isEmpty else { return ["none": true] }
+            return ["x_mm": box.minX, "y_mm": box.minY, "width_mm": box.width, "height_mm": box.height, "rectangle": false]
+        }
+        return try withBoard { link -> Any in
+            guard link.exists else { throw ToolError("The circuit has no board yet: pcb_create makes one") }
+            let before = try link.board().board
+            guard fit || width != nil || height != nil || radius != nil else { return ["outline": describe(before)] }
+            let session = BoardEditing(board: before, project: link.projectSettings())
+            let edit: BoardEditing.Edit?
+            if fit {
+                guard margin >= 0 else { throw ToolError("margin_mm can't be negative") }
+                guard before.outline.isEmpty || before.outlineRectangle != nil else {
+                    throw ToolError("The board's outline is not one rectangle: change it in KiCad (pcb_open)")
+                }
+                edit = session.fitOutline(margin: margin)
+            } else {
+                let now = before.outlineRectangle
+                if now == nil && !before.outline.isEmpty {
+                    throw ToolError("The board's outline is not one rectangle: change it in KiCad (pcb_open)")
+                }
+                guard let w = width ?? now?.box.width, let h = height ?? now?.box.height else {
+                    throw ToolError("The board has no outline yet: give width_mm and height_mm, or fit")
+                }
+                let r = radius ?? now?.radius ?? 0
+                guard w > 0, h > 0, r >= 0, r <= min(w, h) / 2 else {
+                    throw ToolError("width_mm and height_mm should be positive, and corner_radius_mm between 0 and half the shorter side")
+                }
+                edit = session.setOutline(width: w, height: h, radius: r)
+            }
+            guard let edit else { return ["changed": false, "outline": describe(before)] }
+            var (board, live) = try link.apply(edit.after, from: before, message: edit.name + " (JSpice)")
+            if board.zones.contains(where: { !$0.isRuleArea }) { board = try link.fillZones() }
+            return ["changed_in": Self.place(live), "outline": describe(board)]
         }
     }
 

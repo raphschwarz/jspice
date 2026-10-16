@@ -440,6 +440,15 @@ final class PCBEditing: ObservableObject {
         }
     }
 
+    /// The board's outline made a rectangle `width` by `height` (mm), its corners rounded to `radius` (mm), and its
+    /// pours filled again within it
+    func setOutline(width: Double, height: Double, radius: Double) {
+        Task {
+            await place { $0.setOutline(width: width, height: height, radius: radius) }
+            if undoName == "Change Board Outline" { await fillZonesNow() }
+        }
+    }
+
     /// The tracks and vias of the nets of those selected, all of them (I, as KiCad selects a net's copper)
     func selectNets(in picture: KiCadBoardPicture) {
         let nets = Set(picture.tracks.filter { selection.contains($0.uuid) }.compactMap(\.net)
