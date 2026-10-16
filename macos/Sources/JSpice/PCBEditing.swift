@@ -390,6 +390,28 @@ final class PCBEditing: ObservableObject {
     /// The board's zones filled anew by KiCad (B, as in KiCad)
     func fillZones() { Task { await fillZonesNow() } }
 
+    /// Stitching vias for the ground pours, every 5 mm where both sides' are filled (as KiCad last filled them) and
+    /// the router finds room, as one change; KiCad then fills the pours round them
+    func stitchPours() {
+        guard !isRouting else { return }
+        Task {
+            await applying?.value
+            if !isReady { await prepareNow() }
+            let made = await engine.run { session -> BoardEditing.Edit? in
+                guard let net = session.groundNets.first else { return nil }
+                return session.stitchVias(net: net)
+            }
+            guard let made else {
+                NSSound.beep()
+                message = "Stitching vias go where the ground is poured and filled on both sides: pour it on both, then fill the zones (B)."
+                return
+            }
+            take(made)
+            message = "\(made.added.count) stitching via\(made.added.count == 1 ? "" : "s") placed; filling the pours round them."
+            await fillZonesNow()
+        }
+    }
+
     func fillZonesNow() async {
         guard let controller, !isRouting else { return }
         await applying?.value

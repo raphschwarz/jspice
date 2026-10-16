@@ -134,6 +134,12 @@ final class BoardToolsTests: XCTestCase {
         XCTAssertFalse((status["to_board"] as? [String] ?? []).contains { $0.contains("H1") })
         XCTAssertThrowsError(try session.call("pcb_pour", arguments: ["layers": ["In7.Cu"]]))
 
+        // the ground poured on the top too, and stitched to the bottom's
+        let stitched = try call("pcb_pour", ["layers": ["top"], "stitch_pitch_mm": 5])
+        XCTAssertGreaterThan(try XCTUnwrap(stitched["stitching_vias"] as? Int), 0)
+        let stitchedBoard = try KiCadBoard.read(folder.appendingPathComponent("blinker.kicad_pcb"))
+        XCTAssertTrue(stitchedBoard.vias.contains { $0.net == "GND" && $0.node.value("free") == "yes" })
+
         // KiCad finds nothing wrong with the tracks
         let drc = try call("pcb_drc")
         let wrong: Set<String> = ["clearance", "hole_clearance", "copper_edge_clearance", "tracks_crossing", "shorting_items",
@@ -142,7 +148,7 @@ final class BoardToolsTests: XCTestCase {
         XCTAssertTrue(found.isEmpty, "\(found)")
 
         let unroute = try call("pcb_unroute", ["all": true])
-        XCTAssertEqual(unroute["removed"] as? Int, added)
+        XCTAssertEqual(unroute["removed"] as? Int, added + (stitched["stitching_vias"] as? Int ?? 0))
         XCTAssertThrowsError(try session.call("pcb_unroute", arguments: [:]))
     }
 }

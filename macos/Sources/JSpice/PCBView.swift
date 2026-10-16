@@ -614,6 +614,7 @@ struct PCBEditBar: View {
                 Button("Ground Pour on Both Sides") {
                     editing.addPour(layers: [editing.layers.first ?? "F.Cu", editing.layers.last ?? "B.Cu"])
                 }
+                Button("Stitch Ground Pours") { editing.stitchPours() }
                 Divider()
                 Button("Fill Zones") { editing.fillZones() }
                 Button("Remove Pours") { editing.removePours() }

@@ -287,6 +287,51 @@ public final class BoardEditing {
         return edit
     }
 
+    /// Stitching vias for `net`'s pours: a via every `pitch` (mm, on whole multiples of it) where the net's pours
+    /// are filled on both the top and the bottom with room round the via, and where the router finds it clear of
+    /// everything else, as one change (KiCad then fills the pours again round them); none within half a pitch of one
+    /// of the net's vias there already. nil when there is nowhere to put one (the pours unfilled: KiCad fills them).
+    public func stitchVias(net: String, pitch: Double = 5) -> Edit? {
+        guard !isRouting, pitch > 0, let top = layers.first, let bottom = layers.last, top != bottom,
+              let box = router.board.edgeBounds else { return nil }
+        let board = router.board
+        var fills: [String: [[KiCadPoint]]] = [:]
+        for zone in board.zones where zone.net == net && !zone.isRuleArea {
+            for fill in zone.fills { fills[fill.layer, default: []].append(fill.points) }
+        }
+        let size = router.sizes(for: nil, net: net)
+        let reach = Double(size.viaDiameter) / 2e6
+        func inside(_ p: KiCadPoint, _ layer: String) -> Bool {
+            (fills[layer] ?? []).contains { poly in
+                KiCadPolygon.contains(poly, p) && zip(poly, poly.dropFirst() + poly.prefix(1)).allSatisfy { Self.distance(p, $0, $1) >= reach }
+            }
+        }
+        let vias = board.vias.filter { $0.net == net }.map(\.position)
+        var points: [IPoint] = []
+        var y = (box.minY / pitch).rounded(.up) * pitch
+        while y <= box.maxY {
+            var x = (box.minX / pitch).rounded(.up) * pitch
+            while x <= box.maxX {
+                let p = KiCadPoint(x, y)
+                if inside(p, top) && inside(p, bottom) && !vias.contains(where: { $0.distance(to: p) < pitch / 2 }) {
+                    points.append(IPoint(Int((x * 1e6).rounded()), Int((y * 1e6).rounded())))
+                }
+                x += pitch
+            }
+            y += pitch
+        }
+        guard !router.placeVias(net: net, at: points).isEmpty else { return nil }
+        return change("Stitch \(net) Pours")
+    }
+
+    /// How far `p` is from the segment from `a` to `b` (mm)
+    private static func distance(_ p: KiCadPoint, _ a: KiCadPoint, _ b: KiCadPoint) -> Double {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let length = dx * dx + dy * dy
+        let t = length == 0 ? 0 : max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length))
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
+    }
+
     // MARK: - Pours
 
     /// The board's ground nets, those whose names say so (GND, AGND, GND_1…)
@@ -351,8 +396,9 @@ public final class BoardEditing {
 
     /// Mounting holes in the corners of a rectangular outline, `inset` (mm) in from both sides, made from `footprint`
     /// (the library's `libID`): parts of the board alone (board only: no symbol in the schematic, and kept by its
-    /// updates), H1, H2… after any holes already numbered so, as one change; nil when the outline is not one
-    /// rectangle, or each corner has a hole already
+    /// updates), H1, H2… after any holes already numbered so, as one change; a corner where the hole would come too
+    /// near copper already there (as the router finds it, by the board's rules) left without. nil when the outline is
+    /// not one rectangle, or no corner can take a hole
     public func addMountingHoles(_ footprint: SExpr, libID: String, inset: Double) -> Edit? {
         guard !isRouting, inset > 0, let (box, _) = router.board.outlineRectangle,
               box.width > 2 * inset, box.height > 2 * inset else { return nil }
@@ -371,6 +417,18 @@ public final class BoardEditing {
             board.add(node)
             guard let uuid = node.value("uuid"), let placed = board.footprint(uuid: uuid) else { continue }
             placed.attributes.insert("board_only")
+            // (its pads, holes and all, clear of everything else, or the hole is not made)
+            router.boardChanged()
+            let reference = "H\(n)"
+            let clear = zip(router.world.items, router.iface.routerItems).allSatisfy { w, item in
+                guard w.kind == .pad, w.footprint == reference, let item, let world = router.router.world else { return true }
+                return world.checkColliding(item) == nil
+            }
+            guard clear else {
+                board.root.remove(node)
+                router.boardChanged()
+                continue
+            }
             made.append(uuid)
         }
         guard !made.isEmpty else { return nil }

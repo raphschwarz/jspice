@@ -329,6 +329,45 @@ final class BoardEditingTests: XCTestCase {
         XCTAssert(theirs.isEmpty, theirs.map(\.description).joined(separator: "; "))
     }
 
+    /// Stitching vias for a net poured on both sides: where KiCad filled both pours, clear of everything else as the
+    /// router keeps a via, free vias; KiCad fills the pours round them again and its DRC finds nothing wrong with them
+    func testPoursAreStitched() throws {
+        guard let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor else {
+            if ProcessInfo.processInfo.environment["JSPICE_REQUIRE_KICAD"] != nil { return XCTFail("KiCad 10 is needed") }
+            throw XCTSkip("no kicad-cli")
+        }
+        let file = try XCTUnwrap(Self.boards().last)
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-stitch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let copy = work.appendingPathComponent(file.lastPathComponent)
+        try? FileManager.default.copyItem(at: file.deletingPathExtension().appendingPathExtension("kicad_pro"),
+                                          to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+        let session = BoardEditing(board: try KiCadBoard.read(file), project: Self.project(file))
+        let net = try XCTUnwrap(session.groundNets.first ?? session.router.world.netNames.values.sorted().first)
+        XCTAssertNil(session.stitchVias(net: net), "no pours yet")
+        let poured = try XCTUnwrap(session.addPour(net: net, layers: [try XCTUnwrap(session.layers.first), try XCTUnwrap(session.layers.last)]))
+        try poured.after.write(to: copy)
+        let fabrication = KiCadFabrication(installation: kicad)
+        try fabrication.fillZones(copy)
+        session.load(try KiCadBoard.read(copy))
+        let edit = try XCTUnwrap(session.stitchVias(net: net))
+        XCTAssertEqual(edit.name, "Stitch \(net) Pours")
+        let vias = edit.after.vias.filter { edit.added.contains($0.uuid) }
+        XCTAssertFalse(vias.isEmpty)
+        XCTAssertTrue(vias.allSatisfy { $0.net == net && $0.node.value("free") == "yes" })
+        print("BoardEditingTests: \(vias.count) stitching vias for \(net)")
+        XCTAssertNil(session.stitchVias(net: net), "stitched already")
+        try edit.after.write(to: copy)
+        try fabrication.fillZones(copy)
+        let report = try fabrication.drc(copy, refillZones: false)
+        let added = Set(edit.added)
+        let wrong = report.violations.filter { v in
+            (BoardRoutingTests.routerViolations.contains(v.type) || v.type == "via_dangling") && v.items.contains { added.contains($0.uuid) }
+        }
+        XCTAssert(wrong.isEmpty, wrong.map { "\($0.type): \($0.description) — \($0.items.map(\.description))" }.joined(separator: "; "))
+    }
+
     /// A keepout zone and another net's arc track in the way of a track: kept clear of (the port's stand-ins for
     /// KiCad's keepout triangles and arc items)
     func testKeepoutsAndArcTracksAreKeptClearOf() throws {

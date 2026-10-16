@@ -21,7 +21,8 @@ extension CircuitSession {
              description: "Pours copper of a net (by default the ground net) over the whole board on the layers given (by default the bottom), as KiCad's zones: kept clear of other nets' copper, joined to the net's pads by thermal reliefs, and filled by KiCad itself (its editor, or its command line in the board's file). fill_only fills the board's zones again (after routing changes them) without adding one. Returns the zones and the connections left to route.",
              inputSchema: schema(["net": string("The net to pour (default: the board's ground net, GND)"),
                                   "layers": ["type": "array", "items": ["type": "string"], "description": "\"top\", \"bottom\" or copper layer names (default: bottom)"],
-                                  "fill_only": ["type": "boolean", "description": "Only fill the board's zones again"]]),
+                                  "fill_only": ["type": "boolean", "description": "Only fill the board's zones again"],
+                                  "stitch_pitch_mm": ["type": "number", "description": "Then stitching vias of the net every this many mm where its pours are filled on both sides and there is room (5 is usual), and the pours filled again round them"]]),
              run: { session, arguments in try session.pcbPour(arguments) }),
         Tool(name: "pcb_net_class",
              description: "The board's net classes (the widths and gaps the router routes each net with, kept in the board's KiCad project): with no name, lists them; with a name, sets that class's track width, clearance, via diameter and drill (mm) and the nets it takes (names or patterns such as \"+*V\"), adding the class if the board has none of that name. Refused while KiCad has the board open (change them in its Board Setup then).",
@@ -122,7 +123,22 @@ extension CircuitSession {
                 result["changed_in"] = Self.place(live)
                 result["added"] = ["net": net, "layers": names]
             }
-            let board = try link.fillZones()
+            var board = try link.fillZones()
+            if let pitch = try Self.number(arguments["stitch_pitch_mm"], "stitch_pitch_mm") {
+                guard pitch >= 1 else { throw ToolError("stitch_pitch_mm should be 1 or more") }
+                let session = BoardEditing(board: board, project: link.projectSettings())
+                guard let net = (arguments["net"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) ?? session.groundNets.first else {
+                    throw ToolError("The board has no ground net: name one with net")
+                }
+                if let edit = session.stitchVias(net: net, pitch: pitch) {
+                    _ = try link.apply(edit.after, from: board, message: edit.name + " (JSpice)")
+                    board = try link.fillZones()
+                    result["stitching_vias"] = edit.added.count
+                } else {
+                    result["stitching_vias"] = 0
+                    result["stitching_note"] = "No room: \(net) must be poured and filled on both the top and the bottom"
+                }
+            }
             result["zones"] = board.zones.filter { !$0.isRuleArea }.map { z -> [String: Any] in
                 ["net": z.net ?? "", "layers": z.layers, "filled": !z.fills.isEmpty]
             }

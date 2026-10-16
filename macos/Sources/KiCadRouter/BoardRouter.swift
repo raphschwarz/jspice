@@ -216,6 +216,28 @@ public final class BoardRouter {
         iface.removedItems.removeAll()
     }
 
+    // MARK: - Stitching
+
+    /// Through vias of net `name` at `points`, its net class's size, each where the router finds it clear of
+    /// everything else on the board (its clearances, holes and edge, as the router keeps a via it places clear) and of
+    /// those placed before it; free vias, as KiCad's via tool places them. The ids of those placed.
+    @discardableResult
+    public func placeVias(net name: String, at points: [IPoint]) -> [String] {
+        router.stopRouting()
+        lastAdded = []
+        lastRemoved = []
+        guard let net = world.netNames.first(where: { $0.value == name })?.key, let node = router.world else { return [] }
+        let s = sizes(for: nil, net: name)
+        for p in points {
+            let via = Via(pos: p, layers: LayerRange(0, world.copperLayers - 1), diameter: s.viaDiameter, drill: s.viaDrill, net: net)
+            guard node.checkColliding(via) == nil else { continue }
+            node.add(via)
+            lastAdded.append(insert(via: via, free: true))
+        }
+        reload()
+        return lastAdded
+    }
+
     // MARK: - Writing the board
 
     private func apply() {
@@ -254,10 +276,12 @@ public final class BoardRouter {
         return uuid
     }
 
-    private func insert(via v: Via) -> String {
+    private func insert(via v: Via, free: Bool = false) -> String {
         let uuid = KiCadBoard.newUUID()
         let node = SExpr("via", SExpr("at", Self.mm(v.pos.x), Self.mm(v.pos.y)), SExpr("size", Self.mm(v.diameter)), SExpr("drill", Self.mm(v.drill)),
                          SExpr("layers", layerName(v.layers.start), layerName(v.layers.end)), netList(v.net), SExpr("uuid", uuid))
+        // (KiCad writes a free via's flag after its layers)
+        if free { node.items.insert(SExpr("free", Keyword("yes")), at: 5) }
         insertTrack(node)
         return uuid
     }
