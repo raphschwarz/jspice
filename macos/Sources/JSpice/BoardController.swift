@@ -592,6 +592,11 @@ final class BoardController: ObservableObject {
         }
     }
 
+    /// A footprint of KiCad's libraries, by its id (the board's own library tables', or KiCad's), nil if there is none
+    func footprint(_ libID: String) async -> SExpr? {
+        try? await worker.run { w in try w.library()?.footprint(libID) }
+    }
+
     /// The net classes read again from the board's project
     func refreshNetClasses() {
         guard shownBoard == nil else { return }

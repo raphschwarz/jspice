@@ -257,6 +257,14 @@ public final class KiCadBoard {
 
     /// Footprints moved, turned or turned over between `before` and `after`, placed so on this board too (by their
     /// ids): a change made on an older copy of the board carried onto this one, which keeps its own changes
+    /// Footprints added between `before` and `after` (mounting holes, made in the board editor) added to this board as
+    /// they are in `after`, and those taken away taken away
+    public func carryFootprints(from before: KiCadBoard, to after: KiCadBoard) {
+        let was = Set(before.footprints.map(\.uuid)), now = Set(after.footprints.map(\.uuid))
+        for f in after.footprints where !was.contains(f.uuid) && footprint(uuid: f.uuid) == nil { add(f.node.copy()) }
+        for f in footprints where was.contains(f.uuid) && !now.contains(f.uuid) { remove(f) }
+    }
+
     public func carryPlacement(from before: KiCadBoard, to after: KiCadBoard) {
         let old = Dictionary(before.footprints.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
         for f in after.footprints {

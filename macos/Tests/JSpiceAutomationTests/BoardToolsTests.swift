@@ -120,6 +120,18 @@ final class BoardToolsTests: XCTestCase {
         XCTAssertTrue(reshaped.zones.contains { $0.net == "GND" && !$0.fills.isEmpty })
         XCTAssertEqual(reshaped.zones.first { $0.net == "GND" }?.outline.map(\.x).max(), (outline["x_mm"] as? Double ?? 0) + width + 4)
         XCTAssertThrowsError(try session.call("pcb_outline", arguments: ["corner_radius_mm": 1000]))
+
+        // mounting holes in its corners, kept by the schematic's updates
+        let inStep = try call("pcb_status")["in_step"] as? Bool
+        let holes = try XCTUnwrap(call("pcb_mounting_holes", ["screw": "M3"])["added"] as? [[String: Any]])
+        XCTAssertEqual(holes.count, 4)
+        XCTAssertEqual((try call("pcb_mounting_holes")["added"] as? [Any])?.count, 0, "each corner has one")
+        XCTAssertThrowsError(try session.call("pcb_mounting_holes", arguments: ["screw": "M7"]))
+        let holed = try KiCadBoard.read(folder.appendingPathComponent("blinker.kicad_pcb"))
+        XCTAssertEqual(holed.footprints.filter { $0.attributes.contains("board_only") }.count, 4)
+        let status = try call("pcb_status")
+        XCTAssertEqual(status["in_step"] as? Bool, inStep, "the schematic's update leaves them: \(status["to_board"] ?? "")")
+        XCTAssertFalse((status["to_board"] as? [String] ?? []).contains { $0.contains("H1") })
         XCTAssertThrowsError(try session.call("pcb_pour", arguments: ["layers": ["In7.Cu"]]))
 
         // KiCad finds nothing wrong with the tracks

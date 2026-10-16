@@ -619,6 +619,11 @@ struct PCBEditBar: View {
                 Button("Remove Pours") { editing.removePours() }
                 Divider()
                 Button("Fit Outline to Parts") { editing.fitOutline() }
+                Menu("Mounting Holes") {
+                    ForEach(BoardEditing.mountingHoles, id: \.screw) { hole in
+                        Button(hole.screw) { editing.addMountingHoles(screw: hole.screw) }
+                    }
+                }
             } label: {
                 Image(systemName: "square.on.square.dashed")
             }

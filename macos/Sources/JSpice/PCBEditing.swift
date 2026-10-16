@@ -458,13 +458,34 @@ final class PCBEditing: ObservableObject {
                         + picture.vias.filter { $0.net.map(nets.contains) ?? false }.map(\.uuid))
     }
 
-    /// A change to the footprints' places, made and sent to the board
-    func place(_ body: @escaping (BoardEditing) -> BoardEditing.Edit?) async {
-        guard !isRouting else { return }
+    /// A change to the footprints' places (or the board's outline, or parts of the board alone), made and sent to the
+    /// board; whether there was one
+    @discardableResult
+    func place(_ body: @escaping (BoardEditing) -> BoardEditing.Edit?) async -> Bool {
+        guard !isRouting else { return false }
         await applying?.value
         if !isReady { await prepareNow() }
-        guard let made = await engine.run(body) else { return }
+        guard let made = await engine.run(body) else { return false }
         take(made)
+        return true
+    }
+
+    /// Mounting holes for `screw` (M2, M2.5, M3, M4: KiCad's library's) in the corners of the board's outline
+    func addMountingHoles(screw: String) {
+        guard let (_, libID, inset) = BoardEditing.mountingHoles.first(where: { $0.screw == screw }) else { return }
+        Task {
+            guard let footprint = await controller?.footprint(libID) else {
+                NSSound.beep()
+                message = "KiCad's footprint libraries have no \(libID)."
+                return
+            }
+            if await place({ $0.addMountingHoles(footprint, libID: libID, inset: inset) }) {
+                message = nil
+            } else {
+                NSSound.beep()
+                message = "Mounting holes go in the corners of a rectangular outline, where it has none yet."
+            }
+        }
     }
 
     // MARK: - Changes

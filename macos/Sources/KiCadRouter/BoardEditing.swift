@@ -343,6 +343,41 @@ public final class BoardEditing {
         return reshapeOutline(to: box, radius: radius, name: "Change Board Outline")
     }
 
+    /// The mounting holes of KiCad's library by screw size, and how far in from the board's sides each goes
+    public static let mountingHoles: [(screw: String, libID: String, inset: Double)] = [
+        ("M2", "MountingHole:MountingHole_2.2mm_M2", 3), ("M2.5", "MountingHole:MountingHole_2.7mm_M2.5", 3.5),
+        ("M3", "MountingHole:MountingHole_3.2mm_M3", 4), ("M4", "MountingHole:MountingHole_4.3mm_M4", 5),
+    ]
+
+    /// Mounting holes in the corners of a rectangular outline, `inset` (mm) in from both sides, made from `footprint`
+    /// (the library's `libID`): parts of the board alone (board only: no symbol in the schematic, and kept by its
+    /// updates), H1, H2… after any holes already numbered so, as one change; nil when the outline is not one
+    /// rectangle, or each corner has a hole already
+    public func addMountingHoles(_ footprint: SExpr, libID: String, inset: Double) -> Edit? {
+        guard !isRouting, inset > 0, let (box, _) = router.board.outlineRectangle,
+              box.width > 2 * inset, box.height > 2 * inset else { return nil }
+        let board = router.board
+        let corners = [KiCadPoint(box.minX + inset, box.minY + inset), KiCadPoint(box.maxX - inset, box.minY + inset),
+                       KiCadPoint(box.maxX - inset, box.maxY - inset), KiCadPoint(box.minX + inset, box.maxY - inset)]
+        let holes = board.footprints.filter { $0.libID.hasPrefix("MountingHole:") }
+        var numbers = Set(board.footprints.compactMap { $0.reference.hasPrefix("H") ? Int($0.reference.dropFirst()) : nil })
+        let value = KiCadFootprintLibrary.split(libID)?.name ?? libID
+        var made: [String] = []
+        for corner in corners where !holes.contains(where: { $0.position.distance(to: corner) < inset }) {
+            var n = 1
+            while numbers.contains(n) { n += 1 }
+            numbers.insert(n)
+            let node = KiCadFootprintLibrary.placeable(footprint.copy(), libID: libID, reference: "H\(n)", value: value, at: corner)
+            board.add(node)
+            guard let uuid = node.value("uuid"), let placed = board.footprint(uuid: uuid) else { continue }
+            placed.attributes.insert("board_only")
+            made.append(uuid)
+        }
+        guard !made.isEmpty else { return nil }
+        router.boardChanged()
+        return change(made.count == 1 ? "Add Mounting Hole" : "Add Mounting Holes", footprints: made)
+    }
+
     /// The board's outline when it is one rectangle (round cut-outs and polygons aside): its corners and its corners'
     /// radius (mm)
     public static func outlineRectangle(_ board: KiCadBoard) -> (box: KiCadBox, radius: Double)? { board.outlineRectangle }

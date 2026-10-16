@@ -281,6 +281,54 @@ final class BoardEditingTests: XCTestCase {
         }
     }
 
+    /// Mounting holes from KiCad's library in the outline's corners: board-only parts, numbered as KiCad numbers holes,
+    /// in the router's world (their unplated holes), carried onto the board's file as it then is, and read by KiCad
+    func testMountingHolesGoInTheCorners() throws {
+        guard let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor else {
+            if ProcessInfo.processInfo.environment["JSPICE_REQUIRE_KICAD"] != nil { return XCTFail("KiCad 10 is needed") }
+            throw XCTSkip("KiCad's footprint libraries are not installed")
+        }
+        let (_, libID, inset) = try XCTUnwrap(BoardEditing.mountingHoles.first { $0.screw == "M3" })
+        let footprint = try KiCadFootprintLibrary(installation: kicad).footprint(libID)
+        let file = try XCTUnwrap(Self.boards().first)
+        let board = try KiCadBoard.read(file)
+        for f in board.root.items where f.head == "footprint" {
+            f.items.removeAll { ($0.head ?? "").hasPrefix("fp_") && $0.value("layer") == "Edge.Cuts" }
+        }
+        let session = BoardEditing(board: board, project: Self.project(file))
+        let holesBefore = session.router.world.items.filter { $0.kind == .pad && $0.npth }.count
+        let edit = try XCTUnwrap(session.addMountingHoles(footprint, libID: libID, inset: inset))
+        XCTAssertEqual(edit.name, "Add Mounting Holes")
+        XCTAssertEqual(edit.footprints.count, 4)
+        let holes = edit.after.footprints.filter { edit.footprints.contains($0.uuid) }
+        XCTAssertEqual(Set(holes.map(\.reference)), ["H1", "H2", "H3", "H4"])
+        XCTAssertTrue(holes.allSatisfy { $0.attributes.contains("board_only") && $0.libID == libID })
+        let (box, _) = try XCTUnwrap(edit.after.outlineRectangle)
+        XCTAssertTrue(holes.contains { $0.position == KiCadPoint(box.minX + inset, box.minY + inset) })
+        XCTAssertTrue(holes.contains { $0.position == KiCadPoint(box.maxX - inset, box.maxY - inset) })
+        XCTAssertEqual(session.router.world.items.filter { $0.kind == .pad && $0.npth }.count, holesBefore + 4)
+        XCTAssertNil(session.addMountingHoles(footprint, libID: libID, inset: inset), "each corner has one")
+        // carried onto a copy of the board as it was before
+        let elsewhere = edit.before.copy()
+        elsewhere.carryFootprints(from: edit.before, to: edit.after)
+        XCTAssertEqual(Set(elsewhere.footprints.map(\.uuid)), Set(edit.after.footprints.map(\.uuid)))
+        // KiCad reads them: no hole too near the edge or another's copper
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-holes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let copy = work.appendingPathComponent(file.lastPathComponent)
+        try edit.after.write(to: copy)
+        try? FileManager.default.copyItem(at: file.deletingPathExtension().appendingPathExtension("kicad_pro"),
+                                          to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+        let report = try KiCadFabrication(installation: kicad).drc(copy, refillZones: false)
+        let refs = Set(holes.map(\.reference))
+        let theirs = report.violations.filter { v in
+            ["copper_edge_clearance", "hole_clearance", "hole_to_hole", "clearance"].contains(v.type)
+                && v.items.contains { item in refs.contains { item.description.contains("of " + $0) } }
+        }
+        XCTAssert(theirs.isEmpty, theirs.map(\.description).joined(separator: "; "))
+    }
+
     /// A keepout zone and another net's arc track in the way of a track: kept clear of (the port's stand-ins for
     /// KiCad's keepout triangles and arc items)
     func testKeepoutsAndArcTracksAreKeptClearOf() throws {

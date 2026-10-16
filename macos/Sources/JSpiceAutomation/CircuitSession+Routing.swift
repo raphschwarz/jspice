@@ -37,6 +37,10 @@ extension CircuitSession {
                                   "width_mm": ["type": "number"], "height_mm": ["type": "number"],
                                   "corner_radius_mm": ["type": "number", "description": "Its corners' radius, 0 for square corners"]]),
              run: { session, arguments in try session.pcbOutline(arguments) }),
+        Tool(name: "pcb_mounting_holes",
+             description: "Mounting holes (KiCad's MountingHole footprints, unplated, for M2, M2.5, M3 or M4 screws) in the corners of the board's rectangular outline, a few millimetres in from its sides: board-only parts, H1, H2…, which the schematic's updates leave alone. A corner with a hole already is left as it is. The change goes to the board as pcb_route's do.",
+             inputSchema: schema(["screw": string("M2, M2.5, M3 (the default) or M4")]),
+             run: { session, arguments in try session.pcbMountingHoles(arguments) }),
         Tool(name: "pcb_unroute",
              description: "Takes tracks and vias off the board: those of the nets named, or all of them. As one change, as pcb_route makes its own.",
              inputSchema: schema(["nets": ["type": "array", "items": ["type": "string"], "description": "The nets whose tracks and vias to take off"],
@@ -195,6 +199,27 @@ extension CircuitSession {
             var (board, live) = try link.apply(edit.after, from: before, message: edit.name + " (JSpice)")
             if board.zones.contains(where: { !$0.isRuleArea }) { board = try link.fillZones() }
             return ["changed_in": Self.place(live), "outline": describe(board)]
+        }
+    }
+
+    func pcbMountingHoles(_ arguments: [String: Any]) throws -> Any {
+        let screw = arguments["screw"] as? String ?? "M3"
+        guard let (_, libID, inset) = BoardEditing.mountingHoles.first(where: { $0.screw.lowercased() == screw.lowercased() }) else {
+            throw ToolError("screw should be one of \(BoardEditing.mountingHoles.map(\.screw).joined(separator: ", "))")
+        }
+        return try withBoard { link -> Any in
+            guard link.exists else { throw ToolError("The circuit has no board yet: pcb_create makes one") }
+            let before = try link.board().board
+            guard before.outlineRectangle != nil else { throw ToolError("The board's outline is not one rectangle: pcb_outline draws one") }
+            let footprint = try link.footprints().footprint(libID)
+            let session = BoardEditing(board: before, project: link.projectSettings())
+            guard let edit = session.addMountingHoles(footprint, libID: libID, inset: inset) else {
+                return ["added": [], "note": "Each corner has a mounting hole already"]
+            }
+            let (_, live) = try link.apply(edit.after, from: before, message: edit.name + " (JSpice)")
+            let holes = edit.after.footprints.filter { edit.footprints.contains($0.uuid) }
+            return ["added": holes.map { ["reference": $0.reference, "x_mm": $0.position.x, "y_mm": $0.position.y] },
+                    "footprint": libID, "changed_in": Self.place(live)]
         }
     }
 

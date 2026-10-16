@@ -178,6 +178,7 @@ public final class BoardLink {
         if current.text == before.text {
             board = after
         } else {
+            current.carryFootprints(from: before, to: after)
             current.carryPlacement(from: before, to: after)
             current.carryCopper(from: before, to: after)
             current.carryZones(from: before, to: after)
