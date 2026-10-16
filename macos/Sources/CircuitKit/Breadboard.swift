@@ -945,6 +945,15 @@ public enum Breadboard {
 
     /// Each net's DC voltage where the circuit rests, its signal sources held still
     static func netVoltages(_ circuit: Circuit, _ parts: [NetlistPart]) -> (voltages: [String: Double], found: Bool) {
+        // the same circuit rests where it did: the last few kept (a board kept in step with KiCad asks again each time
+        // the board changes, the schematic unchanged)
+        if let kept = RestingVoltages.shared.find(circuit) { return kept }
+        let found = restingVoltages(circuit, parts)
+        RestingVoltages.shared.keep(circuit, found)
+        return found
+    }
+
+    static func restingVoltages(_ circuit: Circuit, _ parts: [NetlistPart]) -> (voltages: [String: Double], found: Bool) {
         var still = circuit
         for i in still.elements.indices where [.acVoltage, .squareVoltage, .noiseVoltage, .balancedCable].contains(still.elements[i].kind)
             || still.elements[i].kind.playsClip {
@@ -1154,5 +1163,25 @@ public enum Breadboard {
             problems.append("\(net) is in \(roots.count) places the board does not join")
         }
         return problems.sorted()
+    }
+}
+
+/// The resting voltages of the last few circuits asked about
+final class RestingVoltages: @unchecked Sendable {
+    static let shared = RestingVoltages()
+    private let lock = NSLock()
+    private var kept: [(circuit: Circuit, found: (voltages: [String: Double], found: Bool))] = []
+
+    func find(_ circuit: Circuit) -> (voltages: [String: Double], found: Bool)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return kept.first { $0.circuit == circuit }?.found
+    }
+
+    func keep(_ circuit: Circuit, _ found: (voltages: [String: Double], found: Bool)) {
+        lock.lock()
+        defer { lock.unlock() }
+        kept.insert((circuit, found), at: 0)
+        if kept.count > 4 { kept.removeLast() }
     }
 }
