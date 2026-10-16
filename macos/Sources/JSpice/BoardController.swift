@@ -111,7 +111,7 @@ final class BoardController: ObservableObject {
             w.link = nil
             w.synced = nil
             w.fingerprint = nil
-            guard let installation = BoardWorker.installation else {
+            guard let installation = w.installation else {
                 return (.noKiCad(BoardLink(boardFile: URL(fileURLWithPath: "/"), installation: nil).problem ?? ""), false)
             }
             if let problem = installation.problem { return (.noKiCad(problem), false) }
@@ -151,6 +151,16 @@ final class BoardController: ObservableObject {
         picture = KiCadBoardPicture(board)
         availability = .board
         publish(built)
+    }
+
+    /// Looks for KiCad again (installed since the window opened), and for the board
+    func lookAgain() {
+        connected = false
+        let file = fileURL
+        Task {
+            try? await worker.run { $0.forgetInstallation() }
+            setFile(file)
+        }
     }
 
     /// Stops following the board (the window is closing)
@@ -553,8 +563,19 @@ private struct Seen {
 /// The board's work, off the main thread and one piece at a time: KiCad's API, the board's files and kicad-cli all
 /// take their time
 final class BoardWorker: @unchecked Sendable, BoardHost {
-    /// KiCad as installed, looked for once
-    static let installation = KiCadInstallation.find()
+    /// KiCad as installed, looked for once (and again when asked)
+    var installation: KiCadInstallation? {
+        if let found { return found }
+        let installation = KiCadInstallation.find()
+        found = .some(installation)
+        return installation
+    }
+    private var found: KiCadInstallation??
+
+    func forgetInstallation() {
+        found = nil
+        standalone = nil
+    }
 
     private let queue = DispatchQueue(label: "org.knowm.jspice.board", qos: .userInitiated)
     // touched only on the queue
@@ -585,7 +606,7 @@ final class BoardWorker: @unchecked Sendable, BoardHost {
     func withBoard<T>(_ body: (BoardLink) throws -> T) throws -> T {
         try queue.sync {
             guard let link else {
-                throw ToolError(Self.installation == nil ? "KiCad is not installed: JSpice lays out boards with KiCad 10 or later"
+                throw ToolError(installation == nil ? "KiCad is not installed: JSpice lays out boards with KiCad 10 or later"
                                                          : "Save the circuit first: its board goes beside its file")
             }
             return try body(link)
@@ -594,7 +615,7 @@ final class BoardWorker: @unchecked Sendable, BoardHost {
 
     func library() throws -> KiCadFootprintLibrary? {
         if let link { return try link.footprints() }
-        if standalone == nil, let installation = Self.installation { standalone = KiCadFootprintLibrary(installation: installation) }
+        if standalone == nil, let installation { standalone = KiCadFootprintLibrary(installation: installation) }
         return standalone
     }
 }

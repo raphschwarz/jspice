@@ -62,7 +62,11 @@ struct PCBView: View {
         switch board.availability {
         case .noKiCad(let problem):
             PCBEmptyState(symbol: "exclamationmark.triangle", title: "JSpice lays out boards with KiCad", text: problem) {
-                Link("Download KiCad", destination: URL(string: "https://www.kicad.org/download/")!)
+                HStack {
+                    Link("Download KiCad", destination: URL(string: "https://www.kicad.org/download/")!)
+                    Button("Look Again") { board.lookAgain() }
+                        .help("Look for KiCad again, once it is installed")
+                }
             }
         case .unsaved:
             PCBEmptyState(symbol: "doc.badge.plus", title: "Save the circuit first",
