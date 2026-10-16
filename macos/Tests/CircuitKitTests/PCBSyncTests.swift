@@ -70,6 +70,29 @@ final class PCBSyncTests: XCTestCase {
         XCTAssertEqual(after.position, KiCadPoint(42, 17))
     }
 
+    /// Undo in the app restores the circuit but keeps the board's record as the board now has it (EditorState's
+    /// restore): the undone change is then the schematic's, and goes back to the board rather than coming back from it
+    func testAChangeUndoneInTheSchematicIsUndoneOnTheBoard() throws {
+        let (board, made) = PCBSync.newBoard(try Self.circuit(), title: "Test", library: Self.library)
+        let before = made.circuit
+        var changed = before
+        let i = try XCTUnwrap(changed.elements.firstIndex { $0.name == "R1" })
+        changed.elements[i].params["resistance"] = 22_000
+        let taken = PCBSync.sync(changed, board: board, library: Self.library)
+        XCTAssertEqual(board.footprints.first { $0.reference == "R1" }?.value, "22k")
+        // the circuit as it was with its record as it was too: the board's 22k would look like the board's own change
+        // and come back
+        let stale = PCBSync.sync(before, board: board.copy(), library: Self.library)
+        XCTAssertEqual(stale.applied.map(\.description), ["R1's value changed from 4.7k to 22k on the board"])
+        // undone: the circuit as it was, the record as the board has it
+        var undone = before
+        undone.pcb?.synced = try XCTUnwrap(taken.circuit.pcb).synced
+        let back = PCBSync.sync(undone, board: board, library: Self.library)
+        XCTAssertEqual(back.applied, [], "nothing comes back from the board")
+        XCTAssertEqual(back.report.actions.map(\.text), ["Change R1 value from 22k to 4.7k."])
+        XCTAssertEqual(board.footprints.first { $0.reference == "R1" }?.value, "4.7k")
+    }
+
     func testTheBoardsRenameValueFootprintAndFittingComeBackToTheSchematic() throws {
         let (board, made) = PCBSync.newBoard(try Self.circuit(), title: "Test", library: Self.library)
         let r1 = try XCTUnwrap(board.footprints.first { $0.reference == "R1" })
