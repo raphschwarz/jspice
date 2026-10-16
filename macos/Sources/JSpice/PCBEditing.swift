@@ -391,6 +391,23 @@ final class PCBEditing: ObservableObject {
         Task { await place { $0.flipFootprints(uuids.sorted()) } }
     }
 
+    /// The board's outline drawn round its parts again (and the pours drawn to it with it)
+    func fitOutline() {
+        Task {
+            await place { $0.fitOutline() }
+            if undoName == "Fit Outline to Parts" { await fillZonesNow() }
+        }
+    }
+
+    /// The tracks and vias of the nets of those selected, all of them (I, as KiCad selects a net's copper)
+    func selectNets(in picture: KiCadBoardPicture) {
+        let nets = Set(picture.tracks.filter { selection.contains($0.uuid) }.compactMap(\.net)
+                       + picture.vias.filter { selection.contains($0.uuid) }.compactMap(\.net))
+        guard !nets.isEmpty else { return }
+        selection = Set(picture.tracks.filter { $0.net.map(nets.contains) ?? false }.map(\.uuid)
+                        + picture.vias.filter { $0.net.map(nets.contains) ?? false }.map(\.uuid))
+    }
+
     /// A change to the footprints' places, made and sent to the board
     func place(_ body: @escaping (BoardEditing) -> BoardEditing.Edit?) async {
         guard !isRouting else { return }

@@ -203,10 +203,39 @@ public final class KiCadBoard {
         return uuid
     }
 
-    /// Zones added between `before` and `after` added to this board, and those taken away taken away (by their ids)
+    /// The board's own drawings on Edge.Cuts (its outline, as drawn on the board rather than by footprints)
+    public var edgeDrawings: [SExpr] {
+        root.items.filter { KiCadDrawing.heads.contains($0.head ?? "") && $0.value("layer") == "Edge.Cuts" }
+    }
+
+    /// The outline `after` has, if it differs from `before`'s, drawn on this board in place of its own
+    public func carryOutline(from before: KiCadBoard, to after: KiCadBoard) {
+        let was = before.edgeDrawings.map(\.compact), now = after.edgeDrawings
+        guard was != now.map(\.compact) else { return }
+        let at = root.items.firstIndex { KiCadDrawing.heads.contains($0.head ?? "") && $0.value("layer") == "Edge.Cuts" }
+        for node in edgeDrawings { root.remove(node) }
+        let index = min(at ?? root.items.count, root.items.count)
+        root.items.insert(contentsOf: now.map { $0.copy() }, at: index)
+    }
+
+    /// A zone's outline and settings, without its fill (which KiCad makes anew)
+    static func unfilled(_ zone: SExpr) -> String {
+        let z = zone.copy()
+        z.remove("filled_polygon")
+        return z.compact
+    }
+
+    /// Zones added between `before` and `after` added to this board, those taken away taken away, and those changed
+    /// (their outlines, nets, layers) changed (by their ids)
     public func carryZones(from before: KiCadBoard, to after: KiCadBoard) {
-        let old = Set(before.zones.map(\.uuid)), new = Dictionary(after.zones.map { ($0.uuid, $0.node) }, uniquingKeysWith: { a, _ in a })
+        let oldNodes = Dictionary(before.zones.map { ($0.uuid, $0.node) }, uniquingKeysWith: { a, _ in a })
+        let old = Set(oldNodes.keys), new = Dictionary(after.zones.map { ($0.uuid, $0.node) }, uniquingKeysWith: { a, _ in a })
         for zone in zones where old.contains(zone.uuid) && new[zone.uuid] == nil { root.remove(zone.node) }
+        for zone in zones {
+            guard let was = oldNodes[zone.uuid], let now = new[zone.uuid], Self.unfilled(was) != Self.unfilled(now),
+                  let i = root.items.firstIndex(where: { $0 === zone.node }) else { continue }
+            root.items[i] = now.copy()
+        }
         let here = Set(zones.map(\.uuid))
         for (uuid, node) in new where !old.contains(uuid) && !here.contains(uuid) {
             let items = root.items
@@ -752,7 +781,7 @@ public struct KiCadDrawing {
 
     init(_ node: SExpr, placement: KiCadPlacement?) { self.node = node; self.placement = placement }
 
-    static let heads: Set<String> = ["gr_line", "gr_rect", "gr_arc", "gr_circle", "gr_poly", "gr_curve"]
+    public static let heads: Set<String> = ["gr_line", "gr_rect", "gr_arc", "gr_circle", "gr_poly", "gr_curve"]
     static let footprintHeads: Set<String> = ["fp_line", "fp_rect", "fp_arc", "fp_circle", "fp_poly", "fp_curve"]
 
     /// line, rect, arc, circle, poly or curve

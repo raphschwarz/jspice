@@ -87,10 +87,18 @@ public final class KiCadLiveBoard {
         }
         let count = removed.count + made.count + changed.count + vias.count + zones.count
             + copperRemoved.count + copperMade.count + copperChanged.count
-        // zones made or taken away here (a pour): the board by its file (a zone's settings are many, and KiCad fills
-        // it as it reads it)
-        if Set(before.zones.map(\.uuid)) != Set(after.zones.map(\.uuid)) {
-            reloadReason = "zones added or taken away"
+        // zones made, taken away or redrawn here (a pour), or the board's outline: the board by its file (a zone's
+        // settings are many, and KiCad fills it as it reads it)
+        func drawn(_ zone: KiCadZone) -> String {
+            let z = zone.node.copy()
+            for head in ["filled_polygon", "net", "net_name"] { z.remove(head) }
+            return z.compact
+        }
+        let oldDrawn = Dictionary(before.zones.map { ($0.uuid, drawn($0)) }, uniquingKeysWith: { a, _ in a })
+        let newDrawn = Dictionary(after.zones.map { ($0.uuid, drawn($0)) }, uniquingKeysWith: { a, _ in a })
+        let zonesRedrawn = Set(oldDrawn.keys) != Set(newDrawn.keys) || oldDrawn.contains { uuid, text in newDrawn[uuid].map { $0 != text } ?? false }
+        if zonesRedrawn || before.edgeDrawings.map(\.compact) != after.edgeDrawings.map(\.compact) {
+            reloadReason = zonesRedrawn ? "zones added, taken away or redrawn" : "the board's outline changed"
             return try reload(after)
         }
         guard count > 0 else { return .nothing }

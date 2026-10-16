@@ -21,6 +21,8 @@ public final class BoardEditing {
         public var footprints: [String] = []
         /// The zones added or taken away, by id
         public var zones: [String] = []
+        /// Whether the board's outline changed
+        public var outline = false
         /// What it was, for an undo menu (and KiCad's own)
         public let name: String
     }
@@ -255,12 +257,13 @@ public final class BoardEditing {
         return change(name)
     }
 
-    private func change(_ name: String, footprints: [String] = [], zones: [String] = []) -> Edit? {
-        guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty else { return nil }
+    private func change(_ name: String, footprints: [String] = [], zones: [String] = [], outline: Bool = false) -> Edit? {
+        guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty || outline else { return nil }
         let after = router.board.copy()
         var edit = Edit(before: base, after: after, added: router.lastAdded, removed: router.lastRemoved, name: name)
         edit.footprints = footprints
         edit.zones = zones
+        edit.outline = outline
         base = after
         return edit
     }
@@ -288,6 +291,52 @@ public final class BoardEditing {
         for zone in gone { router.board.root.remove(zone.node) }
         router.boardChanged()
         return change(gone.count == 1 ? "Delete Pour" : "Delete Pours", zones: gone.map(\.uuid))
+    }
+
+    // MARK: - The outline
+
+    /// The board's outline made the rectangle round its parts, `margin` (mm) away, its corners on whole millimetres
+    /// (as a new board's is), and the pours drawn to the old outline drawn to the new; nil when the outline is not one
+    /// rectangle (or the board has none, when one is drawn) or is already so
+    public func fitOutline(margin: Double = 5) -> Edit? {
+        guard !isRouting else { return nil }
+        let board = router.board
+        guard let parts = board.footprints.compactMap(\.bounds).reduce(nil, { (u: KiCadBox?, b: KiCadBox) -> KiCadBox? in
+            guard var u else { return b }
+            u.include(KiCadPoint(b.minX, b.minY))
+            u.include(KiCadPoint(b.maxX, b.maxY))
+            return u
+        }) else { return nil }
+        let box = KiCadBox(minX: (parts.minX - margin).rounded(.down), minY: (parts.minY - margin).rounded(.down),
+                           maxX: (parts.maxX + margin).rounded(.up), maxY: (parts.maxY + margin).rounded(.up))
+        let edges = board.root.items.filter { KiCadDrawing.heads.contains($0.head ?? "") && $0.value("layer") == "Edge.Cuts" }
+        let old: KiCadBox?
+        if edges.isEmpty {
+            old = nil
+            KiCadProject.addOutline(board, box)
+        } else {
+            guard edges.count == 1, let rect = edges.first, rect.head == "gr_rect", let s = rect["start"], let e = rect["end"],
+                  let x0 = s.number(at: 0), let y0 = s.number(at: 1), let x1 = e.number(at: 0), let y1 = e.number(at: 1) else { return nil }
+            let was = KiCadBox(minX: min(x0, x1), minY: min(y0, y1), maxX: max(x0, x1), maxY: max(y0, y1))
+            guard was.minX != box.minX || was.minY != box.minY || was.maxX != box.maxX || was.maxY != box.maxY else { return nil }
+            old = was
+            rect.set(SExpr("start", box.minX, box.minY))
+            rect.set(SExpr("end", box.maxX, box.maxY))
+        }
+        // pours drawn to the old outline follow it
+        if let old {
+            for zone in board.zones where !zone.isRuleArea {
+                let pts = zone.outline
+                guard pts.count == 4, let poly = zone.node["polygon"]?["pts"],
+                      pts.allSatisfy({ ($0.x == old.minX || $0.x == old.maxX) && ($0.y == old.minY || $0.y == old.maxY) }) else { continue }
+                let corners = [KiCadPoint(box.minX, box.minY), KiCadPoint(box.maxX, box.minY), KiCadPoint(box.maxX, box.maxY),
+                               KiCadPoint(box.minX, box.maxY)]
+                poly.items = [poly.items[0]] + corners.map { SExpr("xy", $0.x, $0.y) }
+                zone.node.remove("filled_polygon")
+            }
+        }
+        router.boardChanged()
+        return change("Fit Outline to Parts", outline: true)
     }
 
     // MARK: - Placing

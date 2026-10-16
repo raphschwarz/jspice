@@ -441,6 +441,7 @@ struct PCBBoardCanvas: View {
         case "/": editing.flipPosture()
         case "w": editing.stepWidth(press.modifiers.contains(.shift) ? -1 : 1)
         case "b": editing.fillZones()
+        case "i", "u": editing.selectNets(in: picture)
         case "r" where editing.tool == .select: editing.rotate(footprints)
         case "f" where editing.tool == .select: editing.flip(footprints)
         case "+", "=": editing.stepLayer(1)
@@ -590,6 +591,8 @@ struct PCBEditBar: View {
                 Divider()
                 Button("Fill Zones") { editing.fillZones() }
                 Button("Remove Pours") { editing.removePours() }
+                Divider()
+                Button("Fit Outline to Parts") { editing.fitOutline() }
             } label: {
                 Image(systemName: "square.on.square.dashed")
             }

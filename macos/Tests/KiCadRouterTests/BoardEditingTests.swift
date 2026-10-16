@@ -186,4 +186,33 @@ final class BoardEditingTests: XCTestCase {
         XCTAssertEqual(removed.zones, [zone.uuid])
         XCTAssertFalse(removed.after.zones.contains { $0.uuid == zone.uuid })
     }
+
+    /// The outline drawn round the parts: drawn where there was none, then drawn again round a part moved out, with
+    /// the pour drawn to it
+    func testTheOutlineIsFittedToTheParts() throws {
+        let file = try XCTUnwrap(Self.boards().first)
+        let board = try KiCadBoard.read(file)
+        for node in board.edgeDrawings { board.root.remove(node) }
+        let session = BoardEditing(board: board, project: Self.project(file))
+        let drawn = try XCTUnwrap(session.fitOutline())
+        XCTAssertTrue(drawn.outline)
+        XCTAssertEqual(drawn.after.edgeDrawings.count, 1)
+        XCTAssertNil(session.fitOutline(), "already round the parts")
+        let pour = try XCTUnwrap(session.addPour(net: try XCTUnwrap(session.router.world.netNames.values.sorted().first), layers: ["B.Cu"]))
+        let edge = try XCTUnwrap(pour.after.edgeBounds)
+        let footprint = try XCTUnwrap(session.board.footprints.first)
+        _ = try XCTUnwrap(session.moveFootprints([footprint.uuid], by: KiCadPoint(edge.maxX - footprint.position.x + 20, 0)))
+        let fitted = try XCTUnwrap(session.fitOutline())
+        let box = try XCTUnwrap(fitted.after.edgeBounds)
+        XCTAssertGreaterThan(box.maxX, edge.maxX + 15)
+        XCTAssertEqual(box.maxX, box.maxX.rounded(), "on whole millimetres")
+        let zone = try XCTUnwrap(fitted.after.zones.first { $0.uuid == pour.zones.first })
+        XCTAssertEqual(zone.outline.map(\.x).max(), box.maxX, "the pour follows the outline")
+        // carried onto a copy of the board as it was before
+        let elsewhere = fitted.before.copy()
+        elsewhere.carryOutline(from: fitted.before, to: fitted.after)
+        elsewhere.carryZones(from: fitted.before, to: fitted.after)
+        XCTAssertEqual(elsewhere.edgeBounds?.maxX, box.maxX)
+        XCTAssertEqual(elsewhere.zones.first { $0.uuid == zone.uuid }?.outline.map(\.x).max(), box.maxX)
+    }
 }
