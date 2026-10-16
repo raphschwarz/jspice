@@ -73,7 +73,10 @@ final class BoardRoutingTests: XCTestCase {
                 XCTAssert(report.violations.contains { Self.routerViolations.contains($0.type) && $0.items.contains { $0.uuid == control } },
                           "the check did not find the control track")
             }
-            var wrong = report.violations.filter { v in Self.routerViolations.contains(v.type) && v.items.contains { added.contains($0.uuid) } }
+            // (a violation the control is in is the control's, though it crosses a routed track)
+            var wrong = report.violations.filter { v in
+                Self.routerViolations.contains(v.type) && v.items.contains { added.contains($0.uuid) } && !v.items.contains { $0.uuid == control }
+            }
             // (a board whose hole clearance is 0: KiCad's router takes tracks along a hole's very edge, and its DRC
             // finds them touching it, "actual < 0", by rounding; KiCad's router does the same on these boards, route
             // for route. Those only touching are counted apart; one that cuts into a hole is wrong.)
