@@ -175,6 +175,18 @@ public struct IBox: Hashable, Sendable {
 
     public func intersects(_ b: IBox) -> Bool { minX <= b.maxX && b.minX <= maxX && minY <= b.maxY && b.minY <= maxY }
 
+    /// The box both boxes cover (KiCad's BOX2::Intersect): an empty box at the origin when they do not overlap
+    /// over some area
+    public func intersection(_ b: IBox) -> IBox {
+        let left = max(minX, b.minX), right = min(maxX, b.maxX)
+        let top = max(minY, b.minY), bottom = min(maxY, b.maxY)
+        if left < right && top < bottom { return IBox(minX: left, minY: top, maxX: right, maxY: bottom) }
+        return IBox(minX: 0, minY: 0, maxX: 0, maxY: 0)
+    }
+
+    /// The largest box there is (KiCad's BOX2::SetMaximum: invertible, so not quite the lowest coordinate)
+    public static let maximum = IBox(minX: -Int(Int32.max), minY: -Int(Int32.max), maxX: Int(Int32.max), maxY: Int(Int32.max))
+
     /// The point of the box nearest `p` (KiCad's BOX2::NearestPoint)
     public func nearestPoint(_ p: IPoint) -> IPoint { IPoint(min(max(p.x, minX), maxX), min(max(p.y, minY), maxY)) }
 

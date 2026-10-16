@@ -76,7 +76,9 @@ public final class Router {
     public private(set) var world: Node?
     public private(set) var iface: RouterInterface?
     public var iterLimit = 0
-    public var visibleViewArea = IBox(minX: 0, minY: 0, maxX: 0, maxY: 0)
+    /// What the user can see of the board, which the shove's optimizer keeps to (KiCad's: all of it, until the
+    /// router tool says)
+    public var visibleViewArea = IBox.maximum
     public var failureReason = ""
 
     public init() {

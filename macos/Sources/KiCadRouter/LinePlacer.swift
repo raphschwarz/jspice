@@ -1,5 +1,5 @@
 // Ported from KiCad 10.0.7: pcbnew/router/pns_line_placer.h, pns_line_placer.cpp and pns_placement_algo.h
-// (walkaround and mark-obstacles modes; the shove mode comes with the shove).
+// (walkaround, shove and mark-obstacles modes; the shove itself is in Shove.swift).
 // Copyright (C) 2013-2017 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -297,7 +297,9 @@ public final class LinePlacer {
             var lenCw = wr.status[cw] != .stuck ? wr.lines[cw].cLine.length : Int(Int32.max)
             var lenCcw = wr.status[ccw] != .stuck ? wr.lines[ccw].cLine.length : Int(Int32.max)
             if wr.status[cw] == .done {
+                Router.dbg("wf-result-cw-preopt: \(wr.lines[cw].cLine.points)")
                 Optimizer.optimize(wr.lines[cw], effort: .mergeSegments, world: currentNode!)
+                Router.dbg("wf-result-cw-opt: \(wr.lines[cw].cLine.points)")
                 let tmpHead = Line(), tmpTail = Line()
                 if splitHeadTail(wr.lines[cw], tail, tmpHead, tmpTail) {
                     // (KiCad's optimizer.Optimize( &tmpHead ) has no result line to write to, and does nothing)
@@ -415,18 +417,52 @@ public final class LinePlacer {
             nt.clear()
             nh.assign(l2)
         }
+        Router.dbg("head-post-split: \(nh.cLine.points)")
         newHead.assign(nh)
         newTail.assign(nt)
         return true
+    }
+
+    /// The head walked round pads and holes only, and what else is in its way shoved (KiCad's rhShoveOnly); if the
+    /// shove fails, the head walks round everything instead
+    private func rhShoveOnly(_ p: IPoint, _ newHead: Line, _ newTail: Line) -> Bool {
+        let walkSolids = Line()
+        var viaOk = false
+        if !rhWalkBase(p, walkSolids, .solid, .shove, &viaOk) { return false }
+        let shove = shove!
+        currentNode = shove.currentNode
+        // (the springback must not let go of the node the end item is in)
+        if let endItem { shove.setSpringbackDoNotTouchNode(endItem.owner as? Node) }
+        let head = walkSolids.copy()
+        if isPlacingVia && viaOk { head.appendVia(makeVia(head.cLastPoint)) }
+        shove.clearHeads()
+        shove.addHeads(head, .shove)
+        let shoveOk = shove.run() == .ok
+        currentNode = shove.currentNode
+        var effort: Optimizer.Effort = []
+        switch settings.optimizerEffort {
+        case .low: effort = []
+        case .medium, .full: effort = .mergeSegments
+        }
+        if settings.smartPads && settings.cornerMode == .mitered45 && !mouseTrailTracer.isManuallyForced {
+            effort.insert(.smartPads)
+        }
+        if shoveOk {
+            let shoved = shove.headsModified() ? shove.modifiedHead(0) : head
+            if !splitHeadTail(shoved, tail, newHead, newTail) { return false }
+            if let v = shoved.via { newHead.appendVia(v) }
+            Optimizer.optimize(newHead, effort: effort, world: currentNode!)
+            Router.dbg("head-sh-postopt: \(newHead.cLine.points)")
+            return true
+        }
+        return rhWalkOnly(p, newHead, newTail)
     }
 
     private func routeHead(_ p: IPoint, _ newHead: Line, _ newTail: Line) -> Bool {
         switch settings.mode {
         case .markObstacles: return rhMarkObstacles(p, newHead, newTail)
         case .walkaround: return rhWalkOnly(p, newHead, newTail)
-        case .shove:
-            // (until the shove is here, shove mode walks round)
-            return rhWalkOnly(p, newHead, newTail)
+        case .shove: return rhShoveOnly(p, newHead, newTail)
         }
     }
 
@@ -495,7 +531,8 @@ public final class LinePlacer {
             }
             if !goBack && handlePullback() {
                 nIter += 1
-                head.withLine { $0.clear() }
+                // (KiCad's LINE::Clear: the head's via goes too)
+                head.clear()
                 goBack = true
             }
             i += 1
@@ -775,10 +812,16 @@ public final class LinePlacer {
         mouseTrailTracer.clear()
         mouseTrailTracer.setDefaultDirections(initialDirection, direction)
         mouseTrailTracer.addTrailPoint(pStart)
-        if let currentNode { shove?.rewindSpringback(to: currentNode) }
-        if settings.mode == .shove, let n = shove?.currentNode {
+        if let currentNode {
+            shove?.rewindSpringbackTo(currentNode)
+            shove?.unlockSpringbackNode(currentNode)
+        }
+        if settings.mode == .shove, let shove {
+            let n = shove.currentNode
             currentNode = n
             n.killChildren()
+            // (where KiCad goes on from a node it has just deleted, the port goes on from what is left)
+            shove.forgetReleasedNodes()
         }
         lastNode = currentNode?.branch()
         return ret
@@ -787,6 +830,12 @@ public final class LinePlacer {
     public var hasPlacedAnything: Bool { placementCorrect || fixedTail.stageCount > 1 }
 
     public func commitPlacement() -> Bool {
+        // (shoving: what is committed is the last node a part of the route was fixed in, with what it shoved)
+        if settings.mode == .shove, let shove {
+            shove.rewindToLastLockedNode()
+            lastNode = shove.currentNode
+            lastNode!.killChildren()
+        }
         if let lastNode { router.commitRouting(lastNode) }
         lastNode = nil
         currentNode = nil
@@ -933,24 +982,5 @@ public final class LinePlacer {
             }
         }
         return false
-    }
-}
-
-/// The springback bookkeeping of KiCad's SHOVE, which the line placer keeps in every mode (the shoving itself is
-/// still to come)
-final class Shove {
-    private(set) var currentNode: Node
-    unowned let router: Router
-    private var lockedSpringbackNodes: [Node] = []
-
-    init(_ node: Node, _ router: Router) {
-        currentNode = node
-        self.router = router
-    }
-
-    func addLockedSpringbackNode(_ node: Node) { lockedSpringbackNodes.append(node) }
-
-    func rewindSpringback(to node: Node) {
-        if let i = lockedSpringbackNodes.lastIndex(where: { $0 === node }) { lockedSpringbackNodes.removeSubrange((i + 1)...) }
     }
 }

@@ -14,10 +14,16 @@ enum SceneRouting {
         let router = Router()
         router.setInterface(iface)
         var out: [[String: Any]] = []
+        // (what a route takes off the board listed, and gone for the routes after it, if the scene says so)
+        let removeItems = (scene["removeItems"] as? NSNumber)?.boolValue ?? false
         for route in scene["routes"] as! [[String: Any]] {
             let mode = route["mode"] as? String ?? "walkaround"
             router.settings.mode = mode == "mark" ? .markObstacles : mode == "shove" ? .shove : .walkaround
             router.settings.optimizerEffort = .medium
+            // (no time limit on a shove, as router.cpp sets KiCad's: it gives up after a second, by the clock, which
+            // would make what it does depend on how fast the machine is, and a debug build is slower; it stops on its
+            // iteration limit alone)
+            router.settings.shoveTimeLimit = Int(Int32.max)
             iface.items = items
             router.clearWorld()
             router.syncWorld()
@@ -33,11 +39,13 @@ enum SceneRouting {
             }
             var r: [String: Any] = [:]
             iface.added.removeAll()
+            iface.removedItems.removeAll()
             let started = router.startRouting(point(route["start"]!), itemAt("startItem"),
                                               layer: (route["layer"] as? NSNumber)?.intValue ?? 0)
             r["started"] = started
             if !started { r["failure"] = router.failureReason }
             var moves: [[String: Any]] = []
+            var lastNode = canonical(NSNull())
             if started {
                 var finished = false
                 // (the steps as router.cpp takes them: a pointer position, or a layer pair, via placement toggled, a
@@ -73,6 +81,14 @@ enum SceneRouting {
                     step["trace"] = lineJSON(placer.trace)
                     step["layer"] = router.currentLayer
                     step["placingVia"] = router.isPlacingVia
+                    // (and the board as the router has it now, what it has shoved where, for a scene that asks: when
+                    // it has changed since the step before)
+                    if removeItems {
+                        let node = nodeJSON(placer.currentNode(loopsRemoved: true), iface)
+                        let key = canonical(node)
+                        if key != lastNode { step["node"] = node }
+                        lastNode = key
+                    }
                     moves.append(step)
                     if finished { break }
                 }
@@ -86,10 +102,25 @@ enum SceneRouting {
             let added = iface.added.compactMap(addedJSON).sorted { canonical($0) < canonical($1) }
             r["moves"] = moves
             r["added"] = added
+            if removeItems {
+                let removed = iface.removedItems.compactMap { item in iface.routerItems.firstIndex { $0 === item } }.sorted()
+                r["removed"] = removed
+                for i in removed.reversed() { items.remove(at: i) }
+            }
             out.append(r)
             items += added.compactMap { WorldItem(scene: $0, layers: copper) }
         }
         return out
+    }
+
+    /// The board as a branch of the router's world has it, as router.cpp writes it: the board's items it takes off
+    /// (their indices) and the tracks and vias it puts on, each in one order
+    static func nodeJSON(_ node: Node?, _ iface: WorldInterface) -> Any {
+        guard let node else { return NSNull() }
+        let (removed, added) = node.updatedItems()
+        let indices = removed.compactMap { item in iface.routerItems.firstIndex { $0 === item } }.sorted()
+        let items = added.compactMap(addedJSON).sorted { canonical($0) < canonical($1) }
+        return ["removed": indices, "added": items]
     }
 
     /// What the router put on the board, as router.cpp writes it
@@ -107,7 +138,7 @@ enum SceneRouting {
 
     /// The JSON as nlohmann's dump() writes it: keys in order, no spaces
     static func canonical(_ v: Any) -> String {
-        String(decoding: try! JSONSerialization.data(withJSONObject: v, options: [.sortedKeys]), as: UTF8.self)
+        String(decoding: try! JSONSerialization.data(withJSONObject: v, options: [.sortedKeys, .fragmentsAllowed]), as: UTF8.self)
     }
 
     static func lineJSON(_ l: Line) -> [String: Any] {

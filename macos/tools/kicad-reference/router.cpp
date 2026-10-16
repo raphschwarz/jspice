@@ -1,7 +1,9 @@
 // KiCad's own interactive router (pcbnew/router, KiCad 10.0.7) driven on a board given as JSON: its pads, tracks,
 // vias and outline, and the routes to make on it (where each starts, where the pointer goes, where it is fixed).
 // For each route it writes what KiCad's router does: the head and the tail after each step (a move, a via, a layer
-// switch, a fix, an undo), whether the route was fixed, and the tracks and vias it put on the board. KiCadRouterTests runs the Swift port on the same boards and
+// switch, a fix, an undo), whether the route was fixed, and the tracks and vias it put on the board (and, for a scene
+// that asks, those it took off: a route that shoves replaces what it shoved). Each route walks round obstacles,
+// shoves them or marks them, as it says. KiCadRouterTests runs the Swift port on the same boards and
 // compares. build.sh builds this against KiCad's sources.
 //
 // The board's rules are KiCad's default board rules made simple: one clearance between copper of different nets,
@@ -9,6 +11,20 @@
 // them (items here have no BOARD_ITEM behind them, so what it asks of them is answered from the JSON).
 //
 // This program links KiCad's code: GNU General Public License version 3 or later, as KiCad.
+
+#include <algorithm>
+#include <cstdlib>
+#include <deque>
+#include <functional>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <optional>
+#include <set>
+#include <stack>
+#include <unordered_map>
+#include <vector>
 
 #include <geometry/shape_arc.h>
 #include <geometry/shape_circle.h>
@@ -20,7 +36,6 @@
 #include <pns_debug_decorator.h>
 #include <pns_hole.h>
 #include <pns_line.h>
-#include <pns_line_placer.h>
 #include <pns_node.h>
 #include <pns_router.h>
 #include <pns_routing_settings.h>
@@ -28,12 +43,11 @@
 #include <pns_solid.h>
 #include <pns_via.h>
 
-#include <algorithm>
-#include <cstdlib>
-#include <functional>
-#include <iostream>
-#include <map>
-#include <optional>
+// (the line placer's fixed stages and the shove's springback stack, which undefinedUndo looks at)
+#define private public
+#include <pns_line_placer.h>
+#include <pns_shove.h>
+#undef private
 
 using json = nlohmann::json;
 
@@ -595,25 +609,80 @@ public:
         aWorld->SetMaxClearance( worst + m_resolver.ClearanceEpsilon() );
     }
 
-    void AddItem( PNS::ITEM* aItem ) override
+    /// A track or via as the scene gives it (null for anything else)
+    static json itemJSON( const PNS::ITEM* aItem )
     {
         if( aItem->Kind() == PNS::ITEM::SEGMENT_T )
         {
-            auto s = static_cast<PNS::SEGMENT*>( aItem );
-            m_added.push_back( { { "kind", "track" }, { "net", netCode( s->Net() ) }, { "layer", s->Layer() },
-                                 { "a", pt( s->Seg().A ) }, { "b", pt( s->Seg().B ) }, { "width", s->Width() } } );
+            auto s = static_cast<const PNS::SEGMENT*>( aItem );
+            return { { "kind", "track" }, { "net", netCode( s->Net() ) }, { "layer", s->Layer() },
+                     { "a", pt( s->Seg().A ) }, { "b", pt( s->Seg().B ) }, { "width", s->Width() } };
         }
         else if( aItem->Kind() == PNS::ITEM::VIA_T )
         {
-            auto v = static_cast<PNS::VIA*>( aItem );
-            m_added.push_back( { { "kind", "via" }, { "net", netCode( v->Net() ) }, { "pos", pt( v->Pos() ) },
-                                 { "diameter", v->Diameter( 0 ) }, { "drill", v->Drill() },
-                                 { "layers", json::array( { v->Layers().Start(), v->Layers().End() } ) } } );
+            auto v = static_cast<const PNS::VIA*>( aItem );
+            return { { "kind", "via" }, { "net", netCode( v->Net() ) }, { "pos", pt( v->Pos() ) },
+                     { "diameter", v->Diameter( 0 ) }, { "drill", v->Drill() },
+                     { "layers", json::array( { v->Layers().Start(), v->Layers().End() } ) } };
         }
+
+        return json();
     }
 
+    void AddItem( PNS::ITEM* aItem ) override
+    {
+        json j = itemJSON( aItem );
+
+        if( !j.is_null() )
+            m_added.push_back( j );
+    }
+
+    /// The scene's index of a board item (-1: none, the router's own)
+    int indexOf( const PNS::ITEM* aItem ) const
+    {
+        auto it = std::find( m_byIndex.begin(), m_byIndex.end(), aItem );
+        return it == m_byIndex.end() ? -1 : int( it - m_byIndex.begin() );
+    }
+
+    /// The board as a branch of the router's world has it: the board's items it takes off (their indices) and the
+    /// tracks and vias it puts on, each in one order (what the shove has pushed aside, and where it put it)
+    json nodeJSON( PNS::NODE* aNode ) const
+    {
+        if( !aNode )
+            return json();
+
+        PNS::NODE::ITEM_VECTOR removed, added;
+        aNode->GetUpdatedItems( removed, added );
+        std::vector<int>  indices;
+        std::vector<json> items;
+
+        for( const PNS::ITEM* item : removed )
+        {
+            if( int i = indexOf( item ); i >= 0 )
+                indices.push_back( i );
+        }
+
+        for( const PNS::ITEM* item : added )
+        {
+            if( json j = itemJSON( item ); !j.is_null() )
+                items.push_back( j );
+        }
+
+        std::sort( indices.begin(), indices.end() );
+        std::sort( items.begin(), items.end(), []( const json& a, const json& b ) { return a.dump() < b.dump(); } );
+        return { { "removed", indices }, { "added", items } };
+    }
+
+    /// What the routes took off the board (a shoved track, say): the indices of its items, as the route found them
+    std::vector<int> m_removed;
+
     void UpdateItem( PNS::ITEM* aItem ) override {}
-    void RemoveItem( PNS::ITEM* aItem ) override {}
+
+    void RemoveItem( PNS::ITEM* aItem ) override
+    {
+        if( int i = indexOf( aItem ); i >= 0 )
+            m_removed.push_back( i );
+    }
     bool IsAnyLayerVisible( const PNS_LAYER_RANGE& aLayer ) const override { return true; }
     bool IsItemVisible( const PNS::ITEM* aItem ) const override { return true; }
 
@@ -713,6 +782,46 @@ public:
     }
 };
 
+/// Whether taking back the last fixed part of a shoving route now (LINE_PLACER::UnfixRoute) would delete a node the
+/// shove still keeps on its springback stack: a fix made while the shove had nothing on its stack, taken back before
+/// the shove has any, has UnfixRoute kill the children of the shove's root, the locked node of the fix among them.
+/// What KiCad's router does after that is undefined (it reads the deleted node), so such a scene is no reference.
+static bool undefinedUndo( PNS::LINE_PLACER* aPlacer )
+{
+    PNS::SHOVE* shove = aPlacer->m_shove.get();
+
+    if( !shove || aPlacer->m_fixedTail.m_stages.empty() )
+        return false;
+
+    // what UnfixRoute does: the stack rewound to the last stage's node, then the shove's current node's children
+    // killed
+    PNS::NODE* commit = aPlacer->m_fixedTail.m_stages.back().commit;
+    std::vector<PNS::NODE*> stack;
+
+    for( const auto& tag : shove->m_nodeStack )
+        stack.push_back( tag.m_node );
+
+    PNS::NODE* current = shove->CurrentNode();
+    auto       found = std::find( stack.begin(), stack.end(), commit );
+
+    if( found != stack.end() )
+    {
+        stack.erase( found, stack.end() );
+        current = stack.empty() ? shove->m_root : stack.back();
+    }
+
+    for( PNS::NODE* node : stack )
+    {
+        for( PNS::NODE* p = node->GetParent(); p; p = p->GetParent() )
+        {
+            if( p == current )
+                return true;
+        }
+    }
+
+    return false;
+}
+
 static json lineJSON( const PNS::LINE& aLine )
 {
     json j = { { "points", chainPoints( aLine.CLine() ) }, { "width", aLine.Width() }, { "layer", aLine.Layer() } };
@@ -779,10 +888,18 @@ int main()
 
     PNS::ROUTER router;
     PNS::ROUTING_SETTINGS settings( nullptr, "" );
+    // (no time limit on a shove, set as the router's settings file would set it: it gives up after a second, by the
+    // clock, which makes what it does depend on how fast the machine is; it stops on its iteration limit alone)
+    settings.Set<int>( "shove_time_limit", std::numeric_limits<int>::max() );
+    settings.Load();
     router.SetInterface( &iface );
     router.LoadSettings( &settings );
 
     json out = json::array();
+
+    // ("removeItems": what each route takes off the board, its tracks and vias shoved aside, is listed ("removed")
+    // and gone for the routes after it; else only what the routes add is kept)
+    bool removeItems = scene.value( "removeItems", false );
 
     for( const json& route : scene["routes"] )
     {
@@ -809,6 +926,7 @@ int main()
 
         json r;
         iface.m_added.clear();
+        iface.m_removed.clear();
         bool started = router.StartRouting( pt( route["start"] ), itemAt( "startItem", route ), route.value( "layer", 0 ) );
         r["started"] = started;
 
@@ -816,6 +934,7 @@ int main()
             r["failure"] = router.FailureReason().ToStdString();
 
         json moves = json::array();
+        json lastNode;
 
         if( started )
         {
@@ -869,6 +988,14 @@ int main()
                 }
                 else if( m.contains( "undo" ) )
                 {
+                    // (an undo KiCad's code gets wrong: no reference to be had, exit status 3)
+                    if( settings.Mode() == PNS::RM_Shove
+                        && undefinedUndo( static_cast<PNS::LINE_PLACER*>( router.Placer() ) ) )
+                    {
+                        std::cerr << "route " << out.size() << ": an undo KiCad's router has no defined result for\n";
+                        return 3;
+                    }
+
                     std::optional<VECTOR2I> p = router.UndoLastSegment();
                     step["undone"] = p ? json( pt( *p ) ) : json();
                 }
@@ -879,6 +1006,19 @@ int main()
                 step["trace"] = lineJSON( placer->Trace() );
                 step["layer"] = router.GetCurrentLayer();
                 step["placingVia"] = router.IsPlacingVia();
+
+                // (and the board as the router has it now, what it has shoved where, for a scene that asks: when it
+                // has changed since the step before)
+                if( removeItems )
+                {
+                    json node = iface.nodeJSON( placer->CurrentNode( true ) );
+
+                    if( node != lastNode )
+                        step["node"] = node;
+
+                    lastNode = node;
+                }
+
                 moves.push_back( step );
 
                 if( finished )
@@ -899,6 +1039,16 @@ int main()
                    []( const json& a, const json& b ) { return a.dump() < b.dump(); } );
         r["moves"] = moves;
         r["added"] = iface.m_added;
+
+        if( removeItems )
+        {
+            std::sort( iface.m_removed.begin(), iface.m_removed.end() );
+            r["removed"] = iface.m_removed;
+
+            for( auto it = iface.m_removed.rbegin(); it != iface.m_removed.rend(); ++it )
+                iface.m_items.erase( iface.m_items.begin() + *it );
+        }
+
         out.push_back( r );
 
         for( const json& a : iface.m_added )

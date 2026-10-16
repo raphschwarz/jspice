@@ -113,7 +113,8 @@ public struct Topology {
         opts.differentNetsOnly = false
         opts.overrideClearance = 0
         guard var clusterBox = start.shape(layer)?.bbox else { return cluster }
-        let initialArea = Double(clusterBox.width) * Double(clusterBox.height)
+        // (BOX2::GetArea, in 64 bits)
+        let initialArea = clusterBox.width * clusterBox.height
         var processed = Set<ObjectIdentifier>()
         while head < pending.count {
             let top = pending[head]
@@ -125,11 +126,13 @@ public struct Topology {
                 if trackOnTrack { continue }
                 if let excludedNet, obs.item.net == excludedNet { continue }
                 if obs.item.ofKind([.segment, .arc]) && obs.item.layers.overlaps(layer) {
-                    clusterBox.merge(world.assembleLine(obs.item as! LinkedItem).cLine.bbox)
+                    // (KiCad's line keeps its width in its chain, and the chain's box takes it in, all of it)
+                    let line = world.assembleLine(obs.item as! LinkedItem)
+                    clusterBox.merge(line.width != 0 ? line.cLine.bbox.inflated(line.width) : line.cLine.bbox)
                 } else if let s = obs.item.shape(layer) {
                     clusterBox.merge(s.bbox)
                 }
-                let areaRatio = Double(clusterBox.width) * Double(clusterBox.height) / (initialArea + 1)
+                let areaRatio = Double(clusterBox.width * clusterBox.height) / Double(initialArea + 1)
                 if areaExpansionLimit > 0 && areaRatio > areaExpansionLimit { break }
                 if !processed.contains(ObjectIdentifier(obs.item)) && obs.item.layers.overlaps(layer) && !obs.item.marker.contains(.head) {
                     processed.insert(ObjectIdentifier(obs.item))

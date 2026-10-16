@@ -454,7 +454,8 @@ public final class Segment: LinkedItem {
         self.net = net
     }
 
-    /// A segment of `line`: its width, net, layers, marks and rank
+    /// A segment of `line`: its width, net, layers, marks and rank (the line's own and its segments', as KiCad's
+    /// LINE::Marker and LINE::Rank give them)
     public init(line: Line, _ s: Seg) {
         seg = Seg(s.a, s.b)
         _width = line.width
@@ -463,8 +464,8 @@ public final class Segment: LinkedItem {
         sourceItem = line.sourceItem
         net = line.net
         layers = line.layers
-        marker = line.marker
-        rank = line.rank
+        marker = line.allMarkers
+        rank = line.lineRank
     }
 
     private init(copying s: Segment) {
@@ -595,6 +596,7 @@ public class Via: LinkedItem {
         var iter = 0
         let mv = Via(copying: self)
         var totalForce = IPoint.zero
+        Router.dbg("via-force-init-pos, iter \(maxIterations): point (\(pos.x),\(pos.y))")
         while iter < maxIterations {
             var opt = CollisionSearchOptions()
             opt.limitCount = 1
@@ -614,11 +616,13 @@ public class Via: LinkedItem {
                 // (KiCad means to cap the force at a quarter of the via's diameter, but its Resize's result goes
                 // unused)
                 totalForce = totalForce + force
+                Router.dbg("via-force-coll: (\(mv.pos.x),\(mv.pos.y)) (\(mv.pos.x + force.x),\(mv.pos.y + force.y)) [\(obs.item)]")
                 mv.setPos(mv.pos + force)
             }
             iter += 1
         }
         if iter == maxIterations { return nil }
+        Router.dbg("via-force-new: point (\(pos.x + totalForce.x),\(pos.y + totalForce.y))")
         return totalForce
     }
 
@@ -632,6 +636,19 @@ public class Via: LinkedItem {
     }
 
     public var handle: Handle { Handle(pos: pos, layers: layers, net: net) }
+
+    /// The box round both vias, if one has moved from the other (KiCad's VIA::ChangedArea)
+    public func changedArea(_ other: Via) -> IBox? {
+        if other.pos == pos { return nil }
+        var tmp: IBox?
+        for layer in uniqueShapeLayers {
+            if let b = shape(layer)?.bbox { tmp = tmp.map { var t = $0; t.merge(b); return t } ?? b }
+        }
+        for layer in other.uniqueShapeLayers {
+            if let b = other.shape(layer)?.bbox { tmp = tmp.map { var t = $0; t.merge(b); return t } ?? b }
+        }
+        return tmp
+    }
 
     public func setHole(_ h: Hole) {
         _hole = h

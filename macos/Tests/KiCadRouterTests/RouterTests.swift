@@ -4,13 +4,15 @@ import XCTest
 
 /// The router against KiCad's own: Fixtures/kicad-routes.json holds boards with routes to make on them, and what
 /// KiCad 10.0.7's router made of each (tools/kicad-reference/router.cpp, made by scenes.py); kicad-board-routes.json
-/// the same on the boards of Fixtures/boards, as KiCad's router sees them (scenes.py --boards). The port must make the
-/// same, point for point. KICAD_ROUTER_REFERENCE names other such files (separated by colons).
+/// the same on the boards of Fixtures/boards, as KiCad's router sees them (scenes.py --boards); kicad-shove-routes.json
+/// routes that shove what is in their way (scenes.py --mode shove), with the board as the router has it after each
+/// step, what it has shoved where. The port must make the same, point for point. KICAD_ROUTER_REFERENCE names other
+/// such files (separated by colons).
 final class RouterTests: XCTestCase {
     private static let reference: [[String: Any]] = {
         let urls = ProcessInfo.processInfo.environment["KICAD_ROUTER_REFERENCE"].map {
             $0.split(separator: ":").map { URL(fileURLWithPath: String($0)) }
-        } ?? ["kicad-routes", "kicad-board-routes"].map {
+        } ?? ["kicad-routes", "kicad-board-routes", "kicad-shove-routes"].map {
             Bundle.module.url(forResource: $0, withExtension: "json", subdirectory: "Fixtures")!
         }
         return urls.flatMap { try! JSONSerialization.jsonObject(with: Data(contentsOf: $0)) as! [[String: Any]] }

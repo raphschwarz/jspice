@@ -619,9 +619,81 @@ public struct LineChain: Hashable, Sendable, CustomStringConvertible {
         points = unique
     }
 
-    /// Whether the chain's points make the same path as `other`'s
+    /// Whether the chain's points make the same path as `other`'s, both simplified (KiCad's CompareGeometry, not
+    /// cyclical, exactly)
     public func compareGeometry(_ other: LineChain) -> Bool {
-        if points.count != other.points.count { return false }
-        return points == other.points
+        var a = self, b = other
+        a.simplify()
+        b.simplify()
+        if a.points.count != b.points.count { return false }
+        return a.points == b.points
+    }
+
+    /// Whether a point is inside the polygon that polylines added one after the other make, closed from the last
+    /// point back to the first (KiCad's POINT_INSIDE_TRACKER). On an edge counts as outside; past an edge KiCad
+    /// keeps counting the crossings on from there, as here.
+    public struct PointInsideTracker {
+        private let point: IPoint
+        private var lastPoint = IPoint.zero
+        private var firstPoint = IPoint.zero
+        private var finished = false
+        private var state = 0
+        private var count = 0
+
+        public init(_ point: IPoint) { self.point = point }
+
+        private mutating func processVertex(_ ip: IPoint, _ ipNext: IPoint) -> Bool {
+            if ipNext.y == point.y {
+                if ipNext.x == point.x || (ip.y == point.y && ((ipNext.x > point.x) == (ip.x < point.x))) {
+                    finished = true
+                    state = -1
+                    return false
+                }
+            }
+            if (ip.y < point.y) != (ipNext.y < point.y) {
+                if ip.x >= point.x {
+                    if ipNext.x > point.x {
+                        state = 1 - state
+                    } else {
+                        let d = Double(ip.x - point.x) * Double(ipNext.y - point.y) - Double(ipNext.x - point.x) * Double(ip.y - point.y)
+                        if d == 0 {
+                            finished = true
+                            state = -1
+                            return false
+                        }
+                        if (d > 0) == (ipNext.y > ip.y) { state = 1 - state }
+                    }
+                } else if ipNext.x > point.x {
+                    let d = Double(ip.x - point.x) * Double(ipNext.y - point.y) - Double(ipNext.x - point.x) * Double(ip.y - point.y)
+                    if d == 0 {
+                        finished = true
+                        state = -1
+                        return false
+                    }
+                    if (d > 0) == (ipNext.y > ip.y) { state = 1 - state }
+                }
+            }
+            return true
+        }
+
+        public mutating func addPolyline(_ polyline: LineChain) {
+            if count == 0, polyline.pointCount > 0 {
+                lastPoint = polyline.point(0)
+                firstPoint = polyline.point(0)
+            }
+            count += polyline.pointCount
+            var i = 1
+            while i < polyline.pointCount {
+                let p = polyline.point(i)
+                if !processVertex(lastPoint, p) { return }
+                lastPoint = p
+                i += 1
+            }
+        }
+
+        public mutating func isInside() -> Bool {
+            _ = processVertex(lastPoint, firstPoint)
+            return state > 0
+        }
     }
 }

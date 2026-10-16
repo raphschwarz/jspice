@@ -363,9 +363,12 @@ public final class Node {
         child.ruleResolver = ruleResolver
         child._root = isRoot ? self : root
         child.maxClearance = maxClearance
-        // (the root's own children copy nothing; deeper ones copy their parent's items, joints and overrides)
+        // (the root's own children copy nothing; deeper ones copy their parent's items, joints and overrides; the
+        // items in the order they were made, as tools/kicad-reference has KiCad copy them: KiCad takes them from a
+        // hash set of pointers, in no order but the allocator's, and the order they go into the R-trees in decides
+        // which obstacle a search that stops at the first finds)
         if !isRoot {
-            for item in index.all { child.index.add(item) }
+            for item in Node.bySerial(index.all) { child.index.add(item) }
             for tag in jointOrder {
                 if let js = joints[tag] { child.joints[tag] = js.map(Joint.init(copying:)) }
             }
@@ -832,44 +835,50 @@ public final class Node {
         let hullMargin = 10
         var vvias: [VirtualVia] = []
         var lockedSeg: Segment?
-        for tag in jointOrder {
-            for joint in joints[tag] ?? [] where !joint.layers.isMultilayer {
-                let nSeg = 0
-                var nSolid = 0, nVias = 0
-                var prevW = -1
-                var prevMask = false
-                var prevMaskMargin: Int?
-                var maxW = -1
-                var isWidthChange = false, isLocked = false
-                for item in joint.links {
-                    if item.ofKind(.via) {
-                        nVias += 1
-                    } else if item.ofKind(.solid) {
-                        nSolid += 1
-                    } else if let t = item as? Segment {
-                        let w = t.width
-                        let (mask, maskMargin) = Router.interface?.solderMask(t) ?? (false, nil)
-                        if prevW < 0 {
-                            prevW = w
-                            prevMask = mask
-                            prevMaskMargin = maskMargin
-                        } else if w != prevW || mask != prevMask || maskMargin != prevMaskMargin {
-                            isWidthChange = true
-                        }
-                        maxW = max(w, maxW)
+        // (the joints by place, net and layer, as tools/kicad-reference has KiCad take them: it takes them from its
+        // hash map, whose order comes from the hashes of places and of nets' addresses)
+        let byPlace = jointOrder.flatMap { joints[$0] ?? [] }.sorted { a, b in
+            if a.pos.x != b.pos.x { return a.pos.x < b.pos.x }
+            if a.pos.y != b.pos.y { return a.pos.y < b.pos.y }
+            if a.net != b.net { return (a.net ?? Int.min) < (b.net ?? Int.min) }
+            return a.layers.start < b.layers.start
+        }
+        for joint in byPlace where !joint.layers.isMultilayer {
+            let nSeg = 0
+            var nSolid = 0, nVias = 0
+            var prevW = -1
+            var prevMask = false
+            var prevMaskMargin: Int?
+            var maxW = -1
+            var isWidthChange = false, isLocked = false
+            for item in joint.links {
+                if item.ofKind(.via) {
+                    nVias += 1
+                } else if item.ofKind(.solid) {
+                    nSolid += 1
+                } else if let t = item as? Segment {
+                    let w = t.width
+                    let (mask, maskMargin) = Router.interface?.solderMask(t) ?? (false, nil)
+                    if prevW < 0 {
                         prevW = w
-                        isLocked = t.isLocked
-                        lockedSeg = t
+                        prevMask = mask
+                        prevMaskMargin = maskMargin
+                    } else if w != prevW || mask != prevMask || maskMargin != prevMaskMargin {
+                        isWidthChange = true
                     }
+                    maxW = max(w, maxW)
+                    prevW = w
+                    isLocked = t.isLocked
+                    lockedSeg = t
                 }
-                // (KiCad counts no segments here: its n_seg stays 0)
-                if (isWidthChange || nSeg >= 3 || isLocked) && nSolid == 0 && nVias == 0 {
-                    vvias.append(VirtualVia(pos: joint.pos, layer: joint.layers.start, diameter: maxW + 2 * hullMargin, net: joint.net))
-                }
-                if isLocked, let s = lockedSeg {
-                    let secondPos = s.seg.a == joint.pos ? s.seg.b : s.seg.a
-                    vvias.append(VirtualVia(pos: secondPos, layer: joint.layers.start, diameter: maxW + 2 * hullMargin, net: joint.net))
-                }
+            }
+            // (KiCad counts no segments here: its n_seg stays 0)
+            if (isWidthChange || nSeg >= 3 || isLocked) && nSolid == 0 && nVias == 0 {
+                vvias.append(VirtualVia(pos: joint.pos, layer: joint.layers.start, diameter: maxW + 2 * hullMargin, net: joint.net))
+            }
+            if isLocked, let s = lockedSeg {
+                let secondPos = s.seg.a == joint.pos ? s.seg.b : s.seg.a
+                vvias.append(VirtualVia(pos: secondPos, layer: joint.layers.start, diameter: maxW + 2 * hullMargin, net: joint.net))
             }
         }
         for v in vvias { add(v) }
@@ -895,12 +904,15 @@ public final class Node {
         joints[tag] = list
     }
 
+    /// (A tag's joints are kept in the order KiCad's unordered_multimap gives them, libstdc++'s: a joint inserted with
+    /// a tag already there goes in front of the others, so the last made comes first; the order decides whose links
+    /// come first when joints are merged into a via's or a pad's.)
     @discardableResult
     private func touchJoint(_ pos: IPoint, _ layers: LayerRange, _ net: NetHandle?) -> Joint {
         let tag = Joint.Tag(pos: pos, net: net)
-        // not here? the root's copied in
+        // not here? the root's copied in (inserted one by one, each in front of the last)
         if (joints[tag] ?? []).isEmpty && !isRoot, let rootJoints = root.joints[tag], !rootJoints.isEmpty {
-            setJoints(tag, rootJoints.map(Joint.init(copying:)))
+            setJoints(tag, rootJoints.reversed().map(Joint.init(copying:)))
         }
         // the joints this one overlaps merged into it
         let jt = Joint(pos, layers, net: net)
@@ -916,7 +928,7 @@ public final class Node {
             }
         }
         var range = joints[tag] ?? []
-        range.append(jt)
+        range.insert(jt, at: 0)
         setJoints(tag, range)
         return jt
     }
@@ -948,10 +960,13 @@ public final class Node {
 
     // MARK: - Branches
 
-    /// What this branch takes out of the root, and what it adds
+    /// Items in the order they were made (in which tools/kicad-reference has KiCad take a node's hash sets of them)
+    static func bySerial(_ items: [Item]) -> [Item] { items.sorted { $0.serial < $1.serial } }
+
+    /// What this branch takes out of the root, and what it adds, each in the order the items were made
     public func updatedItems() -> (removed: [Item], added: [Item]) {
         if isRoot { return ([], []) }
-        return (overrides, index.all)
+        return (Node.bySerial(overrides), Node.bySerial(index.all))
     }
 
     private func releaseChildren() {
@@ -963,8 +978,8 @@ public final class Node {
     /// Takes in a branch's changes (KiCad's Commit)
     public func commit(_ node: Node) {
         if node.isRoot { return }
-        for item in node.overrides { remove(item) }
-        for item in node.index.all {
+        for item in Node.bySerial(node.overrides) { remove(item) }
+        for item in Node.bySerial(node.index.all) {
             if let h = item.hole { h.owner = item }
             item.rank = -1
             item.unmark()
