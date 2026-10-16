@@ -7,55 +7,12 @@ import Foundation
 
 extension KiMath {
     /// KiCad's RotatePoint for an EDA_ANGLE in degrees: exact on the quarter turns, sin and cos exact on the eighths
-    public static func rotate(_ p: IPoint, degrees: Double) -> IPoint {
-        var angle = degrees
-        while angle < -0.0 { angle += 360 }
-        while angle >= 360 { angle -= 360 }
-        switch angle {
-        case 0: return p
-        case 90: return IPoint(p.y, -p.x)
-        case 180: return IPoint(-p.x, -p.y)
-        case 270: return IPoint(-p.y, p.x)
-        default:
-            let s = sinDegrees(angle), c = cosDegrees(angle)
-            return IPoint(round(Double(p.y) * s + Double(p.x) * c), round(Double(p.y) * c - Double(p.x) * s))
-        }
-    }
+    public static func rotate(_ p: IPoint, degrees: Double) -> IPoint { rotate(p, EDAAngle(degrees: degrees)) }
 
     public static func rotate(_ p: IPoint, around c: IPoint, degrees: Double) -> IPoint { rotate(p - c, degrees: degrees) + c }
 
-    static func sinDegrees(_ a: Double) -> Double {
-        switch a {
-        case 0, 180: return 0
-        case 45, 135: return 0.5.squareRoot()
-        case 225, 315: return -0.5.squareRoot()
-        case 90: return 1
-        case 270: return -1
-        default: return sin(a * .pi / 180)
-        }
-    }
-
-    static func cosDegrees(_ a: Double) -> Double {
-        switch a {
-        case 0: return 1
-        case 180: return -1
-        case 90, 270: return 0
-        case 45, 315: return 0.5.squareRoot()
-        case 135, 225: return -0.5.squareRoot()
-        default: return cos(a * .pi / 180)
-        }
-    }
-
     /// KiCad's EDA_ANGLE of a vector, in degrees: exact along the axes and diagonals
-    public static func angleDegrees(_ v: IPoint) -> Double {
-        let x = Double(v.x), y = Double(v.y)
-        if x == 0 && y == 0 { return 0 }
-        if y == 0 { return x >= 0 ? 0 : -180 }
-        if x == 0 { return y >= 0 ? 90 : -90 }
-        if x == y { return x >= 0 ? 45 : -180 + 45 }
-        if x == -y { return x >= 0 ? -45 : 180 - 45 }
-        return atan2(y, x) / (.pi / 180)
-    }
+    public static func angleDegrees(_ v: IPoint) -> Double { EDAAngle(v).degrees }
 
     static func normalize180(_ a: Double) -> Double {
         var a = a
@@ -484,7 +441,7 @@ public final class Optimizer {
                                              maxY: min(p0.y, p1.y) + abs(p1.y - p0.y)), permitDiagonal)
         case .circle(let c, let r): return circleBreakouts(width, c, r)
         case .simple(let l): return customBreakouts(width, item, l, permitDiagonal)
-        case .chain: return []
+        case .chain, .arc: return []
         }
     }
 

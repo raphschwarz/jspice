@@ -8,7 +8,7 @@ import Foundation
 /// A polyline, open or closed (KiCad's SHAPE_LINE_CHAIN, straight segments only): a trace's path, an obstacle's
 /// hull. Indices wrap as KiCad's do: -1 is the last point.
 public struct LineChain: Hashable, Sendable, CustomStringConvertible {
-    public private(set) var points: [IPoint] = []
+    public internal(set) var points: [IPoint] = []
     public private(set) var isClosed = false
 
     /// Where two chains cross (KiCad's SHAPE_LINE_CHAIN::INTERSECTION)

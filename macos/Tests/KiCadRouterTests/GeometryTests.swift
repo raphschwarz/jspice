@@ -133,7 +133,7 @@ final class GeometryTests: XCTestCase {
             let hitP = chain.collide(p, clearance: cl, actual: &actual, location: &location)
             m.check(hitP, bool(c["collideP"]), "collision with a point", c)
             if hitP { m.check(actual ?? -1, int(c["collidePActual"]), "collision with a point's distance", c) }
-            m.check(chain.area(), (c["area"] as! NSNumber).doubleValue, "area", c)
+            m.check(chain.area(), double(c["area"]), "area", c)
         }
         report(m, "line chains", of: all.count)
     }
@@ -180,10 +180,87 @@ final class GeometryTests: XCTestCase {
         report(m, "walkarounds", of: all.count)
     }
 
+    func testArcs() {
+        let m = Mismatches(), all = cases("arcs")
+        for c in all {
+            guard case .arc(let arc) = shape(c["arc"]) else { return XCTFail("not an arc") }
+            let cl = int(c["cl"]), p = point(c["p"])
+            m.check(arc.center, point(c["center"]), "centre", c)
+            m.check(arc.radius, double(c["radius"]), "radius", c)
+            let b = arc.bbox(cl), kb = points(c["bbox"])
+            m.check([IPoint(b.minX, b.minY), IPoint(b.maxX, b.maxY)], kb, "box", c)
+            m.check(arc.startAngle.degrees, double(c["startAngle"]), "start angle", c)
+            m.check(arc.endAngle.degrees, double(c["endAngle"]), "end angle", c)
+            m.check(arc.centralAngle.degrees, double(c["centralAngle"]), "central angle", c)
+            m.check(arc.isCCW, bool(c["ccw"]), "counter-clockwise", c)
+            m.check(arc.isEffectiveLine, bool(c["effectiveLine"]), "all but straight", c)
+            var actual: Int?, location: IPoint?
+            let hit = arc.collide(p, clearance: cl, actual: &actual, location: &location)
+            m.check(hit, bool(c["collide"]), "point collision", c)
+            if hit { m.check(actual ?? -1, int(c["actual"]), "point collision's distance", c) }
+            m.check(arc.nearestPoint(p), point(c["nearest"]), "nearest point", c)
+            if let poly = c["polyline"] {
+                m.check(arc.convertToPolyline(int(c["maxError"])).points, points(poly), "polyline", c)
+                m.check(arc.hull(clearance: cl, walkaroundThickness: int(c["thickness"])).points, points(c["hull"]), "hull", c)
+            }
+        }
+        report(m, "arcs", of: all.count)
+    }
+
+    func testArcCollisions() {
+        let m = Mismatches(), all = cases("arcCollisions")
+        for c in all {
+            let a = shape(c["a"]), b = shape(c["b"]), cl = int(c["cl"])
+            var actual: Int?, actualR: Int?
+            let hit = a.collide(b, clearance: cl, actual: &actual)
+            m.check(hit, bool(c["collide"]), "collision", c)
+            m.check(a.collide(b, clearance: cl), bool(c["collideNoActual"]), "collision, its distance not asked", c)
+            if hit { m.check(actual ?? -1, int(c["actual"]), "collision's distance", c) }
+            let hitR = b.collide(a, clearance: cl, actual: &actualR)
+            m.check(hitR, bool(c["collideReversed"]), "collision the other way round", c)
+            m.check(b.collide(a, clearance: cl), bool(c["collideReversedNoActual"]), "collision the other way round, not asked", c)
+            if hitR { m.check(actualR ?? -1, int(c["actualReversed"]), "collision's distance the other way round", c) }
+            if let mtv = c["mtv"], case .circle(let center, let r) = b {
+                m.check(a.pushout(circle: center, radius: r, clearance: cl), optionalPoint(mtv), "via pushed out", c)
+            }
+        }
+        report(m, "arc collisions", of: all.count)
+    }
+
+    func testPadPolygons() {
+        let m = Mismatches(), all = cases("padPolygons")
+        for c in all {
+            let pos = point(c["pos"]), size = point(c["size"]), rotation = EDAAngle(degrees: double(c["rotation"]))
+            let inflate = int(c["inflate"]), maxError = int(c["maxError"])
+            let location: ErrorLocation = bool(c["outside"]) ? .outside : .inside
+            let outline: LineChain
+            switch c["kind"] as! String {
+            case "roundrect":
+                outline = PadPolygon.roundChamferedRect(position: pos, size: size, rotation: rotation, cornerRadius: int(c["radius"]),
+                                                        chamferRatio: double(c["chamferRatio"]), chamferCorners: int(c["chamferCorners"]),
+                                                        inflate: inflate, maxError: maxError, errorLocation: location)
+            case "trapezoid":
+                outline = PadPolygon.trapezoid(position: pos, size: size, rotation: rotation, deltaX: int(c["dx"]), deltaY: int(c["dy"]),
+                                               inflate: inflate, maxError: maxError, errorLocation: location)
+            default:
+                outline = PadPolygon.circle(center: pos, radius: size.x, maxError: maxError, errorLocation: location,
+                                            minSegCount: int(c["minSegs"]))
+            }
+            m.check(outline.points, points(c["outline"]), "\(c["kind"]!) outline", c)
+        }
+        report(m, "pad polygons", of: all.count)
+    }
+
     // MARK: - Reading the cases
 
     private func int(_ v: Any?) -> Int { (v as! NSNumber).intValue }
     private func bool(_ v: Any?) -> Bool { (v as! NSNumber).boolValue }
+    /// (Foundation on Linux reads a number of 17 digits as an NSDecimalNumber, whose doubleValue can be a bit off;
+    /// its digits read as a Double are the number KiCad wrote)
+    private func double(_ v: Any?) -> Double {
+        if let d = v as? NSDecimalNumber, let x = Double(d.stringValue) { return x }
+        return (v as! NSNumber).doubleValue
+    }
 
     private func point(_ v: Any?) -> IPoint {
         let a = v as! [Any]
@@ -207,6 +284,10 @@ final class GeometryTests: XCTestCase {
         }
         if let s = d["segment"] { return .segment(seg(s), width: int(d["w"])) }
         if let s = d["simple"] { return .simple(LineChain(points(s), closed: true)) }
+        if let a = d["arc"] {
+            let p = points(a)
+            return .arc(ShapeArc(start: p[0], mid: p[1], end: p[2], width: int(d["w"])))
+        }
         return .chain(LineChain(points(d["chain"])))
     }
 

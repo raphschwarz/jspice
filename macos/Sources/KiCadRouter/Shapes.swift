@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/src/geometry/shape_collisions.cpp, libs/kimath/src/geometry/shape_rect.cpp,
+// Ported from KiCad 10.0.7: libs/kimath/src/geometry/shape_collisions.cpp (the arc cases in Arc.swift), libs/kimath/src/geometry/shape_rect.cpp,
 // libs/kimath/include/geometry/shape_circle.h and shape_segment.h, and pcbnew/router/pns_utils.cpp (the hulls).
 // Copyright (C) 2013-2015 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
@@ -18,6 +18,8 @@ public enum Shape: Hashable, Sendable {
     case simple(LineChain)
     /// A polyline of no width (KiCad's SHAPE_LINE_CHAIN, as a trace's path)
     case chain(LineChain)
+    /// An arc of some width (KiCad's SHAPE_ARC)
+    case arc(ShapeArc)
 
     public var bbox: IBox {
         switch self {
@@ -25,6 +27,7 @@ public enum Shape: Hashable, Sendable {
         case .rect(let b): return b
         case .segment(let s, let w): return IBox(s.a, s.b).inflated((w + 1) / 2)
         case .simple(let c), .chain(let c): return c.bbox
+        case .arc(let a): return a.bbox()
         }
     }
 
@@ -38,6 +41,7 @@ public enum Shape: Hashable, Sendable {
         case .segment(let s, let w): return .segment(Seg(s.a + d, s.b + d), width: w)
         case .simple(let c): return .simple(LineChain(c.points.map { $0 + d }, closed: true))
         case .chain(let c): return .chain(LineChain(c.points.map { $0 + d }))
+        case .arc(let a): return .arc(a.moved(d))
         }
     }
 
@@ -46,11 +50,19 @@ public enum Shape: Hashable, Sendable {
     /// Whether this shape and `other` come closer than `clearance` (KiCad's SHAPE::Collide)
     public func collide(_ other: Shape, clearance: Int) -> Bool {
         var actual: Int?
-        return collide(other, clearance: clearance, actual: &actual)
+        return collide(other, clearance: clearance, wantActual: false, actual: &actual)
     }
 
     /// Whether this shape and `other` come closer than `clearance`, and how close they come
     public func collide(_ other: Shape, clearance: Int, actual: inout Int?) -> Bool {
+        collide(other, clearance: clearance, wantActual: true, actual: &actual)
+    }
+
+    /// (`wantActual`: whether KiCad was asked how close, which for arcs can change whether exactly the clearance
+    /// away collides)
+    func collide(_ other: Shape, clearance: Int, wantActual: Bool, actual: inout Int?) -> Bool {
+        if case .arc(let a) = self { return Self.arcCollide(a, other, clearance, wantActual, &actual) }
+        if case .arc(let a) = other { return Self.arcCollide(a, self, clearance, wantActual, &actual) }
         switch (self, other) {
         case let (.rect(a), .rect(b)):
             return Self.chainChain(Self.rectOutline(a), Self.rectOutline(b), clearance, &actual)
@@ -73,7 +85,67 @@ public enum Shape: Hashable, Sendable {
             return Self.withWidth(l.collide(s, clearance: clearance + w / 2, actual: &actual, location: &location), w, &actual)
         case let (.chain(a), .chain(b)), let (.chain(a), .simple(b)), let (.simple(a), .chain(b)), let (.simple(a), .simple(b)):
             return Self.chainChain(a, b, clearance, &actual)
+        case (.arc, _), (_, .arc):
+            return false
         }
+    }
+
+    /// An arc against any shape (shape_collisions.cpp's arc cases, the arc first)
+    static func arcCollide(_ a: ShapeArc, _ b: Shape, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?) -> Bool {
+        let straight = Shape.segment(Seg(a.start, a.end), width: a.width)
+        func near(_ r: (IPoint, IPoint, Int)) -> Bool {
+            let dsq = r.2
+            guard dsq == 0 || dsq < clearance * clearance else { return false }
+            actual = max(0, KiMath.round(Double(dsq).squareRoot()))
+            return true
+        }
+        switch b {
+        case .circle(let c, let r):
+            if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual) }
+            return near(a.nearestPoints(circle: c, r))
+        case .rect(let box):
+            if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual) }
+            return near(a.nearestPoints(rect: box))
+        case .segment(let s, let w):
+            if a.isEffectiveLine { return straight.collide(b, clearance: clearance, wantActual: wantActual, actual: &actual) }
+            var location: IPoint?
+            let hit = a.collide(s, clearance: clearance + w / 2, wantActual: wantActual, actual: &actual, location: &location)
+            if hit, wantActual, let d = actual { actual = max(0, d - w / 2) }
+            return hit
+        case .chain(let l):
+            // (KiCad's SHAPE_LINE_CHAIN case, which does not ask whether the arc is all but straight)
+            return arcChain(a, l, clearance, wantActual, &actual)
+        case .simple(let l):
+            if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual) }
+            return arcChain(a, l, clearance, wantActual, &actual)
+        case .arc(let o):
+            if a.isEffectiveLine { return arcCollide(o, straight, clearance, wantActual, &actual) }
+            if o.isEffectiveLine {
+                return arcCollide(a, .segment(Seg(o.start, o.end), width: o.width), clearance, wantActual, &actual)
+            }
+            return near(a.nearestPoints(o))
+        }
+    }
+
+    /// An arc against a polyline or polygon: inside a closed one, else its segments in turn
+    private static func arcChain(_ a: ShapeArc, _ l: LineChain, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?) -> Bool {
+        var closest = Int.max
+        if l.isClosed && l.pointInside(a.start) {
+            closest = 0
+        } else {
+            for i in 0..<l.segmentCount {
+                var d: Int?, location: IPoint?
+                if a.collide(l.segment(i), clearance: clearance, wantActual: wantActual, actual: &d, location: &location) {
+                    // (not asked how close, KiCad counts any collision as touching)
+                    let dist = wantActual ? d ?? 0 : 0
+                    if dist < closest { closest = dist }
+                    if closest == 0 || !wantActual { break }
+                }
+            }
+        }
+        guard closest == 0 || closest < clearance else { return false }
+        actual = closest
+        return true
     }
 
     /// Whether this shape and `other` come closer than `clearance`, how close, and about where. (KiCad works out
@@ -87,6 +159,7 @@ public enum Shape: Hashable, Sendable {
         case .rect(let b): location = b.nearestPoint(c)
         case .segment(let s, _): location = s.nearestPoint(c)
         case .simple(let l), .chain(let l): location = l.nearestPoint(c)
+        case .arc(let a): location = a.nearestPoint(c)
         }
         return true
     }
@@ -262,6 +335,16 @@ public enum Shape: Hashable, Sendable {
     /// translation vector, this shape first and the circle second), or nil if it is clear already
     public func pushout(circle c: IPoint, radius r: Int, clearance: Int) -> IPoint? {
         switch self {
+        case .arc(let a):
+            if a.isEffectiveLine {
+                var actual: Int?
+                let s = Seg(a.start, a.end)
+                guard Shape.circleSeg(c, r, s, clearance + a.width / 2, &actual) else { return nil }
+                return Shape.pushoutForce(c, r, s, clearance + a.width / 2)
+            }
+            let (ptA, ptB, dsq) = a.nearestPoints(circle: c, r)
+            guard dsq == 0 || dsq < clearance * clearance else { return nil }
+            return (ptB - ptA).resized(Int(Double(clearance) - Double(dsq).squareRoot() + 3))
         case .circle(let c1, let r1):
             let minDist = clearance + r1 + r
             let delta = c - c1
@@ -348,6 +431,8 @@ public enum Shape: Hashable, Sendable {
         case .chain(let c):
             // a polyline's hull: the segments' hulls would be joined; the router hulls lines segment by segment
             return Self.convexHull(LineChain(c.points, closed: true), cl)
+        case .arc(let a):
+            return a.hull(clearance: clearance, walkaroundThickness: walkaroundThickness)
         }
     }
 

@@ -45,9 +45,21 @@ public enum KiMath {
         return r
     }
 
-    /// KiCad's KiROUND: to the nearest, halves away from zero
+    /// KiCad's KiROUND: to the nearest, halves away from zero (what is not a number, or too big for 64 bits, at the
+    /// end of the range an int holds, as KiROUND clamps it)
     @inline(__always)
-    public static func round(_ v: Double) -> Int { Int(v.rounded()) }
+    public static func round(_ v: Double) -> Int {
+        guard v.isFinite && abs(v) < 9.2e18 else { return v > 0 ? Int(Int32.max) : Int(Int32.min) }
+        return Int(v.rounded())
+    }
+
+    /// A double made an int as C++ makes it on x86-64: cut towards zero, and what an int cannot hold (or not a
+    /// number) the smallest int
+    @inline(__always)
+    public static func cInt(_ v: Double) -> Int {
+        guard v.isFinite, v > Double(Int32.min) - 1, v < Double(Int32.max) + 1 else { return Int(Int32.min) }
+        return Int(v)
+    }
 
     @inline(__always)
     public static func sign(_ v: Int) -> Int { v > 0 ? 1 : v < 0 ? -1 : 0 }
@@ -111,9 +123,10 @@ public struct IPoint: Hashable, Sendable, CustomStringConvertible {
             nx = Double(abs(length)) * 0.5.squareRoot()
             ny = nx
         } else {
-            let xsq = x * x, ysq = y * y
-            let lsq = xsq + ysq
-            let nlsq = length * length
+            // (64-bit squares, wrapping as KiCad's do where they overflow)
+            let xsq = x &* x, ysq = y &* y
+            let lsq = xsq &+ ysq
+            let nlsq = length &* length
             nx = Double(KiMath.rescale(nlsq, xsq, lsq)).squareRoot()
             ny = Double(KiMath.rescale(nlsq, ysq, lsq)).squareRoot()
         }

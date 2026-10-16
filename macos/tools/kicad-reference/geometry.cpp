@@ -4,14 +4,18 @@
 //
 // This program links KiCad's code: GNU General Public License version 3 or later, as KiCad.
 
+#include <convert_basic_shapes_to_polygon.h>
 #include <geometry/direction45.h>
 #include <geometry/seg.h>
+#include <geometry/shape_arc.h>
 #include <geometry/shape_circle.h>
 #include <geometry/shape_line_chain.h>
+#include <geometry/shape_poly_set.h>
 #include <geometry/shape_rect.h>
 #include <geometry/shape_segment.h>
 #include <geometry/shape_simple.h>
 #include <math/util.h>
+#include <trigo.h>
 #include <math/vector2d.h>
 #include <nlohmann/json.hpp>
 #include <pns_line.h>
@@ -161,6 +165,12 @@ static json shapeJSON( const SHAPE* s )
         return { { "simple", chainPoints( static_cast<const SHAPE_SIMPLE*>( s )->Vertices() ) } };
     case SH_LINE_CHAIN:
         return { { "chain", chainPoints( *static_cast<const SHAPE_LINE_CHAIN*>( s ) ) } };
+    case SH_ARC:
+    {
+        auto a = static_cast<const SHAPE_ARC*>( s );
+        return { { "arc", json::array( { pt( a->GetP0() ), pt( a->GetArcMid() ), pt( a->GetP1() ) } ) },
+                 { "w", a->GetWidth() } };
+    }
     default:
         return json();
     }
@@ -198,6 +208,85 @@ static SHAPE* nearShape( const SHAPE* a, bool aWithChain )
     }
 
     return b;
+}
+
+/// An angle, often one of the eighths of a turn, a full turn or close to none
+static EDA_ANGLE randAngle()
+{
+    switch( uniform( 0, 5 ) )
+    {
+    case 0: return EDA_ANGLE( uniform( -8, 8 ) * 45.0, DEGREES_T );
+    case 1: return EDA_ANGLE( chance( 50 ) ? 360.0 : -360.0, DEGREES_T );
+    case 2: return EDA_ANGLE( std::uniform_real_distribution<double>( -2, 2 )( rng ), DEGREES_T );
+    default: return EDA_ANGLE( std::uniform_real_distribution<double>( -359, 359 )( rng ), DEGREES_T );
+    }
+}
+
+/// An arc: about a centre from a start through an angle, through three points round a circle, all but straight,
+/// or through any three points; of no width now and then
+static SHAPE_ARC randArcAny()
+{
+    int w = chance( 30 ) ? 0 : uniform( 1, 1000000 );
+    VECTOR2I c = randPoint();
+    int r = chance( 10 ) ? uniform( 1, 50 ) : chance( 10 ) ? uniform( 5000000, 400000000 ) : uniform( 100, 2000000 );
+
+    switch( uniform( 0, 4 ) )
+    {
+    case 0:
+    {
+        VECTOR2I start = c + VECTOR2I( r, 0 );
+        RotatePoint( start, c, randAngle() );
+        return SHAPE_ARC( c, start, randAngle(), w );
+    }
+    case 1:
+    {
+        double a0 = std::uniform_real_distribution<double>( 0, 2 * M_PI )( rng );
+        double da = std::uniform_real_distribution<double>( -2 * M_PI, 2 * M_PI )( rng );
+        auto at = [&]( double a ) { return c + VECTOR2I( KiROUND( r * cos( a ) ), KiROUND( r * sin( a ) ) ); };
+        return SHAPE_ARC( at( a0 ), at( a0 + da / 2 ), at( a0 + da ), w );
+    }
+    case 2:
+    {
+        VECTOR2I a = randPoint();
+        VECTOR2I b = randFrom( a );
+        VECTOR2I m = ( a + b ) / 2 + VECTOR2I( uniform( -3, 3 ), uniform( -3, 3 ) );
+        return SHAPE_ARC( a, m, b, w );
+    }
+    case 3:
+    {
+        VECTOR2I a = randPoint();
+        return SHAPE_ARC( a, randFrom( a ), randPoint(), w );
+    }
+    default:
+    {
+        VECTOR2I start = c + VECTOR2I( r, 0 );
+        RotatePoint( start, c, randAngle() );
+        VECTOR2I end = c + VECTOR2I( r, 0 );
+        RotatePoint( end, c, randAngle() );
+        SHAPE_ARC arc;
+
+        if( chance( 50 ) )
+            arc.ConstructFromStartEndCenter( start, end, c, chance( 50 ) );
+        else
+            arc.ConstructFromStartEndAngle( start, end, randAngle() );
+
+        arc.SetWidth( w );
+        return arc;
+    }
+    }
+}
+
+/// An arc whose radius is less than half a metre. (Beyond, KiCad's arithmetic on its centre runs out of what an
+/// int holds and wraps; no board has such an arc but one all but straight, which KiCad takes as a segment.)
+static SHAPE_ARC randArc()
+{
+    for( ;; )
+    {
+        SHAPE_ARC arc = randArcAny();
+
+        if( arc.GetRadius() < 5e8 )
+            return arc;
+    }
 }
 
 static json intersections( const SHAPE_LINE_CHAIN::INTERSECTIONS& ips )
@@ -512,6 +601,148 @@ int main( int argc, char** argv )
     }
 
     out["walkarounds"] = walks;
+
+    // arcs: how KiCad works them out, their polylines and hulls, points against them
+    json arcs = json::array();
+
+    for( int i = 0; i < n * 2; i++ )
+    {
+        SHAPE_ARC arc = randArc();
+        int cl = chance( 10 ) ? 0 : uniform( 0, 600000 );
+        int thickness = chance( 10 ) ? 0 : uniform( 1, 600000 );
+        int maxError = chance( 50 ) ? 5000 : uniform( 1, 100000 );
+        VECTOR2I p = chance( 50 ) ? arc.GetCenter() + VECTOR2I( uniform( -2000000, 2000000 ), uniform( -2000000, 2000000 ) )
+                                  : randFrom( chance( 50 ) ? arc.GetP0() : arc.GetArcMid() );
+        int actual = -1;
+        VECTOR2I location;
+        bool hit = arc.Collide( p, cl, &actual, &location );
+        BOX2I bb = arc.BBox( cl );
+        json j = { { "arc", shapeJSON( &arc ) }, { "cl", cl }, { "thickness", thickness }, { "maxError", maxError },
+                   { "p", pt( p ) }, { "center", pt( arc.GetCenter() ) }, { "radius", arc.GetRadius() },
+                   { "bbox", json::array( { pt( bb.GetOrigin() ), pt( bb.GetEnd() ) } ) },
+                   { "startAngle", arc.GetStartAngle().AsDegrees() }, { "endAngle", arc.GetEndAngle().AsDegrees() },
+                   { "centralAngle", arc.GetCentralAngle().AsDegrees() }, { "ccw", arc.IsCCW() },
+                   { "effectiveLine", arc.IsEffectiveLine() }, { "collide", hit }, { "actual", hit ? actual : -1 },
+                   { "nearest", pt( arc.NearestPoint( p ) ) } };
+
+        j["polyline"] = chainPoints( arc.ConvertToPolyline( maxError ) );
+        j["hull"] = chainPoints( PNS::BuildHullForPrimitiveShape( &arc, cl, thickness ) );
+
+        arcs.push_back( j );
+    }
+
+    out["arcs"] = arcs;
+
+    // arcs against every shape, and each other, either way round, asked how close or not
+    json arcCollisions = json::array();
+
+    for( int i = 0; i < n * 4; i++ )
+    {
+        SHAPE_ARC arc = randArc();
+        std::unique_ptr<SHAPE> b;
+
+        if( chance( 20 ) )
+        {
+            b.reset( new SHAPE_ARC( randArc() ) );
+        }
+        else
+        {
+            b.reset( randShape( true ) );
+        }
+
+        if( chance( 70 ) )
+        {
+            VECTOR2I to = arc.Centre() + VECTOR2I( uniform( -1500000, 1500000 ), uniform( -1500000, 1500000 ) );
+            b->Move( to - b->Centre() );
+        }
+
+        int cl = chance( 10 ) ? 0 : uniform( 0, 600000 );
+        int actual = -1, actualR = -1;
+        bool hit = arc.Collide( b.get(), cl, &actual );
+        bool hitBool = arc.Collide( b.get(), cl );
+        bool hitR = b->Collide( &arc, cl, &actualR );
+        bool hitRBool = b->Collide( &arc, cl );
+        json j = { { "a", shapeJSON( &arc ) }, { "b", shapeJSON( b.get() ) }, { "cl", cl }, { "collide", hit },
+                   { "collideNoActual", hitBool }, { "actual", hit ? actual : -1 }, { "collideReversed", hitR },
+                   { "collideReversedNoActual", hitRBool }, { "actualReversed", hitR ? actualR : -1 } };
+
+        // how far a via must move to clear the arc
+        if( b->Type() == SH_CIRCLE )
+        {
+            VECTOR2I mtv;
+            bool hitMTV = static_cast<const SHAPE&>( arc ).Collide( b.get(), cl, &mtv );
+            j["mtv"] = hitMTV ? pt( mtv ) : json();
+        }
+
+        arcCollisions.push_back( j );
+    }
+
+    out["arcCollisions"] = arcCollisions;
+
+    // pads' shapes as polygons: rectangles with rounded or cut corners, trapezoids, circles; turned, grown or shrunk
+    json padPolygons = json::array();
+
+    for( int i = 0; i < n * 2; i++ )
+    {
+        VECTOR2I pos = randPoint();
+        int sx = chance( 10 ) ? uniform( 2, 50 ) : uniform( 100, 3000000 );
+        int sy = chance( 20 ) ? sx : chance( 10 ) ? uniform( 2, 50 ) : uniform( 100, 3000000 );
+        VECTOR2I size( sx, sy );
+        EDA_ANGLE rot = chance( 40 ) ? ANGLE_0 : chance( 50 ) ? EDA_ANGLE( uniform( 0, 7 ) * 45.0, DEGREES_T )
+                                                            : EDA_ANGLE( std::uniform_real_distribution<double>( 0, 360 )( rng ), DEGREES_T );
+        int inflate = chance( 50 ) ? 0 : chance( 60 ) ? uniform( 1, 300000 ) : -uniform( 1, std::min( sx, sy ) );
+        int maxError = chance( 50 ) ? 5000 : uniform( 1, 50000 );
+        bool outside = chance( 50 );
+        ERROR_LOC loc = outside ? ERROR_OUTSIDE : ERROR_INSIDE;
+        SHAPE_POLY_SET poly;
+        json j = { { "pos", pt( pos ) }, { "size", pt( size ) }, { "rotation", rot.AsDegrees() }, { "inflate", inflate },
+                   { "maxError", maxError }, { "outside", outside } };
+
+        switch( uniform( 0, 2 ) )
+        {
+        case 0:
+        {
+            double ratio = chance( 20 ) ? 0.5 : std::uniform_real_distribution<double>( 0, 0.5 )( rng );
+            int radius = chance( 10 ) ? 0 : KiROUND( std::min( sx, sy ) * ratio );
+            int corners = chance( 50 ) ? 0 : uniform( 0, 15 );
+            double chamfer = chance( 20 ) ? 0.5 : std::uniform_real_distribution<double>( 0, 0.5 )( rng );
+            TransformRoundChamferedRectToPolygon( poly, pos, size, rot, radius, chamfer, corners, inflate, maxError, loc );
+            j["kind"] = "roundrect";
+            j["radius"] = radius;
+            j["chamferRatio"] = chamfer;
+            j["chamferCorners"] = corners;
+            break;
+        }
+        case 1:
+        {
+            int dx = 0, dy = 0;
+
+            if( chance( 50 ) )
+                dx = uniform( -sy / 2, sy / 2 );
+            else
+                dy = uniform( -sx / 2, sx / 2 );
+
+            TransformTrapezoidToPolygon( poly, pos, size, rot, dx, dy, inflate, maxError, loc );
+            j["kind"] = "trapezoid";
+            j["dx"] = dx;
+            j["dy"] = dy;
+            break;
+        }
+        default:
+        {
+            int minSegs = chance( 50 ) ? 16 : 0;
+            TransformCircleToPolygon( poly, pos, sx, maxError, loc, minSegs );
+            j["kind"] = "circle";
+            j["minSegs"] = minSegs;
+            break;
+        }
+        }
+
+        j["outline"] = poly.OutlineCount() ? chainPoints( poly.Outline( 0 ) ) : json::array();
+        padPolygons.push_back( j );
+    }
+
+    out["padPolygons"] = padPolygons;
 
     std::cout << out.dump() << std::endl;
     return 0;
