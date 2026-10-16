@@ -77,6 +77,12 @@ final class PCBEditing: ObservableObject {
         Task { layers = await engine.load(board, project: project) }
     }
 
+    /// The board's rules changed (its net classes): the router takes them
+    func rulesChanged(_ project: [String: Any]) {
+        guard isReady else { return }
+        Task { layers = await engine.reload(project: project) }
+    }
+
     func close() {
         engine.close()
         isReady = false
@@ -482,6 +488,16 @@ final class PCBRouteEngine: @unchecked Sendable {
         await withCheckedContinuation { continuation in
             queue.async {
                 if let session = self.session { session.load(board, project: project) } else { self.session = BoardEditing(board: board, project: project) }
+                continuation.resume(returning: self.session?.layers ?? [])
+            }
+        }
+    }
+
+    /// The board taken up again with these project settings (its rules changed)
+    func reload(project: [String: Any]) async -> [String] {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                if let session = self.session { session.load(session.board.copy(), project: project) }
                 continuation.resume(returning: self.session?.layers ?? [])
             }
         }

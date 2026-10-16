@@ -24,6 +24,55 @@ public enum KiCadProject {
         public static let standard = NetClass(name: "Default", trackWidth: 0.25, clearance: 0.2)
     }
 
+    /// The net classes a project file's settings (its JSON) set up, the Default class first, each with the nets it
+    /// takes by pattern
+    public static func netClasses(in project: [String: Any]?) -> [NetClass] {
+        let ns = project?["net_settings"] as? [String: Any] ?? [:]
+        let patterns = (ns["netclass_patterns"] as? [[String: Any]] ?? []).compactMap { p -> (String, String)? in
+            guard let pattern = p["pattern"] as? String, let nc = p["netclass"] as? String else { return nil }
+            return (nc, pattern)
+        }
+        var out: [NetClass] = []
+        for c in ns["classes"] as? [[String: Any]] ?? [] {
+            guard let name = c["name"] as? String else { continue }
+            func mm(_ key: String, _ fallback: Double) -> Double { (c[key] as? NSNumber)?.doubleValue ?? fallback }
+            out.append(NetClass(name: name, trackWidth: mm("track_width", 0.2), clearance: mm("clearance", 0.2),
+                                viaDiameter: mm("via_diameter", 0.6), viaDrill: mm("via_drill", 0.3),
+                                patterns: patterns.filter { $0.0 == name }.map(\.1)))
+        }
+        if !out.contains(where: { $0.name == "Default" }) {
+            out.insert(NetClass(name: "Default", trackWidth: 0.2, clearance: 0.2), at: 0)
+        }
+        return out.sorted { a, b in a.name == "Default" ? b.name != "Default" : (b.name != "Default" && a.name < b.name) }
+    }
+
+    /// A net class's widths and gaps set in a project file's settings (its JSON), and the nets it takes by pattern;
+    /// a class it does not have yet added, as KiCad adds one (its other settings KiCad's defaults)
+    public static func setNetClass(_ netClass: NetClass, in project: inout [String: Any]) {
+        var ns = project["net_settings"] as? [String: Any] ?? ["meta": ["version": 5]]
+        var classes = ns["classes"] as? [[String: Any]] ?? []
+        let values: [String: Any] = ["track_width": netClass.trackWidth, "clearance": netClass.clearance,
+                                     "via_diameter": netClass.viaDiameter, "via_drill": netClass.viaDrill]
+        if let i = classes.firstIndex(where: { $0["name"] as? String == netClass.name }) {
+            for (k, v) in values { classes[i][k] = v }
+        } else {
+            var c: [String: Any] = ["name": netClass.name, "microvia_diameter": 0.3, "microvia_drill": 0.1,
+                                    "diff_pair_width": 0.2, "diff_pair_gap": 0.25, "diff_pair_via_gap": 0.25,
+                                    "wire_width": 6, "bus_width": 12, "line_style": 0,
+                                    "pcb_color": "rgba(0, 0, 0, 0.000)", "schematic_color": "rgba(0, 0, 0, 0.000)",
+                                    "priority": netClass.name == "Default" ? 2147483647 : classes.count]
+            for (k, v) in values { c[k] = v }
+            classes.append(c)
+        }
+        ns["classes"] = classes
+        if netClass.name != "Default" {
+            var patterns = (ns["netclass_patterns"] as? [[String: Any]] ?? []).filter { $0["netclass"] as? String != netClass.name }
+            patterns += netClass.patterns.map { ["netclass": netClass.name, "pattern": $0] }
+            ns["netclass_patterns"] = patterns
+        }
+        project["net_settings"] = ns
+    }
+
     /// A new, empty board, as KiCad 10 makes one: `copperLayers` layers of copper (2, 4 or 6) and KiCad's default setup
     public static func newBoard(title: String, date: Date = Date(), company: String = "", revision: String = "1",
                                 copperLayers: Int = 2) -> KiCadBoard {

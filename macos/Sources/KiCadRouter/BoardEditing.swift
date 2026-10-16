@@ -55,9 +55,13 @@ public final class BoardEditing {
     /// The board read anew (changed elsewhere: in KiCad, or by the schematic's update); a track being routed is
     /// dropped. `project` nil keeps the project's settings as they were.
     public func load(_ board: KiCadBoard, project: [String: Any]? = nil) {
-        if let project { self.project = project }
+        var rulesChanged = false
+        if let project {
+            rulesChanged = !NSDictionary(dictionary: project).isEqual(to: self.project ?? [:])
+            self.project = project
+        }
         let text = board.text
-        if text == base.text && !router.router.routingInProgress { return }
+        if text == base.text && !rulesChanged && !router.router.routingInProgress { return }
         router.cancel()
         base = board.copy()
         router = BoardRouter(board: base.copy(), project: self.project)

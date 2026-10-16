@@ -626,6 +626,72 @@ struct PCBEditMessage: View {
     }
 }
 
+/// A net class's widths and gaps (mm), and the nets it takes, edited where they are shown: the router takes them as
+/// they are entered, and the board's KiCad project keeps them
+struct PCBNetClassRow: View {
+    @ObservedObject var board: BoardController
+    let netClass: KiCadProject.NetClass
+    @State private var edited: KiCadProject.NetClass
+    @State private var nets: String
+
+    init(board: BoardController, netClass: KiCadProject.NetClass) {
+        self.board = board
+        self.netClass = netClass
+        _edited = State(initialValue: netClass)
+        _nets = State(initialValue: netClass.patterns.joined(separator: ", "))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(netClass.name).font(.callout.weight(.medium))
+            Grid(alignment: .leading, horizontalSpacing: 6, verticalSpacing: 3) {
+                GridRow {
+                    Text("Track").foregroundStyle(.secondary)
+                    field(\.trackWidth, "The width of its tracks")
+                    Text("Gap").foregroundStyle(.secondary)
+                    field(\.clearance, "How far its copper keeps from other nets'")
+                }
+                GridRow {
+                    Text("Via").foregroundStyle(.secondary)
+                    field(\.viaDiameter, "Its vias' diameter")
+                    Text("Drill").foregroundStyle(.secondary)
+                    field(\.viaDrill, "Its vias' hole")
+                }
+            }
+            .font(.caption)
+            if netClass.name != "Default" {
+                TextField("Nets", text: $nets, prompt: Text("Nets: GND, +*V"))
+                    .font(.caption)
+                    .onSubmit { commit() }
+                    .help("The nets it takes: names, or patterns such as +*V, separated by commas")
+            }
+        }
+        .onChange(of: netClass) { _, value in
+            edited = value
+            nets = value.patterns.joined(separator: ", ")
+        }
+    }
+
+    private func field(_ key: WritableKeyPath<KiCadProject.NetClass, Double>, _ help: String) -> some View {
+        TextField("", value: Binding(get: { edited[keyPath: key] }, set: { edited[keyPath: key] = $0 }),
+                  format: .number.precision(.fractionLength(0...3)))
+            .labelsHidden()
+            .frame(width: 52)
+            .onSubmit { commit() }
+            .help(help + " (mm)")
+    }
+
+    private func commit() {
+        var next = edited
+        next.patterns = nets.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard next != netClass, next.trackWidth > 0, next.clearance >= 0, next.viaDiameter > next.viaDrill, next.viaDrill > 0 else {
+            if next != netClass { NSSound.beep() }
+            return
+        }
+        board.setNetClass(next)
+    }
+}
+
 /// What the PCB view shows where it has no board to show
 struct PCBEmptyState<Actions: View>: View {
     let symbol: String
@@ -718,6 +784,11 @@ struct PCBSidePanel: View {
                 }
             }
             if board.availability == .board { status }
+            if board.availability == .board && !board.netClasses.isEmpty {
+                Section("Net classes") {
+                    ForEach(board.netClasses, id: \.name) { PCBNetClassRow(board: board, netClass: $0) }
+                }
+            }
             if !board.removed.isEmpty {
                 Section("Deleted on the board") {
                     ForEach(board.removed, id: \.self) { change in

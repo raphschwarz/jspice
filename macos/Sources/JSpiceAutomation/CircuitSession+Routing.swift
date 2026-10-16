@@ -23,6 +23,13 @@ extension CircuitSession {
                                   "layers": ["type": "array", "items": ["type": "string"], "description": "\"top\", \"bottom\" or copper layer names (default: bottom)"],
                                   "fill_only": ["type": "boolean", "description": "Only fill the board's zones again"]]),
              run: { session, arguments in try session.pcbPour(arguments) }),
+        Tool(name: "pcb_net_class",
+             description: "The board's net classes (the widths and gaps the router routes each net with, kept in the board's KiCad project): with no name, lists them; with a name, sets that class's track width, clearance, via diameter and drill (mm) and the nets it takes (names or patterns such as \"+*V\"), adding the class if the board has none of that name. Refused while KiCad has the board open (change them in its Board Setup then).",
+             inputSchema: schema(["name": string("The net class (\"Default\", \"Power\"…)"),
+                                  "track_width_mm": ["type": "number"], "clearance_mm": ["type": "number"],
+                                  "via_diameter_mm": ["type": "number"], "via_drill_mm": ["type": "number"],
+                                  "nets": ["type": "array", "items": ["type": "string"], "description": "The nets the class takes, by name or pattern"]]),
+             run: { session, arguments in try session.pcbNetClass(arguments) }),
         Tool(name: "pcb_unroute",
              description: "Takes tracks and vias off the board: those of the nets named, or all of them. As one change, as pcb_route makes its own.",
              inputSchema: schema(["nets": ["type": "array", "items": ["type": "string"], "description": "The nets whose tracks and vias to take off"],
@@ -111,6 +118,30 @@ extension CircuitSession {
             result["unrouted"] = KiCadConnectivity(board).ratsnest().count
             result["next"] = "pcb_drc checks the board"
             return result
+        }
+    }
+
+    func pcbNetClass(_ arguments: [String: Any]) throws -> Any {
+        try withBoard { link -> Any in
+            guard link.exists else { throw ToolError("The circuit has no board yet: pcb_create makes one") }
+            func describe(_ classes: [KiCadProject.NetClass]) -> [[String: Any]] {
+                classes.map { ["name": $0.name, "track_width_mm": $0.trackWidth, "clearance_mm": $0.clearance,
+                               "via_diameter_mm": $0.viaDiameter, "via_drill_mm": $0.viaDrill, "nets": $0.patterns] }
+            }
+            guard let name = (arguments["name"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) else {
+                return ["net_classes": describe(link.netClasses())]
+            }
+            var nc = link.netClasses().first { $0.name == name } ?? KiCadProject.NetClass(name: name, trackWidth: 0.25, clearance: 0.2)
+            if let v = try Self.number(arguments["track_width_mm"], "track_width_mm") { nc.trackWidth = v }
+            if let v = try Self.number(arguments["clearance_mm"], "clearance_mm") { nc.clearance = v }
+            if let v = try Self.number(arguments["via_diameter_mm"], "via_diameter_mm") { nc.viaDiameter = v }
+            if let v = try Self.number(arguments["via_drill_mm"], "via_drill_mm") { nc.viaDrill = v }
+            if let nets = arguments["nets"] as? [String] { nc.patterns = nets }
+            guard nc.trackWidth > 0, nc.clearance >= 0, nc.viaDrill > 0, nc.viaDiameter > nc.viaDrill else {
+                throw ToolError("Widths must be positive, and a via wider than its drill")
+            }
+            try link.setNetClass(nc)
+            return ["net_classes": describe(link.netClasses()), "next": "pcb_route routes with them"]
         }
     }
 

@@ -255,4 +255,34 @@ final class BoardEditingTests: XCTestCase {
             XCTAssertFalse(track.collide(arc, clearance: 0), "over the arc: \(u) \(v)")
         }
     }
+
+    /// Net classes read from the project, changed and added, as KiCad keeps them; the router takes the new widths
+    func testNetClassesAreChangedAndTheRouterTakesThem() throws {
+        var project = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(KiCadProject.projectFile(
+            name: "t", netClasses: [.standard, KiCadProject.NetClass(name: "Power", trackWidth: 0.5, clearance: 0.2, viaDiameter: 0.8,
+                                                                   viaDrill: 0.4, patterns: ["GND", "+*V"])]).utf8)) as? [String: Any])
+        var classes = KiCadProject.netClasses(in: project)
+        XCTAssertEqual(classes.map(\.name), ["Default", "Power"])
+        XCTAssertEqual(classes[1].patterns, ["GND", "+*V"])
+        XCTAssertEqual(classes[1].trackWidth, 0.5)
+
+        var power = classes[1]
+        power.trackWidth = 0.8
+        power.patterns = ["GND"]
+        KiCadProject.setNetClass(power, in: &project)
+        KiCadProject.setNetClass(KiCadProject.NetClass(name: "Signal", trackWidth: 0.15, clearance: 0.15, patterns: ["SIG*"]), in: &project)
+        classes = KiCadProject.netClasses(in: project)
+        XCTAssertEqual(classes.map(\.name), ["Default", "Power", "Signal"])
+        XCTAssertEqual(classes[1].trackWidth, 0.8)
+        XCTAssertEqual(classes[1].patterns, ["GND"])
+        XCTAssertEqual(classes[2].patterns, ["SIG*"])
+
+        // the router reads them: a GND track 0.8 mm wide
+        let file = try XCTUnwrap(Self.boards().first)
+        let board = try KiCadBoard.read(file)
+        let session = BoardEditing(board: board, project: nil)
+        session.load(board, project: project)
+        XCTAssertEqual(session.router.sizes(for: nil, net: "GND").trackWidth, 800_000)
+        XCTAssertEqual(session.router.sizes(for: nil, net: "SIG1").trackWidth, max(150_000, session.router.world.minTrackWidth))
+    }
 }

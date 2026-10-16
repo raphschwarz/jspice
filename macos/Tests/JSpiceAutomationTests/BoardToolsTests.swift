@@ -87,6 +87,12 @@ final class BoardToolsTests: XCTestCase {
 
         let unrouted = try XCTUnwrap(call("pcb_status")["unrouted"] as? Int)
         XCTAssertGreaterThan(unrouted, 0)
+        // the signal tracks a little wider than the default class's
+        let classes = try XCTUnwrap(call("pcb_net_class")["net_classes"] as? [[String: Any]])
+        XCTAssertTrue(classes.contains { $0["name"] as? String == "Default" })
+        let set = try XCTUnwrap(call("pcb_net_class", ["name": "Default", "track_width_mm": 0.3])["net_classes"] as? [[String: Any]])
+        XCTAssertEqual(set.first { $0["name"] as? String == "Default" }?["track_width_mm"] as? Double, 0.3)
+        XCTAssertThrowsError(try session.call("pcb_net_class", arguments: ["name": "Default", "via_drill_mm": 2]))
         XCTAssertThrowsError(try session.call("pcb_route", arguments: ["nets": ["NO_SUCH_NET"]]))
         let routed = try call("pcb_route", ["skip_nets": ["GND"]])
         let added = try XCTUnwrap(routed["tracks_and_vias_added"] as? Int)

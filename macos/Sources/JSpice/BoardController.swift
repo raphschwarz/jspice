@@ -64,6 +64,8 @@ final class BoardController: ObservableObject {
     @Published private(set) var busy: String?
     @Published var failure: String?
     @Published private(set) var drc: KiCadFabrication.DRCReport?
+    /// The board's net classes: the widths and gaps its tracks are routed with (its KiCad project's)
+    @Published private(set) var netClasses: [KiCadProject.NetClass] = []
     @Published private(set) var apiEnabled = true
 
     weak var editor: EditorState?
@@ -150,6 +152,7 @@ final class BoardController: ObservableObject {
         shownName = name
         shownBoard = board.copy()
         shownProject = project
+        netClasses = KiCadProject.netClasses(in: project)
         let circuit = editor?.circuit ?? Circuit()
         let built = PCBNetlistBuilder.netlist(circuit, design: circuit.pcb)
         let top = BoardLink.topLevel(circuit)
@@ -254,6 +257,7 @@ final class BoardController: ObservableObject {
         let result = done.outcome.result
         picture = done.picture
         editing.boardChanged(done.outcome.board, project: nil)
+        refreshNetClasses()
         partsOfFootprint = done.outcome.partsOfFootprint
         isLive = done.live
         isOpenInKiCad = done.open
@@ -585,6 +589,40 @@ final class BoardController: ObservableObject {
         } catch {
             failure = "\(error)"
             return nil
+        }
+    }
+
+    /// The net classes read again from the board's project
+    func refreshNetClasses() {
+        guard shownBoard == nil else { return }
+        Task {
+            if let classes = try? await worker.run({ w in w.link?.netClasses() ?? [] }) { netClasses = classes }
+        }
+    }
+
+    /// A net class's widths and gaps changed (or a class added), in the board's project; the router takes them at once
+    func setNetClass(_ netClass: KiCadProject.NetClass) {
+        if shownBoard != nil {
+            var project = shownProject ?? [:]
+            KiCadProject.setNetClass(netClass, in: &project)
+            shownProject = project
+            netClasses = KiCadProject.netClasses(in: project)
+            editing.rulesChanged(project)
+            return
+        }
+        Task {
+            do {
+                let project = try await worker.run { w -> [String: Any] in
+                    guard let link = w.link else { throw BoardLink.Failure.noBoard }
+                    return try link.setNetClass(netClass)
+                }
+                netClasses = KiCadProject.netClasses(in: project)
+                editing.rulesChanged(project)
+                failure = nil
+                log.insert(LogEntry(date: Date(), text: "Net class \(netClass.name) changed"), at: 0)
+            } catch {
+                failure = "\(error)"
+            }
         }
     }
 

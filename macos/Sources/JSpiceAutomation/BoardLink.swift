@@ -19,10 +19,14 @@ public final class BoardLink {
         /// KiCad has the board open but cannot be reached: changing its file now would be lost
         case openUnreachable
         case noBoard
+        /// KiCad has the project open, and would keep its own settings
+        case projectOpen
 
         public var description: String {
             switch self {
             case .noKiCad(let why): return why
+            case .projectOpen:
+                return "KiCad has the board open: change its net classes in KiCad's Board Setup (Net Classes), or close the board in KiCad and change them here."
             case .openUnreachable:
                 return "KiCad has the board open, but JSpice cannot reach it: turn on KiCad's API (Preferences ▸ Plugins ▸ Enable KiCad API) so the board can be kept in step while it is open."
             case .noBoard: return "The circuit has no board yet."
@@ -195,6 +199,21 @@ public final class BoardLink {
         if isOpenInKiCad { throw Failure.openUnreachable }
         try KiCadFabrication(installation: kicad()).fillZones(boardFile)
         return try KiCadBoard.read(boardFile)
+    }
+
+    /// The board's net classes: the widths and gaps its tracks are routed with
+    public func netClasses() -> [KiCadProject.NetClass] { KiCadProject.netClasses(in: projectSettings()) }
+
+    /// A net class's widths and gaps set in the board's project file (KiCad, if it has the project open, keeps its
+    /// own until it opens it again: refused then). The project's settings as they then are.
+    @discardableResult
+    public func setNetClass(_ netClass: KiCadProject.NetClass) throws -> [String: Any] {
+        if isOpenInKiCad { throw Failure.projectOpen }
+        var project = projectSettings() ?? [:]
+        KiCadProject.setNetClass(netClass, in: &project)
+        let data = try JSONSerialization.data(withJSONObject: project, options: [.prettyPrinted, .sortedKeys])
+        try (String(decoding: data, as: UTF8.self) + "\n").write(to: projectFile, atomically: true, encoding: .utf8)
+        return project
     }
 
     /// The board's project settings (its .kicad_pro: design rules and net classes), as JSON
