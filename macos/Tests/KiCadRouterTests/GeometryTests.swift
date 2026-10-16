@@ -12,7 +12,7 @@ final class GeometryTests: XCTestCase {
         return try! JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
     }()
 
-    private func cases(_ name: String) -> [[String: Any]] { Self.reference[name] as! [[String: Any]] }
+    private func cases(_ name: String) -> [[String: Any]] { Self.reference[name] as? [[String: Any]] ?? [] }
 
     /// The mismatches of one kind of case, the first few told in full
     private final class Mismatches {
@@ -258,6 +258,20 @@ final class GeometryTests: XCTestCase {
             m.check(outline.points, points(c["outline"]), "\(c["kind"]!) outline", c)
         }
         report(m, "pad polygons", of: all.count)
+    }
+
+    func testTriangulations() throws {
+        let m = Mismatches(), all = cases("triangulations")
+        // (fixtures made before triangulations were checked have none)
+        if all.isEmpty { throw XCTSkip("no triangulation cases") }
+        for c in all {
+            let tess = PolygonTriangulation(TriangulatedPolygon())
+            let ok = tess.tesselatePolygon(LineChain(points(c["poly"]), closed: true))
+            m.check(ok, bool(c["ok"]), "success", c)
+            m.check(tess.result.vertices, points(c["vertices"]), "vertices", c)
+            m.check(tess.result.triangles.map { [$0.0, $0.1, $0.2] }, (c["triangles"] as! [[Any]]).map { $0.map(int) }, "triangles", c)
+        }
+        report(m, "triangulations", of: all.count)
     }
 
     // MARK: - Reading the cases

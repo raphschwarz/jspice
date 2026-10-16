@@ -6,6 +6,7 @@
 
 #include <convert_basic_shapes_to_polygon.h>
 #include <geometry/direction45.h>
+#include <geometry/polygon_triangulation.h>
 #include <geometry/seg.h>
 #include <geometry/shape_arc.h>
 #include <geometry/shape_circle.h>
@@ -743,6 +744,149 @@ int main( int argc, char** argv )
     }
 
     out["padPolygons"] = padPolygons;
+
+    // triangulations: polygons cut into triangles as KiCad cuts zones and keepouts (POLYGON_TRIANGULATION):
+    // star-shaped and convex outlines, rectilinear ones like keepouts, ones with points nearer than its
+    // simplification level or in line, outlines with a hole fractured into them, and chains that cross themselves
+    json triangulations = json::array();
+
+    for( int i = 0; i < n; i++ )
+    {
+        SHAPE_LINE_CHAIN poly;
+        VECTOR2I c = randPoint();
+        int kind = uniform( 0, 5 );
+
+        switch( kind )
+        {
+        case 0: // star-shaped: points round a centre at angles in order, distances at random
+        {
+            int k = uniform( 3, 24 );
+            std::vector<double> angles;
+
+            for( int j = 0; j < k; j++ )
+                angles.push_back( std::uniform_real_distribution<double>( 0, 2 * M_PI )( rng ) );
+
+            std::sort( angles.begin(), angles.end() );
+
+            for( double a : angles )
+            {
+                int r = chance( 10 ) ? uniform( 1, 100 ) : uniform( 100000, 5000000 );
+                poly.Append( c + VECTOR2I( KiROUND( r * cos( a ) ), KiROUND( r * sin( a ) ) ) );
+            }
+
+            break;
+        }
+        case 1: // convex
+        {
+            SHAPE_SIMPLE s = randConvex();
+
+            for( int j = 0; j < s.PointCount(); j++ )
+                poly.Append( s.CPoint( j ) );
+
+            break;
+        }
+        case 2: // rectilinear: a staircase, an L, a U
+        {
+            int w = uniform( 500000, 8000000 ), h = uniform( 500000, 8000000 );
+            int steps = uniform( 1, 4 );
+            poly.Append( c );
+            poly.Append( c + VECTOR2I( w, 0 ) );
+
+            for( int j = 1; j <= steps; j++ )
+            {
+                poly.Append( c + VECTOR2I( w - ( j - 1 ) * w / ( steps + 1 ), j * h / steps ) );
+                poly.Append( c + VECTOR2I( w - j * w / ( steps + 1 ), j * h / steps ) );
+            }
+
+            poly.Append( c + VECTOR2I( 0, h ) );
+
+            if( chance( 50 ) ) // a notch in the left side
+            {
+                poly.Append( c + VECTOR2I( 0, h * 2 / 3 ) );
+                poly.Append( c + VECTOR2I( w / 3, h * 2 / 3 ) );
+                poly.Append( c + VECTOR2I( w / 3, h / 3 ) );
+                poly.Append( c + VECTOR2I( 0, h / 3 ) );
+            }
+
+            break;
+        }
+        case 3: // points crowded and in line
+        {
+            int k = uniform( 4, 16 );
+            std::vector<double> angles;
+
+            for( int j = 0; j < k; j++ )
+                angles.push_back( std::uniform_real_distribution<double>( 0, 2 * M_PI )( rng ) );
+
+            std::sort( angles.begin(), angles.end() );
+
+            for( double a : angles )
+            {
+                int r = uniform( 1000000, 3000000 );
+                VECTOR2I p = c + VECTOR2I( KiROUND( r * cos( a ) ), KiROUND( r * sin( a ) ) );
+                poly.Append( p );
+
+                if( chance( 30 ) )
+                    poly.Append( p + VECTOR2I( uniform( -60, 60 ), uniform( -60, 60 ) ) );
+
+                if( chance( 20 ) && poly.PointCount() >= 2 )
+                {
+                    VECTOR2I a2 = poly.CPoint( -2 );
+                    poly.Insert( poly.PointCount() - 1, ( a2 + p ) / 2 );
+                }
+            }
+
+            break;
+        }
+        case 4: // an outline with a hole, fractured into one
+        {
+            SHAPE_POLY_SET set;
+            int w = uniform( 2000000, 9000000 ), h = uniform( 2000000, 9000000 );
+            SHAPE_LINE_CHAIN outer( { c, c + VECTOR2I( w, 0 ), c + VECTOR2I( w, h ), c + VECTOR2I( 0, h ) } );
+            outer.SetClosed( true );
+            set.AddOutline( outer );
+            VECTOR2I hc = c + VECTOR2I( uniform( w / 4, w * 3 / 4 ), uniform( h / 4, h * 3 / 4 ) );
+            int hr = uniform( 200000, std::min( w, h ) / 5 );
+            SHAPE_LINE_CHAIN hole( { hc + VECTOR2I( -hr, -hr ), hc + VECTOR2I( hr, -hr ), hc + VECTOR2I( hr, hr ),
+                                     hc + VECTOR2I( -hr, hr ) } );
+            hole.SetClosed( true );
+            set.AddHole( hole );
+            set.Fracture();
+            poly = set.Outline( 0 );
+            break;
+        }
+        default: // a chain that may cross itself
+            poly = randChain( true );
+            break;
+        }
+
+        poly.SetClosed( true );
+
+        if( chance( 50 ) ) // either way round
+        {
+            SHAPE_LINE_CHAIN r = poly.Reverse();
+            r.SetClosed( true );
+            poly = r;
+        }
+
+        SHAPE_POLY_SET::TRIANGULATED_POLYGON tri( -1 );
+        POLYGON_TRIANGULATION tess( tri );
+        bool ok = tess.TesselatePolygon( poly, nullptr );
+        json tris = json::array();
+
+        for( const SHAPE_POLY_SET::TRIANGULATED_POLYGON::TRI& t : tri.Triangles() )
+            tris.push_back( json::array( { t.a, t.b, t.c } ) );
+
+        json verts = json::array();
+
+        for( const VECTOR2I& v : tri.Vertices() )
+            verts.push_back( pt( v ) );
+
+        triangulations.push_back( { { "kind", kind }, { "poly", chainPoints( poly ) }, { "ok", ok }, { "vertices", verts },
+                                    { "triangles", tris } } );
+    }
+
+    out["triangulations"] = triangulations;
 
     std::cout << out.dump() << std::endl;
     return 0;

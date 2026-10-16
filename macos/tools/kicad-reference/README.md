@@ -17,8 +17,10 @@ Public License version 3 or later (see `../../KICAD-NOTICE.md`).
   (`HullIntersection`). `GeometryTests.swift` checks the port gives the same answers, to the nanometre.
   Also the line walkarounds (`LINE::Walkaround`) the router's walkaround mode is made of; arcs (`SHAPE_ARC`: their
   centres, angles, boxes, polylines, hulls, and collisions with every shape either way round, asked how close or
-  not); and pads' shapes as KiCad makes them polygons (rectangles with rounded or cut corners, trapezoids, circles,
-  grown or shrunk, the error inside or outside).
+  not); pads' shapes as KiCad makes them polygons (rectangles with rounded or cut corners, trapezoids, circles,
+  grown or shrunk, the error inside or outside); and polygons cut into triangles as KiCad cuts zones and keepouts
+  (`POLYGON_TRIANGULATION`: star-shaped, convex and rectilinear outlines, points crowded or in line, outlines with a
+  hole fractured in, chains that cross themselves, where KiCad's own cutting subdivides, splits or fails).
 - `router.cpp`: KiCad's interactive router itself (`PNS::ROUTER` with its line placer, walkaround, optimizer) on a
   board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make on it, step by
   step as the router tool drives it (pointer moves, with the item under the pointer if one is given, vias, layer
