@@ -140,4 +140,41 @@ final class LiveBoardTests: XCTestCase {
         XCTAssertNil(try live.snapshot().footprint(uuid: made[0]))
         made.removeFirst()
     }
+
+    /// Tracks and vias routed here: made in the editor, changed, and taken away, each as one change
+    func testTracksAndViasAreMadeChangedAndRemovedInTheEditor() throws {
+        let before = try live.snapshot()
+        let after = before.copy()
+        let net = before.footprints.flatMap(\.pads).compactMap(\.net).first ?? ""
+        let segment = KiCadBoard.newUUID(), arc = KiCadBoard.newUUID(), via = KiCadBoard.newUUID()
+        after.addCopper(SExpr("segment", SExpr("start", 20.0, 150.0), SExpr("end", 30.5, 155.25), SExpr("width", 0.3),
+                              SExpr("layer", "F.Cu"), after.netList(net, pad: false), SExpr("uuid", segment)))
+        after.addCopper(SExpr("arc", SExpr("start", 30.5, 155.25), SExpr("mid", 33.0, 152.0), SExpr("end", 36.0, 155.25),
+                              SExpr("width", 0.25), SExpr("layer", "B.Cu"), after.netList(net, pad: false), SExpr("uuid", arc)))
+        after.addCopper(SExpr("via", SExpr("at", 30.5, 155.25), SExpr("size", 0.8), SExpr("drill", 0.4),
+                              SExpr("layers", "F.Cu", "B.Cu"), after.netList(net, pad: false), SExpr("uuid", via)))
+        made += [segment, arc, via]
+        XCTAssertEqual(try live.apply(from: before, to: after, message: "Test: route"), .live(count: 3), live.reloadReason ?? "")
+        var now = try live.snapshot()
+        func node(_ board: KiCadBoard, _ uuid: String) -> SExpr? { board.copperItems.first { $0.value("uuid") == uuid } }
+        for uuid in made {
+            let ours = try XCTUnwrap(node(after, uuid)), theirs = try XCTUnwrap(node(now, uuid), uuid)
+            XCTAssertEqual(Self.differences(SExpr("footprint", ours), SExpr("footprint", theirs)), [], ours.head ?? "")
+        }
+
+        // moved
+        let moved = now.copy()
+        try XCTUnwrap(node(moved, segment)).set(SExpr("end", 31.0, 156.0))
+        XCTAssertEqual(try live.apply(from: now, to: moved, message: "Test: move"), .live(count: 1), live.reloadReason ?? "")
+        now = try live.snapshot()
+        XCTAssertEqual(try XCTUnwrap(node(now, segment))["end"]?.compact, "(end 31 156)")
+
+        // taken away
+        let removed = now.copy()
+        for uuid in made { removed.root.remove(try XCTUnwrap(node(removed, uuid))) }
+        XCTAssertEqual(try live.apply(from: now, to: removed, message: "Test: unroute"), .live(count: 3))
+        now = try live.snapshot()
+        for uuid in made { XCTAssertNil(node(now, uuid)) }
+        made.removeAll()
+    }
 }

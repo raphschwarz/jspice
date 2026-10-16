@@ -7,8 +7,9 @@ import SwiftProtobuf
 /// vias following a renamed net) made in the editor as one change, which its Undo takes back whole; the editor then
 /// gives the tracks the nets of the pads they reach, as it does on any change. Footprints new to the board are made
 /// whole from their libraries' definitions (KiCadFootprintMessage), and footprints exchanged for others made again in
-/// their place under their own ids; should KiCad refuse one, the board is written to its file with the changes and
-/// the editor reads it again.
+/// their place under their own ids; tracks and vias routed here are made, changed and taken away as they were
+/// (KiCadTrackMessage). Should KiCad refuse one, the board is written to its file with the changes and the editor
+/// reads it again.
 public final class KiCadLiveBoard {
     public let api: KiCadAPI
     public let document: Kiapi_Common_Types_DocumentSpecifier
@@ -72,20 +73,36 @@ public final class KiCadLiveBoard {
         let oldZones = Dictionary(before.zones.map { ($0.uuid, $0.net) }, uniquingKeysWith: { a, _ in a })
         let vias = after.vias.filter { v in oldVias[v.uuid].map { $0 != v.net } ?? false }
         let zones = after.zones.filter { z in oldZones[z.uuid].map { $0 != z.net } ?? false }
+        // tracks and vias made, changed or taken away (routed here); a track's net alone changed is the editor's to
+        // follow, and a via's is above
+        let oldCopper = Self.copper(before), newCopper = Self.copper(after)
+        let copperRemoved = oldCopper.keys.filter { newCopper[$0] == nil }.sorted()
+        let copperMade = Self.copperItems(after).filter { oldCopper[$0.value("uuid") ?? ""] == nil }
+        let copperChanged = Self.copperItems(after).filter { node in
+            guard let old = oldCopper[node.value("uuid") ?? ""] else { return false }
+            return Self.withoutNet(old) != Self.withoutNet(node)
+        }
         let count = removed.count + made.count + changed.count + vias.count + zones.count
+            + copperRemoved.count + copperMade.count + copperChanged.count
         guard count > 0 else { return .nothing }
 
-        // the footprints to make, as KiCad's API takes them; any KiCad cannot take sends the whole board by its file
+        // the footprints, tracks and vias to make, as KiCad's API takes them; any KiCad cannot take sends the whole
+        // board by its file
         var making: [(uuid: String, message: Google_Protobuf_Any)] = []
+        var copperMaking: [Google_Protobuf_Any] = [], copperChanging: [Google_Protobuf_Any] = []
         do {
             for footprint in made { making.append((footprint.uuid, try Google_Protobuf_Any(message: KiCadFootprintMessage.instance(footprint)))) }
+            copperMaking = try copperMade.map { try KiCadTrackMessage.message($0, board: after) }
+            copperChanging = try copperChanged.map { try KiCadTrackMessage.message($0, board: after) }
         } catch {
             reloadReason = "\(error)"
             return try reload(after)
         }
         do {
             try api.commit(document, message: message) {
-                try api.delete(removed, in: document)
+                try api.delete(removed + copperRemoved, in: document)
+                if !copperMaking.isEmpty { try api.create(copperMaking, in: document) }
+                if !copperChanging.isEmpty { try api.update(copperChanging, in: document) }
                 // a new footprint made; one exchanged (or turned over) made again in its place, under its own id, as
                 // KiCad's own exchange keeps it (KiCad takes a footprint's whole definition in an update: its pads,
                 // drawings and models made anew)
@@ -126,6 +143,23 @@ public final class KiCadLiveBoard {
             return try reload(after)
         }
         return .live(count: count)
+    }
+
+    /// A board's tracks, arc tracks and vias, in its order
+    static func copperItems(_ board: KiCadBoard) -> [SExpr] {
+        board.root.items.filter { ["segment", "arc", "via"].contains($0.head ?? "") && $0.value("uuid") != nil }
+    }
+
+    /// A board's tracks, arc tracks and vias by id
+    static func copper(_ board: KiCadBoard) -> [String: SExpr] {
+        Dictionary(copperItems(board).map { ($0.value("uuid") ?? "", $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// A track or via without its net, to compare the rest
+    static func withoutNet(_ node: SExpr) -> String {
+        let n = node.copy()
+        n.remove("net")
+        return n.compact
     }
 
     /// Writes `board` to the file and has the editor read it again

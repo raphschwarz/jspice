@@ -29,6 +29,15 @@ enum ScreenshotRunner {
         /// A circuit and its KiCad board, saved as name.jspice and name.kicad_pcb (relative to the working directory),
         /// in place of the example, for the PCB view
         var pcb: String?
+        /// Tracks routed on the board in the PCB view first
+        var route: Routing?
+    }
+
+    enum Routing {
+        /// A track being routed, half way
+        case one
+        /// The board's connections routed, one by one
+        case all
     }
 
     static let shots: [Shot] = [
@@ -92,6 +101,8 @@ enum ScreenshotRunner {
         Shot(name: "60-perfboard-fuzz-light", example: "fuzz", dark: false, seconds: 3, board: .perfboard),
         Shot(name: "61-pcb-blinker-dark", example: nil, dark: true, seconds: 1.5, select: .npn, board: .pcb, pcb: "docs/pcb/blinker"),
         Shot(name: "62-pcb-blinker-light", example: nil, dark: false, seconds: 1.5, select: .capacitor, board: .pcb, pcb: "docs/pcb/blinker"),
+        Shot(name: "63-pcb-routing-dark", example: nil, dark: true, seconds: 1, board: .pcb, pcb: "docs/pcb/blinker", route: .one),
+        Shot(name: "64-pcb-routed-light", example: nil, dark: false, seconds: 1, board: .pcb, pcb: "docs/pcb/blinker", route: .all),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool, drawings: Bool = false) {
@@ -184,6 +195,31 @@ enum ScreenshotRunner {
         return (try? SchematicLayout.layout(parts)) ?? Circuit()
     }
 
+    /// Tracks routed in the PCB view as a person would route them: from one end of a connection still to make, to its
+    /// other end, clicked there (double-clicked, if the click did not finish it)
+    static func route(_ board: BoardController, _ routing: Routing) async {
+        let editing = board.editing
+        editing.tool = .route
+        await editing.prepareNow()
+        var tried = Set<KiCadConnectivity.Airwire>()
+        while let wire = board.picture?.airwires.first(where: { !tried.contains($0) }), tried.count < 16 {
+            tried.insert(wire)
+            await editing.clickNow(at: wire.from)
+            guard editing.isRouting else { continue }
+            let mid = KiCadPoint((wire.from.x + wire.to.x) / 2 + 1.5, (wire.from.y + wire.to.y) / 2 - 1)
+            await editing.moveNow(to: mid)
+            if routing == .one {
+                await editing.moveNow(to: KiCadPoint((mid.x + wire.to.x) / 2, (mid.y + wire.to.y) / 2))
+                return
+            }
+            await editing.moveNow(to: wire.to)
+            await editing.clickNow(at: wire.to)
+            if editing.isRouting { await editing.clickNow(at: wire.to, double: true) }
+            await editing.settled()
+        }
+        editing.tool = .select
+    }
+
     private static func capture(to directory: URL) async {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for shot in shots {
@@ -214,7 +250,13 @@ enum ScreenshotRunner {
             }
             editor.tool = shot.tool
             editor.board = shot.board
-            if let board, let pcb = shot.pcb { editor.pcb.show(board, name: URL(fileURLWithPath: pcb).lastPathComponent + ".kicad_pcb") }
+            if let board, let pcb = shot.pcb {
+                // (to route: the board without its tracks and vias)
+                if shot.route != nil { for item in board.copperItems { board.root.remove(item) } }
+                let project = (try? Data(contentsOf: URL(fileURLWithPath: pcb + ".kicad_pro")))
+                    .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                editor.pcb.show(board, name: URL(fileURLWithPath: pcb).lastPathComponent + ".kicad_pcb", project: project)
+            }
 
             let controller = NSHostingController(rootView: EditorView(document: document, editor: editor))
             controller.sceneBridgingOptions = [.toolbars, .title]
@@ -228,6 +270,10 @@ enum ScreenshotRunner {
             if shot.quickAdd {
                 try? await Task.sleep(nanoseconds: 300_000_000)
                 editor.showQuickAdd = true
+            }
+            if let routing = shot.route {
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                await route(editor.pcb, routing)
             }
 
             // let it lay out and simulate in real time

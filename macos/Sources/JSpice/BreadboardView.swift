@@ -455,6 +455,8 @@ struct BoardSidePanel: View {
 /// the pointer redraws only this and not every hole and part
 struct BoardHoverReadout: View {
     let text: (CGPoint) -> String?
+    /// Told where the pointer is, as it moves (nil: gone)
+    var moved: ((CGPoint?) -> Void)?
     @State private var pointer: CGPoint?
 
     var body: some View {
@@ -465,6 +467,7 @@ struct BoardHoverReadout: View {
                 case .active(let location): pointer = location
                 case .ended: pointer = nil
                 }
+                moved?(pointer)
             }
             .overlay(alignment: .topLeading) {
                 if let pointer, let line = text(pointer) {

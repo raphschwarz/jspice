@@ -158,6 +158,34 @@ public final class BoardLink {
         return Outcome(result: result, board: board, live: nil, partsOfFootprint: Self.parts(result, board, result.circuit))
     }
 
+    /// The board changed here, its tracks and vias (routed in the PCB view, or taken away), `before` being the board
+    /// the change was made on: in the open editor as one undoable change, else in the board's file. A file changed
+    /// since `before` was read (the schematic's update) keeps its own changes and takes the tracks and vias. The
+    /// board as it now is, and how the editor took it (nil: the file was written).
+    public func apply(_ after: KiCadBoard, from before: KiCadBoard, message: String) throws -> (board: KiCadBoard, live: KiCadLiveBoard.Applied?) {
+        if let live = live() {
+            let applied = try live.apply(from: before, to: after, message: message)
+            return ((try? live.snapshot()) ?? after, applied)
+        }
+        guard exists else { throw Failure.noBoard }
+        if isOpenInKiCad { throw Failure.openUnreachable }
+        let current = try KiCadBoard.read(boardFile)
+        let board: KiCadBoard
+        if current.text == before.text {
+            board = after
+        } else {
+            current.carryCopper(from: before, to: after)
+            board = current
+        }
+        try board.write(to: boardFile)
+        return (board, nil)
+    }
+
+    /// The board's project settings (its .kicad_pro: design rules and net classes), as JSON
+    public func projectSettings() -> [String: Any]? {
+        (try? Data(contentsOf: projectFile)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+
     /// The schematic's parts each footprint of `board` stands for: top-level parts (the block for a part inside one)
     public static func parts(_ result: PCBSync.Result, _ board: KiCadBoard, _ circuit: Circuit) -> [String: [UUID]] {
         let top = topLevel(circuit)

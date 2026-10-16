@@ -44,6 +44,7 @@ public struct KiCadBoardPicture: Sendable {
         public var width: Double
         public var layer: String
         public var net: String?
+        public var uuid: String = ""
     }
 
     public struct Via: Sendable {
@@ -51,6 +52,7 @@ public struct KiCadBoardPicture: Sendable {
         public var size: Double
         public var drill: Double
         public var net: String?
+        public var uuid: String = ""
     }
 
     public struct Zone: Sendable {
@@ -125,10 +127,10 @@ public struct KiCadBoardPicture: Sendable {
             }
         }
         for track in board.tracks {
-            tracks.append(Track(points: track.points, width: track.width, layer: track.layer, net: track.net))
+            tracks.append(Track(points: track.points, width: track.width, layer: track.layer, net: track.net, uuid: track.uuid))
             include(track.points)
         }
-        for via in board.vias { vias.append(Via(center: via.position, size: via.size, drill: via.drill, net: via.net)) }
+        for via in board.vias { vias.append(Via(center: via.position, size: via.size, drill: via.drill, net: via.net, uuid: via.uuid)) }
         for zone in board.zones {
             for layer in zone.layers.isEmpty ? [""] : zone.layers {
                 zones.append(Zone(layer: layer, fills: zone.fills.filter { $0.layer == layer }.map(\.points), outline: zone.outline,
@@ -148,5 +150,28 @@ public struct KiCadBoardPicture: Sendable {
     /// The pad at `point`
     public func pad(at point: KiCadPoint) -> Pad? {
         pads.first { KiCadPolygon.contains($0.outline, point) }
+    }
+
+    /// The via, else the track, at `point` (within `slop` of its copper), a track on one of `layers` (the first of
+    /// them first): its id
+    public func copper(at point: KiCadPoint, layers: [String], slop: Double = 0) -> String? {
+        if let via = vias.first(where: { hypot($0.center.x - point.x, $0.center.y - point.y) <= $0.size / 2 + slop }) {
+            return via.uuid
+        }
+        for layer in layers {
+            for track in tracks.reversed() where track.layer == layer {
+                for (a, b) in zip(track.points, track.points.dropFirst())
+                where Self.distance(point, a, b) <= track.width / 2 + slop { return track.uuid }
+            }
+        }
+        return nil
+    }
+
+    /// How far `p` is from the segment from `a` to `b`
+    static func distance(_ p: KiCadPoint, _ a: KiCadPoint, _ b: KiCadPoint) -> Double {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let length = dx * dx + dy * dy
+        let t = length == 0 ? 0 : max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length))
+        return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
     }
 }

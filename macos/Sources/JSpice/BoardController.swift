@@ -9,8 +9,8 @@ import JSpiceAutomation
 /// each change to the schematic goes to the board (to KiCad's PCB editor as one undoable change while it has the board
 /// open, else to the board's file), and what is changed on the board (a part renamed, given another value or
 /// footprint, deleted) comes back to the schematic as an undoable change of its own. Selecting parts in either
-/// selects them in the other. The board is laid out and routed in KiCad's PCB editor; this is what joins it to the
-/// schematic, and what the PCB view shows of it.
+/// selects them in the other. The board is routed here (PCBEditing, KiCad's router brought over) or in KiCad's PCB
+/// editor, and laid out there; this is what joins it to the schematic, and what the PCB view shows of it.
 @MainActor
 final class BoardController: ObservableObject {
     /// What a schematic part is on the board
@@ -69,6 +69,15 @@ final class BoardController: ObservableObject {
     weak var editor: EditorState?
     /// Where the board's work is done, one piece at a time (AI agents' board tools too, through the automation bridge)
     let worker = BoardWorker()
+    /// The board edited here: tracks routed, tracks and vias taken away
+    lazy var editing: PCBEditing = {
+        let editing = PCBEditing()
+        editing.controller = self
+        return editing
+    }()
+    /// A board shown without KiCad or a link to it (`show`), edited where it is, in memory, and its project's settings
+    private var shownBoard: KiCadBoard?
+    private var shownProject: [String: Any]?
     private(set) var fileURL: URL?
     private var debounce: Task<Void, Never>?
     private var watcher: Task<Void, Never>?
@@ -123,6 +132,7 @@ final class BoardController: ObservableObject {
         guard let found else { return }
         availability = found.0
         apiEnabled = found.1
+        editing.close()
         if availability == .board {
             watch()
             await update()
@@ -134,10 +144,12 @@ final class BoardController: ObservableObject {
         }
     }
 
-    /// Shows `board` as it is, without KiCad or a link to it (the screenshots' PCB view)
-    func show(_ board: KiCadBoard, name: String) {
+    /// Shows `board` as it is, without KiCad or a link to it (the screenshots' PCB view); edits to it stay in memory
+    func show(_ board: KiCadBoard, name: String, project: [String: Any]? = nil) {
         connected = true
         shownName = name
+        shownBoard = board.copy()
+        shownProject = project
         let circuit = editor?.circuit ?? Circuit()
         let built = PCBNetlistBuilder.netlist(circuit, design: circuit.pcb)
         let top = BoardLink.topLevel(circuit)
@@ -241,6 +253,7 @@ final class BoardController: ObservableObject {
     private func take(_ done: Done, from circuit: Circuit) {
         let result = done.outcome.result
         picture = done.picture
+        editing.boardChanged(done.outcome.board, project: nil)
         partsOfFootprint = done.outcome.partsOfFootprint
         isLive = done.live
         isOpenInKiCad = done.open
@@ -302,6 +315,7 @@ final class BoardController: ObservableObject {
             let check = board.copy()
             let result = PCBSync.sync(circuit, board: check, library: try link.footprints())
             seen.board = (KiCadBoardPicture(board), BoardLink.parts(result, board, result.circuit))
+            seen.model = (board, link.projectSettings())
             seen.back = result.applied.map(\.description)
             seen.removed = result.removed
             seen.pending = result.report.actions.map(\.text)
@@ -311,6 +325,7 @@ final class BoardController: ObservableObject {
         if seen.gone {
             availability = .noBoard
             picture = nil
+            editing.close()
             watcher?.cancel()
             return
         }
@@ -324,6 +339,7 @@ final class BoardController: ObservableObject {
         guard let board = seen.board else { return }
         picture = board.0
         partsOfFootprint = board.1
+        if let (model, project) = seen.model { editing.boardChanged(model, project: project) }
         pending = seen.pending
         let removedChanged = seen.removed != removed
         removed = seen.removed
@@ -531,6 +547,47 @@ final class BoardController: ObservableObject {
         }
     }
 
+    // MARK: - Editing here
+
+    /// The board as it stands, for editing here, and its project's settings (design rules, net classes)
+    func boardForEditing() async -> (KiCadBoard, [String: Any]?)? {
+        if let shownBoard { return (shownBoard.copy(), shownProject) }
+        return try? await worker.run { w -> (KiCadBoard, [String: Any]?) in
+            guard let link = w.link else { throw BoardLink.Failure.noBoard }
+            return (try link.board().board, link.projectSettings())
+        }
+    }
+
+    /// A change made here (`name`: a track routed, tracks deleted, one of those undone) taken to the board: to KiCad's
+    /// open editor as one change, else to the board's file. The board as it then is, or nil if it could not take it.
+    func boardEdited(_ after: KiCadBoard, from before: KiCadBoard, name: String) async -> (board: KiCadBoard, project: [String: Any]?)? {
+        let now = Date()
+        if shownBoard != nil {
+            shownBoard = after.copy()
+            picture = KiCadBoardPicture(after)
+            log.insert(LogEntry(date: now, text: name), at: 0)
+            return (after, shownProject)
+        }
+        do {
+            let (board, made, live, project) = try await worker.run { w -> (KiCadBoard, KiCadBoardPicture, KiCadLiveBoard.Applied?, [String: Any]?) in
+                guard let link = w.link else { throw BoardLink.Failure.noBoard }
+                let (board, live) = try link.apply(after, from: before, message: name + " (JSpice)")
+                // (the board's change is this one: nothing to bring back to the schematic)
+                w.fingerprint = link.fingerprint()
+                return (board, KiCadBoardPicture(board), live, link.projectSettings())
+            }
+            picture = made
+            failure = nil
+            var lines = [name + (live == nil ? "" : " in KiCad's PCB editor")]
+            if live == .reloaded { lines.append("KiCad's PCB editor read the board again from its file") }
+            log = (lines.reversed().map { LogEntry(date: now, text: $0) } + log).prefix(60).map { $0 }
+            return (board, project)
+        } catch {
+            failure = "\(error)"
+            return nil
+        }
+    }
+
     // MARK: - Footprints
 
     /// KiCad's footprint libraries, for choosing a part's footprint
@@ -554,6 +611,8 @@ private struct Seen {
     var open = false
     var selection: Set<UUID>?
     var board: (KiCadBoardPicture, [String: [UUID]])?
+    /// The board itself, and its project's settings, for editing here
+    var model: (KiCadBoard, [String: Any]?)?
     var back: [String] = []
     var removed: [PCBSync.Change] = []
     var pending: [String] = []

@@ -408,7 +408,7 @@ public final class CircuitSession {
              description: "Opens a .jspice file.",
              inputSchema: schema(["path": string("File path")], required: ["path"]),
              run: { session, arguments in try session.open(arguments) }),
-    ] + pcbTools
+    ] + pcbTools + routingTools
 
     public func call(_ name: String, arguments: [String: Any]) throws -> Any {
         guard let tool = Self.tools.first(where: { $0.name == name }) else { throw ToolError("Unknown tool \(name)") }

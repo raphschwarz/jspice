@@ -64,4 +64,49 @@ final class BoardToolsTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(files["zip"] as? String)))
         XCTAssertNotNil(files["positions"])
     }
+
+    /// The blinker's board (docs/pcb) without its tracks, routed by an agent with the PCB view's router, checked by
+    /// KiCad's design rules check, and its tracks taken off again
+    func testAnAgentRoutesTheBoardAndTakesTheTracksOffAgain() throws {
+        guard let kicad = KiCadInstallation.find(), kicad.problem == nil else { throw XCTSkip("KiCad 10 or later is not installed") }
+        let docs = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../docs/pcb").standardized
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-board-route-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        for name in ["blinker.jspice", "blinker.kicad_pro"] {
+            try FileManager.default.copyItem(at: docs.appendingPathComponent(name), to: folder.appendingPathComponent(name))
+        }
+        let board = try KiCadBoard.read(docs.appendingPathComponent("blinker.kicad_pcb"))
+        for item in board.copperItems { board.root.remove(item) }
+        try board.write(to: folder.appendingPathComponent("blinker.kicad_pcb"))
+        let session = CircuitSession(circuit: try JSONDecoder().decode(Circuit.self, from: Data(contentsOf: folder.appendingPathComponent("blinker.jspice"))))
+        session.fileURL = folder.appendingPathComponent("blinker.jspice")
+        func call(_ name: String, _ arguments: [String: Any] = [:]) throws -> [String: Any] {
+            try XCTUnwrap(session.call(name, arguments: arguments) as? [String: Any])
+        }
+
+        let unrouted = try XCTUnwrap(call("pcb_status")["unrouted"] as? Int)
+        XCTAssertGreaterThan(unrouted, 0)
+        XCTAssertThrowsError(try session.call("pcb_route", arguments: ["nets": ["NO_SUCH_NET"]]))
+        let routed = try call("pcb_route", ["skip_nets": ["GND"]])
+        let added = try XCTUnwrap(routed["tracks_and_vias_added"] as? Int)
+        XCTAssertGreaterThan(added, 0)
+        XCTAssertFalse((routed["routed"] as? [String] ?? []).isEmpty)
+        XCTAssertFalse((routed["routed"] as? [String] ?? []).contains { $0.hasPrefix("GND:") })
+        XCTAssertEqual(routed["changed_in"] as? String, "the board's file")
+        XCTAssertLessThan(try XCTUnwrap(call("pcb_status")["unrouted"] as? Int), unrouted)
+        XCTAssertEqual(try KiCadBoard.read(folder.appendingPathComponent("blinker.kicad_pcb")).copperItems.count, added)
+
+        // KiCad finds nothing wrong with the tracks
+        let drc = try call("pcb_drc")
+        let wrong: Set<String> = ["clearance", "hole_clearance", "copper_edge_clearance", "tracks_crossing", "shorting_items",
+                                  "track_width", "via_diameter", "annular_width"]
+        let found = (drc["violations"] as? [[String: Any]] ?? []).filter { wrong.contains($0["type"] as? String ?? "") }
+        XCTAssertTrue(found.isEmpty, "\(found)")
+
+        let unroute = try call("pcb_unroute", ["all": true])
+        XCTAssertEqual(unroute["removed"] as? Int, added)
+        XCTAssertEqual(try call("pcb_status")["unrouted"] as? Int, unrouted)
+        XCTAssertThrowsError(try session.call("pcb_unroute", arguments: [:]))
+    }
 }

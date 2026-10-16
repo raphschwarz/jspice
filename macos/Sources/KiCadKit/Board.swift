@@ -94,7 +94,7 @@ public final class KiCadBoard {
     // MARK: - Nets
 
     /// A net's name from an item's (net …) list, either way KiCad writes it
-    func netName(_ list: SExpr?) -> String? {
+    public func netName(_ list: SExpr?) -> String? {
         guard let list else { return nil }
         if let code = list.text(at: 0), list.items.count == 2, list.items[1].kind == .symbol, let n = Int(code) {
             // KiCad 9: a track's (net 3), named in the table
@@ -112,8 +112,9 @@ public final class KiCadBoard {
     }
 
     /// The (net …) list naming `name` on an item, as this board writes it
-    func netList(_ name: String, pad: Bool) -> SExpr {
+    public func netList(_ name: String, pad: Bool) -> SExpr {
         guard numbersNets else { return SExpr("net", name) }
+        if name.isEmpty { return SExpr("net", 0) }
         let code = netCode(name)
         return pad ? SExpr("net", code, name) : SExpr("net", code)
     }
@@ -135,6 +136,46 @@ public final class KiCadBoard {
     }
 
     public func remove(_ footprint: KiCadFootprint) { root.remove(footprint.node) }
+
+    static let copperHeads: Set<String> = ["segment", "arc", "via"]
+
+    /// The board's tracks, arc tracks and vias, as they stand in its file
+    public var copperItems: [SExpr] { root.items.filter { Self.copperHeads.contains($0.head ?? "") } }
+
+    /// A track, arc track or via put after the board's others, where KiCad keeps them (before its zones and groups)
+    public func addCopper(_ node: SExpr) {
+        let items = root.items
+        if let last = items.lastIndex(where: { Self.copperHeads.contains($0.head ?? "") }) {
+            root.items.insert(node, at: last + 1)
+        } else if let first = items.firstIndex(where: { ["zone", "group", "generated", "embedded_fonts", "embedded_files"].contains($0.head ?? "") }) {
+            root.items.insert(node, at: first)
+        } else {
+            root.items.append(node)
+        }
+    }
+
+    /// What was done to the tracks and vias of `before` to make `after`, done to this board (by their ids: those made
+    /// added, those changed changed, those taken away taken away): a change made on an older copy of the board
+    /// carried onto this one, which keeps its own changes
+    public func carryCopper(from before: KiCadBoard, to after: KiCadBoard) {
+        func byID(_ items: [SExpr]) -> [String: SExpr] {
+            Dictionary(items.compactMap { n in n.value("uuid").map { ($0, n) } }, uniquingKeysWith: { a, _ in a })
+        }
+        let old = byID(before.copperItems), new = byID(after.copperItems)
+        for node in copperItems {
+            guard let uuid = node.value("uuid"), let was = old[uuid] else { continue }
+            if let now = new[uuid] {
+                if now.compact != was.compact, let i = root.items.firstIndex(where: { $0 === node }) { root.items[i] = now.copy() }
+            } else {
+                root.remove(node)
+            }
+        }
+        let here = byID(copperItems)
+        for node in after.copperItems {
+            guard let uuid = node.value("uuid"), old[uuid] == nil, here[uuid] == nil else { continue }
+            addCopper(node.copy())
+        }
+    }
 
     /// Takes nets no item names out of KiCad 9's table (RemoveUnusedNets)
     public func removeUnusedNets() {

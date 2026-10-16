@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import CircuitKit
 import JSpiceAutomation
+import KiCadKit
 
 /// `JSpice --self-test <directory>` drives a real window with synthesized mouse and keyboard events: it draws a circuit by
 /// hand, checks that it simulates, moves, deletes and undoes, and operates a switch. It exits with status 1 on any failure.
@@ -198,7 +199,69 @@ enum InteractionTest {
         check(!document.circuit.elements.contains { $0.name == "RA" }, "undo takes back the agent's change")
         AutomationBridge.shared.stop()
 
+        await routing(directory)
         return finish(window)
+    }
+
+    /// Tracks routed on a board in the PCB view, undone, redone, selected and deleted (docs/pcb/blinker, shown without
+    /// KiCad: the changes stay in memory)
+    private static func routing(_ directory: URL) async {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: "docs/pcb/blinker.jspice")),
+              let circuit = try? JSONDecoder().decode(Circuit.self, from: data),
+              let board = try? KiCadBoard.read(URL(fileURLWithPath: "docs/pcb/blinker.kicad_pcb")) else {
+            check(false, "the blinker's board is there to route")
+            return
+        }
+        // its tracks and vias taken off, to route them again
+        for item in board.copperItems { board.root.remove(item) }
+        let document = CircuitDocument(circuit: circuit)
+        let editor = EditorState(document: document)
+        editor.board = .pcb
+        let project = (try? Data(contentsOf: URL(fileURLWithPath: "docs/pcb/blinker.kicad_pro")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        editor.pcb.show(board, name: "blinker.kicad_pcb", project: project)
+        let controller = NSHostingController(rootView: EditorView(document: document, editor: editor))
+        let window = NSWindow(contentViewController: controller)
+        window.styleMask = [.titled, .closable, .resizable]
+        window.title = "Routed by hand"
+        window.setContentSize(NSSize(width: 1440, height: 900))
+        window.makeKeyAndOrderFront(nil)
+        await pause(1)
+        defer { window.orderOut(nil); window.close() }
+
+        let pcb = editor.pcb, editing = pcb.editing
+        let tracks = pcb.picture?.tracks.count ?? 0
+        let unrouted = pcb.picture?.airwires.count ?? 0
+        check(unrouted > 0, "the board has connections to route (\(unrouted))")
+        await ScreenshotRunner.route(pcb, .all)
+        let routed = pcb.picture?.tracks.count ?? 0
+        let left = pcb.picture?.airwires.count ?? unrouted
+        check(routed > tracks, "routing in the PCB view puts tracks on the board (\(routed - tracks))")
+        check(left < unrouted, "and makes connections (\(unrouted - left) of \(unrouted))")
+        check(editing.undoName == "Route Track", "a routed track can be undone")
+        capture(window, to: directory.appendingPathComponent("65-pcb-routed-by-hand.png"))
+
+        editing.undo()
+        await editing.settled()
+        let undone = pcb.picture?.tracks.count ?? 0
+        check(undone < routed, "undo takes the last track away (\(routed) to \(undone))")
+        editing.redo()
+        await editing.settled()
+        check(pcb.picture?.tracks.count == routed, "redo puts it back")
+
+        // a track clicked with the select tool, and deleted
+        if let track = pcb.picture?.tracks.last(where: { !$0.uuid.isEmpty }), let picture = pcb.picture,
+           let a = track.points.first, let b = track.points.dropFirst().first {
+            let middle = KiCadPoint((a.x + b.x) / 2, (a.y + b.y) / 2)
+            editing.layer = track.layer
+            check(editing.select(at: middle, in: picture, slop: 0.05, extending: false) && editing.selection == [track.uuid],
+                  "clicking a track selects it")
+            await editing.deleteSelectionNow()
+            await editing.settled()
+            check(!(pcb.picture?.tracks.contains { $0.uuid == track.uuid } ?? true), "and Delete takes it away")
+        } else {
+            check(false, "a routed track to select")
+        }
     }
 
     private static func finish(_ window: NSWindow) -> Bool {

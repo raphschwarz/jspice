@@ -2,10 +2,13 @@ import SwiftUI
 import AppKit
 import CircuitKit
 import KiCadKit
+import KiCadRouter
 
 /// The circuit's printed circuit board as KiCad has it: copper, pads, holes, silkscreen and the connections still to
 /// route, kept up to date as the board changes in KiCad's PCB editor and as the schematic changes here. Clicking a
-/// part selects it in the schematic and in KiCad. The board is laid out and routed in KiCad's editor (Edit in KiCad).
+/// part selects it in the schematic and in KiCad. Tracks are routed here with the Route tool (KiCad's router, brought
+/// over: it walks round what is in the way and keeps the board's clearances), or in KiCad's editor (Edit in KiCad),
+/// where the board is also laid out.
 struct PCBView: View {
     @ObservedObject var editor: EditorState
     @ObservedObject var board: BoardController
@@ -30,6 +33,8 @@ struct PCBView: View {
     private var bar: some View {
         HStack(spacing: 10) {
             if board.availability == .board {
+                PCBEditBar(editing: board.editing)
+                Divider().frame(height: 18)
                 Picker("Side", selection: $sideName) {
                     ForEach(PCBSide.allCases) { Text($0.title).tag($0.rawValue) }
                 }
@@ -97,22 +102,15 @@ struct PCBView: View {
             let s = scale ?? fit
             let view = PCBTransform(bounds: picture.bounds, scale: s, mirrored: side == .back)
             ScrollView([.horizontal, .vertical]) {
-                Canvas { context, _ in
-                    PCBPainter(picture: picture, view: view, side: side, selected: selectedFootprints(picture),
-                               drc: board.drc).draw(context)
-                }
-                .frame(width: view.size.width, height: view.size.height)
-                .overlay { BoardHoverReadout { readout(picture, view, at: $0) } }
-                .onTapGesture(coordinateSpace: .local) { location in
-                    let footprint = picture.footprint(at: view.board(location))
-                    board.select(footprint: footprint?.uuid, extending: NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift))
-                }
+                PCBBoardCanvas(board: board, editing: board.editing, picture: picture, view: view, side: side,
+                               selected: selectedFootprints(picture)) { readout(picture, view, at: $0) }
                 .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
             }
             .onAppear { fitted = fit }
             .onChange(of: fit) { _, value in fitted = value }
         }
         .background(PCBPainter.background)
+        .overlay(alignment: .bottomLeading) { PCBEditMessage(editing: board.editing) }
     }
 
     private func selectedFootprints(_ picture: KiCadBoardPicture) -> Set<String> {
@@ -123,6 +121,9 @@ struct PCBView: View {
     private func readout(_ picture: KiCadBoardPicture, _ view: PCBTransform, at pointer: CGPoint) -> String? {
         let p = view.board(pointer)
         let position = String(format: "%.2f, %.2f mm", p.x, p.y)
+        if let preview = board.editing.preview {
+            return "Routing \(preview.net ?? "no net")  ·  \(String(format: "%.2f mm", preview.width))  ·  \(PCBEditBar.title(preview.layer))  ·  \(position)"
+        }
         if let pad = picture.pad(at: p), let footprint = picture.footprints.first(where: { $0.uuid == pad.footprint }) {
             return "\(footprint.reference) pad \(pad.number)  ·  \(pad.net ?? "no net")  ·  \(position)"
         }
@@ -187,13 +188,15 @@ struct PCBPainter {
     static let backSilk = Color(red: 0.91, green: 0.7, blue: 0.65)
     static let edge = Color(red: 0.82, green: 0.82, blue: 0.8)
 
-    func color(_ layer: String) -> Color {
+    func color(_ layer: String) -> Color { Self.color(layer) }
+
+    static func color(_ layer: String) -> Color {
         switch layer {
-        case "F.Cu": return Self.front
-        case "B.Cu": return Self.back
+        case "F.Cu": return front
+        case "B.Cu": return back
         default:
             let n = Int(layer.dropFirst(2).prefix { $0.isNumber }) ?? 1
-            return Self.inner[(n - 1) % Self.inner.count]
+            return inner[(n - 1) % inner.count]
         }
     }
 
@@ -328,6 +331,219 @@ struct PCBPainter {
                 context.fill(mark, with: .color(tint.opacity(0.85)))
                 context.stroke(mark, with: .color(.white), lineWidth: 0.8)
             }
+        }
+    }
+}
+
+/// The board drawn, and what is being done to it here: the track being routed, the tracks and vias selected. The
+/// pointer and the keys drive the tool chosen (KiCad's keys: V via, / posture, ⌫ back a step, Esc stop, End finish,
+/// W width, Page Up and Down the layer).
+struct PCBBoardCanvas: View {
+    @ObservedObject var board: BoardController
+    @ObservedObject var editing: PCBEditing
+    let picture: KiCadBoardPicture
+    let view: PCBTransform
+    let side: PCBSide
+    let selected: Set<String>
+    let readout: (CGPoint) -> String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Canvas { context, _ in
+            PCBPainter(picture: picture, view: view, side: side, selected: selected, drc: board.drc).draw(context)
+            PCBEditPainter(picture: picture, view: view, preview: editing.preview, selection: editing.selection).draw(context)
+        }
+        .frame(width: view.size.width, height: view.size.height)
+        .overlay {
+            BoardHoverReadout(text: readout) { pointer in
+                if let pointer { editing.pointerMoved(view.board(pointer)) }
+            }
+        }
+        .onTapGesture(coordinateSpace: .local) { location in
+            focused = true
+            let p = view.board(location)
+            let flags = NSEvent.modifierFlags
+            let extending = flags.contains(.command) || flags.contains(.shift)
+            switch editing.tool {
+            case .route:
+                editing.click(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
+            case .select:
+                // a track or via, else a part
+                if editing.select(at: p, in: picture, slop: 3 / view.scale, extending: extending) {
+                    if !extending { board.select(footprint: nil, extending: false) }
+                } else {
+                    let footprint = picture.footprint(at: p)
+                    board.select(footprint: footprint?.uuid, extending: extending)
+                }
+            }
+        }
+        .focusable()
+        .focused($focused)
+        .focusEffectDisabled()
+        .onKeyPress(phases: .down) { press in key(press) ? .handled : .ignored }
+        .onDeleteCommand { editing.isRouting ? editing.undoSegment() : editing.deleteSelection() }
+        .onChange(of: editing.tool) { _, _ in focused = true }
+        .onAppear { if editing.tool == .route { focused = true } }
+    }
+
+    private func key(_ press: KeyPress) -> Bool {
+        // the menus' keys (⌘ and ⌥) left to them
+        guard press.modifiers.isDisjoint(with: [.command, .option, .control]) else { return false }
+        switch press.key {
+        case .escape:
+            if editing.isRouting { editing.stop() } else if editing.tool == .route { editing.tool = .select } else { editing.selection = [] }
+            return true
+        case .delete, .deleteForward:
+            if editing.isRouting { editing.undoSegment() } else { editing.deleteSelection() }
+            return true
+        case .return, .end:
+            guard editing.isRouting else { return false }
+            editing.finishToRatsnest()
+            return true
+        case .pageUp:
+            editing.stepLayer(-1)
+            return true
+        case .pageDown:
+            editing.stepLayer(1)
+            return true
+        default:
+            break
+        }
+        switch press.characters.lowercased() {
+        case "x": editing.tool = .route
+        case "v": editing.placeVia()
+        case "/": editing.flipPosture()
+        case "w": editing.stepWidth(press.modifiers.contains(.shift) ? -1 : 1)
+        case "+", "=": editing.stepLayer(1)
+        case "-": editing.stepLayer(-1)
+        default: return false
+        }
+        return true
+    }
+}
+
+/// The track being routed (its fixed part, the part following the pointer, the via to be placed at its end, the line
+/// on to where it should go next, its net's pads), and the tracks and vias selected
+struct PCBEditPainter {
+    let picture: KiCadBoardPicture
+    let view: PCBTransform
+    let preview: BoardEditing.Preview?
+    let selection: Set<String>
+
+    func draw(_ context: GraphicsContext) {
+        let s = view.scale
+        if !selection.isEmpty {
+            for track in picture.tracks where selection.contains(track.uuid) {
+                let path = view.path(track.points, closed: false)
+                let w = max(0.5, track.width * s)
+                context.stroke(path, with: .color(.white), style: StrokeStyle(lineWidth: w + 3, lineCap: .round, lineJoin: .round))
+                context.stroke(path, with: .color(PCBPainter.color(track.layer)), style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
+            }
+            for via in picture.vias where selection.contains(via.uuid) {
+                let c = view.point(via.center), r = via.size * s / 2 + 1.5
+                context.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(.white), lineWidth: 2)
+            }
+        }
+        guard let preview else { return }
+        let color = PCBPainter.color(preview.layer)
+        // the net's pads, to see where it goes
+        if let net = preview.net {
+            var pads = Path()
+            for pad in picture.pads where pad.net == net { pads.addPath(view.path(pad.outline, closed: true)) }
+            context.stroke(pads, with: .color(Color.white.opacity(0.9)), lineWidth: 1.2)
+        }
+        let w = max(0.5, preview.width * s)
+        let style = StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round)
+        if preview.tail.count > 1 { context.stroke(view.path(preview.tail, closed: false), with: .color(color), style: style) }
+        if preview.head.count > 1 {
+            let head = view.path(preview.head, closed: false)
+            context.stroke(head, with: .color(Color.white.opacity(0.35)), style: StrokeStyle(lineWidth: w + 2, lineCap: .round, lineJoin: .round))
+            context.stroke(head, with: .color(color), style: style)
+        }
+        if let via = preview.via {
+            let c = view.point(via), r = preview.viaSize * s / 2
+            let ring = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+            context.fill(ring, with: .color(PCBPainter.via))
+            context.stroke(ring, with: .color(.white), lineWidth: 1)
+        }
+        if let target = preview.target, let end = preview.head.last ?? preview.tail.last {
+            var line = Path()
+            line.move(to: view.point(end))
+            line.addLine(to: view.point(target))
+            context.stroke(line, with: .color(Color.yellow.opacity(0.9)), style: StrokeStyle(lineWidth: 1.2, dash: [5, 3]))
+        }
+    }
+}
+
+/// The tools of the PCB view, and the routing tool's layer and width; undo and redo of what was done here
+struct PCBEditBar: View {
+    @ObservedObject var editing: PCBEditing
+
+    static func title(_ layer: String) -> String {
+        switch layer {
+        case "F.Cu": return "Top"
+        case "B.Cu": return "Bottom"
+        default: return "Inner " + String(layer.dropFirst(2).prefix { $0.isNumber })
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Picker("Tool", selection: $editing.tool) {
+                ForEach(PCBEditing.Tool.allCases) { tool in
+                    Image(systemName: tool.symbol).help(tool == .select
+                        ? "Select parts, tracks and vias (⌫ deletes the tracks and vias selected)"
+                        : "Route tracks (X): click a pad, click to fix, double-click to finish; V via, / posture, Esc stop")
+                        .tag(tool)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            if editing.tool == .route {
+                Picker("Layer", selection: $editing.layer) {
+                    ForEach(editing.layers, id: \.self) { layer in
+                        Label { Text(Self.title(layer)) } icon: { Image(systemName: "square.fill").foregroundStyle(PCBPainter.color(layer)) }
+                            .tag(layer)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("The copper layer to route on (Page Up, Page Down); changed while routing, a via takes the track there")
+                Menu {
+                    Button("Net Class's Width") { editing.width = nil }
+                    Divider()
+                    ForEach(PCBEditing.widths, id: \.self) { w in
+                        Button(String(format: "%.2f mm", w)) { editing.width = w }
+                    }
+                } label: {
+                    Text(editing.width.map { String(format: "%.2f mm", $0) } ?? "Net class width")
+                }
+                .fixedSize()
+                .help("The width of new tracks (W, ⇧W): their net class's, or one chosen here")
+            }
+            Button { editing.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                .disabled(editing.undoName == nil || editing.isRouting)
+                .help(editing.undoName.map { "Undo \($0)" } ?? "Undo")
+            Button { editing.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                .disabled(editing.redoName == nil || editing.isRouting)
+                .help(editing.redoName.map { "Redo \($0)" } ?? "Redo")
+        }
+    }
+}
+
+/// How to go on with the tool, or what it could not do
+struct PCBEditMessage: View {
+    @ObservedObject var editing: PCBEditing
+
+    var body: some View {
+        if let message = editing.message, editing.tool == .route {
+            Text(message)
+                .font(.caption)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(.regularMaterial, in: Capsule())
+                .padding(10)
+                .allowsHitTesting(false)
         }
     }
 }

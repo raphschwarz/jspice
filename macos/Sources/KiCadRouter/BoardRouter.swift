@@ -73,9 +73,9 @@ public final class BoardRouter {
 
     /// The sizes a track from `item` takes: its net class's track width (or the width of the track it starts on) and
     /// via, no less than the board's minimums (KiCad's ImportSizes)
-    public func sizes(for item: Item?) -> SizesSettings {
+    public func sizes(for item: Item?, net name: String? = nil) -> SizesSettings {
         var s = SizesSettings()
-        let net = item?.net.flatMap { world.netNames[$0] } ?? ""
+        let net = name ?? item?.net.flatMap { world.netNames[$0] } ?? ""
         let nc = world.netClasses.effective(net)
         s.clearance = world.rules.clearance
         if let seg = item as? Segment {
@@ -129,6 +129,31 @@ public final class BoardRouter {
         return done
     }
 
+    /// The track fixed at `p` and finished there, whether or not it reached its net (a double click)
+    @discardableResult
+    public func finish(at p: IPoint) -> Bool {
+        router.fixRoute(p, endItem(at: p), forceFinish: true)
+    }
+
+    /// The track routed on to the nearest pad or track of its net still to join, and fixed there (KiCad's End);
+    /// whether it got there
+    @discardableResult
+    public func finishToRatsnest() -> Bool { router.finish() }
+
+    /// Where the track being routed should go next: the nearest pad or track of its net it is not joined to
+    public var target: IPoint? { router.nearestRatnestAnchor()?.point }
+
+    /// The net of the track being routed, by name
+    public var routedNet: String? { (router.currentNets.first ?? nil).flatMap { world.netNames[$0] } }
+
+    /// The track's width from here on (nil: its net class's)
+    public func setWidth(_ width: Int?) {
+        guard router.routingInProgress else { return }
+        var s = router.sizes
+        s.trackWidth = width ?? sizes(for: nil, net: routedNet).trackWidth
+        router.updateSizes(s)
+    }
+
     /// A via at the end of the track, to `layer` (the other outer layer if none given): the next click places it
     public func placeVia(to layer: Int? = nil) {
         let current = router.currentLayer
@@ -161,6 +186,19 @@ public final class BoardRouter {
     public func commit() {
         router.commitRouting()
         apply()
+    }
+
+    /// Tracks and vias taken off the board, by their ids
+    public func remove(_ uuids: Set<String>) {
+        router.stopRouting()
+        lastAdded = []
+        lastRemoved = []
+        for node in board.copperItems {
+            guard let uuid = node.value("uuid"), uuids.contains(uuid) else { continue }
+            board.root.remove(node)
+            lastRemoved.append(uuid)
+        }
+        reload()
     }
 
     /// The track dropped
@@ -197,7 +235,7 @@ public final class BoardRouter {
     private static func mm(_ v: Int) -> Double { Double(v) / 1_000_000 }
 
     private func netList(_ net: NetHandle?) -> SExpr {
-        SExpr("net", net.flatMap { world.netNames[$0] } ?? "")
+        board.netList(net.flatMap { world.netNames[$0] } ?? "", pad: false)
     }
 
     private func insert(segment s: Segment) -> String {
@@ -217,14 +255,5 @@ public final class BoardRouter {
     }
 
     /// A track or via put after the board's others, as KiCad keeps them
-    private func insertTrack(_ node: SExpr) {
-        let items = board.root.items
-        if let last = items.lastIndex(where: { $0.head == "segment" || $0.head == "via" || $0.head == "arc" }) {
-            board.root.items.insert(node, at: last + 1)
-        } else if let first = items.firstIndex(where: { ["zone", "group", "generated", "embedded_fonts", "embedded_files"].contains($0.head ?? "") }) {
-            board.root.items.insert(node, at: first)
-        } else {
-            board.root.items.append(node)
-        }
-    }
+    private func insertTrack(_ node: SExpr) { board.addCopper(node) }
 }
