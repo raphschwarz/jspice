@@ -97,6 +97,13 @@ final class BoardToolsTests: XCTestCase {
         XCTAssertLessThan(try XCTUnwrap(call("pcb_status")["unrouted"] as? Int), unrouted)
         XCTAssertEqual(try KiCadBoard.read(folder.appendingPathComponent("blinker.kicad_pcb")).copperItems.count, added)
 
+        // ground poured on the bottom, filled by KiCad: the ground connections made by the pour
+        let poured = try call("pcb_pour")
+        let zones = try XCTUnwrap(poured["zones"] as? [[String: Any]])
+        XCTAssertTrue(zones.contains { $0["net"] as? String == "GND" && $0["filled"] as? Bool == true })
+        XCTAssertLessThan(try XCTUnwrap(poured["unrouted"] as? Int), try XCTUnwrap(call("pcb_status")["unrouted"] as? Int) + 1)
+        XCTAssertThrowsError(try session.call("pcb_pour", arguments: ["layers": ["In7.Cu"]]))
+
         // KiCad finds nothing wrong with the tracks
         let drc = try call("pcb_drc")
         let wrong: Set<String> = ["clearance", "hole_clearance", "copper_edge_clearance", "tracks_crossing", "shorting_items",
@@ -106,7 +113,6 @@ final class BoardToolsTests: XCTestCase {
 
         let unroute = try call("pcb_unroute", ["all": true])
         XCTAssertEqual(unroute["removed"] as? Int, added)
-        XCTAssertEqual(try call("pcb_status")["unrouted"] as? Int, unrouted)
         XCTAssertThrowsError(try session.call("pcb_unroute", arguments: [:]))
     }
 }

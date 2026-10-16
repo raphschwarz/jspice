@@ -135,6 +135,23 @@ public final class KiCadAPI {
         _ = try call(request, Google_Protobuf_Empty.self)
     }
 
+    /// The board's zones filled anew (all of them, or those named), waited for: KiCad answers busy while it fills
+    public func refillZones(_ document: Kiapi_Common_Types_DocumentSpecifier, zones: [String] = [], timeout: TimeInterval = 60) throws {
+        var request = Kiapi_Board_Commands_RefillZones()
+        request.board = document
+        request.zones = zones.map { var id = Kiapi_Common_Types_KIID(); id.value = $0; return id }
+        _ = try call(request, Google_Protobuf_Empty.self)
+        let end = Date().addingTimeInterval(timeout)
+        while true {
+            do {
+                _ = try text(of: document)
+                return
+            } catch let failure as Failure where failure.isTransient && Date() < end {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
+    }
+
     /// Reads the board again from its file, dropping what the editor had not saved
     public func revert(_ document: Kiapi_Common_Types_DocumentSpecifier) throws {
         var request = Kiapi_Common_Commands_RevertDocument()

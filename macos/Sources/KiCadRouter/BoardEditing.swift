@@ -19,6 +19,8 @@ public final class BoardEditing {
         public let removed: [String]
         /// The footprints moved, turned or turned over, by id
         public var footprints: [String] = []
+        /// The zones added or taken away, by id
+        public var zones: [String] = []
         /// What it was, for an undo menu (and KiCad's own)
         public let name: String
     }
@@ -253,13 +255,39 @@ public final class BoardEditing {
         return change(name)
     }
 
-    private func change(_ name: String, footprints: [String] = []) -> Edit? {
-        guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty else { return nil }
+    private func change(_ name: String, footprints: [String] = [], zones: [String] = []) -> Edit? {
+        guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty else { return nil }
         let after = router.board.copy()
         var edit = Edit(before: base, after: after, added: router.lastAdded, removed: router.lastRemoved, name: name)
         edit.footprints = footprints
+        edit.zones = zones
         base = after
         return edit
+    }
+
+    // MARK: - Pours
+
+    /// The board's ground nets, those whose names say so (GND, AGND, GND_1…)
+    public var groundNets: [String] { Set(router.world.netNames.values).filter { $0.uppercased().contains("GND") }.sorted() }
+
+    /// A copper pour of `net` over the whole board on `layers` (the box round its outline: KiCad keeps the copper
+    /// inside the edge, at the edge clearance), as one change; empty until KiCad fills it
+    public func addPour(net: String, layers: [String]) -> Edit? {
+        guard !isRouting, !layers.isEmpty, let box = router.board.edgeBounds ?? router.board.itemBounds else { return nil }
+        let outline = [KiCadPoint(box.minX, box.minY), KiCadPoint(box.maxX, box.minY), KiCadPoint(box.maxX, box.maxY),
+                       KiCadPoint(box.minX, box.maxY)]
+        let uuid = router.board.addPour(net: net, layers: layers, outline: outline)
+        router.boardChanged()
+        return change("Add \(net) Pour", zones: [uuid])
+    }
+
+    /// Zones taken away, by id
+    public func removeZones(_ uuids: Set<String>) -> Edit? {
+        let gone = router.board.zones.filter { uuids.contains($0.uuid) }
+        guard !isRouting, !gone.isEmpty else { return nil }
+        for zone in gone { router.board.root.remove(zone.node) }
+        router.boardChanged()
+        return change(gone.count == 1 ? "Delete Pour" : "Delete Pours", zones: gone.map(\.uuid))
     }
 
     // MARK: - Placing

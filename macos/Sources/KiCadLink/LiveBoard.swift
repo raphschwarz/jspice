@@ -87,6 +87,12 @@ public final class KiCadLiveBoard {
         }
         let count = removed.count + made.count + changed.count + vias.count + zones.count
             + copperRemoved.count + copperMade.count + copperChanged.count
+        // zones made or taken away here (a pour): the board by its file (a zone's settings are many, and KiCad fills
+        // it as it reads it)
+        if Set(before.zones.map(\.uuid)) != Set(after.zones.map(\.uuid)) {
+            reloadReason = "zones added or taken away"
+            return try reload(after)
+        }
         guard count > 0 else { return .nothing }
 
         // the footprints, tracks and vias to make, as KiCad's API takes them; any KiCad cannot take sends the whole

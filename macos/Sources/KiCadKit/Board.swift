@@ -177,6 +177,44 @@ public final class KiCadBoard {
         }
     }
 
+    /// A copper pour: a zone of `net` filling `outline` on `layers`, as KiCad makes a new zone (pads of the net
+    /// joined by thermal reliefs, other copper kept 0.5 mm away, no copper narrower than 0.25 mm), put after the
+    /// board's tracks; empty until KiCad fills it. Its id.
+    @discardableResult
+    public func addPour(net: String, layers: [String], outline: [KiCadPoint], clearance: Double = 0.5,
+                        minThickness: Double = 0.25, thermalGap: Double = 0.5, thermalBridge: Double = 0.5) -> String {
+        let uuid = Self.newUUID()
+        let node = SExpr("zone",
+                         layers.count == 1 ? SExpr("layer", layers[0]) : SExpr("layers", layers.map { $0 as SExprConvertible }),
+                         SExpr("uuid", uuid), SExpr("name", net), SExpr("hatch", SExpr(symbol: "edge"), 0.5),
+                         SExpr("connect_pads", SExpr("clearance", clearance)), SExpr("min_thickness", minThickness),
+                         SExpr("filled_areas_thickness", SExpr(symbol: "no")),
+                         SExpr("fill", SExpr("thermal_gap", thermalGap), SExpr("thermal_bridge_width", thermalBridge)),
+                         SExpr("polygon", SExpr("pts", outline.map { SExpr("xy", $0.x, $0.y) as SExprConvertible })))
+        KiCadZone(node, board: self).setNet(net)
+        let items = root.items
+        if let last = items.lastIndex(where: { $0.head == "zone" }) ?? items.lastIndex(where: { Self.copperHeads.contains($0.head ?? "") }) {
+            root.items.insert(node, at: last + 1)
+        } else if let first = items.firstIndex(where: { ["group", "generated", "embedded_fonts", "embedded_files"].contains($0.head ?? "") }) {
+            root.items.insert(node, at: first)
+        } else {
+            root.items.append(node)
+        }
+        return uuid
+    }
+
+    /// Zones added between `before` and `after` added to this board, and those taken away taken away (by their ids)
+    public func carryZones(from before: KiCadBoard, to after: KiCadBoard) {
+        let old = Set(before.zones.map(\.uuid)), new = Dictionary(after.zones.map { ($0.uuid, $0.node) }, uniquingKeysWith: { a, _ in a })
+        for zone in zones where old.contains(zone.uuid) && new[zone.uuid] == nil { root.remove(zone.node) }
+        let here = Set(zones.map(\.uuid))
+        for (uuid, node) in new where !old.contains(uuid) && !here.contains(uuid) {
+            let items = root.items
+            let at = (items.lastIndex { $0.head == "zone" } ?? items.lastIndex { Self.copperHeads.contains($0.head ?? "") }).map { $0 + 1 } ?? items.count
+            root.items.insert(node.copy(), at: at)
+        }
+    }
+
     /// Footprints moved, turned or turned over between `before` and `after`, placed so on this board too (by their
     /// ids): a change made on an older copy of the board carried onto this one, which keeps its own changes
     public func carryPlacement(from before: KiCadBoard, to after: KiCadBoard) {

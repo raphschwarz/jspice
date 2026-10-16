@@ -315,6 +315,48 @@ final class PCBEditing: ObservableObject {
         }
     }
 
+    // MARK: - Pours
+
+    /// A ground pour over the whole board on `layers`, filled by KiCad (`net`: the board's ground net if nil)
+    func addPour(net: String? = nil, layers: [String]) {
+        Task {
+            await applying?.value
+            if !isReady { await prepareNow() }
+            let made = await engine.run { session -> BoardEditing.Edit? in
+                guard let n = net ?? session.groundNets.first else { return nil }
+                return session.addPour(net: n, layers: layers)
+            }
+            guard let made else {
+                NSSound.beep()
+                message = "The board has no ground net to pour: name the schematic's ground GND."
+                return
+            }
+            take(made)
+            await fillZonesNow()
+        }
+    }
+
+    /// The board's pours taken away
+    func removePours() {
+        Task {
+            await applying?.value
+            if !isReady { await prepareNow() }
+            guard let made = await engine.run({ s in s.removeZones(Set(s.board.zones.filter { !$0.isRuleArea }.map(\.uuid))) }) else { return }
+            take(made)
+        }
+    }
+
+    /// The board's zones filled anew by KiCad (B, as in KiCad)
+    func fillZones() { Task { await fillZonesNow() } }
+
+    func fillZonesNow() async {
+        guard let controller, !isRouting else { return }
+        await applying?.value
+        if let (board, project) = await controller.fillZones() {
+            layers = await engine.load(board, project: project)
+        }
+    }
+
     // MARK: - Placing
 
     /// A drag from `start` to `now` (mm) with the select tool: the footprint there (with the others selected, if it is

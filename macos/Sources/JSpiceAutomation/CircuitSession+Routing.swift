@@ -17,6 +17,12 @@ extension CircuitSession {
                                   "width_mm": ["type": "number", "description": "The tracks' width (by default their net class's)"],
                                   "max": ["type": "integer", "description": "At most this many connections (default 200)"]]),
              run: { session, arguments in try session.pcbRoute(arguments) }),
+        Tool(name: "pcb_pour",
+             description: "Pours copper of a net (by default the ground net) over the whole board on the layers given (by default the bottom), as KiCad's zones: kept clear of other nets' copper, joined to the net's pads by thermal reliefs, and filled by KiCad itself (its editor, or its command line in the board's file). fill_only fills the board's zones again (after routing changes them) without adding one. Returns the zones and the connections left to route.",
+             inputSchema: schema(["net": string("The net to pour (default: the board's ground net, GND)"),
+                                  "layers": ["type": "array", "items": ["type": "string"], "description": "\"top\", \"bottom\" or copper layer names (default: bottom)"],
+                                  "fill_only": ["type": "boolean", "description": "Only fill the board's zones again"]]),
+             run: { session, arguments in try session.pcbPour(arguments) }),
         Tool(name: "pcb_unroute",
              description: "Takes tracks and vias off the board: those of the nets named, or all of them. As one change, as pcb_route makes its own.",
              inputSchema: schema(["nets": ["type": "array", "items": ["type": "string"], "description": "The nets whose tracks and vias to take off"],
@@ -68,6 +74,42 @@ extension CircuitSession {
                 result["changed_in"] = Self.place(live)
                 result["next"] = "pcb_drc checks the board; pcb_unroute takes tracks off again"
             }
+            return result
+        }
+    }
+
+    func pcbPour(_ arguments: [String: Any]) throws -> Any {
+        try withBoard { link -> Any in
+            guard link.exists else { throw ToolError("The circuit has no board yet: pcb_create makes one") }
+            var result: [String: Any] = [:]
+            if arguments["fill_only"] as? Bool != true {
+                let before = try link.board().board
+                let session = BoardEditing(board: before, project: link.projectSettings())
+                let names = (arguments["layers"] as? [String] ?? ["bottom"]).map { name -> String in
+                    switch name.lowercased() {
+                    case "top", "front": return session.layers.first ?? "F.Cu"
+                    case "bottom", "back": return session.layers.last ?? "B.Cu"
+                    default: return name
+                    }
+                }
+                for name in names where !session.layers.contains(name) {
+                    throw ToolError("No copper layer \(name): the board's are \(session.layers.joined(separator: ", "))")
+                }
+                guard let net = (arguments["net"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) ?? session.groundNets.first else {
+                    throw ToolError("The board has no ground net: name one with net")
+                }
+                guard Set(session.router.world.netNames.values).contains(net) else { throw ToolError("The board has no net \(net)") }
+                guard let edit = session.addPour(net: net, layers: names) else { throw ToolError("The board has no outline to pour within") }
+                let (_, live) = try link.apply(edit.after, from: before, message: "Add \(net) Pour (JSpice)")
+                result["changed_in"] = Self.place(live)
+                result["added"] = ["net": net, "layers": names]
+            }
+            let board = try link.fillZones()
+            result["zones"] = board.zones.filter { !$0.isRuleArea }.map { z -> [String: Any] in
+                ["net": z.net ?? "", "layers": z.layers, "filled": !z.fills.isEmpty]
+            }
+            result["unrouted"] = KiCadConnectivity(board).ratsnest().count
+            result["next"] = "pcb_drc checks the board"
             return result
         }
     }

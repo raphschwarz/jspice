@@ -588,6 +588,29 @@ final class BoardController: ObservableObject {
         }
     }
 
+    /// The board's zones filled as KiCad fills them: in its open editor, else by its command line in the board's
+    /// file. The board as it then is, or nil if KiCad could not (or there is no KiCad: a board only shown).
+    func fillZones() async -> (KiCadBoard, [String: Any]?)? {
+        guard shownBoard == nil else { return nil }
+        busy = "Filling the zones…"
+        defer { busy = nil }
+        do {
+            let (board, made, project) = try await worker.run { w -> (KiCadBoard, KiCadBoardPicture, [String: Any]?) in
+                guard let link = w.link else { throw BoardLink.Failure.noBoard }
+                let board = try link.fillZones()
+                w.fingerprint = link.fingerprint()
+                return (board, KiCadBoardPicture(board), link.projectSettings())
+            }
+            picture = made
+            failure = nil
+            log.insert(LogEntry(date: Date(), text: "Zones filled by KiCad"), at: 0)
+            return (board, project)
+        } catch {
+            failure = "\(error)"
+            return nil
+        }
+    }
+
     // MARK: - Footprints
 
     /// KiCad's footprint libraries, for choosing a part's footprint

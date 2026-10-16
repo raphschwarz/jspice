@@ -176,10 +176,24 @@ public final class BoardLink {
         } else {
             current.carryPlacement(from: before, to: after)
             current.carryCopper(from: before, to: after)
+            current.carryZones(from: before, to: after)
             board = current
         }
         try board.write(to: boardFile)
         return (board, nil)
+    }
+
+    /// The board's zones filled as KiCad fills them: in the open editor (KiCad's API), else in its file (KiCad's
+    /// command line fills them and saves the board). The board as it then is.
+    public func fillZones() throws -> KiCadBoard {
+        if let live = live() {
+            try live.api.refillZones(live.document)
+            return try live.snapshot()
+        }
+        guard exists else { throw Failure.noBoard }
+        if isOpenInKiCad { throw Failure.openUnreachable }
+        try KiCadFabrication(installation: kicad()).fillZones(boardFile)
+        return try KiCadBoard.read(boardFile)
     }
 
     /// The board's project settings (its .kicad_pro: design rules and net classes), as JSON

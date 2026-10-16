@@ -440,6 +440,7 @@ struct PCBBoardCanvas: View {
         case "v": editing.placeVia()
         case "/": editing.flipPosture()
         case "w": editing.stepWidth(press.modifiers.contains(.shift) ? -1 : 1)
+        case "b": editing.fillZones()
         case "r" where editing.tool == .select: editing.rotate(footprints)
         case "f" where editing.tool == .select: editing.flip(footprints)
         case "+", "=": editing.stepLayer(1)
@@ -577,6 +578,25 @@ struct PCBEditBar: View {
             .fixedSize()
             .disabled(editing.isRouting)
             .help("Route every connection still to route with the router, one at a time as you would, in one change (undo takes it back)")
+            Menu {
+                if editing.layers.count > 2 {
+                    Button("Ground Pour on Every Layer") { editing.addPour(layers: editing.layers) }
+                }
+                Button("Ground Pour on the Bottom") { editing.addPour(layers: [editing.layers.last ?? "B.Cu"]) }
+                Button("Ground Pour on the Top") { editing.addPour(layers: [editing.layers.first ?? "F.Cu"]) }
+                Button("Ground Pour on Both Sides") {
+                    editing.addPour(layers: [editing.layers.first ?? "F.Cu", editing.layers.last ?? "B.Cu"])
+                }
+                Divider()
+                Button("Fill Zones") { editing.fillZones() }
+                Button("Remove Pours") { editing.removePours() }
+            } label: {
+                Image(systemName: "square.on.square.dashed")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(editing.isRouting)
+            .help("Pour ground copper over the board, filled by KiCad round everything else (B fills the zones again after a change)")
             Button { editing.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(editing.undoName == nil || editing.isRouting)
                 .help(editing.undoName.map { "Undo \($0)" } ?? "Undo")

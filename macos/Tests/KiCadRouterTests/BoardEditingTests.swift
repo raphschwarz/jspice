@@ -154,4 +154,36 @@ final class BoardEditingTests: XCTestCase {
         XCTAssertTrue((one.routed + one.failed).allSatisfy { $0.hasPrefix(net + ":") })
         XCTAssertTrue(again.routeConnections(skip: Set(KiCadConnectivity(board).ratsnest().map(\.net))).routed.isEmpty)
     }
+
+    /// A ground pour added, filled by KiCad, and taken away again
+    func testAPourIsAddedAndFilledByKiCad() throws {
+        let file = try XCTUnwrap(Self.boards().first)
+        let session = BoardEditing(board: try KiCadBoard.read(file), project: Self.project(file))
+        let net = try XCTUnwrap(session.groundNets.first ?? session.router.world.netNames.values.sorted().first)
+        let edit = try XCTUnwrap(session.addPour(net: net, layers: ["B.Cu"]))
+        XCTAssertEqual(edit.zones.count, 1)
+        let zone = try XCTUnwrap(edit.after.zones.first { $0.uuid == edit.zones[0] })
+        XCTAssertEqual(zone.net, net)
+        XCTAssertEqual(zone.layers, ["B.Cu"])
+        XCTAssertEqual(zone.outline.count, 4)
+        XCTAssertTrue(zone.fills.isEmpty)
+        // KiCad reads it, fills it and saves the board
+        if let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor {
+            let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-pour-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: work) }
+            let copy = work.appendingPathComponent(file.lastPathComponent)
+            try edit.after.write(to: copy)
+            try? FileManager.default.copyItem(at: file.deletingPathExtension().appendingPathExtension("kicad_pro"),
+                                              to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+            try KiCadFabrication(installation: kicad).fillZones(copy)
+            let filled = try KiCadBoard.read(copy)
+            let back = try XCTUnwrap(filled.zones.first { $0.uuid == zone.uuid })
+            XCTAssertFalse(back.fills.isEmpty, "KiCad filled the pour")
+            XCTAssertEqual(back.net, net)
+        }
+        let removed = try XCTUnwrap(session.removeZones([zone.uuid]))
+        XCTAssertEqual(removed.zones, [zone.uuid])
+        XCTAssertFalse(removed.after.zones.contains { $0.uuid == zone.uuid })
+    }
 }

@@ -188,4 +188,25 @@ final class LiveBoardTests: XCTestCase {
         for uuid in made { XCTAssertNil(node(now, uuid)) }
         made.removeAll()
     }
+
+    /// A pour added here goes to the editor by the board's file; KiCad fills it when asked through its API
+    func testAPourIsAddedAndFilledInTheEditor() throws {
+        let before = try live.snapshot()
+        let after = before.copy()
+        let box = try XCTUnwrap(after.edgeBounds ?? after.itemBounds)
+        let net = after.footprints.flatMap(\.pads).compactMap(\.net).first ?? "GND"
+        let uuid = after.addPour(net: net, layers: ["B.Cu"], outline: [KiCadPoint(box.minX, box.minY), KiCadPoint(box.maxX, box.minY),
+                                                                        KiCadPoint(box.maxX, box.maxY), KiCadPoint(box.minX, box.maxY)])
+        XCTAssertEqual(try live.apply(from: before, to: after, message: "Test: pour"), .reloaded)
+        try live.api.refillZones(live.document)
+        var now = try live.snapshot()
+        let zone = try XCTUnwrap(now.zones.first { $0.uuid == uuid })
+        XCTAssertFalse(zone.fills.isEmpty, "KiCad filled it")
+        // and taken away again
+        let without = now.copy()
+        for z in without.zones where z.uuid == uuid { without.root.remove(z.node) }
+        XCTAssertEqual(try live.apply(from: now, to: without, message: "Test: no pour"), .reloaded)
+        now = try live.snapshot()
+        XCTAssertNil(now.zones.first { $0.uuid == uuid })
+    }
 }

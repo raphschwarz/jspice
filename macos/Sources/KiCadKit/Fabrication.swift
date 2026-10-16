@@ -49,6 +49,18 @@ public struct KiCadFabrication: Sendable {
         return try Self.parseDRC(Data(contentsOf: out))
     }
 
+    /// Fills the board's zones as KiCad's PCB editor fills them, and saves the board (kicad-cli's DRC with its zones
+    /// refilled, the board saved by KiCad): its report as it then is
+    @discardableResult
+    public func fillZones(_ board: URL) throws -> DRCReport {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let out = folder.appendingPathComponent("drc.json")
+        try run(["pcb", "drc", "--format", "json", "--units", "mm", "--severity-error", "--severity-warning", "-o", out.path,
+                 "--refill-zones", "--save-board", board.path])
+        return try Self.parseDRC(Data(contentsOf: out))
+    }
+
     /// Reads kicad-cli's DRC report (https://schemas.kicad.org/drc.v1.json)
     public static func parseDRC(_ data: Data) throws -> DRCReport {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
