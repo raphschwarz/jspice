@@ -51,6 +51,15 @@ struct PCBPartSection: View {
                         editor.editBoard(fitted ? "Fit on the Board" : "Do Not Fit") { if fitted { _ = $0.doNotPopulate.remove(id) } else { _ = $0.doNotPopulate.insert(id) } }
                     }))
                     .help("A part not fitted keeps its place on the board but is left out of the assembly files")
+                    if let plus = part.plus {
+                        LabeledContent("Polarity") {
+                            Button("Turn Round") {
+                                let terminals = element.terminalNames
+                                editor.editBoard("Turn Round") { design in design.polarity[id] = terminals.first { $0 != plus } }
+                            }
+                        }
+                        .help("Which way round the electrolytic goes on the board: settled by the circuit's resting voltages when it first went on, and kept as the circuit changes")
+                    }
                     if Self.transistors.contains(element.kind) {
                         LabeledContent("Pinout") {
                             TextField("Pinout", text: $pinout, prompt: Text(element.kind == .npn || element.kind == .pnp ? "EBC" : "GDS"))

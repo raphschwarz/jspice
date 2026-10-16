@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import CircuitKit
+import KiCadKit
 
 /// `JSpice --screenshots <directory>` opens example circuits in real windows, lets them simulate, saves a PNG of each
 /// window and quits. Used by CI to check the interface without a person at the screen.
@@ -25,6 +26,9 @@ enum ScreenshotRunner {
         var response: String?
         /// The circuit as built on a board, in place of the schematic
         var board: BoardKind = .schematic
+        /// A circuit and its KiCad board, saved as name.jspice and name.kicad_pcb (relative to the working directory),
+        /// in place of the example, for the PCB view
+        var pcb: String?
     }
 
     static let shots: [Shot] = [
@@ -86,6 +90,8 @@ enum ScreenshotRunner {
         Shot(name: "58-stripboard-fuzz-light", example: "fuzz", dark: false, seconds: 3, board: .stripboard),
         Shot(name: "59-stripboard-netlist-dark", example: "netlist", dark: true, seconds: 3, board: .stripboard),
         Shot(name: "60-perfboard-fuzz-light", example: "fuzz", dark: false, seconds: 3, board: .perfboard),
+        Shot(name: "61-pcb-blinker-dark", example: nil, dark: true, seconds: 1.5, select: .npn, board: .pcb, pcb: "docs/pcb/blinker"),
+        Shot(name: "62-pcb-blinker-light", example: nil, dark: false, seconds: 1.5, select: .capacitor, board: .pcb, pcb: "docs/pcb/blinker"),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool, drawings: Bool = false) {
@@ -184,6 +190,14 @@ enum ScreenshotRunner {
             NSApp.appearance = NSAppearance(named: shot.dark ? .darkAqua : .aqua)
             let example = shot.example.flatMap { Examples.example($0) }
             var circuit = example?.circuit ?? (shot.example == "netlist" ? netlistDemo() : Circuit())
+            var board: KiCadBoard?
+            if let pcb = shot.pcb {
+                guard let data = try? Data(contentsOf: URL(fileURLWithPath: pcb + ".jspice")),
+                      let saved = try? JSONDecoder().decode(Circuit.self, from: data),
+                      let read = try? KiCadBoard.read(URL(fileURLWithPath: pcb + ".kicad_pcb")) else { continue }
+                circuit = saved
+                board = read
+            }
             if shot.tidy, let tidied = try? SchematicLayout.tidy(circuit) { circuit = tidied }
             if let name = shot.response, let element = circuit.elements.first(where: { $0.name == name }) {
                 circuit.scopes = [ScopeSpec(elementID: element.id, quantity: .voltage, plot: .frequencyResponse)]
@@ -200,12 +214,13 @@ enum ScreenshotRunner {
             }
             editor.tool = shot.tool
             editor.board = shot.board
+            if let board, let pcb = shot.pcb { editor.pcb.show(board, name: URL(fileURLWithPath: pcb).lastPathComponent + ".kicad_pcb") }
 
             let controller = NSHostingController(rootView: EditorView(document: document, editor: editor))
             controller.sceneBridgingOptions = [.toolbars, .title]
             let window = NSWindow(contentViewController: controller)
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-            window.title = example?.title ?? "Untitled"
+            window.title = example?.title ?? shot.pcb.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Untitled"
             window.setContentSize(NSSize(width: 1440, height: 900))
             window.center()
             window.makeKeyAndOrderFront(nil)

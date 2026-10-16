@@ -45,6 +45,36 @@ final class PCBTests: XCTestCase {
         }
     }
 
+    /// An electrolytic's + goes on the higher of its resting voltages when it first goes on the board, and stays there
+    /// when a change elsewhere moves them (as an oscillator's move, which rest nowhere for long), with a note to turn it
+    /// round if it should be
+    func testAnElectrolyticKeepsTheWayRoundItFirstWentOnTheBoard() throws {
+        func circuit(_ volts: Double) throws -> Circuit {
+            try SchematicLayout.layout([
+                NetlistPart(kind: .dcVoltage, name: "V1", params: ["voltage": volts], connections: ["plus": "rail", "minus": "GND"]),
+                NetlistPart(kind: .resistor, name: "R1", params: ["resistance": 1000], connections: ["a": "rail", "b": "GND"]),
+                NetlistPart(kind: .capacitor, name: "C1", params: ["capacitance": 100e-6], connections: ["a": "GND", "b": "rail"]),
+            ])
+        }
+        let first = PCBNetlistBuilder.netlist(try circuit(9))
+        XCTAssertEqual(first.netlist.component(reference: "C1")?.pins["1"]?.net, "rail")
+        let id = try XCTUnwrap(first.parts["C1"]?.first).uuidString
+        XCTAssertEqual(first.design.polarity[id], "b")
+
+        // the rail now negative, the record kept: C1 stays as it was, with a note
+        var turned = try circuit(-9)
+        // the same part, as the board knows it
+        let c1 = try XCTUnwrap(turned.elements.firstIndex { $0.name == "C1" })
+        turned.elements[c1].id = try XCTUnwrap(UUID(uuidString: id))
+        turned.pcb = first.design
+        let kept = PCBNetlistBuilder.netlist(turned)
+        XCTAssertEqual(kept.netlist.component(reference: "C1")?.pins["1"]?.net, "rail")
+        XCTAssertTrue(kept.notes.contains { $0.hasPrefix("C1's + lead") }, "\(kept.notes)")
+        // without the record, the resting voltages decide
+        turned.pcb = nil
+        XCTAssertEqual(PCBNetlistBuilder.netlist(turned).netlist.component(reference: "C1")?.pins["1"]?.net, "GND")
+    }
+
     func testUnnamedNetsAreNamedAfterTheirFirstPadAndKeepTheirNames() throws {
         let circuit = try Self.circuit()
         let board = PCBNetlistBuilder.netlist(circuit)

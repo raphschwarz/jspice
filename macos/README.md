@@ -126,6 +126,10 @@ JSpice takes a circuit from schematic and simulation to a board a board house ca
 - **Cross-probing.** Select a part in the schematic and KiCad selects its footprint; select footprints in KiCad and JSpice selects their parts. Clicking a part in the PCB view selects it in both.
 - **Check and make it.** **PCB ▸ Check Design Rules** runs KiCad's design rules check (zones filled first) and marks what it finds on the board. **PCB ▸ Fabrication Files** makes everything a board house needs in a folder: Gerbers for each layer and the drill files, zipped for upload, pick-and-place positions and the bill of materials for assembly, a STEP model of the board for an enclosure and a picture of it, named and formatted for **JLCPCB** (its BOM and CPL columns), **PCBWay**, **OSH Park**, or any board house.
 
+![The blinker example's board](docs/pcb/blinker-3d.png)
+
+[`docs/pcb`](docs/pcb) holds the blinker example's board: made by JSpice from the example's schematic, autorouted with [Freerouting](https://github.com/freerouting/freerouting) through KiCad's Specctra export, with a ground pour underneath. KiCad's design rules check finds no violations, nothing unconnected and no difference from the schematic; changing a resistor's value in JSpice then changes just that on the routed board.
+
 The board is read and written as KiCad writes it, byte for byte, so a board JSpice has changed reads in KiCad as if KiCad had saved it. Bringing a board up to date with the schematic follows KiCad's own *Update PCB from Schematic*: footprints matched by their link to the schematic, exchanged in place, their fields and pads' nets updated and their tracks' nets carried along, as KiCad's netlist updater does them.
 
 

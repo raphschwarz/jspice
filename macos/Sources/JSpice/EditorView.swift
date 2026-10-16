@@ -61,6 +61,8 @@ struct EditorView: View {
         .onAppear {
             editor.undoManager = undoManager
             editor.fileURL = fileURL
+            // the board looked for (or what it needs first), saved or not
+            editor.pcb.setFile(fileURL)
         }
         // closing the window silences it, and lets its board go
         .onDisappear {

@@ -18,6 +18,8 @@ final class BoardController: ObservableObject {
         var reference: String
         var footprint: String
         var value: String
+        /// An electrolytic's + terminal
+        var plus: String?
     }
 
     enum Availability: Equatable {
@@ -78,7 +80,9 @@ final class BoardController: ObservableObject {
     /// The circuit's board file, once the circuit has a file
     var boardFile: URL? { fileURL.map { BoardLink.boardFile(for: $0, design: editor?.circuit.pcb) } }
 
-    var boardName: String { boardFile?.lastPathComponent ?? "" }
+    var boardName: String { shownName ?? boardFile?.lastPathComponent ?? "" }
+    /// The name of a board shown without KiCad (`show`)
+    private var shownName: String?
 
     // MARK: - Connecting
 
@@ -118,6 +122,25 @@ final class BoardController: ObservableObject {
         }
     }
 
+    /// Shows `board` as it is, without KiCad or a link to it (the screenshots' PCB view)
+    func show(_ board: KiCadBoard, name: String) {
+        connected = true
+        shownName = name
+        let circuit = editor?.circuit ?? Circuit()
+        let built = PCBNetlistBuilder.netlist(circuit, design: circuit.pcb)
+        let top = BoardLink.topLevel(circuit)
+        var byPath: [String: [UUID]] = [:]
+        for component in built.netlist.components {
+            for path in component.paths { byPath[path] = (built.parts[component.reference] ?? []).map { top[$0] ?? $0 } }
+        }
+        var parts: [String: [UUID]] = [:]
+        for footprint in board.footprints { if let path = footprint.path, let ids = byPath[path] { parts[footprint.uuid] = ids } }
+        partsOfFootprint = parts
+        picture = KiCadBoardPicture(board)
+        availability = .board
+        publish(built)
+    }
+
     /// Stops following the board (the window is closing)
     func close() {
         watcher?.cancel()
@@ -155,7 +178,8 @@ final class BoardController: ObservableObject {
         let top = BoardLink.topLevel(editor?.circuit ?? Circuit())
         for component in built.netlist.components where !component.excludeFromBoard {
             for id in built.parts[component.reference] ?? [] where top[id] == id {
-                parts[id] = OnBoard(reference: component.reference, footprint: component.footprint, value: component.value)
+                parts[id] = OnBoard(reference: component.reference, footprint: component.footprint, value: component.value,
+                                    plus: built.design.polarity[id.uuidString])
             }
         }
         if parts != onBoard { onBoard = parts }

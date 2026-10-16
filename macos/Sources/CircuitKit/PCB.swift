@@ -25,6 +25,10 @@ public struct PCBDesign: Codable, Hashable, Sendable {
     public var board: String?
     /// Copper layers for a new board: 2, 4 or 6
     public var copperLayers: Int = 2
+    /// Each electrolytic's + terminal ("a" or "b") as its board has it, by the part's id: settled by the circuit's resting
+    /// voltages when it first goes on the board, then kept, so that a change elsewhere that moves those voltages (an
+    /// oscillator's, which rest nowhere for long) never turns it round under its tracks
+    public var polarity: [String: String] = [:]
     /// What the board had of each part when the two were last brought together, by the path its footprint is linked
     /// by: the common ground from which a difference is known to be the board's (to bring back to the schematic) or the
     /// schematic's (to take to the board)
@@ -69,6 +73,7 @@ public struct PCBDesign: Codable, Hashable, Sendable {
         style = try c.decodeIfPresent(Style.self, forKey: .style) ?? .throughHole
         board = try c.decodeIfPresent(String.self, forKey: .board)
         copperLayers = try c.decodeIfPresent(Int.self, forKey: .copperLayers) ?? 2
+        polarity = try c.decodeIfPresent([String: String].self, forKey: .polarity) ?? [:]
         synced = try c.decodeIfPresent([String: Synced].self, forKey: .synced) ?? [:]
     }
 }
@@ -267,6 +272,8 @@ public enum PCBNetlistBuilder {
             add(reference: part.name, value: value, footprint: fp, description: part.kind.displayName, ids: [partID], nets: pins, parts: [partID])
         }
         // two-lead parts
+        var polarity: [String: String] = [:]
+        var notes = plan.supplyNotes
         for part in plan.twoLead {
             let partID = id(part)
             let terminals = part.kind.terminalNames
@@ -289,10 +296,18 @@ public enum PCBNetlistBuilder {
                 fp = electrolytic(farads, style)
                 value = compact(farads)
                 if let rating = title.split(separator: " ").dropFirst(2).first { fields.append(("Voltage", rating + "V")) }
-                // + (pad 1) on the higher voltage
+                // + (pad 1) on the higher voltage, as the board first had it
                 let (a, b) = (net(terminals[0]).flatMap { plan.voltages[$0] } ?? 0, net(terminals[1]).flatMap { plan.voltages[$0] } ?? 0)
-                pins = [("1", net(terminals[0]), "+", "passive"), ("2", net(terminals[1]), "-", "passive")]
-                if b > a { pins = [("1", net(terminals[1]), "+", "passive"), ("2", net(terminals[0]), "-", "passive")] }
+                let higher = b > a ? terminals[1] : terminals[0]
+                let key = partID.uuidString
+                let plus = design.polarity[key].flatMap { terminals.contains($0) ? $0 : nil } ?? higher
+                let minus = plus == terminals[0] ? terminals[1] : terminals[0]
+                polarity[key] = plus
+                if plus != higher && abs(a - b) > 0.5 && !plan.voltages.isEmpty {
+                    notes.append("\(part.name)'s + lead is where its board first had it, but the circuit now rests \(SI.format(abs(a - b), unit: "V")) "
+                                 + "higher at its other lead: turn it round (the inspector's Board section) if it should be")
+                }
+                pins = [("1", net(plus), "+", "passive"), ("2", net(minus), "-", "passive")]
             case .inductor:
                 // an audio choke is too big for a small axial part: left for KiCad's footprint assignment
                 if (part.params["inductance"] ?? 0) <= 1e-3 { fp = style == .surfaceMount ? inductorSMD : inductorTHT }
@@ -370,10 +385,11 @@ public enum PCBNetlistBuilder {
         }
 
         design.units = units
+        design.polarity = polarity
         var references: [String: String] = [:]
         for c in components where c.reference.hasPrefix("J") || c.ids.count > 1 { references[c.ids.first ?? ""] = c.reference }
         design.references = references
-        return Result(netlist: PCBNetlist(components: components), design: design, notes: plan.supplyNotes,
+        return Result(netlist: PCBNetlist(components: components), design: design, notes: notes,
                       unassigned: components.filter { $0.footprint.isEmpty && !$0.excludeFromBoard }.map(\.reference), parts: parts)
     }
 }

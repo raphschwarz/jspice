@@ -1,0 +1,719 @@
+{
+  "elements" : [
+    {
+      "a" : {
+        "x" : 0,
+        "y" : 10
+      },
+      "b" : {
+        "x" : 0,
+        "y" : 6
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "33B701D0-897D-4896-B617-C0DAE56A39B0",
+      "kind" : "dcVoltage",
+      "name" : "V1",
+      "params" : {
+        "voltage" : 9
+      }
+    },
+    {
+      "a" : {
+        "x" : 0,
+        "y" : 6
+      },
+      "b" : {
+        "x" : 0,
+        "y" : 0
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "4C5F26D5-02AB-4FDE-8C26-41A97ABF36B4",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 0,
+        "y" : 0
+      },
+      "b" : {
+        "x" : 4,
+        "y" : 0
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "EB5FE0A1-ED73-4BBA-80E0-B31B94AE9EC9",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 4,
+        "y" : 0
+      },
+      "b" : {
+        "x" : 8,
+        "y" : 0
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "38784B68-0648-426E-AD1F-9F98A72274B8",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 8,
+        "y" : 0
+      },
+      "b" : {
+        "x" : 12,
+        "y" : 0
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "0D8089CC-29DF-4B55-9E59-BA6968BF22B5",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 12,
+        "y" : 0
+      },
+      "b" : {
+        "x" : 16,
+        "y" : 0
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "406D7556-2367-49C9-8E06-673F2206E1D1",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 4,
+        "y" : 0
+      },
+      "b" : {
+        "x" : 4,
+        "y" : 3
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "773EDCC7-B763-4586-9969-B6C50CFB1FE9",
+      "kind" : "resistor",
+      "name" : "R1",
+      "params" : {
+        "resistance" : 470
+      }
+    },
+    {
+      "a" : {
+        "x" : 4,
+        "y" : 3
+      },
+      "b" : {
+        "x" : 4,
+        "y" : 6
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "FFED1E0B-D9B8-45DD-8E22-0B60DD8E723C",
+      "kind" : "led",
+      "name" : "LED1",
+      "params" : {
+        "color" : 0
+      }
+    },
+    {
+      "a" : {
+        "x" : 4,
+        "y" : 6
+      },
+      "b" : {
+        "x" : 4,
+        "y" : 9
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "1AF12024-5AC8-408C-98D5-6841F057DE31",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 4,
+        "y" : 9
+      },
+      "b" : {
+        "x" : 4,
+        "y" : 10
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "A4C7DEB8-5279-419D-9748-927C257070EC",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 6,
+        "y" : 12
+      },
+      "b" : {
+        "x" : 4,
+        "y" : 12
+      },
+      "closed" : false,
+      "flipped" : true,
+      "id" : "B9268AD7-A0DB-4BC5-9738-F1901537AEC7",
+      "kind" : "npn",
+      "name" : "Q1",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 16,
+        "y" : 0
+      },
+      "b" : {
+        "x" : 16,
+        "y" : 3
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "18B66877-F07F-49C3-91DA-A91C8F63FEA8",
+      "kind" : "resistor",
+      "name" : "R2",
+      "params" : {
+        "resistance" : 470
+      }
+    },
+    {
+      "a" : {
+        "x" : 16,
+        "y" : 3
+      },
+      "b" : {
+        "x" : 16,
+        "y" : 6
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "3AEEED86-6062-4686-A7FB-269AC7F68FFC",
+      "kind" : "led",
+      "name" : "LED2",
+      "params" : {
+        "color" : 1
+      }
+    },
+    {
+      "a" : {
+        "x" : 16,
+        "y" : 6
+      },
+      "b" : {
+        "x" : 16,
+        "y" : 10
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "A55EAD26-09F5-4F73-B409-F7A9FBBE7D5E",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 14,
+        "y" : 12
+      },
+      "b" : {
+        "x" : 16,
+        "y" : 12
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "21E0C734-272A-4CCD-ABDD-AE9C12A62CD8",
+      "kind" : "npn",
+      "name" : "Q2",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 8,
+        "y" : 0
+      },
+      "b" : {
+        "x" : 8,
+        "y" : 4
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "94CF5F3A-9F71-4254-A96C-45F160689304",
+      "kind" : "resistor",
+      "name" : "R3",
+      "params" : {
+        "resistance" : 47000
+      }
+    },
+    {
+      "a" : {
+        "x" : 8,
+        "y" : 4
+      },
+      "b" : {
+        "x" : 8,
+        "y" : 6
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "C6136635-3EC7-4023-B665-033778C65ED1",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 8,
+        "y" : 6
+      },
+      "b" : {
+        "x" : 8,
+        "y" : 12
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "A1A4E843-5E7C-4397-8D51-FAAE1EDFDB82",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 8,
+        "y" : 12
+      },
+      "b" : {
+        "x" : 6,
+        "y" : 12
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "BD8BE350-E3FB-4656-9F12-4E6350E5A791",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 12,
+        "y" : 0
+      },
+      "b" : {
+        "x" : 12,
+        "y" : 4
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "5668378B-3FA4-4221-9C30-CE9304A71842",
+      "kind" : "resistor",
+      "name" : "R4",
+      "params" : {
+        "resistance" : 51000
+      }
+    },
+    {
+      "a" : {
+        "x" : 12,
+        "y" : 4
+      },
+      "b" : {
+        "x" : 12,
+        "y" : 9
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "E7F85035-A55F-4C9F-A1C5-EF45BC274D11",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 12,
+        "y" : 9
+      },
+      "b" : {
+        "x" : 12,
+        "y" : 12
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "29093763-F982-4322-BF17-20015F365A2A",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 12,
+        "y" : 12
+      },
+      "b" : {
+        "x" : 14,
+        "y" : 12
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "3B975457-94CD-45DA-9BE6-50DBB7962796",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 4,
+        "y" : 9
+      },
+      "b" : {
+        "x" : 9,
+        "y" : 9
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "8A374CD7-E38E-40A6-AA00-31B88672564B",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 9,
+        "y" : 9
+      },
+      "b" : {
+        "x" : 12,
+        "y" : 9
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "D6D9823F-AC91-4B22-830B-91BBA66BE805",
+      "kind" : "capacitor",
+      "name" : "C1",
+      "params" : {
+        "capacitance" : 1e-05
+      }
+    },
+    {
+      "a" : {
+        "x" : 16,
+        "y" : 6
+      },
+      "b" : {
+        "x" : 11,
+        "y" : 6
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "519D7BC9-5ECA-4108-9274-97132C7544DF",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 11,
+        "y" : 6
+      },
+      "b" : {
+        "x" : 8,
+        "y" : 6
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "FC659565-B351-4D33-8EDF-8F8D1745C1D0",
+      "kind" : "capacitor",
+      "name" : "C2",
+      "params" : {
+        "capacitance" : 1e-05
+      }
+    },
+    {
+      "a" : {
+        "x" : 4,
+        "y" : 14
+      },
+      "b" : {
+        "x" : 4,
+        "y" : 16
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "806B2E90-4474-4CC8-BCD3-F8E55B2E50AF",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 16,
+        "y" : 14
+      },
+      "b" : {
+        "x" : 16,
+        "y" : 16
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "B0936C10-D16E-48B4-A57D-AD6E14194DE8",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 0,
+        "y" : 10
+      },
+      "b" : {
+        "x" : 0,
+        "y" : 16
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "BE12927C-15E2-4603-AE03-1EC7D76B189A",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 0,
+        "y" : 16
+      },
+      "b" : {
+        "x" : 4,
+        "y" : 16
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "9231C60F-794A-4DD5-BF7C-3A42B06F595E",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 4,
+        "y" : 16
+      },
+      "b" : {
+        "x" : 16,
+        "y" : 16
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "0294E81E-0851-493F-8922-07DE391F9AF9",
+      "kind" : "wire",
+      "name" : "",
+      "params" : {
+
+      }
+    },
+    {
+      "a" : {
+        "x" : 0,
+        "y" : 16
+      },
+      "b" : {
+        "x" : 0,
+        "y" : 17
+      },
+      "closed" : false,
+      "flipped" : false,
+      "id" : "04683E6C-1D1C-447B-A99E-1FE8D223C891",
+      "kind" : "ground",
+      "name" : "",
+      "params" : {
+
+      }
+    }
+  ],
+  "midiMappings" : [
+
+  ],
+  "netNames" : {
+
+  },
+  "pcb" : {
+    "copperLayers" : 2,
+    "doNotPopulate" : [
+
+    ],
+    "footprints" : {
+
+    },
+    "offBoard" : [
+
+    ],
+    "pinouts" : {
+
+    },
+    "polarity" : {
+      "D6D9823F-AC91-4B22-830B-91BBA66BE805" : "a",
+      "FC659565-B351-4D33-8EDF-8F8D1745C1D0" : "a"
+    },
+    "references" : {
+      "179b7701-528d-07f8-d8c7-711639283723" : "J1"
+    },
+    "style" : "throughHole",
+    "synced" : {
+      "\/179b7701-528d-07f8-d8c7-711639283723" : {
+        "doNotPopulate" : false,
+        "footprint" : "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
+        "reference" : "J1",
+        "value" : "Power 9 V"
+      },
+      "\/18b66877-f07f-49c3-91da-a91c8f63fea8" : {
+        "doNotPopulate" : false,
+        "footprint" : "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal",
+        "reference" : "R2",
+        "value" : "470"
+      },
+      "\/21e0c734-272a-4ccd-abdd-ae9c12a62cd8" : {
+        "doNotPopulate" : false,
+        "footprint" : "Package_TO_SOT_THT:TO-92_Inline",
+        "reference" : "Q2",
+        "value" : "2N3904 (or any small NPN)"
+      },
+      "\/3aeeed86-6062-4686-a7fb-269ac7f68ffc" : {
+        "doNotPopulate" : false,
+        "footprint" : "LED_THT:LED_D5.0mm",
+        "reference" : "LED2",
+        "value" : "green LED"
+      },
+      "\/5668378b-3fa4-4221-9c30-ce9304a71842" : {
+        "doNotPopulate" : false,
+        "footprint" : "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal",
+        "reference" : "R4",
+        "value" : "51k"
+      },
+      "\/773edcc7-b763-4586-9969-b6c50cfb1fe9" : {
+        "doNotPopulate" : false,
+        "footprint" : "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal",
+        "reference" : "R1",
+        "value" : "470"
+      },
+      "\/94cf5f3a-9f71-4254-a96c-45f160689304" : {
+        "doNotPopulate" : false,
+        "footprint" : "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal",
+        "reference" : "R3",
+        "value" : "47k"
+      },
+      "\/b9268ad7-a0db-4bc5-9738-f1901537aec7" : {
+        "doNotPopulate" : false,
+        "footprint" : "Package_TO_SOT_THT:TO-92_Inline",
+        "reference" : "Q1",
+        "value" : "2N3904 (or any small NPN)"
+      },
+      "\/d6d9823f-ac91-4b22-830b-91bba66be805" : {
+        "doNotPopulate" : false,
+        "footprint" : "Capacitor_THT:CP_Radial_D5.0mm_P2.00mm",
+        "reference" : "C1",
+        "value" : "10u"
+      },
+      "\/fc659565-b351-4d33-8edf-8f8d1745c1d0" : {
+        "doNotPopulate" : false,
+        "footprint" : "Capacitor_THT:CP_Radial_D5.0mm_P2.00mm",
+        "reference" : "C2",
+        "value" : "10u"
+      },
+      "\/ffed1e0b-d9b8-45dd-8e22-0b60dd8e723c" : {
+        "doNotPopulate" : false,
+        "footprint" : "LED_THT:LED_D5.0mm",
+        "reference" : "LED1",
+        "value" : "red LED"
+      }
+    },
+    "units" : {
+
+    }
+  },
+  "scopes" : [
+    {
+      "elementID" : "FFED1E0B-D9B8-45DD-8E22-0B60DD8E723C",
+      "id" : "0D47D57C-8507-459E-A8FE-361E446F62CB",
+      "plot" : "time",
+      "quantity" : "current"
+    },
+    {
+      "elementID" : "D6D9823F-AC91-4B22-830B-91BBA66BE805",
+      "id" : "5DCBF14A-0060-43B5-B9E0-EAC6DE8631FC",
+      "plot" : "time",
+      "quantity" : "voltage"
+    }
+  ],
+  "settings" : {
+    "autoSpeed" : true,
+    "autoTimeStep" : true,
+    "speed" : 1,
+    "temperature" : 27,
+    "timeStep" : 1e-05
+  }
+}
