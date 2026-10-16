@@ -215,6 +215,8 @@ enum ScreenshotRunner {
             await editing.moveNow(to: wire.to)
             await editing.clickNow(at: wire.to)
             if editing.isRouting { await editing.clickNow(at: wire.to, double: true) }
+            // (a track that cannot get there stopped, what is fixed of it kept, before the next is started)
+            if editing.isRouting { await editing.stopNow() }
             await editing.settled()
         }
         editing.tool = .select

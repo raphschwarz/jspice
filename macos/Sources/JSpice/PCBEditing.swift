@@ -67,8 +67,11 @@ final class PCBEditing: ObservableObject {
         isReady = true
     }
 
-    /// Once the changes made so far have gone to the board
-    func settled() async { await applying?.value }
+    /// Once the changes made so far have gone to the board (a track stopped among them)
+    func settled() async {
+        await stopping?.value
+        await applying?.value
+    }
 
     /// The board changed elsewhere (in KiCad, or by the schematic's update): taken up anew, unless a track is being
     /// routed on it (which carries over onto the board as it then is)
@@ -255,11 +258,21 @@ final class PCBEditing: ObservableObject {
     func stop() {
         guard isRouting else { return }
         pendingMove = nil
-        Task {
-            let made = await engine.run { $0.stop() }
-            routingEnded()
-            if let made { take(made) }
+        let previous = stopping
+        stopping = Task {
+            await previous?.value
+            await stopNow()
         }
+    }
+    private var stopping: Task<Void, Never>?
+
+    /// Routing stopped, waited for
+    func stopNow() async {
+        guard isRouting else { return }
+        pendingMove = nil
+        let made = await engine.run { $0.stop() }
+        routingEnded()
+        if let made { take(made) }
     }
 
     private func show(_ shown: BoardEditing.Preview?) {
