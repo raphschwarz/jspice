@@ -176,6 +176,12 @@ final class BoardController: ObservableObject {
         guard let editor else { return }
         let circuit = editor.circuit
         let hasBoard = availability == .board
+        // the board's netlist (a simulation from rest for the electrolytics, among the rest) only for a circuit with a
+        // board, or while the PCB view is showing
+        guard hasBoard || editor.board == .pcb else {
+            if !onBoard.isEmpty { onBoard = [:] }
+            return
+        }
         guard let found = try? await worker.run({ w -> (PCBNetlistBuilder.Result, Bool) in
             let built = PCBNetlistBuilder.netlist(circuit, design: circuit.pcb)
             return (built, built.netlist != w.synced)

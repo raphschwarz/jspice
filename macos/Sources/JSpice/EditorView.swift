@@ -75,6 +75,8 @@ struct EditorView: View {
             editor.simulation.load(circuit)
             editor.pcb.circuitChanged()
         }
+        // the PCB view shown: what the board would have worked out, board or not yet
+        .onChange(of: editor.board) { _, view in if view == .pcb { editor.pcb.circuitChanged() } }
         // what is selected in the schematic is selected on the board in KiCad
         .onChange(of: editor.selection) { _, selection in editor.pcb.selectionChanged(selection) }
     }
