@@ -879,9 +879,13 @@ struct PCBSidePanel: View {
                 Divider()
                 Button(KiCadFabrication.Maker.generic.title + "…") { board.fabricate(.generic) }
             } label: {
-                Label("Fabrication Files", systemImage: "shippingbox").foregroundStyle(.primary)
+                Label("Fabrication Files", systemImage: "shippingbox")
             }
-            .tint(.primary)
+            // (a borderless pull-down, its title in the text colour as the buttons above: the default style drew it
+            // white on the light side panel)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.visible)
+            .fixedSize()
             .disabled(board.busy != nil)
         }
         .buttonStyle(.borderless)
