@@ -260,8 +260,26 @@ public final class WorldInterface: RouterInterface {
                 resolver.info[ObjectIdentifier(solid)] = w
                 world.add(solid)
             case .keepout:
-                // (KiCad cuts the zone into triangles its own way; until the port does too, it is left out)
-                unsupported.insert("keepout zone")
+                // (KiCad cuts the zone into triangles, after simplifying it with Clipper, and makes each a solid; until
+                // the port can, each outline is one solid, whose hull is the outline's convex hull: routes keep out of
+                // more than the zone where it is not convex, never less)
+                unsupported.insert("keepout zone (kept out of by its outline's convex hull, not yet by KiCad's triangles)")
+                for polygon in w.polygons {
+                    guard let outline = polygon.first, outline.pointCount >= 3 else { continue }
+                    var closed = outline
+                    closed.setClosed(true)
+                    for layer in w.layers.start...w.layers.end {
+                        let solid = Solid()
+                        solid.setLayer(layer)
+                        solid.net = nil
+                        solid.solidShape = .simple(closed)
+                        solid.isCompoundShapePrimitive = true
+                        solid.isRoutable = false
+                        resolver.info[ObjectIdentifier(solid)] = w
+                        world.add(solid)
+                        if item == nil { item = solid }
+                    }
+                }
             case .track:
                 let seg = Segment(Seg(w.a, w.b), net: w.net)
                 seg.width = w.width
@@ -281,8 +299,17 @@ public final class WorldInterface: RouterInterface {
                 resolver.info[ObjectIdentifier(via)] = w
                 world.add(via)
             case .arc:
-                // (the router's lines have no arcs yet)
-                unsupported.insert("arc track")
+                // (the router's lines have no arcs yet: an arc track is an obstacle of its net, as a solid of its
+                // shape, not one to route from or join at its ends)
+                unsupported.insert("arc track (an obstacle, not yet routed from)")
+                let solid = Solid()
+                solid.setLayer(w.layer)
+                solid.net = w.net
+                solid.solidShape = .arc(ShapeArc(start: w.a, mid: w.mid, end: w.b, width: w.width))
+                solid.isRoutable = false
+                resolver.info[ObjectIdentifier(solid)] = w
+                world.add(solid)
+                item = solid
             }
             routerItems.append(item)
         }

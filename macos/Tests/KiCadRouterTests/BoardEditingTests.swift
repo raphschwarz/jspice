@@ -215,4 +215,44 @@ final class BoardEditingTests: XCTestCase {
         XCTAssertEqual(elsewhere.edgeBounds?.maxX, box.maxX)
         XCTAssertEqual(elsewhere.zones.first { $0.uuid == zone.uuid }?.outline.map(\.x).max(), box.maxX)
     }
+
+    /// A keepout zone and another net's arc track in the way of a track: kept clear of (the port's stand-ins for
+    /// KiCad's keepout triangles and arc items)
+    func testKeepoutsAndArcTracksAreKeptClearOf() throws {
+        let file = try XCTUnwrap(Self.boards().first)
+        let board = try KiCadBoard.read(file)
+        for node in board.copperItems { board.root.remove(node) }
+        let box = try XCTUnwrap(board.edgeBounds)
+        // a clear run along the board's middle: a keepout across it on the left, an arc of another net on the right
+        let y = (box.minY + box.maxY) / 2, x0 = box.minX + 3, x1 = box.maxX - 3
+        let kx = x0 + (x1 - x0) * 0.3, ax = x0 + (x1 - x0) * 0.7
+        board.root.items.append(try SExpr.parse("""
+            (zone (net 0) (net_name "") (layers "F.Cu" "B.Cu") (uuid "keepout-1") (hatch edge 0.5)
+              (connect_pads (clearance 0)) (min_thickness 0.25) (filled_areas_thickness no)
+              (keepout (tracks not_allowed) (vias not_allowed) (pads allowed) (copperpour allowed) (footprints allowed))
+              (fill (thermal_gap 0.5) (thermal_bridge_width 0.5))
+              (polygon (pts (xy \(kx - 1) \(y - 2)) (xy \(kx + 1) \(y - 2)) (xy \(kx + 1) \(y + 2)) (xy \(kx - 1) \(y + 2)))))
+            """))
+        let net = try XCTUnwrap(KiCadConnectivity(board).ratsnest().first?.net)
+        board.addCopper(SExpr("arc", SExpr("start", ax, y - 2), SExpr("mid", ax + 1, y), SExpr("end", ax, y + 2), SExpr("width", 0.3),
+                              SExpr("layer", "F.Cu"), board.netList(net, pad: false), SExpr("uuid", "arc-1")))
+        let router = BoardRouter(board: board)
+        XCTAssertTrue(router.unsupported.contains { $0.hasPrefix("keepout zone") })
+        XCTAssertTrue(router.unsupported.contains { $0.hasPrefix("arc track") })
+        let a = IPoint(Int(x0 * 1e6), Int(y * 1e6)), b = IPoint(Int(x1 * 1e6), Int(y * 1e6))
+        guard router.start(at: a, layer: 0, width: 200_000) else { return XCTFail("no start") }
+        router.move(to: b)
+        let p = try XCTUnwrap(router.preview)
+        let points = p.tail.points + p.head.points
+        XCTAssertGreaterThan(points.count, 2, "the track goes round")
+        let keepout = Shape.simple(LineChain([IPoint(Int((kx - 1) * 1e6), Int((y - 2) * 1e6)), IPoint(Int((kx + 1) * 1e6), Int((y - 2) * 1e6)),
+                                              IPoint(Int((kx + 1) * 1e6), Int((y + 2) * 1e6)), IPoint(Int((kx - 1) * 1e6), Int((y + 2) * 1e6))], closed: true))
+        let arc = Shape.arc(ShapeArc(start: IPoint(Int(ax * 1e6), Int((y - 2) * 1e6)), mid: IPoint(Int((ax + 1) * 1e6), Int(y * 1e6)),
+                                     end: IPoint(Int(ax * 1e6), Int((y + 2) * 1e6)), width: 300_000))
+        for (u, v) in zip(points, points.dropFirst()) {
+            let track = Shape.segment(Seg(u, v), width: 200_000)
+            XCTAssertFalse(track.collide(keepout, clearance: 0), "through the keepout: \(u) \(v)")
+            XCTAssertFalse(track.collide(arc, clearance: 0), "over the arc: \(u) \(v)")
+        }
+    }
 }
