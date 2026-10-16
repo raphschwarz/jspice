@@ -514,8 +514,9 @@ struct PCBSidePanel: View {
                 Divider()
                 Button(KiCadFabrication.Maker.generic.title + "…") { board.fabricate(.generic) }
             } label: {
-                Label("Fabrication Files", systemImage: "shippingbox")
+                Label("Fabrication Files", systemImage: "shippingbox").foregroundStyle(.primary)
             }
+            .tint(.primary)
             .disabled(board.busy != nil)
         }
         .buttonStyle(.borderless)
@@ -553,9 +554,9 @@ struct PCBSidePanel: View {
                     board.select(footprint: footprint.uuid, extending: false)
                 } label: {
                     HStack(alignment: .firstTextBaseline) {
-                        Text(footprint.reference).font(.callout.weight(.medium)).frame(width: 44, alignment: .leading)
+                        Text(footprint.reference).font(.callout.weight(.medium)).foregroundStyle(.primary).frame(width: 44, alignment: .leading)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(footprint.value + (footprint.isDNP ? "  (not fitted)" : "")).font(.callout)
+                            Text(footprint.value + (footprint.isDNP ? "  (not fitted)" : "")).font(.callout).foregroundStyle(.primary)
                             Text(footprint.libID.split(separator: ":").last.map(String.init) ?? footprint.libID)
                                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
