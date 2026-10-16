@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "CircuitKit", targets: ["CircuitKit"]),
         .library(name: "KiCadKit", targets: ["KiCadKit"]),
         .library(name: "KiCadLink", targets: ["KiCadLink"]),
+        .library(name: "KiCadRouter", targets: ["KiCadRouter"]),
         .library(name: "JSpiceAutomation", targets: ["JSpiceAutomation"]),
     ],
     dependencies: [
@@ -36,6 +37,10 @@ let package = Package(
         // kept up to date with the schematic as one undoable change, the editors' selections followed both ways.
         // (Generated: KiCad 10.0.7's API messages, made by tools/kicad-api/generate.sh)
         .target(name: "KiCadLink", dependencies: ["KiCadKit", .product(name: "SwiftProtobuf", package: "swift-protobuf")]),
+        // The board editor's router, ported from KiCad's (pcbnew/router and the geometry under it, libs/kimath): KiCad's
+        // whole nanometres and its rounding, so that what is routed here is what KiCad would route, checked against
+        // KiCad's own code built by tools/kicad-reference. Foundation only, as KiCadKit.
+        .target(name: "KiCadRouter", dependencies: ["KiCadKit"]),
         // Tools for driving circuits from outside: netlists, simulation runs, measurements, and an MCP server for AI agents.
         .target(name: "JSpiceAutomation", dependencies: ["CircuitKit", "KiCadKit", "KiCadLink"]),
         // The MCP server on standard input and output.
@@ -50,5 +55,6 @@ let package = Package(
         .testTarget(name: "JSpiceAutomationTests", dependencies: ["JSpiceAutomation", "CircuitKit", "KiCadKit"]),
         .testTarget(name: "KiCadKitTests", dependencies: ["KiCadKit"], resources: [.copy("Fixtures")]),
         .testTarget(name: "KiCadLinkTests", dependencies: ["KiCadLink", "KiCadKit"]),
+        .testTarget(name: "KiCadRouterTests", dependencies: ["KiCadRouter", "KiCadKit"], resources: [.copy("Fixtures")]),
     ]
 )

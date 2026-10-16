@@ -1,0 +1,69 @@
+#!/bin/sh
+# Builds this folder's programs against KiCad's own code: KiCad 10.0.7's sources (libs/kimath, the PCB editor's
+# router in pcbnew/router, and the parts of common/ they use) fetched from KiCad's GitLab and compiled as they are.
+# Needs a C++20 compiler, wxWidgets 3.2's headers and libraries and Boost's headers (on Ubuntu: g++,
+# libwxgtk3.2-dev, libboost-dev). KICAD_REFERENCE_BUILD is where the sources and objects go.
+#
+#   build.sh            builds kicad-geometry, and writes Tests/KiCadRouterTests/Fixtures/kicad-geometry.json
+#   build.sh 2000       ... with that many cases of each kind (75 for the fixture; more to check more)
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+version=10.0.7
+work=${KICAD_REFERENCE_BUILD:-${TMPDIR:-/tmp}/kicad-reference}
+src="$work/kicad-$version"
+obj="$work/obj"
+mkdir -p "$src" "$obj"
+
+for part in include libs/core libs/kimath libs/kiplatform common pcbnew thirdparty; do
+    name=$(echo "$part" | tr / -)
+    if [ ! -e "$work/.have-$name" ]; then
+        echo "fetching KiCad $version's $part"
+        curl -sSfL "https://gitlab.com/kicad/code/kicad/-/archive/$version/kicad-$version.tar.gz?path=$part" | tar xz -C "$work"
+        cp -R "$work/kicad-$version-$name/." "$src/"
+        rm -rf "$work/kicad-$version-$name"
+        touch "$work/.have-$name"
+    fi
+done
+
+# config.h is made by KiCad's CMake; nothing here needs what it says
+mkdir -p "$work/generated"
+[ -e "$work/generated/config.h" ] || echo "#pragma once" > "$work/generated/config.h"
+
+CXX=${CXX:-g++}
+flags="-std=c++20 -O1 -DUSINGZ -DFMT_HEADER_ONLY -I$work/generated -I$src/libs/kimath/include -I$src/libs/core/include
+    -I$src/libs/kiplatform/include -I$src/include -I$src/common -I$src/pcbnew -I$src/pcbnew/router
+    -I$src/thirdparty/clipper2/Clipper2Lib/include -I$src/thirdparty/rtree -I$src/thirdparty/nlohmann_json
+    -I$src/thirdparty/dynamic_bitset -I$src/thirdparty/magic_enum -I$src/thirdparty/fmt/include
+    -I$src/thirdparty/expected/include -I$src/thirdparty/thread-pool $(wx-config --cxxflags)"
+
+# KiCad's geometry, its polygon clipper, its router (all but its glue to the PCB editor), and what they call of
+# common/: advanced settings (their defaults), the router's settings, colours for its debug drawing, ids, units
+sources=$(
+    ls "$src"/libs/kimath/src/*.cpp "$src"/libs/kimath/src/geometry/*.cpp "$src"/libs/kimath/src/math/*.cpp
+    ls "$src"/thirdparty/clipper2/Clipper2Lib/src/*.cpp
+    ls "$src"/pcbnew/router/pns_*.cpp "$src"/pcbnew/router/time_limit.cpp | grep -v "pns_kicad_iface\|pns_tool_base"
+    for f in advanced_config gal/color4d kiid eda_units origin_transforms thread_pool json_conversions locale_io \
+             config_params trace_helpers settings/json_settings settings/nested_settings settings/parameters \
+             settings/aui_settings settings/grid_settings settings/bom_settings; do
+        echo "$src/common/$f.cpp"
+    done
+    echo "$here/stubs.cpp"
+)
+
+echo "compiling $(echo "$sources" | wc -l) files"
+export CXX flags obj
+echo "$sources" | xargs -P "$(nproc 2>/dev/null || sysctl -n hw.ncpu)" -I{} sh -c '
+    o="$obj/$(echo "{}" | cksum | cut -d" " -f1)-$(basename "{}" .cpp).o"
+    [ "$o" -nt "{}" ] || $CXX $flags -c "{}" -o "$o"'
+
+$CXX $flags -c "$here/geometry.cpp" -o "$work/geometry.o"
+$CXX -o "$work/kicad-geometry" "$work/geometry.o" "$obj"/*.o $(wx-config --libs core,base,aui)
+
+fixture="$here/../../Tests/KiCadRouterTests/Fixtures/kicad-geometry.json"
+if [ $# -gt 0 ]; then
+    "$work/kicad-geometry" "$1" > "$work/kicad-geometry-$1.json"
+    echo "$work/kicad-geometry-$1.json: run the tests with KICAD_GEOMETRY_REFERENCE set to it"
+else
+    "$work/kicad-geometry" 75 > "$fixture"
+    echo "$fixture: $(wc -c < "$fixture") bytes"
+fi

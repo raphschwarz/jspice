@@ -1,11 +1,12 @@
 #!/bin/sh
-# KiCadKit's and KiCadLink's tests where KiCad 10 is installed on Linux (CI's macOS runners have no KiCad): a package of
-# just those two targets, as the repository's package also has the macOS app's, built from the repository's own sources
+# KiCadKit's, KiCadLink's and KiCadRouter's tests where KiCad 10 is installed on Linux (CI's macOS runners have no
+# KiCad): a package of just those targets, as the repository's package also has the macOS app's, built from the
+# repository's own sources
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 mkdir -p "$work/Sources" "$work/Tests"
-for target in KiCadKit KiCadLink; do
+for target in KiCadKit KiCadLink KiCadRouter; do
     ln -s "$root/Sources/$target" "$work/Sources/$target"
     ln -s "$root/Tests/${target}Tests" "$work/Tests/${target}Tests"
 done
@@ -23,6 +24,8 @@ let package = Package(
         .target(name: "KiCadLink", dependencies: ["KiCadKit", .product(name: "SwiftProtobuf", package: "swift-protobuf")]),
         .testTarget(name: "KiCadKitTests", dependencies: ["KiCadKit"], resources: [.copy("Fixtures")]),
         .testTarget(name: "KiCadLinkTests", dependencies: ["KiCadLink", "KiCadKit"]),
+        .target(name: "KiCadRouter", dependencies: ["KiCadKit"]),
+        .testTarget(name: "KiCadRouterTests", dependencies: ["KiCadRouter", "KiCadKit"], resources: [.copy("Fixtures")]),
     ]
 )
 EOF

@@ -1,16 +1,19 @@
 name: kicad
 
-# KiCadKit and KiCadLink checked against KiCad itself: boards JSpice writes read and checked by kicad-cli, footprints
-# placed from KiCad's own libraries. They are Foundation only, so this runs on Linux, where KiCad 10 installs from its
+# KiCadKit, KiCadLink and KiCadRouter checked against KiCad itself: boards JSpice writes read and checked by kicad-cli,
+# footprints placed from KiCad's own libraries, the router's geometry against KiCad's own code (built from KiCad's
+# sources by tools/kicad-reference). They are Foundation only, so this runs on Linux, where KiCad 10 installs from its
 # PPA (the macOS runners have no KiCad, and the tests that need it skip there).
 on:
   push:
-    paths: ['macos/Sources/KiCadKit/**', 'macos/Sources/KiCadLink/**', 'macos/Tests/KiCadKitTests/**',
-            'macos/Tests/KiCadLinkTests/**', 'macos/Package.resolved', 'macos/scripts/kicad-linux-tests.sh',
+    paths: ['macos/Sources/KiCadKit/**', 'macos/Sources/KiCadLink/**', 'macos/Sources/KiCadRouter/**',
+            'macos/Tests/KiCadKitTests/**', 'macos/Tests/KiCadLinkTests/**', 'macos/Tests/KiCadRouterTests/**',
+            'macos/tools/kicad-reference/**', 'macos/Package.resolved', 'macos/scripts/kicad-linux-tests.sh',
             '.github/workflows/kicad.yml']
   pull_request:
-    paths: ['macos/Sources/KiCadKit/**', 'macos/Sources/KiCadLink/**', 'macos/Tests/KiCadKitTests/**',
-            'macos/Tests/KiCadLinkTests/**', 'macos/Package.resolved', 'macos/scripts/kicad-linux-tests.sh',
+    paths: ['macos/Sources/KiCadKit/**', 'macos/Sources/KiCadLink/**', 'macos/Sources/KiCadRouter/**',
+            'macos/Tests/KiCadKitTests/**', 'macos/Tests/KiCadLinkTests/**', 'macos/Tests/KiCadRouterTests/**',
+            'macos/tools/kicad-reference/**', 'macos/Package.resolved', 'macos/scripts/kicad-linux-tests.sh',
             '.github/workflows/kicad.yml']
   workflow_dispatch:
 
@@ -29,7 +32,21 @@ jobs:
           kicad-cli version
       - name: Toolchain
         run: swift --version
-      - name: KiCadKit and KiCadLink tests, against KiCad
+      - name: KiCadKit, KiCadLink and KiCadRouter tests, against KiCad
         env:
           JSPICE_REQUIRE_KICAD: "1"
         run: macos/scripts/kicad-linux-tests.sh
+      - name: KiCad's sources and objects, kept between runs
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/kicad-reference
+          key: kicad-reference-10.0.7-${{ hashFiles('macos/tools/kicad-reference/build.sh', 'macos/tools/kicad-reference/stubs.cpp') }}
+          restore-keys: kicad-reference-10.0.7-
+      - name: KiCad's own geometry and router code, built
+        run: |
+          sudo apt-get install -y --no-install-recommends g++ libwxgtk3.2-dev libboost-dev
+          KICAD_REFERENCE_BUILD="$RUNNER_TEMP/kicad-reference" macos/tools/kicad-reference/build.sh 2000
+      - name: KiCadRouter against KiCad's code, on 2000 cases of each kind
+        env:
+          KICAD_GEOMETRY_REFERENCE: ${{ runner.temp }}/kicad-reference/kicad-geometry-2000.json
+        run: macos/scripts/kicad-linux-tests.sh --filter KiCadRouterTests
