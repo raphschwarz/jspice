@@ -169,6 +169,7 @@ final class EditorState: ObservableObject {
             design.units.merge(now.units) { _, current in current }
             design.references.merge(now.references) { _, current in current }
             design.polarity.merge(now.polarity) { _, current in current }
+            design.ratings.merge(now.ratings) { _, current in current }
             restored.pcb = design
         }
         let circuit = restored

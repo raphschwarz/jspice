@@ -60,6 +60,20 @@ final class PCBTests: XCTestCase {
         XCTAssertEqual(first.netlist.component(reference: "C1")?.pins["1"]?.net, "rail")
         let id = try XCTUnwrap(first.parts["C1"]?.first).uuidString
         XCTAssertEqual(first.design.polarity[id], "b")
+        func rating(_ result: PCBNetlistBuilder.Result) -> String? {
+            result.netlist.component(reference: "C1")?.fields.first { $0.0 == "Voltage" }?.1
+        }
+        XCTAssertEqual(rating(first), "16V")
+        // less across it keeps the rating the board has; more than it can take raises it
+        func again(_ volts: Double) throws -> PCBNetlistBuilder.Result {
+            var next = try circuit(volts)
+            let c1 = try XCTUnwrap(next.elements.firstIndex { $0.name == "C1" })
+            next.elements[c1].id = try XCTUnwrap(UUID(uuidString: id))
+            next.pcb = first.design
+            return PCBNetlistBuilder.netlist(next)
+        }
+        XCTAssertEqual(rating(try again(3)), "16V")
+        XCTAssertEqual(rating(try again(20)), "35V")
 
         // the rail now negative, the record kept: C1 stays as it was, with a note
         var turned = try circuit(-9)

@@ -29,6 +29,9 @@ public struct PCBDesign: Codable, Hashable, Sendable {
     /// voltages when it first goes on the board, then kept, so that a change elsewhere that moves those voltages (an
     /// oscillator's, which rest nowhere for long) never turns it round under its tracks
     public var polarity: [String: String] = [:]
+    /// Each electrolytic's voltage rating as its board has it, by the part's id: kept as the circuit's resting voltages
+    /// move, unless they come to need a higher one (or the part is given its own)
+    public var ratings: [String: Double] = [:]
     /// What the board had of each part when the two were last brought together, by the path its footprint is linked
     /// by: the common ground from which a difference is known to be the board's (to bring back to the schematic) or the
     /// schematic's (to take to the board)
@@ -74,6 +77,7 @@ public struct PCBDesign: Codable, Hashable, Sendable {
         board = try c.decodeIfPresent(String.self, forKey: .board)
         copperLayers = try c.decodeIfPresent(Int.self, forKey: .copperLayers) ?? 2
         polarity = try c.decodeIfPresent([String: String].self, forKey: .polarity) ?? [:]
+        ratings = try c.decodeIfPresent([String: Double].self, forKey: .ratings) ?? [:]
         synced = try c.decodeIfPresent([String: Synced].self, forKey: .synced) ?? [:]
     }
 }
@@ -276,6 +280,7 @@ public enum PCBNetlistBuilder {
         }
         // two-lead parts
         var polarity: [String: String] = [:]
+        var ratings: [String: Double] = [:]
         var notes = plan.supplyNotes
         for part in plan.twoLead {
             let partID = id(part)
@@ -298,7 +303,13 @@ public enum PCBNetlistBuilder {
                 let farads = part.params["capacitance"] ?? 0
                 fp = electrolytic(farads, style)
                 value = compact(farads)
-                if let rating = title.split(separator: " ").dropFirst(2).first { fields.append(("Voltage", rating + "V")) }
+                if let text = title.split(separator: " ").dropFirst(2).first, let needed = Double(text) {
+                    // the rating the board has, while it is enough
+                    let own = (part.params["ratedVoltage"] ?? 0) > 0
+                    let rating = own ? needed : max(needed, design.ratings[partID.uuidString] ?? 0)
+                    ratings[partID.uuidString] = rating
+                    fields.append(("Voltage", SI.trimmed(rating, digits: 3) + "V"))
+                }
                 // + (pad 1) on the higher voltage, as the board first had it
                 let (a, b) = (net(terminals[0]).flatMap { plan.voltages[$0] } ?? 0, net(terminals[1]).flatMap { plan.voltages[$0] } ?? 0)
                 let higher = b > a ? terminals[1] : terminals[0]
@@ -392,6 +403,7 @@ public enum PCBNetlistBuilder {
 
         design.units = units
         design.polarity = polarity
+        design.ratings = ratings
         var references: [String: String] = [:]
         for c in components where c.reference.hasPrefix("J") || c.ids.count > 1 { references[c.ids.first ?? ""] = c.reference }
         design.references = references
