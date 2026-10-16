@@ -114,6 +114,25 @@ final class LiveBoardTests: XCTestCase {
         XCTAssertTrue(after2.attributes.contains("dnp"))
         XCTAssertEqual(after2.position, r.position)
 
+        // exchanged for another footprint, and turned over: made again in place under their own ids, in one change
+        let swapped = now.copy()
+        let dip = try XCTUnwrap(swapped.footprint(uuid: made[1]))
+        swapped.add(try library.placeable("Package_SO:SOIC-8_3.9x4.9mm_P1.27mm", reference: dip.reference, value: "test", at: dip.position))
+        let soic = try XCTUnwrap(swapped.footprints.last)
+        soic.move(to: dip.position, rotation: dip.rotation)
+        soic.node.set(SExpr("uuid", dip.uuid))
+        soic.path = dip.path
+        for pad in soic.pads { pad.setNet(dip.pads(numbered: pad.number).first?.net) }
+        swapped.remove(dip)
+        try XCTUnwrap(swapped.footprint(uuid: made[2])).flip()
+        XCTAssertEqual(try live.apply(from: now, to: swapped, message: "Test: exchange"), .live(count: 2), live.reloadReason ?? "")
+        now = try live.snapshot()
+        for uuid in made[1...2] {
+            let ours = try XCTUnwrap(swapped.footprint(uuid: uuid)), theirs = try XCTUnwrap(now.footprint(uuid: uuid))
+            XCTAssertEqual(Self.differences(ours.node, theirs.node), [], ours.libID)
+        }
+        XCTAssertEqual(now.footprints.filter { $0.uuid == made[1] }.count, 1)
+
         // removed
         let removed = now.copy()
         removed.remove(try XCTUnwrap(removed.footprint(uuid: made[0])))

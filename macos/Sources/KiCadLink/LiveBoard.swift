@@ -5,9 +5,10 @@ import SwiftProtobuf
 /// A board open in KiCad's PCB editor, changed where it stands through KiCad's API: what the schematic's update does to
 /// the board (footprints removed, references, values, fields and links changed, pads put on other nets, zones and
 /// vias following a renamed net) made in the editor as one change, which its Undo takes back whole; the editor then
-/// gives the tracks the nets of the pads they reach, as it does on any change. Footprints new to the board or exchanged
-/// for others are made whole from their libraries' definitions (KiCadFootprintMessage); should KiCad refuse one, the
-/// board is written to its file with the changes and the editor reads it again.
+/// gives the tracks the nets of the pads they reach, as it does on any change. Footprints new to the board are made
+/// whole from their libraries' definitions (KiCadFootprintMessage), and footprints exchanged for others made again in
+/// their place under their own ids; should KiCad refuse one, the board is written to its file with the changes and
+/// the editor reads it again.
 public final class KiCadLiveBoard {
     public let api: KiCadAPI
     public let document: Kiapi_Common_Types_DocumentSpecifier
@@ -84,10 +85,14 @@ public final class KiCadLiveBoard {
         }
         do {
             try api.commit(document, message: message) {
-                // exchanged footprints go before their new selves come
-                let exchanged = made.map(\.uuid).filter { old[$0] != nil }
-                try api.delete(removed + exchanged, in: document)
-                if !making.isEmpty { try api.create(making.map(\.message), in: document) }
+                try api.delete(removed, in: document)
+                // a new footprint made; one exchanged (or turned over) made again in its place, under its own id, as
+                // KiCad's own exchange keeps it (KiCad takes a footprint's whole definition in an update: its pads,
+                // drawings and models made anew)
+                let created = making.filter { old[$0.uuid] == nil }.map(\.message)
+                let exchanged = making.filter { old[$0.uuid] != nil }.map(\.message)
+                if !created.isEmpty { try api.create(created, in: document) }
+                if !exchanged.isEmpty { try api.update(exchanged, in: document) }
                 if !changed.isEmpty {
                     let current = try api.items(changed.map(\.uuid), in: document)
                     var updates: [Google_Protobuf_Any] = []
