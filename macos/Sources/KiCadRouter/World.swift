@@ -16,8 +16,12 @@ public struct WorldItem: Sendable {
     public struct Keepout: Sendable, Hashable {
         public var tracks = false, vias = false, pads = false, footprints = false
         public var footprint: String?
-        public init(tracks: Bool = false, vias: Bool = false, pads: Bool = false, footprints: Bool = false, footprint: String? = nil) {
+        /// The zone's name (ZONE::GetZoneName, empty if it has none)
+        public var name = ""
+        public init(tracks: Bool = false, vias: Bool = false, pads: Bool = false, footprints: Bool = false, footprint: String? = nil,
+                    name: String = "") {
             (self.tracks, self.vias, self.pads, self.footprints, self.footprint) = (tracks, vias, pads, footprints, footprint)
+            self.name = name
         }
     }
 
@@ -90,7 +94,7 @@ public final class WorldResolver: RuleResolver {
 
     public init(rules: WorldRules) { self.rules = rules }
 
-    private func infoOf(_ item: Item?) -> WorldItem? {
+    func infoOf(_ item: Item?) -> WorldItem? {
         guard let item else { return nil }
         let key = item.kind == .hole ? (item.parentPadVia ?? item) : item
         return info[ObjectIdentifier(key)]
@@ -232,6 +236,20 @@ public final class WorldInterface: RouterInterface {
         self.items = items
         layerCount = layers
         resolver = WorldResolver(rules: rules)
+    }
+
+    /// What ROUTER::isStartingPointRoutable reads from a non-routable item's board item: a pad without plating, a
+    /// rule area (one with keepout rules, the only kind in the world) and a text stop a route starting there
+    public func nonRoutableReason(_ item: Item) -> String? {
+        guard let i = resolver.infoOf(item) else { return nil }
+        switch i.kind {
+        case .pad where i.npth: return "Cannot start routing from a non-plated hole."
+        case .keepout:
+            let name = i.keepout?.name ?? ""
+            return name.isEmpty ? "Rule area disallows tracks." : "Rule area '\(name)' disallows tracks."
+        case .text: return "Cannot start routing from a text item."
+        default: return nil
+        }
     }
 
     public func syncWorld(_ world: Node) {

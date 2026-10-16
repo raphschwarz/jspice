@@ -715,7 +715,8 @@ public struct BoardWorld {
         func notAllowed(_ name: String) -> Bool { k[name]?.text(at: 0) == "not_allowed" }
         let keepout = WorldItem.Keepout(tracks: notAllowed("tracks"), vias: notAllowed("vias"), pads: notAllowed("pads"),
                                         footprints: notAllowed("footprints"),
-                                        footprint: footprint.map { FootprintPlacement($0).reference })
+                                        footprint: footprint.map { FootprintPlacement($0).reference },
+                                        name: node.value("name") ?? "")
         guard keepout.tracks || keepout.vias || keepout.pads || keepout.footprints || notAllowed("copperpour") else { return }
         var w = WorldItem(kind: .keepout)
         w.net = nil

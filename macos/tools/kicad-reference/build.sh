@@ -39,12 +39,12 @@ flags="-std=c++20 -O1 -DUSINGZ -DFMT_HEADER_ONLY -I$work/generated -I$src/libs/k
     -I$src/thirdparty/dynamic_bitset -I$src/thirdparty/magic_enum -I$src/thirdparty/fmt/include
     -I$src/thirdparty/expected/include -I$src/thirdparty/thread-pool $(wx-config --cxxflags)"
 
-# Changes made to KiCad's sources here, once (patch.py says what and why): ties between obstacles
-# broken by the order the items were made in, not their addresses; a start pad's missing BOARD_ITEM asked nothing
-if [ ! -e "$work/.patched-1" ]; then
-    python3 "$here/patch.py" "$src"
-    touch "$work/.patched-1"
-fi
+# Changes made to KiCad's sources here (patch.py says what and why): ties between obstacles broken by the order
+# the items were made in, not their addresses; a missing BOARD_ITEM asked nothing, or asked of router.cpp. Those made
+# before .patched-1 changed headers, so everything was compiled again after them; those since change a .cpp only,
+# which is then newer than its object.
+python3 "$here/patch.py" "$src"
+[ -e "$work/.patched-1" ] || touch "$work/.patched-1"
 
 # KiCad's geometry, its polygon clipper, its router (all but its glue to the PCB editor), and what they call of
 # common/: advanced settings (their defaults), the router's settings, colours for its debug drawing, ids, units

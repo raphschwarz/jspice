@@ -177,7 +177,7 @@ class Scene:
             polygons.append([chain_points(poly.Outline(i))] + [chain_points(poly.Hole(i, h)) for h in range(poly.HoleCount(i))])
         keepout = {"tracks": zone.GetDoNotAllowTracks(), "vias": zone.GetDoNotAllowVias(),
                    "pads": zone.GetDoNotAllowPads(), "footprints": zone.GetDoNotAllowFootprints(),
-                   "footprint": footprint.GetReference() if footprint else None}
+                   "footprint": footprint.GetReference() if footprint else None, "name": zone.GetZoneName()}
         layers = [self.pns(l) for l in self.copper_layers() if zone.GetLayerSet().Contains(l)]
         self.add({"kind": "keepout", "layers": layers, "polygons": polygons, "keepout": keepout})
         self.unsupported.append("keepout zone")

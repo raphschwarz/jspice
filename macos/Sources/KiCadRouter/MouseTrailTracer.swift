@@ -43,6 +43,7 @@ public final class MouseTrailTracer {
             trail.append(p)
         }
         trail.simplify()
+        Router.dbg("mt-trail: \(trail.points)")
     }
 
     public func posture(_ p: IPoint) -> Direction45 {

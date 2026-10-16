@@ -36,6 +36,7 @@ enum SceneRouting {
             let started = router.startRouting(point(route["start"]!), itemAt("startItem"),
                                               layer: (route["layer"] as? NSNumber)?.intValue ?? 0)
             r["started"] = started
+            if !started { r["failure"] = router.failureReason }
             var moves: [[String: Any]] = []
             if started {
                 var finished = false

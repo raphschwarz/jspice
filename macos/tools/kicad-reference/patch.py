@@ -8,6 +8,11 @@ each time it is run on the same board, and runs on items with no BOARD_ITEM behi
   one machine to the next. The Swift port orders them by the order they were made in, as these serial numbers do.
 - The line placer asks a start pad's BOARD_ITEM its type, for a posture it then leaves unused; it is asked only if
   there is one.
+- The router asks the BOARD_ITEM of a non-routable item at a route's start why it cannot be routed from (a hole with
+  no plating, a rule area, a text); with none behind the item, it asks kicadReferenceNonRoutableReason, which
+  router.cpp answers from the board's JSON as the BOARD_ITEM would.
+
+patch.py changes only what it has not changed already, so it can be run on sources it has changed before.
 
     patch.py KICAD_SOURCE_DIR
 """
@@ -59,6 +64,31 @@ def main():
           "static_cast<SOLID*>( aStartItem )->Parent()->Type() == PCB_PAD_T",
           "static_cast<SOLID*>( aStartItem )->Parent()\n"
           "             && static_cast<SOLID*>( aStartItem )->Parent()->Type() == PCB_PAD_T")
+
+    patch(f"{router}/pns_router.cpp",
+          "namespace PNS {",
+          "/// Why a non-routable item with no BOARD_ITEM behind it cannot be routed from (kicad-reference)\n"
+          "wxString kicadReferenceNonRoutableReason( const PNS::ITEM* aItem );\n"
+          "\n"
+          "namespace PNS {")
+
+    patch(f"{router}/pns_router.cpp",
+          "            BOARD_ITEM* parent = item->BoardItem();\n"
+          "\n"
+          "            switch( parent->Type() )",
+          "            BOARD_ITEM* parent = item->BoardItem();\n"
+          "\n"
+          "            if( !parent )\n"
+          "            {\n"
+          "                wxString reason = kicadReferenceNonRoutableReason( item );\n"
+          "\n"
+          "                if( !reason.IsEmpty() )\n"
+          "                    failureReason = reason;\n"
+          "\n"
+          "                continue;\n"
+          "            }\n"
+          "\n"
+          "            switch( parent->Type() )")
 
 
 if __name__ == "__main__":

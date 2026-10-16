@@ -26,10 +26,12 @@ public protocol RouterInterface: AnyObject {
     var orphanedNetHandle: NetHandle { get }
     var ruleResolver: RuleResolver { get }
     var copperLayerCount: Int { get }
+    /// Why routing cannot start from a non-routable item (a hole without plating, a rule area, a text), as its board
+    /// item says when ROUTER::isStartingPointRoutable asks it; nil: nothing stops it
+    func nonRoutableReason(_ item: Item) -> String?
 }
 
 extension RouterInterface {
-    /// Why routing cannot start from a non-routable item (a hole without plating, a rule area, a text)
     public func nonRoutableReason(_ item: Item) -> String? { nil }
 
     /// A track segment's solder mask: whether it has an opening, and its own margin (its board track's)

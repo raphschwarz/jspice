@@ -106,7 +106,8 @@ extension WorldItem {
             }
             if let k = j["keepout"] as? [String: Any] {
                 keepout = Keepout(tracks: bool(k["tracks"]), vias: bool(k["vias"]), pads: bool(k["pads"]),
-                                  footprints: bool(k["footprints"]), footprint: k["footprint"] as? String)
+                                  footprints: bool(k["footprints"]), footprint: k["footprint"] as? String,
+                                  name: k["name"] as? String ?? "")
             }
         default:
             break
@@ -147,7 +148,7 @@ extension WorldItem {
             j["polygons"] = polygons.map { $0.map { $0.points.map(p) } }
             if let k = keepout {
                 j["keepout"] = ["tracks": k.tracks, "vias": k.vias, "pads": k.pads, "footprints": k.footprints,
-                                "footprint": k.footprint as Any? ?? NSNull()]
+                                "footprint": k.footprint as Any? ?? NSNull(), "name": k.name]
             }
         case .pad:
             j["net"] = net ?? 0

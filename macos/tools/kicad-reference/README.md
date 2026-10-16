@@ -25,7 +25,7 @@ Public License version 3 or later (see `../../KICAD-NOTICE.md`).
   board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make on it, step by
   step as the router tool drives it (pointer moves, with the item under the pointer if one is given, vias, layer
   switches, clicks that fix part of a route, undo, posture flips; walking around obstacles or marking them). It writes the head, tail and trace after each step, what
-  each route fixed and what it put on the board. `RouterTests.swift` routes the same boards with the port, with the
+  each route fixed and what it put on the board, and why the router would not start a route it refused. `RouterTests.swift` routes the same boards with the port, with the
   same rules (`SceneRouting.swift`), and must get the same, point for point. A board can also be a real one as
   `board-scene.py` gives it (`"rules": {"board": true, ...}`): every item KiCad's router takes from a board (pads,
   drawings and texts on copper, outlines, keepout zones, which it cuts into triangles as KiCad does, tracks, vias)
@@ -44,17 +44,19 @@ Public License version 3 or later (see `../../KICAD-NOTICE.md`).
   with rounded corners and round cut-outs. Each is saved with its project, and `board-scene.py` run on it.
   `Tests/KiCadRouterTests/Fixtures/boards` holds three; `KICAD_BOARD_REFERENCE` names another folder of them.
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
-  turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them,
-  and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is
+  turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them
+  (now and then one starting on an unplated hole), and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is
   `scenes.py ... ../../Tests/KiCadRouterTests/Fixtures/kicad-routes.json 60`. With `--boards`, random routes on real
   boards (`board-scene.py`'s scenes): `scenes.py --boards KICAD_ROUTER OUT.json ROUTES_PER_BOARD SEED SCENE.json...`;
   `kicad-board-routes.json` is `scenes.py --boards ... 2 20261016 ../../Tests/KiCadRouterTests/Fixtures/boards/*.json`.
   `KICAD_ROUTER_REFERENCE` names others (separated by colons).
-- `patch.py`: the two changes `build.sh` makes to KiCad's router before building it, so it answers the same each
-  run: obstacles met at the same place are ordered by when their items were made rather than by their addresses in
-  memory (the port orders them the same way), and a start pad's board item is asked its type only when it has one.
+- `patch.py`: the changes `build.sh` makes to KiCad's router before building it, so it answers the same each
+  run and runs on items with no board item behind them: obstacles met at the same place are ordered by when their
+  items were made rather than by their addresses in memory (the port orders them the same way), a start pad's board
+  item is asked its type only when it has one, and why a route cannot start on a non-routable item (a hole with no
+  plating, a rule area, a text), which KiCad asks the item's board item, is asked of `router.cpp` when there is none.
 - `stubs.cpp`: what the router and KiCad's settings call from the rest of KiCad, as these programs need it (no
-  program object, no settings folder, no boards).
+  program object, no settings folder, no boards), and the hook `router.cpp` answers that last question through.
 
 With `KICAD_ROUTER_DEBUG` set, `router.cpp` writes KiCad's router debug messages to standard error, and the router
 tests write the port's in the same form, to compare the two where a route differs.

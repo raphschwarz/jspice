@@ -571,7 +571,7 @@ public final class LinePlacer {
             tail.removeVia()
             head.setLayer(currentLayer)
             tail.setLayer(currentLayer)
-            _ = move(currentEnd, nil)
+            _ = move(currentEnd, nil, isCurrentEnd: true)
             return true
         }
         return false
@@ -625,7 +625,11 @@ public final class LinePlacer {
         shove = Shove(rootNode.branch(), router)
     }
 
-    public func move(_ p: IPoint, _ endItem: Item?) -> Bool {
+    public func move(_ p: IPoint, _ endItem: Item?) -> Bool { move(p, endItem, isCurrentEnd: false) }
+
+    /// (isCurrentEnd: `p` is currentEnd itself, which KiCad's SetLayer hands its Move by reference, so the trail
+    /// takes the end the move leaves there, not `p`)
+    private func move(_ p: IPoint, _ endItem: Item?, isCurrentEnd: Bool) -> Bool {
         var eiDepth = -1
         if let owner = endItem?.owner as? Node { eiDepth = owner.depth }
         if let last = lastNode {
@@ -657,7 +661,7 @@ public final class LinePlacer {
             if endItem.net == currentNet { splitAdjacentSegments(lastNode!, endItem, splitPoint) }
             if settings.removeLoops { removeLoops(lastNode!, current) }
         }
-        mouseTrailTracer.addTrailPoint(p)
+        mouseTrailTracer.addTrailPoint(isCurrentEnd ? currentEnd : p)
         return true
     }
 

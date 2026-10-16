@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -722,10 +723,32 @@ static json lineJSON( const PNS::LINE& aLine )
     return j;
 }
 
+extern std::function<wxString( const PNS::ITEM* )> g_kicadReferenceNonRoutableReason;
+
 int main()
 {
     json scene = json::parse( std::cin );
     SCENE_IFACE iface;
+
+    // Why the router cannot start from a non-routable item, as its BOARD_ITEM would say in ROUTER::
+    // isStartingPointRoutable (patch.py has it ask here): a hole with no plating, a rule area, a text
+    g_kicadReferenceNonRoutableReason = [&]( const PNS::ITEM* aItem ) -> wxString
+    {
+        const ITEM_INFO* i = iface.m_resolver.info( aItem );
+
+        if( !i )
+            return wxString();
+        else if( i->kind == "pad" && i->npth )
+            return wxS( "Cannot start routing from a non-plated hole." );
+        else if( i->kind == "keepout" && !i->keepout.value( "name", std::string() ).empty() )
+            return wxString::Format( wxS( "Rule area '%s' disallows tracks." ), wxString( i->keepout["name"].get<std::string>() ) );
+        else if( i->kind == "keepout" )
+            return wxS( "Rule area disallows tracks." );
+        else if( i->kind == "text" )
+            return wxS( "Cannot start routing from a text item." );
+
+        return wxString();
+    };
     iface.m_items = scene["items"];
     iface.m_layers = scene.value( "layers", 2 );
 
@@ -788,6 +811,10 @@ int main()
         iface.m_added.clear();
         bool started = router.StartRouting( pt( route["start"] ), itemAt( "startItem", route ), route.value( "layer", 0 ) );
         r["started"] = started;
+
+        if( !started )
+            r["failure"] = router.FailureReason().ToStdString();
+
         json moves = json::array();
 
         if( started )

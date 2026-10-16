@@ -3,8 +3,8 @@
 
 Each board has pads of a few nets (rectangles, circles, ovals, turned rectangles as polygons; surface mount on one
 side or through-hole with a drill, now and then a hole with no plating), tracks already on it, and an outline. Each
-route starts on a pad and goes, by a pointer path that wanders and now and then crosses an obstacle, to a pad of its
-net, where it is fixed; some stop short and are fixed mid-way. Some place vias on the way, switch layers, fix parts
+route starts on a pad (now and then on a hole with no plating, where the router refuses to start) and goes, by a
+pointer path that wanders and now and then crosses an obstacle, to a pad of its net, where it is fixed; some stop short and are fixed mid-way. Some place vias on the way, switch layers, fix parts
 of the route as they go and take them back, or flip the posture; some mark obstacles instead of walking around them. What KiCad does with them goes, with the boards, into
 the fixture KiCadRouterTests checks the Swift port against.
 
@@ -102,13 +102,19 @@ def routes(rng, items, copper, area, count=None):
 
     pads = [i for i, it in enumerate(items) if it["kind"] == "pad" and not it.get("npth")
             and any(flashed(it, l) for l in range(copper))]
+    holes = [i for i, it in enumerate(items) if it["kind"] == "pad" and it.get("npth")]
     if not pads:
         return out
     for _ in range(rng.randint(1, 4) if count is None else count):
         a = rng.choice(pads)
+        # (now and then from a hole with no plating instead, which KiCad's router will not start from)
+        unplated = bool(holes) and rng.random() < 0.05
+        if unplated:
+            a = rng.choice(holes)
         same = [i for i in pads if i != a and items[i]["net"] == items[a]["net"]]
         start = items[a]["pos"]
-        layer = rng.choice([l for l in range(copper) if flashed(items[a], l)])
+        layer = rng.choice(list(range(items[a]["layers"][0], items[a]["layers"][1] + 1)) if unplated
+                           else [l for l in range(copper) if flashed(items[a], l)])
         route = {"start": start, "startItem": a, "layer": layer, "width": rng.randint(3, 8) * 50_000}
         if rng.random() < 0.2:
             route["mode"] = "mark"

@@ -189,14 +189,15 @@ public struct LineChain: Hashable, Sendable, CustomStringConvertible {
         return -1
     }
 
-    /// Points `start` to `end`, inclusive, as an open chain
+    /// Points `start` to `end`, inclusive, as an open chain (a point the same as the one before it left out, as
+    /// KiCad's Slice appends them)
     public func slice(_ start: Int, _ end: Int) -> LineChain {
         var (s, e) = (start, end)
         if e < 0 { e += points.count }
         if s < 0 { s += points.count }
         guard s >= 0, e >= 0, s < points.count, e < points.count, e >= s else { return LineChain() }
         var rv = LineChain()
-        for i in s...e { rv.append(points[i], allowDuplication: true) }
+        for i in s...e { rv.append(points[i]) }
         return rv
     }
 

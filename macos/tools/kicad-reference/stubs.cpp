@@ -1,6 +1,7 @@
 // What KiCad's router and settings call from the rest of KiCad, as these programs need it: no program object (so the
 // thread pool is the router's own), no settings folder (so KiCad's advanced settings are their defaults), and no
-// boards (the length calculation's pad and via helpers are never reached: this world has no PADs or PCB_VIAs).
+// boards (the length calculation's pad and via helpers are never reached: this world has no PADs or PCB_VIAs), and
+// what a BOARD_ITEM would say of a non-routable item (router.cpp says it, from the board's JSON).
 //
 // GNU General Public License version 3 or later, as the KiCad code it is linked with.
 
@@ -10,6 +11,17 @@
 #include <pgm_base.h>
 
 #include <cstdlib>
+#include <functional>
+
+namespace PNS { class ITEM; }
+
+/// router.cpp's answer to why an item with no BOARD_ITEM cannot be routed from (patch.py has the router ask it)
+std::function<wxString( const PNS::ITEM* )> g_kicadReferenceNonRoutableReason;
+
+wxString kicadReferenceNonRoutableReason( const PNS::ITEM* aItem )
+{
+    return g_kicadReferenceNonRoutableReason ? g_kicadReferenceNonRoutableReason( aItem ) : wxString();
+}
 
 PGM_BASE* PgmOrNull()
 {
