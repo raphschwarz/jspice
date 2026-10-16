@@ -21,14 +21,16 @@ Public License version 3 or later (see `../../KICAD-NOTICE.md`).
   grown or shrunk, the error inside or outside).
 - `router.cpp`: KiCad's interactive router itself (`PNS::ROUTER` with its line placer, walkaround, optimizer) on a
   board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make on it, step by
-  step as the router tool drives it (pointer moves, vias, layer switches, clicks that fix part of a route, undo,
-  posture flips; walking around obstacles or marking them). It writes the head, tail and trace after each step, what
+  step as the router tool drives it (pointer moves, with the item under the pointer if one is given, vias, layer
+  switches, clicks that fix part of a route, undo, posture flips; walking around obstacles or marking them). It writes the head, tail and trace after each step, what
   each route fixed and what it put on the board. `RouterTests.swift` routes the same boards with the port, with the
   same rules (`SceneRouting.swift`), and must get the same, point for point. A board can also be a real one as
   `board-scene.py` gives it (`"rules": {"board": true, ...}`): every item KiCad's router takes from a board (pads,
   drawings and texts on copper, outlines, keepout zones, which it cuts into triangles as KiCad does, tracks, vias)
   with the clearances KiCad's rule resolver would give it (net classes, pads' and footprints' own clearances, the
-  board's minimums, hole and edge clearances).
+  board's minimums, hole and edge clearances). One case in `kicad-board-routes.json` keeps what KiCad's router does
+  on a board whose hole clearance is 0: it takes tracks along a mounting hole's very edge, which KiCad's DRC then
+  finds touching the hole (`BoardRoutingTests` measures such contacts and fails only on a track that cuts in).
 - `board-scene.py`: what KiCad's router sees of a real board (`board-scene.py BOARD.kicad_pcb [OUT.json]`, through
   KiCad's `pcbnew` Python module): the items `PNS_KICAD_IFACE_BASE::SyncWorld` makes of it, in its order, with their
   shapes as KiCad's own `GetEffectiveShape` gives them, the board's rules as KiCad's design rules engine resolves

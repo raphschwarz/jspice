@@ -59,32 +59,10 @@ extension CircuitSession {
                 let missing = only.subtracting(nets)
                 if missing == only { throw ToolError("No connections to route on \(missing.sorted().joined(separator: ", ")): pcb_status lists those left") }
             }
-            func wanted(_ wire: KiCadConnectivity.Airwire) -> Bool { (only?.contains(wire.net) ?? true) && !skip.contains(wire.net) }
-            var routed: [String] = [], failed: [String] = []
-            var tried = Set<KiCadConnectivity.Airwire>()
-            var added = 0
-            var wires = KiCadConnectivity(session.board).ratsnest()
-            while routed.count + failed.count < most, let wire = wires.first(where: { wanted($0) && !tried.contains($0) }) {
-                tried.insert(wire)
-                let name = "\(wire.net): \(wire.ends.isEmpty ? "tracks" : wire.ends.joined(separator: " to "))"
-                // its layer, then the other side
-                var done = false
-                for l in [layer, layer == "F.Cu" ? "B.Cu" : "F.Cu"] where !done {
-                    let start = session.startLayer(at: wire.from, preferring: l)
-                    guard session.start(at: wire.from, layer: start, width: width) else { continue }
-                    session.move(to: wire.to)
-                    if let edit = session.fix(at: wire.to) {
-                        added += edit.added.count
-                        done = true
-                    } else {
-                        session.cancel()
-                    }
-                }
-                if done { routed.append(name) } else { failed.append(name) }
-                wires = KiCadConnectivity(session.board).ratsnest()
-            }
-            var result: [String: Any] = ["routed": routed, "not_routed": failed, "tracks_and_vias_added": added,
-                                         "unrouted": wires.count]
+            let routing = session.routeConnections(nets: only, skip: skip, layer: layer, width: width, most: most)
+            let added = routing.edit?.added.count ?? 0
+            var result: [String: Any] = ["routed": routing.routed, "not_routed": routing.failed, "tracks_and_vias_added": added,
+                                         "unrouted": routing.left]
             if added > 0 {
                 let (_, live) = try link.apply(session.board, from: board, message: "Route (JSpice)")
                 result["changed_in"] = Self.place(live)

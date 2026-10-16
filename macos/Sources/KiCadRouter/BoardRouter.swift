@@ -30,6 +30,14 @@ public final class BoardRouter {
         router.syncWorld()
     }
 
+    /// The board changed here other than by routing (a footprint moved): what changed taken in
+    public func boardChanged() {
+        router.stopRouting()
+        lastAdded = []
+        lastRemoved = []
+        reload()
+    }
+
     /// The board read again after it changed elsewhere (a footprint moved, a track deleted)
     public func reload() {
         world = BoardWorld(board: board, project: project)

@@ -96,4 +96,62 @@ final class BoardEditingTests: XCTestCase {
             XCTAssert(ours.isEmpty, "\(file.lastPathComponent): " + ours.map { "\($0.type): \($0.description)" }.joined(separator: "; "))
         }
     }
+
+    /// Footprints moved, turned and turned over, each a change of its own; the router then sees their pads where they
+    /// went
+    func testFootprintsArePlaced() throws {
+        let file = try XCTUnwrap(Self.boards().first)
+        let session = BoardEditing(board: try KiCadBoard.read(file), project: Self.project(file))
+        let footprint = try XCTUnwrap(session.board.footprints.first { $0.pads.contains { $0.isCopper && $0.net != nil } })
+        let uuid = footprint.uuid, start = footprint.position, turn = footprint.rotation
+        let pad = try XCTUnwrap(footprint.pads.first { $0.isCopper && $0.net != nil })
+        let offset = KiCadPoint(pad.position.x - start.x, pad.position.y - start.y)
+
+        let moved = try XCTUnwrap(session.moveFootprint(uuid, to: KiCadPoint(start.x + 2.5, start.y - 1.25)))
+        XCTAssertEqual(moved.footprints, [uuid])
+        XCTAssertEqual(moved.added, [])
+        XCTAssertTrue(moved.name.hasPrefix("Move"))
+        let now = try XCTUnwrap(moved.after.footprint(uuid: uuid))
+        XCTAssertEqual(now.position.x, start.x + 2.5, accuracy: 1e-9)
+        XCTAssertEqual(now.rotation, turn)
+        XCTAssertEqual(try XCTUnwrap(moved.before.footprint(uuid: uuid)).position, start, "the board before it is as it was")
+        // the router sees the pad where it went
+        let there = KiCadPoint(start.x + 2.5 + offset.x, start.y - 1.25 + offset.y)
+        let layer = pad.layers.contains("B.Cu") && !pad.layers.contains("F.Cu") && !pad.layers.contains("*.Cu") ? "B.Cu" : "F.Cu"
+        XCTAssertNotNil(session.router.item(at: BoardEditing.nm(there), layer: session.router.layer(layer) ?? 0))
+        XCTAssertNil(session.moveFootprint(uuid, to: now.position), "not moved: no change")
+
+        let rotated = try XCTUnwrap(session.rotateFootprint(uuid))
+        XCTAssertEqual(try XCTUnwrap(rotated.after.footprint(uuid: uuid)).rotation,
+                       (turn + 90).truncatingRemainder(dividingBy: 360) > 180 ? turn + 90 - 360 : turn + 90, accuracy: 1e-9)
+        XCTAssertEqual(rotated.before.text, moved.after.text)
+
+        let side = now.layer
+        let flipped = try XCTUnwrap(session.flipFootprint(uuid))
+        XCTAssertNotEqual(try XCTUnwrap(flipped.after.footprint(uuid: uuid)).layer, side)
+        XCTAssertEqual(session.board.text, flipped.after.text)
+    }
+
+    /// Every connection routed in one go: one change, the connections left fewer
+    func testEveryConnectionIsRoutedAsOneChange() throws {
+        let file = try XCTUnwrap(Self.boards().last)
+        let board = try KiCadBoard.read(file)
+        let session = BoardEditing(board: board, project: Self.project(file))
+        let before = KiCadConnectivity(board).ratsnest().count
+        let routed = session.routeConnections()
+        print("BoardEditingTests: \(routed.routed.count) of \(before) connections routed, \(routed.left) left")
+        XCTAssertFalse(routed.routed.isEmpty)
+        XCTAssertLessThan(routed.left, before)
+        let edit = try XCTUnwrap(routed.edit)
+        XCTAssertEqual(edit.before.text, board.text)
+        XCTAssertEqual(edit.after.text, session.board.text)
+        XCTAssertFalse(edit.added.isEmpty)
+        XCTAssertFalse(session.isRouting)
+        // only one net, and nothing on a net left out
+        let again = BoardEditing(board: board, project: Self.project(file))
+        let net = try XCTUnwrap(KiCadConnectivity(board).ratsnest().first?.net)
+        let one = again.routeConnections(nets: [net])
+        XCTAssertTrue((one.routed + one.failed).allSatisfy { $0.hasPrefix(net + ":") })
+        XCTAssertTrue(again.routeConnections(skip: Set(KiCadConnectivity(board).ratsnest().map(\.net))).routed.isEmpty)
+    }
 }

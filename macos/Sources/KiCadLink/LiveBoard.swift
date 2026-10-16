@@ -6,8 +6,8 @@ import SwiftProtobuf
 /// the board (footprints removed, references, values, fields and links changed, pads put on other nets, zones and
 /// vias following a renamed net) made in the editor as one change, which its Undo takes back whole; the editor then
 /// gives the tracks the nets of the pads they reach, as it does on any change. Footprints new to the board are made
-/// whole from their libraries' definitions (KiCadFootprintMessage), and footprints exchanged for others made again in
-/// their place under their own ids; tracks and vias routed here are made, changed and taken away as they were
+/// whole from their libraries' definitions (KiCadFootprintMessage), and footprints exchanged for others (or moved,
+/// turned or turned over here) made again in their place under their own ids; tracks and vias routed here are made, changed and taken away as they were
 /// (KiCadTrackMessage). Should KiCad refuse one, the board is written to its file with the changes and the editor
 /// reads it again.
 public final class KiCadLiveBoard {
@@ -62,10 +62,13 @@ public final class KiCadLiveBoard {
         let old = Dictionary(before.footprints.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
         let new = Dictionary(after.footprints.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
         let removed = old.keys.filter { new[$0] == nil }.sorted()
-        // new, or exchanged for another footprint (or turned over): made whole
-        let made = after.footprints.filter { f in old[f.uuid].map { $0.libID != f.libID || $0.layer != f.layer } ?? true }
+        // new, or exchanged for another footprint (or turned over, moved or turned): made whole
+        func placedElsewhere(_ o: KiCadFootprint, _ f: KiCadFootprint) -> Bool {
+            o.libID != f.libID || o.layer != f.layer || o.position != f.position || o.rotation != f.rotation
+        }
+        let made = after.footprints.filter { f in old[f.uuid].map { placedElsewhere($0, f) } ?? true }
         let changed = after.footprints.filter { f in
-            guard let o = old[f.uuid], o.libID == f.libID, o.layer == f.layer else { return false }
+            guard let o = old[f.uuid], !placedElsewhere(o, f) else { return false }
             return o.node.compact != f.node.compact
         }
         // stitching vias and zones whose nets the update renamed (tracks follow their pads in the editor itself)

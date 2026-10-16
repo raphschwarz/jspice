@@ -348,10 +348,14 @@ struct PCBBoardCanvas: View {
     let readout: (CGPoint) -> String?
     @FocusState private var focused: Bool
 
+    /// The footprints selected: those of the parts selected in the schematic, and those selected here
+    private var footprints: Set<String> { selected.union(editing.footprintSelection) }
+
     var body: some View {
         Canvas { context, _ in
-            PCBPainter(picture: picture, view: view, side: side, selected: selected, drc: board.drc).draw(context)
-            PCBEditPainter(picture: picture, view: view, preview: editing.preview, selection: editing.selection).draw(context)
+            PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc).draw(context)
+            PCBEditPainter(picture: picture, view: view, preview: editing.preview, selection: editing.selection,
+                           dragging: editing.dragging).draw(context)
         }
         .frame(width: view.size.width, height: view.size.height)
         .overlay {
@@ -359,6 +363,12 @@ struct PCBBoardCanvas: View {
                 if let pointer { editing.pointerMoved(view.board(pointer)) }
             }
         }
+        .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
+            .onChanged { drag in
+                editing.dragChanged(from: view.board(drag.startLocation), to: view.board(drag.location), in: picture,
+                                    selected: footprints)
+            }
+            .onEnded { _ in editing.dragEnded() })
         .onTapGesture(coordinateSpace: .local) { location in
             focused = true
             let p = view.board(location)
@@ -370,10 +380,18 @@ struct PCBBoardCanvas: View {
             case .select:
                 // a track or via, else a part
                 if editing.select(at: p, in: picture, slop: 3 / view.scale, extending: extending) {
-                    if !extending { board.select(footprint: nil, extending: false) }
+                    if !extending {
+                        board.select(footprint: nil, extending: false)
+                        editing.footprintSelection = []
+                    }
                 } else {
                     let footprint = picture.footprint(at: p)
                     board.select(footprint: footprint?.uuid, extending: extending)
+                    if let uuid = footprint?.uuid {
+                        if extending { editing.footprintSelection.formSymmetricDifference([uuid]) } else { editing.footprintSelection = [uuid] }
+                    } else if !extending {
+                        editing.footprintSelection = []
+                    }
                 }
             }
         }
@@ -391,7 +409,15 @@ struct PCBBoardCanvas: View {
         guard press.modifiers.isDisjoint(with: [.command, .option, .control]) else { return false }
         switch press.key {
         case .escape:
-            if editing.isRouting { editing.stop() } else if editing.tool == .route { editing.tool = .select } else { editing.selection = [] }
+            if editing.isRouting {
+                editing.stop()
+            } else if editing.tool == .route {
+                editing.tool = .select
+            } else {
+                editing.selection = []
+                editing.footprintSelection = []
+                board.select(footprint: nil, extending: false)
+            }
             return true
         case .delete, .deleteForward:
             if editing.isRouting { editing.undoSegment() } else { editing.deleteSelection() }
@@ -414,6 +440,8 @@ struct PCBBoardCanvas: View {
         case "v": editing.placeVia()
         case "/": editing.flipPosture()
         case "w": editing.stepWidth(press.modifiers.contains(.shift) ? -1 : 1)
+        case "r" where editing.tool == .select: editing.rotate(footprints)
+        case "f" where editing.tool == .select: editing.flip(footprints)
         case "+", "=": editing.stepLayer(1)
         case "-": editing.stepLayer(-1)
         default: return false
@@ -429,9 +457,24 @@ struct PCBEditPainter {
     let view: PCBTransform
     let preview: BoardEditing.Preview?
     let selection: Set<String>
+    var dragging: (uuids: [String], delta: KiCadPoint)?
 
     func draw(_ context: GraphicsContext) {
         let s = view.scale
+        // footprints being dragged: their pads and outline where they would go
+        if let (uuids, d) = dragging {
+            let moving = Set(uuids)
+            func moved(_ points: [KiCadPoint]) -> [KiCadPoint] { points.map { KiCadPoint($0.x + d.x, $0.y + d.y) } }
+            var pads = Path()
+            for pad in picture.pads where moving.contains(pad.footprint) { pads.addPath(view.path(moved(pad.outline), closed: true)) }
+            context.fill(pads, with: .color(Color.white.opacity(0.35)))
+            context.stroke(pads, with: .color(.white), lineWidth: 1)
+            for footprint in picture.footprints where moving.contains(footprint.uuid) {
+                let b = footprint.box
+                let corners = moved([KiCadPoint(b.minX, b.minY), KiCadPoint(b.maxX, b.minY), KiCadPoint(b.maxX, b.maxY), KiCadPoint(b.minX, b.maxY)])
+                context.stroke(view.path(corners, closed: true), with: .color(.white), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            }
+        }
         if !selection.isEmpty {
             for track in picture.tracks where selection.contains(track.uuid) {
                 let path = view.path(track.points, closed: false)
@@ -492,7 +535,7 @@ struct PCBEditBar: View {
             Picker("Tool", selection: $editing.tool) {
                 ForEach(PCBEditing.Tool.allCases) { tool in
                     Image(systemName: tool.symbol).help(tool == .select
-                        ? "Select parts, tracks and vias (⌫ deletes the tracks and vias selected)"
+                        ? "Select and move parts (drag; R rotates, F flips), select tracks and vias (⌫ deletes them)"
                         : "Route tracks (X): click a pad, click to fix, double-click to finish; V via, / posture, Esc stop")
                         .tag(tool)
                 }
@@ -522,6 +565,18 @@ struct PCBEditBar: View {
                 .fixedSize()
                 .help("The width of new tracks (W, ⇧W): their net class's, or one chosen here")
             }
+            Menu {
+                Button("Route All Connections") { editing.routeAll() }
+                Button("Route All but Ground (for a Pour)") { editing.routeAll(groundToo: false) }
+            } label: {
+                Image(systemName: "wand.and.rays")
+            } primaryAction: {
+                editing.routeAll()
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(editing.isRouting)
+            .help("Route every connection still to route with the router, one at a time as you would, in one change (undo takes it back)")
             Button { editing.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(editing.undoName == nil || editing.isRouting)
                 .help(editing.undoName.map { "Undo \($0)" } ?? "Undo")
@@ -537,7 +592,7 @@ struct PCBEditMessage: View {
     @ObservedObject var editing: PCBEditing
 
     var body: some View {
-        if let message = editing.message, editing.tool == .route {
+        if let message = editing.message {
             Text(message)
                 .font(.caption)
                 .padding(.horizontal, 10).padding(.vertical, 5)

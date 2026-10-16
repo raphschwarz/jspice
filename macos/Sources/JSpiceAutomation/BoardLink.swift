@@ -158,9 +158,9 @@ public final class BoardLink {
         return Outcome(result: result, board: board, live: nil, partsOfFootprint: Self.parts(result, board, result.circuit))
     }
 
-    /// The board changed here, its tracks and vias (routed in the PCB view, or taken away), `before` being the board
-    /// the change was made on: in the open editor as one undoable change, else in the board's file. A file changed
-    /// since `before` was read (the schematic's update) keeps its own changes and takes the tracks and vias. The
+    /// The board changed here, its tracks and vias (routed in the PCB view, or taken away) and its footprints' places,
+    /// `before` being the board the change was made on: in the open editor as one undoable change, else in the board's
+    /// file. A file changed since `before` was read (the schematic's update) keeps its own changes and takes these. The
     /// board as it now is, and how the editor took it (nil: the file was written).
     public func apply(_ after: KiCadBoard, from before: KiCadBoard, message: String) throws -> (board: KiCadBoard, live: KiCadLiveBoard.Applied?) {
         if let live = live() {
@@ -174,6 +174,7 @@ public final class BoardLink {
         if current.text == before.text {
             board = after
         } else {
+            current.carryPlacement(from: before, to: after)
             current.carryCopper(from: before, to: after)
             board = current
         }

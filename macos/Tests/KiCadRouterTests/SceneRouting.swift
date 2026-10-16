@@ -46,7 +46,9 @@ enum SceneRouting {
                     if m is [Any] {
                         router.move(point(m), itemAt("endItem"))
                     } else if let m = m as? [String: Any] {
-                        if let pair = m["pair"] as? [Any] {
+                        if let to = m["move"] {
+                            router.move(point(to), itemAt("endItem", m))
+                        } else if let pair = m["pair"] as? [Any] {
                             var s = router.sizes
                             s.clearLayerPairs()
                             s.addLayerPair(int(pair[0]), int(pair[1]))

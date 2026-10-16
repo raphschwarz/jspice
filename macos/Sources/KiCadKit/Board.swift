@@ -177,6 +177,18 @@ public final class KiCadBoard {
         }
     }
 
+    /// Footprints moved, turned or turned over between `before` and `after`, placed so on this board too (by their
+    /// ids): a change made on an older copy of the board carried onto this one, which keeps its own changes
+    public func carryPlacement(from before: KiCadBoard, to after: KiCadBoard) {
+        let old = Dictionary(before.footprints.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
+        for f in after.footprints {
+            guard let o = old[f.uuid], let here = footprint(uuid: f.uuid),
+                  o.position != f.position || o.rotation != f.rotation || o.layer != f.layer else { continue }
+            if here.layer != f.layer { here.flip() }
+            here.move(to: f.position, rotation: f.rotation)
+        }
+    }
+
     /// Takes nets no item names out of KiCad 9's table (RemoveUnusedNets)
     public func removeUnusedNets() {
         guard numbersNets else { return }

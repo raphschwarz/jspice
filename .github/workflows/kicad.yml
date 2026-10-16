@@ -65,4 +65,14 @@ jobs:
           KICAD_GEOMETRY_REFERENCE: ${{ runner.temp }}/kicad-reference/kicad-geometry-2000.json
           KICAD_ROUTER_REFERENCE: ${{ runner.temp }}/kicad-reference/routes-1000.json:${{ runner.temp }}/board-routes.json
           KICAD_BOARD_REFERENCE: ${{ runner.temp }}/boards
+          KICAD_DRC_KEEP: ${{ runner.temp }}/drc-failures
         run: macos/scripts/kicad-linux-tests.sh --filter KiCadRouterTests
+      - name: Boards the router got wrong, to look at
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kicad-router-failures
+          path: |
+            ${{ runner.temp }}/drc-failures
+            ${{ runner.temp }}/boards
+          if-no-files-found: ignore

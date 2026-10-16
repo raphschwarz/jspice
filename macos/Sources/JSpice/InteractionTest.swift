@@ -262,6 +262,25 @@ enum InteractionTest {
         } else {
             check(false, "a routed track to select")
         }
+
+        // a part dragged, turned and turned over, and the moves undone
+        if let footprint = pcb.picture?.footprints.first {
+            let at = footprint.position
+            await editing.place { $0.moveFootprints([footprint.uuid], by: KiCadPoint(2, 1)) }
+            await editing.settled()
+            let moved = pcb.picture?.footprints.first { $0.uuid == footprint.uuid }
+            check(moved.map { abs($0.position.x - at.x - 2) < 1e-6 && abs($0.position.y - at.y - 1) < 1e-6 } ?? false,
+                  "a part dragged moves on the board")
+            await editing.place { $0.rotateFootprints([footprint.uuid]) }
+            await editing.place { $0.flipFootprints([footprint.uuid]) }
+            await editing.settled()
+            check(pcb.picture?.footprints.first { $0.uuid == footprint.uuid }?.isOnBack != footprint.isOnBack, "and turns over")
+            capture(window, to: directory.appendingPathComponent("66-pcb-placed-by-hand.png"))
+            for _ in 0..<3 { editing.undo() }
+            await editing.settled()
+            let back = pcb.picture?.footprints.first { $0.uuid == footprint.uuid }
+            check(back.map { $0.position == at && $0.isOnBack == footprint.isOnBack } ?? false, "undo puts it back")
+        }
     }
 
     private static func finish(_ window: NSWindow) -> Bool {

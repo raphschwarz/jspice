@@ -33,6 +33,11 @@ final class PCBEditing: ObservableObject {
     @Published private(set) var isRouting = false
     /// The tracks and vias selected, by id
     @Published var selection: Set<String> = []
+    /// Footprints selected here, by id (besides those of the parts selected in the schematic: these include parts the
+    /// schematic does not have, mounting holes and logos)
+    @Published var footprintSelection: Set<String> = []
+    /// Footprints being dragged, and how far so far
+    @Published private(set) var dragging: (uuids: [String], delta: KiCadPoint)?
     /// What the last action could not do, or how to go on
     @Published private(set) var message: String?
     @Published private(set) var undoName: String?
@@ -286,6 +291,70 @@ final class PCBEditing: ObservableObject {
         await applying?.value
         if !isReady { await prepareNow() }
         guard let made = await engine.run({ $0.remove(uuids) }) else { return }
+        take(made)
+    }
+
+    // MARK: - Routing every connection
+
+    /// Every connection still to route routed, as one change (`groundToo` false: the ground nets left for a pour)
+    func routeAll(groundToo: Bool = true) {
+        guard !isRouting else { return }
+        let layer = self.layer, width = self.width
+        Task {
+            await applying?.value
+            if !isReady { await prepareNow() }
+            message = "Routing every connection…"
+            let routed = await engine.run { session -> BoardEditing.Routed? in
+                let ground = groundToo ? [] : Set(session.router.world.netNames.values.filter { $0.uppercased().contains("GND") })
+                return session.routeConnections(skip: ground, layer: layer, width: width)
+            }
+            guard let routed else { return }
+            if let edit = routed.edit { take(edit) }
+            message = "Routed \(routed.routed.count) connection\(routed.routed.count == 1 ? "" : "s")"
+                + (routed.failed.isEmpty ? "" : "; \(routed.failed.count) could not be routed") + "; \(routed.left) left to route."
+        }
+    }
+
+    // MARK: - Placing
+
+    /// A drag from `start` to `now` (mm) with the select tool: the footprint there (with the others selected, if it is
+    /// one of them) following it, on a 0.05 mm grid
+    func dragChanged(from start: KiCadPoint, to now: KiCadPoint, in picture: KiCadBoardPicture, selected: Set<String>) {
+        guard tool == .select, !isRouting else { return }
+        if dragging == nil {
+            guard let footprint = picture.footprint(at: start) else { return }
+            dragging = (selected.contains(footprint.uuid) ? Array(selected) : [footprint.uuid], .zero)
+        }
+        let grid = 0.05
+        dragging?.delta = KiCadPoint(((now.x - start.x) / grid).rounded() * grid, ((now.y - start.y) / grid).rounded() * grid)
+    }
+
+    /// The drag let go: the footprints moved there
+    func dragEnded() {
+        guard let (uuids, delta) = dragging else { return }
+        dragging = nil
+        guard delta != .zero else { return }
+        Task { await place { $0.moveFootprints(uuids, by: delta) } }
+    }
+
+    /// Footprints turned 90° counterclockwise (R)
+    func rotate(_ uuids: Set<String>) {
+        guard !uuids.isEmpty else { return }
+        Task { await place { $0.rotateFootprints(uuids.sorted()) } }
+    }
+
+    /// Footprints turned over to the other side (F)
+    func flip(_ uuids: Set<String>) {
+        guard !uuids.isEmpty else { return }
+        Task { await place { $0.flipFootprints(uuids.sorted()) } }
+    }
+
+    /// A change to the footprints' places, made and sent to the board
+    func place(_ body: @escaping (BoardEditing) -> BoardEditing.Edit?) async {
+        guard !isRouting else { return }
+        await applying?.value
+        if !isReady { await prepareNow() }
+        guard let made = await engine.run(body) else { return }
         take(made)
     }
 

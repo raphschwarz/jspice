@@ -133,6 +133,17 @@ final class LiveBoardTests: XCTestCase {
         }
         XCTAssertEqual(now.footprints.filter { $0.uuid == made[1] }.count, 1)
 
+        // moved and turned, as the PCB view moves one: made again where it went
+        let placed = now.copy()
+        let mover = try XCTUnwrap(placed.footprint(uuid: made[3]))
+        mover.move(to: KiCadPoint(mover.position.x + 3.5, mover.position.y + 2), rotation: mover.rotation + 90)
+        XCTAssertEqual(try live.apply(from: now, to: placed, message: "Test: move"), .live(count: 1), live.reloadReason ?? "")
+        now = try live.snapshot()
+        let went = try XCTUnwrap(now.footprint(uuid: made[3]))
+        XCTAssertEqual(went.position.x, mover.position.x, accuracy: 1e-6)
+        XCTAssertEqual(went.position.y, mover.position.y, accuracy: 1e-6)
+        XCTAssertEqual(Self.differences(mover.node, went.node), [], mover.libID)
+
         // removed
         let removed = now.copy()
         removed.remove(try XCTUnwrap(removed.footprint(uuid: made[0])))

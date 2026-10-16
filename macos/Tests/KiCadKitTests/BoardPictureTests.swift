@@ -55,10 +55,15 @@ final class BoardPictureTests: XCTestCase {
         let gone = try XCTUnwrap(after.copperItems.last { $0.value("uuid") != "new-track" && $0.value("uuid") != kept })
         let goneID = try XCTUnwrap(gone.value("uuid"))
         after.root.remove(gone)
+        // and a footprint turned
+        let turned = try XCTUnwrap(after.footprints.last)
+        turned.move(to: turned.position, rotation: turned.rotation + 90)
         // the board meanwhile changed elsewhere: a footprint moved
         let moved = try XCTUnwrap(board.footprints.first)
         moved.move(to: KiCadPoint(moved.position.x + 5, moved.position.y), rotation: moved.rotation)
         board.carryCopper(from: before, to: after)
+        board.carryPlacement(from: before, to: after)
+        XCTAssertEqual(board.footprint(uuid: turned.uuid)?.rotation, turned.rotation)
         XCTAssertTrue(board.copperItems.contains { $0.value("uuid") == "new-track" })
         XCTAssertFalse(board.copperItems.contains { $0.value("uuid") == goneID })
         XCTAssertTrue(board.copperItems.contains { $0.value("uuid") == kept })

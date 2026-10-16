@@ -794,7 +794,8 @@ int main()
         {
             bool finished = false;
 
-            // each step a pointer position, or one of what the router tool asks of the router: a layer pair for
+            // each step a pointer position (or one with the item under it, "move" and "endItem"), or one of what the
+            // router tool asks of the router: a layer pair for
             // vias ("pair"), via placement on or off ("via"), a layer to route on ("layer"), the posture flipped
             // ("posture"), the route fixed where it is ("fix", which ends it when the router says it is finished),
             // the last fixed part taken back ("undo")
@@ -805,6 +806,11 @@ int main()
                 if( m.is_array() )
                 {
                     router.Move( pt( m ), itemAt( "endItem", route ) );
+                }
+                else if( m.contains( "move" ) )
+                {
+                    // (a pointer position with the item under it, as the router tool finds one at each move)
+                    router.Move( pt( m["move"] ), itemAt( "endItem", m ) );
                 }
                 else if( m.contains( "pair" ) )
                 {
