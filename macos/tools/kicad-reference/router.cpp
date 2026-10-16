@@ -10,7 +10,9 @@
 //
 // This program links KiCad's code: GNU General Public License version 3 or later, as KiCad.
 
+#include <geometry/shape_arc.h>
 #include <geometry/shape_circle.h>
+#include <geometry/shape_poly_set.h>
 #include <geometry/shape_rect.h>
 #include <geometry/shape_segment.h>
 #include <geometry/shape_simple.h>
@@ -30,6 +32,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <optional>
 
 using json = nlohmann::json;
 
@@ -60,6 +63,9 @@ static SHAPE* makeShape( const json& j )
     if( j.contains( "segment" ) )
         return new SHAPE_SEGMENT( pt( j["segment"][0] ), pt( j["segment"][1] ), j["w"].get<int>() );
 
+    if( j.contains( "arc" ) )
+        return new SHAPE_ARC( pt( j["arc"][0] ), pt( j["arc"][1] ), pt( j["arc"][2] ), j.value( "w", 0 ) );
+
     SHAPE_SIMPLE* s = new SHAPE_SIMPLE();
 
     for( const json& p : j["simple"] )
@@ -77,8 +83,18 @@ static int netCode( PNS::NET_HANDLE aNet ) { return aNet ? int( static_cast<int*
 /// What the JSON says of an item that KiCad would read from its BOARD_ITEM
 struct ITEM_INFO
 {
-    std::string kind; // pad, track, via, edge
-    bool        npth = false;
+    std::string        kind; // pad, track, via, edge, graphic, text, keepout
+    bool               npth = false;
+    bool               copper = true;      // BOARD_ITEM::IsOnCopperLayer
+    bool               drilled = false;    // BOARD_ITEM::HasDrilledHole
+    bool               npthSlot = false;
+    std::optional<int> clearanceOverride;  // BOARD_CONNECTED_ITEM::GetClearanceOverrides
+    std::vector<bool>  flashed;            // PAD::FlashLayer, PCB_VIA::FlashLayer, by router layer
+    json               keepout;            // a keepout zone's rules
+    std::string        footprint;          // the footprint a pad or keepout zone is part of
+
+    /// BOARD_ITEM::IsConnected: a pad, track, via or drawing; not a text or a rule area
+    bool connected() const { return kind != "text" && kind != "keepout"; }
 };
 
 class SCENE_RESOLVER : public PNS::RULE_RESOLVER
@@ -90,6 +106,11 @@ public:
     int m_holeToHole = 250000;
     int m_edgeClearance = 500000;
     int m_epsilon = 0;
+
+    // A board's rules (scene "rules": "board"), as KiCad's DRC engine works them out with no rules of the user's
+    // own: each net's net class clearance, a pad's or its footprint's own clearance first, the board's minimums
+    bool               m_board = false;
+    std::map<int, int> m_netClearance;
 
     const ITEM_INFO* info( const PNS::ITEM* aItem ) const
     {
@@ -112,7 +133,96 @@ public:
     bool isCopper( const PNS::ITEM* aItem ) const
     {
         const ITEM_INFO* i = info( aItem );
-        return !( i && i->kind == "pad" && i->npth );
+
+        if( !m_board )
+            return !( i && i->kind == "pad" && i->npth );
+
+        return !i || i->copper;
+    }
+
+    /// DRC_ENGINE::EvalRules's "non copper": not on a copper layer, or a keepout zone
+    bool nonCopper( const PNS::ITEM* aItem ) const
+    {
+        const ITEM_INFO* i = info( aItem );
+        return i && ( !i->copper || i->kind == "keepout" );
+    }
+
+    bool connected( const PNS::ITEM* aItem ) const
+    {
+        const ITEM_INFO* i = info( aItem );
+        return !i || i->connected();
+    }
+
+    std::optional<int> override( const PNS::ITEM* aItem ) const
+    {
+        const ITEM_INFO* i = info( aItem );
+        return i ? i->clearanceOverride : std::nullopt;
+    }
+
+    int netClearance( const PNS::ITEM* aItem ) const
+    {
+        auto it = m_netClearance.find( netCode( aItem->Net() ) );
+        return it == m_netClearance.end() ? 0 : it->second;
+    }
+
+    /// The local overrides of either item, the larger, and no less than `aMinimum` (EvalRules's "local overrides
+    /// take precedence over everything except board min clearance")
+    std::optional<int> overrides( const PNS::ITEM* aA, const PNS::ITEM* aB, int aMinimum ) const
+    {
+        std::optional<int> a, b;
+
+        if( aA && connected( aA ) && !( aB && nonCopper( aB ) ) )
+            a = override( aA );
+
+        if( aB && connected( aB ) && !( aA && nonCopper( aA ) ) )
+            b = override( aB );
+
+        if( !a && !b )
+            return std::nullopt;
+
+        int v = a.value_or( 0 );
+
+        if( b && *b > v )
+            v = *b;
+
+        if( !v )
+            return std::nullopt;
+
+        return std::max( v, aMinimum );
+    }
+
+    /// QueryConstraint, for the constraint types the router asks of a board without rules of its own
+    int boardConstraint( PNS::CONSTRAINT_TYPE aType, const PNS::ITEM* aA, const PNS::ITEM* aB ) const
+    {
+        switch( aType )
+        {
+        case PNS::CONSTRAINT_TYPE::CT_CLEARANCE:
+        {
+            if( std::optional<int> v = overrides( aA, aB, m_clearance ) )
+                return *v;
+
+            if( nonCopper( aA ) || ( aB && nonCopper( aB ) ) )
+                return 0;
+
+            int c = 0;
+
+            if( connected( aA ) )
+                c = netClearance( aA );
+
+            if( aB && connected( aB ) )
+                c = std::max( c, netClearance( aB ) );
+
+            return std::max( c, m_clearance );
+        }
+        case PNS::CONSTRAINT_TYPE::CT_HOLE_CLEARANCE:
+            if( std::optional<int> v = overrides( aA, aB, m_holeClearance ) )
+                return *v;
+
+            return m_holeClearance;
+        case PNS::CONSTRAINT_TYPE::CT_HOLE_TO_HOLE: return m_holeToHole;
+        case PNS::CONSTRAINT_TYPE::CT_EDGE_CLEARANCE: return m_edgeClearance;
+        default: return 0;
+        }
     }
 
     int Clearance( const PNS::ITEM* aA, const PNS::ITEM* aB, bool aUseClearanceEpsilon ) override
@@ -121,19 +231,24 @@ public:
         bool sameNet = aA && aB && aA->Net() && aA->Net() == aB->Net();
         bool freePad = aA && aB && ( aA->IsFreePad() || aB->IsFreePad() );
 
+        auto query = [&]( PNS::CONSTRAINT_TYPE aType, int aSimple )
+        {
+            return m_board ? boardConstraint( aType, aA, aB ) : aSimple;
+        };
+
         if( IsDrilledHole( aA ) && IsDrilledHole( aB ) )
-            rv = std::max( rv, m_holeToHole );
+            rv = std::max( rv, query( PNS::CONSTRAINT_TYPE::CT_HOLE_TO_HOLE, m_holeToHole ) );
         else if( isHole( aA ) || isHole( aB ) )
         {
             if( !sameNet )
-                rv = std::max( rv, m_holeClearance );
+                rv = std::max( rv, query( PNS::CONSTRAINT_TYPE::CT_HOLE_CLEARANCE, m_holeClearance ) );
         }
 
         if( isCopper( aA ) && ( !aB || isCopper( aB ) ) && !sameNet && !freePad )
-            rv = std::max( rv, m_clearance );
+            rv = std::max( rv, query( PNS::CONSTRAINT_TYPE::CT_CLEARANCE, m_clearance ) );
 
         if( isEdge( aA ) || IsNonPlatedSlot( aA ) || isEdge( aB ) || IsNonPlatedSlot( aB ) )
-            rv = std::max( rv, m_edgeClearance );
+            rv = std::max( rv, query( PNS::CONSTRAINT_TYPE::CT_EDGE_CLEARANCE, m_edgeClearance ) );
 
         if( ( sameNet || freePad ) && rv == 0 )
             rv = -1;
@@ -155,24 +270,67 @@ public:
     bool IsDrilledHole( const PNS::ITEM* aItem ) override
     {
         const ITEM_INFO* i = info( aItem );
+
+        if( m_board )
+            return isHole( aItem ) && i && ( i->kind == "via" || i->drilled );
+
         return isHole( aItem ) && i && ( i->kind == "pad" || i->kind == "via" );
     }
 
-    bool IsNonPlatedSlot( const PNS::ITEM* aItem ) override { return false; }
-    bool IsKeepout( const PNS::ITEM*, const PNS::ITEM*, bool* ) override { return false; }
+    bool IsNonPlatedSlot( const PNS::ITEM* aItem ) override
+    {
+        const ITEM_INFO* i = info( aItem );
+        return m_board && isHole( aItem ) && i && i->npthSlot;
+    }
 
-    bool QueryConstraint( PNS::CONSTRAINT_TYPE aType, const PNS::ITEM*, const PNS::ITEM*, int,
+    /// Whether `aObstacle` is a keepout zone; if so, `aEnforce` whether it keeps `aItem` out. (KiCad asks it of the
+    /// board item it makes for the router item's kind: a track for a segment or line, a via for a via or a hole,
+    /// nothing for a pad.)
+    bool IsKeepout( const PNS::ITEM* aObstacle, const PNS::ITEM* aItem, bool* aEnforce ) override
+    {
+        const ITEM_INFO* i = info( aObstacle );
+
+        if( !i || i->kind != "keepout" )
+            return false;
+
+        const json& k = i->keepout;
+        bool        enforce = false;
+
+        if( aItem->OfKind( PNS::ITEM::SEGMENT_T | PNS::ITEM::LINE_T | PNS::ITEM::ARC_T ) )
+            enforce = k.value( "tracks", false );
+        else if( aItem->OfKind( PNS::ITEM::VIA_T | PNS::ITEM::HOLE_T ) )
+            enforce = k.value( "vias", false );
+
+        *aEnforce = enforce;
+        return true;
+    }
+
+    bool QueryConstraint( PNS::CONSTRAINT_TYPE aType, const PNS::ITEM* aA, const PNS::ITEM* aB, int,
                           PNS::CONSTRAINT* aConstraint ) override
     {
         int v = 0;
 
-        switch( aType )
+        if( m_board )
         {
-        case PNS::CONSTRAINT_TYPE::CT_CLEARANCE: v = m_clearance; break;
-        case PNS::CONSTRAINT_TYPE::CT_HOLE_CLEARANCE: v = m_holeClearance; break;
-        case PNS::CONSTRAINT_TYPE::CT_HOLE_TO_HOLE: v = m_holeToHole; break;
-        case PNS::CONSTRAINT_TYPE::CT_EDGE_CLEARANCE: v = m_edgeClearance; break;
-        default: return false;
+            switch( aType )
+            {
+            case PNS::CONSTRAINT_TYPE::CT_CLEARANCE:
+            case PNS::CONSTRAINT_TYPE::CT_HOLE_CLEARANCE:
+            case PNS::CONSTRAINT_TYPE::CT_HOLE_TO_HOLE:
+            case PNS::CONSTRAINT_TYPE::CT_EDGE_CLEARANCE: v = boardConstraint( aType, aA, aB ); break;
+            default: return false;
+            }
+        }
+        else
+        {
+            switch( aType )
+            {
+            case PNS::CONSTRAINT_TYPE::CT_CLEARANCE: v = m_clearance; break;
+            case PNS::CONSTRAINT_TYPE::CT_HOLE_CLEARANCE: v = m_holeClearance; break;
+            case PNS::CONSTRAINT_TYPE::CT_HOLE_TO_HOLE: v = m_holeToHole; break;
+            case PNS::CONSTRAINT_TYPE::CT_EDGE_CLEARANCE: v = m_edgeClearance; break;
+            default: return false;
+            }
         }
 
         aConstraint->m_Type = aType;
@@ -270,6 +428,8 @@ public:
     SCENE_RESOLVER               m_resolver;
     std::vector<PNS::ITEM*>      m_byIndex;
     std::vector<json>            m_added;
+    std::vector<json>            m_triangles;     // the keepout zones' triangles, as SyncWorld made them
+    int                          m_maxClearance = -1;
     PNS::NODE*                   m_world = nullptr;
 
     void SyncWorld( PNS::NODE* aWorld ) override
@@ -282,21 +442,45 @@ public:
         {
             std::string kind = j["kind"];
             PNS::ITEM*  item = nullptr;
+            ITEM_INFO   info{ kind, j.value( "npth", false ) };
+            info.copper = j.value( "copper", kind != "edge" );
+            info.drilled = j.value( "drilled", false );
+            info.npthSlot = j.value( "npthSlot", false );
 
-            if( kind == "pad" || kind == "edge" )
+            if( j.contains( "clearanceOverride" ) )
+                info.clearanceOverride = j["clearanceOverride"].get<int>();
+
+            if( j.contains( "flashed" ) )
+                info.flashed = j["flashed"].get<std::vector<bool>>();
+
+            info.footprint = j.value( "footprint", "" );
+
+            auto layersOf = [&]( PNS_LAYER_RANGE aDefault )
             {
-                auto solid = std::make_unique<PNS::SOLID>();
-                PNS_LAYER_RANGE layers = kind == "edge" ? PNS_LAYER_RANGE( 0, m_layers - 1 )
-                                                        : PNS_LAYER_RANGE( j["layers"][0].get<int>(), j["layers"][1].get<int>() );
-                solid->SetLayers( layers );
+                return j.contains( "layers" ) ? PNS_LAYER_RANGE( j["layers"][0].get<int>(), j["layers"][1].get<int>() )
+                                              : aDefault;
+            };
 
-                if( kind == "edge" || j.value( "npth", false ) )
+            if( kind == "pad" || kind == "edge" || kind == "graphic" || kind == "text" )
+            {
+                // syncPad, syncGraphicalItem, syncTextItem
+                auto solid = std::make_unique<PNS::SOLID>();
+                solid->SetLayers( kind == "edge" ? layersOf( PNS_LAYER_RANGE( 0, m_layers - 1 ) ) : layersOf( PNS_LAYER_RANGE( 0, 0 ) ) );
+
+                if( kind == "edge" || kind == "text" || j.value( "npth", false ) )
                     solid->SetRoutable( false );
 
-                solid->SetNet( netHandle( j.value( "net", 0 ) ) );
+                // (a text has no net; anything else a net, the orphaned one if none of its own)
+                solid->SetNet( kind == "text" ? nullptr : netHandle( j.value( "net", 0 ) ) );
+
+                if( j.value( "freePad", false ) )
+                    solid->SetIsFreePad();
 
                 if( j.contains( "pos" ) )
                     solid->SetPos( pt( j["pos"] ) );
+
+                if( j.contains( "offset" ) )
+                    solid->SetOffset( pt( j["offset"] ) );
 
                 if( j.contains( "hole" ) && !j["hole"].is_null() )
                 {
@@ -305,17 +489,80 @@ public:
                 }
 
                 solid->SetShape( makeShape( j["shape"] ) );
+
+                if( j.value( "compound", false ) )
+                    solid->SetIsCompoundShapePrimitive();
+
                 item = solid.get();
-                m_resolver.m_info[item] = ITEM_INFO{ kind, j.value( "npth", false ) };
+                m_resolver.m_info[item] = info;
                 aWorld->Add( std::move( solid ) );
+            }
+            else if( kind == "keepout" )
+            {
+                // syncZone: the rule area's outline cut into triangles, by KiCad's code, each a solid on each layer
+                SHAPE_POLY_SET poly;
+
+                for( const json& polygon : j["polygons"] )
+                {
+                    poly.NewOutline();
+
+                    for( const json& p : polygon[0] )
+                        poly.Append( pt( p ) );
+
+                    for( size_t h = 1; h < polygon.size(); h++ )
+                    {
+                        poly.NewHole();
+
+                        for( const json& p : polygon[h] )
+                            poly.Append( pt( p ), -1, poly.HoleCount( poly.OutlineCount() - 1 ) - 1 );
+                    }
+                }
+
+                poly.CacheTriangulation( false );
+                info.keepout = j["keepout"];
+
+                for( const json& layer : j["layers"] )
+                {
+                    for( unsigned int polyId = 0; polyId < poly.TriangulatedPolyCount(); polyId++ )
+                    {
+                        const SHAPE_POLY_SET::TRIANGULATED_POLYGON* tri = poly.TriangulatedPolygon( polyId );
+
+                        for( size_t i = 0; i < tri->GetTriangleCount(); i++ )
+                        {
+                            VECTOR2I a, b, c;
+                            tri->GetTriangle( i, a, b, c );
+                            SHAPE_SIMPLE* triShape = new SHAPE_SIMPLE;
+                            triShape->Append( a );
+                            triShape->Append( b );
+                            triShape->Append( c );
+                            auto solid = std::make_unique<PNS::SOLID>();
+                            solid->SetLayer( layer.get<int>() );
+                            solid->SetNet( nullptr );
+                            solid->SetShape( triShape );
+                            solid->SetIsCompoundShapePrimitive();
+                            solid->SetRoutable( false );
+
+                            if( !item )
+                                item = solid.get();
+
+                            m_resolver.m_info[solid.get()] = info;
+                            m_triangles.push_back( { { "layer", layer }, { "triangle", json::array( { pt( a ), pt( b ), pt( c ) } ) } } );
+                            aWorld->Add( std::move( solid ) );
+                        }
+                    }
+                }
             }
             else if( kind == "track" )
             {
                 auto seg = std::make_unique<PNS::SEGMENT>( SEG( pt( j["a"] ), pt( j["b"] ) ), netHandle( j["net"] ) );
                 seg->SetWidth( j["width"] );
                 seg->SetLayer( j["layer"] );
+
+                if( j.value( "locked", false ) )
+                    seg->Mark( PNS::MK_LOCKED );
+
                 item = seg.get();
-                m_resolver.m_info[item] = ITEM_INFO{ kind, false };
+                m_resolver.m_info[item] = info;
                 aWorld->Add( std::move( seg ), true );
             }
             else if( kind == "via" )
@@ -324,18 +571,25 @@ public:
                 auto via = std::make_unique<PNS::VIA>( pt( j["pos"] ), layers, 0, j["drill"].get<int>(),
                                                        netHandle( j["net"] ) );
                 via->SetDiameter( 0, j["diameter"] );
+
+                if( j.value( "locked", false ) )
+                    via->Mark( PNS::MK_LOCKED );
+
+                via->SetIsFree( j.value( "free", false ) );
                 via->SetHole( PNS::HOLE::MakeCircularHole( pt( j["pos"] ), j["drill"].get<int>() / 2, layers ) );
                 via->SetHoleLayers( layers );
                 item = via.get();
-                m_resolver.m_info[item] = ITEM_INFO{ kind, false };
+                m_resolver.m_info[item] = info;
                 aWorld->Add( std::move( via ) );
             }
 
+            // (an arc track is left out: the Swift port has no arcs in its lines yet, and both leave them out)
             m_byIndex.push_back( item );
         }
 
-        int worst = std::max( { m_resolver.m_clearance, m_resolver.m_holeClearance, m_resolver.m_holeToHole,
-                                m_resolver.m_edgeClearance } );
+        int worst = m_maxClearance >= 0 ? m_maxClearance
+                                        : std::max( { m_resolver.m_clearance, m_resolver.m_holeClearance,
+                                                      m_resolver.m_holeToHole, m_resolver.m_edgeClearance } );
         aWorld->SetRuleResolver( &m_resolver );
         aWorld->SetMaxClearance( worst + m_resolver.ClearanceEpsilon() );
     }
@@ -362,10 +616,20 @@ public:
     bool IsAnyLayerVisible( const PNS_LAYER_RANGE& aLayer ) const override { return true; }
     bool IsItemVisible( const PNS::ITEM* aItem ) const override { return true; }
 
+    /// Which layers a pad or via of the board is flashed on (PAD::FlashLayer, PCB_VIA::FlashLayer)
+    const std::vector<bool>* flashed( const PNS::ITEM* aItem ) const
+    {
+        const ITEM_INFO* i = m_resolver.info( aItem );
+        return i && !i->flashed.empty() && !aItem->OfKind( PNS::ITEM::HOLE_T ) ? &i->flashed : nullptr;
+    }
+
     bool IsFlashedOnLayer( const PNS::ITEM* aItem, int aLayer ) const override
     {
         if( aLayer < 0 )
             return true;
+
+        if( const std::vector<bool>* f = flashed( aItem ) )
+            return aLayer < (int) f->size() && ( *f )[aLayer];
 
         if( aItem->OfKind( PNS::ITEM::VIA_T ) )
             return static_cast<const PNS::VIA*>( aItem )->ConnectsLayer( aLayer );
@@ -376,6 +640,17 @@ public:
     bool IsFlashedOnLayer( const PNS::ITEM* aItem, const PNS_LAYER_RANGE& aLayer ) const override
     {
         PNS_LAYER_RANGE test = aItem->Layers().Intersection( aLayer );
+
+        if( const std::vector<bool>* f = flashed( aItem ) )
+        {
+            for( int layer = test.Start(); layer <= test.End(); ++layer )
+            {
+                if( layer >= 0 && layer < (int) f->size() && ( *f )[layer] )
+                    return true;
+            }
+
+            return false;
+        }
 
         if( aItem->OfKind( PNS::ITEM::VIA_T ) )
         {
@@ -460,6 +735,16 @@ int main()
     iface.m_resolver.m_holeToHole = rules.value( "holeToHole", 250000 );
     iface.m_resolver.m_edgeClearance = rules.value( "edgeClearance", 500000 );
     iface.m_resolver.m_epsilon = rules.value( "epsilon", 0 );
+
+    if( rules.value( "board", false ) )
+    {
+        iface.m_resolver.m_board = true;
+        iface.m_resolver.m_clearance = rules["minClearance"];
+        iface.m_maxClearance = rules["maxClearance"];
+
+        for( const auto& [code, clearance] : rules["netClearance"].items() )
+            iface.m_resolver.m_netClearance[std::stoi( code )] = clearance;
+    }
 
     TRACE_DECORATOR trace;
 

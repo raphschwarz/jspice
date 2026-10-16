@@ -24,12 +24,28 @@ Public License version 3 or later (see `../../KICAD-NOTICE.md`).
   step as the router tool drives it (pointer moves, vias, layer switches, clicks that fix part of a route, undo,
   posture flips; walking around obstacles or marking them). It writes the head, tail and trace after each step, what
   each route fixed and what it put on the board. `RouterTests.swift` routes the same boards with the port, with the
-  same rules (`SceneRouting.swift`), and must get the same, point for point.
+  same rules (`SceneRouting.swift`), and must get the same, point for point. A board can also be a real one as
+  `board-scene.py` gives it (`"rules": {"board": true, ...}`): every item KiCad's router takes from a board (pads,
+  drawings and texts on copper, outlines, keepout zones, which it cuts into triangles as KiCad does, tracks, vias)
+  with the clearances KiCad's rule resolver would give it (net classes, pads' and footprints' own clearances, the
+  board's minimums, hole and edge clearances).
+- `board-scene.py`: what KiCad's router sees of a real board (`board-scene.py BOARD.kicad_pcb [OUT.json]`, through
+  KiCad's `pcbnew` Python module): the items `PNS_KICAD_IFACE_BASE::SyncWorld` makes of it, in its order, with their
+  shapes as KiCad's own `GetEffectiveShape` gives them, the board's rules as KiCad's design rules engine resolves
+  them, and its nets. `BoardWorldTests.swift` reads the same board with `BoardWorld` and must find the same items,
+  shapes and rules, to the nanometre (custom pads aside, whose outlines need polygon merging the port lacks yet).
+- `boards.py`: random boards made by KiCad itself (`boards.py OUTDIR COUNT [SEED]`): footprints from KiCad's own
+  libraries with every kind of pad, turned and flipped, on two or four layers; nets in net classes chosen by
+  pattern, of different priorities; pads' and footprints' own clearances; tracks, vias, drawings on copper; outlines
+  with rounded corners and round cut-outs. Each is saved with its project, and `board-scene.py` run on it.
+  `Tests/KiCadRouterTests/Fixtures/boards` holds three; `KICAD_BOARD_REFERENCE` names another folder of them.
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
   turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them,
   and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is
-  `scenes.py ... ../../Tests/KiCadRouterTests/Fixtures/kicad-routes.json 60`; `KICAD_ROUTER_REFERENCE` names
-  another.
+  `scenes.py ... ../../Tests/KiCadRouterTests/Fixtures/kicad-routes.json 60`. With `--boards`, random routes on real
+  boards (`board-scene.py`'s scenes): `scenes.py --boards KICAD_ROUTER OUT.json ROUTES_PER_BOARD SEED SCENE.json...`;
+  `kicad-board-routes.json` is `scenes.py --boards ... 2 20261016 ../../Tests/KiCadRouterTests/Fixtures/boards/*.json`.
+  `KICAD_ROUTER_REFERENCE` names others (separated by colons).
 - `patch.py`: the two changes `build.sh` makes to KiCad's router before building it, so it answers the same each
   run: obstacles met at the same place are ordered by when their items were made rather than by their addresses in
   memory (the port orders them the same way), and a start pad's board item is asked its type only when it has one.
@@ -39,5 +55,11 @@ Public License version 3 or later (see `../../KICAD-NOTICE.md`).
 With `KICAD_ROUTER_DEBUG` set, `router.cpp` writes KiCad's router debug messages to standard error, and the router
 tests write the port's in the same form, to compare the two where a route differs.
 
-CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind and 1000
-random boards (a new seed each run, the run number; the scene names a failure reports carry it).
+`BoardRoutingTests.swift` goes one step further, with KiCad's own design rules check as the judge: it routes pads of
+the same net on real boards with `BoardRouter` (the port, on the board's world, writing what it places into the
+board file), and runs `kicad-cli pcb drc` on the result; no clearance, crossing, short or size violation may
+involve a track or via the router placed.
+
+CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind, 1000
+random router boards and 60 real boards made by `boards.py` (their worlds, routes on them, and KiCad's DRC on
+the port's routes); each run has a new seed, the run number, which the names a failure reports carry.

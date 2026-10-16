@@ -20,7 +20,7 @@ on:
 jobs:
   kicad:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: KiCad 10
@@ -51,8 +51,18 @@ jobs:
         run: |
           python3 macos/tools/kicad-reference/scenes.py "$RUNNER_TEMP/kicad-reference/kicad-router" \
             "$RUNNER_TEMP/kicad-reference/routes-1000.json" 1000 "$GITHUB_RUN_NUMBER"
-      - name: KiCadRouter against KiCad's code, on 2000 cases of each kind and the 1000 boards
+      - name: 60 random boards made by KiCad, what its router sees of each, and routes on them by its router
+        # (also a new seed each run)
+        run: |
+          python3 macos/tools/kicad-reference/boards.py "$RUNNER_TEMP/boards" 60 "$GITHUB_RUN_NUMBER"
+          python3 macos/tools/kicad-reference/scenes.py --boards "$RUNNER_TEMP/kicad-reference/kicad-router" \
+            "$RUNNER_TEMP/board-routes.json" 4 "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP"/boards/*.json
+      - name: KiCadRouter against KiCad's code, on 2000 cases of each kind, the 1000 boards and the 60 real ones
+        # (the real boards' worlds as KiCad's router sees them, their routes as it routes them, and routes the port
+        # makes on them through kicad-cli's DRC)
         env:
+          JSPICE_REQUIRE_KICAD: "1"
           KICAD_GEOMETRY_REFERENCE: ${{ runner.temp }}/kicad-reference/kicad-geometry-2000.json
-          KICAD_ROUTER_REFERENCE: ${{ runner.temp }}/kicad-reference/routes-1000.json
+          KICAD_ROUTER_REFERENCE: ${{ runner.temp }}/kicad-reference/routes-1000.json:${{ runner.temp }}/board-routes.json
+          KICAD_BOARD_REFERENCE: ${{ runner.temp }}/boards
         run: macos/scripts/kicad-linux-tests.sh --filter KiCadRouterTests

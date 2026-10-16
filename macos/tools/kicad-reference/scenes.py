@@ -9,6 +9,7 @@ of the route as they go and take them back, or flip the posture; some mark obsta
 the fixture KiCadRouterTests checks the Swift port against.
 
     scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]
+    scenes.py --boards KICAD_ROUTER OUT.json ROUTES_PER_BOARD SEED SCENE.json...   (real boards, from board-scene.py)
 """
 
 import json
@@ -87,13 +88,27 @@ def board(rng, n):
                           "width": rng.randint(3, 8) * 50_000})
     rules = {"clearance": rng.choice([150_000, 200_000, 250_000]), "holeClearance": 250_000, "holeToHole": 250_000,
              "edgeClearance": rng.choice([300_000, 500_000])}
-    routes = []
-    pads = [i for i, it in enumerate(items) if it["kind"] == "pad" and not it.get("npth")]
-    for _ in range(rng.randint(1, 4)):
+    return {"layers": copper, "rules": rules, "items": items, "routes": routes(rng, items, copper, (0, 0, size, size))}
+
+
+def routes(rng, items, copper, area, count=None):
+    """Random routes from pads of the board in `area` (x0, y0, x1, y1): to a pad of their net mostly, else anywhere"""
+    out = []
+    x0, y0, x1, y1 = area
+    last = copper - 1
+
+    def flashed(it, l):
+        return it["layers"][0] <= l <= it["layers"][1] and ("flashed" not in it or it["flashed"][l])
+
+    pads = [i for i, it in enumerate(items) if it["kind"] == "pad" and not it.get("npth")
+            and any(flashed(it, l) for l in range(copper))]
+    if not pads:
+        return out
+    for _ in range(rng.randint(1, 4) if count is None else count):
         a = rng.choice(pads)
         same = [i for i in pads if i != a and items[i]["net"] == items[a]["net"]]
         start = items[a]["pos"]
-        layer = rng.choice([l for l in range(copper) if items[a]["layers"][0] <= l <= items[a]["layers"][1]])
+        layer = rng.choice([l for l in range(copper) if flashed(items[a], l)])
         route = {"start": start, "startItem": a, "layer": layer, "width": rng.randint(3, 8) * 50_000}
         if rng.random() < 0.2:
             route["mode"] = "mark"
@@ -105,7 +120,7 @@ def board(rng, n):
             b = rng.choice(same)
             end = items[b]["pos"]
         else:
-            end = [rng.randint(MM, size - MM), rng.randint(MM, size - MM)]
+            end = [rng.randint(x0 + MM, x1 - MM), rng.randint(y0 + MM, y1 - MM)]
         steps = rng.randint(2, 7)
         points = []
         for s in range(1, steps + 1):
@@ -146,15 +161,53 @@ def board(rng, n):
             elif event == "posture":
                 moves += [{"posture": True}, p]
         route["moves"] = moves
-        if b is not None and items[b]["layers"][0] <= current <= items[b]["layers"][1]:
+        if b is not None and flashed(items[b], current):
             route["endItem"] = b
         if rng.random() < 0.85:
             route["fix"] = points[-1]
-        routes.append(route)
-    return {"layers": copper, "rules": rules, "items": items, "routes": routes}
+        out.append(route)
+    return out
+
+
+def board_area(scene):
+    """The box round a board's edge, or its pads"""
+    xs, ys = [], []
+    for it in scene["items"]:
+        shape = it.get("shape", {})
+        pts = shape.get("segment") or shape.get("arc") or shape.get("simple") or ([it["pos"]] if "pos" in it else [])
+        if it["kind"] == "edge" or not any(i["kind"] == "edge" for i in scene["items"]):
+            for p in pts:
+                xs.append(p[0])
+                ys.append(p[1])
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def boards(router, out, files, per_board, seed):
+    """Real boards (board-scene.py's scenes, from KiCad's own reading of them), each with routes, routed by KiCad"""
+    rng = random.Random(seed)
+    cases = []
+    for path in files:
+        with open(path) as f:
+            scene = json.load(f)
+        name = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        area = board_area(scene)
+        for k in range(per_board):
+            case = dict(scene)
+            case["routes"] = routes(rng, scene["items"], scene["layers"], area, count=rng.randint(2, 6))
+            if not case["routes"]:
+                continue
+            result = subprocess.run([router], input=json.dumps(case), capture_output=True, text=True, check=True)
+            cases.append({"name": f"{name}-{seed}-{k}", "scene": case, "kicad": json.loads(result.stdout)})
+    with open(out, "w") as f:
+        json.dump(cases, f, separators=(",", ":"))
+    print(f"{out}: {len(cases)} cases on {len(files)} boards, {sum(len(c['kicad']) for c in cases)} routes")
 
 
 def main():
+    if sys.argv[1] == "--boards":
+        # scenes.py --boards KICAD_ROUTER OUT.json PER_BOARD SEED SCENE.json...
+        boards(sys.argv[2], sys.argv[3], sys.argv[6:], int(sys.argv[4]), int(sys.argv[5]))
+        return
     router, out = sys.argv[1], sys.argv[2]
     count = int(sys.argv[3]) if len(sys.argv) > 3 else 40
     seed = int(sys.argv[4]) if len(sys.argv) > 4 else 20261016
