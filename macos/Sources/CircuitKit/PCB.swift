@@ -14,6 +14,9 @@ public struct PCBDesign: Codable, Hashable, Sendable {
     public var offBoard: Set<String> = []
     /// Parts on the board but not fitted
     public var doNotPopulate: Set<String> = []
+    /// Each part's number at the board house that assembles it (an LCSC number, "C25804", for JLCPCB), by the part's
+    /// id: the board's LCSC field, and the assembly bill of materials' part number
+    public var partNumbers: [String: String] = [:]
     /// Each chip unit's package and place in it (U1, unit 0 for A), as the board has them
     public var units: [String: Unit] = [:]
     /// The references of what has none of its own in the schematic (packages of several units, pin headers for supplies),
@@ -71,6 +74,7 @@ public struct PCBDesign: Codable, Hashable, Sendable {
         pinouts = try c.decodeIfPresent([String: String].self, forKey: .pinouts) ?? [:]
         offBoard = try c.decodeIfPresent(Set<String>.self, forKey: .offBoard) ?? []
         doNotPopulate = try c.decodeIfPresent(Set<String>.self, forKey: .doNotPopulate) ?? []
+        partNumbers = try c.decodeIfPresent([String: String].self, forKey: .partNumbers) ?? [:]
         units = try c.decodeIfPresent([String: Unit].self, forKey: .units) ?? [:]
         references = try c.decodeIfPresent([String: String].self, forKey: .references) ?? [:]
         style = try c.decodeIfPresent(Style.self, forKey: .style) ?? .throughHole
@@ -213,6 +217,9 @@ public enum PCBNetlistBuilder {
             var component = PCBNetlist.Component(reference: reference, value: value, footprint: footprint,
                                                  ids: ids.map { $0.uuidString.lowercased() }, pins: [:])
             component.fields = [("Datasheet", ""), ("Description", description)] + fields
+            if let number = parts.lazy.compactMap({ design.partNumbers[$0.uuidString] }).first(where: { !$0.isEmpty }) {
+                component.fields.append(("LCSC", number))
+            }
             component.placementHint = hint(parts)
             component.excludeFromBoard = parts.contains { design.offBoard.contains($0.uuidString) }
             component.doNotPopulate = parts.contains { design.doNotPopulate.contains($0.uuidString) }

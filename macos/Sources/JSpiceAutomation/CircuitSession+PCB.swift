@@ -30,6 +30,7 @@ extension CircuitSession {
                                   "on_board": ["type": "boolean", "description": "false to leave it off the board"],
                                   "fitted": ["type": "boolean", "description": "false to keep its place on the board but leave it out of the assembly"],
                                   "pinout": string("A transistor's legs in pad order, or \"\" for its footprint's own"),
+                                  "lcsc": string("The part's LCSC number (\"C25804\"), for JLCPCB's assembly: the board's LCSC field and the bill of materials' part number; \"\" for none"),
                                   "plus": string("An electrolytic's + terminal, \"a\" or \"b\" (settled by the circuit's resting voltages when it first goes on the board, then kept)")],
                                  required: ["part"]),
              run: { session, arguments in try session.pcbPart(arguments) }),
@@ -250,6 +251,10 @@ extension CircuitSession {
             guard legs.allSatisfy({ "EBCGDS".contains($0) }) else { throw ToolError("A pinout is the legs' letters in pad order: E, B, C or G, D, S") }
             design.pinouts[id] = legs.isEmpty ? nil : legs
         }
+        if let number = arguments["lcsc"] as? String {
+            let trimmed = number.trimmingCharacters(in: .whitespaces)
+            design.partNumbers[id] = trimmed.isEmpty ? nil : trimmed
+        }
         if let plus = arguments["plus"] as? String {
             guard element.terminalNames.contains(plus) else { throw ToolError("plus should be one of \(element.terminalNames.joined(separator: ", "))") }
             design.polarity[id] = plus
@@ -267,6 +272,7 @@ extension CircuitSession {
             result["on_board"] = !c.excludeFromBoard
             result["fitted"] = !c.doNotPopulate
             if let plus = built.design.polarity[id] { result["plus"] = plus }
+            if let number = c.fields.first(where: { $0.0 == "LCSC" })?.1 { result["lcsc"] = number }
         } else {
             result["on_board"] = false
         }

@@ -70,6 +70,20 @@ final class PCBSyncTests: XCTestCase {
         XCTAssertEqual(after.position, KiCadPoint(42, 17))
     }
 
+    /// A part's LCSC number goes on its footprint, and from there into JLCPCB's assembly bill of materials
+    func testAPartsNumberAtTheBoardHouseReachesTheBillOfMaterials() throws {
+        let (board, made) = PCBSync.newBoard(try Self.circuit(), title: "Test", library: Self.library)
+        var circuit = made.circuit
+        let r1 = try element(circuit, "R1").id.uuidString
+        circuit.pcb?.partNumbers[r1] = "C25804"
+        let result = PCBSync.sync(circuit, board: board, library: Self.library)
+        XCTAssertEqual(result.applied, [])
+        XCTAssertEqual(board.footprints.first { $0.reference == "R1" }?.property("LCSC"), "C25804")
+        let line = try XCTUnwrap(KiCadFabrication.bom(board).first { $0.references.contains("R1") })
+        XCTAssertEqual(line.partNumber, "C25804")
+        XCTAssertTrue(KiCadFabrication.bomCSV([line], maker: .jlcpcb).contains("C25804"))
+    }
+
     /// Undo in the app restores the circuit but keeps the board's record as the board now has it (EditorState's
     /// restore): the undone change is then the schematic's, and goes back to the board rather than coming back from it
     func testAChangeUndoneInTheSchematicIsUndoneOnTheBoard() throws {

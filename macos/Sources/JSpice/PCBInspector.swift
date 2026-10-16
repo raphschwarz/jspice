@@ -10,6 +10,7 @@ struct PCBPartSection: View {
     let element: Element
     @State private var footprint = ""
     @State private var pinout = ""
+    @State private var partNumber = ""
     @State private var choosing = false
     @FocusState private var footprintFocused: Bool
 
@@ -60,6 +61,17 @@ struct PCBPartSection: View {
                         }
                         .help("Which way round the electrolytic goes on the board: settled by the circuit's resting voltages when it first went on, and kept as the circuit changes")
                     }
+                    LabeledContent("LCSC part") {
+                        TextField("LCSC part", text: $partNumber, prompt: Text("C25804"))
+                            .labelsHidden()
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 110)
+                            .onSubmit {
+                                let number = partNumber.trimmingCharacters(in: .whitespaces)
+                                editor.editBoard("Change Part Number") { $0.partNumbers[id] = number.isEmpty ? nil : number }
+                            }
+                    }
+                    .help("The part's number at LCSC, for JLCPCB to assemble the board: the board's LCSC field, and the assembly bill of materials")
                     if Self.transistors.contains(element.kind) {
                         LabeledContent("Pinout") {
                             TextField("Pinout", text: $pinout, prompt: Text(element.kind == .npn || element.kind == .pnp ? "EBC" : "GDS"))
@@ -85,6 +97,7 @@ struct PCBPartSection: View {
             .onAppear {
                 footprint = part?.footprint ?? ""
                 pinout = design.pinouts[id] ?? ""
+                partNumber = design.partNumbers[id] ?? ""
             }
             .onChange(of: part?.footprint) { _, value in if !footprintFocused { footprint = value ?? "" } }
         }
