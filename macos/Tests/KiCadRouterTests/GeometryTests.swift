@@ -274,7 +274,58 @@ final class GeometryTests: XCTestCase {
         report(m, "triangulations", of: all.count)
     }
 
+    /// Polygon sets cut into triangles as KiCad cuts a keepout zone's outline for its router (SHAPE_POLY_SET::
+    /// CacheTriangulation( false )), and what Simplify and Fracture make of them on the way, the fractured outlines
+    /// split where they touch themselves: each polygon's points, in order, and each triangulated polygon's
+    func testPolySets() throws {
+        let m = Mismatches(), all = cases("polySets")
+        // (fixtures made before polygon sets were checked have none)
+        if all.isEmpty { throw XCTSkip("no polygon set cases") }
+        var crashed = 0, notCut = 0, triangles = 0
+        for c in all {
+            // (KiCad's Clipper2 goes round for ever on some inputs, and KiCad crashes; the port finishes)
+            if c["crashed"] != nil {
+                crashed += 1
+                continue
+            }
+            // built point by point, as geometry.cpp builds KiCad's
+            var set = PolySet()
+            for polygon in c["polys"] as! [Any] {
+                for (i, chain) in (polygon as! [Any]).enumerated() {
+                    if i == 0 { set.newOutline() } else { set.newHole() }
+                    for p in points(chain) { set.append(p, hole: i == 0 ? -1 : set.holeCount(set.outlineCount - 1) - 1) }
+                }
+            }
+            var simplified = set
+            simplified.simplify()
+            m.check(polygons(simplified), polygons(c["simplified"]), "simplified", c)
+            var fractured = set
+            fractured.clearArcs()
+            fractured.fracture()
+            m.check(polygons(fractured), polygons(c["fractured"]), "fractured", c)
+            fractured.splitSelfTouchingOutlines()
+            m.check(polygons(fractured), polygons(c["split"]), "split where they touch themselves", c)
+            var triangulated = set
+            triangulated.cacheTriangulation()
+            m.check(triangulated.isTriangulationUpToDate, bool(c["upToDate"]), "triangulation up to date", c)
+            let theirs = c["triangulated"] as! [[String: Any]]
+            m.check(triangulated.triangulatedPolygons.count, theirs.count, "triangulated polygons", c)
+            for (o, k) in zip(triangulated.triangulatedPolygons, theirs) {
+                m.check(o.sourceOutline, int(k["source"]), "source outline", c)
+                m.check(o.vertices, points(k["vertices"]), "triangulated vertices", c)
+                m.check(o.triangles.map { [$0.0, $0.1, $0.2] }, (k["triangles"] as! [[Any]]).map { $0.map(int) }, "triangles", c)
+                triangles += (k["triangles"] as! [Any]).count
+            }
+            if !bool(c["upToDate"]) { notCut += 1 }
+        }
+        print("GeometryTests: \(all.count) polygon sets, \(triangles) triangles, \(notCut) KiCad could not cut, \(crashed) it crashed on")
+        report(m, "polygon sets", of: all.count)
+    }
+
     // MARK: - Reading the cases
+
+    private func polygons(_ set: PolySet) -> [[[IPoint]]] { set.polygons.map { $0.map(\.points) } }
+    private func polygons(_ v: Any?) -> [[[IPoint]]] { (v as! [Any]).map { ($0 as! [Any]).map(points) } }
 
     private func int(_ v: Any?) -> Int { (v as! NSNumber).intValue }
     private func bool(_ v: Any?) -> Bool { (v as! NSNumber).boolValue }

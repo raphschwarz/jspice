@@ -6,9 +6,36 @@
 
 import Foundation
 
+/// The type KiCad's R-tree works its volumes out in (its ELEMTYPEREAL): a double, as the router's index has it, or a
+/// 64-bit integer, as SHAPE_POLY_SET's search for collinear edges has it
+public protocol RTreeVolume: SignedNumeric, Comparable {
+    /// KiCad's RectSphericalVolume of a box this wide and high, in this type
+    static func sphericalVolume(_ width: Int, _ height: Int) -> Self
+}
+
+extension Double: RTreeVolume {
+    /// (float's pi, as KiCad's table has it)
+    private static let unitSphereVolume = Double(Float(3.141593))
+
+    public static func sphericalVolume(_ width: Int, _ height: Int) -> Double {
+        let hx = Double(width) * 0.5, hy = Double(height) * 0.5
+        return (hx * hx + hy * hy) * unitSphereVolume
+    }
+}
+
+extension Int: RTreeVolume {
+    /// In integers: each half extent the float an integer times 0.5f makes, cut to an integer, and the unit circle's
+    /// area 3 (float's pi cut)
+    public static func sphericalVolume(_ width: Int, _ height: Int) -> Int {
+        let hx = Int(Float(width) * 0.5), hy = Int(Float(height) * 0.5)
+        return (hx &* hx &+ hy &* hy) &* 3
+    }
+}
+
 /// KiCad's R-tree of boxes, in two dimensions with eight branches a node: the same tree for the same insertions and
-/// removals, so that a search visits what it finds in the order KiCad's does (the router's ties go by that order)
-public final class RTree<Element: AnyObject> {
+/// removals, so that a search visits what it finds in the order KiCad's does (the router's ties go by that order).
+/// Its volumes are worked out in `Volume`, as KiCad's in its ELEMTYPEREAL.
+public final class RTree<Element, Volume: RTreeVolume> {
     struct Rect {
         var minX, minY, maxX, maxY: Int
     }
@@ -30,8 +57,6 @@ public final class RTree<Element: AnyObject> {
     static var minNodes: Int { 4 }
 
     private var root: Node
-    /// (float's pi, as KiCad's table has it)
-    private let unitSphereVolume = Double(Float(3.141593))
 
     public init() {
         root = Node()
@@ -42,9 +67,10 @@ public final class RTree<Element: AnyObject> {
         insertRect(Rect(minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY), Branch(rect: Rect(minX: 0, minY: 0, maxX: 0, maxY: 0), child: nil, data: data), &root, 0)
     }
 
+    /// The entry of `box` that `isData` picks taken out; false if it was there
     @discardableResult
-    public func remove(_ box: IBox, _ data: Element) -> Bool {
-        removeRect(Rect(minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY), data, &root)
+    func remove(_ box: IBox, where isData: (Element) -> Bool) -> Bool {
+        removeRect(Rect(minX: box.minX, minY: box.minY, maxX: box.maxX, maxY: box.maxY), isData, &root)
     }
 
     /// Visits what overlaps `box`, until `visit` says to stop; how many it visited
@@ -126,7 +152,7 @@ public final class RTree<Element: AnyObject> {
 
     private func pickBranch(_ rect: Rect, _ node: Node) -> Int {
         var first = true
-        var bestIncr = -1.0, bestArea = 0.0
+        var bestIncr: Volume = -1, bestArea: Volume = 0
         var best = 0
         for index in 0..<node.count {
             let cur = node.branches[index].rect
@@ -151,11 +177,7 @@ public final class RTree<Element: AnyObject> {
     }
 
     /// KiCad's RectSphericalVolume (RTREE_USE_SPHERICAL_VOLUME is set)
-    private func volume(_ r: Rect) -> Double {
-        let hx = (Double(r.maxX) - Double(r.minX)) * 0.5
-        let hy = (Double(r.maxY) - Double(r.minY)) * 0.5
-        return (hx * hx + hy * hy) * unitSphereVolume
-    }
+    private func volume(_ r: Rect) -> Volume { Volume.sphericalVolume(r.maxX - r.minX, r.maxY - r.minY) }
 
     private struct PartitionVars {
         var partition: [Int]
@@ -164,10 +186,10 @@ public final class RTree<Element: AnyObject> {
         var taken: [Bool]
         var count = [0, 0]
         var cover = [Rect(minX: 0, minY: 0, maxX: 0, maxY: 0), Rect(minX: 0, minY: 0, maxX: 0, maxY: 0)]
-        var area = [0.0, 0.0]
+        var area: [Volume] = [0, 0]
         var branchBuf: [Branch]
         var coverSplit = Rect(minX: 0, minY: 0, maxX: 0, maxY: 0)
-        var coverSplitArea = 0.0
+        var coverSplitArea: Volume = 0
     }
 
     private func splitNode(_ node: Node, _ branch: Branch) -> Node {
@@ -204,7 +226,7 @@ public final class RTree<Element: AnyObject> {
         }
         pickSeeds(&v)
         while v.count[0] + v.count[1] < v.total && v.count[0] < v.total - v.minFill && v.count[1] < v.total - v.minFill {
-            var biggestDiff = -1.0
+            var biggestDiff: Volume = -1
             var chosen = 0, betterGroup = 0
             for index in 0..<v.total where !v.taken[index] {
                 let cur = v.branchBuf[index].rect
@@ -261,9 +283,9 @@ public final class RTree<Element: AnyObject> {
         v.count[group] += 1
     }
 
-    private func removeRect(_ rect: Rect, _ data: Element, _ root: inout Node) -> Bool {
+    private func removeRect(_ rect: Rect, _ isData: (Element) -> Bool, _ root: inout Node) -> Bool {
         var reInsert: [Node] = []
-        if !removeRectRec(rect, data, root, &reInsert) {
+        if !removeRectRec(rect, isData, root, &reInsert) {
             // the nodes left too empty, their branches put back in (last taken out first, as KiCad's list)
             for node in reInsert.reversed() {
                 for index in 0..<node.count {
@@ -278,11 +300,11 @@ public final class RTree<Element: AnyObject> {
         return true
     }
 
-    private func removeRectRec(_ rect: Rect, _ data: Element, _ node: Node, _ reInsert: inout [Node]) -> Bool {
+    private func removeRectRec(_ rect: Rect, _ isData: (Element) -> Bool, _ node: Node, _ reInsert: inout [Node]) -> Bool {
         if node.isInternal {
             for index in 0..<node.count where overlap(rect, node.branches[index].rect) {
                 let child = node.branches[index].child!
-                if !removeRectRec(rect, data, child, &reInsert) {
+                if !removeRectRec(rect, isData, child, &reInsert) {
                     if child.count >= Self.minNodes {
                         node.branches[index].rect = nodeCover(child)
                     } else {
@@ -294,7 +316,7 @@ public final class RTree<Element: AnyObject> {
             }
             return true
         }
-        for index in 0..<node.count where node.branches[index].data === data {
+        for index in 0..<node.count where isData(node.branches[index].data!) {
             disconnectBranch(node, index)
             return false
         }
@@ -318,4 +340,10 @@ public final class RTree<Element: AnyObject> {
         }
         return true
     }
+}
+
+extension RTree where Element: AnyObject {
+    /// `data`'s entry of `box` taken out; false if it was there
+    @discardableResult
+    public func remove(_ box: IBox, _ data: Element) -> Bool { remove(box) { $0 === data } }
 }

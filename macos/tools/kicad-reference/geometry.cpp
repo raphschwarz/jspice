@@ -22,11 +22,33 @@
 #include <pns_line.h>
 #include <pns_utils.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <iostream>
+#include <optional>
 #include <random>
+#include <sys/wait.h>
+#include <unistd.h>
 
 using json = nlohmann::json;
+
+// SHAPE_POLY_SET::splitSelfTouchingOutlines is private: its address is taken in an explicit instantiation, where C++
+// does not check access, so that what it makes of a fractured set can be written too
+using SPLIT_FN = void ( SHAPE_POLY_SET::* )();
+static SPLIT_FN g_splitSelfTouchingOutlines = nullptr;
+
+template <SPLIT_FN F>
+struct SPLIT_ACCESS
+{
+    SPLIT_ACCESS() { g_splitSelfTouchingOutlines = F; }
+    static SPLIT_ACCESS instance;
+};
+
+template <SPLIT_FN F>
+SPLIT_ACCESS<F> SPLIT_ACCESS<F>::instance;
+
+template struct SPLIT_ACCESS<&SHAPE_POLY_SET::splitSelfTouchingOutlines>;
 
 static std::mt19937_64 rng( 20261016 );
 
@@ -304,9 +326,181 @@ static json intersections( const SHAPE_LINE_CHAIN::INTERSECTIONS& ips )
     return a;
 }
 
+/// What `run` writes, run in a child process: nothing if the child dies. (Clipper2 has inputs it goes round for ever
+/// on, recursing until its stack runs out, as clipper.cpp finds; Simplify's union might meet one. Such a case is kept,
+/// marked as one KiCad crashes on.)
+static std::optional<std::string> isolated( const std::function<std::string()>& run )
+{
+    int fds[2];
+
+    if( pipe( fds ) != 0 )
+        abort();
+
+    std::cout.flush();
+    pid_t pid = fork();
+
+    if( pid == 0 )
+    {
+        close( fds[0] );
+        std::string out = run();
+
+        for( size_t at = 0; at < out.size(); )
+        {
+            ssize_t n = write( fds[1], out.data() + at, out.size() - at );
+
+            if( n <= 0 )
+                _exit( 1 );
+
+            at += n;
+        }
+
+        _exit( 0 );
+    }
+
+    close( fds[1] );
+    std::string out;
+    char        buffer[65536];
+
+    for( ssize_t n; ( n = read( fds[0], buffer, sizeof buffer ) ) > 0; )
+        out.append( buffer, n );
+
+    close( fds[0] );
+    int status = 0;
+    waitpid( pid, &status, 0 );
+
+    if( !WIFEXITED( status ) || WEXITSTATUS( status ) != 0 )
+        return std::nullopt;
+
+    return out;
+}
+
+/// A polygon set's polygons, each its outline's points and then each hole's
+static json polySetJSON( const SHAPE_POLY_SET& aSet )
+{
+    json a = json::array();
+
+    for( int i = 0; i < aSet.OutlineCount(); i++ )
+    {
+        json polygon = json::array();
+
+        for( const SHAPE_LINE_CHAIN& chain : aSet.CPolygon( i ) )
+            polygon.push_back( chainPoints( chain ) );
+
+        a.push_back( polygon );
+    }
+
+    return a;
+}
+
+/// A polygon set's case: what Simplify and Fracture make of it, the fractured outlines split where they touch
+/// themselves, and the triangles CacheTriangulation( false ) cuts it into (in a child process: a case KiCad crashes on
+/// is marked so)
+static json polySetCase( int aKind, const json& aPolys, const SHAPE_POLY_SET& aSet )
+{
+    json j = { { "kind", aKind }, { "polys", aPolys } };
+
+    std::optional<std::string> result = isolated(
+            [&]() -> std::string
+            {
+                json r;
+                SHAPE_POLY_SET simplified( aSet );
+                simplified.Simplify();
+                r["simplified"] = polySetJSON( simplified );
+                SHAPE_POLY_SET fractured( aSet );
+                fractured.ClearArcs();
+                fractured.Fracture();
+                r["fractured"] = polySetJSON( fractured );
+                ( fractured.*g_splitSelfTouchingOutlines )();
+                r["split"] = polySetJSON( fractured );
+                SHAPE_POLY_SET triangulated( aSet );
+                triangulated.CacheTriangulation( false );
+                r["upToDate"] = triangulated.IsTriangulationUpToDate();
+                json tris = json::array();
+
+                for( unsigned k = 0; k < triangulated.TriangulatedPolyCount(); k++ )
+                {
+                    const SHAPE_POLY_SET::TRIANGULATED_POLYGON* tp = triangulated.TriangulatedPolygon( k );
+                    json verts = json::array(), ts = json::array();
+
+                    for( const VECTOR2I& v : tp->Vertices() )
+                        verts.push_back( pt( v ) );
+
+                    for( const SHAPE_POLY_SET::TRIANGULATED_POLYGON::TRI& t : tp->Triangles() )
+                        ts.push_back( json::array( { t.a, t.b, t.c } ) );
+
+                    tris.push_back( { { "source", tp->GetSourceOutlineIndex() }, { "vertices", verts },
+                                      { "triangles", ts } } );
+                }
+
+                r["triangulated"] = tris;
+                return r.dump();
+            } );
+
+    if( result )
+        j.update( json::parse( *result ) );
+    else
+        j["crashed"] = true;
+
+    return j;
+}
+
+/// A chain's points begun at another of them, and either way round
+static std::vector<VECTOR2I> turned( std::vector<VECTOR2I> aPoints )
+{
+    if( aPoints.size() > 1 )
+    {
+        int start = uniform( 0, (int) aPoints.size() - 1 );
+        std::rotate( aPoints.begin(), aPoints.begin() + start, aPoints.end() );
+    }
+
+    if( chance( 50 ) )
+        std::reverse( aPoints.begin(), aPoints.end() );
+
+    return aPoints;
+}
+
+static std::vector<VECTOR2I> boxPoints( const VECTOR2I& aMin, const VECTOR2I& aMax )
+{
+    return { aMin, VECTOR2I( aMax.x, aMin.y ), aMax, VECTOR2I( aMin.x, aMax.y ) };
+}
+
+/// `aCount` points round `aCentre`, `aRadius` from it (or between a third of that and it, a star), at angles evenly
+/// apart or at random, in order
+static std::vector<VECTOR2I> roundPoints( const VECTOR2I& aCentre, int aRadius, int aCount, bool aStar, bool aEven )
+{
+    std::vector<double> angles;
+
+    for( int j = 0; j < aCount; j++ )
+        angles.push_back( aEven ? 2 * M_PI * j / aCount : std::uniform_real_distribution<double>( 0, 2 * M_PI )( rng ) );
+
+    std::sort( angles.begin(), angles.end() );
+    std::vector<VECTOR2I> pts;
+
+    for( double a : angles )
+    {
+        int r = aStar ? uniform( std::max( 1, aRadius / 3 ), std::max( 1, aRadius ) ) : aRadius;
+        pts.push_back( aCentre + VECTOR2I( KiROUND( r * cos( a ) ), KiROUND( r * sin( a ) ) ) );
+    }
+
+    return pts;
+}
+
+/// A small step anywhere within `aReach` on each axis
+static VECTOR2I jitter( int aReach )
+{
+    int dx = uniform( -aReach, aReach );
+    int dy = uniform( -aReach, aReach );
+    return VECTOR2I( dx, dy );
+}
+
 int main( int argc, char** argv )
 {
+    // geometry [COUNT [SEED]]: COUNT cases of each kind, from the random cases SEED gives (the same each time)
     int n = argc > 1 ? atoi( argv[1] ) : 400;
+
+    if( argc > 2 )
+        rng.seed( strtoull( argv[2], nullptr, 10 ) );
+
     json out;
 
     // vectors: norm, resize, rescale
@@ -887,6 +1081,567 @@ int main( int argc, char** argv )
     }
 
     out["triangulations"] = triangulations;
+
+    // polygon sets cut into triangles as KiCad cuts a keepout zone's outline for its router (SHAPE_POLY_SET::
+    // CacheTriangulation( false )), with what Simplify and Fracture make of them and the fractured outlines split where
+    // they touch themselves: outlines with holes in them, across them and over each other, holes touching the outline
+    // and each other on small grids, outlines that touch or cross themselves, points in line or repeated, spikes,
+    // waists of no width, several outlines and islands in holes, many points, points crowded within the
+    // triangulation's 50 nm, outlines like real keepouts', degenerate ones; on grids of a nanometre to ten millimetres
+    json polySets = json::array();
+
+    for( int i = 0; i < n; i++ )
+    {
+        int kind = uniform( 0, 9 );
+        int g = chance( 8 ) ? uniform( 1, 4 )
+                : chance( 8 ) ? uniform( 5000000, 10000000 )
+                : chance( 40 ) ? 10000 * uniform( 1, 40 ) : uniform( 100, 300000 );
+        VECTOR2I c = randPoint();
+
+        if( g >= 5000000 )
+        {
+            int cx = uniform( -40, 40 ) * 10000000;
+            int cy = uniform( -40, 40 ) * 10000000;
+            c = VECTOR2I( cx, cy );
+        }
+
+        auto G = [&]( int x, int y ) { return c + VECTOR2I( x * g, y * g ); };
+        SHAPE_POLY_SET set;
+        json polys = json::array();
+
+        // an outline, or a hole in the last outline, point by point as KiCad builds one (SHAPE_POLY_SET::Append)
+        auto add = [&]( const std::vector<VECTOR2I>& aPoints, bool aHole )
+        {
+            aHole = aHole && set.OutlineCount() > 0;
+
+            if( aHole )
+            {
+                set.NewHole();
+            }
+            else
+            {
+                set.NewOutline();
+                polys.push_back( json::array() );
+            }
+
+            json chain = json::array();
+
+            for( const VECTOR2I& p : aPoints )
+            {
+                set.Append( p.x, p.y, -1, aHole ? set.HoleCount( set.OutlineCount() - 1 ) - 1 : -1 );
+                chain.push_back( pt( p ) );
+            }
+
+            polys.back().push_back( chain );
+        };
+
+        auto randomHole = [&]( int aW, int aH )
+        {
+            int hx = uniform( -1, aW ), hy = uniform( -1, aH );
+            int hw = uniform( 1, std::max( 1, aW / 3 ) ), hh = uniform( 1, std::max( 1, aH / 3 ) );
+            add( turned( boxPoints( G( hx, hy ), G( hx + hw, hy + hh ) ) ), true );
+        };
+
+        switch( kind )
+        {
+        case 0: // an outline with holes at random: in it, across its edge, over each other
+        {
+            int w = uniform( 6, 40 ), h = uniform( 6, 40 );
+
+            if( chance( 60 ) )
+            {
+                add( turned( boxPoints( G( 0, 0 ), G( w, h ) ) ), false );
+            }
+            else
+            {
+                int  k = uniform( 3, 24 );
+                bool star = chance( 40 );
+                bool even = chance( 50 );
+                add( turned( roundPoints( G( w / 2, h / 2 ), std::max( 1, std::min( w, h ) / 2 * g ), k, star, even ) ),
+                     false );
+            }
+
+            for( int k = uniform( 1, 5 ); k > 0; k-- )
+            {
+                if( chance( 70 ) )
+                {
+                    randomHole( w, h );
+                }
+                else
+                {
+                    int hx = uniform( 0, w ), hy = uniform( 0, h ), hr = uniform( 1, std::max( 1, std::min( w, h ) / 4 ) );
+                    int m = uniform( 3, 12 );
+                    bool star = chance( 30 );
+                    add( turned( roundPoints( G( hx, hy ), hr * g, m, star, true ) ), true );
+                }
+            }
+
+            break;
+        }
+        case 1: // on a small grid: holes sharing edges and corners with the outline and each other
+        {
+            int m = uniform( 3, 8 );
+            int shape = uniform( 0, 2 );
+
+            if( shape == 0 )
+                add( turned( boxPoints( G( 0, 0 ), G( m, m ) ) ), false );
+            else if( shape == 1 ) // an L
+                add( turned( { G( 0, 0 ), G( m, 0 ), G( m, m / 2 ), G( m / 2, m / 2 ), G( m / 2, m ), G( 0, m ) } ), false );
+            else // a U
+                add( turned( { G( 0, 0 ), G( m, 0 ), G( m, m ), G( m - 1, m ), G( m - 1, 1 ), G( 1, 1 ), G( 1, m ), G( 0, m ) } ),
+                     false );
+
+            for( int k = uniform( 1, 6 ); k > 0; k-- )
+            {
+                int x0 = uniform( 0, m - 1 ), y0 = uniform( 0, m - 1 );
+                int x1 = std::min( m, x0 + uniform( 1, 3 ) ), y1 = std::min( m, y0 + uniform( 1, 3 ) );
+
+                if( chance( 80 ) )
+                    add( turned( boxPoints( G( x0, y0 ), G( x1, y1 ) ) ), true );
+                else
+                    add( turned( { G( x0, y0 ), G( x1, y0 ), G( x0, y1 ) } ), true );
+            }
+
+            break;
+        }
+        case 2: // an outline that touches itself: a notch whose tip is on its far edge (with more than 32 points now and
+                // then), two boxes meeting at a corner, a hole touching it at a point
+        {
+            int w = uniform( 4, 14 ), h = uniform( 4, 14 );
+            int variant = uniform( 0, 3 );
+
+            if( variant == 0 )
+            {
+                int tx = uniform( 0, w );
+                int x1 = std::min( w, tx + uniform( 1, 3 ) ), x2 = std::max( 0, tx - uniform( 1, 3 ) );
+                add( turned( { G( 0, 0 ), G( w, 0 ), G( w, h ), G( x1, h ), G( tx, 0 ), G( x2, h ), G( 0, h ) } ), false );
+            }
+            else if( variant == 1 )
+            {
+                int w2 = uniform( 2, 10 ), h2 = uniform( 2, 10 );
+                add( turned( { G( 0, 0 ), G( w, 0 ), G( w, h ), G( w + w2, h ), G( w + w2, h + h2 ), G( w, h + h2 ), G( w, h ),
+                               G( 0, h ) } ),
+                     false );
+            }
+            else if( variant == 2 )
+            {
+                add( turned( boxPoints( G( 0, 0 ), G( w, h ) ) ), false );
+                int hx = uniform( 1, w - 2 ), hy = uniform( 1, h - 2 );
+                add( turned( { G( hx, 0 ), G( hx + 1, hy ), G( hx, hy + 1 ), G( hx - 1, hy ) } ), true );
+
+                if( chance( 50 ) )
+                    add( turned( boxPoints( G( hx + 1, hy ), G( w, hy + 1 ) ) ), true );
+            }
+            else
+            {
+                // round, a notch from one side to a point on the edge across (rounded onto it, or nearly)
+                int k = 2 * uniform( 4, 24 );
+                std::vector<VECTOR2I> round = roundPoints( G( w, w ), std::max( 1, w * g ), k, false, true ), pts;
+                VECTOR2I tip = ( round[0] + round[1] ) / 2;
+
+                for( int j = 0; j < k; j++ )
+                {
+                    pts.push_back( round[j] );
+
+                    if( j == k / 2 )
+                        pts.push_back( tip );
+                }
+
+                add( turned( pts ), false );
+            }
+
+            if( chance( 30 ) )
+                randomHole( w, h );
+
+            break;
+        }
+        case 3: // an outline that crosses itself: a bow tie, a star, a chain at random
+        {
+            int w = uniform( 2, 20 ), h = uniform( 2, 20 );
+            int shape = uniform( 0, 2 );
+
+            if( shape == 0 )
+            {
+                add( turned( { G( 0, 0 ), G( w, h ), G( w, 0 ), G( 0, h ) } ), false );
+            }
+            else if( shape == 1 )
+            {
+                int k = 2 * uniform( 2, 4 ) + 1;
+                std::vector<VECTOR2I> round = roundPoints( G( w, w ), std::max( 1, w * g ), k, false, true ), star;
+
+                for( int j = 0; j < k; j++ )
+                    star.push_back( round[( 2 * j ) % k] );
+
+                add( turned( star ), false );
+            }
+            else
+            {
+                add( turned( randChain( true ).CPoints() ), false );
+            }
+
+            if( chance( 40 ) )
+                randomHole( w, h );
+
+            break;
+        }
+        case 4: // points in line and repeated, spikes out and back, and two boxes joined by a waist of no width (out
+                // along a line and back along it, broken at another point, or a few nanometres off it)
+        {
+            int w = uniform( 2, 10 ), h = uniform( 2, 10 );
+            std::vector<VECTOR2I> pts;
+
+            if( chance( 50 ) )
+            {
+                std::vector<VECTOR2I> box = boxPoints( G( 0, 0 ), G( w, h ) );
+
+                for( int j = 0; j < 4; j++ )
+                {
+                    VECTOR2I a = box[j], b = box[( j + 1 ) % 4];
+                    pts.push_back( a );
+
+                    if( chance( 30 ) )
+                        pts.push_back( a );
+
+                    int pieces = uniform( 0, 3 );
+
+                    for( int s = 1; s <= pieces; s++ )
+                        pts.push_back( a + ( b - a ) * s / ( pieces + 1 ) );
+
+                    if( chance( 30 ) )
+                    {
+                        VECTOR2I m = ( a + b ) / 2;
+                        VECTOR2I d = ( b - a ).Perpendicular().Resize( uniform( 1, 3 ) * g );
+                        bool     out = chance( 50 );
+                        pts.push_back( m );
+                        pts.push_back( out ? m + d : m - d );
+                        pts.push_back( m );
+                    }
+                }
+            }
+            else
+            {
+                int l = uniform( 1, 6 ), w2 = uniform( 1, 6 );
+                int y = uniform( 0, h );
+                int off = chance( 50 ) ? 0 : uniform( -12, 12 );
+                pts = { G( 0, 0 ), G( w, 0 ), G( w, y ), G( w + l, y ), G( w + l, 0 ), G( w + l + w2, 0 ), G( w + l + w2, h ),
+                        G( w + l, h ), G( w + l, y ) + VECTOR2I( 0, off ) };
+
+                if( off == 0 && l > 1 )
+                    pts.push_back( G( w + uniform( 1, l - 1 ), y ) );
+
+                pts.push_back( G( w, y ) + VECTOR2I( 0, off ) );
+                pts.push_back( G( w, h ) );
+                pts.push_back( G( 0, h ) );
+            }
+
+            add( turned( pts ), false );
+
+            if( chance( 30 ) )
+                randomHole( w, h );
+
+            break;
+        }
+        case 5: // several outlines, apart, over each other or touching, some with holes; an island in a hole
+        {
+            for( int k = uniform( 2, 4 ); k > 0; k-- )
+            {
+                int x = uniform( 0, 20 ), y = uniform( 0, 20 ), w = uniform( 2, 10 ), h = uniform( 2, 10 );
+                add( turned( boxPoints( G( x, y ), G( x + w, y + h ) ) ), false );
+
+                if( w > 2 && h > 2 && chance( 40 ) )
+                    add( turned( boxPoints( G( x + 1, y + 1 ), G( x + w - 1, y + h - 1 ) ) ), true );
+            }
+
+            if( chance( 50 ) )
+            {
+                add( turned( boxPoints( G( 30, 0 ), G( 40, 10 ) ) ), false );
+                add( turned( boxPoints( G( 31, 1 ), G( 39, 9 ) ) ), true );
+                add( turned( boxPoints( G( 33, 3 ), G( 37, 7 ) ) ), false );
+
+                if( chance( 50 ) )
+                    add( turned( boxPoints( G( 34, 4 ), G( 36, 6 ) ) ), true );
+            }
+
+            break;
+        }
+        case 6: // many points: a round outline with round holes, which may touch it or each other
+        {
+            int r = uniform( 10, 40 ) * g;
+            int k = uniform( 32, 96 );
+            bool star = chance( 20 );
+            add( turned( roundPoints( c, r, k, star, true ) ), false );
+
+            for( int m = uniform( 0, 4 ); m > 0; m-- )
+            {
+                double a = std::uniform_real_distribution<double>( 0, 2 * M_PI )( rng );
+                double d = r * ( uniform( 0, 100 ) / 100.0 );
+                int    hr = std::max( 1, r / 100 * uniform( 2, 30 ) );
+                int    hk = uniform( 8, 40 );
+                add( turned( roundPoints( c + VECTOR2I( KiROUND( d * cos( a ) ), KiROUND( d * sin( a ) ) ), hr, hk, false,
+                                          true ) ),
+                     true );
+            }
+
+            break;
+        }
+        case 7: // crowded: points within the triangulation's 50 nm of others, spikes of a few nanometres; holes a few
+                // nanometres from the outline's edge, and near copies of holes (their fracture one KiCad's
+                // triangulation may not cut, then cut once simplified, or not at all)
+        {
+            int variant = uniform( 0, 2 );
+
+            if( variant == 1 )
+            {
+                int s = uniform( 1000, 200000 );
+                add( turned( boxPoints( c, c + VECTOR2I( 10 * s, 10 * s ) ) ), false );
+
+                for( int k = uniform( 1, 4 ); k > 0; k-- )
+                {
+                    int gap = uniform( 1, 80 );
+                    int w = uniform( 1, 4 ) * s, h = uniform( 1, 4 ) * s;
+                    int x = chance( 50 ) ? gap : uniform( 1, 5 ) * s;
+                    int y = uniform( 1, 5 ) * s;
+                    y += uniform( -80, 80 );
+                    add( turned( boxPoints( c + VECTOR2I( x, y ), c + VECTOR2I( x + w, y + h ) ) ), true );
+                }
+
+                break;
+            }
+            else if( variant == 2 )
+            {
+                int s = uniform( 1000, 200000 );
+                int d = uniform( 5, 60 );
+                add( turned( boxPoints( c, c + VECTOR2I( 10 * s, 10 * s ) ) ), false );
+
+                for( int k = uniform( 1, 3 ); k > 0; k-- )
+                {
+                    int x = uniform( 0, 6 ) * s, y = uniform( 0, 6 ) * s;
+                    int w = uniform( 1, 4 ) * s, h = uniform( 1, 4 ) * s;
+
+                    for( int m = uniform( 2, 4 ); m > 0; m-- )
+                    {
+                        VECTOR2I o = c + VECTOR2I( x, y ) + jitter( d );
+                        add( turned( boxPoints( o, o + VECTOR2I( w, h ) ) ), true );
+                    }
+                }
+
+                break;
+            }
+
+            int k = uniform( 4, 16 );
+            int r = uniform( 1000, 3000000 );
+            bool star = chance( 50 );
+            bool even = chance( 30 );
+            std::vector<VECTOR2I> pts;
+
+            for( const VECTOR2I& p : roundPoints( c, r, k, star, even ) )
+            {
+                pts.push_back( p );
+
+                if( chance( 40 ) )
+                    pts.push_back( p + jitter( 60 ) );
+
+                if( chance( 15 ) )
+                {
+                    pts.push_back( p + jitter( 30 ) );
+                    pts.push_back( p );
+                }
+            }
+
+            add( turned( pts ), false );
+
+            if( chance( 50 ) )
+            {
+                std::vector<VECTOR2I> hole;
+
+                for( const VECTOR2I& p : roundPoints( c, std::max( 1, r / 4 ), uniform( 3, 8 ), false, false ) )
+                {
+                    hole.push_back( p );
+
+                    if( chance( 40 ) )
+                        hole.push_back( p + jitter( 60 ) );
+                }
+
+                add( turned( hole ), true );
+            }
+
+            break;
+        }
+        case 8: // as keepouts are drawn: boxes, L shapes and polygons of a few millimetres on a 0.01 mm grid, with
+                // round holes for mounting holes and box ones
+        {
+            g = 10000;
+            int cx = uniform( 0, 20000 ), cy = uniform( 0, 20000 );
+            c = VECTOR2I( cx * g, cy * g );
+            int w = uniform( 100, 2000 ), h = uniform( 100, 2000 );
+            int shape = uniform( 0, 2 );
+
+            if( shape == 0 )
+            {
+                add( turned( boxPoints( G( 0, 0 ), G( w, h ) ) ), false );
+            }
+            else if( shape == 1 )
+            {
+                int a = uniform( 20, w - 20 ), b = uniform( 20, h - 20 );
+                add( turned( { G( 0, 0 ), G( w, 0 ), G( w, b ), G( a, b ), G( a, h ), G( 0, h ) } ), false );
+            }
+            else
+            {
+                int  k = uniform( 5, 10 );
+                bool star = chance( 50 );
+                add( turned( roundPoints( G( w / 2, h / 2 ), std::min( w, h ) / 2 * g, k, star, false ) ), false );
+            }
+
+            for( int m = uniform( 0, 3 ); m > 0; m-- )
+            {
+                int hx = uniform( 0, w ), hy = uniform( 0, h );
+
+                if( chance( 60 ) )
+                {
+                    int hr = uniform( 50, 300 ), hk = 4 * uniform( 4, 16 );
+                    add( turned( roundPoints( G( hx, hy ), hr * g, hk, false, true ) ), true );
+                }
+                else
+                {
+                    int hw = uniform( 20, 400 ), hh = uniform( 20, 400 );
+                    add( turned( boxPoints( G( hx, hy ), G( hx + hw, hy + hh ) ) ), true );
+                }
+            }
+
+            break;
+        }
+        default: // degenerate: an outline already fractured (out to a hole along a bridge, round it and back), all in
+                 // line, of one or two points, with an empty hole
+        {
+            int w = uniform( 4, 20 ), h = uniform( 4, 20 );
+            int variant = uniform( 0, 3 );
+
+            if( variant == 0 )
+            {
+                int hx = uniform( 1, w - 3 ), hy = uniform( 1, h - 3 );
+                add( turned( { G( 0, 0 ), G( w, 0 ), G( w, h ), G( 0, h ), G( 0, hy ), G( hx, hy ), G( hx, hy + 2 ),
+                               G( hx + 2, hy + 2 ), G( hx + 2, hy ), G( hx, hy ), G( 0, hy ) } ),
+                     false );
+            }
+            else if( variant == 1 )
+            {
+                add( turned( { G( 0, 0 ), G( w, 0 ), G( 2 * w, 0 ), G( w, 0 ) } ), false );
+            }
+            else if( variant == 2 )
+            {
+                add( chance( 50 ) ? std::vector<VECTOR2I>{ G( 0, 0 ) } : std::vector<VECTOR2I>{ G( 0, 0 ), G( w, h ) }, false );
+
+                if( chance( 50 ) )
+                    add( turned( boxPoints( G( 0, 0 ), G( w, h ) ) ), false );
+            }
+            else
+            {
+                add( turned( boxPoints( G( 0, 0 ), G( w, h ) ) ), false );
+                add( {}, true );
+                add( { G( 1, 1 ), G( 2, 2 ) }, true );
+            }
+
+            break;
+        }
+        }
+
+        polySets.push_back( polySetCase( kind, polys, set ) );
+    }
+
+    // and inputs found by searching for ones that take the triangulation its rarer ways: near copies of holes whose
+    // fractured outline KiCad cannot cut, then can once simplified, or still cannot; and two of those together (once
+    // one has been simplified and tried again, the next that cannot be cut is not)
+    using POLYS = std::vector<std::vector<std::vector<VECTOR2I>>>;
+    const POLYS cutOnceSimplified = {
+        { { { 0, 0 }, { 24720, 0 }, { 24720, 24720 }, { 0, 24720 } },
+          { { 14834, 7444 }, { 24722, 7444 }, { 24722, 14860 }, { 14834, 14860 } },
+          { { 14819, 7422 }, { 24707, 7422 }, { 24707, 14838 }, { 14819, 14838 } },
+          { { 14847, 7398 }, { 24735, 7398 }, { 24735, 14814 }, { 14847, 14814 } },
+          { { 14856, 7417 }, { 24744, 7417 }, { 24744, 14833 }, { 14856, 14833 } },
+          { { 7428, 9901 }, { 12372, 9901 }, { 12372, 14845 }, { 7428, 14845 } },
+          { { 7400, 9870 }, { 12344, 9870 }, { 12344, 14814 }, { 7400, 14814 } },
+          { { 4937, 20 }, { 7409, 20 }, { 7409, 4964 }, { 4937, 4964 } },
+          { { 4940, 8 }, { 7412, 8 }, { 7412, 4952 }, { 4940, 4952 } } } };
+    const POLYS cutOnceSimplified2 = {
+        { { { 0, 0 }, { 8090, 0 }, { 8090, 8090 }, { 0, 8090 } },
+          { { 3250, 769 }, { 4868, 769 }, { 4868, 4005 }, { 3250, 4005 } },
+          { { 3248, 825 }, { 4866, 825 }, { 4866, 4061 }, { 3248, 4061 } },
+          { { 3195, 770 }, { 4813, 770 }, { 4813, 4006 }, { 3195, 4006 } },
+          { { 1613, 834 }, { 2422, 834 }, { 2422, 2452 }, { 1613, 2452 } },
+          { { 1611, 776 }, { 2420, 776 }, { 2420, 2394 }, { 1611, 2394 } },
+          { { 1608, 815 }, { 2417, 815 }, { 2417, 2433 }, { 1608, 2433 } },
+          { { 1609, 785 }, { 2418, 785 }, { 2418, 2403 }, { 1609, 2403 } } } };
+    const POLYS notCut = {
+        { { { 0, 0 }, { 7300, 0 }, { 7300, 7300 }, { 0, 7300 } },
+          { { 2909, 4391 }, { 4369, 4391 }, { 4369, 7311 }, { 2909, 7311 } },
+          { { 2926, 4368 }, { 4386, 4368 }, { 4386, 7288 }, { 2926, 7288 } },
+          { { 2923, 4370 }, { 4383, 4370 }, { 4383, 7290 }, { 2923, 7290 } },
+          { { 725, 3649 }, { 1455, 3649 }, { 1455, 6569 }, { 725, 6569 } },
+          { { 742, 3641 }, { 1472, 3641 }, { 1472, 6561 }, { 742, 6561 } },
+          { { 2913, 2910 }, { 5833, 2910 }, { 5833, 3640 }, { 2913, 3640 } },
+          { { 2923, 2925 }, { 5843, 2925 }, { 5843, 3655 }, { 2923, 3655 } } } };
+    const POLYS notCut2 = {
+        { { { 0, 0 }, { 21640, 0 }, { 21640, 21640 }, { 0, 21640 } },
+          { { -2, 8701 }, { 2162, 8701 }, { 2162, 10865 }, { -2, 10865 } },
+          { { 46, 8612 }, { 2210, 8612 }, { 2210, 10776 }, { 46, 10776 } },
+          { { 100, 6519 }, { 2264, 6519 }, { 2264, 8683 }, { 100, 8683 } },
+          { { 63, 6486 }, { 2227, 6486 }, { 2227, 8650 }, { 63, 8650 } },
+          { { 79, 2121 }, { 6571, 2121 }, { 6571, 6449 }, { 79, 6449 } },
+          { { 85, 2203 }, { 6577, 2203 }, { 6577, 6531 }, { 85, 6531 } },
+          { { 10, 2141 }, { 6502, 2141 }, { 6502, 6469 }, { 10, 6469 } },
+          { { 71, 2120 }, { 6563, 2120 }, { 6563, 6448 }, { 71, 6448 } } } };
+
+    // (a polygon set of these, the second moved off to the right of the first)
+    auto together = []( const POLYS& a, const POLYS& b )
+    {
+        POLYS both = a;
+
+        for( std::vector<std::vector<VECTOR2I>> polygon : b )
+        {
+            for( std::vector<VECTOR2I>& chain : polygon )
+            {
+                for( VECTOR2I& p : chain )
+                    p += VECTOR2I( 100000, 0 );
+            }
+
+            both.push_back( polygon );
+        }
+
+        return both;
+    };
+
+    for( const POLYS& found : { cutOnceSimplified, cutOnceSimplified2, notCut, notCut2,
+                                together( cutOnceSimplified, cutOnceSimplified2 ), together( cutOnceSimplified, notCut ),
+                                together( notCut2, cutOnceSimplified2 ) } )
+    {
+        SHAPE_POLY_SET set;
+        json polys = json::array();
+
+        for( const std::vector<std::vector<VECTOR2I>>& polygon : found )
+        {
+            json chains = json::array();
+
+            for( size_t h = 0; h < polygon.size(); h++ )
+            {
+                h == 0 ? set.NewOutline() : set.NewHole();
+                json chain = json::array();
+
+                for( const VECTOR2I& p : polygon[h] )
+                {
+                    set.Append( p.x, p.y, -1, h == 0 ? -1 : (int) h - 1 );
+                    chain.push_back( pt( p ) );
+                }
+
+                chains.push_back( chain );
+            }
+
+            polys.push_back( chains );
+        }
+
+        polySets.push_back( polySetCase( 10, polys, set ) );
+    }
+
+    out["polySets"] = polySets;
 
     std::cout << out.dump() << std::endl;
     return 0;

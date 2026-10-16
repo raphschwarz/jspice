@@ -18,9 +18,16 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   Also the line walkarounds (`LINE::Walkaround`) the router's walkaround mode is made of; arcs (`SHAPE_ARC`: their
   centres, angles, boxes, polylines, hulls, and collisions with every shape either way round, asked how close or
   not); pads' shapes as KiCad makes them polygons (rectangles with rounded or cut corners, trapezoids, circles,
-  grown or shrunk, the error inside or outside); and polygons cut into triangles as KiCad cuts zones and keepouts
+  grown or shrunk, the error inside or outside); polygons cut into triangles as KiCad cuts zones and keepouts
   (`POLYGON_TRIANGULATION`: star-shaped, convex and rectilinear outlines, points crowded or in line, outlines with a
-  hole fractured in, chains that cross themselves, where KiCad's own cutting subdivides, splits or fails).
+  hole fractured in, chains that cross themselves, where KiCad's own cutting subdivides, splits or fails); and polygon
+  sets as KiCad's router cuts a keepout zone's outline (`SHAPE_POLY_SET::CacheTriangulation( false )`: outlines with
+  holes in them, across them and over each other, holes touching the outline and each other, outlines that touch or
+  cross themselves, points in line and repeated, spikes, waists of no width, several outlines and islands in holes,
+  many points, points and holes crowded within its 50 nm, outlines like real keepouts', degenerate ones, on grids of a
+  nanometre to ten millimetres; then a few found to need its second try, or to fail it), with what `Simplify` and
+  `Fracture` make of each on the way and the fractured outlines split where they touch themselves (each case in a
+  child process, as `clipper.cpp`'s). `kicad-geometry COUNT SEED` makes other random cases than `build.sh`'s.
 - `router.cpp`: KiCad's interactive router itself (`PNS::ROUTER` with its line placer, walkaround, shove,
   optimizer) on a board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make
   on it, step by step as the router tool drives it (pointer moves, with the item under the pointer if one is given,

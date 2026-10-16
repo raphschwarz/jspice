@@ -238,7 +238,7 @@ public final class Joint: Item {
 
 /// The items of a node, indexed by layer and box, and by net (KiCad's PNS::INDEX)
 final class ItemIndex {
-    private var subIndices: [RTree<Item>] = []
+    private var subIndices: [RTree<Item, Double>] = []
     private var netMap: [NetHandle: [Item]] = [:]
     /// Everything, in the order it came (KiCad keeps an unordered set)
     private(set) var all: [Item] = []
