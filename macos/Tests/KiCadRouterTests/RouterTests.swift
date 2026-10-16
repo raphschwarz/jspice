@@ -28,15 +28,9 @@ final class RouterTests: XCTestCase {
     func testRoutesAsKiCadRoutesThem() {
         var differences: [String] = []
         var routes = 0, identical = 0
-        var skipped = 0
         for (n, c) in Self.reference.enumerated() {
             let scene = c["scene"] as! [String: Any]
             let kicad = c["kicad"] as! [[String: Any]]
-            // (a board with a keepout zone, whose triangles the port cannot cut as KiCad cuts them yet)
-            if (scene["items"] as! [[String: Any]]).contains(where: { $0["kind"] as? String == "keepout" }) {
-                skipped += 1
-                continue
-            }
             let ours = SceneRouting.route(scene)
             XCTAssertEqual(ours.count, kicad.count, "scene \(n): routes")
             for (i, (o, k)) in zip(ours, kicad).enumerated() {
@@ -57,7 +51,6 @@ final class RouterTests: XCTestCase {
             let all = Self.reference.map { SceneRouting.route($0["scene"] as! [String: Any]) }
             try? JSONSerialization.data(withJSONObject: all).write(to: URL(fileURLWithPath: dump))
         }
-        if skipped > 0 { print("RouterTests: \(skipped) boards with keepout zones left out") }
         XCTAssertGreaterThan(routes, 0)
         XCTAssertEqual(identical, routes, "\(routes - identical) of \(routes) routes differ from KiCad's:\n"
                        + differences.prefix(10).joined(separator: "\n"))

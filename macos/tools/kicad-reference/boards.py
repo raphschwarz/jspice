@@ -3,8 +3,9 @@
 world of a board against KiCad's: footprints with every kind of pad (rectangles, rounded and cut corners, ovals,
 trapezoids, circles, unplated holes, custom pads), turned and flipped, on two or four layers; nets in net classes (by
 pattern, of different priorities, regular expressions among them), pads' and footprints' own clearances; tracks and
-vias; drawings on copper; outlines with rounded corners and round cut-outs. Each board is saved (its .kicad_pcb and
-.kicad_pro), and board-scene.py run on it (KiCad reading it afresh) writes what KiCad's router sees of it.
+vias; drawings on copper; outlines with rounded corners and round cut-outs; keepout zones (rule areas) of several
+shapes, some with holes, some in footprints. Each board is saved (its .kicad_pcb and .kicad_pro), and board-scene.py
+run on it (KiCad reading it afresh) writes what KiCad's router sees of it.
 
     boards.py OUTDIR COUNT [SEED]
 """
@@ -122,7 +123,88 @@ def net_classes(rng, board):
     ds.m_CopperEdgeClearance = rng.choice([300_000, 500_000])
 
 
-def make(rng, path):
+def keepouts(rng, board, x0, y0, x1, y1, copper, footprints):
+    """Rule areas keeping tracks or vias out (or only pads, footprints or fills, which the router still sees): boxes, L
+    shapes, polygons and now and then one crossing itself, some with box or round holes (which may cross their edge),
+    on some of the copper layers, a few in footprints; now and then a tiny one KiCad's router cannot cut into
+    triangles (near copies of holes a few nanometres apart, as geometry.cpp's), which it leaves out"""
+    def grid(v):
+        return v if rng.random() < 0.2 else v // 10_000 * 10_000
+
+    for _ in range(rng.choice([0, 1, 1, 2, 2, 3])):
+        fp = rng.choice(footprints) if footprints and rng.random() < 0.25 else None
+        if fp is not None:
+            cx, cy = fp.GetPosition().x, fp.GetPosition().y
+        else:
+            cx, cy = rng.randint(x0 + 3 * MM, x1 - 3 * MM), rng.randint(y0 + 3 * MM, y1 - 3 * MM)
+        zone = pcbnew.ZONE(fp if fp is not None else board)
+        zone.SetIsRuleArea(True)
+        rules = rng.choice(["tracks", "vias", "both", "both", "both", "other"])
+        zone.SetDoNotAllowTracks(rules in ("tracks", "both"))
+        zone.SetDoNotAllowVias(rules in ("vias", "both"))
+        zone.SetDoNotAllowPads(rng.random() < 0.3)
+        zone.SetDoNotAllowFootprints(rng.random() < 0.3)
+        zone.SetDoNotAllowZoneFills(rules == "other" or rng.random() < 0.5)
+        if rng.random() < 0.5:
+            zone.SetZoneName(f"Keepout {rng.randint(1, 99)}")
+        layers = pcbnew.LSET()
+        chosen = [l for l in copper if rng.random() < 0.6] or [rng.choice(copper)]
+        for l in chosen:
+            layers.AddLayer(l)
+        zone.SetLayerSet(layers)
+        poly = zone.Outline()
+        poly.NewOutline()
+        w, h = rng.randint(1, 12) * MM, rng.randint(1, 12) * MM
+        shape = rng.choice(["box", "box", "L", "polygon", "polygon", "crossing", "tiny"])
+        if shape == "box":
+            pts = [(0, 0), (w, 0), (w, h), (0, h)]
+        elif shape == "L":
+            a, b = rng.randint(w // 4, w * 3 // 4), rng.randint(h // 4, h * 3 // 4)
+            pts = [(0, 0), (w, 0), (w, b), (a, b), (a, h), (0, h)]
+        elif shape == "polygon":
+            angles = sorted(rng.uniform(0, 2 * math.pi) for _ in range(rng.randint(3, 9)))
+            pts = [(w / 2 + w / 2 * rng.uniform(0.4, 1) * math.cos(t), h / 2 + h / 2 * rng.uniform(0.4, 1) * math.sin(t))
+                   for t in angles]
+        elif shape == "crossing":
+            pts = [(0, 0), (w, h), (w, 0), (0, h)]
+        else:
+            pts = [(0, 0), (7300, 0), (7300, 7300), (0, 7300)]
+        if rng.random() < 0.5:
+            pts.reverse()
+        for x, y in pts:
+            poly.Append(int(grid(cx + int(x))) if shape != "tiny" else cx + int(x),
+                        int(grid(cy + int(y))) if shape != "tiny" else cy + int(y))
+        if shape == "tiny":
+            for hole in [[(2909, 4391), (4369, 4391), (4369, 7311), (2909, 7311)],
+                         [(2926, 4368), (4386, 4368), (4386, 7288), (2926, 7288)],
+                         [(2923, 4370), (4383, 4370), (4383, 7290), (2923, 7290)],
+                         [(725, 3649), (1455, 3649), (1455, 6569), (725, 6569)],
+                         [(742, 3641), (1472, 3641), (1472, 6561), (742, 6561)],
+                         [(2913, 2910), (5833, 2910), (5833, 3640), (2913, 3640)],
+                         [(2923, 2925), (5843, 2925), (5843, 3655), (2923, 3655)]]:
+                h = poly.NewHole()
+                for x, y in hole:
+                    poly.Append(cx + x, cy + y, -1, h)
+        elif shape in ("box", "L", "polygon") and rng.random() < 0.5:
+            for _ in range(rng.randint(1, 2)):
+                hx, hy = rng.randint(0, w), rng.randint(0, h)
+                hole = poly.NewHole()
+                if rng.random() < 0.5:
+                    r = rng.randint(2, 8) * 100_000
+                    k = rng.choice([16, 24, 32])
+                    hp = [(hx + r * math.cos(2 * math.pi * j / k), hy + r * math.sin(2 * math.pi * j / k)) for j in range(k)]
+                else:
+                    hw, hh = rng.randint(1, 4) * 500_000, rng.randint(1, 4) * 500_000
+                    hp = [(hx, hy), (hx + hw, hy), (hx + hw, hy + hh), (hx, hy + hh)]
+                for x, y in hp:
+                    poly.Append(int(grid(cx + int(x))), int(grid(cy + int(y))), -1, hole)
+        if fp is not None:
+            fp.Add(zone)
+        else:
+            board.Add(zone)
+
+
+def make(rng, path, krng):
     board = pcbnew.NewBoard(path)
     board.SetCopperLayerCount(rng.choice([2, 2, 4]))
     size = rng.randint(30, 70) * MM
@@ -136,11 +218,13 @@ def make(rng, path):
         board.Add(n)
         nets.append(n)
     pads = []
+    footprints = []
     for i in range(rng.randint(6, 18)):
         lib, name = rng.choice(FOOTPRINTS)
         fp = pcbnew.FootprintLoad(f"{LIBRARIES}/{lib}.pretty", name)
         if fp is None:
             continue
+        footprints.append(fp)
         fp.SetReference(f"U{i + 1}")
         fp.SetPosition(vec(rng.randint(x0 + 4 * MM, x1 - 4 * MM), rng.randint(y0 + 4 * MM, y1 - 4 * MM)))
         fp.SetOrientationDegrees(rng.choice([0, 0, 90, 180, 270, 45, 30, round(rng.uniform(0, 360), 1)]))
@@ -196,6 +280,8 @@ def make(rng, path):
         if rng.random() < 0.5:
             s.SetNet(rng.choice(nets))
         board.Add(s)
+    # keepout zones (from a random sequence of their own, so that the rest of each board is as it was without them)
+    keepouts(krng, board, x0, y0, x1, y1, copper, footprints)
     pcbnew.SaveBoard(path, board)
 
 
@@ -207,7 +293,7 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     for n in range(count):
         path = os.path.abspath(f"{out}/random-{seed}-{n}.kicad_pcb")
-        make(rng, path)
+        make(rng, path, random.Random(f"keepouts-{seed}-{n}"))
         subprocess.run([sys.executable, f"{here}/board-scene.py", path, path[:-len(".kicad_pcb")] + ".json"], check=True,
                        stderr=subprocess.DEVNULL)
     print(f"{out}: {count} boards")

@@ -64,7 +64,6 @@ final class BoardWorldTests: XCTestCase {
     static func named(_ item: [String: Any], _ names: [Int: String]) -> [String: Any] {
         var j = item
         if let n = j["net"] as? NSNumber { j["net"] = names[n.intValue] ?? "#\(n.intValue)" }
-        // (what the port does not keep yet: a keepout zone's outline only, which KiCad's scene gives in full)
         return j
     }
 

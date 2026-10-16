@@ -443,7 +443,7 @@ public:
     SCENE_RESOLVER               m_resolver;
     std::vector<PNS::ITEM*>      m_byIndex;
     std::vector<json>            m_added;
-    std::vector<json>            m_triangles;     // the keepout zones' triangles, as SyncWorld made them
+    json                         m_triangles;     // the keepout zones' triangles, as SyncWorld made them
     int                          m_maxClearance = -1;
     PNS::NODE*                   m_world = nullptr;
 
@@ -452,6 +452,7 @@ public:
         m_world = aWorld;
         m_byIndex.clear();
         m_resolver.m_info.clear();
+        m_triangles = json::array();
 
         for( const json& j : m_items )
         {
@@ -536,7 +537,8 @@ public:
                 poly.CacheTriangulation( false );
                 info.keepout = j["keepout"];
 
-                for( const json& layer : j["layers"] )
+                // (a zone KiCad cannot cut it leaves out, telling the user it is malformed)
+                for( const json& layer : poly.IsTriangulationUpToDate() ? j["layers"] : json::array() )
                 {
                     for( unsigned int polyId = 0; polyId < poly.TriangulatedPolyCount(); polyId++ )
                     {
@@ -561,7 +563,7 @@ public:
                                 item = solid.get();
 
                             m_resolver.m_info[solid.get()] = info;
-                            m_triangles.push_back( { { "layer", layer }, { "triangle", json::array( { pt( a ), pt( b ), pt( c ) } ) } } );
+                            m_triangles.push_back( { { "layer", layer }, { "triangle", chainPoints( triShape->Vertices() ) } } );
                             aWorld->Add( std::move( solid ) );
                         }
                     }
@@ -927,6 +929,10 @@ int main()
         json r;
         iface.m_added.clear();
         iface.m_removed.clear();
+
+        // (with the first route, the keepout zones' triangles as the world has them, if there are any)
+        if( out.empty() && !iface.m_triangles.empty() )
+            r["keepoutTriangles"] = iface.m_triangles;
         bool started = router.StartRouting( pt( route["start"] ), itemAt( "startItem", route ), route.value( "layer", 0 ) );
         r["started"] = started;
 

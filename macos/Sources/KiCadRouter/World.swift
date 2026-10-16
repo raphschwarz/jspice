@@ -51,8 +51,10 @@ public struct WorldItem: Sendable {
     // a track's, an arc's, a via's
     public var a = IPoint.zero, b = IPoint.zero, mid = IPoint.zero
     public var width = 0, layer = 0, diameter = 0, drill = 0
-    /// A keepout zone's outlines, each with its holes
+    /// A keepout zone's outlines, each with its holes (as KiCad holds them: its SHAPE_POLY_SET's)
     public var polygons: [[LineChain]] = []
+    /// A keepout zone's copper layers, in order (its layer set: not always a run of them, as `layers` is)
+    public var zoneLayers: [Int] = []
     public var keepout: Keepout?
     /// The reference of the footprint a pad belongs to
     public var footprint: String?
@@ -229,8 +231,11 @@ public final class WorldInterface: RouterInterface {
     public private(set) var routerItems: [Item?] = []
     /// What the router has put on the board, in the order it did
     public var added: [Item] = []
-    /// What the world holds that the port cannot make as KiCad makes it yet (a keepout zone's triangles)
+    /// What the world holds that the port cannot make as KiCad makes it yet (an arc track)
     public private(set) var unsupported: Set<String> = []
+    /// The keepout zones that could not be cut into triangles, which KiCad's router leaves out (warning that each is
+    /// malformed, perhaps crossing itself): their indices among the items
+    public private(set) var malformedZones: [Int] = []
 
     public init(items: [WorldItem], layers: Int, rules: WorldRules) {
         self.items = items
@@ -256,6 +261,7 @@ public final class WorldInterface: RouterInterface {
         routerItems.removeAll()
         resolver.info.removeAll()
         unsupported.removeAll()
+        malformedZones.removeAll()
         for w in items {
             var item: Item?
             switch w.kind {
@@ -278,24 +284,34 @@ public final class WorldInterface: RouterInterface {
                 resolver.info[ObjectIdentifier(solid)] = w
                 world.add(solid)
             case .keepout:
-                // (KiCad cuts the zone into triangles, after simplifying it with Clipper, and makes each a solid; until
-                // the port can, each outline is one solid, whose hull is the outline's convex hull: routes keep out of
-                // more than the zone where it is not convex, never less)
-                unsupported.insert("keepout zone (kept out of by its outline's convex hull, not yet by KiCad's triangles)")
-                for polygon in w.polygons {
-                    guard let outline = polygon.first, outline.pointCount >= 3 else { continue }
-                    var closed = outline
-                    closed.setClosed(true)
-                    for layer in w.layers.start...w.layers.end {
-                        let solid = Solid()
-                        solid.setLayer(layer)
-                        solid.net = nil
-                        solid.solidShape = .simple(closed)
-                        solid.isCompoundShapePrimitive = true
-                        solid.isRoutable = false
-                        resolver.info[ObjectIdentifier(solid)] = w
-                        world.add(solid)
-                        if item == nil { item = solid }
+                // syncZone: the zone's outline cut into triangles as KiCad cuts it, each triangle a solid on each of the
+                // zone's copper layers in turn; a zone that cannot be cut is left out (KiCad warns it is malformed)
+                var poly = PolySet(w.polygons)
+                poly.cacheTriangulation()
+                guard poly.isTriangulationUpToDate else {
+                    malformedZones.append(routerItems.count)
+                    break
+                }
+                for layer in w.zoneLayers {
+                    for tri in poly.triangulatedPolygons {
+                        for t in tri.triangles.indices {
+                            let (a, b, c) = tri.triangle(t)
+                            // (a SHAPE_SIMPLE: closed, a point the same as the one before it left out)
+                            var chain = LineChain()
+                            chain.setClosed(true)
+                            chain.append(a)
+                            chain.append(b)
+                            chain.append(c)
+                            let solid = Solid()
+                            solid.setLayer(layer)
+                            solid.net = nil
+                            solid.solidShape = .simple(chain)
+                            solid.isCompoundShapePrimitive = true
+                            solid.isRoutable = false
+                            resolver.info[ObjectIdentifier(solid)] = w
+                            world.add(solid)
+                            if item == nil { item = solid }
+                        }
                     }
                 }
             case .track:

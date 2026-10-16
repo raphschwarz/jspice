@@ -368,8 +368,8 @@ final class BoardEditingTests: XCTestCase {
         XCTAssert(wrong.isEmpty, wrong.map { "\($0.type): \($0.description) — \($0.items.map(\.description))" }.joined(separator: "; "))
     }
 
-    /// A keepout zone and another net's arc track in the way of a track: kept clear of (the port's stand-ins for
-    /// KiCad's keepout triangles and arc items)
+    /// A keepout zone and another net's arc track in the way of a track: kept clear of (the keepout cut into KiCad's
+    /// triangles, the arc the port's stand-in for KiCad's arc items)
     func testKeepoutsAndArcTracksAreKeptClearOf() throws {
         let file = try XCTUnwrap(Self.boards().first)
         let board = try KiCadBoard.read(file)
@@ -389,8 +389,14 @@ final class BoardEditingTests: XCTestCase {
         board.addCopper(SExpr("arc", SExpr("start", ax, y - 2), SExpr("mid", ax + 1, y), SExpr("end", ax, y + 2), SExpr("width", 0.3),
                               SExpr("layer", "F.Cu"), board.netList(net, pad: false), SExpr("uuid", "arc-1")))
         let router = BoardRouter(board: board)
-        XCTAssertTrue(router.unsupported.contains { $0.hasPrefix("keepout zone") })
+        XCTAssertFalse(router.unsupported.contains { $0.hasPrefix("keepout zone") })
         XCTAssertTrue(router.unsupported.contains { $0.hasPrefix("arc track") })
+        // (the rectangle in two triangles, on each of its two layers)
+        let zone = try XCTUnwrap(router.world.items.firstIndex { $0.kind == .keepout })
+        XCTAssertEqual(router.world.items[zone].zoneLayers, [0, 1])
+        XCTAssertTrue(router.iface.malformedZones.isEmpty)
+        let triangles = try XCTUnwrap(router.router.world).index.all.filter { router.iface.worldItem($0)?.kind == .keepout }
+        XCTAssertEqual(triangles.map(\.layer), [0, 0, 1, 1])
         let a = IPoint(Int(x0 * 1e6), Int(y * 1e6)), b = IPoint(Int(x1 * 1e6), Int(y * 1e6))
         guard router.start(at: a, layer: 0, width: 200_000) else { return XCTFail("no start") }
         router.move(to: b)

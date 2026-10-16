@@ -99,10 +99,17 @@ extension WorldItem {
             drill = int(j["drill"])
         case .keepout:
             // (a keepout zone's layers are a list, each one its triangles are put on)
-            let ls = (j["layers"] as? [Any] ?? []).map(int)
-            layers = LayerRange(ls.min() ?? 0, ls.max() ?? 0)
+            zoneLayers = (j["layers"] as? [Any] ?? []).map(int)
+            layers = LayerRange(zoneLayers.min() ?? 0, zoneLayers.max() ?? 0)
+            // (each outline and hole as router.cpp makes it: a closed chain, a point the same as the one before it
+            // left out, as SHAPE_POLY_SET::Append leaves it out)
             polygons = (j["polygons"] as? [Any] ?? []).map { poly in
-                (poly as? [Any] ?? []).map { LineChain(($0 as? [Any] ?? []).map(point), closed: true) }
+                (poly as? [Any] ?? []).map { chain in
+                    var c = LineChain()
+                    c.setClosed(true)
+                    for p in (chain as? [Any] ?? []).map(point) { c.append(p) }
+                    return c
+                }
             }
             if let k = j["keepout"] as? [String: Any] {
                 keepout = Keepout(tracks: bool(k["tracks"]), vias: bool(k["vias"]), pads: bool(k["pads"]),
@@ -144,7 +151,7 @@ extension WorldItem {
             j["locked"] = locked
             j["flashed"] = flashed
         case .keepout:
-            j["layers"] = Array(layers.start...layers.end)
+            j["layers"] = zoneLayers
             j["polygons"] = polygons.map { $0.map { $0.points.map(p) } }
             if let k = keepout {
                 j["keepout"] = ["tracks": k.tracks, "vias": k.vias, "pads": k.pads, "footprints": k.footprints,

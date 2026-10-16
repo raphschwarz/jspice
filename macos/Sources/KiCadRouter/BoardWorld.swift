@@ -2,10 +2,10 @@
 // syncGraphicalItem), pcbnew/pad.cpp (BuildEffectiveShapes, TransformShapeToPolygon, FlashLayer, IsOnCopperLayer,
 // GetClearanceOverrides), common/eda_shape.cpp (makeEffectiveShapes, SetArcGeometry, GetArcAngle, rotate),
 // pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp (how a board's items are read: units, pad and drawing
-// placement), pcbnew/board_design_settings.cpp and common/project/net_settings.cpp (the rules and net classes),
-// libs/kimath/src/geometry/roundrect.cpp and shape_utils.cpp (ROUNDRECT::TransformToPolygon, KIGEOM::MakeArcCw90 and
-// MakeArcCw180) and shape_line_chain.cpp (how an outline keeps its arcs: Append, mergeFirstLastPointIfNeeded,
-// fixIndicesRotation, IsArcSegment).
+// placement, zone outlines) and pcbnew/zone.cpp (AddPolygon), pcbnew/board_design_settings.cpp and
+// common/project/net_settings.cpp (the rules and net classes), libs/kimath/src/geometry/roundrect.cpp and
+// shape_utils.cpp (ROUNDRECT::TransformToPolygon, KIGEOM::MakeArcCw90 and MakeArcCw180) and shape_line_chain.cpp (how
+// an outline keeps its arcs: Append, mergeFirstLastPointIfNeeded, fixIndicesRotation, IsArcSegment).
 // Copyright (C) 2013-2016 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -14,8 +14,8 @@ import KiCadKit
 
 /// A KiCad board as KiCad's router sees it: its items in the order KiCad's SyncWorld puts them in the router's world,
 /// with the shapes KiCad makes of them, and the board's rules as its DRC engine works them out with no rules of the
-/// user's own. What KiCad's router would see and this cannot make yet (a text on copper, a keepout zone's triangles,
-/// an arc track, a custom pad's merged outline) is named in `unsupported`.
+/// user's own. What KiCad's router would see and this cannot make yet (a text on copper, an arc track, a custom pad's
+/// merged outline) is named in `unsupported`.
 public struct BoardWorld {
     public private(set) var copperLayers = 2
     public private(set) var items: [WorldItem] = []
@@ -758,11 +758,25 @@ public struct BoardWorld {
         let ls = copper(layerNames(node))
         guard let lo = ls.first, let hi = ls.last else { return }
         w.layers = LayerRange(lo, hi)
-        w.polygons = node.all("polygon").map { poly in
-            [LineChain((poly["pts"]?.arguments ?? []).filter { $0.head == "xy" }.map(Self.point), closed: true)]
+        w.zoneLayers = ls
+        // the outline as KiCad's parser reads it: each polygon's points (one the same as the one before it left out),
+        // closed, the first polygon the outline and the others holes in it (ZONE::AddPolygon)
+        var outline = PolySet()
+        for poly in node.all("polygon") {
+            let pts = poly["pts"]?.arguments ?? []
+            if pts.contains(where: { $0.head == "arc" }) { unsupported.insert("keepout zone with arcs") }
+            var chain = LineChain()
+            for xy in pts where xy.head == "xy" { chain.append(Self.point(xy)) }
+            chain.setClosed(true)
+            if chain.pointCount == 0 { continue }
+            if outline.outlineCount == 0 {
+                outline.addOutline(chain)
+            } else {
+                outline.addHole(chain)
+            }
         }
+        w.polygons = outline.polygons
         w.source = node.value("uuid")
-        unsupported.insert("keepout zone")
         items.append(w)
     }
 

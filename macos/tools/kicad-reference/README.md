@@ -46,7 +46,8 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   does depend on how fast the machine is; `router.cpp` and the tests set no time limit, and both stop on the
   iteration limit alone. A board can also be a real one as `board-scene.py` gives it (`"rules": {"board": true,
   ...}`): every item KiCad's router takes from a board (pads, drawings and texts on copper, outlines, keepout zones,
-  which it cuts into triangles as KiCad does, tracks, vias) with the clearances KiCad's rule resolver would give it
+  which it cuts into triangles with KiCad's code as `syncZone` does, leaving out one it cannot cut, and writes with
+  the first route, tracks, vias) with the clearances KiCad's rule resolver would give it
   (net classes, pads' and footprints' own clearances, the board's minimums, hole and edge clearances). One case in
   `kicad-board-routes.json` keeps what KiCad's router does on a board whose hole clearance is 0: it takes tracks
   along a mounting hole's very edge, which KiCad's DRC then finds touching the hole (`BoardRoutingTests` measures
@@ -59,9 +60,13 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
 - `boards.py`: random boards made by KiCad itself (`boards.py OUTDIR COUNT [SEED]`): footprints from KiCad's own
   libraries with every kind of pad, turned and flipped, on two or four layers; nets in net classes chosen by
   pattern, of different priorities; pads' and footprints' own clearances; tracks, vias, drawings on copper; outlines
-  with rounded corners (arcs, or a rectangle's own corner radius) and round cut-outs. Each is saved with its
-  project, and `board-scene.py` run on it.
-  `Tests/KiCadRouterTests/Fixtures/boards` holds three; `KICAD_BOARD_REFERENCE` names another folder of them.
+  with rounded corners (arcs, or a rectangle's own corner radius) and round cut-outs; keepout zones of several shapes
+  on some of the copper layers, some with holes, some in footprints, now and then one KiCad's router cannot cut into
+  triangles (drawn from random numbers of their own, so that the rest of each board is what it was before they were
+  added). Each is saved with its project, and `board-scene.py` run on it.
+  `Tests/KiCadRouterTests/Fixtures/boards` holds five (`random-2-43` and `random-2-51`, with keepout zones, as
+  `boards.py` makes them now; the other three as it made them before it drew keepouts and rounded rectangles);
+  `KICAD_BOARD_REFERENCE` names another folder of them.
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
   turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them
   (now and then one starting on an unplated hole), and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is

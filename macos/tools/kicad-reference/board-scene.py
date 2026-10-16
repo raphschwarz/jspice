@@ -166,8 +166,8 @@ class Scene:
                   "copper": True})
         self.unsupported.append(f"text on {pcbnew.LayerName(layer) if hasattr(pcbnew, 'LayerName') else layer}")
 
-    # syncZone (the outline only: router.cpp triangulates it with KiCad's code, as syncZone does, the triangles
-    # being out of reach of KiCad's Python)
+    # syncZone (the outline only: router.cpp cuts it into triangles with KiCad's code, as syncZone does, leaving out a
+    # zone it cannot cut; the triangles are out of reach of KiCad's Python)
     def zone(self, zone, footprint=None):
         if not zone.GetIsRuleArea() or not zone.HasKeepoutParametersSet():
             return
@@ -180,7 +180,6 @@ class Scene:
                    "footprint": footprint.GetReference() if footprint else None, "name": zone.GetZoneName()}
         layers = [self.pns(l) for l in self.copper_layers() if zone.GetLayerSet().Contains(l)]
         self.add({"kind": "keepout", "layers": layers, "polygons": polygons, "keepout": keepout})
-        self.unsupported.append("keepout zone")
 
     def drawing(self, item):
         cls = item.GetClass()

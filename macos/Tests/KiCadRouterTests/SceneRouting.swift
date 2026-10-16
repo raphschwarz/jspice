@@ -40,6 +40,14 @@ enum SceneRouting {
             var r: [String: Any] = [:]
             iface.added.removeAll()
             iface.removedItems.removeAll()
+            // (with the first route, the keepout zones' triangles as the world has them, if there are any)
+            if out.isEmpty, let world = router.world {
+                let triangles: [[String: Any]] = world.index.all.compactMap { item in
+                    guard iface.worldItem(item)?.kind == .keepout, let s = item as? Solid, case .simple(let c)? = s.solidShape else { return nil }
+                    return ["layer": s.layer, "triangle": c.points.map { [$0.x, $0.y] }]
+                }
+                if !triangles.isEmpty { r["keepoutTriangles"] = triangles }
+            }
             let started = router.startRouting(point(route["start"]!), itemAt("startItem"),
                                               layer: (route["layer"] as? NSNumber)?.intValue ?? 0)
             r["started"] = started
