@@ -14,6 +14,7 @@
 #include <math/util.h>
 #include <math/vector2d.h>
 #include <nlohmann/json.hpp>
+#include <pns_line.h>
 #include <pns_utils.h>
 
 #include <cstdio>
@@ -467,6 +468,50 @@ int main( int argc, char** argv )
     }
 
     out["hulls"] = hulls;
+
+    // a path walked round a hull (LINE::Walkaround), both ways
+    json walks = json::array();
+
+    for( int i = 0; i < n * 2; i++ )
+    {
+        std::unique_ptr<SHAPE> a( randShape( false ) );
+        int cl = uniform( 0, 400000 );
+        int thickness = uniform( 1, 600000 );
+        SHAPE_LINE_CHAIN hull = PNS::BuildHullForPrimitiveShape( a.get(), cl, thickness );
+        BOX2I bb = hull.BBox();
+        SHAPE_LINE_CHAIN path;
+        VECTOR2I start = bb.GetOrigin() - VECTOR2I( uniform( 1, 800000 ), uniform( -800000, 1600000 ) );
+        path.Append( start );
+
+        if( chance( 40 ) )
+            path.Append( start + VECTOR2I( uniform( 0, bb.GetWidth() ), 0 ) );
+
+        if( chance( 30 ) && hull.PointCount() > 0 )
+            path.Append( hull.CPoint( uniform( 0, hull.PointCount() - 1 ) ) );
+
+        // the end beyond the hull, or inside it (as the pointer is when it is on an obstacle)
+        VECTOR2I end = chance( 60 ) ? bb.GetEnd() + VECTOR2I( uniform( 1, 800000 ), uniform( -1600000, 800000 ) )
+                                    : bb.Centre() + VECTOR2I( uniform( -bb.GetWidth() / 3, bb.GetWidth() / 3 ),
+                                                              uniform( -bb.GetHeight() / 3, bb.GetHeight() / 3 ) );
+        path.Append( end );
+
+        PNS::LINE line;
+        line.SetShape( path );
+        line.SetWidth( thickness );
+        json results = json::array();
+
+        for( int cw = 0; cw < 2; cw++ )
+        {
+            SHAPE_LINE_CHAIN walked;
+            bool ok = line.Walkaround( hull, walked, cw == 1 );
+            results.push_back( { { "ok", ok }, { "path", ok ? chainPoints( walked ) : json::array() } } );
+        }
+
+        walks.push_back( { { "hull", chainPoints( hull ) }, { "path", chainPoints( path ) }, { "ccw", results[0] },
+                           { "cw", results[1] } } );
+    }
+
+    out["walkarounds"] = walks;
 
     std::cout << out.dump() << std::endl;
     return 0;

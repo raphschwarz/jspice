@@ -13,12 +13,12 @@ CERN). Each of these files names the KiCad sources it comes from, from KiCad 10.
 
 | Here | From KiCad |
 | --- | --- |
-| `Sources/KiCadRouter/` (the board editor's router: geometry, collisions, hulls, and the router on them) | `libs/kimath` (`seg`, `shape_line_chain`, `shape_collisions`, `shape_rect`, `direction_45`, `vector2d`, `util`, `trigo`) and `pcbnew/router` |
+| `Sources/KiCadRouter/` (the board editor's router: geometry, collisions, hulls, and the router on them) | `libs/kimath` (`seg`, `shape_line_chain`, `shape_collisions`, `shape_rect`, `shape_index`, `direction_45`, `vector2d`, `util`, `trigo`), `thirdparty/rtree` (KiCad's R-tree) and `pcbnew/router` (`pns_item`, `pns_node`, `pns_index`, `pns_joint`, `pns_line`, `pns_segment`, `pns_via`, `pns_solid`, `pns_hole`, `pns_utils`, `pns_topology`, `pns_walkaround`, `pns_optimizer`, `pns_mouse_trail_tracer`, `pns_line_placer`, `pns_router`, `pns_routing_settings`, `pns_sizes_settings`) |
 | `Sources/KiCadKit/NetlistUpdater.swift` (a board brought up to date with the schematic) | `pcbnew/netlist_reader/board_netlist_updater.cpp` |
 | `Sources/KiCadKit/Connectivity.swift` (what touches what in a board's copper, and its ratsnest) | `pcbnew/connectivity` |
 | `Sources/KiCadKit/SExpression.swift` (boards written as KiCad writes them) | `common/io/kicad/kicad_io_utils.cpp` (`KICAD_FORMAT::Prettify`) |
 | `Sources/KiCadKit/Board.swift` (footprints placed, turned and flipped as KiCad does it) | `pcbnew/footprint.cpp`, `pcbnew/pad.cpp` |
 | `Sources/KiCadLink/Generated/` (KiCad's API messages) | `api/proto`, through `protoc` (`tools/kicad-api/generate.sh`) |
-| `tools/kicad-reference/` (programs that link KiCad's own code, to check the router against it) | links `libs/kimath`, `pcbnew/router` and parts of `common` |
+| `tools/kicad-reference/` (programs that link KiCad's own code, to check the router against it; `patch.py` changes two places in KiCad's router before it is built) | links `libs/kimath`, `pcbnew/router` and parts of `common` |
 
 KiCad's source code is at <https://gitlab.com/kicad/code/kicad>; KiCad 10.0.7's is its tag `10.0.7`.

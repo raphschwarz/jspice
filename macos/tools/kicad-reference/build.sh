@@ -1,11 +1,14 @@
 #!/bin/sh
 # Builds this folder's programs against KiCad's own code: KiCad 10.0.7's sources (libs/kimath, the PCB editor's
 # router in pcbnew/router, and the parts of common/ they use) fetched from KiCad's GitLab and compiled as they are.
-# Needs a C++20 compiler, wxWidgets 3.2's headers and libraries and Boost's headers (on Ubuntu: g++,
-# libwxgtk3.2-dev, libboost-dev). KICAD_REFERENCE_BUILD is where the sources and objects go.
+# Needs a C++20 compiler, wxWidgets 3.2's headers and libraries, and Boost's and GLM's headers (on Ubuntu: g++,
+# libwxgtk3.2-dev, libboost-dev, libglm-dev). KICAD_REFERENCE_BUILD is where the sources and objects go.
 #
-#   build.sh            builds kicad-geometry, and writes Tests/KiCadRouterTests/Fixtures/kicad-geometry.json
+#   build.sh            builds kicad-geometry and kicad-router, and writes Tests/KiCadRouterTests/Fixtures/kicad-geometry.json
 #   build.sh 2000       ... with that many cases of each kind (75 for the fixture; more to check more)
+#
+# kicad-router reads a board and the routes to make on it, as JSON, and writes what KiCad's router does with them
+# (scenes.py makes the boards the router tests use).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 version=10.0.7
@@ -36,6 +39,13 @@ flags="-std=c++20 -O1 -DUSINGZ -DFMT_HEADER_ONLY -I$work/generated -I$src/libs/k
     -I$src/thirdparty/dynamic_bitset -I$src/thirdparty/magic_enum -I$src/thirdparty/fmt/include
     -I$src/thirdparty/expected/include -I$src/thirdparty/thread-pool $(wx-config --cxxflags)"
 
+# Changes made to KiCad's sources here, once (patch.py says what and why): ties between obstacles
+# broken by the order the items were made in, not their addresses; a start pad's missing BOARD_ITEM asked nothing
+if [ ! -e "$work/.patched-1" ]; then
+    python3 "$here/patch.py" "$src"
+    touch "$work/.patched-1"
+fi
+
 # KiCad's geometry, its polygon clipper, its router (all but its glue to the PCB editor), and what they call of
 # common/: advanced settings (their defaults), the router's settings, colours for its debug drawing, ids, units
 sources=$(
@@ -51,13 +61,17 @@ sources=$(
 )
 
 echo "compiling $(echo "$sources" | wc -l) files"
-export CXX flags obj
+export CXX flags obj work
 echo "$sources" | xargs -P "$(nproc 2>/dev/null || sysctl -n hw.ncpu)" -I{} sh -c '
     o="$obj/$(echo "{}" | cksum | cut -d" " -f1)-$(basename "{}" .cpp).o"
-    [ "$o" -nt "{}" ] || $CXX $flags -c "{}" -o "$o"'
+    { [ "$o" -nt "{}" ] && [ "$o" -nt "$work/.patched-1" ]; } || $CXX $flags -c "{}" -o "$o"'
+objects=$(echo "$sources" | while read -r f; do echo "$obj/$(echo "$f" | cksum | cut -d" " -f1)-$(basename "$f" .cpp).o"; done)
 
-$CXX $flags -c "$here/geometry.cpp" -o "$work/geometry.o"
-$CXX -o "$work/kicad-geometry" "$work/geometry.o" "$obj"/*.o $(wx-config --libs core,base,aui)
+for program in geometry router; do
+    $CXX $flags -c "$here/$program.cpp" -o "$work/$program.o"
+    # shellcheck disable=SC2086
+    $CXX -o "$work/kicad-$program" "$work/$program.o" $objects $(wx-config --libs core,base,aui)
+done
 
 fixture="$here/../../Tests/KiCadRouterTests/Fixtures/kicad-geometry.json"
 if [ $# -gt 0 ]; then

@@ -1,8 +1,8 @@
 name: kicad
 
 # KiCadKit, KiCadLink and KiCadRouter checked against KiCad itself: boards JSpice writes read and checked by kicad-cli,
-# footprints placed from KiCad's own libraries, the router's geometry against KiCad's own code (built from KiCad's
-# sources by tools/kicad-reference). They are Foundation only, so this runs on Linux, where KiCad 10 installs from its
+# footprints placed from KiCad's own libraries, the router's geometry and routes against KiCad's own code (built from
+# KiCad's sources by tools/kicad-reference). They are Foundation only, so this runs on Linux, where KiCad 10 installs from its
 # PPA (the macOS runners have no KiCad, and the tests that need it skip there).
 on:
   push:
@@ -40,13 +40,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/kicad-reference
-          key: kicad-reference-10.0.7-${{ hashFiles('macos/tools/kicad-reference/build.sh', 'macos/tools/kicad-reference/stubs.cpp') }}
+          key: kicad-reference-10.0.7-${{ hashFiles('macos/tools/kicad-reference/build.sh', 'macos/tools/kicad-reference/stubs.cpp', 'macos/tools/kicad-reference/patch.py') }}
           restore-keys: kicad-reference-10.0.7-
       - name: KiCad's own geometry and router code, built
         run: |
-          sudo apt-get install -y --no-install-recommends g++ libwxgtk3.2-dev libboost-dev
+          sudo apt-get install -y --no-install-recommends g++ libwxgtk3.2-dev libboost-dev libglm-dev
           KICAD_REFERENCE_BUILD="$RUNNER_TEMP/kicad-reference" macos/tools/kicad-reference/build.sh 2000
-      - name: KiCadRouter against KiCad's code, on 2000 cases of each kind
+      - name: 1000 random boards routed by KiCad's router
+        # (a new seed each run: the run number, which the boards' names carry)
+        run: |
+          python3 macos/tools/kicad-reference/scenes.py "$RUNNER_TEMP/kicad-reference/kicad-router" \
+            "$RUNNER_TEMP/kicad-reference/routes-1000.json" 1000 "$GITHUB_RUN_NUMBER"
+      - name: KiCadRouter against KiCad's code, on 2000 cases of each kind and the 1000 boards
         env:
           KICAD_GEOMETRY_REFERENCE: ${{ runner.temp }}/kicad-reference/kicad-geometry-2000.json
+          KICAD_ROUTER_REFERENCE: ${{ runner.temp }}/kicad-reference/routes-1000.json
         run: macos/scripts/kicad-linux-tests.sh --filter KiCadRouterTests

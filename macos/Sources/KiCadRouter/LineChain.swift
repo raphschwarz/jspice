@@ -600,6 +600,24 @@ public struct LineChain: Hashable, Sendable, CustomStringConvertible {
         return self
     }
 
+    /// KiCad's RemoveDuplicatePoints: points repeated one after the other made one (but two points always kept)
+    public mutating func removeDuplicatePoints() {
+        if points.count < 3 { return }
+        if points.count == 3 {
+            if points[0] == points[1] { remove(1) }
+            return
+        }
+        var unique: [IPoint] = []
+        var i = 0
+        while i < points.count {
+            var j = i + 1
+            while j < points.count && points[i] == points[j] { j += 1 }
+            unique.append(points[i])
+            i = j
+        }
+        points = unique
+    }
+
     /// Whether the chain's points make the same path as `other`'s
     public func compareGeometry(_ other: LineChain) -> Bool {
         if points.count != other.points.count { return false }

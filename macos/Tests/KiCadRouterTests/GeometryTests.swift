@@ -163,6 +163,23 @@ final class GeometryTests: XCTestCase {
         report(m, "hulls", of: all.count)
     }
 
+    func testWalkarounds() {
+        let m = Mismatches(), all = cases("walkarounds")
+        for c in all {
+            let hull = LineChain(points(c["hull"]), closed: true)
+            let line = Line()
+            line.setShape(LineChain(points(c["path"])))
+            for (key, cw) in [("ccw", false), ("cw", true)] {
+                let k = c[key] as! [String: Any]
+                var walked = LineChain()
+                let ok = line.walkaround(hull, &walked, cw: cw)
+                m.check(ok, bool(k["ok"]), "\(key) walk's success", c)
+                if ok && bool(k["ok"]) { m.check(walked.points, points(k["path"]), "\(key) walk", c) }
+            }
+        }
+        report(m, "walkarounds", of: all.count)
+    }
+
     // MARK: - Reading the cases
 
     private func int(_ v: Any?) -> Int { (v as! NSNumber).intValue }

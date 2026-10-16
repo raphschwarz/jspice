@@ -76,6 +76,21 @@ public enum Shape: Hashable, Sendable {
         }
     }
 
+    /// Whether this shape and `other` come closer than `clearance`, how close, and about where. (KiCad works out
+    /// where for each pair of shapes; here it is the point of `other` nearest this shape's middle, which is all the
+    /// router asks of it: whether the place is a castellated pad's, or a net tie's.)
+    public func collide(_ other: Shape, clearance: Int, actual: inout Int?, location: inout IPoint?) -> Bool {
+        guard collide(other, clearance: clearance, actual: &actual) else { return false }
+        let c = bbox.center
+        switch other {
+        case .circle(let o, let r): location = c == o ? o : o + (c - o).resized(r)
+        case .rect(let b): location = b.nearestPoint(c)
+        case .segment(let s, _): location = s.nearestPoint(c)
+        case .simple(let l), .chain(let l): location = l.nearestPoint(c)
+        }
+        return true
+    }
+
     /// A segment's own collision, its width's half taken off what is found
     private static func withWidth(_ hit: Bool, _ width: Int, _ actual: inout Int?) -> Bool {
         if hit, let a = actual { actual = max(0, a - width / 2) }
@@ -224,6 +239,95 @@ public enum Shape: Hashable, Sendable {
             return true
         }
         return false
+    }
+
+    // MARK: - Pushing a circle out (shape_collisions.cpp's minimum translation vectors)
+
+    /// KiCad's pushoutForce: how far a circle must move to clear a segment by `clearance`
+    static func pushoutForce(_ c: IPoint, _ r: Int, _ seg: Seg, _ clearance: Int) -> IPoint {
+        var f = IPoint.zero
+        let nearest = seg.nearestPoint(c)
+        let dist = (nearest - c).norm
+        let minDist = clearance + r
+        if dist < minDist {
+            for corr in 0..<5 {
+                f = (c - nearest).resized(minDist - dist + corr)
+                if seg.distance(c + f) >= minDist { break }
+            }
+        }
+        return f
+    }
+
+    /// Where a circle (a via) must move to clear this shape by `clearance` (KiCad's SHAPE::Collide with a minimum
+    /// translation vector, this shape first and the circle second), or nil if it is clear already
+    public func pushout(circle c: IPoint, radius r: Int, clearance: Int) -> IPoint? {
+        switch self {
+        case .circle(let c1, let r1):
+            let minDist = clearance + r1 + r
+            let delta = c - c1
+            let dsq = delta.squaredNorm
+            guard dsq == 0 || dsq < minDist * minDist else { return nil }
+            return delta.resized(Int(Double(minDist) - Double(dsq).squareRoot() + 3))
+        case .rect(let b):
+            let minDist = clearance + r
+            let v = [IPoint(b.minX, b.minY), IPoint(b.minX, b.maxY), IPoint(b.maxX, b.maxY), IPoint(b.maxX, b.minY), IPoint(b.minX, b.minY)]
+            var nearestSq = Int.max
+            var nearest = IPoint.zero
+            let inside = b.contains(c)
+            for i in 0..<4 {
+                let pn = Seg(v[i], v[i + 1]).nearestPoint(c)
+                let d = (pn - c).squaredNorm
+                if d < nearestSq {
+                    nearest = pn
+                    nearestSq = d
+                }
+            }
+            guard inside || nearestSq == 0 || nearestSq < minDist * minDist else { return nil }
+            let delta = c - nearest
+            let d = Double(nearestSq).squareRoot()
+            if inside { return -delta.resized(Int(abs(Double(minDist + 1) + d) + 1)) }
+            return delta.resized(Int(abs(Double(minDist + 1) - d) + 1))
+        case .segment(let s, let w):
+            var actual: Int?
+            guard Shape.circleSeg(c, r, s, clearance + w / 2, &actual) else { return nil }
+            return Shape.pushoutForce(c, r, s, clearance + w / 2)
+        case .simple(let l), .chain(let l):
+            var mtvSeg = -1
+            if l.isClosed && l.pointInside(c) {
+                var closest = Int.max
+                for s in 0..<l.segmentCount {
+                    let d = l.segment(s).distance(c)
+                    if d < closest {
+                        closest = d
+                        mtvSeg = s
+                    }
+                }
+            } else {
+                var any = false
+                for s in 0..<l.segmentCount {
+                    var actual: Int?
+                    if Shape.circleSeg(c, r, l.segment(s), clearance, &actual) {
+                        any = true
+                        break
+                    }
+                }
+                guard any else { return nil }
+            }
+            var moved = c
+            var total = IPoint.zero
+            if mtvSeg >= 0 {
+                let np = l.segment(mtvSeg).nearestPoint(c)
+                let f = (np - c) + (np - c).resized(r)
+                moved = moved + f
+                total = total + f
+            }
+            for s in 0..<l.segmentCount {
+                let f = Shape.pushoutForce(moved, r, l.segment(s), clearance)
+                moved = moved + f
+                total = total + f
+            }
+            return total
+        }
     }
 
     // MARK: - Hulls (pns_utils.cpp)

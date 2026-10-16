@@ -1,0 +1,82 @@
+import Foundation
+import XCTest
+@testable import KiCadRouter
+
+/// The router against KiCad's own: Fixtures/kicad-routes.json holds boards with routes to make on them, and what
+/// KiCad 10.0.7's router made of each (tools/kicad-reference/router.cpp, made by scenes.py); the port must make the
+/// same, point for point. KICAD_ROUTER_REFERENCE names another such file.
+final class RouterTests: XCTestCase {
+    private static let reference: [[String: Any]] = {
+        let url = ProcessInfo.processInfo.environment["KICAD_ROUTER_REFERENCE"].map(URL.init(fileURLWithPath:))
+            ?? Bundle.module.url(forResource: "kicad-routes", withExtension: "json", subdirectory: "Fixtures")!
+        return try! JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [[String: Any]]
+    }()
+
+    override func setUp() {
+        // (KICAD_ROUTER_DEBUG: the port's trace on standard error, as router.cpp writes KiCad's)
+        if ProcessInfo.processInfo.environment["KICAD_ROUTER_DEBUG"] != nil {
+            Router.trace = { FileHandle.standardError.write(($0 + "\n").data(using: .utf8)!) }
+        }
+    }
+
+    func testRoutesAsKiCadRoutesThem() {
+        var differences: [String] = []
+        var routes = 0, identical = 0
+        for (n, c) in Self.reference.enumerated() {
+            let scene = c["scene"] as! [String: Any]
+            let kicad = c["kicad"] as! [[String: Any]]
+            let ours = SceneInterface.route(scene)
+            XCTAssertEqual(ours.count, kicad.count, "scene \(n): routes")
+            for (i, (o, k)) in zip(ours, kicad).enumerated() {
+                routes += 1
+                // (what a route added, in any order: KiCad lists it from a hash set)
+                var o = o, k = k
+                o["added"] = Self.sorted(o["added"])
+                k["added"] = Self.sorted(k["added"])
+                if let d = Self.difference(o, k, "scene \(n) (\(c["name"] ?? "")) route \(i)") {
+                    differences.append(d)
+                } else {
+                    identical += 1
+                }
+            }
+        }
+        if let dump = ProcessInfo.processInfo.environment["KICAD_ROUTER_DUMP"] {
+            // (for comparing by hand: ours, as router.cpp writes KiCad's)
+            let all = Self.reference.map { SceneInterface.route($0["scene"] as! [String: Any]) }
+            try? JSONSerialization.data(withJSONObject: all).write(to: URL(fileURLWithPath: dump))
+        }
+        XCTAssertGreaterThan(routes, 0)
+        XCTAssertEqual(identical, routes, "\(routes - identical) of \(routes) routes differ from KiCad's:\n"
+                       + differences.prefix(10).joined(separator: "\n"))
+    }
+
+    private static func sorted(_ v: Any?) -> [Any] {
+        ((v as? [Any]) ?? []).sorted { compact($0) < compact($1) }
+    }
+
+    /// Where two JSON values first differ
+    static func difference(_ a: Any, _ b: Any, _ path: String) -> String? {
+        switch (a, b) {
+        case let (a as [String: Any], b as [String: Any]):
+            for key in Set(a.keys).union(b.keys).sorted() {
+                guard let av = a[key] else { return "\(path).\(key): ours missing, KiCad's \(b[key]!)" }
+                guard let bv = b[key] else { return "\(path).\(key): ours \(av), KiCad's missing" }
+                if let d = difference(av, bv, "\(path).\(key)") { return d }
+            }
+            return nil
+        case let (a as [Any], b as [Any]):
+            if a.count != b.count { return "\(path): ours \(compact(a)), KiCad's \(compact(b))" }
+            for (i, (x, y)) in zip(a, b).enumerated() {
+                if let d = difference(x, y, "\(path)[\(i)]") { return a.count < 8 ? "\(path): ours \(compact(a)), KiCad's \(compact(b))" : d }
+            }
+            return nil
+        default:
+            return "\(a)" == "\(b)" || (a as? NSNumber)?.isEqual(b) == true ? nil : "\(path): ours \(a), KiCad's \(b)"
+        }
+    }
+
+    private static func compact(_ v: Any) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: v, options: [.sortedKeys]) else { return "\(v)" }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
