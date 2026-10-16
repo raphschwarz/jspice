@@ -23,6 +23,15 @@ final class GeometryTests: XCTestCase {
             count += 1
             if told.count < 8 { told.append("\(what): ours \(ours), KiCad's \(kicad), in \(c)") }
         }
+
+        /// A floating point result KiCad's own computes with the platform's sine, cosine and arc tangent: the same
+        /// within a few units in the last place (Apple's maths library and its JSON reader round the last bit
+        /// otherwise than glibc's; the nanometres the router works in come out the same)
+        func close(_ ours: Double, _ kicad: Double, _ what: String, _ c: [String: Any]) {
+            guard abs(ours - kicad) > 4 * max(ours.magnitude, kicad.magnitude).ulp else { return }
+            count += 1
+            if told.count < 8 { told.append("\(what): ours \(ours), KiCad's \(kicad), in \(c)") }
+        }
     }
 
     private func report(_ m: Mismatches, _ kind: String, of n: Int, file: StaticString = #filePath, line: UInt = #line) {
@@ -133,7 +142,7 @@ final class GeometryTests: XCTestCase {
             let hitP = chain.collide(p, clearance: cl, actual: &actual, location: &location)
             m.check(hitP, bool(c["collideP"]), "collision with a point", c)
             if hitP { m.check(actual ?? -1, int(c["collidePActual"]), "collision with a point's distance", c) }
-            m.check(chain.area(), double(c["area"]), "area", c)
+            m.close(chain.area(), double(c["area"]), "area", c)
         }
         report(m, "line chains", of: all.count)
     }
@@ -186,12 +195,12 @@ final class GeometryTests: XCTestCase {
             guard case .arc(let arc) = shape(c["arc"]) else { return XCTFail("not an arc") }
             let cl = int(c["cl"]), p = point(c["p"])
             m.check(arc.center, point(c["center"]), "centre", c)
-            m.check(arc.radius, double(c["radius"]), "radius", c)
+            m.close(arc.radius, double(c["radius"]), "radius", c)
             let b = arc.bbox(cl), kb = points(c["bbox"])
             m.check([IPoint(b.minX, b.minY), IPoint(b.maxX, b.maxY)], kb, "box", c)
-            m.check(arc.startAngle.degrees, double(c["startAngle"]), "start angle", c)
-            m.check(arc.endAngle.degrees, double(c["endAngle"]), "end angle", c)
-            m.check(arc.centralAngle.degrees, double(c["centralAngle"]), "central angle", c)
+            m.close(arc.startAngle.degrees, double(c["startAngle"]), "start angle", c)
+            m.close(arc.endAngle.degrees, double(c["endAngle"]), "end angle", c)
+            m.close(arc.centralAngle.degrees, double(c["centralAngle"]), "central angle", c)
             m.check(arc.isCCW, bool(c["ccw"]), "counter-clockwise", c)
             m.check(arc.isEffectiveLine, bool(c["effectiveLine"]), "all but straight", c)
             var actual: Int?, location: IPoint?
