@@ -167,6 +167,11 @@ public struct KiCadBoardPicture: Sendable {
         return nil
     }
 
+    /// The connection still to route whose line passes within `slop` of `point` (the nearest)
+    public func airwire(at point: KiCadPoint, slop: Double) -> KiCadConnectivity.Airwire? {
+        airwires.map { ($0, Self.distance(point, $0.from, $0.to)) }.filter { $0.1 <= slop }.min { $0.1 < $1.1 }?.0
+    }
+
     /// How far `p` is from the segment from `a` to `b`
     static func distance(_ p: KiCadPoint, _ a: KiCadPoint, _ b: KiCadPoint) -> Double {
         let dx = b.x - a.x, dy = b.y - a.y

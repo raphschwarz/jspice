@@ -155,6 +155,33 @@ final class BoardEditingTests: XCTestCase {
         XCTAssertTrue(again.routeConnections(skip: Set(KiCadConnectivity(board).ratsnest().map(\.net))).routed.isEmpty)
     }
 
+    /// One line of the ratsnest routed, as a click on it routes it: that connection made, as one change
+    func testOneConnectionIsRouted() throws {
+        let file = try XCTUnwrap(Self.boards().first)
+        let board = try KiCadBoard.read(file)
+        let session = BoardEditing(board: board, project: Self.project(file))
+        let wires = KiCadConnectivity(board).ratsnest()
+        var routed = 0
+        for wire in wires {
+            let before = session.board.text
+            guard let edit = session.routeConnection(wire) else {
+                XCTAssertEqual(session.board.text, before, "a connection not routed leaves the board as it was")
+                continue
+            }
+            routed += 1
+            XCTAssertEqual(edit.name, "Route Connection")
+            XCTAssertEqual(edit.before.text, before)
+            XCTAssertEqual(edit.after.text, session.board.text)
+            XCTAssertFalse(edit.added.isEmpty)
+            XCTAssertFalse(session.isRouting)
+            let left = KiCadConnectivity(session.board).ratsnest()
+            XCTAssertFalse(left.contains { $0.net == wire.net && Set([$0.from, $0.to]) == Set([wire.from, wire.to]) },
+                           "\(wire.net) \(wire.ends) is routed")
+        }
+        print("BoardEditingTests: \(routed) of \(wires.count) connections routed one at a time")
+        XCTAssertGreaterThan(routed, 0)
+    }
+
     /// A ground pour added, filled by KiCad, and taken away again
     func testAPourIsAddedAndFilledByKiCad() throws {
         let file = try XCTUnwrap(Self.boards().first)

@@ -124,6 +124,9 @@ struct PCBView: View {
         if let preview = board.editing.preview {
             return "Routing \(preview.net ?? "no net")  ·  \(String(format: "%.2f mm", preview.width))  ·  \(PCBEditBar.title(preview.layer))  ·  \(position)"
         }
+        if let wire = board.editing.hoveredAirwire, board.editing.tool == .select {
+            return "Click to route \(wire.net)\(wire.ends.isEmpty ? "" : ": " + wire.ends.joined(separator: " to "))"
+        }
         if let pad = picture.pad(at: p), let footprint = picture.footprints.first(where: { $0.uuid == pad.footprint }) {
             return "\(footprint.reference) pad \(pad.number)  ·  \(pad.net ?? "no net")  ·  \(position)"
         }
@@ -355,12 +358,21 @@ struct PCBBoardCanvas: View {
         Canvas { context, _ in
             PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc).draw(context)
             PCBEditPainter(picture: picture, view: view, preview: editing.preview, selection: editing.selection,
-                           dragging: editing.dragging).draw(context)
+                           dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil).draw(context)
         }
         .frame(width: view.size.width, height: view.size.height)
         .overlay {
             BoardHoverReadout(text: readout) { pointer in
-                if let pointer { editing.pointerMoved(view.board(pointer)) }
+                guard let pointer else {
+                    if editing.hoveredAirwire != nil { editing.hoveredAirwire = nil }
+                    return
+                }
+                let p = view.board(pointer)
+                editing.pointerMoved(p)
+                // (a line of the ratsnest under the pointer, where a click routes it: not over a track, which it selects)
+                let wire = editing.tool == .select && picture.copper(at: p, layers: picture.copperLayers, slop: 3 / view.scale) == nil
+                    ? picture.airwire(at: p, slop: 3 / view.scale) : nil
+                if wire != editing.hoveredAirwire { editing.hoveredAirwire = wire }
             }
         }
         .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
@@ -378,12 +390,14 @@ struct PCBBoardCanvas: View {
             case .route:
                 editing.click(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
             case .select:
-                // a track or via, else a part
+                // a track or via, else a connection still to route (routed), else a part
                 if editing.select(at: p, in: picture, slop: 3 / view.scale, extending: extending) {
                     if !extending {
                         board.select(footprint: nil, extending: false)
                         editing.footprintSelection = []
                     }
+                } else if !extending, let wire = picture.airwire(at: p, slop: 3 / view.scale) {
+                    editing.routeConnection(wire)
                 } else {
                     let footprint = picture.footprint(at: p)
                     board.select(footprint: footprint?.uuid, extending: extending)
@@ -460,9 +474,21 @@ struct PCBEditPainter {
     let preview: BoardEditing.Preview?
     let selection: Set<String>
     var dragging: (uuids: [String], delta: KiCadPoint)?
+    /// The connection still to route under the pointer, which a click routes
+    var airwire: KiCadConnectivity.Airwire?
 
     func draw(_ context: GraphicsContext) {
         let s = view.scale
+        if let airwire {
+            var line = Path()
+            line.move(to: view.point(airwire.from))
+            line.addLine(to: view.point(airwire.to))
+            context.stroke(line, with: .color(.yellow), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            for end in [airwire.from, airwire.to] {
+                let c = view.point(end)
+                context.stroke(Path(ellipseIn: CGRect(x: c.x - 5, y: c.y - 5, width: 10, height: 10)), with: .color(.yellow), lineWidth: 1.5)
+            }
+        }
         // footprints being dragged: their pads and outline where they would go
         if let (uuids, d) = dragging {
             let moving = Set(uuids)

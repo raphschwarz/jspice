@@ -43,6 +43,8 @@ final class PCBEditing: ObservableObject {
     @Published private(set) var undoName: String?
     @Published private(set) var redoName: String?
     @Published private(set) var isReady = false
+    /// The connection still to route under the pointer, which the select tool routes when it is clicked
+    @Published var hoveredAirwire: KiCadConnectivity.Airwire?
 
     static let widths: [Double] = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0]
 
@@ -331,6 +333,26 @@ final class PCBEditing: ObservableObject {
             if let edit = routed.edit { take(edit) }
             message = "Routed \(routed.routed.count) connection\(routed.routed.count == 1 ? "" : "s")"
                 + (routed.failed.isEmpty ? "" : "; \(routed.failed.count) could not be routed") + "; \(routed.left) left to route."
+        }
+    }
+
+    /// One connection routed (a line of the ratsnest clicked), as Route All routes each: on this layer, else the other
+    /// side
+    func routeConnection(_ wire: KiCadConnectivity.Airwire) { Task { await routeConnectionNow(wire) } }
+
+    /// One connection routed, waited for
+    func routeConnectionNow(_ wire: KiCadConnectivity.Airwire) async {
+        guard !isRouting else { return }
+        let layer = self.layer, width = self.width
+        hoveredAirwire = nil
+        await applying?.value
+        if !isReady { await prepareNow() }
+        if let made = await engine.run({ $0.routeConnection(wire, layer: layer, width: width) }) {
+            take(made)
+            message = nil
+        } else {
+            NSSound.beep()
+            message = "The router can't get \(wire.net) through from \(wire.ends.first ?? "here") to \(wire.ends.last ?? "there") on either side."
         }
     }
 

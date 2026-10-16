@@ -256,9 +256,22 @@ enum InteractionTest {
             editing.layer = track.layer
             check(editing.select(at: middle, in: picture, slop: 0.05, extending: false) && editing.selection == [track.uuid],
                   "clicking a track selects it")
+            let open = Set(picture.airwires)
             await editing.deleteSelectionNow()
             await editing.settled()
             check(!(pcb.picture?.tracks.contains { $0.uuid == track.uuid } ?? true), "and Delete takes it away")
+            // the connection it made, a line of the ratsnest again, routed by clicking it
+            if let wire = pcb.picture?.airwires.first(where: { !open.contains($0) }) {
+                let left = pcb.picture?.airwires.count ?? 0
+                let middle = KiCadPoint((wire.from.x + wire.to.x) / 2, (wire.from.y + wire.to.y) / 2)
+                check(pcb.picture?.airwire(at: middle, slop: 0.05) == wire, "the connection is found under the pointer")
+                await editing.routeConnectionNow(wire)
+                await editing.settled()
+                check((pcb.picture?.airwires.count ?? left) < left && editing.undoName == "Route Connection",
+                      "and clicking it routes it (\(left) to \(pcb.picture?.airwires.count ?? left) left)")
+            } else {
+                check(false, "taking the track away leaves a connection to route")
+            }
         } else {
             check(false, "a routed track to select")
         }

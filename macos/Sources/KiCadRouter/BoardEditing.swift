@@ -220,23 +220,16 @@ public final class BoardEditing {
         var tried = Set<KiCadConnectivity.Airwire>()
         var wires = KiCadConnectivity(router.board).ratsnest()
         func wanted(_ w: KiCadConnectivity.Airwire) -> Bool { (nets?.contains(w.net) ?? true) && !skip.contains(w.net) }
-        let other = layers.first { $0 != layer } ?? layer
         while out.routed.count + out.failed.count < most, let wire = wires.first(where: { wanted($0) && !tried.contains($0) }) {
             tried.insert(wire)
             let name = "\(wire.net): \(wire.ends.isEmpty ? "tracks" : wire.ends.joined(separator: " to "))"
-            var done = false
-            for l in (layer == other ? [layer] : [layer, other]) where !done {
-                guard self.start(at: wire.from, layer: startLayer(at: wire.from, preferring: l), width: width) else { continue }
-                move(to: wire.to)
-                if let edit = fix(at: wire.to) {
-                    added += edit.added
-                    removed += edit.removed
-                    done = true
-                } else {
-                    cancel()
-                }
+            if let (a, r) = route(wire, layer: layer, width: width) {
+                added += a
+                removed += r
+                out.routed.append(name)
+            } else {
+                out.failed.append(name)
             }
-            if done { out.routed.append(name) } else { out.failed.append(name) }
             wires = KiCadConnectivity(router.board).ratsnest()
         }
         out.left = wires.count
@@ -246,6 +239,28 @@ public final class BoardEditing {
                             name: n == 1 ? "Route 1 Connection" : "Route \(n) Connections")
         }
         return out
+    }
+
+    /// One connection still to route (a line of the ratsnest) routed, as routeConnections routes each, as one change;
+    /// nil if the router cannot get it through on either side
+    public func routeConnection(_ wire: KiCadConnectivity.Airwire, layer: String = "F.Cu", width: Double? = nil) -> Edit? {
+        guard !isRouting else { return nil }
+        let start = base
+        guard let (added, removed) = route(wire, layer: layer, width: width) else { return nil }
+        return Edit(before: start, after: base, added: added, removed: removed, name: "Route Connection")
+    }
+
+    /// A track from one end of `wire` to the other, on `layer` (the side a one-sided pad is on), else on the other
+    /// side: what it added and took away
+    private func route(_ wire: KiCadConnectivity.Airwire, layer: String, width: Double?) -> (added: [String], removed: [String])? {
+        let other = layers.first { $0 != layer } ?? layer
+        for l in (layer == other ? [layer] : [layer, other]) {
+            guard start(at: wire.from, layer: startLayer(at: wire.from, preferring: l), width: width) else { continue }
+            move(to: wire.to)
+            if let edit = fix(at: wire.to) { return (edit.added, edit.removed) }
+            cancel()
+        }
+        return nil
     }
 
     // MARK: - Changes
