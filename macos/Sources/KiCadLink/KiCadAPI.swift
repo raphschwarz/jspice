@@ -110,13 +110,15 @@ public final class KiCadAPI {
 
     /// The open board whose file is `file`, if it is open
     public func board(file: URL) throws -> Kiapi_Common_Types_DocumentSpecifier? {
-        let boards = try openBoards()
-        let name = file.lastPathComponent
-        let folder = file.deletingLastPathComponent().standardizedFileURL.path
-        return boards.first { doc in
-            doc.boardFilename == name && (doc.project.path.isEmpty
-                || URL(fileURLWithPath: doc.project.path).standardizedFileURL.path == folder)
-        } ?? boards.first { $0.boardFilename == name }
+        try openBoards().first { Self.document($0, is: file) }
+    }
+
+    /// Whether an open board is the board `file`: its name and its project's folder (with its links followed, as
+    /// /tmp is /private/tmp on a Mac), never its name alone, as another project's board may have the same name
+    static func document(_ document: Kiapi_Common_Types_DocumentSpecifier, is file: URL) -> Bool {
+        guard document.boardFilename == file.lastPathComponent, !document.project.path.isEmpty else { return false }
+        func folder(_ url: URL) -> String { url.resolvingSymlinksInPath().standardizedFileURL.path }
+        return folder(URL(fileURLWithPath: document.project.path, isDirectory: true)) == folder(file.deletingLastPathComponent())
     }
 
     /// The board as it stands in the editor, unsaved changes and all, as its file would have it

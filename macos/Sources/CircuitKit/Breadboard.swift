@@ -610,6 +610,8 @@ public enum Breadboard {
     /// voltage at rest
     struct Plan {
         var parts: [NetlistPart] = []
+        /// The net of each wire and net label, by its id
+        var wireNets: [UUID: String] = [:]
         var voltages: [String: Double] = [:]
         /// Whether the circuit's resting voltages were found (its simulation from rest did not fail)
         var restingFound = true
@@ -699,7 +701,9 @@ public enum Breadboard {
             flat.elements[k].params = [:]
         }
         var plan = Plan()
-        plan.parts = NetlistExtractor.netlist(from: flat).filter { $0.kind != .block && $0.kind != .port }
+        let extracted = NetlistExtractor.nets(from: flat)
+        plan.parts = extracted.parts.filter { $0.kind != .block && $0.kind != .port }
+        plan.wireNets = extracted.wires
         (plan.voltages, plan.restingFound) = netVoltages(flat, plan.parts)
 
         // supplies: the circuit's own DC sources to ground, and what the chips need

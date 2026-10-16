@@ -17,6 +17,26 @@ final class KiCadAPITests: XCTestCase {
         throw XCTSkip("No KiCad is running with its API on")
     }
 
+    /// An open board is a file by its name and its project's folder, never by its name alone
+    func testAnOpenBoardIsItsFileOnlyInItsOwnFolder() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-api-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        var document = Kiapi_Common_Types_DocumentSpecifier()
+        document.boardFilename = "amp.kicad_pcb"
+        document.project.path = folder.path
+        XCTAssertTrue(KiCadAPI.document(document, is: folder.appendingPathComponent("amp.kicad_pcb")))
+        XCTAssertFalse(KiCadAPI.document(document, is: folder.appendingPathComponent("other.kicad_pcb")))
+        XCTAssertFalse(KiCadAPI.document(document, is: URL(fileURLWithPath: "/elsewhere/amp.kicad_pcb")), "another project's amp")
+        // the same folder by a link
+        let link = folder.deletingLastPathComponent().appendingPathComponent("jspice-api-link-\(UUID().uuidString)")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: folder)
+        addTeardownBlock { try? FileManager.default.removeItem(at: link) }
+        XCTAssertTrue(KiCadAPI.document(document, is: link.appendingPathComponent("amp.kicad_pcb")))
+        document.project.path = ""
+        XCTAssertFalse(KiCadAPI.document(document, is: folder.appendingPathComponent("amp.kicad_pcb")))
+    }
+
     func testKiCadSaysWhoItIsAndWhatItHasOpen() throws {
         let api = try api()
         let version = try api.version()

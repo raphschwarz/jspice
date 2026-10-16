@@ -2295,6 +2295,17 @@ public final class CircuitSession {
 
     func save(_ arguments: [String: Any]) throws -> Any {
         let path = (try Self.text(arguments, "path") as NSString).expandingTildeInPath
+        // saved as another file: it keeps its board, rather than looking for one under its new name
+        if boardHost == nil, let old = fileURL {
+            let new = URL(fileURLWithPath: path)
+            let (before, after) = (BoardLink.boardFile(for: old, design: circuit.pcb), BoardLink.boardFile(for: new, design: circuit.pcb))
+            if before != after && FileManager.default.fileExists(atPath: before.path) && !FileManager.default.fileExists(atPath: after.path) {
+                let sameFolder = before.deletingLastPathComponent().standardizedFileURL == new.deletingLastPathComponent().standardizedFileURL
+                var design = circuit.pcb ?? PCBDesign()
+                design.board = sameFolder ? before.lastPathComponent : before.path
+                change("Keep the Board") { $0.pcb = design }
+            }
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(circuit).write(to: URL(fileURLWithPath: path))

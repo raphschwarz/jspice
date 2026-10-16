@@ -75,6 +75,21 @@ final class PCBTests: XCTestCase {
         XCTAssertEqual(PCBNetlistBuilder.netlist(turned).netlist.component(reference: "C1")?.pins["1"]?.net, "GND")
     }
 
+    /// Each wire of the schematic is on a net the board has, for highlighting it there
+    func testWiresAreOnTheBoardsNets() throws {
+        let circuit = try Self.circuit()
+        let board = PCBNetlistBuilder.netlist(circuit)
+        let nets = Set(board.netlist.components.flatMap { $0.pins.values.map(\.net) })
+        let wires = circuit.elements.filter { $0.kind == .wire }
+        XCTAssertFalse(wires.isEmpty)
+        for wire in wires {
+            let net = try XCTUnwrap(board.wireNets[wire.id], "a wire on no net")
+            XCTAssertTrue(nets.contains(net), net)
+        }
+        XCTAssertTrue(board.wireNets.values.contains("vcc"))
+        XCTAssertTrue(board.wireNets.values.contains("Net-(Q1-Pad2)"))
+    }
+
     func testUnnamedNetsAreNamedAfterTheirFirstPadAndKeepTheirNames() throws {
         let circuit = try Self.circuit()
         let board = PCBNetlistBuilder.netlist(circuit)

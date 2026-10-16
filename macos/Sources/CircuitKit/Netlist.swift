@@ -174,7 +174,11 @@ public enum NetlistLayout {
 /// their net labels, else after the names they were given when the circuit was built from a netlist (`netNames`), else
 /// numbered; the ground net is "GND". Terminals connected to nothing are left out.
 public enum NetlistExtractor {
-    public static func netlist(from circuit: Circuit) -> [NetlistPart] {
+    public static func netlist(from circuit: Circuit) -> [NetlistPart] { nets(from: circuit).parts }
+
+    /// The parts with their terminals' nets, and the net of each wire and net label on one with a name or a part's
+    /// terminal, by the wire's id
+    public static func nets(from circuit: Circuit) -> (parts: [NetlistPart], wires: [UUID: String]) {
         // the nodes alone, as the simulator finds them (a simulator would also set up every chip and clip)
         let topology = Topology(circuit: circuit.flattened())
         // the drawn terminals' nodes (a part's internal nodes, as behind a transistor's resistances, come after them)
@@ -236,6 +240,10 @@ public enum NetlistExtractor {
             part.audio = element.audio
             parts.append(part)
         }
-        return parts
+        var wires: [UUID: String] = [:]
+        for (i, element) in circuit.elements.enumerated() where element.kind == .wire || element.kind == .netLabel {
+            if let node = nodes(of: i).first, let net = names[node] { wires[element.id] = net }
+        }
+        return (parts, wires)
     }
 }

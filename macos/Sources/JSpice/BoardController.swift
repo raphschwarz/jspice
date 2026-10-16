@@ -47,6 +47,10 @@ final class BoardController: ObservableObject {
     @Published private(set) var partsOfFootprint: [String: [UUID]] = [:]
     /// What each schematic part is on the board (worked out from the schematic, board or no board)
     @Published private(set) var onBoard: [UUID: OnBoard] = [:]
+    /// The board's net of each of the schematic's wires and net labels
+    private var wireNets: [UUID: String] = [:]
+    /// The net last highlighted in KiCad's editor
+    private var highlighted: String?
     @Published private(set) var unassigned: [String] = []
     @Published private(set) var notes: [String] = []
     /// Parts deleted on the board, waiting for the user's word: delete them from the schematic too, or put them back
@@ -89,7 +93,15 @@ final class BoardController: ObservableObject {
     func setFile(_ url: URL?) {
         guard url != fileURL || !connected else { return }
         connected = true
+        let before = boardFile
         fileURL = url
+        // renamed, or saved as another file: it keeps its board, rather than looking for one under its new name
+        if let before, let url, let editor, before != boardFile, FileManager.default.fileExists(atPath: before.path),
+           let after = boardFile, !FileManager.default.fileExists(atPath: after.path) {
+            let sameFolder = before.deletingLastPathComponent().standardizedFileURL == url.deletingLastPathComponent().standardizedFileURL
+            // an edit, so that the circuit is saved with it
+            editor.editBoard("Keep the Board") { $0.board = sameFolder ? before.lastPathComponent : before.path }
+        }
         let file = boardFile
         Task { await connect(file) }
     }
@@ -183,6 +195,7 @@ final class BoardController: ObservableObject {
             }
         }
         if parts != onBoard { onBoard = parts }
+        wireNets = built.wireNets
         if built.unassigned != unassigned { unassigned = built.unassigned }
         if built.notes != notes { notes = built.notes }
     }
@@ -460,6 +473,15 @@ final class BoardController: ObservableObject {
 
     /// The schematic's selection changed: the same parts selected in KiCad's editor
     func selectionChanged(_ selection: Set<UUID>) {
+        // wires of one net selected: the net highlighted in KiCad's editor, as KiCad's schematic editor highlights it
+        if isOpenInKiCad || isLive {
+            let nets = Set(selection.compactMap { wireNets[$0] })
+            let net = nets.count == 1 && selection.allSatisfy({ wireNets[$0] != nil }) ? nets.first : nil
+            if net != highlighted {
+                highlighted = net
+                Task.detached { KiCadCrossProbe.highlight(net: net) }
+            }
+        }
         guard isLive, selection != fromKiCad, selection != toKiCad else { return }
         toKiCad = selection
         let parts = partsOfFootprint

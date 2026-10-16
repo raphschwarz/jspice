@@ -294,7 +294,7 @@
 				)
 			)
 		)
-		(property "Value" "2N3904 (or any small NPN)"
+		(property "Value" "2N3904"
 			(at 1.27 2.79 0)
 			(layer "F.Fab")
 			(uuid "222673de-16e5-4a48-a725-30f515b2bd1c")
@@ -947,7 +947,7 @@
 				)
 			)
 		)
-		(property "Value" "2N3904 (or any small NPN)"
+		(property "Value" "2N3904"
 			(at 1.27 2.79 0)
 			(layer "F.Fab")
 			(uuid "175bd3d6-0d0c-44f5-b580-e0ff4978b689")

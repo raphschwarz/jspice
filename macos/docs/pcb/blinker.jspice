@@ -640,7 +640,7 @@
         "doNotPopulate" : false,
         "footprint" : "Package_TO_SOT_THT:TO-92_Inline",
         "reference" : "Q2",
-        "value" : "2N3904 (or any small NPN)"
+        "value" : "2N3904"
       },
       "\/3aeeed86-6062-4686-a7fb-269ac7f68ffc" : {
         "doNotPopulate" : false,
@@ -670,7 +670,7 @@
         "doNotPopulate" : false,
         "footprint" : "Package_TO_SOT_THT:TO-92_Inline",
         "reference" : "Q1",
-        "value" : "2N3904 (or any small NPN)"
+        "value" : "2N3904"
       },
       "\/d6d9823f-ac91-4b22-830b-91bba66be805" : {
         "doNotPopulate" : false,

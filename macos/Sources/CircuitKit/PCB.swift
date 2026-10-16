@@ -94,6 +94,8 @@ public enum PCBNetlistBuilder {
         public var unassigned: [String]
         /// The schematic's parts each component stands for, by reference
         public var parts: [String: [UUID]]
+        /// The board's net of each of the schematic's wires and net labels, by its id (for highlighting it on the board)
+        public var wireNets: [UUID: String] = [:]
     }
 
     // footprints of KiCad's standard libraries
@@ -264,7 +266,8 @@ public enum PCBNetlistBuilder {
                 let mapped = pinout.uppercased().compactMap { letter[$0] }
                 if mapped.count == legs.count { legs = mapped }
             }
-            var value = title
+            // the part number alone ("2N3904", not the breadboard's "2N3904 (or any small NPN)"), as a board's value is
+            var value = title.components(separatedBy: " (").first ?? title
             if part.kind == .potentiometer {
                 value = compact(part.params["resistance"] ?? 10_000) + ((part.params["taper"] ?? 0) >= 0.5 ? " A" : " B")
             }
@@ -365,6 +368,9 @@ public enum PCBNetlistBuilder {
                 }
             }
         }
+        func boardName(_ net: String) -> String {
+            isUnnamed(net) ? firstPad[net].map { "Net-(\($0.ref)-Pad\($0.pad))" } ?? net : boardNet(net)
+        }
         var components: [PCBNetlist.Component] = []
         var parts: [String: [UUID]] = [:]
         for draft in drafts {
@@ -372,7 +378,7 @@ public enum PCBNetlistBuilder {
             for pad in draft.pads {
                 let (function, type) = draft.types[pad] ?? ("", "passive")
                 if let net = draft.nets[pad] {
-                    let name = isUnnamed(net) ? firstPad[net].map { "Net-(\($0.ref)-Pad\($0.pad))" } ?? net : boardNet(net)
+                    let name = boardName(net)
                     component.pins[pad] = PCBNetlist.Pin(net: name, function: function, type: type)
                 } else {
                     // a pin left free: on a net of its own, as KiCad's schematic puts it
@@ -390,6 +396,7 @@ public enum PCBNetlistBuilder {
         for c in components where c.reference.hasPrefix("J") || c.ids.count > 1 { references[c.ids.first ?? ""] = c.reference }
         design.references = references
         return Result(netlist: PCBNetlist(components: components), design: design, notes: notes,
-                      unassigned: components.filter { $0.footprint.isEmpty && !$0.excludeFromBoard }.map(\.reference), parts: parts)
+                      unassigned: components.filter { $0.footprint.isEmpty && !$0.excludeFromBoard }.map(\.reference), parts: parts,
+                      wireNets: plan.wireNets.mapValues(boardName))
     }
 }
