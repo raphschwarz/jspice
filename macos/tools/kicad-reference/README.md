@@ -1,14 +1,14 @@
 # KiCad reference
 
 The tools used to check JSpice's board router (`Sources/KiCadRouter`, ported from KiCad's) against KiCad's own code:
-programs linked with KiCad 10.0.7's geometry library (`libs/kimath`) and its PCB editor's router (`pcbnew/router`),
-compiled from KiCad's sources as they are. They link KiCad's code, so they are under KiCad's license, the GNU General
-Public License version 3 or later (see `../../KICAD-NOTICE.md`).
+programs linked with KiCad 10.0.7's geometry library (`libs/kimath`), its polygon clipper (`thirdparty/clipper2`) and
+its PCB editor's router (`pcbnew/router`), compiled from KiCad's sources as they are. They link KiCad's code, so they
+are under KiCad's license, the GNU General Public License version 3 or later (see `../../KICAD-NOTICE.md`).
 
 - `build.sh`: fetches the parts of KiCad's sources these need from KiCad's GitLab, compiles them (with a C++20
   compiler, wxWidgets 3.2, and Boost's and GLM's headers: on Ubuntu, `g++ libwxgtk3.2-dev libboost-dev libglm-dev`) and builds the
-  programs. With no argument it writes the router tests' fixture; with a number, a set of that many cases of each kind
-  for `KICAD_GEOMETRY_REFERENCE`.
+  programs. With no argument it writes the router tests' fixtures; with a number, sets of that many cases of each kind
+  for `KICAD_GEOMETRY_REFERENCE` and `KICAD_CLIPPER_REFERENCE`.
 - `geometry.cpp`: random cases, chosen to reach the corners (segments along the 45° directions or nearly, touching,
   overlapping, of no length; chains that share points; shapes close together), with KiCad's answers for them: vector
   lengths and resizing, `rescale`, segment distances, intersections and collisions, `DIRECTION_45` and the traces it
@@ -50,6 +50,18 @@ Public License version 3 or later (see `../../KICAD-NOTICE.md`).
   boards (`board-scene.py`'s scenes): `scenes.py --boards KICAD_ROUTER OUT.json ROUTES_PER_BOARD SEED SCENE.json...`;
   `kicad-board-routes.json` is `scenes.py --boards ... 2 20261016 ../../Tests/KiCadRouterTests/Fixtures/boards/*.json`.
   `KICAD_ROUTER_REFERENCE` names others (separated by colons).
+- `clipper.cpp`: the polygon clipper KiCad ships (`thirdparty/clipper2`, Clipper2, compiled as KiCad compiles it: its
+  points carry a z value) on random cases, with its answers: boolean operations (union, intersection, difference,
+  exclusive or, under every fill rule; open paths too; collinear points kept or not, solutions reversed or not) on
+  polygons chosen to reach the corners (on small grids, so that points repeat and edges touch, overlap and cross;
+  holes; rings of many points; combs; long flat edges; the clip the subject moved a little), and offsets (every join
+  and end type, out and in, miter limits and arc tolerances, and KiCad's simplification after), as paths and as trees
+  of outlines and holes, with the z callback KiCad follows its arcs with; and the helpers (areas, point in polygon,
+  simplification) and the order `std::sort` leaves equal elements in (Clipper2 sorts each scanbeam's crossings with
+  it). After the random boolean operations come a few found to take Clipper2 down its rarest ways, two of which it
+  goes round for ever (KiCad's copy crashes on them: each case runs in a child process, and those are marked as such).
+  `ClipperTests.swift` checks the port gives the same, point for point and z value for z value, and finishes where
+  KiCad's copy crashes. `kicad-clipper COUNT SEED` makes other random cases than `build.sh`'s.
 - `patch.py`: the changes `build.sh` makes to KiCad's router before building it, so it answers the same each
   run and runs on items with no board item behind them: obstacles met at the same place are ordered by when their
   items were made rather than by their addresses in memory (the port orders them the same way), a start pad's board
@@ -66,6 +78,6 @@ the same net on real boards with `BoardRouter` (the port, on the board's world, 
 board file), and runs `kicad-cli pcb drc` on the result; no clearance, crossing, short or size violation may
 involve a track or via the router placed.
 
-CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind, 1000
-random router boards and 60 real boards made by `boards.py` (their worlds, routes on them, and KiCad's DRC on
+CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind, 2000
+clipper cases of each kind, 1000 random router boards and 60 real boards made by `boards.py` (their worlds, routes on them, and KiCad's DRC on
 the port's routes); each run has a new seed, the run number, which the names a failure reports carry.
