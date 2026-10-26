@@ -684,6 +684,15 @@ struct PCBEditBar: View {
                 .labelsHidden()
                 .fixedSize()
                 .help("What a new track does with other nets' tracks and vias in its way: walks round them, or shoves them aside (KiCad's router modes)")
+                Picker("Corners", selection: $editing.corners) {
+                    Text("45°").tag(Direction45.CornerMode.mitered45)
+                    Text("45° Rounded").tag(Direction45.CornerMode.rounded45)
+                    Text("90°").tag(Direction45.CornerMode.mitered90)
+                    Text("90° Rounded").tag(Direction45.CornerMode.rounded90)
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("The corners new tracks take: at 45° or 90°, mitred, or rounded into arcs (KiCad's track corner mode)")
             }
             Menu {
                 Button("Route All Connections") { editing.routeAll() }

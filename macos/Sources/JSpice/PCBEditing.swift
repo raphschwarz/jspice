@@ -48,6 +48,12 @@ final class PCBEditing: ObservableObject {
         didSet { UserDefaults.standard.set(shove, forKey: Self.shoveKey) }
     }
     static let shoveKey = "pcbRouterShove"
+    /// The corners new tracks take (KiCad's track corner mode): 45° or 90°, mitred or rounded into arcs; the next
+    /// track, pair or drag started takes it
+    @Published var corners = Direction45.CornerMode(rawValue: UserDefaults.standard.integer(forKey: PCBEditing.cornersKey)) ?? .mitered45 {
+        didSet { UserDefaults.standard.set(corners.rawValue, forKey: Self.cornersKey) }
+    }
+    static let cornersKey = "pcbRouterCorners"
     /// The differential pair being routed, as it now goes
     @Published private(set) var pairPreview: BoardEditing.PairPreview?
     /// The track being routed, as it now goes
@@ -221,11 +227,12 @@ final class PCBEditing: ObservableObject {
     func clickNow(at p: KiCadPoint, double: Bool = false) async {
         if !isRouting && tool == .pair {
             guard !double else { return }
-            let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround
+            let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround, corners = self.corners
             await applying?.value
             if !isReady { await prepareNow() }
             let started = await engine.run { session -> (BoardEditing.PairPreview?, String)? in
                 session.mode = mode
+                session.cornerMode = corners
                 let shown = session.startPair(at: p, layer: layer)
                 return (shown.flatMap { _ in session.movePair(to: p) } ?? shown, session.failureReason)
             }
@@ -257,11 +264,12 @@ final class PCBEditing: ObservableObject {
         }
         if !isRouting {
             guard !double else { return }
-            let layer = self.layer, width = self.width, mode: RouterMode = shove ? .shove : .walkaround
+            let layer = self.layer, width = self.width, mode: RouterMode = shove ? .shove : .walkaround, corners = self.corners
             await applying?.value
             if !isReady { await prepareNow() }
             let started = await engine.run { session -> (Bool, String, BoardEditing.Preview?)? in
                 session.mode = mode
+                session.cornerMode = corners
                 let l = session.startLayer(at: p, preferring: layer)
                 guard session.start(at: p, layer: l, width: width) else { return (false, l, nil) }
                 return (true, l, session.move(to: p))
@@ -418,11 +426,12 @@ final class PCBEditing: ObservableObject {
     @discardableResult
     func startDrag(at p: KiCadPoint, freeAngle: Bool = false, follow: Bool = false) async -> Bool {
         guard !isRouting, !isDragging else { return false }
-        let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround
+        let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround, corners = self.corners
         await applying?.value
         if !isReady { await prepareNow() }
         let shown = await engine.run { session -> BoardEditing.DragPreview? in
             session.mode = mode
+            session.cornerMode = corners
             return session.startDrag(at: p, layer: layer, freeAngle: freeAngle)
         }
         guard let shown else { return false }
