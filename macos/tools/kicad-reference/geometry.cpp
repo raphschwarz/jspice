@@ -56,6 +56,7 @@ static int uniform( int lo, int hi ) { return std::uniform_int_distribution<int>
 static bool chance( int percent ) { return uniform( 0, 99 ) < percent; }
 
 static json pt( const VECTOR2I& p ) { return json::array( { p.x, p.y } ); }
+static VECTOR2I ptOf( const json& j ) { return VECTOR2I( j[0].get<int>(), j[1].get<int>() ); }
 static json opt( const OPT_VECTOR2I& p ) { return p ? pt( *p ) : json(); }
 
 static json chainPoints( const SHAPE_LINE_CHAIN& c )
@@ -493,8 +494,427 @@ static VECTOR2I jitter( int aReach )
     return VECTOR2I( dx, dy );
 }
 
+/// A chain with arcs as JSON: its points, the arcs each is on, and its arcs (their three points, the centre KiCad
+/// keeps, which an arc turned round keeps from before, and their width)
+static json arcChainJSON( const SHAPE_LINE_CHAIN& c )
+{
+    json shapes = json::array();
+    json arcs = json::array();
+
+    for( const std::pair<ssize_t, ssize_t>& sh : c.CShapes() )
+        shapes.push_back( json::array( { sh.first, sh.second } ) );
+
+    for( const SHAPE_ARC& a : c.CArcs() )
+    {
+        arcs.push_back( json::array( { pt( a.GetP0() ), pt( a.GetArcMid() ), pt( a.GetP1() ), pt( a.GetCenter() ),
+                                       a.GetWidth() } ) );
+    }
+
+    return { { "points", chainPoints( c ) }, { "shapes", shapes }, { "arcs", arcs }, { "closed", c.IsClosed() } };
+}
+
+/// The steps a chain of segments and arcs is made of, as a track has them: from `aStart`, each a point (along a 45°
+/// direction or not, now and then the same point again) or an arc from where the chain is, a turn about a centre near
+/// by (now and then one too small to keep as an arc; one after another, so that they share the point between them);
+/// a closed one's last now and then an arc back to where it started
+static json randArcSteps( const VECTOR2I& aStart, bool aClosed )
+{
+    json     steps = json::array();
+    VECTOR2I p = aStart;
+    int      n = uniform( 1, 6 );
+
+    steps.push_back( { { "p", pt( p ) } } );
+
+    for( int i = 0; i < n; i++ )
+    {
+        if( aClosed && i == n - 1 && p != aStart && chance( 40 ) )
+        {
+            VECTOR2I d = aStart - p;
+            VECTOR2I m = ( p + aStart ) / 2 + VECTOR2I( -d.y, d.x ) * uniform( -9, 9 ) / 10;
+            steps.push_back( { { "arc", json::array( { pt( p ), pt( m ), pt( aStart ) } ) } } );
+            p = aStart;
+        }
+        else if( chance( 55 ) )
+        {
+            int       r = chance( 8 ) ? uniform( 1, 3000 ) : uniform( 20000, 3000000 );
+            EDA_ANGLE dir = chance( 50 ) ? EDA_ANGLE( uniform( 0, 7 ) * 45.0, DEGREES_T )
+                                         : EDA_ANGLE( std::uniform_real_distribution<double>( 0, 360 )( rng ), DEGREES_T );
+            EDA_ANGLE a = chance( 50 ) ? EDA_ANGLE( uniform( -6, 6 ) * 45.0, DEGREES_T )
+                                       : EDA_ANGLE( std::uniform_real_distribution<double>( -300, 300 )( rng ), DEGREES_T );
+
+            if( a.AsDegrees() == 0.0 )
+                a = ANGLE_90;
+
+            VECTOR2I c = p + VECTOR2I( r, 0 );
+            RotatePoint( c, p, dir );
+            SHAPE_ARC arc( c, p, a );
+            steps.push_back( { { "arc", json::array( { pt( arc.GetP0() ), pt( arc.GetArcMid() ), pt( arc.GetP1() ) } ) } } );
+            p = arc.GetP1();
+        }
+        else
+        {
+            p = chance( 85 ) ? randFrom( p ) : randPoint();
+            steps.push_back( { { "p", pt( p ) }, { "dup", chance( 10 ) } } );
+        }
+    }
+
+    // (a chain of one point given a second)
+    if( steps.size() == 1 )
+        steps.push_back( { { "p", pt( p + VECTOR2I( 100000, 0 ) ) } } );
+
+    return steps;
+}
+
+/// The chain `randArcSteps` describes, built as KiCad builds one: points appended, arcs appended as arcs
+static SHAPE_LINE_CHAIN arcStepsChain( const json& aSteps, bool aClosed )
+{
+    SHAPE_LINE_CHAIN c;
+
+    for( const json& s : aSteps )
+    {
+        if( s.contains( "arc" ) )
+            c.Append( SHAPE_ARC( ptOf( s["arc"][0] ), ptOf( s["arc"][1] ), ptOf( s["arc"][2] ), 0 ) );
+        else
+            c.Append( ptOf( s["p"] ), s.value( "dup", false ) );
+    }
+
+    c.SetClosed( aClosed );
+    return c;
+}
+
+/// A point on the chain: one of its points, a point along one of its segments (an arc's too), or near it
+static VECTOR2I pointOn( const SHAPE_LINE_CHAIN& c )
+{
+    switch( uniform( 0, 2 ) )
+    {
+    case 0: return c.CPoint( uniform( 0, c.PointCount() - 1 ) );
+    case 1:
+    {
+        if( c.SegmentCount() < 1 )
+            return c.CPoint( 0 );
+
+        SEG     s = c.CSegment( uniform( 0, c.SegmentCount() - 1 ) );
+        int64_t t = uniform( 0, 1000 );
+        return VECTOR2I( s.A.x + int( ( s.B.x - s.A.x ) * t / 1000 ), s.A.y + int( ( s.B.y - s.A.y ) * t / 1000 ) );
+    }
+    default: return c.CPoint( uniform( 0, c.PointCount() - 1 ) ) + jitter( chance( 50 ) ? 3 : 300000 );
+    }
+}
+
+/// kicad-geometry --arcs COUNT [SEED]: chains with arcs in them as the router keeps its lines (SHAPE_LINE_CHAIN's
+/// arcs: each chain built from points and arcs, then cut, split, spliced, turned round, simplified, collided and
+/// walked round, each in a child process, as an assertion of KiCad's might stop it), and the traces DIRECTION_45 starts
+/// in each corner mode, rounded too
+static int arcGeometry( int n )
+{
+    json out;
+    json chains = json::array();
+
+    for( int i = 0; i < n * 2; i++ )
+    {
+        bool             closed = chance( 25 );
+        json             steps = randArcSteps( randPoint(), closed );
+        SHAPE_LINE_CHAIN c = arcStepsChain( steps, closed );
+        int              pc = c.PointCount();
+
+        // what each operation is asked, drawn here, before the child runs them
+        int      s1 = uniform( 0, pc - 1 ), e1 = uniform( s1, pc - 1 );
+        int      s2 = uniform( 0, pc - 1 ), e2 = uniform( s2, pc - 1 );
+        int      s3 = uniform( 0, pc - 1 ), e3 = uniform( s3, pc - 1 );
+        int      shapeAt = uniform( 0, pc - 1 );
+        int      insertAt = uniform( 0, pc );
+        VECTOR2I insertP = randFrom( c.CPoint( insertAt % pc ) );
+        VECTOR2I splitP = pointOn( c );
+        bool     splitExact = chance( 30 );
+        int      setAt = uniform( 0, pc - 1 );
+        VECTOR2I setP = randFrom( c.CPoint( setAt ) );
+        int      tol = chance( 50 ) ? 0 : uniform( 1, 50 );
+        json     withSteps = randArcSteps( chance( 50 ) ? c.CPoint( s3 ) : randPoint(), false );
+        json     appendSteps = randArcSteps( chance( 60 ) ? c.CLastPoint() : randPoint(), false );
+        VECTOR2I nearP = pointOn( c ) + jitter( 400000 );
+        VECTOR2I collideP = pointOn( c ) + jitter( 600000 );
+        int      cl = chance( 10 ) ? 0 : uniform( 0, 500000 );
+        SEG      collideS( pointOn( c ) + jitter( 800000 ), pointOn( c ) + jitter( 800000 ) );
+        VECTOR2I splitA = pointOn( c ), splitB = pointOn( c );
+        json     otherSteps;
+        std::unique_ptr<SHAPE> other;
+
+        switch( uniform( 0, 2 ) )
+        {
+        case 0:
+            otherSteps = randArcSteps( pointOn( c ) + jitter( 1000000 ), chance( 20 ) );
+            break;
+        case 1: other.reset( new SHAPE_ARC( randArc() ) ); break;
+        default: other.reset( randShape( false ) ); break;
+        }
+
+        if( other && chance( 70 ) )
+            other->Move( pointOn( c ) + jitter( 800000 ) - other->Centre() );
+
+        bool otherClosed = !otherSteps.is_null() && chance( 20 );
+
+        std::optional<std::string> result = isolated(
+                [&]() -> std::string
+                {
+                    json j = { { "steps", steps }, { "closed", closed }, { "chain", arcChainJSON( c ) } };
+                    json query = json::array();
+
+                    for( int k = 0; k < pc; k++ )
+                    {
+                        query.push_back( json::array( { c.IsSharedPt( k ), c.IsPtOnArc( k ), c.IsArcSegment( k ),
+                                                        c.IsArcStart( k ), c.IsArcEnd( k ), c.ArcIndex( k ),
+                                                        c.NextShape( k ) } ) );
+                    }
+
+                    j["query"] = query;
+                    j["shapeCount"] = c.ShapeCount();
+                    j["length"] = c.Length();
+                    j["reverse"] = arcChainJSON( c.Reverse() );
+                    j["slice"] = { { "s", s1 }, { "e", e1 }, { "result", arcChainJSON( c.Slice( s1, e1 ) ) } };
+
+                    SHAPE_LINE_CHAIN r = c;
+                    r.Remove( s2, e2 );
+                    j["remove"] = { { "s", s2 }, { "e", e2 }, { "result", arcChainJSON( r ) } };
+
+                    r = c;
+                    r.RemoveShape( shapeAt );
+                    j["removeShape"] = { { "i", shapeAt }, { "result", arcChainJSON( r ) } };
+
+                    r = c;
+                    r.Replace( s3, e3, arcStepsChain( withSteps, false ) );
+                    j["replace"] = { { "s", s3 }, { "e", e3 }, { "with", withSteps }, { "result", arcChainJSON( r ) } };
+
+                    r = c;
+                    r.Insert( insertAt, insertP );
+                    j["insert"] = { { "i", insertAt }, { "p", pt( insertP ) }, { "result", arcChainJSON( r ) } };
+
+                    r = c;
+                    r.Append( arcStepsChain( appendSteps, false ) );
+                    j["append"] = { { "with", appendSteps }, { "result", arcChainJSON( r ) } };
+
+                    r = c;
+                    int at = r.Split( splitP, splitExact );
+                    j["split"] = { { "p", pt( splitP ) }, { "exact", splitExact }, { "index", at },
+                                   { "result", arcChainJSON( r ) } };
+
+                    r = c;
+                    r.SetPoint( setAt, setP );
+                    j["setPoint"] = { { "i", setAt }, { "p", pt( setP ) }, { "result", arcChainJSON( r ) } };
+
+                    r = c;
+                    r.Simplify( tol );
+                    j["simplify"] = { { "tol", tol }, { "result", arcChainJSON( r ) } };
+                    r = c;
+                    r.Simplify2( true );
+                    j["simplify2"] = arcChainJSON( r );
+                    r = c;
+                    r.Simplify2( false );
+                    j["simplify2KeepColinear"] = arcChainJSON( r );
+                    r = c;
+                    r.RemoveDuplicatePoints();
+                    j["removeDuplicates"] = arcChainJSON( r );
+                    r = c;
+                    r.ClearArcs();
+                    j["clearArcs"] = arcChainJSON( r );
+                    r = c;
+                    r.SetClosed( !closed );
+                    j["setClosed"] = arcChainJSON( r );
+
+                    j["nearest"] = { { "p", pt( nearP ) }, { "any", pt( c.NearestPoint( nearP ) ) } };
+
+                    // (an arc's ends only: of an open chain, as KiCad's meander placers ask it, a closed one's last
+                    // segment reading past its points)
+                    if( !closed )
+                        j["nearest"]["ends"] = pt( c.NearestPoint( nearP, false ) );
+
+                    int  actualP = -1, actualS = -1;
+                    bool hitP = c.Collide( collideP, cl, &actualP );
+                    bool hitS = c.Collide( collideS, cl, &actualS );
+                    j["collide"] = { { "cl", cl }, { "p", pt( collideP ) }, { "hitP", hitP },
+                                     { "actualP", hitP ? actualP : -1 },
+                                     { "s", json::array( { pt( collideS.A ), pt( collideS.B ) } ) },
+                                     { "hitS", hitS }, { "actualS", hitS ? actualS : -1 },
+                                     { "hitSNoActual", c.Collide( collideS, cl ) } };
+
+                    SHAPE_LINE_CHAIN otherChain;
+                    const SHAPE*     o = other.get();
+
+                    if( !o )
+                    {
+                        otherChain = arcStepsChain( otherSteps, otherClosed );
+                        o = &otherChain;
+                    }
+
+                    int  actualO = -1;
+                    bool hitO = static_cast<const SHAPE*>( &c )->Collide( o, cl, &actualO );
+                    int  actualR = -1;
+                    bool hitR = o->Collide( &c, cl, &actualR );
+                    json shape = { { "steps", otherSteps }, { "closed", otherClosed } };
+
+                    if( other )
+                        shape = shapeJSON( o );
+
+                    j["collideShape"] = { { "shape", shape }, { "hit", hitO }, { "actual", hitO ? actualO : -1 },
+                                          { "hitNoActual", static_cast<const SHAPE*>( &c )->Collide( o, cl ) },
+                                          { "hitReversed", hitR }, { "actualReversed", hitR ? actualR : -1 },
+                                          { "hitReversedNoActual", o->Collide( &c, cl ) } };
+
+                    if( !closed )
+                    {
+                        SHAPE_LINE_CHAIN pre, mid, post;
+                        c.Split( splitA, splitB, pre, mid, post );
+                        j["splitAt"] = { { "a", pt( splitA ) }, { "b", pt( splitB ) }, { "pre", arcChainJSON( pre ) },
+                                         { "mid", arcChainJSON( mid ) }, { "post", arcChainJSON( post ) } };
+                    }
+
+                    return j.dump();
+                } );
+
+        // (a chain KiCad's own code stops on, an assertion of its failing: no reference)
+        if( result )
+            chains.push_back( json::parse( *result ) );
+    }
+
+    out["chains"] = chains;
+
+    // the traces DIRECTION_45 starts, in each corner mode
+    json traces = json::array();
+
+    for( int i = 0; i < n * 4; i++ )
+    {
+        VECTOR2I     v = chance( 50 ) ? randFrom( VECTOR2I( 0, 0 ) ) : randPoint();
+        VECTOR2I     p0 = randPoint();
+        VECTOR2I     p1 = chance( 80 ) ? randFrom( p0 ) : randPoint();
+        DIRECTION_45 d( v );
+        DIRECTION_45 u;
+        bool         undefined = chance( 30 );
+        bool         diag = chance( 50 );
+        int          mode = uniform( 0, 3 );
+        SHAPE_LINE_CHAIN trace = ( undefined ? u : d ).BuildInitialTrace( p0, p1, diag,
+                                                                       static_cast<DIRECTION_45::CORNER_MODE>( mode ) );
+        traces.push_back( { { "v", undefined ? json() : pt( v ) }, { "p0", pt( p0 ) }, { "p1", pt( p1 ) },
+                            { "diag", diag }, { "mode", mode }, { "trace", arcChainJSON( trace ) } } );
+    }
+
+    out["traces"] = traces;
+
+    // paths with arcs walked round a hull (LINE::Walkaround), both ways: what the walk leaves of the path as it was
+    // keeps its arcs
+    json walks = json::array();
+
+    for( int i = 0; i < n * 2; i++ )
+    {
+        std::unique_ptr<SHAPE> a( randShape( false ) );
+        int                    cl = uniform( 0, 400000 );
+        int                    thickness = uniform( 1, 600000 );
+        SHAPE_LINE_CHAIN       hull = PNS::BuildHullForPrimitiveShape( a.get(), cl, thickness );
+        BOX2I                  bb = hull.BBox();
+        VECTOR2I               start = bb.GetOrigin() - VECTOR2I( uniform( 1, 800000 ), uniform( -800000, 1600000 ) );
+        json                   steps = randArcSteps( start, false );
+        VECTOR2I               end = chance( 60 ) ? bb.GetEnd() + VECTOR2I( uniform( 1, 800000 ), uniform( -1600000, 800000 ) )
+                                                  : bb.Centre() + jitter( std::max<int>( 1, bb.GetWidth() / 3 ) );
+
+        steps.push_back( { { "p", pt( end ) } } );
+
+        if( chance( 50 ) )
+        {
+            // and on, an arc after it
+            json more = randArcSteps( end, false );
+            more.erase( more.begin() );
+
+            for( json& s : more )
+                steps.push_back( s );
+        }
+
+        std::optional<std::string> result = isolated(
+                [&]() -> std::string
+                {
+                    SHAPE_LINE_CHAIN path = arcStepsChain( steps, false );
+                    PNS::LINE        line;
+                    line.SetShape( path );
+                    line.SetWidth( thickness );
+                    json results = json::array();
+
+                    for( int cw = 0; cw < 2; cw++ )
+                    {
+                        SHAPE_LINE_CHAIN walked;
+                        bool             ok = line.Walkaround( hull, walked, cw == 1 );
+                        results.push_back( { { "ok", ok }, { "path", ok ? arcChainJSON( walked ) : json() } } );
+                    }
+
+                    json j = { { "hull", chainPoints( hull ) }, { "steps", steps }, { "ccw", results[0] },
+                               { "cw", results[1] } };
+                    return j.dump();
+                } );
+
+        if( result )
+            walks.push_back( json::parse( *result ) );
+    }
+
+    out["walkarounds"] = walks;
+
+    // a line's arc dragged through a point (LINE::DragArc, as the dragger drags an arc track): the point near the
+    // arc, inside it or out, or far off
+    json drags = json::array();
+
+    for( int i = 0; i < n * 2; i++ )
+    {
+        json             steps = randArcSteps( randPoint(), false );
+        SHAPE_LINE_CHAIN path = arcStepsChain( steps, false );
+        std::vector<int> onArcs;
+
+        for( int k = 0; k < path.PointCount(); k++ )
+        {
+            if( path.ArcIndex( k ) >= 0 )
+                onArcs.push_back( k );
+        }
+
+        if( onArcs.empty() )
+            continue;
+
+        int              index = onArcs[uniform( 0, (int) onArcs.size() - 1 )];
+        const SHAPE_ARC& arc = path.Arc( path.ArcIndex( index ) );
+        VECTOR2I         toward = chance( 50 ) ? arc.GetCenter() : arc.GetArcMid() * 2 - arc.GetCenter();
+        VECTOR2I         p = arc.GetArcMid() + ( toward - arc.GetArcMid() ) * uniform( 0, 10 ) / 10 + jitter( 200000 );
+
+        if( chance( 10 ) )
+            p = randPoint();
+
+        std::optional<std::string> result = isolated(
+                [&]() -> std::string
+                {
+                    PNS::LINE line;
+                    line.SetShape( path );
+                    line.SetWidth( 250000 );
+                    line.DragArc( p, index );
+                    json j = { { "steps", steps }, { "index", index }, { "p", pt( p ) },
+                               { "result", arcChainJSON( line.CLine() ) } };
+                    return j.dump();
+                } );
+
+        if( result )
+            drags.push_back( json::parse( *result ) );
+    }
+
+    out["arcDrags"] = drags;
+
+    std::cout << out.dump() << std::endl;
+    return 0;
+}
+
 int main( int argc, char** argv )
 {
+    // geometry --arcs COUNT [SEED]: chains with arcs, and traces in every corner mode
+    if( argc > 1 && std::string( argv[1] ) == "--arcs" )
+    {
+        if( argc > 3 )
+            rng.seed( strtoull( argv[3], nullptr, 10 ) );
+        else
+            rng.seed( 20261101 );
+
+        return arcGeometry( argc > 2 ? atoi( argv[2] ) : 100 );
+    }
+
     // geometry [COUNT [SEED]]: COUNT cases of each kind, from the random cases SEED gives (the same each time)
     int n = argc > 1 ? atoi( argv[1] ) : 400;
 

@@ -227,7 +227,7 @@ public final class Walkaround {
             let clearance = world.clearance(clItem, line, useEpsilon: false)
             let cached = world.ruleResolver.hullCache(clItem, clearance: clearance, walkaroundThickness: line.width, layer: line.layer)
             let hull: LineChain
-            if cornerMode == .mitered90 {
+            if cornerMode.isNinety {
                 let b = cached.bbox
                 hull = LineChain([IPoint(b.minX, b.minY), IPoint(b.maxX, b.minY), IPoint(b.maxX, b.maxY), IPoint(b.minX, b.maxY)])
             } else {

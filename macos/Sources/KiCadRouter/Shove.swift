@@ -1068,7 +1068,7 @@ public final class Shove {
             optimizer.setRestrictArea(area, strict: false)
         }
         // (smart pads cannot do 90 degree corners yet)
-        if settings.smartPads && settings.cornerMode == .mitered45 { optFlags.insert(.smartPads) }
+        if settings.smartPads && !settings.cornerMode.isNinety { optFlags.insert(.smartPads) }
         optimizer.effortLevel = optFlags.subtracting(optFlagDisableMask)
         optimizer.collisionKindMask = .any
         for pass in 0..<nPasses {

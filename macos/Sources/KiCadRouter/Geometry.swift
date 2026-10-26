@@ -1,6 +1,7 @@
 // Ported from KiCad 10.0.7: libs/kimath/include/math/vector2d.h, libs/kimath/src/math/util.cpp (rescale),
 // libs/kimath/include/geometry/seg.h and libs/kimath/src/geometry/seg.cpp, libs/kimath/src/trigo.cpp
-// (TestSegmentHit), libs/kimath/include/math/box2.h.
+// (TestSegmentHit), libs/kimath/include/math/box2.h, libs/kimath/include/geometry/direction45.h and
+// libs/kimath/src/geometry/direction_45.cpp.
 // Copyright (C) 2013-2015 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -281,6 +282,12 @@ public struct Seg: Hashable, Sendable, CustomStringConvertible {
         return IPoint(a.x + KiMath.rescale(t, d.x, lsq), a.y + KiMath.rescale(t, d.y, lsq))
     }
 
+    /// The segment from `p` square to this one, as long (KiCad's PerpendicularSeg)
+    public func perpendicularSeg(_ p: IPoint) -> Seg { Seg(p, (b - a).perpendicular + p) }
+
+    /// The segment from `p` along this one, as long (KiCad's ParallelSeg)
+    public func parallelSeg(_ p: IPoint) -> Seg { Seg(p, (b - a) + p) }
+
     public func squaredDistance(_ p: IPoint) -> Int {
         let ab = IPoint(b.x - a.x, b.y - a.y), ap = IPoint(p.x - a.x, p.y - a.y)
         let e = ap.dot(ab)
@@ -433,8 +440,14 @@ public struct Seg: Hashable, Sendable, CustomStringConvertible {
 public struct Direction45: Hashable, Sendable, CustomStringConvertible {
     public enum Dir: Int, Sendable { case n = 0, ne, e, se, s, sw, w, nw, undefined = -1 }
 
-    /// The corner a trace turns: KiCad's mitered corners (rounded ones are not drawn here)
-    public enum CornerMode: Sendable { case mitered45, mitered90 }
+    /// The corners a trace turns (KiCad's CORNER_MODE, the router's "Track corner mode"): mitered or rounded, on the
+    /// 45° directions or on 90° ones only
+    public enum CornerMode: Int, Sendable {
+        case mitered45 = 0, rounded45, mitered90, rounded90
+
+        /// Horizontal and vertical only (MITERED_90 or ROUNDED_90)
+        public var isNinety: Bool { self == .mitered90 || self == .rounded90 }
+    }
 
     public struct AngleType: OptionSet, Sendable {
         public let rawValue: Int
@@ -458,6 +471,9 @@ public struct Direction45: Hashable, Sendable, CustomStringConvertible {
     }
 
     public init(_ s: Seg, ninety: Bool = false) { self.init(s.b - s.a, ninety: ninety) }
+
+    /// The direction of an arc's chord, from its start to its end
+    public init(_ a: ShapeArc, ninety: Bool = false) { self.init(a.end - a.start, ninety: ninety) }
 
     public static func == (l: Direction45, r: Direction45) -> Bool { l.dir == r.dir }
     public func hash(into h: inout Hasher) { h.combine(dir) }
@@ -524,36 +540,122 @@ public struct Direction45: Hashable, Sendable, CustomStringConvertible {
 
     public var mask: Int { 1 << dir.rawValue }
 
-    /// KiCad's BuildInitialTrace: two segments from `p0` to `p1` on 45° (or 90°) directions, starting diagonally if this
-    /// direction is diagonal (or, undefined, if `startDiagonal`)
+    /// KiCad's BuildInitialTrace: from `p0` to `p1` on 45° (or 90°) directions, a straight piece and a diagonal one
+    /// (or a horizontal and a vertical), the corner between them mitered or rounded (an arc in its place), starting
+    /// diagonally if this direction is diagonal (or, undefined, if `startDiagonal`)
     public func buildInitialTrace(_ p0: IPoint, _ p1: IPoint, startDiagonal: Bool = false, mode: CornerMode = .mitered45) -> LineChain {
         let diagonal = dir == .undefined ? startDiagonal : isDiagonal
         let w = abs(p1.x - p0.x), h = abs(p1.y - p0.y)
         let sw = KiMath.sign(p1.x - p0.x), sh = KiMath.sign(p1.y - p0.y)
-        let ninetyMode = mode == .mitered90
+        let ninetyMode = mode == .rounded90 || mode == .mitered90
         var pl = LineChain()
+        // (one segment will do)
         if w == 0 || h == 0 || (!ninetyMode && h == w) {
             pl.append(p0)
             pl.append(p1)
             return pl
         }
         var mp0 = IPoint.zero, mp1 = IPoint.zero
+        var tangentLength = 0
         if ninetyMode {
             mp0 = diagonal == (h >= w) ? IPoint(w * sw, 0) : IPoint(0, sh * h)
         } else if w > h {
             mp0 = IPoint((w - h) * sw, 0)
             mp1 = IPoint(h * sw, h * sh)
+            tangentLength = (w - h) - mp1.norm
         } else {
             mp0 = IPoint(0, sh * (h - w))
             mp1 = IPoint(sw * w, sh * w)
+            tangentLength = (h - w) - mp1.norm
         }
-        pl.append(p0)
-        if ninetyMode {
-            pl.append(p0 + mp0)
-        } else {
+        switch mode {
+        case .mitered45:
+            pl.append(p0)
             pl.append(diagonal ? p0 + mp1 : p0 + mp0)
+            pl.append(p1)
+        case .rounded45:
+            // the arc where the corner would be, a straight piece before it (starting straight) or after it, its
+            // length the straight one's less the diagonal's (negative: the arc at the other end)
+            if w == h {
+                pl.append(p0)
+                pl.append(p1)
+                break
+            }
+            let diag2 = Double(tangentLength >= 0 ? mp1.squaredNorm : mp0.squaredNorm)
+            let diagLength = (2 * diag2 - 2 * diag2 * cos(3 * Double.pi / 4)).squareRoot()
+            let arcRadius = KiMath.round(diagLength / (2.0 * cos(67.5 * Double.pi / 180.0)))
+            let rotationSign = Double(w > h ? sw * sh * -1 : sw * sh)
+            if diagonal {
+                if tangentLength >= 0 {
+                    // the arc at the start
+                    let arc = ShapeArc(start: p0, end: p1 - mp0.resized(tangentLength), angle: .a45 * rotationSign)
+                    if arc.start == arc.end { pl.append(p0) } else { pl.append(arc) }
+                    pl.append(p1)
+                } else {
+                    // the arc at the end
+                    let arc = ShapeArc(start: p0 + mp1.resized(abs(tangentLength)), end: p1, angle: .a45 * rotationSign)
+                    pl.append(p0)
+                    if arc.start == arc.end { pl.append(p1) } else { pl.append(arc) }
+                }
+            } else {
+                let centerDir = KiMath.rotate(DPoint(mp0), .a90 * rotationSign)
+                if tangentLength >= 0 {
+                    // the arc at the end
+                    let arc = ShapeArc(start: p0 + mp0.resized(tangentLength), end: p1, angle: -.a45 * rotationSign)
+                    pl.append(p0)
+                    if arc.start == arc.end { pl.append(p1) } else { pl.append(arc) }
+                } else {
+                    // the arc at the start, about a centre, its end then put square to the end (an end made from a
+                    // centre is not quite on it)
+                    let arcCenter = (DPoint(p0) + centerDir.resized(Double(arcRadius))).truncated
+                    var ca = ShapeArc(center: arcCenter, start: p0, angle: -.a45 * rotationSign)
+                    let endpoint = ca.end
+                    if abs(endpoint.y - p1.y) < Circle.minPrecision {
+                        ca = ShapeArc(start: ca.start, end: IPoint(endpoint.x, p1.y), angle: .a45 * rotationSign)
+                    } else if abs(endpoint.x - p1.x) < Circle.minPrecision {
+                        ca = ShapeArc(start: ca.start, end: IPoint(p1.x, endpoint.y), angle: .a45 * rotationSign)
+                    }
+                    if ca.start == ca.end { pl.append(p0) } else { pl.append(ca) }
+                    pl.append(p1)
+                }
+            }
+        case .mitered90:
+            pl.append(p0)
+            pl.append(p0 + mp0)
+            pl.append(p1)
+        case .rounded90:
+            // the arc where the corner would be, its radius the shorter of the two distances, a straight piece
+            // before it or after it
+            if w == h {
+                // (one arc and nothing else, not simplified)
+                pl.append(ShapeArc(start: p0, end: p1, center: p1 - mp0, clockwise: (sh == sw) != diagonal))
+                return pl
+            }
+            if diagonal {
+                // the arc first
+                if h > w {
+                    // then a vertical line
+                    let y = p0.y + w * sh
+                    pl.append(ShapeArc(start: p0, end: IPoint(p1.x, y), center: IPoint(p0.x, y), clockwise: sh != sw))
+                    pl.append(p1)
+                } else {
+                    // then a horizontal one
+                    let x = p0.x + h * sw
+                    pl.append(ShapeArc(start: p0, end: IPoint(x, p1.y), center: IPoint(x, p0.y), clockwise: sh == sw))
+                    pl.append(p1)
+                }
+            } else if w > h {
+                // a horizontal line, then the arc
+                let x = p1.x - h * sw
+                pl.append(p0)
+                pl.append(ShapeArc(start: IPoint(x, p0.y), end: p1, center: IPoint(x, p1.y), clockwise: sh != sw))
+            } else {
+                // a vertical one, then the arc
+                let y = p1.y - w * sh
+                pl.append(p0)
+                pl.append(ShapeArc(start: IPoint(p0.x, y), end: p1, center: IPoint(p1.x, y), clockwise: sh == sw))
+            }
         }
-        pl.append(p1)
         pl.simplify()
         return pl
     }

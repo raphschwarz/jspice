@@ -28,6 +28,19 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   nanometre to ten millimetres; then a few found to need its second try, or to fail it), with what `Simplify` and
   `Fracture` make of each on the way and the fractured outlines split where they touch themselves (each case in a
   child process, as `clipper.cpp`'s). `kicad-geometry COUNT SEED` makes other random cases than `build.sh`'s.
+  With `--arcs` (`kicad-geometry --arcs COUNT [SEED]`), chains of segments and arcs as the router keeps a track's
+  path (`SHAPE_LINE_CHAIN` with its arcs: each built from points and arcs, arcs one after another sharing the point
+  between them, some closed, some ending where they start), and what KiCad makes of each: which point is on which arc,
+  the next shape, its length; the chain cut (`Slice`), spliced (`Remove`, `RemoveShape`, `Replace`, `Insert`,
+  `Append`), split at a point, a point moved, turned round, simplified each way, its arcs made points, closed or
+  opened; the nearest point; collisions with points, segments and shapes (other chains with arcs, arcs, pads'
+  shapes) both ways round, asked how close or not; the traces `DIRECTION_45` starts in each corner mode, rounded
+  ones too; paths with arcs walked round a hull (what the walk leaves of the path keeps its arcs); and a line's arc
+  dragged (`LINE::DragArc`). Each case runs in a child process: one of KiCad's assertions might stop it (none has),
+  and a closed chain's nearest end of an arc is not asked, as KiCad reads past its points there.
+  `ArcGeometryTests.swift` checks the port keeps the same points, the same arcs (to their centres: an arc turned
+  round keeps the centre it had) and the same note of which point is on which arc. The fixture,
+  `kicad-arc-geometry.json`, is `kicad-geometry --arcs 25`.
 - `router.cpp`: KiCad's interactive router itself (`PNS::ROUTER` with its line placer, diff pair placer, walkaround,
   shove, dragger, optimizer) on a board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make
   on it, step by step as the router tool drives it (pointer moves, with the item under the pointer if one is given,

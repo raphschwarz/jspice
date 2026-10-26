@@ -398,6 +398,65 @@ public struct Circle: Hashable, Sendable {
     /// Where it crosses a segment
     public func intersect(_ s: Seg) -> [IPoint] { intersectLine(s).filter { s.contains($0) } }
 
+    /// The circle tangent to the lines through `lineA` and `lineB` that passes through `p`, the one that fillets the
+    /// two (KiCad's CIRCLE::ConstructFromTanTanPt, by homothety; between parallel lines, the one whose centre is
+    /// nearer `lineA`'s start). Where KiCad finds no solution it leaves the circle as far as it got.
+    public mutating func constructFromTanTanPt(_ lineA: Seg, _ lineB: Seg, _ p: IPoint) {
+        var intersectPoint = IPoint.zero
+        func furthestFromIntersect(_ a: IPoint, _ b: IPoint) -> IPoint {
+            (a - intersectPoint).norm > (b - intersectPoint).norm ? a : b
+        }
+        func closestToIntersect(_ a: IPoint, _ b: IPoint) -> IPoint {
+            (a - intersectPoint).norm <= (b - intersectPoint).norm ? a : b
+        }
+        if lineA.approxParallel(lineB) {
+            // no intersection: the centre on the line halfway between them, the radius half the distance between
+            let perpendicularAtoB = Seg(lineA.a, lineB.lineProject(lineA.a))
+            let midPt = perpendicularAtoB.center
+            radius = (midPt - lineA.a).norm
+            let anglebisector = lineA.parallelSeg(midPt)
+            // (this circle about the point, to find the centres where it crosses that line)
+            center = p
+            let possibleCenters = intersectLine(anglebisector)
+            guard let first = possibleCenters.first, let last = possibleCenters.last else { return }
+            intersectPoint = lineA.a
+            center = closestToIntersect(first, last)
+            return
+        }
+        // all circles in the angle are homothetic about the lines' intersection
+        guard let ip = lineA.intersectLines(lineB) else { return }
+        intersectPoint = ip
+        if p == intersectPoint {
+            center = p
+            radius = 0
+            return
+        }
+        let lineApt = furthestFromIntersect(lineA.a, lineA.b)
+        let lineBpt = furthestFromIntersect(lineB.a, lineB.b)
+        let anglebisector = Seg(intersectPoint, KiMath.arcMid(lineApt, lineBpt, intersectPoint, minArcAngle: true))
+        // a circle tangent to both, and the image of the point on it
+        var hSolution = Circle(anglebisector.lineProject(p), 0)
+        hSolution.radius = lineA.lineDistance(hSolution.center)
+        let hProjections = hSolution.intersectLine(Seg(intersectPoint, p))
+        guard let hFirst = hProjections.first, let hLast = hProjections.last else { return }
+        // (the one nearer the intersection, for a fillet)
+        let hSelected = closestToIntersect(hFirst, hLast)
+        let hTanLineA = lineA.lineProject(hSolution.center)
+        let hTanLineB = lineB.lineProject(hSolution.center)
+        // the tangent point taken back from the image, on the line whose tangent is further from the point
+        if (hTanLineA - p).squaredNorm > (hTanLineB - p).squaredNorm {
+            guard let actTanA = Seg(hTanLineA, hSelected).parallelSeg(p).intersectLines(lineA),
+                  let actCenter = lineA.perpendicularSeg(actTanA).intersectLines(anglebisector) else { return }
+            center = actCenter
+            radius = lineA.lineDistance(center)
+        } else {
+            guard let actTanB = Seg(hTanLineB, hSelected).parallelSeg(p).intersectLines(lineB),
+                  let actCenter = lineB.perpendicularSeg(actTanB).intersectLines(anglebisector) else { return }
+            center = actCenter
+            radius = lineB.lineDistance(center)
+        }
+    }
+
     /// Where it crosses the line through a segment
     public func intersectLine(_ line: Seg) -> [IPoint] {
         let m = line.lineProject(center)

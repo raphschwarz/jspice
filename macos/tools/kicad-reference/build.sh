@@ -4,9 +4,9 @@
 # Needs a C++20 compiler, wxWidgets 3.2's headers and libraries, and Boost's and GLM's headers (on Ubuntu: g++,
 # libwxgtk3.2-dev, libboost-dev, libglm-dev). KICAD_REFERENCE_BUILD is where the sources and objects go.
 #
-#   build.sh            builds kicad-geometry, kicad-router and kicad-clipper, and writes Tests/KiCadRouterTests/Fixtures/kicad-geometry.json
-#                       and kicad-clipper.json
-#   build.sh 2000       ... with that many cases of each kind (75 and 25 for the fixtures; more to check more)
+#   build.sh            builds kicad-geometry, kicad-router and kicad-clipper, and writes Tests/KiCadRouterTests/Fixtures/kicad-geometry.json,
+#                       kicad-clipper.json and kicad-arc-geometry.json
+#   build.sh 2000       ... with that many cases of each kind (75, 25 and 25 for the fixtures; more to check more)
 #
 # kicad-router reads a board and the routes to make on it, as JSON, and writes what KiCad's router does with them
 # (scenes.py makes the boards the router tests use).
@@ -81,10 +81,14 @@ if [ $# -gt 0 ]; then
     echo "$work/kicad-geometry-$1.json: run the tests with KICAD_GEOMETRY_REFERENCE set to it"
     "$work/kicad-clipper" "$1" > "$work/kicad-clipper-$1.json"
     echo "$work/kicad-clipper-$1.json: run the tests with KICAD_CLIPPER_REFERENCE set to it"
+    # (KiCad's own complaints about the indices its chains with arcs are asked for, which it answers, left out)
+    "$work/kicad-geometry" --arcs "$1" > "$work/kicad-arc-geometry-$1.json" 2> /dev/null
+    echo "$work/kicad-arc-geometry-$1.json: run the tests with KICAD_ARC_GEOMETRY_REFERENCE set to it"
 else
     "$work/kicad-geometry" 75 > "$fixtures/kicad-geometry.json"
     "$work/kicad-clipper" 25 > "$fixtures/kicad-clipper.json"
-    for fixture in kicad-geometry kicad-clipper; do
+    "$work/kicad-geometry" --arcs 25 > "$fixtures/kicad-arc-geometry.json" 2> /dev/null
+    for fixture in kicad-geometry kicad-clipper kicad-arc-geometry; do
         echo "$fixtures/$fixture.json: $(wc -c < "$fixtures/$fixture.json") bytes"
     done
 fi

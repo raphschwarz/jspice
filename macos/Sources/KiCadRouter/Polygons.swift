@@ -500,17 +500,22 @@ struct ArcChordParams {
 
 
 extension LineChain {
-    /// Every point turned about the origin (KiCad's SHAPE_LINE_CHAIN::Rotate)
+    /// Every point turned about the origin, and every arc (KiCad's SHAPE_LINE_CHAIN::Rotate)
     public func rotated(_ angle: EDAAngle, around c: IPoint = .zero) -> LineChain {
         var out = self
         out.points = points.map { KiMath.rotate($0, around: c, angle) }
+        out.arcs = arcs.map {
+            ShapeArc(start: KiMath.rotate($0.start, around: c, angle), mid: KiMath.rotate($0.mid, around: c, angle),
+                     end: KiMath.rotate($0.end, around: c, angle), width: $0.width)
+        }
         return out
     }
 
-    /// Every point moved by `d`
+    /// Every point moved by `d`, and every arc (KiCad's SHAPE_LINE_CHAIN::Move)
     public func moved(_ d: IPoint) -> LineChain {
         var out = self
         out.points = points.map { $0 + d }
+        out.arcs = arcs.map { $0.moved(d) }
         return out
     }
 }

@@ -40,7 +40,7 @@ public enum Shape: Hashable, Sendable {
         case .rect(let b): return .rect(IBox(minX: b.minX + d.x, minY: b.minY + d.y, maxX: b.maxX + d.x, maxY: b.maxY + d.y))
         case .segment(let s, let w): return .segment(Seg(s.a + d, s.b + d), width: w)
         case .simple(let c): return .simple(LineChain(c.points.map { $0 + d }, closed: true))
-        case .chain(let c): return .chain(LineChain(c.points.map { $0 + d }))
+        case .chain(let c): return .chain(c.moved(d))
         case .arc(let a): return .arc(a.moved(d))
         }
     }
@@ -65,7 +65,7 @@ public enum Shape: Hashable, Sendable {
         if case .arc(let a) = other { return Self.arcCollide(a, self, clearance, wantActual, &actual) }
         switch (self, other) {
         case let (.rect(a), .rect(b)):
-            return Self.chainChain(Self.rectOutline(a), Self.rectOutline(b), clearance, &actual)
+            return Self.chainChain(Self.rectOutline(a), Self.rectOutline(b), clearance, wantActual, &actual)
         case let (.rect(a), .circle(c, r)), let (.circle(c, r), .rect(a)):
             return Self.rectCircle(a, c, r, clearance, &actual)
         case let (.rect(a), .chain(l)), let (.rect(a), .simple(l)), let (.chain(l), .rect(a)), let (.simple(l), .rect(a)):
@@ -82,9 +82,13 @@ public enum Shape: Hashable, Sendable {
             return Self.withWidth(Self.capsuleSeg(s1, w1, s2, clearance + w2 / 2, &actual), w2, &actual)
         case let (.chain(l), .segment(s, w)), let (.simple(l), .segment(s, w)), let (.segment(s, w), .chain(l)), let (.segment(s, w), .simple(l)):
             var location: IPoint?
-            return Self.withWidth(l.collide(s, clearance: clearance + w / 2, actual: &actual, location: &location), w, &actual)
-        case let (.chain(a), .chain(b)), let (.chain(a), .simple(b)), let (.simple(a), .chain(b)), let (.simple(a), .simple(b)):
-            return Self.chainChain(a, b, clearance, &actual)
+            let hit = l.collide(s, clearance: clearance + w / 2, wantActual: wantActual, actual: &actual, location: &location)
+            return Self.withWidth(hit, w, &actual)
+        case (.chain(let a), .chain(let b)), (.chain(let a), .simple(let b)), (.simple(let a), .simple(let b)):
+            return Self.chainChain(a, b, clearance, wantActual, &actual, shapes: (self, other))
+        case (.simple(let a), .chain(let b)):
+            // (KiCad takes the polyline first)
+            return Self.chainChain(b, a, clearance, wantActual, &actual, shapes: (other, self))
         case (.arc, _), (_, .arc):
             return false
         }
@@ -127,16 +131,24 @@ public enum Shape: Hashable, Sendable {
         }
     }
 
-    /// An arc against a polyline or polygon: inside a closed one, else its segments in turn
+    /// An arc against a polyline or polygon: inside a closed one, else its segments in turn, then its arcs as arcs
     private static func arcChain(_ a: ShapeArc, _ l: LineChain, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?) -> Bool {
         var closest = Int.max
         if l.isClosed && l.pointInside(a.start) {
             closest = 0
         } else {
-            for i in 0..<l.segmentCount {
+            for i in 0..<l.segmentCount where !l.isArcSegment(i) {
                 var d: Int?, location: IPoint?
                 if a.collide(l.segment(i), clearance: clearance, wantActual: wantActual, actual: &d, location: &location) {
                     // (not asked how close, KiCad counts any collision as touching)
+                    let dist = wantActual ? d ?? 0 : 0
+                    if dist < closest { closest = dist }
+                    if closest == 0 || !wantActual { break }
+                }
+            }
+            for arc in l.arcs {
+                var d: Int?
+                if arcCollide(a, .arc(arc), clearance, wantActual, &d) {
                     let dist = wantActual ? d ?? 0 : 0
                     if dist < closest { closest = dist }
                     if closest == 0 || !wantActual { break }
@@ -288,7 +300,10 @@ public enum Shape: Hashable, Sendable {
         return false
     }
 
-    static func chainChain(_ a: LineChain, _ b: LineChain, _ clearance: Int, _ actual: inout Int?) -> Bool {
+    /// Two polylines or polygons: one inside the other, closed, else their segments (an arc's pieces left out), then
+    /// each one's arcs as arcs against the other (`shapes`, the two as shapes)
+    static func chainChain(_ a: LineChain, _ b: LineChain, _ clearance: Int, _ wantActual: Bool = true, _ actual: inout Int?,
+                           shapes: (Shape, Shape)? = nil) -> Bool {
         var closest = Int.max
         if b.isClosed && a.pointCount > 0 && b.pointInside(a.point(0)) {
             closest = 0
@@ -296,7 +311,8 @@ public enum Shape: Hashable, Sendable {
             closest = 0
         } else {
             let order: (Seg, Seg) -> Bool = { $0.a.x < $1.a.x || ($0.a.x == $1.a.x && $0.a.y < $1.a.y) }
-            let aSegs = a.segments.sorted(by: order), bSegs = b.segments.sorted(by: order)
+            let aSegs = (0..<a.segmentCount).filter { !a.isArcSegment($0) }.map(a.segment).sorted(by: order)
+            let bSegs = (0..<b.segmentCount).filter { !b.isArcSegment($0) }.map(b.segment).sorted(by: order)
             outer: for sa in aSegs {
                 for sb in bSegs {
                     var d: Int?
@@ -306,6 +322,10 @@ public enum Shape: Hashable, Sendable {
                     }
                 }
             }
+        }
+        if let (sa, sb) = shapes, !wantActual || closest > 0 {
+            for arc in a.arcs where arcCollide(arc, sb, clearance, wantActual, &actual) { return true }
+            for arc in b.arcs where arcCollide(arc, sa, clearance, wantActual, &actual) { return true }
         }
         if closest == 0 || closest < clearance {
             actual = closest

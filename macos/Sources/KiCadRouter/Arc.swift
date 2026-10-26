@@ -98,6 +98,12 @@ public struct ShapeArc: Hashable, Sendable, CustomStringConvertible {
 
     public var isCCW: Bool { (end - mid).cross(start - mid) > 0 }
 
+    public var isClockwise: Bool { !isCCW }
+
+    /// Its ends swapped, all else as it was, its centre and box too (KiCad's SHAPE_ARC::Reverse; `reversed` is
+    /// KiCad's Reversed, which works them out again)
+    public mutating func reverse() { swap(&start, &end) }
+
     public var startAngle: EDAAngle { EDAAngle(start - center).normalized }
 
     public var endAngle: EDAAngle { EDAAngle(end - center).normalized }

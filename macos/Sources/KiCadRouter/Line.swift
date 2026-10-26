@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_line.h, pns_line.cpp and pns_link_holder.h (without arcs).
+// Ported from KiCad 10.0.7: pcbnew/router/pns_line.h, pns_line.cpp and pns_link_holder.h.
 // Copyright (C) 2013-2017 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -234,8 +234,8 @@ public final class Line: Item {
         return -1
     }
 
-    /// Keeps the points from `start` to `end` (and the links of the segments between them, as KiCad's rotation
-    /// keeps them)
+    /// Keeps the points from `start` to `end` (and the links of the segments and arcs between them, an arc counted
+    /// once, as KiCad's rotation keeps them)
     public func clipVertexRange(_ start: Int, _ end: Int) {
         var firstLink = 0
         var lastLink = max(0, links.count - 1)
@@ -243,12 +243,12 @@ public final class Line: Item {
         var i = 0
         while i >= 0 && i < line.pointCount {
             if i <= start { firstLink = linkIdx }
-            if i >= end - 1 || linkIdx >= lastLink {
+            if i < 0 || i >= end - 1 || linkIdx >= lastLink {
                 lastLink = linkIdx
                 break
             }
             linkIdx += 1
-            i = i < line.pointCount - 2 ? i + 1 : (line.isClosed && i == line.pointCount - 2 ? line.pointCount - 1 : -1)
+            i = line.nextShape(i)
         }
         line = line.slice(start, end)
         if isLinked {
@@ -458,10 +458,31 @@ public final class Line: Item {
             v = next
         }
         if appendV { out.append(vts[v].pos) }
-        // (outside vertices went in twice)
+        // (outside vertices went in twice: gone before the runs of points are matched against the path)
         out.simplify2(removeColinear: false)
+        Line.restoreUntouchedArcs(&out, pnew)
         path = out
         return true
+    }
+
+    /// The runs of points at the start and the end of a walk that are the path's own taken back from the path, its
+    /// arcs with them (KiCad's restoreUntouchedArcs: the walk keeps points only)
+    private static func restoreUntouchedArcs(_ path: inout LineChain, _ original: LineChain) {
+        if original.arcCount == 0 { return }
+        let origCount = original.pointCount, pathCount = path.pointCount
+        var head = 0
+        while head < origCount && head < pathCount && original.point(head) == path.point(head) { head += 1 }
+        var tail = 0
+        while tail < origCount - head && tail < pathCount - head
+              && original.point(origCount - 1 - tail) == path.point(pathCount - 1 - tail) {
+            tail += 1
+        }
+        if head == 0 && tail == 0 { return }
+        var rebuilt = LineChain()
+        if head > 0 { rebuilt = original.slice(0, head - 1) }
+        if head + tail < pathCount { rebuilt.append(path.slice(max(head - 1, 0), pathCount - tail - 1)) }
+        if tail > 0 { rebuilt.append(original.slice(origCount - tail, origCount - 1)) }
+        path = rebuilt
     }
 
     /// The line cut short where it first meets an obstacle (empty, if five tries do not clear it)
@@ -474,9 +495,14 @@ public final class Line: Item {
             l.removeVia()
             let collisionPoint = obs.ipFirst
             let segIdx = l.line.nearestSegment(collisionPoint)
-            let nearestPt = l.line.segment(segIdx).nearestPoint(collisionPoint)
-            let p = l.line.split(nearestPt)
-            l.line.remove(p + 1, -1)
+            if l.line.isArcSegment(segIdx) {
+                // (no cutting an arc: again from nothing)
+                l.line.clear()
+            } else {
+                let nearestPt = l.line.segment(segIdx).nearestPoint(collisionPoint)
+                let p = l.line.split(nearestPt)
+                l.line.remove(p + 1, -1)
+            }
             i += 1
         }
         if i == iterationLimit { l.line.clear() }
@@ -590,6 +616,8 @@ public final class Line: Item {
         } else if index == line.segmentCount {
             path = Line.dragCornerInternal(line, snapped, preferredEnding)
         } else {
+            // (next to an arc: a point put in, so that the slices are right)
+            if line.isPointOnArc(index + 1) { line.insert(line.point(index + 1), at: index + 1) }
             path = Line.dragCornerInternal(line.slice(0, index), snapped, preferredEnding)
             let pathRev = Line.dragCornerInternal(line.slice(index, -1).reversed(), snapped, preferredEnding).reversed()
             path.append(pathRev)
@@ -599,7 +627,19 @@ public final class Line: Item {
     }
 
     private func dragCornerFree(_ p: IPoint, _ index: Int) {
-        line.setPoint(index, p)
+        var idx = index
+        let numpts = line.pointCount
+        // an arc's end: a point put in to drag instead
+        if line.isPointOnArc(idx) {
+            if idx == 0 || (idx > 0 && !line.isPointOnArc(idx - 1)) {
+                line.insert(line.point(idx), at: idx)
+            } else if idx == numpts - 1 || (idx < numpts - 1 && !line.isArcSegment(idx)) {
+                idx += 1
+                line.insert(line.point(idx), at: idx)
+            }
+            // (else the middle of an arc, which KiCad asserts is never dragged)
+        }
+        line.setPoint(idx, p)
         line.simplify()
     }
 
@@ -615,12 +655,17 @@ public final class Line: Item {
         var index = index
         let aIndex = index
         let target = snapToNeighbourSegments(path, p, aIndex)
-        // a segment before and after it, of no length at the ends
-        if index == 0 {
-            path.insert(path.point(index), at: 0)
+        // a segment before and after it, of no length at the ends, and next to an arc (whose points cannot be dragged
+        // away)
+        if index == 0 || path.isPointOnArc(index) {
+            path.insert(path.point(index), at: index > 0 ? index + 1 : 0)
             index += 1
         }
-        if index == path.segmentCount - 1 { path.insert(path.lastPoint, at: path.pointCount - 1) }
+        if index == path.segmentCount - 1 {
+            path.insert(path.lastPoint, at: path.pointCount - 1)
+        } else if path.isPointOnArc(index + 1) {
+            path.insert(path.point(index + 1), at: index + 1)
+        }
         var dragged = path.segment(index)
         let dragDir = Direction45(dragged)
         var sPrev = path.segment(index - 1), sNext = path.segment(index + 1)
@@ -704,5 +749,135 @@ public final class Line: Item {
             line.replace(aIndex, aIndex + 1, with: best)
         }
         line.simplify()
+    }
+
+    /// How far, in degrees, a segment may turn from an arc's tangent and still count as running on from it (KiCad's
+    /// ADVANCED_CFG m_MaxTangentAngleDeviation)
+    static let maxTangentAngleDeviation = 1.0
+
+    /// The shortest piece of track KiCad keeps, 0.0005 mm (ADVANCED_CFG m_MaxTrackLengthToKeep), in nanometres
+    static let maxTrackLengthToKeep = KiMath.round(0.0005 * 1e6)
+
+    /// The line with the arc point `index` is on dragged to pass through `p`: another arc tangent to what it runs on
+    /// from at either end (the segment there, if it runs on from the arc, else the arc's own tangent), its ends where
+    /// it touches them, and the line rebuilt round it; an arc too small to keep dropped (KiCad's LINE::DragArc)
+    public func dragArc(_ p: IPoint, _ index: Int) {
+        guard index >= 0 && index < line.pointCount else { return }
+        let arcIdx = line.arcIndex(index)
+        if arcIdx < 0 { return }
+        var firstArcPt = -1, lastArcPt = -1
+        for i in 0..<line.pointCount where line.arcIndex(i) == arcIdx {
+            if firstArcPt < 0 { firstArcPt = i }
+            lastArcPt = i
+        }
+        if firstArcPt < 0 || lastArcPt < 0 { return }
+        let oldArc = line.arcs[arcIdx]
+        let width = oldArc.width
+        func tangentLineAtArcEndpoint(_ endpoint: IPoint) -> Seg {
+            let radial = endpoint - oldArc.center
+            let perp = IPoint(-radial.y, radial.x)
+            return Seg(endpoint - perp, endpoint + perp)
+        }
+        func isCollinearTo(_ a: Seg, _ b: Seg, _ maxDeviationDeg: Double) -> Bool {
+            let dirA = DPoint(a.b - a.a), dirB = DPoint(b.b - b.a)
+            let magA = dirA.norm, magB = dirB.norm
+            if magA <= 0 || magB <= 0 { return false }
+            let crossMag = abs(dirA.x * dirB.y - dirA.y * dirB.x)
+            let sinAngle = crossMag / (magA * magB)
+            let angleDeg = asin(min(max(sinAngle, 0.0), 1.0)) * 180.0 / Double.pi
+            return angleDeg <= maxDeviationDeg
+        }
+        let maxDeviation = Line.maxTangentAngleDeviation
+        let arcLineStart = tangentLineAtArcEndpoint(oldArc.start)
+        let arcLineEnd = tangentLineAtArcEndpoint(oldArc.end)
+        // the segments either side, if they run on from the arc
+        var useChainStart = false, useChainEnd = false
+        if firstArcPt > 0 && isCollinearTo(Seg(line.point(firstArcPt - 1), line.point(firstArcPt)), arcLineStart, maxDeviation) {
+            useChainStart = true
+        }
+        if lastArcPt < line.pointCount - 1 && isCollinearTo(Seg(line.point(lastArcPt), line.point(lastArcPt + 1)), arcLineEnd, maxDeviation) {
+            useChainEnd = true
+        }
+        let arcOwnTanIntersect = arcLineStart.intersectLines(arcLineEnd)
+        let tanStartSeg: Seg, tanEndSeg: Seg
+        if useChainStart {
+            tanStartSeg = Seg(line.point(firstArcPt - 1), line.point(firstArcPt))
+        } else {
+            guard let x = arcOwnTanIntersect else { return }
+            tanStartSeg = Seg(x, oldArc.start)
+        }
+        if useChainEnd {
+            tanEndSeg = Seg(line.point(lastArcPt), line.point(lastArcPt + 1))
+        } else {
+            guard let x = arcOwnTanIntersect else { return }
+            tanEndSeg = Seg(x, oldArc.end)
+        }
+        // (parallel tangents: no circle tangent to both)
+        guard let tanIntersect = tanStartSeg.intersectLines(tanEndSeg) else { return }
+        // the tangents from their intersection to the arc's ends
+        let tanStartFromIntersect = Seg(tanIntersect, oldArc.start)
+        let tanEndFromIntersect = Seg(tanIntersect, oldArc.end)
+        func furthestFromIntersect(_ a: IPoint, _ b: IPoint) -> IPoint { (a - tanIntersect).norm > (b - tanIntersect).norm ? a : b }
+        let tanStartFar = furthestFromIntersect(tanStartSeg.a, tanStartSeg.b)
+        let tanEndFar = furthestFromIntersect(tanEndSeg.a, tanEndSeg.b)
+        let tempTangentPoint = furthestFromIntersect(tanStartFar, tanEndFar) == tanEndFar ? tanStartFar : tanEndFar
+        // the biggest arc there is room for, and the pointer kept inside the triangle it makes with the tangents
+        var maxTanCircle = Circle(.zero, 0)
+        maxTanCircle.constructFromTanTanPt(tanStartFromIntersect, tanEndFromIntersect, tempTangentPoint)
+        let maxTanPtStart = tanStartFromIntersect.lineProject(maxTanCircle.center)
+        let maxTanPtEnd = tanEndFromIntersect.lineProject(maxTanCircle.center)
+        let cSegTanStart = Seg(maxTanPtStart, tanIntersect)
+        let cSegTanEnd = Seg(maxTanPtEnd, tanIntersect)
+        let cSegChord = Seg(maxTanPtStart, maxTanPtEnd)
+        let oldMid = oldArc.mid
+        var cursor = p
+        if cSegTanStart.side(oldMid) != cSegTanStart.side(cursor) || cSegTanEnd.side(oldMid) != cSegTanEnd.side(cursor)
+            || cSegChord.side(oldMid) != cSegChord.side(cursor) {
+            var best = cSegTanStart.nearestPoint(cursor)
+            for candidate in [cSegTanEnd.nearestPoint(cursor), cSegChord.nearestPoint(cursor)]
+            where (candidate - cursor).squaredNorm < (best - cursor).squaredNorm {
+                best = candidate
+            }
+            cursor = best
+        }
+        if (cursor - maxTanCircle.center).norm < maxTanCircle.radius { cursor = maxTanCircle.nearestPoint(cursor) }
+        var c = Circle(.zero, 0)
+        c.constructFromTanTanPt(tanStartSeg, tanEndSeg, cursor)
+        if c.radius <= 0 { return }
+        let newCenter = c.center
+        var newStart = tanStartSeg.lineProject(newCenter)
+        var newEnd = tanEndSeg.lineProject(newCenter)
+        // a side not running on from the arc keeps the arc's end, a new stub growing out of it to the new arc
+        let maxStubIU = Line.maxTrackLengthToKeep
+        var prefixCutoff = useChainStart ? firstArcPt - 1 : firstArcPt
+        var suffixCutoff = useChainEnd ? lastArcPt + 1 : lastArcPt
+        if (newEnd - newStart).norm <= maxStubIU {
+            // (an arc too small to keep: dropped)
+            var rebuilt = LineChain()
+            if prefixCutoff >= 0 { rebuilt.append(line.slice(0, prefixCutoff)) }
+            if suffixCutoff <= line.pointCount - 1 { rebuilt.append(line.slice(suffixCutoff, line.pointCount - 1)) }
+            line = rebuilt
+            return
+        }
+        if firstArcPt > 0 {
+            let anchor = useChainStart ? line.point(firstArcPt - 1) : line.point(firstArcPt)
+            if (anchor - newStart).norm <= maxStubIU {
+                newStart = anchor
+                prefixCutoff = useChainStart ? firstArcPt - 2 : firstArcPt - 1
+            }
+        }
+        if lastArcPt < line.pointCount - 1 {
+            let anchor = useChainEnd ? line.point(lastArcPt + 1) : line.point(lastArcPt)
+            if (anchor - newEnd).norm <= maxStubIU {
+                newEnd = anchor
+                suffixCutoff = useChainEnd ? lastArcPt + 2 : lastArcPt + 1
+            }
+        }
+        let newMid = KiMath.arcMid(newStart, newEnd, newCenter)
+        var rebuilt = LineChain()
+        if prefixCutoff >= 0 { rebuilt.append(line.slice(0, prefixCutoff)) }
+        rebuilt.append(ShapeArc(start: newStart, mid: newMid, end: newEnd, width: width))
+        if suffixCutoff <= line.pointCount - 1 { rebuilt.append(line.slice(suffixCutoff, line.pointCount - 1)) }
+        line = rebuilt
     }
 }
