@@ -10,10 +10,24 @@ import KiCadRouter
 @MainActor
 final class PCBEditing: ObservableObject {
     enum Tool: String, CaseIterable, Identifiable {
-        case select, route
+        case select, route, pair
         var id: Self { self }
-        var title: String { self == .select ? "Select" : "Route" }
-        var symbol: String { self == .select ? "cursorarrow" : "point.topleft.down.to.point.bottomright.curvepath" }
+        var title: String {
+            switch self {
+            case .select: return "Select"
+            case .route: return "Route"
+            case .pair: return "Route Differential Pair"
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .select: return "cursorarrow"
+            case .route: return "point.topleft.down.to.point.bottomright.curvepath"
+            case .pair: return "equal"
+            }
+        }
+        /// Whether it routes (a track, or a pair)
+        var routes: Bool { self != .select }
     }
 
     @Published var tool: Tool = .select {
@@ -34,6 +48,8 @@ final class PCBEditing: ObservableObject {
         didSet { UserDefaults.standard.set(shove, forKey: Self.shoveKey) }
     }
     static let shoveKey = "pcbRouterShove"
+    /// The differential pair being routed, as it now goes
+    @Published private(set) var pairPreview: BoardEditing.PairPreview?
     /// The track being routed, as it now goes
     @Published private(set) var preview: BoardEditing.Preview?
     @Published private(set) var isRouting = false
@@ -111,12 +127,11 @@ final class PCBEditing: ObservableObject {
 
     private func toolChanged() {
         message = nil
-        if tool == .route {
+        if isRouting { stop() }
+        if tool.routes {
             selection = []
             if !isReady { prepare() }
-            message = "Click a pad or track to start a track."
-        } else if isRouting {
-            stop()
+            message = startMessage
         }
         if isDragging { cancelDrag() }
     }
@@ -125,7 +140,11 @@ final class PCBEditing: ObservableObject {
         // routing: a via to the new layer, placed at the next click (as KiCad's layer switch places one)
         guard isRouting, !isSettingLayer else { return }
         let to = layer
-        Task { show(await engine.run { $0.placeVia(to: to) }) }
+        if routingPair {
+            Task { showPair(await engine.run { $0.placePairVias(to: to) }) }
+        } else {
+            Task { show(await engine.run { $0.placeVia(to: to) }) }
+        }
     }
 
     private func widthChanged() {
@@ -161,8 +180,13 @@ final class PCBEditing: ObservableObject {
             // only the latest place the pointer has got to is routed to
             while let next = pendingMove {
                 pendingMove = nil
-                let shown = await engine.run { $0.move(to: next) }
-                if isRouting { preview = shown }
+                if routingPair {
+                    let shown = await engine.run { $0.movePair(to: next) }
+                    if isRouting, let shown { pairPreview = shown }
+                } else {
+                    let shown = await engine.run { $0.move(to: next) }
+                    if isRouting { preview = shown }
+                }
             }
             moving = false
         }
@@ -170,7 +194,7 @@ final class PCBEditing: ObservableObject {
 
     /// A click at `p`: a track started there, or the one being routed fixed there; `double`: finished there
     func click(at p: KiCadPoint, double: Bool = false) {
-        guard tool == .route else { return }
+        guard tool.routes else { return }
         // (a click while one is being dealt with waits its turn, and the pointer's moves before it are done with)
         if isRouting { pendingMove = nil }
         let previous = clicking
@@ -184,12 +208,53 @@ final class PCBEditing: ObservableObject {
     /// The pointer moved to `p`, waited for (for scripts: the screenshots, the self-test)
     func moveNow(to p: KiCadPoint) async {
         guard isRouting else { return }
+        if routingPair {
+            let shown = await engine.run { $0.movePair(to: p) }
+            if isRouting, let shown { pairPreview = shown }
+            return
+        }
         let shown = await engine.run { $0.move(to: p) }
         if isRouting { preview = shown }
     }
 
     /// A click at `p`, waited for
     func clickNow(at p: KiCadPoint, double: Bool = false) async {
+        if !isRouting && tool == .pair {
+            guard !double else { return }
+            let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround
+            await applying?.value
+            if !isReady { await prepareNow() }
+            let started = await engine.run { session -> (BoardEditing.PairPreview?, String)? in
+                session.mode = mode
+                let shown = session.startPair(at: p, layer: layer)
+                return (shown.flatMap { _ in session.movePair(to: p) } ?? shown, session.failureReason)
+            }
+            guard let (shown, reason) = started else { return }
+            if let shown {
+                isRouting = true
+                routingPair = true
+                showPair(shown)
+                message = "Click to fix the pair, double-click to finish it. V: vias, /: posture, Esc: stop."
+            } else {
+                NSSound.beep()
+                message = reason.isEmpty ? "A differential pair can't start there." : reason
+            }
+            return
+        }
+        if routingPair {
+            let edit = await engine.run { session -> (BoardEditing.Edit?, BoardEditing.PairPreview?)? in
+                let e = double ? session.finish(at: p) : session.fix(at: p)
+                return (e, session.currentPairPreview)
+            }
+            guard let (made, shown) = edit else { return }
+            if let made {
+                routingEnded()
+                take(made)
+            } else {
+                showPair(shown)
+            }
+            return
+        }
         if !isRouting {
             guard !double else { return }
             let layer = self.layer, width = self.width, mode: RouterMode = shove ? .shove : .walkaround
@@ -237,16 +302,31 @@ final class PCBEditing: ObservableObject {
         }
     }
     private var isSettingLayer = false
+    /// Whether what is being routed is a differential pair
+    private var routingPair = false
 
-    /// A via at the track's end, to the next layer (the other side, on two)
+    /// A via at the track's end (the pair's two), to the next layer (the other side, on two)
     func placeVia() {
         guard isRouting else { return }
-        Task { show(await engine.run { $0.placeVia() }) }
+        if routingPair {
+            Task { showPair(await engine.run { $0.placePairVias() }) }
+        } else {
+            Task { show(await engine.run { $0.placeVia() }) }
+        }
     }
 
     func flipPosture() {
         guard isRouting else { return }
-        Task { show(await engine.run { $0.flipPosture() }) }
+        if routingPair {
+            Task {
+                showPair(await engine.run { session -> BoardEditing.PairPreview? in
+                    session.flipPosture()
+                    return session.currentPairPreview
+                })
+            }
+        } else {
+            Task { show(await engine.run { $0.flipPosture() }) }
+        }
     }
 
     /// The last fixed part of the track taken back
@@ -296,10 +376,29 @@ final class PCBEditing: ObservableObject {
         layerFollows(shown)
     }
 
+    /// The pair as it now goes, and its layer the one shown
+    private func showPair(_ shown: BoardEditing.PairPreview?) {
+        guard let shown else { return }
+        pairPreview = shown
+        if shown.layer != layer {
+            isSettingLayer = true
+            layer = shown.layer
+            isSettingLayer = false
+        }
+    }
+
     private func routingEnded() {
         isRouting = false
+        routingPair = false
         preview = nil
-        message = tool == .route ? "Click a pad or track to start a track." : nil
+        pairPreview = nil
+        message = tool.routes ? startMessage : nil
+    }
+
+    /// How to start with the routing tool chosen
+    private var startMessage: String {
+        tool == .pair ? "Click a pad of a differential pair's net (a net named like USB_P and USB_N, or D+ and D-) to route the pair."
+                      : "Click a pad or track to start a track."
     }
 
     // MARK: - Dragging tracks and vias

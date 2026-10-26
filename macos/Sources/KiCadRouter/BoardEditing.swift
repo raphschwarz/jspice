@@ -282,6 +282,9 @@ public final class BoardEditing {
     /// Whether a differential pair is being routed
     public var isRoutingPair: Bool { router.isRoutingPair }
 
+    /// The pair as it now goes (after a fix, a via or a posture flip), as clear of everything
+    public var currentPairPreview: PairPreview? { isRoutingPair ? pairPreview(clear: true) : nil }
+
     /// The pointer moved to `p`: the pair as it now goes
     @discardableResult
     public func movePair(to p: KiCadPoint) -> PairPreview? {

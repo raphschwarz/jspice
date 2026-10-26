@@ -121,6 +121,9 @@ struct PCBView: View {
     private func readout(_ picture: KiCadBoardPicture, _ view: PCBTransform, at pointer: CGPoint) -> String? {
         let p = view.board(pointer)
         let position = String(format: "%.2f, %.2f mm", p.x, p.y)
+        if let pair = board.editing.pairPreview {
+            return "Routing \(pair.positiveNet) and \(pair.negativeNet)  ·  \(String(format: "%.2f mm, gap %.2f mm", pair.width, pair.gap))  ·  \(PCBEditBar.title(pair.layer))  ·  \(position)"
+        }
         if let preview = board.editing.preview {
             return "Routing \(preview.net ?? "no net")  ·  \(String(format: "%.2f mm", preview.width))  ·  \(PCBEditBar.title(preview.layer))  ·  \(position)"
         }
@@ -359,8 +362,10 @@ struct PCBBoardCanvas: View {
     var body: some View {
         Canvas { context, _ in
             PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc,
-                       hidden: (editing.preview?.moved ?? []).union(editing.dragPreview?.moved ?? [])).draw(context)
-            PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview, selection: editing.selection,
+                       hidden: (editing.preview?.moved ?? []).union(editing.dragPreview?.moved ?? []).union(editing.pairPreview?.moved ?? []))
+                .draw(context)
+            PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview, pair: editing.pairPreview,
+                           selection: editing.selection,
                            dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil).draw(context)
         }
         .frame(width: view.size.width, height: view.size.height)
@@ -395,7 +400,7 @@ struct PCBBoardCanvas: View {
                 return
             }
             switch editing.tool {
-            case .route:
+            case .route, .pair:
                 editing.click(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
             case .select:
                 // a track or via, else a connection still to route (routed), else a part
@@ -423,7 +428,7 @@ struct PCBBoardCanvas: View {
         .onKeyPress(phases: .down) { press in key(press) ? .handled : .ignored }
         .onDeleteCommand { editing.isRouting ? editing.undoSegment() : editing.deleteSelection() }
         .onChange(of: editing.tool) { _, _ in focused = true }
-        .onAppear { if editing.tool == .route { focused = true } }
+        .onAppear { if editing.tool.routes { focused = true } }
     }
 
     private func key(_ press: KeyPress) -> Bool {
@@ -435,7 +440,7 @@ struct PCBBoardCanvas: View {
                 editing.cancelDrag()
             } else if editing.isRouting {
                 editing.stop()
-            } else if editing.tool == .route {
+            } else if editing.tool.routes {
                 editing.tool = .select
             } else {
                 editing.selection = []
@@ -461,6 +466,7 @@ struct PCBBoardCanvas: View {
         }
         switch press.characters.lowercased() {
         case "x": editing.tool = .route
+        case "6": editing.tool = .pair
         case "d" where !editing.isRouting: editing.dragAtPointer(freeAngle: false)
         case "g" where !editing.isRouting: editing.dragAtPointer(freeAngle: true)
         case "v": editing.placeVia()
@@ -486,6 +492,8 @@ struct PCBEditPainter {
     let preview: BoardEditing.Preview?
     /// A track or via being dragged, as it now goes
     var drag: BoardEditing.DragPreview?
+    /// A differential pair being routed, as it now goes
+    var pair: BoardEditing.PairPreview?
     let selection: Set<String>
     var dragging: (uuids: [String], delta: KiCadPoint)?
     /// The connection still to route under the pointer, which a click routes
@@ -546,6 +554,35 @@ struct PCBEditPainter {
                 context.stroke(ring, with: .color(drag.violates ? Color.red : Color.white), lineWidth: 1)
             }
         }
+        if let pair {
+            // the pair's nets' pads, to see where it goes; what it has shoved aside; its two lines and their vias
+            var pads = Path()
+            for pad in picture.pads where pad.net == pair.positiveNet || pad.net == pair.negativeNet {
+                pads.addPath(view.path(pad.outline, closed: true))
+            }
+            context.stroke(pads, with: .color(Color.white.opacity(0.9)), lineWidth: 1.2)
+            for track in pair.shovedTracks {
+                context.stroke(view.path(track.points, closed: false), with: .color(PCBPainter.color(track.layer).opacity(0.9)),
+                               style: StrokeStyle(lineWidth: max(0.5, track.width * s), lineCap: .round, lineJoin: .round))
+            }
+            for via in pair.shovedVias {
+                let c = view.point(via.center), r = via.size * s / 2
+                context.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(PCBPainter.via))
+            }
+            let w = max(0.5, pair.width * s)
+            for line in [pair.positive, pair.negative] where line.count > 1 {
+                let path = view.path(line, closed: false)
+                context.stroke(path, with: .color(pair.clear ? Color.white.opacity(0.35) : Color.red.opacity(0.7)),
+                               style: StrokeStyle(lineWidth: w + 2, lineCap: .round, lineJoin: .round))
+                context.stroke(path, with: .color(PCBPainter.color(pair.layer)), style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
+            }
+            for via in [pair.positiveVia, pair.negativeVia].compactMap({ $0 }) {
+                let c = view.point(via), r = pair.viaSize * s / 2
+                let ring = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+                context.fill(ring, with: .color(PCBPainter.via))
+                context.stroke(ring, with: .color(Color.white), lineWidth: 1)
+            }
+        }
         guard let preview else { return }
         // what the track has shoved aside, where it now goes
         for track in preview.shovedTracks {
@@ -590,6 +627,17 @@ struct PCBEditPainter {
 struct PCBEditBar: View {
     @ObservedObject var editing: PCBEditing
 
+    static func help(_ tool: PCBEditing.Tool) -> String {
+        switch tool {
+        case .select:
+            return "Select and move parts (drag; R rotates, F flips), select tracks and vias (⌫ deletes them); drag a track or via (or D, G at any angle) and the router moves it, as KiCad's drag"
+        case .route:
+            return "Route tracks (X): click a pad, click to fix, double-click to finish; V via, / posture, Esc stop"
+        case .pair:
+            return "Route differential pairs (6): click a pad of a pair's net (USB_P and USB_N, D+ and D-), both tracks follow at the net class's pair width and gap; V vias, / posture, Esc stop"
+        }
+    }
+
     static func title(_ layer: String) -> String {
         switch layer {
         case "F.Cu": return "Top"
@@ -602,16 +650,13 @@ struct PCBEditBar: View {
         HStack(spacing: 8) {
             Picker("Tool", selection: $editing.tool) {
                 ForEach(PCBEditing.Tool.allCases) { tool in
-                    Image(systemName: tool.symbol).help(tool == .select
-                        ? "Select and move parts (drag; R rotates, F flips), select tracks and vias (⌫ deletes them); drag a track or via (or D, G at any angle) and the router moves it, as KiCad's drag"
-                        : "Route tracks (X): click a pad, click to fix, double-click to finish; V via, / posture, Esc stop")
-                        .tag(tool)
+                    Image(systemName: tool.symbol).help(Self.help(tool)).tag(tool)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            if editing.tool == .route {
+            if editing.tool.routes {
                 Picker("Layer", selection: $editing.layer) {
                     ForEach(editing.layers, id: \.self) { layer in
                         Label { Text(Self.title(layer)) } icon: { Image(systemName: "square.fill").foregroundStyle(PCBPainter.color(layer)) }
