@@ -1,13 +1,14 @@
 // KiCad's own interactive router (pcbnew/router, KiCad 10.0.7) driven on a board given as JSON: its pads, tracks,
-// vias and outline, and the routes to make on it (where each starts, where the pointer goes, where it is fixed).
+// arc tracks, vias and outline, and the routes to make on it (where each starts, where the pointer goes, where it is
+// fixed, and the corner mode its new tracks turn in: mitered or rounded).
 // For each route it writes what KiCad's router does: the head and the tail after each step (a move, a via, a layer
 // switch, a fix, an undo), whether the route was fixed, and the tracks and vias it put on the board (and, for a scene
 // that asks, those it took off: a route that shoves replaces what it shoved). Each route walks round obstacles,
-// shoves them or marks them, as it says. A route can be a drag instead (a track's segment or corner, or a via, as
-// the router tool's drag tools drag them), with what the dragger dragged after each step; or a differential pair,
-// routed from a pad, via or track end of one of a pair's nets and the nearest of its coupled net's, with the pair's
-// two lines after each step. KiCadRouterTests runs the Swift port on the same boards and compares. build.sh builds
-// this against KiCad's sources.
+// shoves them or marks them, as it says. A route can be a drag instead (a track's segment or corner, an arc track,
+// or a via, as the router tool's drag tools drag them), with what the dragger dragged after each step; or a
+// differential pair, routed from a pad, via or track end of one of a pair's nets and the nearest of its coupled net's,
+// with the pair's two lines after each step. KiCadRouterTests runs the Swift port on the same boards and compares.
+// build.sh builds this against KiCad's sources.
 //
 // The board's rules are KiCad's default board rules made simple: one clearance between copper of different nets,
 // a hole clearance, a hole to hole clearance and an edge clearance, as PNS_PCBNEW_RULE_RESOLVER::Clearance combines
@@ -37,6 +38,7 @@
 #include <geometry/shape_segment.h>
 #include <geometry/shape_simple.h>
 #include <nlohmann/json.hpp>
+#include <pns_arc.h>
 #include <pns_debug_decorator.h>
 #include <pns_drag_algo.h>
 #include <pns_hole.h>
@@ -194,23 +196,24 @@ public:
     /// take precedence over everything except board min clearance")
     std::optional<int> overrides( const PNS::ITEM* aA, const PNS::ITEM* aB, int aMinimum ) const
     {
-        std::optional<int> a, b;
+        // (no optionals kept here: GCC reads an empty one's value before it asks whether there is one, which
+        // valgrind takes for a use of an uninitialised value)
+        bool any = false;
+        int  v = 0;
 
-        if( aA && connected( aA ) && !( aB && nonCopper( aB ) ) )
-            a = override( aA );
+        if( aA && connected( aA ) && !( aB && nonCopper( aB ) ) && override( aA ) )
+        {
+            any = true;
+            v = override( aA ).value();
+        }
 
-        if( aB && connected( aB ) && !( aA && nonCopper( aA ) ) )
-            b = override( aB );
+        if( aB && connected( aB ) && !( aA && nonCopper( aA ) ) && override( aB ) )
+        {
+            any = true;
+            v = std::max( v, override( aB ).value() );
+        }
 
-        if( !a && !b )
-            return std::nullopt;
-
-        int v = a.value_or( 0 );
-
-        if( b && *b > v )
-            v = *b;
-
-        if( !v )
+        if( !any || !v )
             return std::nullopt;
 
         return std::max( v, aMinimum );
@@ -537,6 +540,11 @@ public:
             BOX2I b = aShape->BBox();
             return " rect" + chain( SHAPE_LINE_CHAIN( { b.GetOrigin(), b.GetEnd() } ) );
         }
+        case SH_ARC:
+        {
+            auto a = static_cast<const SHAPE_ARC*>( aShape );
+            return " arc" + chain( SHAPE_LINE_CHAIN( { a->GetP0(), a->GetArcMid(), a->GetP1() } ) );
+        }
         default: return " ?";
         }
     }
@@ -741,7 +749,22 @@ public:
                 aWorld->Add( std::move( via ) );
             }
 
-            // (an arc track is left out: the Swift port has no arcs in its lines yet, and both leave them out)
+            else if( kind == "arc" )
+            {
+                // syncArc
+                auto arc = std::make_unique<PNS::ARC>( SHAPE_ARC( pt( j["start"] ), pt( j["mid"] ), pt( j["end"] ),
+                                                                  j["width"].get<int>() ),
+                                                       netHandle( j["net"] ) );
+                arc->SetLayer( j["layer"] );
+
+                if( j.value( "locked", false ) )
+                    arc->Mark( PNS::MK_LOCKED );
+
+                item = arc.get();
+                m_resolver.m_info[item] = info;
+                aWorld->Add( std::move( arc ), true );
+            }
+
             m_byIndex.push_back( item );
         }
 
@@ -752,7 +775,7 @@ public:
         aWorld->SetMaxClearance( worst + m_resolver.ClearanceEpsilon() );
     }
 
-    /// A track or via as the scene gives it (null for anything else)
+    /// A track, arc track or via as the scene gives it (null for anything else)
     static json itemJSON( const PNS::ITEM* aItem )
     {
         if( aItem->Kind() == PNS::ITEM::SEGMENT_T )
@@ -760,6 +783,14 @@ public:
             auto s = static_cast<const PNS::SEGMENT*>( aItem );
             return { { "kind", "track" }, { "net", netCode( s->Net() ) }, { "layer", s->Layer() },
                      { "a", pt( s->Seg().A ) }, { "b", pt( s->Seg().B ) }, { "width", s->Width() } };
+        }
+        else if( aItem->Kind() == PNS::ITEM::ARC_T )
+        {
+            // (as the board has an arc track: its three points)
+            const SHAPE_ARC& a = static_cast<const PNS::ARC*>( aItem )->CArc();
+            return { { "kind", "arc" }, { "net", netCode( aItem->Net() ) }, { "layer", aItem->Layer() },
+                     { "start", pt( a.GetP0() ) }, { "mid", pt( a.GetArcMid() ) }, { "end", pt( a.GetP1() ) },
+                     { "width", a.GetWidth() } };
         }
         else if( aItem->Kind() == PNS::ITEM::VIA_T )
         {
@@ -1006,6 +1037,24 @@ static json lineJSON( const PNS::LINE& aLine )
 {
     json j = { { "points", chainPoints( aLine.CLine() ) }, { "width", aLine.Width() }, { "layer", aLine.Layer() } };
 
+    // (a line with arcs: its arcs too, their three points and the centre KiCad keeps, and the arcs each point is on)
+    if( aLine.ArcCount() )
+    {
+        json arcs = json::array(), shapes = json::array();
+
+        for( const SHAPE_ARC& a : aLine.CLine().CArcs() )
+        {
+            arcs.push_back( json::array( { pt( a.GetP0() ), pt( a.GetArcMid() ), pt( a.GetP1() ),
+                                           pt( a.GetCenter() ) } ) );
+        }
+
+        for( const std::pair<ssize_t, ssize_t>& sh : aLine.CLine().CShapes() )
+            shapes.push_back( json::array( { sh.first, sh.second } ) );
+
+        j["arcs"] = arcs;
+        j["shapes"] = shapes;
+    }
+
     if( aLine.EndsWithVia() )
         j["via"] = pt( aLine.Via().Pos() );
 
@@ -1170,6 +1219,8 @@ int main()
         settings.SetOptimizeEntireDraggedTrack( route.value( "optimizeEntire", false ) );
         settings.SetAllowDRCViolations( route.value( "allowViolations", false ) );
         settings.SetFixAllSegments( route.value( "fixAll", true ) );
+        // (the track corner mode: mitered or rounded, at 45 or 90 degrees)
+        settings.SetCornerMode( static_cast<DIRECTION_45::CORNER_MODE>( route.value( "cornerMode", 0 ) ) );
 
         // (a differential pair, "diffPair": the router tool's Route Differential Pair; else a single track)
         bool diffPair = route.value( "diffPair", false );

@@ -1,5 +1,5 @@
 // Ported from KiCad 10.0.7: pcbnew/router/pns_diff_pair_placer.h and pns_diff_pair_placer.cpp (walkaround, shove
-// and mark-obstacles modes; without arcs).
+// and mark-obstacles modes).
 // Copyright (C) 2013-2015 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -281,8 +281,12 @@ public final class DiffPairPlacer: PlacementAlgo {
             return l.pointCount == 0 ? nil : l.cPoint(0)
         case is Via, is Solid:
             return item.anchor(0)
+        case let a as Arc:
+            let jA = node.findJoint(item.anchor(0), item), jB = node.findJoint(item.anchor(1), item)
+            if let jA, jA.linkCount() == 1 { return a.arc.start }
+            if let jB, jB.linkCount() == 1 { return a.arc.end }
+            return nil
         case let s as Segment:
-            // (and an arc's ends alike: the port's lines have no arcs)
             let jA = node.findJoint(item.anchor(0), item), jB = node.findJoint(item.anchor(1), item)
             if let jA, jA.linkCount() == 1 { return s.seg.a }
             if let jB, jB.linkCount() == 1 { return s.seg.b }

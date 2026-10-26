@@ -1,5 +1,6 @@
 // Ported from KiCad 10.0.7: pcbnew/router/pns_layerset.h, pns_item.h, pns_item.cpp, pns_linked_item.h, pns_hole.h,
-// pns_hole.cpp, pns_solid.h, pns_solid.cpp, pns_segment.h, pns_via.h and pns_via.cpp (padstacks of one size only).
+// pns_hole.cpp, pns_solid.h, pns_solid.cpp, pns_segment.h, pns_arc.h, pns_arc.cpp, pns_via.h and pns_via.cpp (padstacks
+// of one size only).
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -496,6 +497,79 @@ public final class Segment: LinkedItem {
     public override var anchorCount: Int { 2 }
 
     public override var description: String { super.description + " \(seg) width \(_width)" }
+}
+
+/// A piece of track that is an arc (KiCad's PNS::ARC)
+public final class Arc: LinkedItem {
+    public private(set) var arc: ShapeArc
+
+    public init(_ a: ShapeArc, net: NetHandle?) {
+        arc = a
+        super.init(kind: .arc)
+        self.net = net
+    }
+
+    /// An arc of `line`: made again through the arc's three points, at the line's width, with its net, layers, marks
+    /// and rank (KiCad's ARC( LINE, SHAPE_ARC ), which, unlike a segment's, takes no source item from the line)
+    public init(line: Line, _ a: ShapeArc) {
+        arc = ShapeArc(start: a.start, mid: a.mid, end: a.end, width: line.width)
+        super.init(kind: .arc)
+        parent = nil
+        net = line.net
+        layers = line.layers
+        marker = line.allMarkers
+        rank = line.lineRank
+    }
+
+    /// Another arc like `parentArc` (its net, layers, marks and rank) on `a` (KiCad's ARC( ARC, SHAPE_ARC ))
+    public init(parentArc: Arc, _ a: ShapeArc) {
+        arc = a
+        super.init(kind: .arc)
+        net = parentArc.net
+        layers = parentArc.layers
+        marker = parentArc.marker
+        rank = parentArc.rank
+    }
+
+    /// KiCad's ARC::Clone: a new arc of the same shape and net, with the board item behind it, its layers, marks,
+    /// rank and whether it moves or can be routed from (a new arc: its own unique id, unlike a cloned segment's)
+    public override func clone() -> Item {
+        let a = Arc(arc, net: net)
+        a.parent = parent
+        a.sourceItem = sourceItem
+        a.movable = movable
+        a.layers = layers
+        a.marker = marker
+        a.rank = rank
+        a.isRoutable = isRoutable
+        return a
+    }
+
+    public override var width: Int {
+        get { arc.width }
+        set { arc.width = newValue }
+    }
+
+    public override func shape(_ layer: Int) -> Shape? { .arc(arc) }
+
+    /// Its points, as a chain keeps an arc
+    public var cLine: LineChain { LineChain(arc: arc) }
+
+    public override func hull(clearance: Int = 0, walkaroundThickness: Int = 0, layer: Int = -1) -> LineChain {
+        arc.hull(clearance: clearance, walkaroundThickness: walkaroundThickness)
+    }
+
+    public override func anchor(_ n: Int) -> IPoint { n == 0 ? arc.start : arc.end }
+    public override var anchorCount: Int { 2 }
+
+    /// The box round both arcs (KiCad's ARC::ChangedArea)
+    public func changedArea(_ other: Arc) -> IBox {
+        var b = arc.bbox()
+        b.merge(other.arc.bbox())
+        return b
+    }
+
+    public override var description: String { super.description + " \(arc)" }
 }
 
 /// A via: copper rings on its layers round a drilled hole (KiCad's PNS::VIA, its padstack one size throughout)

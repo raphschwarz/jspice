@@ -757,7 +757,7 @@ final class BoardEditingTests: XCTestCase {
                               SExpr("layer", "F.Cu"), board.netList(net, pad: false), SExpr("uuid", "arc-1")))
         let router = BoardRouter(board: board)
         XCTAssertFalse(router.unsupported.contains { $0.hasPrefix("keepout zone") })
-        XCTAssertTrue(router.unsupported.contains { $0.hasPrefix("arc track") })
+        XCTAssertFalse(router.unsupported.contains { $0.hasPrefix("arc track") })
         // (the rectangle in two triangles, on each of its two layers)
         let zone = try XCTUnwrap(router.world.items.firstIndex { $0.kind == .keepout })
         XCTAssertEqual(router.world.items[zone].zoneLayers, [0, 1])

@@ -16,8 +16,8 @@ import KiCadKit
 
 /// A KiCad board as KiCad's router sees it: its items in the order KiCad's SyncWorld puts them in the router's world,
 /// with the shapes KiCad makes of them, and the board's rules as its DRC engine works them out with no rules of the
-/// user's own. What KiCad's router would see and this cannot make yet (a text on copper, an arc track, a custom pad
-/// with a curve among its pieces) is named in `unsupported`.
+/// user's own. What KiCad's router would see and this cannot make yet (a text on copper, a custom pad with a curve
+/// among its pieces) is named in `unsupported`.
 public struct BoardWorld {
     public private(set) var copperLayers = 2
     public private(set) var items: [WorldItem] = []
@@ -945,7 +945,6 @@ public struct BoardWorld {
         w.layer = layer
         w.locked = node.flag("locked") || node["locked"]?.text(at: 0) == "yes"
         w.source = node.value("uuid")
-        unsupported.insert("arc track")
         items.append(w)
     }
 

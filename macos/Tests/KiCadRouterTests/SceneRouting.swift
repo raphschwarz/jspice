@@ -32,6 +32,8 @@ enum SceneRouting {
             router.settings.optimizeEntireDraggedTrack = (route["optimizeEntire"] as? NSNumber)?.boolValue ?? false
             router.settings.allowDRCViolationsSetting = (route["allowViolations"] as? NSNumber)?.boolValue ?? false
             router.settings.fixAllSegments = (route["fixAll"] as? NSNumber)?.boolValue ?? true
+            // (the track corner mode: mitered or rounded, at 45 or 90 degrees)
+            router.settings.cornerMode = Direction45.CornerMode(rawValue: (route["cornerMode"] as? NSNumber)?.intValue ?? 0) ?? .mitered45
             // (a differential pair, the router tool's Route Differential Pair; else a single track)
             let diffPair = (route["diffPair"] as? NSNumber)?.boolValue ?? false
             router.mode = diffPair ? .routeDiffPair : .routeSingle
@@ -217,6 +219,10 @@ enum SceneRouting {
 
     /// What the router put on the board, as router.cpp writes it
     static func addedJSON(_ item: Item) -> [String: Any]? {
+        if let a = item as? Arc {
+            return ["kind": "arc", "net": a.net ?? -1, "layer": a.layer, "start": [a.arc.start.x, a.arc.start.y],
+                    "mid": [a.arc.mid.x, a.arc.mid.y], "end": [a.arc.end.x, a.arc.end.y], "width": a.width]
+        }
         if let s = item as? Segment {
             return ["kind": "track", "net": s.net ?? -1, "layer": s.layer, "a": [s.seg.a.x, s.seg.a.y], "b": [s.seg.b.x, s.seg.b.y],
                     "width": s.width]
@@ -239,6 +245,11 @@ enum SceneRouting {
     static func lineJSON(_ l: Line) -> [String: Any] {
         var j: [String: Any] = ["points": l.cLine.points.map { [$0.x, $0.y] }, "width": l.width, "layer": l.layer]
         if let v = l.via { j["via"] = [v.pos.x, v.pos.y] }
+        // (a line with arcs: its arcs, their three points and centre, and the arcs each point is on)
+        if l.cLine.arcCount > 0 {
+            j["arcs"] = l.cLine.arcs.map { [[$0.start.x, $0.start.y], [$0.mid.x, $0.mid.y], [$0.end.x, $0.end.y], [$0.center.x, $0.center.y]] }
+            j["shapes"] = l.cLine.shapes.map { [$0.first, $0.second] }
+        }
         return j
     }
 

@@ -24,6 +24,15 @@ each time it is run on the same board, and runs on items with no BOARD_ITEM behi
 - The items of a differential pair's coupled net that the pair could start or end on (FindDpPrimitivePair) are
   taken in the order they were made, not in the order of KiCad's set of pointers: of two the same distance away,
   the first taken is the one the pair goes from. The Swift port takes them in the same order.
+- Where KiCad's router reads an arc as a segment (LINE_PLACER::simplifyNewLine casts a track at a joint it cleans
+  up to a SEGMENT whatever it is, and reads an arc's memory as a segment's), which is undefined, it reports it to
+  kicadReferenceUndefined, which stops the program with exit status 3, as router.cpp stops where it sees KiCad's
+  undefined behaviour coming: such a board is no reference.
+- The dot product DRAGGER::startDragArc takes to choose which way the stub it puts at an arc's free end goes
+  overflows its ints for any arc of more than some 46 µm radius, which is undefined too; but its builds wrap the
+  products and their sum round in 32 bits, the same every time (the stub then often goes back along the arc), and
+  nearly every drag of an arc at a track's end comes to it, so it is made to wrap round explicitly (in unsigned
+  ints, which C++ defines), not reported. The Swift port wraps them round the same way.
 
 patch.py changes only what it has not changed already, so it can be run on sources it has changed before.
 
@@ -161,6 +170,27 @@ def main():
           "    for( ITEM* item : coupledBySerial )\n"
           "    {\n"
           "        if( item->Kind() == aItem->Kind() )")
+
+    # an arc read as a segment, which is undefined: reported, so that router.cpp stops (exit status 3)
+    patch(f"{router}/pns_line_placer.cpp",
+          "namespace PNS {",
+          "/// What KiCad's router does next is undefined: router.cpp stops (kicad-reference)\n"
+          "void kicadReferenceUndefined( const char* aWhat );\n"
+          "\n"
+          "namespace PNS {")
+
+    patch(f"{router}/pns_line_placer.cpp",
+          "                    const SEG& testSeg = static_cast<const SEGMENT*>( neighbor )->Seg();",
+          "                    if( neighbor->OfKind( ITEM::ARC_T ) )\n"
+          "                        kicadReferenceUndefined( \"simplifyNewLine reads an arc as a segment\" );\n"
+          "\n"
+          "                    const SEG& testSeg = static_cast<const SEGMENT*>( neighbor )->Seg();")
+
+    # the dot product of an arc drag's stub direction, which overflows its ints, wrapped round as KiCad's builds wrap it
+    patch(f"{router}/pns_dragger.cpp",
+          "            if( perp.x * toMid.x + perp.y * toMid.y > 0 )",
+          "            if( (int) ( (unsigned) perp.x * (unsigned) toMid.x\n"
+          "                        + (unsigned) perp.y * (unsigned) toMid.y ) > 0 )")
 
     # the world's joints, as virtual vias are made for them, in the order of their places (then nets and layers)
     patch(f"{router}/pns_node.cpp",

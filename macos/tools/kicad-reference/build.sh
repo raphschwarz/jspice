@@ -34,7 +34,9 @@ mkdir -p "$work/generated"
 [ -e "$work/generated/config.h" ] || echo "#pragma once" > "$work/generated/config.h"
 
 CXX=${CXX:-g++}
-flags="-std=c++20 -O1 -DUSINGZ -DFMT_HEADER_ONLY -I$work/generated -I$src/libs/kimath/include -I$src/libs/core/include
+# (NDEBUG, as KiCad's release builds have it: its plain assertions compiled out, as in the KiCad its users run, which
+# goes on where a debug build would stop, as when the shove drags a via's arc track)
+flags="-std=c++20 -O1 -DNDEBUG -DUSINGZ -DFMT_HEADER_ONLY -I$work/generated -I$src/libs/kimath/include -I$src/libs/core/include
     -I$src/libs/kiplatform/include -I$src/include -I$src/common -I$src/pcbnew -I$src/pcbnew/router
     -I$src/thirdparty/clipper2/Clipper2Lib/include -I$src/thirdparty/rtree -I$src/thirdparty/nlohmann_json
     -I$src/thirdparty/dynamic_bitset -I$src/thirdparty/magic_enum -I$src/thirdparty/fmt/include
@@ -42,11 +44,12 @@ flags="-std=c++20 -O1 -DUSINGZ -DFMT_HEADER_ONLY -I$work/generated -I$src/libs/k
 
 # Changes made to KiCad's sources here (patch.py says what and why): ties between obstacles broken by the order
 # the items were made in, not their addresses, and a node's items as a branch copies them and the joints virtual
-# vias are made for in an order of their own; a missing BOARD_ITEM asked nothing, or asked of router.cpp. Those made
-# before .patched-1 changed headers, so everything was compiled again after them; those since change a .cpp only,
-# which is then newer than its object.
+# vias are made for in an order of their own; a missing BOARD_ITEM asked nothing, or asked of router.cpp; KiCad's
+# undefined behaviour reported. Those made before .patched-1 changed headers, so everything was compiled again after
+# them; those since change a .cpp only, which is then newer than its object. (.patched-2 came with NDEBUG, which
+# everything was compiled again for too.)
 python3 "$here/patch.py" "$src"
-[ -e "$work/.patched-1" ] || touch "$work/.patched-1"
+[ -e "$work/.patched-2" ] || touch "$work/.patched-2"
 
 # KiCad's geometry, its polygon clipper, its router (all but its glue to the PCB editor), and what they call of
 # common/: advanced settings (their defaults), the router's settings, colours for its debug drawing, ids, units
@@ -66,7 +69,7 @@ echo "compiling $(echo "$sources" | wc -l) files"
 export CXX flags obj work
 echo "$sources" | xargs -P "$(nproc 2>/dev/null || sysctl -n hw.ncpu)" -I{} sh -c '
     o="$obj/$(echo "{}" | cksum | cut -d" " -f1)-$(basename "{}" .cpp).o"
-    { [ "$o" -nt "{}" ] && [ "$o" -nt "$work/.patched-1" ]; } || $CXX $flags -c "{}" -o "$o"'
+    { [ "$o" -nt "{}" ] && [ "$o" -nt "$work/.patched-2" ]; } || $CXX $flags -c "{}" -o "$o"'
 objects=$(echo "$sources" | while read -r f; do echo "$obj/$(echo "$f" | cksum | cut -d" " -f1)-$(basename "$f" .cpp).o"; done)
 
 for program in geometry router clipper; do

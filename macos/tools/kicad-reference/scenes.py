@@ -25,12 +25,19 @@ dragged track optimized, or its segments not smoothed. Each drag is chosen on th
 it (KiCad's router is run on those to know), so a track already dragged can be dragged again. `--shoving` keeps only
 the boards on which a drag shoved another net's track or via.
 
-    scenes.py [--mode shove|mix|drag] [--shoving] KICAD_ROUTER OUT.json [COUNT [SEED]]
-    scenes.py [--mode shove|mix|drag] --boards KICAD_ROUTER OUT.json ROUTES_PER_BOARD SEED SCENE.json...   (real
-        boards, from board-scene.py)
+With `--arcs`, the boards have arc tracks too (on their own or out of pads; the shove and drag modes' tracks with
+some of their turns rounded), routes start on arcs and go to them, and drags grab arcs by their middles; with
+`--rounded`, each route turns its corners in a corner mode of its own (mitred or rounded, at 45 or 90 degrees). A
+board on which KiCad's line placer would read an arc as a segment is left out (router.cpp stops there, with exit
+status 3, as above).
+
+    scenes.py [--mode shove|mix|drag|diffpair] [--shoving] [--arcs] [--rounded] KICAD_ROUTER OUT.json [COUNT [SEED]]
+    scenes.py [--mode shove|mix|drag|diffpair] [--arcs] [--rounded] --boards KICAD_ROUTER OUT.json ROUTES_PER_BOARD SEED
+        SCENE.json...   (real boards, from board-scene.py)
 """
 
 import json
+import math
 import random
 import subprocess
 import sys
@@ -70,12 +77,31 @@ def pad(rng, net, pos, layers, through):
     return p
 
 
-def polylines(rng, items, size, nets, copper, dense):
+DIRS = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
+
+
+def arc_turn(p, d, turn, r):
+    """An arc track's mid and end from `p`, going on in direction `d` (one of DIRS) and turning `turn` eighths of a
+    turn (positive the way DIRS go round) on a radius of `r`, tangent to the way it came and the way it goes on"""
+    u = (DIRS[d][0] / math.hypot(*DIRS[d]), DIRS[d][1] / math.hypot(*DIRS[d]))
+    side = 1 if turn > 0 else -1
+    c = (p[0] - u[1] * side * r, p[1] + u[0] * side * r)
+
+    def at(a):
+        dx, dy = p[0] - c[0], p[1] - c[1]
+        return [round(c[0] + dx * math.cos(a) - dy * math.sin(a)), round(c[1] + dx * math.sin(a) + dy * math.cos(a))]
+
+    theta = turn * math.pi / 4
+    return at(theta / 2), at(theta)
+
+
+def polylines(rng, items, size, nets, copper, dense, arcs=False):
     """Tracks to shove: lines of a few segments at 45 and 90 degrees, some from pads of their net, some going on
-    through a via on another layer, some locked; and vias on their own"""
+    through a via on another layer, some locked; and vias on their own. With `arcs`, some of their turns rounded,
+    arc tracks tangent to the segments either side."""
     last = copper - 1
     lo, hi = 2 * MM, size - 2 * MM
-    dirs = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
+    dirs = DIRS
     pads = [it for it in items if it["kind"] == "pad" and not it.get("npth")]
 
     def line(start, net, layer, width, locked):
@@ -83,7 +109,18 @@ def polylines(rng, items, size, nets, copper, dense):
         d = rng.randrange(8)
         for _ in range(rng.randint(1, 4)):
             # (on, or a turn of 45 or 90 degrees)
-            d = (d + rng.choice([0, 1, -1, 2, -2])) % 8
+            turn = rng.choice([0, 1, -1, 2, -2])
+            if arcs and turn and rng.random() < 0.5:
+                # (the turn an arc from here)
+                mid, end = arc_turn(p, d, turn, rng.randint(2, 16) * 125_000)
+                if not (lo <= end[0] <= hi and lo <= end[1] <= hi):
+                    break
+                a = {"kind": "arc", "net": net, "layer": layer, "start": p, "mid": mid, "end": end, "width": width}
+                if locked:
+                    a["locked"] = True
+                items.append(a)
+                p = end
+            d = (d + turn) % 8
             step = rng.randint(2, 12) * 250_000
             q = [p[0] + dirs[d][0] * step, p[1] + dirs[d][1] * step]
             if not (lo <= q[0] <= hi and lo <= q[1] <= hi):
@@ -124,7 +161,7 @@ def polylines(rng, items, size, nets, copper, dense):
                       "drill": diameter * rng.randint(4, 6) // 10 // 50_000 * 50_000})
 
 
-def board(rng, n, mode="walkaround"):
+def board(rng, n, mode="walkaround", arcs=False, rounded=False):
     # two copper layers mostly, now and then four; now and then a small board crowded with pads and tracks
     copper = rng.choice([2, 2, 2, 4])
     last = copper - 1
@@ -158,19 +195,50 @@ def board(rng, n, mode="walkaround"):
         if a != b:
             items.append({"kind": "track", "net": rng.randint(1, nets), "layer": rng.randint(0, last), "a": a, "b": b,
                           "width": rng.randint(3, 8) * 50_000})
-    if mode != "walkaround":
-        polylines(rng, items, size, nets, copper, dense)
+    if mode != "walkaround" or arcs:
+        polylines(rng, items, size, nets, copper, dense, arcs)
     if mode == "drag":
         # (more of them, to drag and to drag into)
-        polylines(rng, items, size, nets, copper, dense)
+        polylines(rng, items, size, nets, copper, dense, arcs)
+    if arcs:
+        arc_tracks(rng, items, size, nets, copper)
     rules = {"clearance": rng.choice([150_000, 200_000, 250_000]), "holeClearance": 250_000, "holeToHole": 250_000,
              "edgeClearance": rng.choice([300_000, 500_000])}
     # (drags are chosen later, each on the board as the drags before it left it)
     scene = {"layers": copper, "rules": rules, "items": items,
-             "routes": [] if mode == "drag" else routes(rng, items, copper, (0, 0, size, size), mode=mode)}
+             "routes": [] if mode == "drag" else routes(rng, items, copper, (0, 0, size, size), mode=mode, arcs=arcs,
+                                                         rounded=rounded)}
     if mode != "walkaround":
         scene["removeItems"] = True
     return scene
+
+
+def arc_tracks(rng, items, size, nets, copper):
+    """Arc tracks on their own, or out of a pad of their net: of an eighth of a turn to three, on radii of a quarter
+    of a millimetre to a few, now and then two one after the other"""
+    lo, hi = 2 * MM, size - 2 * MM
+    pads = [it for it in items if it["kind"] == "pad" and not it.get("npth")]
+    for _ in range(rng.randint(1, 6)):
+        width = rng.randint(3, 8) * 50_000
+        if pads and rng.random() < 0.3:
+            pd = rng.choice(pads)
+            net, p = pd["net"], pd["pos"]
+            layer = rng.randint(pd["layers"][0], pd["layers"][1])
+        else:
+            net = rng.randint(1, nets)
+            p = [rng.randint(lo, hi) // 50_000 * 50_000, rng.randint(lo, hi) // 50_000 * 50_000]
+            layer = rng.randint(0, copper - 1)
+        d = rng.randrange(8)
+        for _ in range(rng.choice([1, 1, 1, 2])):
+            turn = rng.choice([1, -1, 2, -2, 3, -3])
+            mid, end = arc_turn(p, d, turn, rng.randint(1, 24) * 125_000)
+            if not (lo <= end[0] <= hi and lo <= end[1] <= hi):
+                break
+            a = {"kind": "arc", "net": net, "layer": layer, "start": p, "mid": mid, "end": end, "width": width}
+            if rng.random() < 0.05:
+                a["locked"] = True
+            items.append(a)
+            p, d = end, (d + turn) % 8
 
 
 def route_mode(rng, mode):
@@ -183,18 +251,24 @@ def route_mode(rng, mode):
     return "mark" if rng.random() < 0.2 else "walkaround"
 
 
-def routes(rng, items, copper, area, count=None, mode="walkaround"):
-    """Random routes from pads of the board in `area` (x0, y0, x1, y1): to a pad of their net mostly, else anywhere"""
+def routes(rng, items, copper, area, count=None, mode="walkaround", arcs=False, rounded=False):
+    """Random routes from pads of the board in `area` (x0, y0, x1, y1): to a pad of their net mostly, else anywhere.
+    With `arcs`, some from an arc track's end, some to one; with `rounded`, each in a corner mode of its own, its
+    corners mitered or rounded, at 45 or 90 degrees."""
     out = []
     x0, y0, x1, y1 = area
     last = copper - 1
 
     def flashed(it, l):
+        if "layers" not in it:
+            # (an arc track: on its layer)
+            return it["layer"] == l
         return it["layers"][0] <= l <= it["layers"][1] and ("flashed" not in it or it["flashed"][l])
 
     pads = [i for i, it in enumerate(items) if it["kind"] == "pad" and not it.get("npth")
             and any(flashed(it, l) for l in range(copper))]
     holes = [i for i, it in enumerate(items) if it["kind"] == "pad" and it.get("npth")]
+    arc_tracks = [i for i, it in enumerate(items) if it["kind"] == "arc"] if arcs else []
     if not pads:
         return out
     for _ in range(rng.randint(1, 4) if count is None else count):
@@ -203,10 +277,19 @@ def routes(rng, items, copper, area, count=None, mode="walkaround"):
         unplated = bool(holes) and rng.random() < 0.05
         if unplated:
             a = rng.choice(holes)
+        # (now and then from an arc track's end, or a point along it)
+        from_arc = bool(arc_tracks) and not unplated and rng.random() < 0.35
+        if from_arc:
+            a = rng.choice(arc_tracks)
         same = [i for i in pads if i != a and items[i]["net"] == items[a]["net"]]
-        start = items[a]["pos"]
-        layer = rng.choice(list(range(items[a]["layers"][0], items[a]["layers"][1] + 1)) if unplated
-                           else [l for l in range(copper) if flashed(items[a], l)])
+        same += [i for i in arc_tracks if i != a and items[i]["net"] == items[a]["net"]]
+        if from_arc:
+            start = items[a][rng.choice(["start", "end", "start", "end", "mid"])]
+            layer = items[a]["layer"]
+        else:
+            start = items[a]["pos"]
+            layer = rng.choice(list(range(items[a]["layers"][0], items[a]["layers"][1] + 1)) if unplated
+                               else [l for l in range(copper) if flashed(items[a], l)])
         route = {"start": start, "startItem": a, "layer": layer, "width": rng.randint(3, 8) * 50_000}
         m = route_mode(rng, mode)
         if m != "walkaround":
@@ -217,7 +300,7 @@ def routes(rng, items, copper, area, count=None, mode="walkaround"):
         b = None
         if same and rng.random() < 0.8:
             b = rng.choice(same)
-            end = items[b]["pos"]
+            end = items[b]["pos"] if "pos" in items[b] else items[b][rng.choice(["start", "end"])]
         else:
             end = [rng.randint(x0 + MM, x1 - MM), rng.randint(y0 + MM, y1 - MM)]
         steps = rng.randint(2, 7)
@@ -245,7 +328,7 @@ def routes(rng, items, copper, area, count=None, mode="walkaround"):
         moves = []
         for s, p in enumerate(points, 1):
             moves.append(p)
-            if s == 1 and items[a]["layers"] == [0, last] and rng.random() < 0.15:
+            if s == 1 and items[a].get("layers") == [0, last] and rng.random() < 0.15:
                 current = rng.choice([l for l in range(copper) if l != current])
                 moves += [{"layer": current}, p]
             event = events.get(s)
@@ -264,19 +347,31 @@ def routes(rng, items, copper, area, count=None, mode="walkaround"):
             route["endItem"] = b
         if rng.random() < 0.85:
             route["fix"] = points[-1]
+        if rounded:
+            route["cornerMode"] = rng.choice([0, 1, 1, 2, 3, 3])
         out.append(route)
     return out
 
 
-def drag(rng, items, area):
+def drag(rng, items, area, arcs=False):
     """A random drag of one of `items`' tracks or vias, as the router tool's drag (D) or free angle drag (G) starts one
-    with the pointer on it, and the pointer's way from there; None if there is nothing to drag"""
+    with the pointer on it, and the pointer's way from there; None if there is nothing to drag. With `arcs`, now and
+    then an arc track's, grabbed along it."""
     x0, y0, x1, y1 = area
     tracks = [i for i, it in enumerate(items) if it["kind"] == "track" and it["a"] != it["b"]]
     vias = [i for i, it in enumerate(items) if it["kind"] == "via"]
-    if not tracks and not vias:
+    arc_tracks = [i for i, it in enumerate(items) if it["kind"] == "arc"] if arcs else []
+    if not tracks and not vias and not arc_tracks:
         return None
-    if vias and (not tracks or rng.random() < 0.3):
+    if arc_tracks and (not tracks and not vias or rng.random() < 0.3):
+        i = rng.choice(arc_tracks)
+        grabbed = "arc"
+        at = list(items[i]["mid"])
+        if rng.random() < 0.5:
+            # (along it, a little off it)
+            w = items[i]["width"] // 4
+            at = [at[0] + rng.randint(-w, w), at[1] + rng.randint(-w, w)]
+    elif vias and (not tracks or rng.random() < 0.3):
         i = rng.choice(vias)
         grabbed = "via"
         at = list(items[i]["pos"])
@@ -338,7 +433,12 @@ def drag(rng, items, area):
     own = [p for it in items if it["kind"] == "track" and it.get("net") == net and it.get("layer") == layer
            and it is not items[i] and (grabbed != "segment" or parallel(it)) for p in (it["a"], it["b"])]
     w = items[i].get("width", 0)
-    if own and rng.random() < 0.2:
+    if grabbed == "arc" and rng.random() < 0.6:
+        # (an arc's mid pulled out from its chord or pushed in towards it, as far again or more, or past it)
+        (sx, sy), (mx, my), (ex, ey) = items[i]["start"], items[i]["mid"], items[i]["end"]
+        t = rng.uniform(-1.6, 1.2)
+        end = [int(mx + (mx - (sx + ex) / 2) * t), int(my + (my - (sy + ey) / 2) * t)]
+    elif own and rng.random() < 0.2:
         p = rng.choice(own)
         end = [p[0] + rng.randint(-w // 2, w // 2), p[1] + rng.randint(-w // 2, w // 2)]
     elif near and rng.random() < 0.8:
@@ -381,14 +481,14 @@ def drag(rng, items, area):
     return route
 
 
-def drag_routes(router, rng, scene, area, count):
+def drag_routes(router, rng, scene, area, count, arcs=False):
     """`count` drags on the scene's board, each chosen on the board as the drags before it left it (KiCad's router run
     on those to know), and what KiCad's router made of them (None if what it does is undefined); and how many of them
     shoved another net's track or via, on the way or in the end"""
     items = list(scene["items"])
     drags, kicad, shoving = [], [], 0
     for _ in range(count):
-        d = drag(rng, items, area)
+        d = drag(rng, items, area, arcs)
         if d is None:
             break
         drags.append(d)
@@ -485,7 +585,7 @@ def pair_of(scene, net):
     return {net, coupled[0]} if coupled else {net}
 
 
-def diffpair_board(rng, n):
+def diffpair_board(rng, n, arcs=False):
     """A board with differential pairs to route: pads of each pair's nets in pairs, at each end of where the pair is to
     go (now and then a third end), some with a pair of tracks out of them that end short, now and then a pair of vias
     of its nets; pads of other nets, and tracks of a few segments and vias in the way, as the shove mode's"""
@@ -570,7 +670,9 @@ def diffpair_board(rng, n):
     for _ in range(rng.randint(3, 12 if dense else 8)):
         layers = rng.choice([[0, 0], [last, last], [0, last]])
         items.append(pad(rng, rng.choice(singles), place(1_500_000), layers, layers == [0, last]))
-    polylines(rng, items, size, nets, copper, dense)
+    polylines(rng, items, size, nets, copper, dense, arcs)
+    if arcs:
+        arc_tracks(rng, items, size, nets, copper)
     rules = {"clearance": rng.choice([100_000, 150_000, 200_000]), "holeClearance": 250_000, "holeToHole": 250_000,
              "edgeClearance": rng.choice([300_000, 500_000])}
     return {"layers": copper, "rules": rules, "items": items, "netNames": {str(k): v for k, v in names.items()},
@@ -728,7 +830,8 @@ def diffpair_routes(router, rng, scene, area, count):
 
 def route(router, scene):
     """What KiCad's router makes of the scene's routes; None if what it does is undefined (router.cpp's exit status
-    3: an undo of a shoving route that KiCad's line placer gets wrong, reading a node it has deleted)"""
+    3: an undo of a shoving route that KiCad's line placer gets wrong, reading a node it has deleted; its line placer
+    reading an arc as a segment)"""
     result = subprocess.run([router], input=json.dumps(scene), capture_output=True, text=True)
     if result.returncode == 3:
         return None
@@ -750,7 +853,7 @@ def board_area(scene):
     return (min(xs), min(ys), max(xs), max(ys))
 
 
-def boards(router, out, files, per_board, seed, mode="walkaround"):
+def boards(router, out, files, per_board, seed, mode="walkaround", arcs=False, rounded=False):
     """Real boards (board-scene.py's scenes, from KiCad's own reading of them), each with routes, routed by KiCad"""
     rng = random.Random(seed)
     cases = []
@@ -765,7 +868,7 @@ def boards(router, out, files, per_board, seed, mode="walkaround"):
             case = dict(scene)
             if mode == "drag":
                 case["removeItems"] = True
-                done, shoving = drag_routes(router, rng, case, area, rng.randint(2, 6))
+                done, shoving = drag_routes(router, rng, case, area, rng.randint(2, 6), arcs)
                 if done is None:
                     undefined += 1
                     continue
@@ -785,7 +888,8 @@ def boards(router, out, files, per_board, seed, mode="walkaround"):
                 shoves += shoving
                 cases.append({"name": f"{name}-diffpair-{seed}-{k}", "scene": case, "kicad": kicad})
                 continue
-            case["routes"] = routes(rng, scene["items"], scene["layers"], area, count=rng.randint(2, 6), mode=mode)
+            case["routes"] = routes(rng, scene["items"], scene["layers"], area, count=rng.randint(2, 6), mode=mode,
+                                    arcs=arcs, rounded=rounded)
             if not case["routes"]:
                 continue
             if mode != "walkaround":
@@ -801,6 +905,7 @@ def boards(router, out, files, per_board, seed, mode="walkaround"):
     print(f"{out}: {len(cases)} cases on {len(files)} boards, {sum(len(c['kicad']) for c in cases)} routes"
           + (f", {shoves} of the {drags} drags shoving" if mode == "drag" else "")
           + (f", {shoves} of the {drags} pairs shoving, {pair_stats(cases)}" if mode == "diffpair" else "")
+          + (f", {arc_stats(cases)}" if arcs or rounded else "")
           + (f" ({undefined} left out, KiCad's router undefined on them)" if undefined else ""))
 
 
@@ -817,6 +922,32 @@ def pair_stats(cases):
             + ", ".join(f"{v} {k}" for k, v in sorted(modes.items())))
 
 
+def arc_stats(cases):
+    """How the routes went with arcs: on boards with arc tracks, from an arc's end, arcs dragged, arcs shoved, routes
+    in a rounded corner mode, and the arcs the routes put on"""
+    rs = [(c["scene"], r, k) for c in cases for r, k in zip(c["scene"]["routes"], c["kicad"])]
+    on = sum(any(it["kind"] == "arc" for it in s["items"]) for s, _, _ in rs)
+    starts = dragged = 0
+    for c in cases:
+        # (the board as each route found it, what the routes before it took off and put on)
+        items = list(c["scene"]["items"])
+        for r, k in zip(c["scene"]["routes"], c["kicad"]):
+            i = r["drag"]["item"] if "drag" in r else r.get("startItem", -1)
+            if 0 <= i < len(items) and items[i]["kind"] == "arc":
+                dragged += "drag" in r
+                starts += "drag" not in r
+            if c["scene"].get("removeItems"):
+                for j in reversed(k.get("removed", [])):
+                    del items[j]
+            items += k["added"]
+    rounded = sum(r.get("cornerMode", 0) in (1, 3) for _, r, _ in rs)
+    put = sum(1 for _, _, k in rs for a in k["added"] if a["kind"] == "arc")
+    lines = sum(1 for _, _, k in rs if any("arcs" in m.get("trace", m.get("head", {})) or
+                                           any("arcs" in d for d in m.get("dragged", [])) for m in k["moves"]))
+    return (f"{on} on boards with arc tracks, {starts} from arcs, {dragged} dragging arcs, {rounded} rounded, "
+            f"{lines} with arcs in their lines on the way, {put} arcs put on")
+
+
 def shoved(kicad):
     """Whether KiCad's router shoved anything aside on the board, on the way or in the end"""
     return any(r.get("removed") or any((m.get("node") or {}).get("removed") for m in r["moves"]) for r in kicad)
@@ -824,7 +955,7 @@ def shoved(kicad):
 
 def main():
     args = sys.argv[1:]
-    mode, shoving_only, real = "walkaround", False, False
+    mode, shoving_only, real, arcs, rounded = "walkaround", False, False, False, False
     while args and args[0].startswith("--"):
         flag = args.pop(0)
         if flag == "--mode":
@@ -835,28 +966,35 @@ def main():
             shoving_only = True
         elif flag == "--boards":
             real = True
+        elif flag == "--arcs":
+            arcs = True
+        elif flag == "--rounded":
+            rounded = True
         else:
             sys.exit(f"scenes.py: no option {flag}")
     if real:
         # scenes.py [--mode MODE] --boards KICAD_ROUTER OUT.json PER_BOARD SEED SCENE.json...
-        boards(args[0], args[1], args[4:], int(args[2]), int(args[3]), mode)
+        boards(args[0], args[1], args[4:], int(args[2]), int(args[3]), mode, arcs, rounded)
         return
     router, out = args[0], args[1]
     count = int(args[2]) if len(args) > 2 else 40
     seed = int(args[3]) if len(args) > 3 else 20261016
     rng = random.Random(seed)
     cases = []
-    prefix = "random" if mode == "walkaround" else mode
+    prefix = ("random" if mode == "walkaround" else mode) + ("-arcs" if arcs else "") + ("-rounded" if rounded else "")
     n = 0
     undefined = 0
     quiet = 0
     drags = shoves = 0
     while len(cases) < count:
-        scene = diffpair_board(rng, n) if mode == "diffpair" else board(rng, n, mode)
+        scene = diffpair_board(rng, n, arcs) if mode == "diffpair" else board(rng, n, mode, arcs, rounded)
         shoving = 0
         if mode in ("drag", "diffpair"):
-            each = drag_routes if mode == "drag" else diffpair_routes
-            done, shoving = each(router, rng, scene, board_area(scene), rng.randint(1, 5 if mode == "drag" else 4))
+            area = board_area(scene)
+            if mode == "drag":
+                done, shoving = drag_routes(router, rng, scene, area, rng.randint(1, 5), arcs)
+            else:
+                done, shoving = diffpair_routes(router, rng, scene, area, rng.randint(1, 4))
             kicad = None
             if done is not None:
                 scene["routes"], kicad = done
@@ -877,6 +1015,7 @@ def main():
     print(f"{out}: {count} boards, {sum(len(c['kicad']) for c in cases)} routes"
           + (f", {shoves} of the {drags} drags shoving" if mode == "drag" else "")
           + (f", {shoves} of the {drags} pairs shoving, {pair_stats(cases)}" if mode == "diffpair" else "")
+          + (f", {arc_stats(cases)}" if arcs or rounded else "")
           + (f" ({undefined} more left out, KiCad's router undefined on them)" if undefined else "")
           + (f" ({quiet} more left out, nothing shoved on them)" if quiet else ""))
 

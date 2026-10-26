@@ -365,13 +365,19 @@ public final class Shove {
         // hulls round curLine's segments, the clearance and half the obstacle's width away, so that the obstacle
         // walked round them is the clearance away
         let obstacleLineWidth = obstacleLine.width
-        let clearance = getClearance(curLine, obstacleLine)
+        var clearance = getClearance(curLine, obstacleLine)
         let currentLineSegmentCount = curLine.segmentCount
         for attempt in 0..<3 {
             var hulls: [LineChain] = []
             hulls.reserveCapacity(currentLineSegmentCount + 1)
             for i in 0..<currentLineSegmentCount {
                 let seg = Segment(line: curLine, curLine.cSegment(i))
+                // an arc's pieces more clearance, so that the hulls are always bigger than the arc (KiCad's clearance
+                // grows with each, for the pieces and the attempts after it too)
+                if curLine.cLine.isArcSegment(i) {
+                    Shove.dbg("shove add-extra-clearance 5000")
+                    clearance += 5000
+                }
                 hulls.append(seg.hull(clearance: clearance + extraHullExpansion, walkaroundThickness: obstacleLineWidth,
                                       layer: obstacleLine.layer))
             }
@@ -420,6 +426,30 @@ public final class Shove {
             return .ok
         }
         return .incomplete
+    }
+
+    /// The line of an arc `current` collides with shoved out of its way (KiCad's onCollidingArc), unless it is to be
+    /// walked round: it has locked segments, or the shove would make it more than twice as long. (KiCad's shove never
+    /// meets an arc: arcs are not among the kinds it looks for.)
+    private func onCollidingArc(_ current: Line, _ obstacleArc: Arc) -> Status {
+        var segIndex = 0
+        let obstacleLine = assembleLine(obstacleArc, &segIndex)
+        let shovedLine = obstacleLine.copy()
+        if obstacleLine.hasLockedSegments { return .tryWalk }
+        let shoveOK = shoveObstacleLine(current, obstacleLine, shovedLine)
+        let extensionWalkThreshold = 1.0
+        let obsLen = Double(obstacleLine.cLine.length)
+        let shovedLen = Double(shovedLine.cLine.length)
+        var extensionFactor = 0.0
+        if obsLen != 0 { extensionFactor = shovedLen / obsLen - 1.0 }
+        if extensionFactor > extensionWalkThreshold { return .tryWalk }
+        if shoveOK {
+            let rank = current.lineRank
+            shovedLine.setRank(rank - 1)
+            replaceLine(obstacleLine, shovedLine, includeInChangedArea: true, allowRedundantSegments: false)
+            if !pushLineStack(shovedLine) { return .incomplete }
+        }
+        return .ok
     }
 
     /// `obstacle` (a line) shoved out of `current`'s way, given `nextRank` (KiCad's onCollidingLine)
@@ -881,6 +911,7 @@ public final class Shove {
         var st = Status.null
         let iface = router.iface
         Shove.dbg("current sc=\(currentLine.segmentCount) net=\(iface?.netName(currentLine.net) ?? "") evia=\(currentLine.via != nil ? 1 : 0): \(currentLine.cLine.points)")
+        // (no arcs: KiCad's shove does not look for them, and goes through an arc track as if it were not there)
         for searchOrder in [ItemKind.solid, .via, .segment, .hole] {
             var opts = CollisionSearchOptions()
             opts.kindMask = searchOrder
@@ -938,8 +969,15 @@ public final class Shove {
                     st = onCollidingLine(revLine, currentLine, revLine.lineRank + 1)
                 }
                 if !pushLineStack(revLine) { return .incomplete }
+            case .arc:
+                // (an arc's line shoved as a line, ranked the other way: never reached, as arcs are not looked for)
+                Shove.dbg("[iter \(iter): reverse-collide-arc ]")
+                let revLine = assembleLine(ni as! Arc)
+                popLineStack()
+                st = onCollidingLine(revLine, currentLine, revLine.lineRank - 1)
+                if !pushLineStack(revLine) { return .incomplete }
             default:
-                // (KiCad asserts; arcs, which it shoves as lines, the port's lines do not have)
+                // (KiCad asserts)
                 break
             }
         } else {
@@ -948,6 +986,11 @@ public final class Shove {
             case .segment:
                 Shove.dbg("[iter \(iter): collide-segment ]")
                 st = onCollidingSegment(currentLine, ni as! Segment)
+                if st == .tryWalk { st = onCollidingSolid(currentLine, ni, &nearest) }
+            case .arc:
+                // (never reached, as arcs are not looked for)
+                Shove.dbg("[iter \(iter): collide-arc ]")
+                st = onCollidingArc(currentLine, ni as! Arc)
                 if st == .tryWalk { st = onCollidingSolid(currentLine, ni, &nearest) }
             case .via:
                 Shove.dbg("[iter \(iter): collide-via (fixup: 0)]")

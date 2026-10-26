@@ -171,16 +171,18 @@ public final class LinePlacer: PlacementAlgo {
             tail.withLine { $0.clear() }
             return true
         }
-        let firstHead = Direction45(h.segment(0))
+        // (an arc's direction is its chord's)
+        let firstHead = h.isPointOnArc(0) ? Direction45(h.arcs[h.arcIndex(0)]) : Direction45(h.segment(0))
         let lastSegIdx = t.pointCount - 2
-        let lastTail = Direction45(t.segment(lastSegIdx))
+        let lastTail = t.isPointOnArc(lastSegIdx) ? Direction45(t.arcs[t.arcIndex(lastSegIdx)]) : Direction45(t.segment(lastSegIdx))
         let angle = firstHead.angle(lastTail)
         if angle == .right || angle == .acute {
-            direction = Direction45(t.segment(lastSegIdx))
+            direction = t.isArcSegment(lastSegIdx) ? Direction45(t.arcs[t.arcIndex(lastSegIdx)]) : Direction45(t.segment(lastSegIdx))
+            // (the last segment taken off, or the whole arc it is on)
             if n < 2 {
                 tail.withLine { $0.clear() }
             } else {
-                tail.withLine { $0.remove(-1) }
+                tail.withLine { $0.removeShape(-1) }
             }
             if tail.segmentCount == 0 { direction = initialDirection }
             return true
@@ -226,20 +228,24 @@ public final class LinePlacer: PlacementAlgo {
         head.withLine { $0.simplify() }
         tail.withLine { $0.simplify() }
         let h = head.cLine, t = tail.cLine
-        let nHead = h.segmentCount, nTail = t.segmentCount
+        // (an arc counted once)
+        let nHead = h.shapeCount, nTail = t.shapeCount
         if nHead < 3 { return false }
         if nTail > 0 && h.point(0) != t.lastPoint { return false }
         if head.countCorners(forbidden) != 0 { return false }
-        let dirHead = Direction45(h.segment(0))
+        let dirHead = h.isPointOnArc(0) ? Direction45(h.arcs[h.arcIndex(0)]) : Direction45(h.segment(0))
         if nTail > 0 {
-            let dirTail = Direction45(t.segment(-1))
+            let lastSegIdx = t.pointCount - 2
+            let dirTail = t.isPointOnArc(lastSegIdx) ? Direction45(t.arcs[t.arcIndex(lastSegIdx)]) : Direction45(t.segment(-1))
             if !dirHead.angle(dirTail).intersection(forbidden).isEmpty { return false }
         }
         tail.withLine {
             $0.append(h)
             $0.simplify()
         }
-        direction = Direction45(tail.cLine.segment(-1))
+        let lastSegIdx = tail.cLine.pointCount - 2
+        let tl = tail.cLine
+        direction = tl.isArcSegment(lastSegIdx) ? Direction45(tl.arcs[tl.arcIndex(lastSegIdx)]) : Direction45(tl.segment(-1))
         head.withLine {
             $0.remove(0, -1)
             $0.simplify()
@@ -399,7 +405,7 @@ public final class LinePlacer: PlacementAlgo {
         case .low: effort = []
         case .medium, .full: effort = .mergeSegments
         }
-        if settings.smartPads && settings.cornerMode == .mitered45 && !mouseTrailTracer.isManuallyForced {
+        if settings.smartPads && !settings.cornerMode.isNinety && !mouseTrailTracer.isManuallyForced {
             effort.insert(.smartPads)
         }
         if currentNode!.checkColliding(walkFull) != nil { return false }
@@ -417,7 +423,7 @@ public final class LinePlacer: PlacementAlgo {
         if let obs = currentNode!.nearestObstacle(head) {
             let clearance = currentNode!.clearance(obs.item, head, useEpsilon: false)
             let hull = currentNode!.ruleResolver.hullCache(obs.item, clearance: clearance, walkaroundThickness: head.width, layer: head.layer)
-            let nearest = settings.cornerMode == .mitered90 ? hull.bbox.nearestPoint(p) : hull.nearestPoint(p)
+            let nearest = settings.cornerMode.isNinety ? hull.bbox.nearestPoint(p) : hull.nearestPoint(p)
             if (nearest - p).norm < head.width / 2 { buildInitialLine(nearest, head, .markObstacles) }
         }
         newHead.assign(head)
@@ -478,7 +484,7 @@ public final class LinePlacer: PlacementAlgo {
         case .low: effort = []
         case .medium, .full: effort = .mergeSegments
         }
-        if settings.smartPads && settings.cornerMode == .mitered45 && !mouseTrailTracer.isManuallyForced {
+        if settings.smartPads && !settings.cornerMode.isNinety && !mouseTrailTracer.isManuallyForced {
             effort.insert(.smartPads)
         }
         if shoveOk {
@@ -737,7 +743,7 @@ public final class LinePlacer: PlacementAlgo {
     }
 
     public func fixRoute(_ p: IPoint, _ endItem: Item?, forceFinish: Bool) -> Bool {
-        let fixAll = settings.fixAllSegments
+        var fixAll = settings.fixAllSegments
         var realEnd = false
         let pl = trace
         if settings.mode == .markObstacles, let endItem, let iface = router.iface {
@@ -777,16 +783,33 @@ public final class LinePlacer: PlacementAlgo {
         if l.pointCount > 2 { pPreLast = l.point(l.pointCount - 2) }
         if let endItem, let cn = currentNet, cn == endItem.net { realEnd = true }
         if forceFinish { realEnd = true }
+        // (KiCad's undo of a part fixed short is wrong with arcs, so with arcs it fixes it all)
+        if !fixAll && l.arcCount > 0 { fixAll = true }
+        // (worked out wrongly, as KiCad says, if the line ends on an arc)
         let lastDirSeg = (!fixAll && l.segmentCount > 1) ? l.segment(-2) : l.segment(-1)
         let dLast = Direction45(lastDirSeg)
         let lastV = (realEnd || isPlacingVia || fixAll) ? l.segmentCount : max(1, l.segmentCount - 1)
         var lastItem: LinkedItem?
+        var lastArc = -1
         for i in 0..<lastV {
-            let seg = Segment(pl.cSegment(i), net: currentNet)
-            seg.width = pl.width
-            seg.setLayer(currentLayer)
-            lastItem = seg
-            if !lastNode!.add(seg) { lastItem = nil }
+            let arcIndex = l.arcIndex(i)
+            if arcIndex < 0 || (lastArc >= 0 && i == lastV - 1 && !l.isPointOnArc(lastV)) {
+                let seg = Segment(pl.cSegment(i), net: currentNet)
+                seg.width = pl.width
+                seg.setLayer(currentLayer)
+                lastItem = seg
+                if !lastNode!.add(seg) { lastItem = nil }
+            } else {
+                // an arc, once (and the segment from an arc's end to the next arc's start with it: KiCad's quirk, which
+                // leaves it out)
+                if arcIndex == lastArc { continue }
+                let arc = Arc(l.arcs[arcIndex], net: currentNet)
+                arc.width = pl.width
+                arc.setLayer(currentLayer)
+                lastItem = arc
+                if !lastNode!.add(arc) { lastItem = nil }
+                lastArc = arcIndex
+            }
         }
         if let via = pl.via {
             let newVia = via.clone() as! Via
@@ -918,7 +941,9 @@ public final class LinePlacer: PlacementAlgo {
             guard let joint, !joint.isLineCorner(), let itemSeg = item as? Segment else { return }
             let refSeg = itemSeg.seg
             for neighbor in joint.links {
-                guard neighbor !== item, let nSeg = neighbor as? Segment, neighbor.layersOverlap(item) else { continue }
+                guard neighbor !== item, neighbor.ofKind([.segment, .arc]), neighbor.layersOverlap(item) else { continue }
+                // (an arc of the same width there KiCad reads as a segment, which is undefined; the port passes it by)
+                guard let nSeg = neighbor as? Segment else { continue }
                 if nSeg.width != itemSeg.width { continue }
                 let testSeg = nSeg.seg
                 if refSeg.contains(testSeg) {

@@ -294,11 +294,11 @@ public final class WorldInterface: RouterInterface {
     public var items: [WorldItem]
     public let layerCount: Int
     public let resolver: WorldResolver
-    /// The router's item for each world item (nil: none, an arc track)
+    /// The router's item for each world item (nil: none, a keepout zone that could not be cut into triangles)
     public private(set) var routerItems: [Item?] = []
     /// What the router has put on the board, in the order it did
     public var added: [Item] = []
-    /// What the world holds that the port cannot make as KiCad makes it yet (an arc track)
+    /// What the world holds that the port cannot make as KiCad makes it yet
     public private(set) var unsupported: Set<String> = []
     /// The keepout zones that could not be cut into triangles, which KiCad's router leaves out (warning that each is
     /// malformed, perhaps crossing itself): their indices among the items
@@ -400,17 +400,13 @@ public final class WorldInterface: RouterInterface {
                 resolver.info[ObjectIdentifier(via)] = w
                 world.add(via)
             case .arc:
-                // (the router's lines have no arcs yet: an arc track is an obstacle of its net, as a solid of its
-                // shape, not one to route from or join at its ends)
-                unsupported.insert("arc track (an obstacle, not yet routed from)")
-                let solid = Solid()
-                solid.setLayer(w.layer)
-                solid.net = w.net
-                solid.solidShape = .arc(ShapeArc(start: w.a, mid: w.mid, end: w.b, width: w.width))
-                solid.isRoutable = false
-                resolver.info[ObjectIdentifier(solid)] = w
-                world.add(solid)
-                item = solid
+                // syncArc
+                let arc = Arc(ShapeArc(start: w.a, mid: w.mid, end: w.b, width: w.width), net: w.net)
+                arc.setLayer(w.layer)
+                if w.locked { arc.mark(.locked) }
+                item = arc
+                resolver.info[ObjectIdentifier(arc)] = w
+                world.add(arc, allowRedundant: true)
             }
             routerItems.append(item)
         }

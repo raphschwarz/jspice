@@ -1,5 +1,5 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_diff_pair.h, pns_diff_pair.cpp and ranged_num.h (without arcs, and
-// without what the pair placer does not call: gateways projected orthogonally, pairs' total lengths).
+// Ported from KiCad 10.0.7: pcbnew/router/pns_diff_pair.h, pns_diff_pair.cpp and ranged_num.h (without what the
+// pair placer does not call: gateways projected orthogonally, pairs' total lengths).
 // Copyright (C) 2013-2015 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -669,8 +669,9 @@ public final class DiffPair: Item {
     public func coupledSegmentPairs() -> [CoupledSegments] {
         var pairs: [CoupledSegments] = []
         // Do not simplify the line chains here, otherwise the indices will be invalid
-        for i in 0..<cp.segmentCount {
-            for j in 0..<cn.segmentCount {
+        // (an arc's pieces left out)
+        for i in 0..<cp.segmentCount where !cp.isArcSegment(i) {
+            for j in 0..<cn.segmentCount where !cn.isArcSegment(j) {
                 let sp = cp.segment(i), sn = cn.segment(j)
                 let dist = abs(sp.distance(sn) - width)
                 if sp.approxParallel(sn, threshold: 2) && gapConstraint.matches(dist), let (pClip, nClip) = commonParallelProjection(sp, sn) {

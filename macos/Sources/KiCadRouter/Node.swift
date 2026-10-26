@@ -448,7 +448,7 @@ public final class Node {
         let obstacles = ctx.obstacles
         if obstacles.isEmpty { return nil }
         let layer = line.layer
-        let simplifyHull = cornerMode == .mitered90
+        let simplifyHull = cornerMode.isNinety
         func makeHull(_ cached: LineChain) -> LineChain {
             guard simplifyHull else { return cached }
             let b = cached.bbox
@@ -576,6 +576,7 @@ public final class Node {
     /// Adds an item of any kind (KiCad's AddRaw)
     public func addRaw(_ item: Item, allowRedundant: Bool = false) {
         switch item {
+        case let a as Arc: addArc(a)
         case let s as Segment: addSegment(s)
         case let v as Via: addVia(v)
         case let s as Solid: addSolid(s)
@@ -583,10 +584,21 @@ public final class Node {
         }
     }
 
-    /// Adds a line's segments, linking it to them (and to ones already here, unless redundant ones are allowed)
+    /// Adds a line's arcs and then its segments (the pieces of its arcs aside), linking it to them (and to ones
+    /// already here, unless redundant ones are allowed): the line's links its arcs first, as KiCad's NODE::Add links them
     public func add(_ line: Line, allowRedundant: Bool = false) {
         let l = line.cLine
+        for a in l.arcs {
+            if !allowRedundant, let r = findRedundantArc(a.start, a.end, line.layers, line.net) {
+                line.link(r)
+            } else {
+                let arc = Arc(line: line, a)
+                line.link(arc)
+                add(arc, allowRedundant: true)
+            }
+        }
         for i in 0..<l.segmentCount {
+            if l.isArcSegment(i) { continue }
             let s = l.segment(i)
             if s.a == s.b { continue }
             if !allowRedundant, let r = findRedundantSegment(s.a, s.b, line.layers, line.net) {
@@ -612,6 +624,20 @@ public final class Node {
         if seg.seg.a == seg.seg.b { return false }
         if !allowRedundant && findRedundantSegment(seg) != nil { return false }
         addSegment(seg)
+        return true
+    }
+
+    private func addArc(_ arc: Arc) {
+        arc.owner = self
+        linkJoint(arc.anchor(0), arc.layers, arc.net, arc)
+        linkJoint(arc.anchor(1), arc.layers, arc.net, arc)
+        index.add(arc)
+    }
+
+    @discardableResult
+    public func add(_ arc: Arc, allowRedundant: Bool = false) -> Bool {
+        if !allowRedundant && findRedundantArc(arc.arc.start, arc.arc.end, arc.layers, arc.net) != nil { return false }
+        addArc(arc)
         return true
     }
 
@@ -648,6 +674,11 @@ public final class Node {
     private func removeSegmentIndex(_ seg: Segment) {
         unlinkJoint(seg.seg.a, seg.layers, seg.net, seg)
         unlinkJoint(seg.seg.b, seg.layers, seg.net, seg)
+    }
+
+    private func removeArcIndex(_ arc: Arc) {
+        unlinkJoint(arc.anchor(0), arc.layers, arc.net, arc)
+        unlinkJoint(arc.anchor(1), arc.layers, arc.net, arc)
     }
 
     private func rebuildJoint(_ joint: Joint?, _ item: Item) {
@@ -700,6 +731,9 @@ public final class Node {
 
     public func remove(_ item: Item) {
         switch item {
+        case let arc as Arc:
+            removeArcIndex(arc)
+            doRemove(arc)
         case let solid as Solid:
             if let h = solid.hole {
                 remove(h)
@@ -733,6 +767,9 @@ public final class Node {
             if let s = li as? Segment {
                 removeSegmentIndex(s)
                 doRemove(s)
+            } else if let a = li as? Arc {
+                removeArcIndex(a)
+                doRemove(a)
             } else if let v = li as? Via {
                 removeViaIndex(v)
                 doRemove(v)
@@ -745,8 +782,9 @@ public final class Node {
     // MARK: - Lines
 
     private func followLine(_ start: LinkedItem, _ scanDirection: Bool, _ pos: inout Int, _ limit: Int,
-                            _ corners: inout [IPoint], _ segments: inout [LinkedItem?], _ guardHit: inout Bool,
-                            _ stopAtLockedJoints: Bool, _ followLockedSegments: Bool, _ allowSegmentSizeMismatch: Bool) {
+                            _ corners: inout [IPoint], _ segments: inout [LinkedItem?], _ arcReversed: inout [Bool],
+                            _ guardHit: inout Bool, _ stopAtLockedJoints: Bool, _ followLockedSegments: Bool,
+                            _ allowSegmentSizeMismatch: Bool) {
         var current = start
         var prevReversed = false
         let guardPoint = current.anchor(scanDirection ? 1 : 0)
@@ -757,6 +795,11 @@ public final class Node {
             guard let jt = findJoint(p, current) else { break }
             corners[pos] = jt.pos
             segments[pos] = current
+            arcReversed[pos] = false
+            // (an arc met from its end runs the other way)
+            if current.kind == .arc && ((scanDirection && jt.pos == current.anchor(0)) || (!scanDirection && jt.pos == current.anchor(1))) {
+                arcReversed[pos] = true
+            }
             pos += scanDirection ? 1 : -1
             if count > 0 && guardPoint == p {
                 if pos >= 0 && pos < limit { segments[pos] = nil }
@@ -773,13 +816,15 @@ public final class Node {
         }
     }
 
-    /// The line `seg` is a segment of: the segments joined end to end through joints with nothing else at them
+    /// The line `seg` is a segment or arc of: the segments and arcs joined end to end through joints with nothing else
+    /// at them
     public func assembleLine(_ seg: LinkedItem, originSegmentIndex: UnsafeMutablePointer<Int>? = nil,
                              stopAtLockedJoints: Bool = false, followLockedSegments: Bool = false,
                              allowSegmentSizeMismatch: Bool = true) -> Line {
         let maxVerts = 1024 * 16
         var corners = Array(repeating: IPoint.zero, count: maxVerts + 1)
         var segs = [LinkedItem?](repeating: nil, count: maxVerts + 1)
+        var arcReversed = Array(repeating: false, count: maxVerts + 1)
         let pl = Line()
         var guardHit = false
         var iStart = maxVerts / 2
@@ -790,11 +835,11 @@ public final class Node {
         pl.parent = nil
         pl.sourceItem = seg.sourceItem
         pl.owner = self
-        followLine(seg, false, &iStart, maxVerts, &corners, &segs, &guardHit, stopAtLockedJoints, followLockedSegments,
-                   allowSegmentSizeMismatch)
+        followLine(seg, false, &iStart, maxVerts, &corners, &segs, &arcReversed, &guardHit, stopAtLockedJoints,
+                   followLockedSegments, allowSegmentSizeMismatch)
         if !guardHit {
-            followLine(seg, true, &iEnd, maxVerts, &corners, &segs, &guardHit, stopAtLockedJoints, followLockedSegments,
-                       allowSegmentSizeMismatch)
+            followLine(seg, true, &iEnd, maxVerts, &corners, &segs, &arcReversed, &guardHit, stopAtLockedJoints,
+                       followLockedSegments, allowSegmentSizeMismatch)
         }
         var prev: LinkedItem?
         var originSet = false
@@ -802,8 +847,10 @@ public final class Node {
         for i in (iStart + 1)..<iEnd {
             let p = corners[i]
             let li = segs[i]
-            chain.append(p)
+            // (an arc's points from the arc, the way the line runs: KiCad's Reversed works its centre out again)
+            if li == nil || li?.kind != .arc { chain.append(p) }
             if let li, prev !== li {
+                if let a = li as? Arc { chain.append(arcReversed[i] ? a.arc.reversed : a.arc) }
                 pl.link(li)
                 if li === seg, let originSegmentIndex, !originSet {
                     originSegmentIndex.pointee = chain.pointCount - 1
@@ -1042,6 +1089,16 @@ public final class Node {
     }
 
     private func findRedundantSegment(_ seg: Segment) -> Segment? { findRedundantSegment(seg.seg.a, seg.seg.b, seg.layers, seg.net) }
+
+    /// An arc already here between the same ends, on the same first layer (whatever way it bends)
+    private func findRedundantArc(_ a: IPoint, _ b: IPoint, _ layers: LayerRange, _ net: NetHandle?) -> Arc? {
+        guard let jt = findJoint(a, layer: layers.start, net: net) else { return nil }
+        for case let arc as Arc in jt.links {
+            let a2 = arc.anchor(0), b2 = arc.anchor(1)
+            if arc.layers.start == layers.start && ((a == a2 && b == b2) || (a == b2 && b == a2)) { return arc }
+        }
+        return nil
+    }
 
     public func findItem(byParent parent: AnyObject, net: NetHandle?) -> Item? {
         index.items(forNet: net)?.first { $0.parent === parent }

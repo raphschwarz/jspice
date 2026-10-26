@@ -8,7 +8,10 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
 - `build.sh`: fetches the parts of KiCad's sources these need from KiCad's GitLab, compiles them (with a C++20
   compiler, wxWidgets 3.2, and Boost's and GLM's headers: on Ubuntu, `g++ libwxgtk3.2-dev libboost-dev libglm-dev`) and builds the
   programs. With no argument it writes the router tests' fixtures; with a number, sets of that many cases of each kind
-  for `KICAD_GEOMETRY_REFERENCE` and `KICAD_CLIPPER_REFERENCE`.
+  for `KICAD_GEOMETRY_REFERENCE`, `KICAD_CLIPPER_REFERENCE` and `KICAD_ARC_GEOMETRY_REFERENCE`. It compiles KiCad's
+  code with `NDEBUG`, as KiCad's release builds are compiled: KiCad's plain assertions are left out, as they are in
+  the KiCad its users run, which goes on past one of them (the shove's, that a via it moves ends a line's first or
+  last segment, which it need not when the line has arcs).
 - `geometry.cpp`: random cases, chosen to reach the corners (segments along the 45° directions or nearly, touching,
   overlapping, of no length; chains that share points; shapes close together), with KiCad's answers for them: vector
   lengths and resizing, `rescale`, segment distances, intersections and collisions, `DIRECTION_45` and the traces it
@@ -51,6 +54,14 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   it then no longer find there, and, after each step, the board as the router has it then (the branch it is routing
   on: what the shove has pushed where, and what has sprung back), when it has changed. `RouterTests.swift` routes
   the same boards with the port, with the same rules (`SceneRouting.swift`), and must get the same, point for point.
+  Tracks can be arcs (`"kind": "arc"`, their start, mid and end: `syncArc`'s `PNS::ARC`), and a route can turn its
+  corners in any of KiCad's corner modes (`"cornerMode"`: 0 mitred at 45°, KiCad's default, 1 rounded at 45°, 2
+  mitred at 90°, 3 rounded at 90°); the lines it writes then carry their arcs (each one's start, mid, end and centre)
+  and which point is on which (`"shapes"`), and what a route puts on and takes off can be arcs. Where KiCad's line
+  placer reads an arc as a segment (`simplifyNewLine` takes what is at a joint it tidies for a `SEGMENT`, whatever it
+  is), which is undefined, `patch.py` has it say so and `router.cpp` stops with exit status 3; `scenes.py` leaves
+  such boards out. Valgrind finds nothing wrong in KiCad's router on scenes with arcs and rounded corners (47 of
+  them, of every mode, real boards among them).
   An undo that would leave KiCad's shove holding a branch the undo deletes (its springback stack keeps branches of a
   fixed stage the undo kills) is where KiCad's behaviour is undefined, a use after free; `router.cpp` sees it coming
   and stops with exit status 3, and `scenes.py` leaves such boards out. (Valgrind finds one more slip in KiCad's
@@ -165,6 +176,15 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   `scenes.py --mode diffpair --shoving ... ../../Tests/KiCadRouterTests/Fixtures/kicad-diffpair-routes.json 30 20261027`,
   and `kicad-board-diffpair-routes.json`
   `scenes.py --mode diffpair --boards ... 2 20261030 ../../Tests/KiCadRouterTests/Fixtures/pairboards/*.json`.
+  With `--arcs`, boards with arc tracks too (on their own or out of a pad, of an eighth of a turn to three; the shove
+  and drag modes' tracks with some of their turns rounded by arcs), routes that start on an arc (at an end, or on its
+  middle) or go to one of their net, and drags that grab an arc by its middle
+  (KiCad drags the arc itself, keeping it tangent to the tracks either side, a stub put at a free end) and pull it
+  out or push it in; with `--rounded`, each route in a corner mode of its own, rounded ones twice as often as mitred.
+  Both go with every mode and with `--boards`. `kicad-arc-routes.json` is
+  `scenes.py --arcs --rounded --mode mix ... ../../Tests/KiCadRouterTests/Fixtures/kicad-arc-routes.json 30 20261101`,
+  and `kicad-arc-drag-routes.json`
+  `scenes.py --arcs --mode drag --shoving ... ../../Tests/KiCadRouterTests/Fixtures/kicad-arc-drag-routes.json 25 20261101`.
   `KICAD_ROUTER_REFERENCE` names others (separated by colons).
 - `clipper.cpp`: the polygon clipper KiCad ships (`thirdparty/clipper2`, Clipper2, compiled as KiCad compiles it: its
   points carry a z value) on random cases, with its answers: boolean operations (union, intersection, difference,
@@ -187,9 +207,14 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   goes from, rather than in a set of pointers' order (the port does all four in the same order); a start
   pad's board item is asked its type only when it has one; and why a route cannot start on a non-routable item (a
   hole with no plating, a rule area, a text), which KiCad asks the item's board item, is asked of `router.cpp` when
-  there is none.
+  there is none. Where the line placer reads an arc as a segment, which is undefined, it says so, and the program
+  stops (exit status 3). The dot product `DRAGGER::startDragArc` takes to choose which way the stub it puts at an
+  arc's free end goes overflows its ints for an arc of more than some 46 µm radius, which is undefined too, but
+  KiCad's builds wrap it round in 32 bits, the same every time, and nearly every drag of an arc at a line's end comes
+  to it: it is made to wrap round in unsigned ints, which C++ defines, as the port wraps it.
 - `stubs.cpp`: what the router and KiCad's settings call from the rest of KiCad, as these programs need it (no
-  program object, no settings folder, no boards), and the hook `router.cpp` answers that last question through.
+  program object, no settings folder, no boards), the hook `router.cpp` answers that last question through, and the
+  stop where KiCad's router would do what is undefined (`kicadReferenceUndefined`).
 
 With `KICAD_ROUTER_DEBUG` set, `router.cpp` writes KiCad's router debug messages to standard error, and the router
 tests write the port's in the same form, to compare the two where a route differs.

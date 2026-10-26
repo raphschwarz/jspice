@@ -222,7 +222,6 @@ class Scene:
             elif cls == "PCB_ARC":
                 self.add({"kind": "arc", "net": t.GetNetCode(), "layer": self.pns(t.GetLayer()), "start": pt(t.GetStart()),
                           "mid": pt(t.GetMid()), "end": pt(t.GetEnd()), "width": t.GetWidth(), "locked": t.IsLocked()})
-                self.unsupported.append("arc track")
             elif cls == "PCB_VIA":
                 v = pcbnew.Cast_to_PCB_VIA(t) if hasattr(pcbnew, "Cast_to_PCB_VIA") else t
                 if v.Padstack().Mode() != pcbnew.PADSTACK.MODE_NORMAL:

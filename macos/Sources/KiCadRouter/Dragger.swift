@@ -1,6 +1,5 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_drag_algo.h, pns_dragger.h and pns_dragger.cpp (segments, corners and
-// vias dragged; not arcs, which the port's lines do not have, nor footprints or several segments at once, KiCad's
-// COMPONENT_DRAGGER and MULTI_DRAGGER).
+// Ported from KiCad 10.0.7: pcbnew/router/pns_drag_algo.h, pns_dragger.h and pns_dragger.cpp (segments, corners,
+// arcs and vias dragged; not footprints or several segments at once, KiCad's COMPONENT_DRAGGER and MULTI_DRAGGER).
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -20,8 +19,8 @@ public struct DragMode: OptionSet, Sendable {
     public static let component = DragMode(rawValue: 0x20)
 }
 
-/// A track's segment, its corner or a via dragged by the pointer (KiCad's PNS::DRAGGER): the line the segment is part
-/// of reshaped round the dragged segment or corner, the tracks on a via with it; what is in the way walked round,
+/// A track's segment, its corner, an arc or a via dragged by the pointer (KiCad's PNS::DRAGGER): the line the segment
+/// or arc is part of reshaped round the dragged segment, corner or arc, the tracks on a via with it; what is in the way walked round,
 /// shoved aside or marked, as the router's mode says. Each move is made in a branch of the world from before the drag,
 /// and a move that fails keeps the last that did not. A drag whose first move fails marks obstacles from then on.
 public final class Dragger {
@@ -124,11 +123,83 @@ public final class Dragger {
             mode = .corner
             if distB <= distA { draggedSegmentIndex += 1 }
         } else if freeAngleMode {
-            if distB < distA && draggedSegmentIndex < originalLine.pointCount - 2 { draggedSegmentIndex += 1 }
+            // (not onto an arc's point)
+            if distB < distA && draggedSegmentIndex < originalLine.pointCount - 2
+                && !originalLine.cLine.isPointOnArc(draggedSegmentIndex + 1) {
+                draggedSegmentIndex += 1
+            }
             mode = .corner
         } else {
             mode = .segment
         }
+        return true
+    }
+
+    /// An arc's line to drag (KiCad's startDragArc), unless the arc turns too far (179° or more) to keep tangent: a
+    /// line with the arc at an end gets a stub of track there (in the branch the drag starts from), going on from the
+    /// arc's tangent, for the arc to stay tangent to. (KiCad keeps no last solution for an arc's drag.)
+    private func startDragArc(_ p: IPoint, _ arc: Arc) -> Bool {
+        let maxDeviation = EDAAngle(degrees: Line.maxTangentAngleDeviation)
+        let centralAngle = EDAAngle(degrees: abs(arc.arc.centralAngle.degrees))
+        if centralAngle + maxDeviation >= .a180 {
+            let limit = EDAAngle.a180 - maxDeviation
+            router.failureReason = "Unable to drag arc tracks of \(String(format: "%.1f", limit.degrees)) degrees or greater."
+            return false
+        }
+        var probeIdx = 0
+        let probe = world.assembleLine(arc, originSegmentIndex: &probeIdx)
+        var arcIdx = -1, firstArcPt = -1, lastArcPt = -1
+        for i in 0..<probe.pointCount {
+            let a = probe.cLine.arcIndex(i)
+            if a < 0 { continue }
+            if arcIdx < 0 { arcIdx = a }
+            if a == arcIdx {
+                if firstArcPt < 0 { firstArcPt = i }
+                lastArcPt = i
+            }
+        }
+        let isolatedStart = firstArcPt == 0
+        let isolatedEnd = lastArcPt == probe.pointCount - 1
+        var index = 0
+        if isolatedStart || isolatedEnd {
+            let maxStubIU = Line.maxTrackLengthToKeep
+            let stubLen = max(1, maxStubIU / 2)
+            let sharc = arc.arc
+            let center = sharc.center, mid = sharc.mid
+            func outwardTangent(_ endpoint: IPoint) -> IPoint {
+                let radial = endpoint - center
+                var perp = IPoint(-radial.y, radial.x)
+                let toMid = mid - endpoint
+                // (KiCad takes the dot product in ints, which overflow for any arc of more than some 46 µm radius:
+                // its result is what KiCad's builds make of it, the products and their sum wrapped round in 32 bits,
+                // so the stub can go back along the arc)
+                let dot = Int32(truncatingIfNeeded: perp.x) &* Int32(truncatingIfNeeded: toMid.x)
+                    &+ Int32(truncatingIfNeeded: perp.y) &* Int32(truncatingIfNeeded: toMid.y)
+                if dot > 0 { perp = IPoint(radial.y, -radial.x) }
+                let mag = hypot(Double(perp.x), Double(perp.y))
+                if mag <= 0 { return IPoint(stubLen, 0) }
+                return IPoint(KiMath.round(Double(perp.x) * Double(stubLen) / mag), KiMath.round(Double(perp.y) * Double(stubLen) / mag))
+            }
+            if isolatedStart {
+                let p0 = sharc.start
+                let stub = Segment(Seg(p0 + outwardTangent(p0), p0), net: arc.net)
+                stub.width = arc.width
+                stub.layers = arc.layers
+                preDragNode.add(stub)
+            }
+            if isolatedEnd {
+                let p1 = sharc.end
+                let stub = Segment(Seg(p1, p1 + outwardTangent(p1)), net: arc.net)
+                stub.width = arc.width
+                stub.layers = arc.layers
+                preDragNode.add(stub)
+            }
+            originalLine = preDragNode.assembleLine(arc, originSegmentIndex: &index)
+        } else {
+            originalLine = world.assembleLine(arc, originSegmentIndex: &index)
+        }
+        draggedSegmentIndex = index
+        mode = .arc
         return true
     }
 
@@ -187,8 +258,9 @@ public final class Dragger {
             return startDragSegment(p, seg)
         case let via as Via:
             return startDragVia(via)
+        case let arc as Arc:
+            return startDragArc(p, arc)
         default:
-            // (arcs are not dragged here: the port's lines have none)
             return false
         }
     }
@@ -218,6 +290,15 @@ public final class Dragger {
             } else {
                 dragged.dragCorner(p, draggedSegmentIndex, freeAngle: freeAngleMode)
             }
+            lastNode.remove(origLine)
+            lastNode.add(dragged)
+            traces = [dragged.copy()]
+        case .arc:
+            let origLine = originalLine.copy()
+            let dragged = originalLine.copy()
+            dragged.clearLinks()
+            dragged.dragArc(p, draggedSegmentIndex)
+            // (an arc that collapses leaves no line: it is dropped from the route, as KiCad means it to be)
             lastNode.remove(origLine)
             lastNode.add(dragged)
             traces = [dragged.copy()]
@@ -385,6 +466,22 @@ public final class Dragger {
                 lastNode!.remove(origLine)
                 optimizeAndUpdateDraggedLine(draggedWalk, origLine, p)
             }
+        case .arc:
+            let dragged = originalLine.copy()
+            let draggedWalk = originalLine.copy()
+            let origLine = originalLine.copy()
+            dragged.dragArc(p, draggedSegmentIndex)
+            if world.checkColliding(dragged) != nil {
+                ok = tryWalkaround(lastNode!, dragged, draggedWalk)
+            } else {
+                draggedWalk.assign(dragged)
+                ok = true
+            }
+            if draggedWalk.cLine.pointCount < 2 { ok = false }
+            if ok {
+                lastNode!.remove(origLine)
+                optimizeAndUpdateDraggedLine(draggedWalk, origLine, p)
+            }
         case .via:
             ok = dragViaWalkaround(initialVia!, lastNode!, p)
         default:
@@ -420,6 +517,27 @@ public final class Dragger {
             shove.clearHeads()
             shove.addHeads(draggedPreShove, policy)
             ok = shove.run() == .ok
+            let draggedPostShove = draggedPreShove.copy()
+            if ok && shove.headsModified() { draggedPostShove.assign(shove.modifiedHead(0)) }
+            lastNode = shove.currentNode.branch()
+            if ok {
+                draggedPostShove.clearLinks()
+                draggedPostShove.unmark()
+                optimizeAndUpdateDraggedLine(draggedPostShove, originalLine, p)
+                lastDragSolution = draggedPostShove
+            }
+            dragStatus = ok
+        case .arc:
+            var ok = false
+            let draggedPreShove = originalLine.copy()
+            draggedPreShove.dragArc(p, draggedSegmentIndex)
+            // (an arc that collapses to fewer than two points is no head for the shove: the shove fails)
+            if draggedPreShove.cLine.pointCount >= 2 {
+                shove.currentNode.remove(draggedPreShove)
+                shove.clearHeads()
+                shove.addHeads(draggedPreShove, [.shove, .dontLockEndpoints])
+                ok = shove.run() == .ok
+            }
             let draggedPostShove = draggedPreShove.copy()
             if ok && shove.headsModified() { draggedPostShove.assign(shove.modifiedHead(0)) }
             lastNode = shove.currentNode.branch()

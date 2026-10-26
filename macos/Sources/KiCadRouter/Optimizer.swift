@@ -326,7 +326,10 @@ public final class Optimizer {
         var segIdx = 0
         while segIdx < line.segmentCount - 1 {
             let s1 = line.segment(segIdx), s2 = line.segment(segIdx + 1)
-            if s1.squaredLength != 0 && s2.squaredLength != 0 && s1.collinear(s2) { line.remove(segIdx + 1) }
+            // (segments of no length, where arcs meet, passed by; an arc's points kept)
+            if s1.squaredLength != 0 && s2.squaredLength != 0 && s1.collinear(s2) && !line.isPointOnArc(segIdx + 1) {
+                line.remove(segIdx + 1)
+            }
             segIdx += 1
         }
         aLine.setLine(line)
@@ -340,6 +343,11 @@ public final class Optimizer {
         let cornerMode = Router.instance?.settings.cornerMode ?? .mitered45
         var n = 0
         while n < nSegs - step {
+            // (no merging the segments that are pieces of an arc)
+            if currentPath.isArcSegment(n) || currentPath.isArcSegment(n + step) {
+                n += 1
+                continue
+            }
             let s1 = currentPath.segment(n), s2 = currentPath.segment(n + step)
             var path = [LineChain(), LineChain()]
             var cost = [Int(Int32.max), Int(Int32.max)]
@@ -575,11 +583,14 @@ public final class Optimizer {
         if effortLevel.contains(.restrictVertexRange) { constraints.append(RestrictVertexRangeConstraint()) }
         if effortLevel.contains(.restrictArea) { constraints.append(AreaConstraint(allowedArea: restrictArea)) }
         if effortLevel.contains(.keepTopology) { constraints.append(KeepTopologyConstraint(world: world)) }
-        if effortLevel.contains(.mergeSegments) { rv = mergeFull(result) || rv }
-        if effortLevel.contains(.mergeObtuse) { rv = mergeObtuse(result) || rv }
+        // (a line with arcs only has its collinear segments merged: KiCad's other steps are yet to be made right for
+        // arcs)
+        let hasArcs = line.cLine.arcCount > 0
+        if !hasArcs && effortLevel.contains(.mergeSegments) { rv = mergeFull(result) || rv }
+        if !hasArcs && effortLevel.contains(.mergeObtuse) { rv = mergeObtuse(result) || rv }
         if effortLevel.contains(.mergeColinear) { rv = mergeColinear(result) || rv }
-        if effortLevel.contains(.smartPads) { rv = runSmartPads(result) || rv }
-        if effortLevel.contains(.fanoutCleanup) { rv = fanoutCleanup(result) || rv }
+        if !hasArcs && effortLevel.contains(.smartPads) { rv = runSmartPads(result) || rv }
+        if !hasArcs && effortLevel.contains(.fanoutCleanup) { rv = fanoutCleanup(result) || rv }
         return rv
     }
 
