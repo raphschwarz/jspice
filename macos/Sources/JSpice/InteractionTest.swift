@@ -284,8 +284,8 @@ enum InteractionTest {
             editing.layer = track.layer
             let before = editing.undoName
             let started = await editing.startDrag(at: middle)
-            check(started && editing.isDragging && editing.dragPreview?.moved.contains(track.uuid) == true,
-                  "pressing on a track drags it with the router")
+            // (nothing is moved yet: the dragger moves the track with the pointer's first move)
+            check(started && editing.isDragging && editing.dragPreview != nil, "pressing on a track drags it with the router")
             // (a step across the track, a quarter of a millimetre)
             let length = max(1e-9, hypot(b.x - a.x, b.y - a.y))
             await editing.fixDrag(at: KiCadPoint(middle.x - (b.y - a.y) / length * 0.25, middle.y + (b.x - a.x) / length * 0.25))
