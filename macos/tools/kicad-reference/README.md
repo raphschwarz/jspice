@@ -71,8 +71,11 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   shapes as KiCad's own `GetEffectiveShape` gives them, the board's rules as KiCad's design rules engine resolves
   them, and its nets. `BoardWorldTests.swift` reads the same board with `BoardWorld` and must find the same items,
   shapes and rules, to the nanometre: custom pads too, their anchors and pieces merged into one outline as KiCad
-  merges them (a pad with a curve among its pieces aside: the port draws a convex outline round it, and says so).
-- `boards.py`: random boards made by KiCad itself (`boards.py [--custom-pads] OUTDIR COUNT [SEED]`): footprints from KiCad's own
+  merges them (a pad with a curve among its pieces aside: the port draws a convex outline round it, and says so);
+  vias with their types (blind, buried, micro), which `router.cpp` gives KiCad's router's vias and writes with those
+  a route puts on (a via shoved or dragged keeps its type, and the port writes it back into the board so).
+- `boards.py`: random boards made by KiCad itself (`boards.py [--custom-pads] OUTDIR COUNT [SEED]`; on four layers,
+  blind, buried and micro vias too, from random numbers of their own): footprints from KiCad's own
   libraries with every kind of pad, turned and flipped, on two or four layers; nets in net classes chosen by
   pattern, of different priorities; pads' and footprints' own clearances; tracks, vias, drawings on copper; outlines
   with rounded corners (arcs, or a rectangle's own corner radius) and round cut-outs; keepout zones of several shapes

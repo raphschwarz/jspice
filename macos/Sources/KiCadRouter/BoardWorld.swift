@@ -962,8 +962,14 @@ public struct BoardWorld {
         w.locked = node.flag("locked") || node["locked"]?.text(at: 0) == "yes"
         w.flashed = (0..<copperLayers).map { $0 >= lo && $0 <= hi }
         w.source = node.value("uuid")
-        if node.arguments.contains(where: { $0.kind == .symbol && ($0.text == "blind" || $0.text == "micro" || $0.text == "buried") }) {
-            unsupported.insert("blind or micro via")
+        // (its type the word after "via": a KiCad 9 board's blind and buried vias both "blind")
+        for arg in node.arguments where arg.kind == .symbol {
+            switch arg.text {
+            case "blind": w.viaType = .blind
+            case "buried": w.viaType = .buried
+            case "micro": w.viaType = .microVia
+            default: break
+            }
         }
         if node["remove_unused_layers"].map({ $0.text(at: 0) != "no" }) == true { unsupported.insert("via without unconnected layers") }
         if node["padstack"] != nil { unsupported.insert("via padstack") }

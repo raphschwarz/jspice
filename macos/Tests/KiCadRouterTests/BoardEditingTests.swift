@@ -97,6 +97,42 @@ final class BoardEditingTests: XCTestCase {
         }
     }
 
+    /// A blind, buried or micro via dragged keeps its type: the board's file has it again after "via", as KiCad
+    /// writes it
+    func testADraggedViaKeepsItsType() throws {
+        let file = try XCTUnwrap(Self.boards().first)
+        var kept = 0
+        for type in ["blind", "buried", "micro"] {
+            let board = try KiCadBoard.read(file)
+            guard let box = board.edgeBounds else { return XCTFail("no outline") }
+            // (somewhere along the edge clear of the parts, a step at a time)
+            var placed: (KiCadPoint, String)?
+            for i in 1..<40 where placed == nil {
+                let p = KiCadPoint(box.minX + 1.5 + Double(i) * (box.maxX - box.minX - 3) / 40, box.minY + 1.5)
+                let uuid = KiCadBoard.newUUID()
+                let via = SExpr("via", SExpr("at", p.x, p.y), SExpr("size", 0.6), SExpr("drill", 0.3), SExpr("layers", "F.Cu", "B.Cu"),
+                                SExpr("net", ""), SExpr("uuid", uuid))
+                via.items.insert(SExpr(symbol: type), at: 1)
+                let trial = board.copy()
+                trial.addCopper(via)
+                let session = BoardEditing(board: trial)
+                guard session.startDrag(at: p, layer: "F.Cu") != nil else { continue }
+                session.drag(to: KiCadPoint(p.x + 0.3, p.y + 0.4))
+                guard let edit = session.fixDrag(at: KiCadPoint(p.x + 0.3, p.y + 0.4)) else {
+                    session.cancelDrag()
+                    continue
+                }
+                XCTAssertEqual(edit.name, "Drag Via")
+                XCTAssertEqual(edit.removed, [uuid])
+                let moved = try XCTUnwrap(edit.after.copperItems.first { $0.head == "via" && edit.added.contains($0.value("uuid") ?? "") })
+                XCTAssertEqual(moved.text(at: 0), type, "the via dragged is \(type) still")
+                placed = (p, uuid)
+            }
+            if placed != nil { kept += 1 }
+        }
+        XCTAssertEqual(kept, 3)
+    }
+
     /// Tracks routed shoving what is in their way (KiCad's shove mode): the preview shows the tracks and vias pushed
     /// aside where they now go, and which of the board's it moved; the change takes those out and puts in the shoved;
     /// KiCad's DRC finds nothing wrong with what was routed and shoved

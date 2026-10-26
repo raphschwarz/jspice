@@ -48,6 +48,8 @@ public struct WorldItem: Sendable {
     public var locked = false
     /// A via's PCB_VIA::GetIsFree
     public var free = false
+    /// A via's PCB_VIA::GetViaType
+    public var viaType = Via.ViaType.through
     // a track's, an arc's, a via's
     public var a = IPoint.zero, b = IPoint.zero, mid = IPoint.zero
     public var width = 0, layer = 0, diameter = 0, drill = 0
@@ -323,7 +325,7 @@ public final class WorldInterface: RouterInterface {
                 resolver.info[ObjectIdentifier(seg)] = w
                 world.add(seg, allowRedundant: true)
             case .via:
-                let via = Via(pos: w.a, layers: w.layers, diameter: 0, drill: w.drill, net: w.net)
+                let via = Via(pos: w.a, layers: w.layers, diameter: 0, drill: w.drill, net: w.net, type: w.viaType)
                 via.setDiameter(w.diameter)
                 if w.locked { via.mark(.locked) }
                 via.isFree = w.free

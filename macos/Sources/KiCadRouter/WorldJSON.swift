@@ -48,6 +48,9 @@ extension Shape {
 }
 
 extension WorldItem {
+    /// A via's type as board-scene.py names it
+    static let viaTypes: [(Via.ViaType, String)] = [(.through, "through"), (.blind, "blind"), (.buried, "buried"), (.microVia, "micro")]
+
     /// An item as a scene gives it
     public init?(scene j: [String: Any], layers layerCount: Int) {
         guard let k = j["kind"] as? String, let kind = Kind(rawValue: k) else { return nil }
@@ -97,6 +100,7 @@ extension WorldItem {
             pos = nil
             diameter = int(j["diameter"])
             drill = int(j["drill"])
+            viaType = Self.viaTypes.first { $0.1 == j["viaType"] as? String }?.0 ?? .through
         case .keepout:
             // (a keepout zone's layers are a list, each one its triangles are put on)
             zoneLayers = (j["layers"] as? [Any] ?? []).map(int)
@@ -150,6 +154,8 @@ extension WorldItem {
             j["free"] = free
             j["locked"] = locked
             j["flashed"] = flashed
+            // (a through via's type left out, as board-scene.py leaves it out)
+            if viaType != .through { j["viaType"] = Self.viaTypes.first { $0.0 == viaType }?.1 }
         case .keepout:
             j["layers"] = zoneLayers
             j["polygons"] = polygons.map { $0.map { $0.points.map(p) } }

@@ -505,8 +505,14 @@ public final class BoardRouter {
         let uuid = KiCadBoard.newUUID()
         let node = SExpr("via", SExpr("at", Self.mm(v.pos.x), Self.mm(v.pos.y)), SExpr("size", Self.mm(v.diameter)), SExpr("drill", Self.mm(v.drill)),
                          SExpr("layers", layerName(v.layers.start), layerName(v.layers.end)), netList(v.net), SExpr("uuid", uuid))
-        // (KiCad writes a free via's flag after its layers)
+        // (KiCad writes a free via's flag after its layers, and a via's type, but a through via's, after "via")
         if free { node.items.insert(SExpr("free", Keyword("yes")), at: 5) }
+        switch v.viaType {
+        case .blind: node.items.insert(SExpr(symbol: "blind"), at: 1)
+        case .buried: node.items.insert(SExpr(symbol: "buried"), at: 1)
+        case .microVia: node.items.insert(SExpr(symbol: "micro"), at: 1)
+        case .through: break
+        }
         insertTrack(node)
         return uuid
     }

@@ -3,7 +3,7 @@
 world of a board against KiCad's: footprints with every kind of pad (rectangles, rounded and cut corners, ovals,
 trapezoids, circles, unplated holes, custom pads), turned and flipped, on two or four layers; nets in net classes (by
 pattern, of different priorities, regular expressions among them), pads' and footprints' own clearances; tracks and
-vias; drawings on copper; outlines with rounded corners and round cut-outs; keepout zones (rule areas) of several
+vias, on a four layer board blind, buried and micro ones too; drawings on copper; outlines with rounded corners and round cut-outs; keepout zones (rule areas) of several
 shapes, some with holes, some in footprints. Each board is saved (its .kicad_pcb and .kicad_pro), and board-scene.py
 run on it (KiCad reading it afresh) writes what KiCad's router sees of it. With --custom-pads, the footprints are
 drawn from every footprint of KiCad's libraries with a custom pad (their primitives: polygons, lines, arcs, circles
@@ -206,6 +206,27 @@ def keepouts(rng, board, x0, y0, x1, y1, copper, footprints):
             board.Add(zone)
 
 
+def layered_vias(rng, board, x0, y0, x1, y1, nets):
+    """On a four layer board, vias that go through some of it: blind (from the top or the bottom to an inner layer),
+    buried (between the inner layers) and micro (one layer deep)"""
+    if board.GetCopperLayerCount() != 4:
+        return
+    kinds = [(pcbnew.VIATYPE_BLIND, pcbnew.F_Cu, pcbnew.In2_Cu), (pcbnew.VIATYPE_BLIND, pcbnew.In1_Cu, pcbnew.B_Cu),
+             (pcbnew.VIATYPE_BURIED, pcbnew.In1_Cu, pcbnew.In2_Cu), (pcbnew.VIATYPE_MICROVIA, pcbnew.F_Cu, pcbnew.In1_Cu),
+             (pcbnew.VIATYPE_MICROVIA, pcbnew.In2_Cu, pcbnew.B_Cu)]
+    for _ in range(rng.randint(0, 6)):
+        kind, top, bottom = rng.choice(kinds)
+        v = pcbnew.PCB_VIA(board)
+        v.SetPosition(vec(rng.randint(x0 + 3 * MM, x1 - 3 * MM), rng.randint(y0 + 3 * MM, y1 - 3 * MM)))
+        d = rng.randint(3, 4) * 100_000 if kind == pcbnew.VIATYPE_MICROVIA else rng.randint(5, 8) * 100_000
+        v.SetViaType(kind)  # (before its layers, as KiCad's router sets it)
+        v.SetLayerPair(top, bottom)
+        v.SetWidth(pcbnew.F_Cu, d)
+        v.SetDrill(d // 2 // 50_000 * 50_000)
+        v.SetNet(rng.choice(nets))
+        board.Add(v)
+
+
 def custom_pad_footprints():
     """Every footprint of KiCad's libraries with a custom pad, as (library, name), in order"""
     found = []
@@ -220,7 +241,7 @@ def custom_pad_footprints():
     return found
 
 
-def make(rng, path, krng, footprints_from=FOOTPRINTS):
+def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None):
     board = pcbnew.NewBoard(path)
     board.SetCopperLayerCount(rng.choice([2, 2, 4]))
     size = rng.randint(30, 70) * MM
@@ -298,6 +319,9 @@ def make(rng, path, krng, footprints_from=FOOTPRINTS):
         board.Add(s)
     # keepout zones (from a random sequence of their own, so that the rest of each board is as it was without them)
     keepouts(krng, board, x0, y0, x1, y1, copper, footprints)
+    # blind, buried and micro vias (the same)
+    if vrng is not None:
+        layered_vias(vrng, board, x0, y0, x1, y1, nets)
     pcbnew.SaveBoard(path, board)
 
 
@@ -313,7 +337,7 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     for n in range(count):
         path = os.path.abspath(f"{out}/{'custom' if custom else 'random'}-{seed}-{n}.kicad_pcb")
-        make(rng, path, random.Random(f"keepouts-{seed}-{n}"), footprints_from)
+        make(rng, path, random.Random(f"keepouts-{seed}-{n}"), footprints_from, random.Random(f"vias-{seed}-{n}"))
         subprocess.run([sys.executable, f"{here}/board-scene.py", path, path[:-len(".kicad_pcb")] + ".json"], check=True,
                        stderr=subprocess.DEVNULL)
     print(f"{out}: {count} boards")

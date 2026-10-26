@@ -587,8 +587,12 @@ public:
             else if( kind == "via" )
             {
                 PNS_LAYER_RANGE layers( j["layers"][0].get<int>(), j["layers"][1].get<int>() );
+                // (its type, a through via's if the scene names none)
+                std::string type = j.value( "viaType", "through" );
+                VIATYPE viaType = type == "blind" ? VIATYPE::BLIND : type == "buried" ? VIATYPE::BURIED
+                                  : type == "micro" ? VIATYPE::MICROVIA : VIATYPE::THROUGH;
                 auto via = std::make_unique<PNS::VIA>( pt( j["pos"] ), layers, 0, j["drill"].get<int>(),
-                                                       netHandle( j["net"] ) );
+                                                       netHandle( j["net"] ), viaType );
                 via->SetDiameter( 0, j["diameter"] );
 
                 if( j.value( "locked", false ) )
@@ -625,9 +629,19 @@ public:
         else if( aItem->Kind() == PNS::ITEM::VIA_T )
         {
             auto v = static_cast<const PNS::VIA*>( aItem );
-            return { { "kind", "via" }, { "net", netCode( v->Net() ) }, { "pos", pt( v->Pos() ) },
-                     { "diameter", v->Diameter( 0 ) }, { "drill", v->Drill() },
-                     { "layers", json::array( { v->Layers().Start(), v->Layers().End() } ) } };
+            json j = { { "kind", "via" }, { "net", netCode( v->Net() ) }, { "pos", pt( v->Pos() ) },
+                       { "diameter", v->Diameter( 0 ) }, { "drill", v->Drill() },
+                       { "layers", json::array( { v->Layers().Start(), v->Layers().End() } ) } };
+
+            // (its type, unless it goes through)
+            if( v->ViaType() == VIATYPE::BLIND )
+                j["viaType"] = "blind";
+            else if( v->ViaType() == VIATYPE::BURIED )
+                j["viaType"] = "buried";
+            else if( v->ViaType() == VIATYPE::MICROVIA )
+                j["viaType"] = "micro";
+
+            return j;
         }
 
         return json();

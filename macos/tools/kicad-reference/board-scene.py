@@ -227,11 +227,17 @@ class Scene:
                 v = pcbnew.Cast_to_PCB_VIA(t) if hasattr(pcbnew, "Cast_to_PCB_VIA") else t
                 if v.Padstack().Mode() != pcbnew.PADSTACK.MODE_NORMAL:
                     self.unsupported.append("via padstack")
-                self.add({"kind": "via", "net": v.GetNetCode(), "pos": pt(v.GetPosition()),
-                          "layers": [self.pns(v.TopLayer()), self.pns(v.BottomLayer())],
-                          "diameter": v.GetWidth(pcbnew.PADSTACK.ALL_LAYERS), "drill": v.GetDrillValue(),
-                          "free": v.GetIsFree(), "locked": v.IsLocked(),
-                          "flashed": [v.FlashLayer(l) for l in self.copper_layers()]})
+                item = {"kind": "via", "net": v.GetNetCode(), "pos": pt(v.GetPosition()),
+                        "layers": [self.pns(v.TopLayer()), self.pns(v.BottomLayer())],
+                        "diameter": v.GetWidth(pcbnew.PADSTACK.ALL_LAYERS), "drill": v.GetDrillValue(),
+                        "free": v.GetIsFree(), "locked": v.IsLocked(),
+                        "flashed": [v.FlashLayer(l) for l in self.copper_layers()]}
+                # (a via's type, unless it goes through: the router puts one it shoves or drags back as it was)
+                kind = {pcbnew.VIATYPE_BLIND: "blind", pcbnew.VIATYPE_BURIED: "buried",
+                        pcbnew.VIATYPE_MICROVIA: "micro"}.get(v.GetViaType())
+                if kind:
+                    item["viaType"] = kind
+                self.add(item)
         nets = self.board.GetNetInfo().NetsByNetcode()
         settings = self.ds.m_NetSettings
         net_clearance = {}

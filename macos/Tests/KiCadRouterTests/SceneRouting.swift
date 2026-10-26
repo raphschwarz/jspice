@@ -192,8 +192,11 @@ enum SceneRouting {
                     "width": s.width]
         }
         if let v = item as? Via {
-            return ["kind": "via", "net": v.net ?? -1, "pos": [v.pos.x, v.pos.y], "diameter": v.diameter, "drill": v.drill,
-                    "layers": [v.layers.start, v.layers.end]]
+            var j: [String: Any] = ["kind": "via", "net": v.net ?? -1, "pos": [v.pos.x, v.pos.y], "diameter": v.diameter, "drill": v.drill,
+                                    "layers": [v.layers.start, v.layers.end]]
+            // (a via's type, unless it goes through, as router.cpp writes it)
+            if v.viaType != .through { j["viaType"] = WorldItem.viaTypes.first { $0.0 == v.viaType }?.1 }
+            return j
         }
         return nil
     }
