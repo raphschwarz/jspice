@@ -3,8 +3,9 @@
 // For each route it writes what KiCad's router does: the head and the tail after each step (a move, a via, a layer
 // switch, a fix, an undo), whether the route was fixed, and the tracks and vias it put on the board (and, for a scene
 // that asks, those it took off: a route that shoves replaces what it shoved). Each route walks round obstacles,
-// shoves them or marks them, as it says. KiCadRouterTests runs the Swift port on the same boards and
-// compares. build.sh builds this against KiCad's sources.
+// shoves them or marks them, as it says. A route can be a drag instead (a track's segment or corner, or a via, as
+// the router tool's drag tools drag them), with what the dragger dragged after each step. KiCadRouterTests runs the
+// Swift port on the same boards and compares. build.sh builds this against KiCad's sources.
 //
 // The board's rules are KiCad's default board rules made simple: one clearance between copper of different nets,
 // a hole clearance, a hole to hole clearance and an edge clearance, as PNS_PCBNEW_RULE_RESOLVER::Clearance combines
@@ -34,6 +35,7 @@
 #include <geometry/shape_simple.h>
 #include <nlohmann/json.hpp>
 #include <pns_debug_decorator.h>
+#include <pns_drag_algo.h>
 #include <pns_hole.h>
 #include <pns_line.h>
 #include <pns_node.h>
@@ -834,6 +836,81 @@ static json lineJSON( const PNS::LINE& aLine )
     return j;
 }
 
+/// What a drag has dragged (DRAGGER::Traces): its lines, and its vias as the scene gives them
+static json tracesJSON( const PNS::ITEM_SET& aTraces )
+{
+    json a = json::array();
+
+    for( const PNS::ITEM* item : aTraces.CItems() )
+    {
+        if( item->Kind() == PNS::ITEM::LINE_T )
+            a.push_back( lineJSON( *static_cast<const PNS::LINE*>( item ) ) );
+        else
+            a.push_back( SCENE_IFACE::itemJSON( item ) );
+    }
+
+    return a;
+}
+
+/// A drag's steps, as the router tool drives the router's dragger (ROUTER_TOOL::performDragging): each a pointer
+/// position, or a click ("fix"; with Ctrl held, "force", which keeps a drag that collides, marking obstacles), which
+/// ends the drag when the dragger keeps it. After each, whether the move worked, what it dragged, whether the dragger
+/// marks obstacles now (its first move failed) and whether what it dragged is clear, and the board as the dragger has
+/// it, when it has changed, for a scene that asks. A last click ("fix" of the route) if the drag is still going on.
+static void dragSteps( PNS::ROUTER& aRouter, SCENE_IFACE& aIface, const json& aRoute, json& aMoves, json& aResult,
+                       bool aRemoveItems )
+{
+    bool finished = false;
+    json lastNode;
+
+    for( const json& m : aRoute["moves"] )
+    {
+        json step;
+
+        if( m.is_array() )
+        {
+            step["moved"] = aRouter.Move( pt( m ), nullptr );
+        }
+        else if( m.contains( "fix" ) )
+        {
+            finished = aRouter.FixRoute( pt( m["fix"] ), nullptr, false, m.value( "force", false ) );
+            step["fixed"] = finished;
+        }
+
+        // (a drag kept is in the world, its branches gone with what the dragger had of them)
+        if( !finished )
+        {
+            PNS::DRAG_ALGO* dragger = aRouter.GetDragger();
+            bool            status = false;
+
+            step["forceMark"] = dragger->GetForceMarkObstaclesMode( &status );
+            step["status"] = status;
+            step["dragged"] = tracesJSON( dragger->Traces() );
+            step["layer"] = aRouter.GetCurrentLayer();
+
+            if( aRemoveItems )
+            {
+                json node = aIface.nodeJSON( dragger->CurrentNode() );
+
+                if( node != lastNode )
+                    step["node"] = node;
+
+                lastNode = node;
+            }
+        }
+
+        aMoves.push_back( step );
+
+        if( finished )
+            break;
+    }
+
+    if( !finished && aRoute.contains( "fix" ) )
+        aResult["fixed"] = aRouter.FixRoute( pt( aRoute["fix"] ), nullptr, false, aRoute.value( "force", false ) );
+
+    aRouter.StopRouting();
+}
+
 extern std::function<wxString( const PNS::ITEM* )> g_kicadReferenceNonRoutableReason;
 
 int main()
@@ -908,6 +985,9 @@ int main()
         std::string mode = route.value( "mode", "walkaround" );
         settings.SetMode( mode == "mark" ? PNS::RM_MarkObstacles : mode == "shove" ? PNS::RM_Shove : PNS::RM_Walkaround );
         settings.SetOptimizerEffort( PNS::OE_MEDIUM );
+        settings.SetSmoothDraggedSegments( route.value( "smooth", true ) );
+        settings.SetOptimizeEntireDraggedTrack( route.value( "optimizeEntire", false ) );
+        settings.SetAllowDRCViolations( route.value( "allowViolations", false ) );
 
         // a world fresh from the board, with what the routes before this one added
         router.ClearWorld();
@@ -933,7 +1013,23 @@ int main()
         // (with the first route, the keepout zones' triangles as the world has them, if there are any)
         if( out.empty() && !iface.m_triangles.empty() )
             r["keepoutTriangles"] = iface.m_triangles;
-        bool started = router.StartRouting( pt( route["start"] ), itemAt( "startItem", route ), route.value( "layer", 0 ) );
+
+        // (a drag: of the item the route names, from where it says, as the router tool's drag (D) or free angle drag
+        // (G) starts one; else a track from its start)
+        bool dragging = route.contains( "drag" );
+        bool started;
+
+        if( dragging )
+        {
+            const json& d = route["drag"];
+            started = router.StartDragging( pt( d["at"] ), itemAt( "item", d ),
+                                            d.value( "freeAngle", false ) ? PNS::DM_ANY | PNS::DM_FREE_ANGLE : PNS::DM_ANY );
+        }
+        else
+        {
+            started = router.StartRouting( pt( route["start"] ), itemAt( "startItem", route ), route.value( "layer", 0 ) );
+        }
+
         r["started"] = started;
 
         if( !started )
@@ -942,7 +1038,11 @@ int main()
         json moves = json::array();
         json lastNode;
 
-        if( started )
+        if( started && dragging )
+        {
+            dragSteps( router, iface, route, moves, r, removeItems );
+        }
+        else if( started )
         {
             bool finished = false;
 

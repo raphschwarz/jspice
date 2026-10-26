@@ -17,9 +17,17 @@ sprung back) is written too, when it has changed. `--mode mix` mixes the three m
 KiCad's shove holding a branch the undo deletes is left out (router.cpp stops there, with exit status 3: what KiCad
 does next is undefined), and another made in its place.
 
-    scenes.py [--mode shove|mix] [--shoving] KICAD_ROUTER OUT.json [COUNT [SEED]]
-    scenes.py [--mode shove|mix] --boards KICAD_ROUTER OUT.json ROUTES_PER_BOARD SEED SCENE.json...   (real boards,
-        from board-scene.py)
+With `--mode drag`, the routes are drags instead, on boards like the shove mode's: of a track's segment (grabbed
+along it) or corner (grabbed within half its width of its end, or right on it), or of a via, now and then at free
+angles, walking round what is in the way, shoving it or marking it; the pointer taken away and now and then back,
+and clicked to keep the drag (now and then with Ctrl, to keep it whatever it collides with); now and then the whole
+dragged track optimized, or its segments not smoothed. Each drag is chosen on the board as the drags before it left
+it (KiCad's router is run on those to know), so a track already dragged can be dragged again. `--shoving` keeps only
+the boards on which a drag shoved another net's track or via.
+
+    scenes.py [--mode shove|mix|drag] [--shoving] KICAD_ROUTER OUT.json [COUNT [SEED]]
+    scenes.py [--mode shove|mix|drag] --boards KICAD_ROUTER OUT.json ROUTES_PER_BOARD SEED SCENE.json...   (real
+        boards, from board-scene.py)
 """
 
 import json
@@ -152,10 +160,14 @@ def board(rng, n, mode="walkaround"):
                           "width": rng.randint(3, 8) * 50_000})
     if mode != "walkaround":
         polylines(rng, items, size, nets, copper, dense)
+    if mode == "drag":
+        # (more of them, to drag and to drag into)
+        polylines(rng, items, size, nets, copper, dense)
     rules = {"clearance": rng.choice([150_000, 200_000, 250_000]), "holeClearance": 250_000, "holeToHole": 250_000,
              "edgeClearance": rng.choice([300_000, 500_000])}
+    # (drags are chosen later, each on the board as the drags before it left it)
     scene = {"layers": copper, "rules": rules, "items": items,
-             "routes": routes(rng, items, copper, (0, 0, size, size), mode=mode)}
+             "routes": [] if mode == "drag" else routes(rng, items, copper, (0, 0, size, size), mode=mode)}
     if mode != "walkaround":
         scene["removeItems"] = True
     return scene
@@ -256,6 +268,146 @@ def routes(rng, items, copper, area, count=None, mode="walkaround"):
     return out
 
 
+def drag(rng, items, area):
+    """A random drag of one of `items`' tracks or vias, as the router tool's drag (D) or free angle drag (G) starts one
+    with the pointer on it, and the pointer's way from there; None if there is nothing to drag"""
+    x0, y0, x1, y1 = area
+    tracks = [i for i, it in enumerate(items) if it["kind"] == "track" and it["a"] != it["b"]]
+    vias = [i for i, it in enumerate(items) if it["kind"] == "via"]
+    if not tracks and not vias:
+        return None
+    if vias and (not tracks or rng.random() < 0.3):
+        i = rng.choice(vias)
+        grabbed = "via"
+        at = list(items[i]["pos"])
+        if rng.random() < 0.3:
+            # (off its centre, on it)
+            r = items[i]["diameter"] // 5
+            at = [at[0] + rng.randint(-r, r), at[1] + rng.randint(-r, r)]
+    else:
+        i = rng.choice(tracks)
+        a, b, w = items[i]["a"], items[i]["b"], items[i]["width"]
+        grab = rng.random()
+        grabbed = "segment" if grab < 0.5 else "corner"
+        if grab < 0.5:
+            # (along the segment)
+            t = rng.uniform(0.2, 0.8)
+            at = [int(a[0] + (b[0] - a[0]) * t), int(a[1] + (b[1] - a[1]) * t)]
+        else:
+            # (at its corner: within half its width of an end, or right on it)
+            e = rng.choice([a, b])
+            r = w // 5 if grab < 0.85 else 0
+            at = [e[0] + rng.randint(-r, r), e[1] + rng.randint(-r, r)]
+    r = rng.random()
+    mode = "shove" if r < 0.5 else "walkaround" if r < 0.8 else "mark"
+    d = {"item": i, "at": at}
+    if rng.random() < 0.12:
+        d["freeAngle"] = True
+    route = {"drag": d, "mode": mode}
+    if rng.random() < 0.2:
+        route["optimizeEntire"] = True
+    if rng.random() < 0.15:
+        route["smooth"] = False
+    if mode == "mark" and rng.random() < 0.3:
+        # (KiCad's "allow DRC violations", which marking obstacles keeps any drag)
+        route["allowViolations"] = True
+    # the pointer taken somewhere near (mostly to another net's track, via or pad near by, into it or past it), by
+    # the way it wanders, now and then back towards where it started
+    net = items[i].get("net")
+    kinds = ("track", "via", "pad") if rng.random() < 0.25 else ("track", "via")
+    near = []
+    layer = items[i].get("layer")
+    for it in items:
+        if it.get("net") == net or it["kind"] not in kinds:
+            continue
+        # (on the dragged track's layer)
+        lo, hi = it.get("layers") or [it.get("layer")] * 2
+        if layer is not None and not lo <= layer <= hi:
+            continue
+        p = it["pos"] if "pos" in it else [(it["a"][0] + it["b"][0]) // 2, (it["a"][1] + it["b"][1]) // 2]
+        if abs(p[0] - at[0]) + abs(p[1] - at[1]) < 5 * MM:
+            near.append(p)
+    # (or now and then to a corner of its own net's tracks on its layer, or near it, where the dragged corner or
+    # segment snaps to the line of another, as KiCad smooths a drag)
+    def parallel(it):
+        if "a" not in items[i]:
+            return True
+        (ax, ay), (bx, by) = items[i]["a"], items[i]["b"]
+        (cx, cy), (dx, dy) = it["a"], it["b"]
+        return (bx - ax) * (dy - cy) == (by - ay) * (dx - cx)
+    own = [p for it in items if it["kind"] == "track" and it.get("net") == net and it.get("layer") == layer
+           and it is not items[i] and (grabbed != "segment" or parallel(it)) for p in (it["a"], it["b"])]
+    w = items[i].get("width", 0)
+    if own and rng.random() < 0.2:
+        p = rng.choice(own)
+        end = [p[0] + rng.randint(-w // 2, w // 2), p[1] + rng.randint(-w // 2, w // 2)]
+    elif near and rng.random() < 0.8:
+        p = rng.choice(near)
+        over = rng.uniform(0.8, 1.2)
+        end = [int(at[0] + (p[0] - at[0]) * over), int(at[1] + (p[1] - at[1]) * over)]
+    else:
+        span = rng.choice([4, 8, 12])
+        end = [at[0] + rng.randint(-span, span) * 250_000, at[1] + rng.randint(-span, span) * 250_000]
+    end = [min(max(end[0], x0), x1), min(max(end[1], y0), y1)]
+    steps = rng.randint(1, 6)
+    moves = []
+    for s in range(1, steps + 1):
+        t = s / steps
+        px = int(at[0] + (end[0] - at[0]) * t)
+        py = int(at[1] + (end[1] - at[1]) * t)
+        if s < steps:
+            px += rng.randint(-2, 2) * 150_000
+            py += rng.randint(-2, 2) * 150_000
+        moves.append([px, py])
+    if rng.random() < 0.2:
+        back = rng.uniform(0.2, 0.9)
+        moves.append([int(end[0] + (at[0] - end[0]) * back), int(end[1] + (at[1] - end[1]) * back)])
+    if rng.random() < 0.15:
+        # (the pointer still, as it is between moves the grid snaps to the same point)
+        k = rng.randrange(len(moves))
+        moves.insert(k, moves[k])
+    if rng.random() < 0.1:
+        # (a click on the way, which ends the drag if the dragger keeps it)
+        k = rng.randrange(len(moves))
+        click = {"fix": moves[k]}
+        if rng.random() < 0.3:
+            click["force"] = True
+        moves.insert(k + 1, click)
+    route["moves"] = moves
+    if rng.random() < 0.85:
+        route["fix"] = moves[-1] if isinstance(moves[-1], list) else moves[-2]
+        if rng.random() < 0.3:
+            route["force"] = True
+    return route
+
+
+def drag_routes(router, rng, scene, area, count):
+    """`count` drags on the scene's board, each chosen on the board as the drags before it left it (KiCad's router run
+    on those to know), and what KiCad's router made of them (None if what it does is undefined); and how many of them
+    shoved another net's track or via, on the way or in the end"""
+    items = list(scene["items"])
+    drags, kicad, shoving = [], [], 0
+    for _ in range(count):
+        d = drag(rng, items, area)
+        if d is None:
+            break
+        drags.append(d)
+        kicad = route(router, dict(scene, routes=drags))
+        if kicad is None:
+            return None, 0
+        r = kicad[-1]
+        net = items[d["drag"]["item"]].get("net")
+        removed = set(r.get("removed", []))
+        for m in r["moves"]:
+            removed |= set((m.get("node") or {}).get("removed", []))
+        if any(items[k].get("net") != net for k in removed):
+            shoving += 1
+        for k in reversed(r.get("removed", [])):
+            del items[k]
+        items += r["added"]
+    return (drags, kicad), shoving
+
+
 def route(router, scene):
     """What KiCad's router makes of the scene's routes; None if what it does is undefined (router.cpp's exit status
     3: an undo of a shoving route that KiCad's line placer gets wrong, reading a node it has deleted)"""
@@ -285,6 +437,7 @@ def boards(router, out, files, per_board, seed, mode="walkaround"):
     rng = random.Random(seed)
     cases = []
     undefined = 0
+    drags = shoves = 0
     for path in files:
         with open(path) as f:
             scene = json.load(f)
@@ -292,6 +445,17 @@ def boards(router, out, files, per_board, seed, mode="walkaround"):
         area = board_area(scene)
         for k in range(per_board):
             case = dict(scene)
+            if mode == "drag":
+                case["removeItems"] = True
+                done, shoving = drag_routes(router, rng, case, area, rng.randint(2, 6))
+                if done is None:
+                    undefined += 1
+                    continue
+                case["routes"], kicad = done
+                drags += len(case["routes"])
+                shoves += shoving
+                cases.append({"name": f"{name}-drag-{seed}-{k}", "scene": case, "kicad": kicad})
+                continue
             case["routes"] = routes(rng, scene["items"], scene["layers"], area, count=rng.randint(2, 6), mode=mode)
             if not case["routes"]:
                 continue
@@ -306,6 +470,7 @@ def boards(router, out, files, per_board, seed, mode="walkaround"):
     with open(out, "w") as f:
         json.dump(cases, f, separators=(",", ":"))
     print(f"{out}: {len(cases)} cases on {len(files)} boards, {sum(len(c['kicad']) for c in cases)} routes"
+          + (f", {shoves} of the {drags} drags shoving" if mode == "drag" else "")
           + (f" ({undefined} left out, KiCad's router undefined on them)" if undefined else ""))
 
 
@@ -316,15 +481,15 @@ def shoved(kicad):
 
 def main():
     args = sys.argv[1:]
-    mode, shoving, real = "walkaround", False, False
+    mode, shoving_only, real = "walkaround", False, False
     while args and args[0].startswith("--"):
         flag = args.pop(0)
         if flag == "--mode":
             mode = args.pop(0)
-            if mode not in ("walkaround", "shove", "mix"):
+            if mode not in ("walkaround", "shove", "mix", "drag"):
                 sys.exit(f"scenes.py: no mode {mode}")
         elif flag == "--shoving":
-            shoving = True
+            shoving_only = True
         elif flag == "--boards":
             real = True
         else:
@@ -342,20 +507,31 @@ def main():
     n = 0
     undefined = 0
     quiet = 0
+    drags = shoves = 0
     while len(cases) < count:
         scene = board(rng, n, mode)
-        kicad = route(router, scene)
+        shoving = 0
+        if mode == "drag":
+            done, shoving = drag_routes(router, rng, scene, board_area(scene), rng.randint(1, 5))
+            kicad = None
+            if done is not None:
+                scene["routes"], kicad = done
+        else:
+            kicad = route(router, scene)
         if kicad is None:
             undefined += 1
-        elif shoving and not shoved(kicad):
+        elif shoving_only and not (shoving if mode == "drag" else shoved(kicad)):
             # (--shoving: only boards on which something was shoved)
             quiet += 1
         else:
             cases.append({"name": f"{prefix}-{seed}-{n}", "scene": scene, "kicad": kicad})
+            drags += len(scene["routes"])
+            shoves += shoving
         n += 1
     with open(out, "w") as f:
         json.dump(cases, f, separators=(",", ":"))
     print(f"{out}: {count} boards, {sum(len(c['kicad']) for c in cases)} routes"
+          + (f", {shoves} of the {drags} drags shoving" if mode == "drag" else "")
           + (f" ({undefined} more left out, KiCad's router undefined on them)" if undefined else "")
           + (f" ({quiet} more left out, nothing shoved on them)" if quiet else ""))
 

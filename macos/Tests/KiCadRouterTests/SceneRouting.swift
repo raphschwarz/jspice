@@ -24,6 +24,9 @@ enum SceneRouting {
             // would make what it does depend on how fast the machine is, and a debug build is slower; it stops on its
             // iteration limit alone)
             router.settings.shoveTimeLimit = Int(Int32.max)
+            router.settings.smoothDraggedSegments = (route["smooth"] as? NSNumber)?.boolValue ?? true
+            router.settings.optimizeEntireDraggedTrack = (route["optimizeEntire"] as? NSNumber)?.boolValue ?? false
+            router.settings.allowDRCViolationsSetting = (route["allowViolations"] as? NSNumber)?.boolValue ?? false
             iface.items = items
             router.clearWorld()
             router.syncWorld()
@@ -48,13 +51,23 @@ enum SceneRouting {
                 }
                 if !triangles.isEmpty { r["keepoutTriangles"] = triangles }
             }
-            let started = router.startRouting(point(route["start"]!), itemAt("startItem"),
+            // (a drag, of the item the route names, from where it says; else a track from its start)
+            let drag = route["drag"] as? [String: Any]
+            let started: Bool
+            if let drag {
+                started = router.startDragging(point(drag["at"]!), itemAt("item", drag),
+                                               mode: (drag["freeAngle"] as? NSNumber)?.boolValue == true ? [.any, .freeAngle] : .any)
+            } else {
+                started = router.startRouting(point(route["start"]!), itemAt("startItem"),
                                               layer: (route["layer"] as? NSNumber)?.intValue ?? 0)
+            }
             r["started"] = started
             if !started { r["failure"] = router.failureReason }
             var moves: [[String: Any]] = []
             var lastNode = canonical(NSNull())
-            if started {
+            if started && drag != nil {
+                moves = dragSteps(router, route, &r, iface, removeItems)
+            } else if started {
                 var finished = false
                 // (the steps as router.cpp takes them: a pointer position, or a layer pair, via placement toggled, a
                 // layer switch, the posture flipped, a fix, an undo)
@@ -119,6 +132,47 @@ enum SceneRouting {
             items += added.compactMap { WorldItem(scene: $0, layers: copper) }
         }
         return out
+    }
+
+    /// A drag's steps, as router.cpp drives them (as the router tool's performDragging does): pointer positions and
+    /// clicks, the last click the route's if the drag is still going on; after each, what router.cpp writes
+    static func dragSteps(_ router: Router, _ route: [String: Any], _ r: inout [String: Any], _ iface: WorldInterface,
+                          _ removeItems: Bool) -> [[String: Any]] {
+        var moves: [[String: Any]] = []
+        var finished = false
+        var lastNode = canonical(NSNull())
+        for m in route["moves"] as! [Any] {
+            var step: [String: Any] = [:]
+            if m is [Any] {
+                step["moved"] = router.move(point(m), nil)
+            } else if let m = m as? [String: Any], let fix = m["fix"] {
+                finished = router.fixRoute(point(fix), nil, forceCommit: (m["force"] as? NSNumber)?.boolValue ?? false)
+                step["fixed"] = finished
+            }
+            // (a drag kept is in the world, and the dragger's branches gone)
+            if !finished, let dragger = router.dragger {
+                step["forceMark"] = dragger.forceMarkObstaclesMode
+                step["status"] = dragger.dragStatus
+                step["dragged"] = dragger.traces.compactMap { item -> [String: Any]? in
+                    if let l = item as? Line { return lineJSON(l) }
+                    return addedJSON(item)
+                }
+                step["layer"] = router.currentLayer
+                if removeItems {
+                    let node = nodeJSON(dragger.currentNode, iface)
+                    let key = canonical(node)
+                    if key != lastNode { step["node"] = node }
+                    lastNode = key
+                }
+            }
+            moves.append(step)
+            if finished { break }
+        }
+        if !finished, let fix = route["fix"] {
+            r["fixed"] = router.fixRoute(point(fix), nil, forceCommit: (route["force"] as? NSNumber)?.boolValue ?? false)
+        }
+        router.stopRouting()
+        return moves
     }
 
     /// The board as a branch of the router's world has it, as router.cpp writes it: the board's items it takes off

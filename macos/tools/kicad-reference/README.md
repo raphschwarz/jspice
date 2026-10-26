@@ -28,7 +28,7 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   nanometre to ten millimetres; then a few found to need its second try, or to fail it), with what `Simplify` and
   `Fracture` make of each on the way and the fractured outlines split where they touch themselves (each case in a
   child process, as `clipper.cpp`'s). `kicad-geometry COUNT SEED` makes other random cases than `build.sh`'s.
-- `router.cpp`: KiCad's interactive router itself (`PNS::ROUTER` with its line placer, walkaround, shove,
+- `router.cpp`: KiCad's interactive router itself (`PNS::ROUTER` with its line placer, walkaround, shove, dragger,
   optimizer) on a board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make
   on it, step by step as the router tool drives it (pointer moves, with the item under the pointer if one is given,
   vias, layer switches, clicks that fix part of a route, undo, posture flips; walking around obstacles, shoving them
@@ -52,6 +52,20 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   `kicad-board-routes.json` keeps what KiCad's router does on a board whose hole clearance is 0: it takes tracks
   along a mounting hole's very edge, which KiCad's DRC then finds touching the hole (`BoardRoutingTests` measures
   such contacts and fails only on a track that cuts in).
+  A route can be a drag instead (`"drag": {"item": INDEX, "at": POINT, "freeAngle": true}`): KiCad's dragger
+  (`PNS::DRAGGER`, started by `ROUTER::StartDragging` as the router tool's drag (D) and free angle drag (G) start it)
+  drags the track's segment, or its corner where the point is within half the track's width of one of its ends (or the
+  virtual via there, where the track's width changes, three tracks meet or a locked one ends), or the via with the
+  tracks on it, walking round what is in its way, shoving it or marking it, through the route's pointer positions and
+  clicks (a click with Ctrl held, `{"fix": POINT, "force": true}`, keeps a drag that collides, marking obstacles; one
+  that is kept ends the drag). After each step it writes whether the move worked, what the dragger dragged
+  (`DRAGGER::Traces`), whether it is marking obstacles (its first move failed) and whether what it drags is clear, and
+  the board as the dragger has it, when it has changed; then what the drag kept put on the board and took off it. The
+  router's settings for a drag: the whole dragged track optimized (`"optimizeEntire": true`), its segments not
+  smoothed (`"smooth": false`), violations allowed marking obstacles (`"allowViolations": true`). A drag kept deletes
+  the dragger's branches of the world (`NODE::Commit` lets go of them), and `router.cpp` asks the dragger nothing more
+  then. Valgrind finds nothing wrong in KiCad's dragger on these scenes but the shove's slip above, when a drag that
+  shoved a via is over and its shove deleted, which changes nothing.
 - `board-scene.py`: what KiCad's router sees of a real board (`board-scene.py BOARD.kicad_pcb [OUT.json]`, through
   KiCad's `pcbnew` Python module): the items `PNS_KICAD_IFACE_BASE::SyncWorld` makes of it, in its order, with their
   shapes as KiCad's own `GetEffectiveShape` gives them, the board's rules as KiCad's design rules engine resolves
@@ -78,6 +92,18 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   own; with `--mode mix`, the three modes evenly; `--shoving` keeps only boards on which something was shoved. Both
   take `--boards` too. `kicad-shove-routes.json` is
   `scenes.py --mode shove --shoving ... ../../Tests/KiCadRouterTests/Fixtures/kicad-shove-routes.json 35 20261016`.
+  With `--mode drag`, drags instead, on boards like the shove mode's with more tracks on them: of a track's segment
+  (grabbed along it), its corner (within half its width of its end, or on it) or a via, now and then at free angles,
+  walking round what is in their way, shoving it or marking it; the pointer taken mostly to another net's track or via
+  near by (into it, or a little past it), now and then near a corner of the dragged net's own, where the drag snaps to
+  it, and back, now and then resting, and clicked to keep the drag (now and then with Ctrl, to keep it whatever it
+  collides with); each drag chosen on the board as the drags before it left it (KiCad's router run on those first), so
+  that a track dragged can be dragged again. `--shoving` keeps the boards on which a drag shoved another net's track
+  or via aside; `--boards` drags tracks and vias of real boards.
+  `kicad-drag-routes.json` is
+  `scenes.py --mode drag --shoving ... ../../Tests/KiCadRouterTests/Fixtures/kicad-drag-routes.json 40 20261026`,
+  and `kicad-board-drag-routes.json`
+  `scenes.py --mode drag --boards ... 2 20261026 ../../Tests/KiCadRouterTests/Fixtures/boards/*.json`.
   `KICAD_ROUTER_REFERENCE` names others (separated by colons).
 - `clipper.cpp`: the polygon clipper KiCad ships (`thirdparty/clipper2`, Clipper2, compiled as KiCad compiles it: its
   points carry a z value) on random cases, with its answers: boolean operations (union, intersection, difference,
@@ -111,6 +137,7 @@ board file), and runs `kicad-cli pcb drc` on the result; no clearance, crossing,
 involve a track or via the router placed.
 
 CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind, 2000
-clipper cases of each kind, 1000 random router boards, 400 random boards with routes that shove, and 60 real boards
-made by `boards.py` (their worlds, routes on them that walk round, mark and shove, and KiCad's DRC on the port's
-routes); each run has a new seed, the run number, which the names a failure reports carry.
+clipper cases of each kind, 1000 random router boards, 400 random boards with routes that shove, 400 random boards
+with tracks and vias dragged, and 60 real boards made by `boards.py` (their worlds, routes on them that walk round,
+mark and shove, drags on them, and KiCad's DRC on the port's routes); each run has a new seed, the run number, which
+the names a failure reports carry.

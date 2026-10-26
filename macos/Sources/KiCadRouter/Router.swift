@@ -1,4 +1,5 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_router.h and pns_router.cpp.
+// Ported from KiCad 10.0.7: pcbnew/router/pns_router.h and pns_router.cpp (routing a track, and dragging a segment,
+// corner or via; not differential pairs, length tuning, or footprints dragged).
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -93,6 +94,8 @@ public final class Router {
     public var ruleResolver: RuleResolver? { iface?.ruleResolver }
 
     public private(set) var placer: LinePlacer?
+    /// What drags a segment, corner or via (KiCad's GetDragger)
+    public private(set) var dragger: Dragger?
 
     public func clearWorld() {
         world?.killChildren()
@@ -174,32 +177,79 @@ public final class Router {
         return false
     }
 
-    /// The track routed on to `p` (`endItem`: what is there)
+    /// Starts dragging `item` (a track's segment, or a via) from `p` (KiCad's StartDragging): its segment, or its
+    /// corner if `p` is at one of its ends, as `mode` allows; whether it could
+    public func startDragging(_ p: IPoint, _ item: Item?, mode: DragMode = .any) -> Bool {
+        Router.instance = self
+        failureReason = ""
+        guard let item else { return false }
+        ruleResolver?.clearCaches()
+        // (footprints' pads, and several segments at once, which KiCad's COMPONENT_DRAGGER and MULTI_DRAGGER drag, are
+        // not ported)
+        if item.ofKind(.solid) { return false }
+        guard let world else { return false }
+        let dragger = Dragger(router: self, world: world)
+        self.dragger = dragger
+        state = .dragSegment
+        dragger.setMode(mode)
+        dragger.setWorld(world)
+        if dragger.start(p, [item]) { return true }
+        self.dragger = nil
+        state = .idle
+        return false
+    }
+
+    /// The track routed, or what is dragged, on to `p` (`endItem`: what is there)
     @discardableResult
     public func move(_ p: IPoint, _ endItem: Item?) -> Bool {
         Router.instance = self
         defer { ruleResolver?.clearTemporaryCaches() }
-        guard state == .routeTrack, let placer else { return false }
+        switch state {
+        case .routeTrack: return movePlacing(p, endItem)
+        case .dragSegment, .dragComponent: return moveDragging(p, endItem)
+        case .idle: return false
+        }
+    }
+
+    /// KiCad's moveDragging, without the drawing
+    private func moveDragging(_ p: IPoint, _ endItem: Item?) -> Bool {
+        guard let dragger else { return false }
+        let ret = dragger.drag(p)
+        markViolations(dragger.currentNode, dragger.traces)
+        return ret
+    }
+
+    /// KiCad's movePlacing, without the drawing
+    private func movePlacing(_ p: IPoint, _ endItem: Item?) -> Bool {
+        guard let placer else { return false }
         let ret = placer.move(p, endItem)
         if let node = placer.currentNode(loopsRemoved: true) { markViolations(node, placer.traces()) }
         return ret
     }
 
-    /// The obstacles of what is being routed marked (KiCad's markViolations, without the drawing)
+    /// The obstacles of what is being routed marked (KiCad's markViolations, without the drawing), not what is being
+    /// dragged
     private func markViolations(_ node: Node, _ current: [Item]) {
+        let dragged = dragger?.traces ?? []
         for item in current {
             var obstacles = node.queryColliding(item)
             if let l = item as? Line, let via = l.via { obstacles += node.queryColliding(via.clone() as! Via) }
-            for obs in obstacles { obs.item.mark(obs.item.marker.union(.violation)) }
+            for obs in obstacles where !dragged.contains(where: { $0 === obs.item }) {
+                obs.item.mark(obs.item.marker.union(.violation))
+            }
         }
     }
 
     /// Fixes the track routed so far at `p`; whether it is finished (it reached its net's `endItem`, or was told to
-    /// finish)
-    public func fixRoute(_ p: IPoint, _ endItem: Item?, forceFinish: Bool = false) -> Bool {
+    /// finish). Dragging, the drag kept if it may be (`forceCommit`: even where it collides, marking obstacles);
+    /// whether it was.
+    public func fixRoute(_ p: IPoint, _ endItem: Item?, forceFinish: Bool = false, forceCommit: Bool = false) -> Bool {
         Router.instance = self
-        guard state == .routeTrack, let placer else { return false }
-        return placer.fixRoute(p, endItem, forceFinish: forceFinish)
+        switch state {
+        case .routeTrack: return placer?.fixRoute(p, endItem, forceFinish: forceFinish) ?? false
+        case .dragSegment, .dragComponent: return dragger?.fixRoute(forceCommit: forceCommit) ?? false
+        case .idle: return false
+        }
     }
 
     public func undoLastSegment() -> IPoint? {
@@ -235,6 +285,7 @@ public final class Router {
     public func stopRouting() {
         if !routingInProgress { return }
         placer = nil
+        dragger = nil
         state = .idle
         world?.killChildren()
         world?.clearRanks()
@@ -257,8 +308,8 @@ public final class Router {
         if state == .routeTrack, let placer { _ = placer.toggleVia(!placer.isPlacingVia) }
     }
 
-    public var currentNets: [NetHandle?] { placer.map { [$0.currentNet] } ?? [] }
-    public var currentLayer: Int { placer?.currentLayer ?? -1 }
+    public var currentNets: [NetHandle?] { placer.map { [$0.currentNet] } ?? dragger?.currentNets ?? [] }
+    public var currentLayer: Int { placer?.currentLayer ?? dragger?.currentLayer ?? -1 }
     public var isPlacingVia: Bool { placer?.isPlacingVia ?? false }
 
     /// Where the track being routed should go next, and what is there (KiCad's GetNearestRatnestAnchor)
