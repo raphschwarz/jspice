@@ -1,7 +1,8 @@
 // A board edited here, a track at a time, as KiCad's router tool drives its router (pcbnew/router/router_tool.cpp,
 // KiCad 10.0.7): magnetic pads, the start layer taken from a one-sided pad, a click fixing the track, a double click
-// finishing it, Escape keeping what is fixed; tracks and vias dragged as its drag tools drag them. GNU General Public
-// License version 3 or later, as the router (see KICAD-NOTICE.md).
+// finishing it, Escape keeping what is fixed; differential pairs routed as its Route Differential Pair routes them;
+// tracks and vias dragged as its drag tools drag them. GNU General Public License version 3 or later, as the router
+// (see KICAD-NOTICE.md).
 
 import Foundation
 import KiCadKit
@@ -66,6 +67,27 @@ public final class BoardEditing {
         public var vias: [Preview.Via] = []
         public var net: String?
         public var violates = false
+    }
+
+    /// The differential pair being routed, as it is drawn: its positive and negative lines from where they were last
+    /// fixed (or started) to the pointer (what is fixed is on the board already, as KiCad commits each part as it is
+    /// fixed), their width, gap and layer, the vias they end in if vias are being placed, their nets, whether the
+    /// pair got to the pointer clear of everything, and what it has shoved aside (shoving), as a track's preview
+    public struct PairPreview: Sendable, Equatable {
+        public var positive: [KiCadPoint]
+        public var negative: [KiCadPoint]
+        public var width: Double
+        public var gap: Double
+        public var layer: String
+        public var positiveVia: KiCadPoint?
+        public var negativeVia: KiCadPoint?
+        public var viaSize: Double
+        public var positiveNet: String
+        public var negativeNet: String
+        public var clear: Bool
+        public var moved: Set<String> = []
+        public var shovedTracks: [Preview.Track] = []
+        public var shovedVias: [Preview.Via] = []
     }
 
     /// How a track started here gets past what is in its way: walks round it (KiCad's default), or shoves it aside;
@@ -147,36 +169,44 @@ public final class BoardEditing {
         return preview
     }
 
-    /// A click at `p`: the track fixed up to there; the change, if that finished it (it reached its net)
+    /// A click at `p`: the track (or pair) fixed up to there; the change, if that finished it (it reached its net, or
+    /// the pair the pads, vias or track ends of its nets there)
     public func fix(at p: KiCadPoint) -> Edit? {
         guard isRouting else { return nil }
-        return router.fix(at: Self.nm(p)) ? commit("Route Track") : nil
+        let name = routeName
+        return router.fix(at: Self.nm(p)) ? commit(name) : nil
     }
 
-    /// A double click at `p`: the track fixed there and finished, whether or not it reached its net
+    /// A double click at `p`: the track (or pair) fixed there and finished, whether or not it reached its net
     public func finish(at p: KiCadPoint) -> Edit? {
         guard isRouting else { return nil }
+        let name = routeName
         let q = Self.nm(p)
         router.move(to: q)
         _ = router.finish(at: q)
-        return commit("Route Track")
+        return commit(name)
     }
 
     /// The track routed on to the nearest pad or track of its net it is not joined to, and finished there, if it
     /// gets there (KiCad's End)
     public func finishToRatsnest() -> Edit? {
-        guard isRouting, router.finishToRatsnest() else { return nil }
-        return commit("Route Track")
+        guard isRouting else { return nil }
+        let name = routeName
+        guard router.finishToRatsnest() else { return nil }
+        return commit(name)
     }
 
-    /// Routing stopped, what is fixed of the track kept (KiCad's Escape)
+    /// Routing stopped, what is fixed of the track (or pair) kept (KiCad's Escape)
     public func stop() -> Edit? {
         guard isRouting else { return nil }
-        return commit("Route Track")
+        return commit(routeName)
     }
 
-    /// The track dropped, fixed parts and all
+    /// The track (or pair) dropped, fixed parts and all
     public func cancel() { router.cancel() }
+
+    /// What routing it is, for the change it makes (KiCad's names for them)
+    private var routeName: String { router.isRoutingPair ? "Route Differential Pair" : "Route Track" }
 
     /// A via at the track's end, to `layer` (the other side if nil), and the track on from it there: placed at the
     /// next click
@@ -222,6 +252,65 @@ public final class BoardEditing {
         let shoved = router.shoved
         shown.moved = shoved.moved
         for item in shoved.items {
+            if let s = item as? Segment {
+                shown.shovedTracks.append(.init(points: [Self.mm(s.seg.a), Self.mm(s.seg.b)], width: Double(s.width) / 1e6,
+                                                layer: router.layerName(s.layers.start)))
+            } else if let v = item as? Via {
+                shown.shovedVias.append(.init(center: Self.mm(v.pos), size: Double(v.diameter) / 1e6))
+            }
+        }
+        return shown
+    }
+
+    // MARK: - Differential pairs
+
+    /// Starts a differential pair at `p` on `layer` (KiCad's Route Differential Pair): from the pad, via or track end
+    /// there and the nearest of its coupled net's, its net class's diff pair width and gap. Nil if the router will not
+    /// start it, `failureReason` saying why as KiCad says it (no coupled net, nothing of it to start from...).
+    /// `fix`, `finish`, `stop`, `placeVia`, `flipPosture` and `cancel` go on with it as with a track, each part fixed
+    /// committed at once as KiCad commits it ("Route Differential Pair").
+    public func startPair(at p: KiCadPoint, layer: String) -> PairPreview? {
+        guard !isRouting, let l = router.layer(layer) else { return nil }
+        router.mode = mode
+        guard router.startPair(at: Self.nm(p), layer: l) else { return nil }
+        return pairPreview(clear: true)
+    }
+
+    /// Why the router would not start the last track or pair, as KiCad's says it
+    public var failureReason: String { router.failureReason }
+
+    /// Whether a differential pair is being routed
+    public var isRoutingPair: Bool { router.isRoutingPair }
+
+    /// The pointer moved to `p`: the pair as it now goes
+    @discardableResult
+    public func movePair(to p: KiCadPoint) -> PairPreview? {
+        guard isRoutingPair else { return nil }
+        let clear = router.move(to: Self.nm(p))
+        return pairPreview(clear: clear)
+    }
+
+    /// Vias at the pair's ends, to `layer` (the other side if nil), the pair on from them there: placed at the next
+    /// click
+    @discardableResult
+    public func placePairVias(to layer: String? = nil) -> PairPreview? {
+        guard isRoutingPair else { return nil }
+        router.placeVia(to: layer.flatMap(router.layer))
+        return pairPreview(clear: true)
+    }
+
+    private func pairPreview(clear: Bool) -> PairPreview? {
+        guard let p = router.pairPreview, let nets = router.pairNets else { return nil }
+        var shown = PairPreview(positive: p.positive.points.map(Self.mm), negative: p.negative.points.map(Self.mm),
+                                width: Double(p.width) / 1e6, gap: Double(p.gap) / 1e6, layer: router.layerName(p.layer),
+                                positiveVia: p.viaP.map(Self.mm), negativeVia: p.viaN.map(Self.mm),
+                                viaSize: Double(router.router.sizes.viaDiameter) / 1e6, positiveNet: nets.positive,
+                                negativeNet: nets.negative, clear: clear)
+        let shoved = router.shoved
+        shown.moved = shoved.moved
+        // (the shove's branch holds the pair's own lines too, which the preview has)
+        let own = router.router.currentNets
+        for item in shoved.items where !own.contains(item.net) {
             if let s = item as? Segment {
                 shown.shovedTracks.append(.init(points: [Self.mm(s.seg.a), Self.mm(s.seg.b)], width: Double(s.width) / 1e6,
                                                 layer: router.layerName(s.layers.start)))

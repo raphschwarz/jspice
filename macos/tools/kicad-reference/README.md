@@ -178,10 +178,13 @@ tests write the port's in the same form, to compare the two where a route differ
 the same net on real boards with `BoardRouter` (the port, on the board's world, writing what it places into the
 board file), and runs `kicad-cli pcb drc` on the result; no clearance, crossing, short or size violation may
 involve a track or via the router placed. `BoardEditingTests.swift` does the same with tracks and vias dragged on
-the fixture boards (`BoardEditing`'s drag), walking round and shoving: no clearance, crossing or short with them.
+the fixture boards (`BoardEditing`'s drag), walking round and shoving: no clearance, crossing or short with them; and
+with differential pairs routed on the pair boards (`BoardEditing`'s `startPair`, as the router tool's Route
+Differential Pair starts one, at the net class's diff pair width and gap), walking round through vias and shoving.
 
 CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind, 2000
 clipper cases of each kind, 1000 random router boards, 400 random boards with routes that shove, 400 random boards
-with tracks and vias dragged, and 60 real boards made by `boards.py` (their worlds, routes on them that walk round,
-mark and shove, drags on them, and KiCad's DRC on the port's routes); each run has a new seed, the run number, which
-the names a failure reports carry.
+with tracks and vias dragged, 100 random boards with differential pairs, 60 real boards made by `boards.py` (their
+worlds, routes on them that walk round, mark and shove, drags on them, and KiCad's DRC on the port's routes) and 10
+with pairs (`boards.py --pairs`, pairs routed on them); each run has a new seed, the run number, which the names a
+failure reports carry.

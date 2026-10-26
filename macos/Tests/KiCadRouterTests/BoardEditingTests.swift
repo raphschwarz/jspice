@@ -271,6 +271,127 @@ final class BoardEditingTests: XCTestCase {
         }
     }
 
+    /// Differential pairs routed as KiCad's Route Differential Pair routes them (BoardEditing's startPair) on the
+    /// boards of Fixtures/pairboards (boards.py --pairs): each pair from the connector's pads to the chip's, the
+    /// pointer taken there by a way of its own, walking round and shoving, at the width and gap of its net class; and
+    /// refused where KiCad refuses one (a pad of a net that is no pair's, nothing under the pointer). kicad-cli's DRC
+    /// finds no clearance, crossing or short with what the pairs put on the boards.
+    func testDifferentialPairsAreRoutedAsKiCadsRouterRoutesThem() throws {
+        let folder = try XCTUnwrap(Bundle.module.url(forResource: "pairboards", withExtension: nil, subdirectory: "Fixtures"))
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }
+        var pairs = 0, finished = 0, shoving = 0, vias = 0
+        var finalBoards: [(URL, KiCadBoard)] = []
+        for file in files {
+            let project = Self.project(file)
+            let session = BoardEditing(board: try KiCadBoard.read(file), project: project)
+            let world = session.router.world
+            func pads(_ net: String, _ footprint: String) -> [WorldItem] {
+                world.items.filter { $0.kind == .pad && $0.footprint == footprint && $0.net.flatMap { world.netNames[$0] } == net }
+            }
+            // (the positive nets whose negative nets are the board's too)
+            let positives = world.netNames.values.filter { name in
+                let (polarity, coupled) = WorldResolver.matchDpSuffix(name)
+                return polarity == 1 && world.netNames.values.contains(coupled)
+            }.sorted()
+            XCTAssertEqual(positives.count, 2, file.lastPathComponent)
+            for (k, positive) in positives.enumerated() {
+                let negative = WorldResolver.matchDpSuffix(positive).complement
+                guard let from = pads(negative, "J1").first, let to = pads(positive, "U1").first,
+                      let start = from.pos, let end = to.pos else { return XCTFail("\(file.lastPathComponent): \(positive)'s pads") }
+                session.mode = k == 0 ? .walkaround : .shove
+                let layer = session.router.layerName(to.layers.start)
+                let started = try XCTUnwrap(session.startPair(at: Self.mm(start), layer: layer),
+                                            "\(file.lastPathComponent) \(positive): \(session.failureReason)")
+                pairs += 1
+                XCTAssertTrue(session.isRoutingPair)
+                XCTAssertEqual(started.positiveNet, positive)
+                XCTAssertEqual(started.negativeNet, negative)
+                // (the net class's diff pair width and gap)
+                let nc = world.netClasses.effective(positive)
+                XCTAssertEqual(started.width, Double(max(world.minTrackWidth, nc.diffPairWidth ?? 0)) / 1e6)
+                XCTAssertEqual(started.gap, Double(max(world.rules.clearance, nc.diffPairGap ?? 0)) / 1e6)
+                // (out along the way and on to the chip's pads; the first pair, walking round, down to the other side
+                // through vias in the middle and back up further on. Not the second, shoving: a shove that pushes the
+                // pair's vias aside leaves KiCad's pair placer committing them where they were, off its tracks.)
+                let before = session.board.copy()
+                let other = session.router.layerName(to.layers.start == 0 ? world.copperLayers - 1 : 0)
+                var preview = started
+                var stuck = false
+                for (i, t) in [0.3, 0.55, 0.8].enumerated() where !stuck {
+                    let p = IPoint(start.x + Int(Double(end.x - start.x) * t), start.y + Int(Double(end.y - start.y) * t)
+                                   + (i == 1 ? 1_500_000 : 0))
+                    preview = try XCTUnwrap(session.movePair(to: Self.mm(p)))
+                    if k == 1 && preview.clear && !preview.positive.isEmpty {
+                        // (shoving: fixed where it got clear, what it shoved with it, and on from there)
+                        XCTAssertNil(session.fix(at: Self.mm(p)))
+                    }
+                    if k == 0 && i > 0 {
+                        preview = try XCTUnwrap(session.placePairVias(to: i == 1 ? other : layer))
+                        XCTAssertNotNil(preview.positiveVia)
+                        XCTAssertNil(session.fix(at: Self.mm(p)))
+                        // (the vias not placed, the pair not clear there: it is left there, as with Escape; on to the
+                        // pads, KiCad's would put its vias on them, as close as they are)
+                        stuck = session.router.router.isPlacingVia
+                    }
+                }
+                for moved in preview.moved { XCTAssertTrue(before.copperItems.contains { $0.value("uuid") == moved }) }
+                if !stuck { preview = try XCTUnwrap(session.movePair(to: Self.mm(end))) }
+                let edit: BoardEditing.Edit
+                if !stuck, let done = session.fix(at: Self.mm(end)) {
+                    finished += 1
+                    edit = done
+                } else {
+                    // (not there: what is fixed of it kept, as Escape keeps it)
+                    guard let kept = session.stop() else { continue }
+                    edit = kept
+                }
+                XCTAssertFalse(session.isRouting)
+                XCTAssertEqual(edit.name, "Route Differential Pair")
+                for uuid in edit.removed { XCTAssertFalse(edit.after.copperItems.contains { $0.value("uuid") == uuid }) }
+                for uuid in edit.added { XCTAssertTrue(edit.after.copperItems.contains { $0.value("uuid") == uuid }) }
+                // (the pair's two nets' tracks; another net's taken away: shoved aside)
+                let nets = Set(edit.after.copperItems.filter { edit.added.contains($0.value("uuid") ?? "") }.compactMap { $0.value("net") })
+                XCTAssertTrue(nets.isSubset(of: [positive, negative]) || !edit.removed.isEmpty, "\(nets)")
+                XCTAssertTrue(nets.contains(positive) && nets.contains(negative), "\(file.lastPathComponent) \(positive): \(nets)")
+                func net(_ id: String) -> String? { edit.before.copperItems.first { $0.value("uuid") == id }?.value("net") }
+                if edit.removed.contains(where: { ![positive, negative].contains(net($0)) }) { shoving += 1 }
+                vias += edit.after.copperItems.filter { $0.head == "via" && edit.added.contains($0.value("uuid") ?? "") }.count
+            }
+            // (refused as KiCad refuses: a pad of a net that is no pair's; nothing under the pointer)
+            if let single = world.items.first(where: { $0.kind == .pad && $0.net.flatMap { world.netNames[$0] } == "GND" }), let p = single.pos {
+                XCTAssertNil(session.startPair(at: Self.mm(p), layer: session.router.layerName(single.layers.start)))
+                XCTAssertTrue(session.failureReason.hasPrefix("Unable to find complementary differential pair nets."), session.failureReason)
+            }
+            XCTAssertNil(session.startPair(at: KiCadPoint(101.3, 51.3), layer: "F.Cu"))
+            XCTAssertEqual(session.failureReason, "Cannot start a differential pair in the middle of nowhere.")
+            XCTAssertFalse(session.isRouting)
+            finalBoards.append((file, session.board))
+        }
+        print("BoardEditingTests: \(finished) of \(pairs) pairs finished on the chip's pads, \(shoving) shoving, \(vias) vias")
+        XCTAssertGreaterThan(finished, 0)
+        guard let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor else {
+            if ProcessInfo.processInfo.environment["JSPICE_REQUIRE_KICAD"] != nil { return XCTFail("KiCad 10's kicad-cli is needed") }
+            return
+        }
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-pairs-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        for (file, board) in finalBoards {
+            let copy = work.appendingPathComponent(file.lastPathComponent)
+            try board.write(to: copy)
+            let pro = file.deletingPathExtension().appendingPathExtension("kicad_pro")
+            try? FileManager.default.copyItem(at: pro, to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+            let original = Set(try KiCadBoard.read(file).copperItems.compactMap { $0.value("uuid") })
+            let added = Set(board.copperItems.compactMap { $0.value("uuid") }).subtracting(original)
+            let report = try KiCadFabrication(installation: kicad).drc(copy, refillZones: false)
+            let ours = report.violations.filter { v in
+                Self.clearanceViolations.contains(v.type) && v.items.contains(where: { added.contains($0.uuid) })
+            }
+            XCTAssert(ours.isEmpty, "\(file.lastPathComponent): " + ours.map { "\($0.type): \($0.description)" }.joined(separator: "; "))
+        }
+    }
+
     /// What KiCad's DRC finds of copper too close to other copper, to holes or to the edge
     static let clearanceViolations: Set<String> = ["clearance", "hole_clearance", "copper_edge_clearance", "hole_to_hole",
                                                    "tracks_crossing", "shorting_items", "holes_co_located"]

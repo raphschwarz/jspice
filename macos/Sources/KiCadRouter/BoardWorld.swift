@@ -138,6 +138,7 @@ public struct BoardWorld {
         minTrackWidth = mm("min_track_width", 0.0)
         minViaDiameter = mm("min_via_diameter", 0.5)
         minViaDrill = mm("min_through_hole_diameter", 0.3)
+        rules.netNames = netNames
         for (name, code) in netCodes { rules.netClearance[code] = netClasses.effective(name).clearance ?? 0 }
         // the board's worst clearance (BOARD::GetMaxClearanceValue): its minimums, its net classes', a millimetre
         // (DRC's implicit physical clearance round barcodes), its zones' own and its pads' own
@@ -844,6 +845,10 @@ struct NetClasses {
         var trackWidth: Int?
         var viaDiameter: Int?
         var viaDrill: Int?
+        /// Its differential pairs' track width, gap, and gap between their vias
+        var diffPairWidth: Int? = nil
+        var diffPairGap: Int? = nil
+        var diffPairViaGap: Int? = nil
     }
 
     /// A net's net class values, each from the most important class that has it, else the default class's
@@ -853,11 +858,14 @@ struct NetClasses {
         var trackWidth: Int?
         var viaDiameter: Int?
         var viaDrill: Int?
+        var diffPairWidth: Int? = nil
+        var diffPairGap: Int? = nil
+        var diffPairViaGap: Int? = nil
     }
 
     var classes: [String: NetClass] = [:]
     var defaultClass = NetClass(name: "Default", priority: Int.max, clearance: 200_000, trackWidth: 200_000, viaDiameter: 600_000,
-                                viaDrill: 300_000)
+                                viaDrill: 300_000, diffPairWidth: 200_000, diffPairGap: 250_000, diffPairViaGap: 250_000)
     var assignments: [String: [String]] = [:]
     var patterns: [(pattern: String, netClass: String)] = []
 
@@ -867,11 +875,14 @@ struct NetClasses {
             guard let name = c["name"] as? String else { continue }
             func mm(_ key: String) -> Int? { (c[key] as? NSNumber).map { BoardWorld.iuMM($0.doubleValue) } }
             let nc = NetClass(name: name, priority: (c["priority"] as? NSNumber)?.intValue ?? Int.max, clearance: mm("clearance"),
-                              trackWidth: mm("track_width"), viaDiameter: mm("via_diameter"), viaDrill: mm("via_drill"))
+                              trackWidth: mm("track_width"), viaDiameter: mm("via_diameter"), viaDrill: mm("via_drill"),
+                              diffPairWidth: mm("diff_pair_width"), diffPairGap: mm("diff_pair_gap"),
+                              diffPairViaGap: mm("diff_pair_via_gap"))
             if name == "Default" {
                 defaultClass = NetClass(name: name, priority: Int.max, clearance: nc.clearance ?? 200_000,
                                         trackWidth: nc.trackWidth ?? 200_000, viaDiameter: nc.viaDiameter ?? 600_000,
-                                        viaDrill: nc.viaDrill ?? 300_000)
+                                        viaDrill: nc.viaDrill ?? 300_000, diffPairWidth: nc.diffPairWidth ?? 200_000,
+                                        diffPairGap: nc.diffPairGap ?? 250_000, diffPairViaGap: nc.diffPairViaGap ?? 250_000)
             } else {
                 classes[name] = nc
             }
@@ -889,7 +900,9 @@ struct NetClasses {
         let d = defaultClass
         func whole(_ c: NetClass) -> Effective {
             Effective(name: c.name, clearance: c.clearance ?? d.clearance, trackWidth: c.trackWidth ?? d.trackWidth,
-                      viaDiameter: c.viaDiameter ?? d.viaDiameter, viaDrill: c.viaDrill ?? d.viaDrill)
+                      viaDiameter: c.viaDiameter ?? d.viaDiameter, viaDrill: c.viaDrill ?? d.viaDrill,
+                      diffPairWidth: c.diffPairWidth ?? d.diffPairWidth, diffPairGap: c.diffPairGap ?? d.diffPairGap,
+                      diffPairViaGap: c.diffPairViaGap ?? d.diffPairViaGap)
         }
         if net.isEmpty { return whole(d) }
         var resolved: [NetClass] = []
@@ -910,7 +923,8 @@ struct NetClasses {
         func first(_ k: KeyPath<NetClass, Int?>) -> Int? { resolved.first(where: { $0[keyPath: k] != nil })?[keyPath: k] ?? d[keyPath: k] }
         return Effective(name: resolved.count == 1 ? resolved[0].name : resolved.map(\.name).joined(separator: ","),
                          clearance: first(\.clearance), trackWidth: first(\.trackWidth), viaDiameter: first(\.viaDiameter),
-                         viaDrill: first(\.viaDrill))
+                         viaDrill: first(\.viaDrill), diffPairWidth: first(\.diffPairWidth), diffPairGap: first(\.diffPairGap),
+                         diffPairViaGap: first(\.diffPairViaGap))
     }
 
     /// The worst of the classes' clearances
