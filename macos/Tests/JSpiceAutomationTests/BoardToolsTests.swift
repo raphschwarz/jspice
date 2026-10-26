@@ -118,7 +118,8 @@ final class BoardToolsTests: XCTestCase {
         let reshaped = try KiCadBoard.read(folder.appendingPathComponent("blinker.kicad_pcb"))
         XCTAssertEqual(reshaped.outlineRectangle?.radius, 3)
         XCTAssertTrue(reshaped.zones.contains { $0.net == "GND" && !$0.fills.isEmpty })
-        XCTAssertEqual(reshaped.zones.first { $0.net == "GND" }?.outline.map(\.x).max(), (outline["x_mm"] as? Double ?? 0) + width + 4)
+        // (the board came with a ground pour of its own, a little inside the outline; KiCad keeps zones in no set order)
+        XCTAssertEqual(reshaped.zones.filter { $0.net == "GND" }.flatMap { $0.outline.map(\.x) }.max(), (outline["x_mm"] as? Double ?? 0) + width + 4)
         XCTAssertThrowsError(try session.call("pcb_outline", arguments: ["corner_radius_mm": 1000]))
 
         // mounting holes in its corners, kept by the schematic's updates
