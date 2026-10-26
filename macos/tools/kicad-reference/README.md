@@ -137,7 +137,10 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   boards with differential pairs to route instead: a connector and a chip, two pairs of their pads (pins 1 and 2, 3
   and 4) of two pairs' nets, the pairs in a net class with a diff pair width and gap of its own or in the default
   class; resistors and tracks of other nets across the way. `Tests/KiCadRouterTests/Fixtures/pairboards` holds three
-  (`boards.py --pairs ... 3 20261026`).
+  (`boards.py --pairs ... 3 20261026`). With `--arcs`, arc tracks too, from random numbers of their own (so that the
+  rest of each board is as it is without them): lines of segments and arcs, each arc tangent to the segments either
+  side, out of pads of their net or from anywhere, some arcs one after another, now and then a locked one.
+  `Tests/KiCadRouterTests/Fixtures/arcboards` holds three (`boards.py --arcs ... 3 20261103`).
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
   turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them
   (now and then one starting on an unplated hole), and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is
@@ -183,8 +186,12 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   out or push it in; with `--rounded`, each route in a corner mode of its own, rounded ones twice as often as mitred.
   Both go with every mode and with `--boards`. `kicad-arc-routes.json` is
   `scenes.py --arcs --rounded --mode mix ... ../../Tests/KiCadRouterTests/Fixtures/kicad-arc-routes.json 30 20261101`,
-  and `kicad-arc-drag-routes.json`
-  `scenes.py --arcs --mode drag --shoving ... ../../Tests/KiCadRouterTests/Fixtures/kicad-arc-drag-routes.json 25 20261101`.
+  `kicad-arc-drag-routes.json`
+  `scenes.py --arcs --mode drag --shoving ... ../../Tests/KiCadRouterTests/Fixtures/kicad-arc-drag-routes.json 25 20261101`,
+  and on boards with arc tracks `kicad-board-arc-routes.json`
+  `scenes.py --arcs --rounded --mode mix --boards ... 2 20261103 ../../Tests/KiCadRouterTests/Fixtures/arcboards/*.json`
+  and `kicad-board-arc-drag-routes.json`
+  `scenes.py --arcs --mode drag --boards ... 2 20261103 ../../Tests/KiCadRouterTests/Fixtures/arcboards/*.json`.
   `KICAD_ROUTER_REFERENCE` names others (separated by colons).
 - `clipper.cpp`: the polygon clipper KiCad ships (`thirdparty/clipper2`, Clipper2, compiled as KiCad compiles it: its
   points carry a z value) on random cases, with its answers: boolean operations (union, intersection, difference,
@@ -226,10 +233,15 @@ involve a track or via the router placed. `BoardEditingTests.swift` does the sam
 the fixture boards (`BoardEditing`'s drag), walking round and shoving: no clearance, crossing or short with them; and
 with differential pairs routed on the pair boards (`BoardEditing`'s `startPair`, as the router tool's Route
 Differential Pair starts one, at the net class's diff pair width and gap), walking round through vias and shoving.
+`BoardRoutingTests` routes the arc boards too (`Fixtures/arcboards`), each route in a corner mode of its own,
+rounded ones among them: the arcs the port puts on go into the board file as KiCad writes arc tracks (start, mid,
+end, width, layer, net, uuid), and KiCad's DRC reads them and finds nothing wrong with them.
 
-CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind, 2000
-clipper cases of each kind, 1000 random router boards, 400 random boards with routes that shove, 400 random boards
-with tracks and vias dragged, 100 random boards with differential pairs, 60 real boards made by `boards.py` (their
-worlds, routes on them that walk round, mark and shove, drags on them, and KiCad's DRC on the port's routes) and 10
-with pairs (`boards.py --pairs`, pairs routed on them); each run has a new seed, the run number, which the names a
-failure reports carry.
+CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind (with
+arcs too), 2000 clipper cases of each kind, 1000 random router boards, 400 random boards with routes that shove, 400
+random boards with tracks and vias dragged, 100 random boards with differential pairs, 200 random boards with arc
+tracks and routes in every corner mode, 150 with arc tracks and drags, 60 real boards made by `boards.py` (their
+worlds, routes on them that walk round, mark and shove, drags on them, and KiCad's DRC on the port's routes), 10
+with pairs (`boards.py --pairs`, pairs routed on them) and 20 with arc tracks (`boards.py --arcs`: their worlds,
+routes in every corner mode and drags on them); each run has a new seed, the run number, which the names a failure
+reports carry.

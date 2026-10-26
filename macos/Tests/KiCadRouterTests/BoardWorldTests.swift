@@ -7,16 +7,16 @@ import KiCadKit
 /// module) read each board and write what its router's SyncWorld makes of it; BoardWorld, reading the same board
 /// itself, must make the same items in the same order, with the same shapes to the nanometre and the same rules.
 /// KICAD_BOARD_REFERENCE names a folder of boards (NAME.kicad_pcb, NAME.kicad_pro if it has one) and KiCad's scenes
-/// of them (NAME.json); with none, Fixtures/boards.
+/// of them (NAME.json); with none, Fixtures/boards and Fixtures/arcboards (boards with arc tracks).
 final class BoardWorldTests: XCTestCase {
-    private static var folder: URL? {
-        if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return URL(fileURLWithPath: f) }
-        return Bundle.module.url(forResource: "boards", withExtension: nil, subdirectory: "Fixtures")
+    private static var folders: [URL] {
+        if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
+        return ["boards", "arcboards"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
     }
 
     func testWorldsAsKiCadMakesThem() throws {
-        guard let folder = Self.folder else { throw XCTSkip("no boards") }
-        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        guard !Self.folders.isEmpty else { throw XCTSkip("no boards") }
+        let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }
         var boards = 0, itemsCompared = 0, approximated = 0
         var differences: [String] = []

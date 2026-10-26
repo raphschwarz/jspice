@@ -1,8 +1,9 @@
 // Routing on a KiCad board: the router (KiCad's, ported) on the board's world, and what it places written back into
-// the board as KiCad writes tracks and vias. The start item and sizes are as KiCad's router tool and
+// the board as KiCad writes tracks, arc tracks and vias. The start item and sizes are as KiCad's router tool and
 // PNS_KICAD_IFACE_BASE::ImportSizes find them (a differential pair's too, routed as its Route Differential Pair
 // routes one), and tracks and vias are dragged as its drag tools drag them
-// (pcbnew/router/router_tool.cpp, pns_tool_base.cpp, pns_kicad_iface.cpp, KiCad 10.0.7).
+// (pcbnew/router/router_tool.cpp, pns_tool_base.cpp, pns_kicad_iface.cpp, pcbnew/tools/pcb_grid_helper.cpp,
+// pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp, pcbnew/pcb_track.cpp, KiCad 10.0.7).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as KiCad
 // (see KICAD-NOTICE.md).
 
@@ -69,13 +70,20 @@ public final class BoardRouter {
         set { router.settings.mode = newValue }
     }
 
+    /// How a track routed turns its corners: on the 45° directions or on 90° ones only, mitred, or rounded with an arc
+    /// (KiCad's router's track corner modes); arcs go into the board as arc tracks
+    public var cornerMode: Direction45.CornerMode {
+        get { router.settings.cornerMode }
+        set { router.settings.cornerMode = newValue }
+    }
+
     /// What the track being routed has shoved aside, as KiCad's router shows it (the line placer's current node, its
     /// loops taken out): the board's tracks and vias it moved (their ids), and the tracks and vias where they go now
     public var shoved: (moved: Set<String>, items: [Item]) {
         guard router.routingInProgress, mode == .shove, let node = router.placer?.currentNode(loopsRemoved: true) else { return ([], []) }
         let (removed, added) = node.updatedItems()
         let moved = Set(removed.compactMap { iface.resolver.info[ObjectIdentifier($0)]?.source })
-        return (moved, added.filter { !$0.isVirtual && ($0.kind == .segment || $0.kind == .via) })
+        return (moved, added.filter { !$0.isVirtual && ($0.kind == .segment || $0.kind == .arc || $0.kind == .via) })
     }
 
     // MARK: - The pointer, as KiCad's router tool takes it (pcbnew/router/pns_tool_base.cpp and router_tool.cpp,
@@ -132,7 +140,7 @@ public final class BoardRouter {
     }
 
     /// The item under the pointer to start or end a track on (TOOL_BASE::pickSingleItem): pads and vias first, then
-    /// tracks, those on `topLayer` before those on other layers, each the nearest; of net `net` (nil: any); none
+    /// tracks and arcs, those on `topLayer` before those on other layers, each the nearest; of net `net` (nil: any); none
     /// that is not on `layer` (-1: any)
     func pickSingleItem(_ p: IPoint, net: NetHandle?, layer: Int, topLayer: Int, ignorePads: Bool = false,
                         avoid: [Item] = []) -> Item? {
@@ -156,7 +164,7 @@ public final class BoardRouter {
                             prioritized[0] = item
                             dist[0] = d
                         }
-                    } else if let li = item as? Segment {
+                    } else if item.kind == .segment || item.kind == .arc, let li = item as? LinkedItem {
                         let d = min((li.anchor(0) - p).squaredNorm, (li.anchor(1) - p).squaredNorm)
                         if d < dist[3] {
                             prioritized[3] = item
@@ -185,8 +193,8 @@ public final class BoardRouter {
     }
 
     /// Where the pointer at `p` goes on `item` (TOOL_BASE::snapToItem): a pad's or via's centre (a pad's nearest
-    /// anchor); a track's end if within half its width of the pointer, else the point of the track by the grid point
-    /// nearest the pointer (AlignToSegment); with no item, the grid point
+    /// anchor); a track's (or arc's) end if within half its width of the pointer, else the point of the track by the
+    /// grid point nearest the pointer (AlignToSegment, AlignToArc); with no item, the grid point
     public func snapToItem(_ item: Item?, _ p: IPoint) -> IPoint {
         switch item {
         case let solid as Solid:
@@ -208,6 +216,12 @@ public final class BoardRouter {
             let distA = (p - a).squaredNorm, distB = (p - b).squaredNorm
             if distA < wSq || distB < wSq { return distA < distB ? a : b }
             return alignToSegment(p, seg.seg)
+        case let arc as Arc:
+            let a = arc.anchor(0), b = arc.anchor(1)
+            let wSq = (arc.width / 2) * (arc.width / 2)
+            let distA = (p - a).squaredNorm, distB = (p - b).squaredNorm
+            if distA < wSq || distB < wSq { return distA < distB ? a : b }
+            return alignToArc(p, arc.arc)
         default:
             return align(p)
         }
@@ -248,7 +262,34 @@ public final class BoardRouter {
         return nearest
     }
 
-    /// The sizes a track from `item` takes: its net class's track width (or the width of the track it starts on) and
+    /// Where on `arc` the pointer at `p` goes (PCB_GRID_HELPER::AlignToArc): its nearer end to the pointer, or where
+    /// it crosses the lines across, down and diagonally through the grid point nearest the pointer, whichever is
+    /// nearest
+    func alignToArc(_ p: IPoint, _ arc: ShapeArc) -> IPoint {
+        let aligned = align(p)
+        var points: [IPoint] = []
+        for d in [IPoint(1, 0), IPoint(0, 1), IPoint(1, 1), IPoint(1, -1)] {
+            points += arc.intersectLine(Seg(aligned, aligned + d))
+        }
+        var nearest = aligned, minDist = Int.max
+        for pt in [arc.start, arc.end] {
+            let d = (pt - p).squaredNorm
+            if d < minDist {
+                minDist = d
+                nearest = pt
+            }
+        }
+        for pt in points {
+            let d = (pt - aligned).squaredNorm
+            if d < minDist {
+                minDist = d
+                nearest = pt
+            }
+        }
+        return nearest
+    }
+
+    /// The sizes a track from `item` takes: its net class's track width (or the width of the track or arc it starts on) and
     /// via, no less than the board's minimums; a differential pair's, its net class's diff pair width and gap, the
     /// gap between its vias the same as its gap (as ImportSizes takes it from the net class's gap rule), and its vias'
     /// holes kept the board's hole to hole and hole clearances from each other (KiCad's ImportSizes)
@@ -258,8 +299,8 @@ public final class BoardRouter {
         let nc = world.netClasses.effective(net)
         s.clearance = world.rules.clearance
         s.minClearance = world.rules.clearance
-        if let seg = item as? Segment {
-            s.trackWidth = seg.width
+        if let track = item as? LinkedItem, item?.kind == .segment || item?.kind == .arc {
+            s.trackWidth = track.width
         } else {
             s.trackWidth = max(world.minTrackWidth, nc.trackWidth ?? 200_000)
         }
@@ -467,7 +508,7 @@ public final class BoardRouter {
         guard router.state == .dragSegment, let dragger = router.dragger else { return nil }
         let (removed, added) = dragger.currentNode.updatedItems()
         let moved = Set(removed.compactMap { iface.resolver.info[ObjectIdentifier($0)]?.source })
-        return (moved, added.filter { !$0.isVirtual && ($0.kind == .segment || $0.kind == .via) },
+        return (moved, added.filter { !$0.isVirtual && ($0.kind == .segment || $0.kind == .arc || $0.kind == .via) },
                 dragger.forceMarkObstaclesMode && !dragger.dragStatus)
     }
 
@@ -538,6 +579,8 @@ public final class BoardRouter {
         for item in iface.added {
             if let s = item as? Segment {
                 lastAdded.append(insert(segment: s))
+            } else if let a = item as? Arc {
+                lastAdded.append(insert(arc: a))
             } else if let v = item as? Via {
                 lastAdded.append(insert(via: v))
             }
@@ -557,6 +600,18 @@ public final class BoardRouter {
         let uuid = KiCadBoard.newUUID()
         let node = SExpr("segment", SExpr("start", Self.mm(s.seg.a.x), Self.mm(s.seg.a.y)), SExpr("end", Self.mm(s.seg.b.x), Self.mm(s.seg.b.y)),
                          SExpr("width", Self.mm(s.width)), SExpr("layer", layerName(s.layer)), netList(s.net), SExpr("uuid", uuid))
+        insertTrack(node)
+        return uuid
+    }
+
+    /// An arc track as KiCad writes one (PCB_IO_KICAD_SEXPR::format of a PCB_ARC): its start, the middle of the arc
+    /// and its end, as PNS_KICAD_IFACE::createBoardItem makes the PCB_ARC of the router's arc (SHAPE_ARC::GetArcMid)
+    private func insert(arc a: Arc) -> String {
+        let uuid = KiCadBoard.newUUID()
+        let start = a.arc.start, mid = a.arc.mid, end = a.arc.end
+        let node = SExpr("arc", SExpr("start", Self.mm(start.x), Self.mm(start.y)), SExpr("mid", Self.mm(mid.x), Self.mm(mid.y)),
+                         SExpr("end", Self.mm(end.x), Self.mm(end.y)), SExpr("width", Self.mm(a.width)), SExpr("layer", layerName(a.layer)),
+                         netList(a.net), SExpr("uuid", uuid))
         insertTrack(node)
         return uuid
     }

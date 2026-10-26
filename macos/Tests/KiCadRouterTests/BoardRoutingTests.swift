@@ -7,6 +7,8 @@ import KiCadKit
 /// one, the pointer to the other, fixed there), the board written, and kicad-cli's DRC run on it; no clearance,
 /// crossing, short or size violation may involve a track or via the router put there. The boards are those of
 /// KICAD_BOARD_REFERENCE (boards.py's), or Fixtures/boards; it needs kicad-cli (JSPICE_REQUIRE_KICAD: fail without).
+/// And the same on Fixtures/arcboards (boards.py --arcs), with arc tracks on them, routed with rounded corners: the
+/// arcs the router puts on written into the board as KiCad writes arc tracks, which its DRC reads.
 final class BoardRoutingTests: XCTestCase {
     /// The violations a router must not cause (KiCad's DRC error keys)
     static let routerViolations: Set<String> = ["clearance", "hole_clearance", "copper_edge_clearance", "hole_to_hole",
@@ -15,19 +17,36 @@ final class BoardRoutingTests: XCTestCase {
 
     func testRoutesPassKiCadsDRC() throws {
         let env = ProcessInfo.processInfo.environment
-        guard let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor else {
-            if env["JSPICE_REQUIRE_KICAD"] != nil { return XCTFail("KiCad 10's kicad-cli is needed") }
-            throw XCTSkip("no kicad-cli")
-        }
         guard let folder = env["KICAD_BOARD_REFERENCE"].map(URL.init(fileURLWithPath:))
                 ?? Bundle.module.url(forResource: "boards", withExtension: nil, subdirectory: "Fixtures") else { throw XCTSkip("no boards") }
+        try check(folder, cornerModes: [.mitered45])
+    }
+
+    /// On boards with arc tracks, each route in a corner mode of its own, rounded ones among them: the arcs it puts on
+    /// are in the board as KiCad writes them, and pass its DRC as the segments do
+    func testRoundedRoutesPassKiCadsDRC() throws {
+        guard let folder = Bundle.module.url(forResource: "arcboards", withExtension: nil, subdirectory: "Fixtures") else {
+            throw XCTSkip("no boards")
+        }
+        let arcs = try check(folder, cornerModes: [.rounded45, .mitered45, .rounded90, .rounded45, .mitered90])
+        XCTAssertGreaterThan(arcs, 0, "no arcs put on")
+    }
+
+    /// Routes on the boards of `folder`, each in the next of `cornerModes`, checked by KiCad's DRC; the arcs put on
+    @discardableResult
+    func check(_ folder: URL, cornerModes: [Direction45.CornerMode]) throws -> Int {
+        let env = ProcessInfo.processInfo.environment
+        guard let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor else {
+            if env["JSPICE_REQUIRE_KICAD"] != nil { XCTFail("KiCad 10's kicad-cli is needed"); return 0 }
+            throw XCTSkip("no kicad-cli")
+        }
         let limit = Int(env["KICAD_DRC_BOARDS"] ?? "") ?? 24
         let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }.prefix(limit)
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-routing-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: work) }
-        var routes = 0, finished = 0, placed = 0, touching = 0
+        var routes = 0, finished = 0, placed = 0, touching = 0, arcs = 0
         var bad: [String] = []
         for file in files {
             let name = file.deletingPathExtension().lastPathComponent
@@ -43,6 +62,7 @@ final class BoardRoutingTests: XCTestCase {
             let router = BoardRouter(board: board, project: project)
             var added = Set<String>()
             for (a, b, layer) in Self.pairs(router.world, seed: name) {
+                router.cornerMode = cornerModes[routes % cornerModes.count]
                 routes += 1
                 guard router.start(at: a, layer: layer) else { continue }
                 // the pointer from one pad to the other, a little off the straight line on the way
@@ -68,6 +88,12 @@ final class BoardRoutingTests: XCTestCase {
                 control = uuid
             }
             try board.write(to: copy)
+            // (the arcs put on, in the file written as KiCad writes an arc track: its start, mid and end, width, layer,
+            // net and uuid)
+            for node in try KiCadBoard.read(copy).copperItems where node.head == "arc" && added.contains(node.value("uuid") ?? "") {
+                XCTAssertEqual(node.arguments.compactMap(\.head), ["start", "mid", "end", "width", "layer", "net", "uuid"])
+                arcs += 1
+            }
             let report = try KiCadFabrication(installation: kicad).drc(copy, refillZones: false)
             if let control {
                 XCTAssert(report.violations.contains { Self.routerViolations.contains($0.type) && $0.items.contains { $0.uuid == control } },
@@ -99,9 +125,11 @@ final class BoardRoutingTests: XCTestCase {
             }
         }
         print("BoardRoutingTests: \(files.count) boards, \(routes) routes tried, \(finished) finished, \(placed) tracks and vias placed"
+              + (arcs > 0 ? " (\(arcs) arcs)" : "")
               + (touching > 0 ? ", \(touching) along a hole's edge at a hole clearance of 0" : ""))
         XCTAssertGreaterThan(placed, 0)
         XCTAssert(bad.isEmpty, "\(bad.count) violations of KiCad's DRC by routed tracks:\n" + bad.prefix(10).joined(separator: "\n"))
+        return arcs
     }
 
     /// Pads of the same net to join, and a layer both are on (up to five pairs a board, chosen by its name)

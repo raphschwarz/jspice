@@ -9,9 +9,11 @@ run on it (KiCad reading it afresh) writes what KiCad's router sees of it. With 
 drawn from every footprint of KiCad's libraries with a custom pad (their primitives: polygons, lines, arcs, circles
 and rings, rectangles, filled or outlined, of some width or none) instead. With --pairs, boards with differential
 pairs to route instead: a connector and a chip with two pairs of their pads of pairs' nets, a net class with a diff
-pair width and gap of its own, parts and tracks of other nets between.
+pair width and gap of its own, parts and tracks of other nets between. With --arcs, arc tracks too (from a random
+sequence of their own, so that the rest of each board is as it is without them): out of pads of their net, rounding
+the turns of tracks of a few segments, or on their own.
 
-    boards.py [--custom-pads | --pairs] OUTDIR COUNT [SEED]
+    boards.py [--custom-pads | --pairs] [--arcs] OUTDIR COUNT [SEED]
 """
 
 import math
@@ -229,6 +231,71 @@ def layered_vias(rng, board, x0, y0, x1, y1, nets):
         board.Add(v)
 
 
+# the eight directions a track goes, round the way KiCad's y axis turns
+DIRS = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
+
+
+def arc_turn(p, d, turn, r):
+    """An arc track's mid and end from `p`, going on in direction `d` (one of DIRS) and turning `turn` eighths of a
+    turn on a radius of `r`, tangent to the way it came and the way it goes on"""
+    u = (DIRS[d][0] / math.hypot(*DIRS[d]), DIRS[d][1] / math.hypot(*DIRS[d]))
+    side = 1 if turn > 0 else -1
+    c = (p[0] - u[1] * side * r, p[1] + u[0] * side * r)
+
+    def at(a):
+        dx, dy = p[0] - c[0], p[1] - c[1]
+        return (round(c[0] + dx * math.cos(a) - dy * math.sin(a)), round(c[1] + dx * math.sin(a) + dy * math.cos(a)))
+
+    theta = turn * math.pi / 4
+    return at(theta / 2), at(theta)
+
+
+def arc_tracks(rng, board, x0, y0, x1, y1, copper, nets, pads):
+    """Arc tracks: lines of segments and arcs (each arc tangent to the segments either side), from a pad of their net
+    or from anywhere, now and then arcs one after the other or an arc on its own"""
+    def inside(p):
+        return x0 + 2 * MM <= p[0] <= x1 - 2 * MM and y0 + 2 * MM <= p[1] <= y1 - 2 * MM
+
+    for _ in range(rng.randint(3, 8)):
+        width = rng.randint(3, 8) * 50_000
+        layer = rng.choice(copper)
+        if pads and rng.random() < 0.5:
+            pad = rng.choice(pads)
+            net = pad.GetNet() if pad.GetNetCode() > 0 else rng.choice(nets)
+            p = (pad.GetPosition().x, pad.GetPosition().y)
+        else:
+            net = rng.choice(nets)
+            p = (rng.randint(x0 + 3 * MM, x1 - 3 * MM) // 50_000 * 50_000,
+                 rng.randint(y0 + 3 * MM, y1 - 3 * MM) // 50_000 * 50_000)
+        d = rng.randrange(8)
+        for _ in range(rng.randint(1, 4)):
+            if rng.random() < 0.45:
+                length = rng.randint(1, 10) * 500_000
+                q = (p[0] + DIRS[d][0] * length, p[1] + DIRS[d][1] * length)
+                if not inside(q):
+                    break
+                t = pcbnew.PCB_TRACK(board)
+                t.SetStart(vec(*p))
+                t.SetEnd(vec(*q))
+                p = q
+            else:
+                turn = rng.choice([1, -1, 2, -2, 3, -3])
+                mid, end = arc_turn(p, d, turn, rng.randint(1, 24) * 125_000)
+                if not inside(end):
+                    break
+                t = pcbnew.PCB_ARC(board)
+                t.SetStart(vec(*p))
+                t.SetMid(vec(*mid))
+                t.SetEnd(vec(*end))
+                p, d = end, (d + turn) % 8
+            t.SetWidth(width)
+            t.SetLayer(layer)
+            t.SetNet(net)
+            if rng.random() < 0.04:
+                t.SetLocked(True)
+            board.Add(t)
+
+
 def custom_pad_footprints():
     """Every footprint of KiCad's libraries with a custom pad, as (library, name), in order"""
     found = []
@@ -243,7 +310,7 @@ def custom_pad_footprints():
     return found
 
 
-def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None):
+def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None, arng=None):
     board = pcbnew.NewBoard(path)
     board.SetCopperLayerCount(rng.choice([2, 2, 4]))
     size = rng.randint(30, 70) * MM
@@ -324,6 +391,10 @@ def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None):
     # blind, buried and micro vias (the same)
     if vrng is not None:
         layered_vias(vrng, board, x0, y0, x1, y1, nets)
+    # arc tracks (the same)
+    if arng is not None:
+        plated = [p for p in pads if p.GetAttribute() != pcbnew.PAD_ATTRIB_NPTH]
+        arc_tracks(arng, board, x0, y0, x1, y1, copper, nets, plated)
     pcbnew.SaveBoard(path, board)
 
 
@@ -418,7 +489,8 @@ def main():
     args = sys.argv[1:]
     custom = "--custom-pads" in args
     pairs = "--pairs" in args
-    args = [a for a in args if a not in ("--custom-pads", "--pairs")]
+    arcs = "--arcs" in args
+    args = [a for a in args if a not in ("--custom-pads", "--pairs", "--arcs")]
     out, count = args[0], int(args[1])
     seed = int(args[2]) if len(args) > 2 else 20261016
     footprints_from = custom_pad_footprints() if custom else FOOTPRINTS
@@ -426,11 +498,13 @@ def main():
     os.makedirs(out, exist_ok=True)
     here = os.path.dirname(os.path.abspath(__file__))
     for n in range(count):
-        path = os.path.abspath(f"{out}/{'pairs' if pairs else 'custom' if custom else 'random'}-{seed}-{n}.kicad_pcb")
+        kind = "pairs" if pairs else "custom" if custom else "random"
+        path = os.path.abspath(f"{out}/{kind}{'-arcs' if arcs else ''}-{seed}-{n}.kicad_pcb")
         if pairs:
             make_pairs(rng, path)
         else:
-            make(rng, path, random.Random(f"keepouts-{seed}-{n}"), footprints_from, random.Random(f"vias-{seed}-{n}"))
+            make(rng, path, random.Random(f"keepouts-{seed}-{n}"), footprints_from, random.Random(f"vias-{seed}-{n}"),
+                 random.Random(f"arcs-{seed}-{n}") if arcs else None)
         subprocess.run([sys.executable, f"{here}/board-scene.py", path, path[:-len(".kicad_pcb")] + ".json"], check=True,
                        stderr=subprocess.DEVNULL)
     print(f"{out}: {count} boards")

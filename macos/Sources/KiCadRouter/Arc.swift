@@ -156,6 +156,13 @@ public struct ShapeArc: Hashable, Sendable, CustomStringConvertible {
 
     private var hugeRadius: Bool { radius >= Double(Int32.max) / 2.0 }
 
+    /// Where the line through `line` crosses it (SHAPE_ARC::IntersectLine): none for a line of one point or an arc as
+    /// good as straight
+    public func intersectLine(_ line: Seg) -> [IPoint] {
+        if line.a == line.b || hugeRadius { return [] }
+        return Circle(center, KiMath.cInt(radius)).intersectLine(line).filter { sliceContainsPoint($0) }
+    }
+
     /// The point of it nearest `p`
     public func nearestPoint(_ p: IPoint) -> IPoint {
         let epsilon = 8

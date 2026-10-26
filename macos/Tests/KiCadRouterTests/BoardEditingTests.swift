@@ -781,6 +781,77 @@ final class BoardEditingTests: XCTestCase {
         }
     }
 
+    /// Arc tracks on a board (Fixtures/arcboards, boards.py --arcs): a track routed with rounded corners puts its
+    /// corners in as arc tracks, as KiCad writes them; the pointer snaps to an arc's end, and a track started there
+    /// takes its width; an arc is dragged as KiCad's router drags one, the board's arc replaced by the new one
+    func testRoundedCornersGoInAsArcTracksAndArcsAreDragged() throws {
+        let folder = try XCTUnwrap(Bundle.module.url(forResource: "arcboards", withExtension: nil, subdirectory: "Fixtures"))
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }
+        var rounded = 0, started = 0, dragged = 0, bent = 0
+        for file in files {
+            let board = try KiCadBoard.read(file)
+            let session = BoardEditing(board: board, project: Self.project(file))
+            session.cornerMode = .rounded45
+            for (a, b, layer) in BoardRoutingTests.pairs(session.router.world, seed: file.lastPathComponent) {
+                let from = Self.mm(a), to = Self.mm(b)
+                guard session.start(at: from, layer: session.layers[layer]) else { continue }
+                session.move(to: KiCadPoint((from.x + to.x) / 2 + 1.1, (from.y + to.y) / 2 - 0.7))
+                session.move(to: to)
+                guard let edit = session.fix(at: to) ?? session.finish(at: to) else { continue }
+                let arcs = edit.after.copperItems.filter { $0.head == "arc" && edit.added.contains($0.value("uuid") ?? "") }
+                for arc in arcs {
+                    XCTAssertEqual(arc.arguments.compactMap(\.head), ["start", "mid", "end", "width", "layer", "net", "uuid"])
+                }
+                rounded += arcs.count
+            }
+            // the board's own arcs: the pointer near one's end snaps to it, and a track started on it (where the arc is
+            // what the router tool picks there, not a pad or another track) is as wide
+            for node in session.board.copperItems where node.head == "arc" {
+                guard let m = node["mid"], let e = node["end"], let layer = node.value("layer"), let l = session.router.layer(layer),
+                      let w = node["width"]?.number(at: 0) else { continue }
+                let mid = KiCadPoint(m.number(at: 0)!, m.number(at: 1)!), end = KiCadPoint(e.number(at: 0)!, e.number(at: 1)!)
+                if session.router.startPoint(at: BoardEditing.nm(end), layer: l).item is Arc {
+                    XCTAssertEqual(session.snap(KiCadPoint(end.x + w / 8, end.y - w / 8), layer: layer), BoardEditing.nm(end))
+                }
+                guard session.router.startPoint(at: BoardEditing.nm(mid), layer: l).item is Arc,
+                      session.start(at: mid, layer: layer) else { continue }
+                XCTAssertEqual(session.router.router.sizes.trackWidth, Int((w * 1e6).rounded()))
+                session.cancel()
+                started += 1
+                break
+            }
+            // one dragged by its middle
+            for node in session.board.copperItems where node.head == "arc" {
+                guard let m = node["mid"], let layer = node.value("layer"), let l = session.router.layer(layer),
+                      let uuid = node.value("uuid") else { continue }
+                let mid = KiCadPoint(m.number(at: 0)!, m.number(at: 1)!)
+                // (an arc the drag picks there, as the router tool picks it: the track whose end is nearest)
+                guard session.router.dragStartPoint(at: BoardEditing.nm(mid), layer: l).item is Arc,
+                      session.startDrag(at: mid, layer: layer) != nil else { continue }
+                let shown = session.drag(to: KiCadPoint(mid.x + 0.2, mid.y + 0.15))
+                XCTAssertTrue(shown?.moved.contains(uuid) ?? false)
+                guard let edit = session.fixDrag(at: KiCadPoint(mid.x + 0.2, mid.y + 0.15)) else {
+                    session.cancelDrag()
+                    continue
+                }
+                XCTAssertTrue(edit.removed.contains(uuid))
+                // (an arc bent, drawn as the polyline a track's chain keeps of it, and written as an arc track; one the
+                // drag walked round something with goes as segments, as KiCad's dragger leaves it)
+                if shown?.tracks.contains(where: { $0.points.count > 2 }) ?? false {
+                    XCTAssertTrue(edit.after.copperItems.contains { $0.head == "arc" && edit.added.contains($0.value("uuid") ?? "") })
+                    bent += 1
+                }
+                dragged += 1
+                break
+            }
+        }
+        print("BoardEditingTests: \(rounded) arcs put on rounding corners, \(started) tracks started on arcs, \(dragged) arcs dragged (\(bent) bent)")
+        XCTAssertGreaterThan(rounded, 0)
+        XCTAssertGreaterThan(started, 0)
+        XCTAssertGreaterThan(bent, 0)
+    }
+
     /// Net classes read from the project, changed and added, as KiCad keeps them; the router takes the new widths
     func testNetClassesAreChangedAndTheRouterTakesThem() throws {
         var project = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(KiCadProject.projectFile(

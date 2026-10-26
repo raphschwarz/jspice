@@ -29,7 +29,8 @@ public final class BoardEditing {
         public let name: String
     }
 
-    /// The track being routed, as it is drawn: its fixed part, the part following the pointer, its width and layer,
+    /// The track being routed, as it is drawn: its fixed part, the part following the pointer (their arcs as the
+    /// polylines a track's chain keeps of them, a micrometre off), its width and layer,
     /// the via at its end if one is to be placed, its net, and where it should go next
     public struct Preview: Sendable, Equatable {
         public var tail: [KiCadPoint]
@@ -94,6 +95,10 @@ public final class BoardEditing {
     /// a drag too. Routing every connection walks round.
     public var mode: RouterMode = .walkaround
 
+    /// How a track started here turns its corners (KiCad's track corner modes): mitred at 45° (KiCad's default) or
+    /// 90°, or rounded with an arc, which goes into the board as an arc track; a pair and a drag too
+    public var cornerMode: Direction45.CornerMode = .mitered45
+
     public private(set) var router: BoardRouter
     private var project: [String: Any]?
     /// The board as the last change left it (each change is made from it)
@@ -157,6 +162,7 @@ public final class BoardEditing {
 
     private func start(at p: KiCadPoint, layer: String, width: Double?, mode: RouterMode) -> Bool {
         router.mode = mode
+        router.cornerMode = cornerMode
         guard let l = router.layer(layer) else { return false }
         return router.start(at: Self.nm(p), layer: l, width: width.map { Int(($0 * 1e6).rounded()) })
     }
@@ -252,14 +258,28 @@ public final class BoardEditing {
         let shoved = router.shoved
         shown.moved = shoved.moved
         for item in shoved.items {
-            if let s = item as? Segment {
-                shown.shovedTracks.append(.init(points: [Self.mm(s.seg.a), Self.mm(s.seg.b)], width: Double(s.width) / 1e6,
-                                                layer: router.layerName(s.layers.start)))
+            if let track = track(item) {
+                shown.shovedTracks.append(track)
             } else if let v = item as? Via {
                 shown.shovedVias.append(.init(center: Self.mm(v.pos), size: Double(v.diameter) / 1e6))
             }
         }
         return shown
+    }
+
+    /// A segment or arc of what the router has moved, as it is drawn: a segment's two ends, an arc's points as a
+    /// track's chain keeps them (a polyline a micrometre off it)
+    private func track(_ item: Item) -> Preview.Track? {
+        let points: [IPoint]
+        guard let li = item as? LinkedItem else { return nil }
+        if let s = item as? Segment {
+            points = [s.seg.a, s.seg.b]
+        } else if let a = item as? Arc {
+            points = a.cLine.points
+        } else {
+            return nil
+        }
+        return .init(points: points.map(Self.mm), width: Double(li.width) / 1e6, layer: router.layerName(item.layers.start))
     }
 
     // MARK: - Differential pairs
@@ -272,6 +292,7 @@ public final class BoardEditing {
     public func startPair(at p: KiCadPoint, layer: String) -> PairPreview? {
         guard !isRouting, let l = router.layer(layer) else { return nil }
         router.mode = mode
+        router.cornerMode = cornerMode
         guard router.startPair(at: Self.nm(p), layer: l) else { return nil }
         return pairPreview(clear: true)
     }
@@ -314,9 +335,8 @@ public final class BoardEditing {
         // (the shove's branch holds the pair's own lines too, which the preview has)
         let own = router.router.currentNets
         for item in shoved.items where !own.contains(item.net) {
-            if let s = item as? Segment {
-                shown.shovedTracks.append(.init(points: [Self.mm(s.seg.a), Self.mm(s.seg.b)], width: Double(s.width) / 1e6,
-                                                layer: router.layerName(s.layers.start)))
+            if let track = track(item) {
+                shown.shovedTracks.append(track)
             } else if let v = item as? Via {
                 shown.shovedVias.append(.init(center: Self.mm(v.pos), size: Double(v.diameter) / 1e6))
             }
@@ -333,6 +353,7 @@ public final class BoardEditing {
     public func startDrag(at p: KiCadPoint, layer: String, freeAngle: Bool = false) -> DragPreview? {
         guard !isRouting, let l = router.layer(layer) else { return nil }
         router.mode = mode
+        router.cornerMode = cornerMode
         guard router.startDrag(at: Self.nm(p), layer: l, freeAngle: freeAngle) else { return nil }
         return dragPreview
     }
@@ -363,9 +384,8 @@ public final class BoardEditing {
         var shown = DragPreview(moved: d.moved, net: (router.router.currentNets.first ?? nil).flatMap { router.world.netNames[$0] },
                                 violates: d.violates)
         for item in d.items {
-            if let s = item as? Segment {
-                shown.tracks.append(.init(points: [Self.mm(s.seg.a), Self.mm(s.seg.b)], width: Double(s.width) / 1e6,
-                                          layer: router.layerName(s.layers.start)))
+            if let track = track(item) {
+                shown.tracks.append(track)
             } else if let v = item as? Via {
                 shown.vias.append(.init(center: Self.mm(v.pos), size: Double(v.diameter) / 1e6))
             }
