@@ -1,14 +1,15 @@
 // A board edited here, a track at a time, as KiCad's router tool drives its router (pcbnew/router/router_tool.cpp,
 // KiCad 10.0.7): magnetic pads, the start layer taken from a one-sided pad, a click fixing the track, a double click
-// finishing it, Escape keeping what is fixed. GNU General Public License version 3 or later, as the router (see
-// KICAD-NOTICE.md).
+// finishing it, Escape keeping what is fixed; tracks and vias dragged as its drag tools drag them. GNU General Public
+// License version 3 or later, as the router (see KICAD-NOTICE.md).
 
 import Foundation
 import KiCadKit
 
 /// A board edited in the PCB view: the router on it, driven as a pointer drives it (start, move, fix, finish, vias,
-/// layers, postures, widths), and tracks and vias taken away. Each change made is handed back as the board before and
-/// after it, for the board's file or KiCad's open editor to take; the board here is then the board after it.
+/// layers, postures, widths), tracks and vias dragged, and tracks and vias taken away. Each change made is handed back
+/// as the board before and after it, for the board's file or KiCad's open editor to take; the board here is then the
+/// board after it.
 public final class BoardEditing {
     /// A change made to the board
     public struct Edit {
@@ -55,8 +56,20 @@ public final class BoardEditing {
         }
     }
 
-    /// How a track started here gets past what is in its way: walks round it (KiCad's default), or shoves it aside.
-    /// Routing every connection walks round.
+    /// What is being dragged, as it is drawn: the board's tracks and vias the drag takes away (moved, or shoved aside),
+    /// by id, and where they go now, the dragged with the shoved; the net dragged; and whether what is dragged collides
+    /// with something (KiCad's "Track violates DRC": the drag could not get past it, and a click keeps it only if
+    /// forced)
+    public struct DragPreview: Sendable, Equatable {
+        public var moved: Set<String> = []
+        public var tracks: [Preview.Track] = []
+        public var vias: [Preview.Via] = []
+        public var net: String?
+        public var violates = false
+    }
+
+    /// How a track started here gets past what is in its way: walks round it (KiCad's default), or shoves it aside;
+    /// a drag too. Routing every connection walks round.
     public var mode: RouterMode = .walkaround
 
     public private(set) var router: BoardRouter
@@ -214,6 +227,55 @@ public final class BoardEditing {
                                                 layer: router.layerName(s.layers.start)))
             } else if let v = item as? Via {
                 shown.shovedVias.append(.init(center: Self.mm(v.pos), size: Double(v.diameter) / 1e6))
+            }
+        }
+        return shown
+    }
+
+    // MARK: - Dragging
+
+    /// Starts dragging the track or via at `p` on `layer` (the one a track is on is taken first), as KiCad's drag (D)
+    /// drags it, or its free angle drag (G) with `freeAngle`: a track's segment, its two neighbours stretched to
+    /// follow on the 45° directions, or its corner if `p` is at one of its ends, or a via with the tracks on it.
+    /// Nil if there is nothing there to drag.
+    public func startDrag(at p: KiCadPoint, layer: String, freeAngle: Bool = false) -> DragPreview? {
+        guard !isRouting, let l = router.layer(layer) else { return nil }
+        router.mode = mode
+        guard router.startDrag(at: Self.nm(p), layer: l, freeAngle: freeAngle) else { return nil }
+        return dragPreview
+    }
+
+    /// The pointer moved to `p`, dragging: what is dragged as it now goes
+    @discardableResult
+    public func drag(to p: KiCadPoint) -> DragPreview? {
+        guard router.router.state == .dragSegment else { return nil }
+        router.move(to: Self.nm(p))
+        return dragPreview
+    }
+
+    /// A click at `p`, dragging: the change, if the drag is kept ("Drag Track", "Drag Via"); kept where it last got
+    /// past what was in its way, or, where it could not get past it, only if `force`d (KiCad's Ctrl-click). Nil, the
+    /// drag going on, if not.
+    public func fixDrag(at p: KiCadPoint, force: Bool = false) -> Edit? {
+        guard router.router.state == .dragSegment else { return nil }
+        let name = router.isDraggingVia ? "Drag Via" : "Drag Track"
+        guard router.fixDrag(at: Self.nm(p), force: force) else { return nil }
+        return change(name)
+    }
+
+    /// The drag dropped, the board as it was
+    public func cancelDrag() { router.cancelDrag() }
+
+    public var dragPreview: DragPreview? {
+        guard let d = router.dragged else { return nil }
+        var shown = DragPreview(moved: d.moved, net: (router.router.currentNets.first ?? nil).flatMap { router.world.netNames[$0] },
+                                violates: d.violates)
+        for item in d.items {
+            if let s = item as? Segment {
+                shown.tracks.append(.init(points: [Self.mm(s.seg.a), Self.mm(s.seg.b)], width: Double(s.width) / 1e6,
+                                          layer: router.layerName(s.layers.start)))
+            } else if let v = item as? Via {
+                shown.vias.append(.init(center: Self.mm(v.pos), size: Double(v.diameter) / 1e6))
             }
         }
         return shown

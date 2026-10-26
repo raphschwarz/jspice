@@ -134,7 +134,8 @@ tests write the port's in the same form, to compare the two where a route differ
 `BoardRoutingTests.swift` goes one step further, with KiCad's own design rules check as the judge: it routes pads of
 the same net on real boards with `BoardRouter` (the port, on the board's world, writing what it places into the
 board file), and runs `kicad-cli pcb drc` on the result; no clearance, crossing, short or size violation may
-involve a track or via the router placed.
+involve a track or via the router placed. `BoardEditingTests.swift` does the same with tracks and vias dragged on
+the fixture boards (`BoardEditing`'s drag), walking round and shoving: no clearance, crossing or short with them.
 
 CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind, 2000
 clipper cases of each kind, 1000 random router boards, 400 random boards with routes that shove, 400 random boards

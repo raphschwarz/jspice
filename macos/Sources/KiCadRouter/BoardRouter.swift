@@ -1,6 +1,7 @@
 // Routing on a KiCad board: the router (KiCad's, ported) on the board's world, and what it places written back into
 // the board as KiCad writes tracks and vias. The start item and sizes are as KiCad's router tool and
-// PNS_KICAD_IFACE_BASE::ImportSizes find them (pcbnew/router/router_tool.cpp, pns_kicad_iface.cpp, KiCad 10.0.7).
+// PNS_KICAD_IFACE_BASE::ImportSizes find them, and tracks and vias are dragged as its drag tools drag them
+// (pcbnew/router/router_tool.cpp, pns_tool_base.cpp, pns_kicad_iface.cpp, KiCad 10.0.7).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as KiCad
 // (see KICAD-NOTICE.md).
 
@@ -8,7 +9,8 @@ import Foundation
 import KiCadKit
 
 /// Interactive routing on a KiCad board: start on a pad, track or via (or anywhere), move the pointer, fix, place
-/// vias, switch layers, and commit; what the router places goes into the board's file as KiCad writes it
+/// vias, switch layers, and commit; or drag a track or via; what the router places goes into the board's file as
+/// KiCad writes it
 public final class BoardRouter {
     public let board: KiCadBoard
     public private(set) var world: BoardWorld
@@ -80,8 +82,12 @@ public final class BoardRouter {
 
     /// The grid the pointer goes to where there is nothing to snap to, in nm (the editor's grid, its origin at 0)
     public var grid = 50_000
-    /// What the track being routed started on (which it does not end on)
+    /// What the track being routed started on (which it does not end on), or what is being dragged
     private var startItem: Item?
+    /// The layer chosen when the drag started (the view's top layer, for KiCad's router tool), and whether what it
+    /// drags was locked
+    private var dragLayer = 0
+    private var draggedLocked = false
 
     /// What a track started at the pointer `p` starts on, `layer` the layer chosen (TOOL_BASE::updateStartItem): the
     /// item there of any net, picked as pickSingleItem picks it; and where the track starts, on it (snapToItem)
@@ -98,18 +104,30 @@ public final class BoardRouter {
     }
 
     /// What the track being routed ends on with the pointer at `p` (TOOL_BASE::updateEndItem): an item of its net
-    /// there other than the one it started on, and where the track goes, on it; else nothing, and the grid point
+    /// there other than the one it started on, and where the track goes, on it; else nothing, and the grid point.
+    /// Dragging, the same of the dragged net, but for the line dragged.
     public func endPoint(at p: IPoint) -> (point: IPoint, item: Item?) {
         guard router.settings.mode == .markObstacles || (router.currentNets.first ?? nil) != nil else { return (align(p), nil) }
         let layer = router.isPlacingVia ? -1 : router.currentLayer
+        // (routing, the layer routed on is the top one; dragging, the one chosen)
+        let top = router.state == .dragSegment ? dragLayer : router.currentLayer
         var item: Item?
         for net in router.currentNets {
-            item = pickSingleItem(p, net: net, layer: layer, topLayer: router.currentLayer, avoid: startItem.map { [$0] } ?? [])
+            item = pickSingleItem(p, net: net, layer: layer, topLayer: top, avoid: startItem.map { [$0] } ?? [])
             if item != nil { break }
         }
-        // (pads and tracks both snapped to, as KiCad's magnetic items are by default in the router tool: checkSnap)
-        guard let item else { return (align(p), nil) }
+        guard let item, checkSnap(item) else { return (align(p), nil) }
         return (snapToItem(item, p), item)
+    }
+
+    /// Whether the pointer snaps to `item` (TOOL_BASE::checkSnap): pads and tracks both, as KiCad's magnetic items
+    /// are by default in the router tool; not, dragging, a segment of the line dragged
+    private func checkSnap(_ item: Item) -> Bool {
+        if startItem != nil, router.state == .dragSegment, let dragger = router.dragger, let li = item as? LinkedItem,
+           dragger.originalLine.containsLink(li) {
+            return false
+        }
+        return true
     }
 
     /// The item under the pointer to start or end a track on (TOOL_BASE::pickSingleItem): pads and vias first, then
@@ -354,6 +372,66 @@ public final class BoardRouter {
             lastRemoved.append(uuid)
         }
         reload()
+    }
+
+    // MARK: - Dragging (ROUTER_TOOL::performDragging)
+
+    /// What a drag started with the pointer at `p` drags, `layer` the layer chosen (TOOL_BASE::updateStartItem, pads
+    /// left out): the track or via there, picked as pickSingleItem picks it; and where the drag starts, on it
+    /// (snapToItem)
+    public func dragStartPoint(at p: IPoint, layer: Int) -> (point: IPoint, item: Item?) {
+        let item = pickSingleItem(p, net: nil, layer: -1, topLayer: layer, ignorePads: true)
+        return (snapToItem(item, p), item)
+    }
+
+    /// Starts dragging the track or via at the pointer at `p`, `layer` the layer chosen, as KiCad's router tool
+    /// starts its drag (D), or its free angle drag (G) with `freeAngle`: a track's segment, or its corner where the
+    /// pointer is at one of its ends; whether there was one to drag. (A locked one is dragged, as KiCad's "Drag
+    /// Anyway" drags it.)
+    @discardableResult
+    public func startDrag(at p: IPoint, layer: Int, freeAngle: Bool = false) -> Bool {
+        let (q, item) = dragStartPoint(at: p, layer: layer)
+        iface.added.removeAll()
+        iface.removedItems.removeAll()
+        startItem = item
+        dragLayer = layer
+        draggedLocked = item?.isLocked ?? false
+        return router.startDragging(q, item, mode: freeAngle ? [.any, .freeAngle] : .any)
+    }
+
+    /// What was dragged: a via (not a track's corner where its width changes, which drags as one)
+    public var isDraggingVia: Bool { (startItem as? Via).map { !$0.isVirtual } ?? false }
+
+    /// What the drag has moved, as KiCad's router shows it (the dragger's current node): the board's tracks and vias
+    /// it takes away (their ids), the tracks and vias that go in their place, the dragged and the shoved; and whether
+    /// what is dragged collides with something, the drag marking obstacles since it could not get past them (KiCad's
+    /// "Track violates DRC", which a click keeps only if forced)
+    public var dragged: (moved: Set<String>, items: [Item], violates: Bool)? {
+        guard router.state == .dragSegment, let dragger = router.dragger else { return nil }
+        let (removed, added) = dragger.currentNode.updatedItems()
+        let moved = Set(removed.compactMap { iface.resolver.info[ObjectIdentifier($0)]?.source })
+        return (moved, added.filter { !$0.isVirtual && ($0.kind == .segment || $0.kind == .via) },
+                dragger.forceMarkObstaclesMode && !dragger.dragStatus)
+    }
+
+    /// A click with the pointer at `p`, dragging: the drag kept, if the dragger keeps it (where it last got past what
+    /// was in its way; marking obstacles, only if clear of them, or if `force`d, as with Ctrl), written into the
+    /// board; whether it was. If not, the drag goes on.
+    @discardableResult
+    public func fixDrag(at p: IPoint, force: Bool = false) -> Bool {
+        guard router.state == .dragSegment else { return false }
+        let (q, item) = endPoint(at: p)
+        guard router.fixRoute(q, item, forceCommit: force) else { return false }
+        router.stopRouting()
+        apply()
+        return true
+    }
+
+    /// The drag dropped; what it unlocked to drag locked again (the world read again)
+    public func cancelDrag() {
+        cancel()
+        if draggedLocked { reload() }
+        draggedLocked = false
     }
 
     /// The track dropped

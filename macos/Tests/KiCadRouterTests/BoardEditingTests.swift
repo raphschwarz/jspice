@@ -153,6 +153,128 @@ final class BoardEditingTests: XCTestCase {
         }
     }
 
+    /// Tracks and vias dragged as KiCad's drag tool drags them, walking round and shoving what is in their way: a
+    /// track by its middle, by its end (its corner), at free angles; a via with the tracks on it. The preview shows
+    /// the dragged where it goes and which of the board's tracks it takes away; the change ("Drag Track", "Drag Via")
+    /// takes those out and puts in the new; KiCad's DRC finds no clearance fault in what was dragged and shoved (their
+    /// sizes are theirs as they were, some of them under these boards' minimums).
+    func testTracksAndViasAreDraggedClearOfWhatIsInTheirWay() throws {
+        var drags = 0, kept = 0, viaDrags = 0, shoves = 0, cornerDrags = 0
+        var finalBoards: [(URL, KiCadBoard, BoardWorld)] = []
+        for file in try Self.boards() {
+            let session = BoardEditing(board: try KiCadBoard.read(file), project: Self.project(file))
+            // (the board's tracks, and some more routed, to drag and to drag into)
+            _ = session.routeConnections(most: 12)
+            let world = session.router.world
+            var rng = BoardRoutingTests.SplitMix(seed: UInt64(truncatingIfNeeded: file.lastPathComponent.utf8.reduce(5381) { ($0 << 5) &+ $0 &+ Int($1) }))
+            let tracks = world.items.filter { $0.kind == .track && ($0.net ?? 0) != 0 && $0.a.distance($0.b) > 1_000_000 && $0.source != nil }
+            let vias = world.items.filter { $0.kind == .via && ($0.net ?? 0) != 0 && $0.source != nil }
+            // (a few of each, in an order of their own)
+            func some(_ items: [WorldItem], _ count: Int) -> [WorldItem] {
+                var items = items
+                for i in items.indices.reversed() { items.swapAt(i, Int(rng.next() % UInt64(i + 1))) }
+                return Array(items.prefix(count))
+            }
+            let picks = some(tracks, 14) + some(vias, 5)
+            for (k, w) in picks.enumerated() {
+                // (the board as the drags before left it: the track or via still there?)
+                guard let uuid = w.source, session.board.copperItems.contains(where: { $0.value("uuid") == uuid }) else { continue }
+                session.mode = k % 3 == 1 ? .walkaround : .shove
+                let layer = session.router.layerName(w.kind == .via ? w.layers.start : w.layer)
+                // (into another net's track or via near by, mostly, to shove or walk round it; else across)
+                let others = session.router.world.items.filter { o in
+                    (o.kind == .track || o.kind == .via) && o.net != w.net
+                        && (o.kind == .via ? o.layers : LayerRange(o.layer)).overlaps(w.kind == .via ? w.layers : LayerRange(w.layer))
+                }
+                func centre(_ o: WorldItem) -> IPoint { o.kind == .via ? o.a : IPoint((o.a.x + o.b.x) / 2, (o.a.y + o.b.y) / 2) }
+                let grab: IPoint
+                var way: IPoint
+                if w.kind == .via {
+                    grab = w.a
+                    way = IPoint(700_000, -500_000)
+                    let near = others.map { centre($0) - grab }.filter { $0.norm > 300_000 && $0.norm < 2_500_000 }
+                    if k % 3 != 2, let v = near.min(by: { $0.norm < $1.norm }) { way = v }
+                } else {
+                    // (by its middle; or by its end, now and then)
+                    let d = w.b - w.a
+                    let n = (Double(d.x) * Double(d.x) + Double(d.y) * Double(d.y)).squareRoot()
+                    let ux = Double(d.x) / n, uy = Double(d.y) / n
+                    grab = k % 4 == 3 ? w.b : IPoint((w.a.x + w.b.x) / 2, (w.a.y + w.b.y) / 2)
+                    way = IPoint(Int(-uy * 900_000), Int(ux * 900_000))
+                    if k % 2 == 1 { way = -way }
+                    // (onto the nearest, where it is nearest)
+                    let onto = others.map { o in (o.kind == .via ? o.a : Seg(o.a, o.b).nearestPoint(grab)) - grab }
+                        .filter { $0.norm > 300_000 && $0.norm < 5_000_000 }
+                    if k != 5, let v = onto.min(by: { $0.norm < $1.norm }) { way = v }
+                }
+                let preview = try XCTUnwrap(session.startDrag(at: Self.mm(grab), layer: layer, freeAngle: k == 6), "\(uuid) to drag")
+                XCTAssertTrue(session.isRouting)
+                if w.kind == .via && session.router.isDraggingVia { viaDrags += 1 }
+                if k % 4 == 3 { cornerDrags += 1 }
+                drags += 1
+                XCTAssertFalse(preview.violates)
+                let before = session.board.copy()
+                var last = preview
+                for t in [0.4, 0.8, 1.0] {
+                    last = try XCTUnwrap(session.drag(to: Self.mm(grab + IPoint(Int(Double(way.x) * t), Int(Double(way.y) * t)))))
+                    for moved in last.moved { XCTAssertTrue(before.copperItems.contains { $0.value("uuid") == moved }) }
+                }
+                XCTAssertEqual(last.net, session.router.world.items.first { $0.source == uuid }.flatMap { $0.net.flatMap { world.netNames[$0] } })
+                guard let edit = session.fixDrag(at: Self.mm(grab + way)) else {
+                    // (could not get past what is in the way: the drag dropped)
+                    session.cancelDrag()
+                    XCTAssertFalse(session.isRouting)
+                    continue
+                }
+                kept += 1
+                XCTAssertFalse(session.isRouting)
+                XCTAssertEqual(edit.name, session.router.isDraggingVia ? "Drag Via" : "Drag Track")
+                XCTAssertTrue(edit.removed.contains(uuid) || !last.moved.contains(uuid))
+                for uuid in edit.removed { XCTAssertFalse(edit.after.copperItems.contains { $0.value("uuid") == uuid }) }
+                for uuid in edit.added { XCTAssertTrue(edit.after.copperItems.contains { $0.value("uuid") == uuid }) }
+                // (another net's track or via taken away: shoved aside)
+                func net(_ id: String) -> String? { edit.before.copperItems.first { $0.value("uuid") == id }?.value("net") }
+                if edit.removed.contains(where: { net($0) != net(uuid) }) { shoves += 1 }
+            }
+            finalBoards.append((file, session.board, session.router.world))
+        }
+        print("BoardEditingTests: \(kept) of \(drags) drags kept (\(viaDrags) of vias, \(cornerDrags) by a corner), \(shoves) shoving")
+        XCTAssertGreaterThan(kept, 0)
+        XCTAssertGreaterThan(viaDrags, 0)
+        XCTAssertGreaterThan(shoves, 0)
+        guard let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor else {
+            if ProcessInfo.processInfo.environment["JSPICE_REQUIRE_KICAD"] != nil { return XCTFail("KiCad 10's kicad-cli is needed") }
+            return
+        }
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-drag-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        for (file, board, world) in finalBoards {
+            let copy = work.appendingPathComponent(file.lastPathComponent)
+            try board.write(to: copy)
+            let pro = file.deletingPathExtension().appendingPathExtension("kicad_pro")
+            try? FileManager.default.copyItem(at: pro, to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+            let original = Set(try KiCadBoard.read(file).copperItems.compactMap { $0.value("uuid") })
+            let added = Set(board.copperItems.compactMap { $0.value("uuid") }).subtracting(original)
+            let report = try KiCadFabrication(installation: kicad).drc(copy, refillZones: false)
+            let ours = report.violations.filter { v in
+                guard Self.clearanceViolations.contains(v.type) && v.items.contains(where: { added.contains($0.uuid) }) else { return false }
+                // (a hole clearance of 0: KiCad's router takes tracks along a hole's very edge, which its DRC finds touching
+                // it, as BoardRoutingTests counts apart; one cutting into the hole is wrong)
+                if v.type == "hole_clearance", v.description.contains("hole clearance 0 mm"),
+                   let overlap = BoardRoutingTests.holeOverlap(v, board: board, world: world), overlap < 1_000 {
+                    return false
+                }
+                return true
+            }
+            XCTAssert(ours.isEmpty, "\(file.lastPathComponent): " + ours.map { "\($0.type): \($0.description)" }.joined(separator: "; "))
+        }
+    }
+
+    /// What KiCad's DRC finds of copper too close to other copper, to holes or to the edge
+    static let clearanceViolations: Set<String> = ["clearance", "hole_clearance", "copper_edge_clearance", "hole_to_hole",
+                                                   "tracks_crossing", "shorting_items", "holes_co_located"]
+
     /// The pointer snapped as KiCad's router tool snaps it (TOOL_BASE::snapToItem): to a pad's centre; to a track's
     /// end within half its width of it; else to a point of the track by the grid; else to the grid
     func testThePointerSnapsAsKiCadsRouterToolSnapsIt() throws {
