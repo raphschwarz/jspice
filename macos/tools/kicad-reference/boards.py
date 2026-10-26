@@ -5,9 +5,11 @@ trapezoids, circles, unplated holes, custom pads), turned and flipped, on two or
 pattern, of different priorities, regular expressions among them), pads' and footprints' own clearances; tracks and
 vias; drawings on copper; outlines with rounded corners and round cut-outs; keepout zones (rule areas) of several
 shapes, some with holes, some in footprints. Each board is saved (its .kicad_pcb and .kicad_pro), and board-scene.py
-run on it (KiCad reading it afresh) writes what KiCad's router sees of it.
+run on it (KiCad reading it afresh) writes what KiCad's router sees of it. With --custom-pads, the footprints are
+drawn from every footprint of KiCad's libraries with a custom pad (their primitives: polygons, lines, arcs, circles
+and rings, rectangles, filled or outlined, of some width or none) instead.
 
-    boards.py OUTDIR COUNT [SEED]
+    boards.py [--custom-pads] OUTDIR COUNT [SEED]
 """
 
 import math
@@ -204,7 +206,21 @@ def keepouts(rng, board, x0, y0, x1, y1, copper, footprints):
             board.Add(zone)
 
 
-def make(rng, path, krng):
+def custom_pad_footprints():
+    """Every footprint of KiCad's libraries with a custom pad, as (library, name), in order"""
+    found = []
+    for lib in sorted(os.listdir(LIBRARIES)):
+        if not lib.endswith(".pretty"):
+            continue
+        for f in sorted(os.listdir(f"{LIBRARIES}/{lib}")):
+            if f.endswith(".kicad_mod"):
+                with open(f"{LIBRARIES}/{lib}/{f}") as mod:
+                    if " custom" in mod.read():
+                        found.append((lib[:-len(".pretty")], f[:-len(".kicad_mod")]))
+    return found
+
+
+def make(rng, path, krng, footprints_from=FOOTPRINTS):
     board = pcbnew.NewBoard(path)
     board.SetCopperLayerCount(rng.choice([2, 2, 4]))
     size = rng.randint(30, 70) * MM
@@ -220,7 +236,7 @@ def make(rng, path, krng):
     pads = []
     footprints = []
     for i in range(rng.randint(6, 18)):
-        lib, name = rng.choice(FOOTPRINTS)
+        lib, name = rng.choice(footprints_from)
         fp = pcbnew.FootprintLoad(f"{LIBRARIES}/{lib}.pretty", name)
         if fp is None:
             continue
@@ -286,14 +302,18 @@ def make(rng, path, krng):
 
 
 def main():
-    out, count = sys.argv[1], int(sys.argv[2])
-    seed = int(sys.argv[3]) if len(sys.argv) > 3 else 20261016
+    args = sys.argv[1:]
+    custom = "--custom-pads" in args
+    args = [a for a in args if a != "--custom-pads"]
+    out, count = args[0], int(args[1])
+    seed = int(args[2]) if len(args) > 2 else 20261016
+    footprints_from = custom_pad_footprints() if custom else FOOTPRINTS
     rng = random.Random(seed)
     os.makedirs(out, exist_ok=True)
     here = os.path.dirname(os.path.abspath(__file__))
     for n in range(count):
-        path = os.path.abspath(f"{out}/random-{seed}-{n}.kicad_pcb")
-        make(rng, path, random.Random(f"keepouts-{seed}-{n}"))
+        path = os.path.abspath(f"{out}/{'custom' if custom else 'random'}-{seed}-{n}.kicad_pcb")
+        make(rng, path, random.Random(f"keepouts-{seed}-{n}"), footprints_from)
         subprocess.run([sys.executable, f"{here}/board-scene.py", path, path[:-len(".kicad_pcb")] + ".json"], check=True,
                        stderr=subprocess.DEVNULL)
     print(f"{out}: {count} boards")

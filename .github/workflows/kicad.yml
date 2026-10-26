@@ -61,10 +61,11 @@ jobs:
         run: |
           python3 macos/tools/kicad-reference/scenes.py --mode drag "$RUNNER_TEMP/kicad-reference/kicad-router" \
             "$RUNNER_TEMP/kicad-reference/routes-drag-400.json" 400 "$GITHUB_RUN_NUMBER"
-      - name: 60 random boards made by KiCad, what its router sees of each, and routes on them by its router
+      - name: 60 random boards made by KiCad and 20 of its footprints with custom pads, what its router sees of each, and routes on them by its router
         # (also a new seed each run)
         run: |
           python3 macos/tools/kicad-reference/boards.py "$RUNNER_TEMP/boards" 60 "$GITHUB_RUN_NUMBER"
+          python3 macos/tools/kicad-reference/boards.py --custom-pads "$RUNNER_TEMP/boards" 20 "$GITHUB_RUN_NUMBER"
           python3 macos/tools/kicad-reference/scenes.py --boards "$RUNNER_TEMP/kicad-reference/kicad-router" \
             "$RUNNER_TEMP/board-routes.json" 4 "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP"/boards/*.json
           python3 macos/tools/kicad-reference/scenes.py --mode shove --boards "$RUNNER_TEMP/kicad-reference/kicad-router" \

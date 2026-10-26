@@ -37,7 +37,8 @@ final class BoardWorldTests: XCTestCase {
                 differences.append("\(name): \(ours.count) items, KiCad's \(theirs.count)")
             }
             for (i, (o, k)) in zip(ours, theirs).enumerated() {
-                // (an item the port makes otherwise, knowingly: a custom pad, its outline not merged as KiCad's)
+                // (an item the port makes otherwise, knowingly: a custom pad with a curve among its pieces, a convex
+                // outline round them all)
                 if approximate.contains(i) {
                     approximated += 1
                     continue

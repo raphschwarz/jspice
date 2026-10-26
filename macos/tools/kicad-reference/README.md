@@ -70,14 +70,18 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   KiCad's `pcbnew` Python module): the items `PNS_KICAD_IFACE_BASE::SyncWorld` makes of it, in its order, with their
   shapes as KiCad's own `GetEffectiveShape` gives them, the board's rules as KiCad's design rules engine resolves
   them, and its nets. `BoardWorldTests.swift` reads the same board with `BoardWorld` and must find the same items,
-  shapes and rules, to the nanometre (custom pads aside, whose outlines need polygon merging the port lacks yet).
-- `boards.py`: random boards made by KiCad itself (`boards.py OUTDIR COUNT [SEED]`): footprints from KiCad's own
+  shapes and rules, to the nanometre: custom pads too, their anchors and pieces merged into one outline as KiCad
+  merges them (a pad with a curve among its pieces aside: the port draws a convex outline round it, and says so).
+- `boards.py`: random boards made by KiCad itself (`boards.py [--custom-pads] OUTDIR COUNT [SEED]`): footprints from KiCad's own
   libraries with every kind of pad, turned and flipped, on two or four layers; nets in net classes chosen by
   pattern, of different priorities; pads' and footprints' own clearances; tracks, vias, drawings on copper; outlines
   with rounded corners (arcs, or a rectangle's own corner radius) and round cut-outs; keepout zones of several shapes
   on some of the copper layers, some with holes, some in footprints, now and then one KiCad's router cannot cut into
   triangles (drawn from random numbers of their own, so that the rest of each board is what it was before they were
-  added). Each is saved with its project, and `board-scene.py` run on it.
+  added). Each is saved with its project, and `board-scene.py` run on it. With `--custom-pads`, the footprints are
+  drawn from all of KiCad's library footprints with a custom pad instead (some 600: pads of polygons, lines, arcs,
+  circles and rings, rectangles, filled or outlined, of some width or none; keepout zones of their own, some with
+  arcs, some on no copper layer).
   `Tests/KiCadRouterTests/Fixtures/boards` holds five (`random-2-43` and `random-2-51`, with keepout zones, as
   `boards.py` makes them now; the other three as it made them before it drew keepouts and rounded rectangles);
   `KICAD_BOARD_REFERENCE` names another folder of them.

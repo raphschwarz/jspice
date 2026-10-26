@@ -1,11 +1,13 @@
 // Ported from KiCad 10.0.7: pcbnew/router/pns_kicad_iface.cpp (SyncWorld, syncPad, syncTrack, syncVia, syncZone,
-// syncGraphicalItem), pcbnew/pad.cpp (BuildEffectiveShapes, TransformShapeToPolygon, FlashLayer, IsOnCopperLayer,
-// GetClearanceOverrides), common/eda_shape.cpp (makeEffectiveShapes, SetArcGeometry, GetArcAngle, rotate),
+// syncGraphicalItem), pcbnew/pad.cpp (BuildEffectiveShapes, TransformShapeToPolygon, MergePrimitivesAsPolygon,
+// FlashLayer, IsOnCopperLayer, GetClearanceOverrides), common/eda_shape.cpp (makeEffectiveShapes, SetArcGeometry,
+// GetArcAngle, rotate, TransformShapeToPolygon, GetRadius, GetRectCorners, SetCornerRadius, IsPolyShapeValid),
 // pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp (how a board's items are read: units, pad and drawing
-// placement, zone outlines) and pcbnew/zone.cpp (AddPolygon), pcbnew/board_design_settings.cpp and
+// placement, zone outlines, pad primitives and their fills), pcbnew/pcb_shape.cpp (Normalize), pcbnew/zone.cpp (AddPolygon), pcbnew/board_design_settings.cpp and
 // common/project/net_settings.cpp (the rules and net classes), libs/kimath/src/geometry/roundrect.cpp and
 // shape_utils.cpp (ROUNDRECT::TransformToPolygon, KIGEOM::MakeArcCw90 and MakeArcCw180) and shape_line_chain.cpp (how
-// an outline keeps its arcs: Append, mergeFirstLastPointIfNeeded, fixIndicesRotation, IsArcSegment).
+// an outline keeps its arcs: Append, mergeFirstLastPointIfNeeded, fixIndicesRotation, IsArcSegment; an arc read
+// into an outline: Append of a SHAPE_ARC, getArcPolygonizationMaxError).
 // Copyright (C) 2013-2016 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -14,8 +16,8 @@ import KiCadKit
 
 /// A KiCad board as KiCad's router sees it: its items in the order KiCad's SyncWorld puts them in the router's world,
 /// with the shapes KiCad makes of them, and the board's rules as its DRC engine works them out with no rules of the
-/// user's own. What KiCad's router would see and this cannot make yet (a text on copper, an arc track, a custom pad's
-/// merged outline) is named in `unsupported`.
+/// user's own. What KiCad's router would see and this cannot make yet (a text on copper, an arc track, a custom pad
+/// with a curve among its pieces) is named in `unsupported`.
 public struct BoardWorld {
     public private(set) var copperLayers = 2
     public private(set) var items: [WorldItem] = []
@@ -433,7 +435,6 @@ public struct BoardWorld {
             layers = LayerRange(front, front)
         }
         if node["padstack"] != nil { unsupported.insert("pad padstack") }
-        if node.text(at: 2) == "custom" { unsupported.insert("custom pad") }
         if p.removeUnconnected && p.attribute == .pth { unsupported.insert("pad without unconnected layers") }
         if node["property"]?.arguments.contains(where: { $0.text == "pad_prop_castellated" }) == true { unsupported.insert("castellated pad") }
 
@@ -454,11 +455,18 @@ public struct BoardWorld {
         w.source = node.value("uuid")
         if p.drill.x > 0 { w.hole = holeShape(p) }
         let shapes = effectiveShapes(p)
-        if p.kind == .custom && !(node["primitives"]?.arguments.isEmpty ?? true) {
-            // (KiCad merges a custom pad's anchor and pieces into one outline; until the port can, an outline round
-            // them all)
-            w.shape = customApproximation(node, p)
-            w.approximate = true
+        let primitives = (node["primitives"]?.arguments ?? []).filter { $0.head != "gr_bbox" && $0.head != "gr_vector" }
+        if p.kind == .custom && !primitives.isEmpty {
+            // (its anchor and pieces merged into one outline, as KiCad's router takes a pad of several shapes; where
+            // a piece is one the port cannot make a polygon of yet, an outline round them all)
+            if let merged = customPolygon(primitives, p) {
+                guard let outline = merged.polygons.first?.first else { return }
+                w.shape = .simple(outline)
+            } else {
+                unsupported.insert("custom pad curve or old arc")
+                w.shape = customApproximation(node, p)
+                w.approximate = true
+            }
         } else if shapes.count == 1 {
             w.shape = shapes[0]
         } else if let poly = effectivePolygon(p) {
@@ -467,6 +475,127 @@ public struct BoardWorld {
             return
         }
         items.append(w)
+    }
+
+    /// A custom pad's shape as KiCad's router has it (PAD::GetEffectivePolygon, the error outside): its anchor and
+    /// its primitives merged into one polygon (PAD::MergePrimitivesAsPolygon), turned and moved with the pad, grown by
+    /// the board's maximum error with round corners and fractured (PAD::TransformShapeToPolygon); nil if a primitive
+    /// is one the port cannot make a polygon of yet (a curve, an outlined rectangle with round corners, an arc in
+    /// the old format)
+    func customPolygon(_ primitives: [SExpr], _ p: Pad) -> PolySet? {
+        let maxError = rules.maxError
+        var merged = PolySet()
+        if p.anchorRect {
+            merged.addOutline(LineChain([IPoint(-p.size.x / 2, -p.size.y / 2), IPoint(-p.size.x / 2 + p.size.x, -p.size.y / 2),
+                                         IPoint(-p.size.x / 2 + p.size.x, -p.size.y / 2 + p.size.y),
+                                         IPoint(-p.size.x / 2, -p.size.y / 2 + p.size.y)], closed: true))
+        } else {
+            merged.append(PolySet([[PadPolygon.circle(center: .zero, radius: p.size.x / 2, maxError: maxError, errorLocation: .outside)]]))
+        }
+        var pieces = PolySet()
+        for prim in primitives {
+            guard let piece = Self.primitivePolygon(prim, maxError: maxError, errorLocation: .outside) else { return nil }
+            pieces.append(piece)
+        }
+        pieces.simplify()
+        if !pieces.polygons.isEmpty {
+            merged.booleanAdd(pieces)
+            merged.fracture()
+        }
+        merged.rotate(p.orientation)
+        merged.move(p.shapePos)
+        merged.inflate(maxError, .roundAllCorners, maxError: maxError)
+        merged.fracture()
+        return merged
+    }
+
+    /// A pad's primitive (a drawing in the pad's own coordinates) as polygons, its line's width round it and its
+    /// fill as the file has it (EDA_SHAPE::TransformShapeToPolygon, with what the board's parser makes of the
+    /// drawing: a polygon, or a rectangle or circle of no width without a fill, filled; a line of no width without
+    /// a fill a tenth of a millimetre wide); nil for one the port cannot make yet
+    static func primitivePolygon(_ prim: SExpr, maxError: Int, errorLocation: ErrorLocation) -> PolySet? {
+        let head = prim.head ?? ""
+        var width = prim["width"].map { iu($0, 0) } ?? prim["stroke"]?["width"].map { iu($0, 0) } ?? 0
+        let fills = prim["fill"]?.arguments.map(\.text) ?? []
+        var filled = fills.contains { ["yes", "solid", "hatch", "reverse_hatch", "cross_hatch"].contains($0) }
+        if prim["fill"] == nil {
+            if width == 0 && (head == "gr_rect" || head == "gr_circle") { filled = true }
+            if head == "gr_poly" { filled = true }
+        }
+        if width <= 0 && !filled { width = 100_000 }
+        var out = PolySet()
+        switch head {
+        case "gr_line":
+            out.append(PadPolygon.oval(start: point(prim["start"]), end: point(prim["end"]), width: width, maxError: maxError,
+                                       errorLocation: errorLocation))
+        case "gr_arc":
+            guard prim["mid"] != nil, prim["angle"] == nil else { return nil }
+            out.append(PadPolygon.arc(start: point(prim["start"]), mid: point(prim["mid"]), end: point(prim["end"]), width: width,
+                                      maxError: maxError, errorLocation: errorLocation))
+        case "gr_circle":
+            let c = point(prim["center"]), e = point(prim["end"])
+            let r = max(1, KiMath.round(DPoint(e - c).norm))
+            if filled {
+                out.append(PolySet([[PadPolygon.circle(center: c, radius: r + width / 2, maxError: maxError, errorLocation: errorLocation)]]))
+            } else {
+                out.append(PadPolygon.ring(center: c, radius: r, width: width, maxError: maxError, errorLocation: errorLocation))
+            }
+        case "gr_rect":
+            // (its corners put in order, top left first, as the parser does)
+            let s0 = point(prim["start"]), e0 = point(prim["end"])
+            let s = IPoint(min(s0.x, e0.x), min(s0.y, e0.y)), e = IPoint(max(s0.x, e0.x), max(s0.y, e0.y))
+            let radius = min(max(prim["radius"].map { iu($0, 0) } ?? 0, 0), min(e.x - s.x, e.y - s.y) / 2)
+            if radius > 0 {
+                guard filled else { return nil }
+                let size = IPoint(e.x - s.x, e.y - s.y)
+                let o = PadPolygon.roundChamferedRect(position: IPoint(s.x + size.x / 2, s.y + size.y / 2), size: size, rotation: .zero,
+                                                      cornerRadius: radius, chamferRatio: 0, chamferCorners: 0, inflate: width / 2,
+                                                      maxError: maxError, errorLocation: errorLocation)
+                out.addOutline(o)
+            } else {
+                let corners = [s, IPoint(e.x, s.y), e, IPoint(s.x, e.y)]
+                if filled {
+                    out.newOutline()
+                    for c in corners { out.append(c) }
+                }
+                if width > 0 || !filled {
+                    for i in 0..<4 {
+                        out.append(PadPolygon.oval(start: corners[i], end: corners[(i + 1) % 4], width: width, maxError: maxError,
+                                                   errorLocation: errorLocation))
+                    }
+                }
+            }
+        case "gr_poly":
+            // (its points as the parser reads them, an arc among them as a polyline, as a zone's are)
+            var chain = LineChain()
+            for q in prim["pts"]?.arguments ?? [] {
+                if q.head == "xy" {
+                    chain.append(point(q))
+                } else if q.head == "arc" {
+                    let line = ShapeArc(start: point(q["start"]), mid: point(q["mid"]), end: point(q["end"])).convertToPolyline(1000)
+                    for (i, p) in line.points.enumerated() { chain.append(p, allowDuplication: i > 0) }
+                }
+            }
+            chain.setClosed(true)
+            guard chain.pointCount > 2 else { return out }
+            if filled {
+                var tmp = PolySet()
+                tmp.newOutline()
+                for q in chain.points { tmp.append(q) }
+                if width > 0 {
+                    tmp.inflate(width / 2 + (errorLocation == .outside ? maxError : 0), .roundAllCorners, maxError: maxError)
+                }
+                out.append(tmp)
+            } else {
+                for i in 0..<chain.segmentCount {
+                    let seg = chain.segment(i)
+                    out.append(PadPolygon.oval(start: seg.a, end: seg.b, width: width, maxError: maxError, errorLocation: errorLocation))
+                }
+            }
+        default:
+            return nil
+        }
+        return out
     }
 
     /// A custom pad's anchor and primitives, all in one convex outline: no smaller than KiCad's merged outline
@@ -755,18 +884,27 @@ public struct BoardWorld {
         var w = WorldItem(kind: .keepout)
         w.net = nil
         w.keepout = keepout
+        // (a zone on no copper layer too: one that keeps out footprints, say, which KiCad's router takes and puts nothing of)
         let ls = copper(layerNames(node))
-        guard let lo = ls.first, let hi = ls.last else { return }
-        w.layers = LayerRange(lo, hi)
+        w.layers = LayerRange(ls.first ?? 0, ls.last ?? 0)
         w.zoneLayers = ls
-        // the outline as KiCad's parser reads it: each polygon's points (one the same as the one before it left out),
-        // closed, the first polygon the outline and the others holes in it (ZONE::AddPolygon)
+        // the outline as KiCad's parser reads it: each polygon's points (one the same as the one before it left out;
+        // an arc as a polyline a micrometre from it at most, a fifth of the usual for display, as SHAPE_LINE_CHAIN's
+        // Append of an arc makes it, its first point left out if it is the one before it), closed,
+        // the first polygon the outline and the others holes in it (ZONE::AddPolygon)
         var outline = PolySet()
         for poly in node.all("polygon") {
             let pts = poly["pts"]?.arguments ?? []
-            if pts.contains(where: { $0.head == "arc" }) { unsupported.insert("keepout zone with arcs") }
             var chain = LineChain()
-            for xy in pts where xy.head == "xy" { chain.append(Self.point(xy)) }
+            for q in pts {
+                if q.head == "xy" {
+                    chain.append(Self.point(q))
+                } else if q.head == "arc" {
+                    let arc = ShapeArc(start: Self.point(q["start"]), mid: Self.point(q["mid"]), end: Self.point(q["end"]))
+                    let line = arc.convertToPolyline(1000)
+                    for (i, p) in line.points.enumerated() { chain.append(p, allowDuplication: i > 0) }
+                }
+            }
             chain.setClosed(true)
             if chain.pointCount == 0 { continue }
             if outline.outlineCount == 0 {

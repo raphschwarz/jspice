@@ -1,7 +1,8 @@
 // Ported from KiCad 10.0.7: libs/kimath/include/geometry/shape_poly_set.h and libs/kimath/src/geometry/shape_poly_set.cpp
 // (SHAPE_POLY_SET as far as KiCad's router uses one: CacheTriangulation( false ) and what it calls, Fracture with its
 // cache-friendly fracture, Simplify with splitCollinearOutlines and the Clipper2 union of booleanOp and importTree,
-// splitSelfTouchingOutlines, SimplifyOutlines, PointInside), libs/kimath/src/geometry/shape_line_chain.cpp
+// splitSelfTouchingOutlines, SimplifyOutlines, PointInside; and as far as a custom pad's outline needs one:
+// Append, BooleanAdd, BooleanIntersection, Inflate with inflate2, Rotate, Move), libs/kimath/src/geometry/shape_line_chain.cpp
 // (convertToClipper2, and a SHAPE_LINE_CHAIN made from a Clipper2 path) and libs/kimath/include/geometry/
 // shape_line_chain.h (CLIPPER_Z_VALUE).
 // Copyright (C) 2015-2019 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
@@ -124,7 +125,81 @@ public struct PolySet: Sendable {
         }
     }
 
+    /// Another set's polygons added after this one's (KiCad's Append of a SHAPE_POLY_SET)
+    public mutating func append(_ other: PolySet) { polygons += other.polygons }
+
+    /// Every point turned about `center` (KiCad's Rotate)
+    public mutating func rotate(_ angle: EDAAngle, around center: IPoint = .zero) {
+        for i in polygons.indices {
+            for j in polygons[i].indices { polygons[i][j] = polygons[i][j].rotated(angle, around: center) }
+        }
+    }
+
+    /// Every point moved by `d` (KiCad's Move)
+    public mutating func move(_ d: IPoint) {
+        for i in polygons.indices {
+            for j in polygons[i].indices { polygons[i][j] = polygons[i][j].moved(d) }
+        }
+    }
+
     // MARK: - Clipper2
+
+    /// The set made its union with `b` (KiCad's BooleanAdd)
+    public mutating func booleanAdd(_ b: PolySet) { booleanOp(.union, self, b) }
+
+    /// The set made its intersection with `b` (KiCad's BooleanIntersection)
+    public mutating func booleanIntersection(_ b: PolySet) { booleanOp(.intersection, self, b) }
+
+    /// How an outline's corners are offset (KiCad's CORNER_STRATEGY)
+    public enum CornerStrategy { case allowAcuteCorners, chamferAcuteCorners, roundAcuteCorners, chamferAllCorners, roundAllCorners }
+
+    /// Every outline grown by `amount` (shrunk if it is negative), its holes shrunk, by Clipper2's offset, its round
+    /// corners `maxError` from true (KiCad's Inflate)
+    public mutating func inflate(_ amount: Int, _ cornerStrategy: CornerStrategy, maxError: Int, simplify: Bool = false) {
+        let segCount = KiMath.arcToSegmentCount(abs(amount), maxError, .a360)
+        inflate2(amount, segCount, cornerStrategy, simplify: simplify)
+    }
+
+    /// KiCad's inflate2: the arc tolerance worked out from the segments a full circle would have
+    private mutating func inflate2(_ amount: Int, _ circleSegCount: Int, _ cornerStrategy: CornerStrategy, simplify: Bool) {
+        var joinType = Clipper.JoinType.round
+        var miterLimit = 2.0
+        switch cornerStrategy {
+        case .allowAcuteCorners:
+            joinType = .miter
+            miterLimit = 10
+        case .chamferAcuteCorners, .roundAcuteCorners:
+            joinType = .miter
+        case .chamferAllCorners:
+            joinType = .square
+        case .roundAllCorners:
+            joinType = .round
+        }
+        var zValues: [ClipperZValue] = []
+        var arcBuffer: [ShapeArc] = []
+        let c = Clipper.ClipperOffset()
+        for poly in polygons {
+            var paths = Clipper.Paths64()
+            for (i, chain) in poly.enumerated() { paths.append(chain.convertToClipper2(i == 0, &zValues, &arcBuffer)) }
+            c.addPaths(paths, joinType, .polygon)
+        }
+        let segCount = max(circleSegCount, 6)
+        let coeff = 1.0 - Foundation.cos(Double.pi / Double(segCount))
+        c.arcTolerance = Double(abs(amount)) * coeff
+        c.miterLimit = miterLimit
+        let tree = Clipper.PolyTree64()
+        if simplify {
+            let paths = Clipper.simplifyPaths(c.execute(Double(amount)), Double(abs(amount)) * coeff, isClosedPath: true)
+            let c2 = Clipper.Clipper64()
+            c2.preserveCollinear = false
+            c2.reverseSolution = false
+            c2.addSubject(paths)
+            _ = c2.execute(.union, .positive, polytree: tree)
+        } else {
+            c.execute(Double(amount), polytree: tree)
+        }
+        importTree(tree, zValues, arcBuffer)
+    }
 
     /// The set made the union, intersection, difference or exclusive or of `a` and `b` under the non-zero rule, by
     /// Clipper2, with the z values KiCad follows its arcs through it with (KiCad's booleanOp)

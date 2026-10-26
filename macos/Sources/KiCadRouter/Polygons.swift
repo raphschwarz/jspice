@@ -1,6 +1,7 @@
 // Ported from KiCad 10.0.7: libs/kimath/src/convert_basic_shapes_to_polygon.cpp (rectangles with rounded or cut
-// corners, trapezoids and circles as polygons), libs/kimath/src/geometry/seg.cpp (ReflectPoint) and
-// libs/kimath/src/geometry/geometry_utils.cpp (GetCircleToPolyCorrection).
+// corners, trapezoids, circles, rings, segments with round ends and arcs of some width as polygons, and arcs as
+// polylines), libs/kimath/src/geometry/arc_chord_params.cpp and include/geometry/arc_chord_params.h, libs/kimath/src/
+// geometry/seg.cpp (ReflectPoint) and libs/kimath/src/geometry/geometry_utils.cpp (GetCircleToPolyCorrection).
 // Copyright (C) 2018 Jean-Pierre Charras; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -240,7 +241,263 @@ public enum PadPolygon {
         out.append(KiMath.rotate(IPoint(r, 0), delta / 2) + center)
         return out
     }
+    /// A circle as a closed chain, its segment count a multiple of eight (KiCad's TransformCircleToPolygon, into a
+    /// SHAPE_LINE_CHAIN: the first point not repeated)
+    public static func circleChain(center: IPoint, radius: Int, maxError: Int, errorLocation: ErrorLocation, minSegCount: Int = 0) -> LineChain {
+        var numSegs = max(minSegCount, KiMath.arcToSegmentCount(radius, maxError, .a360))
+        numSegs = (numSegs + 7) / 8 * 8
+        let delta = EDAAngle.a360 / Double(numSegs)
+        var r = radius
+        if errorLocation == .outside { r += KiMath.circleToEndSegmentDeltaRadius(r, numSegs) }
+        var out = LineChain()
+        var angle = delta / 2
+        while angle < .a360 {
+            out.append(KiMath.rotate(IPoint(r, 0), angle) + center)
+            angle += delta
+        }
+        out.setClosed(true)
+        return out
+    }
+
+    /// A segment `width` wide with round ends as a polygon (KiCad's TransformOvalToPolygon): its ends' half circles
+    /// cut to the segment's width, in case the error outside made them wider
+    public static func oval(start: IPoint, end: IPoint, width: Int, maxError: Int, errorLocation: ErrorLocation,
+                            minSegCount: Int = 0) -> PolySet {
+        var radius = width / 2
+        var numSegs = max(minSegCount, KiMath.arcToSegmentCount(radius, maxError, .a360))
+        numSegs = (numSegs + 7) / 8 * 8
+        let delta = EDAAngle.a360 / Double(numSegs)
+        if errorLocation == .outside { radius += KiMath.circleToEndSegmentDeltaRadius(radius, numSegs) }
+        // (the segment from the origin along x, its end to the right)
+        var endp = end - start, startp = start
+        if endp.x < 0 {
+            endp = start - end
+            startp = end
+        }
+        let deltaAngle = EDAAngle(endp)
+        let segLen = endp.norm
+        var shape = PolySet()
+        shape.newOutline()
+        shape.append(IPoint(segLen, radius))
+        var angle = delta / 2
+        while angle < .a180 {
+            shape.append(KiMath.rotate(IPoint(0, radius), angle) + IPoint(segLen, 0))
+            angle += delta
+        }
+        shape.append(IPoint(segLen, -radius))
+        shape.append(IPoint(0, -radius))
+        angle = delta / 2
+        while angle < .a180 {
+            shape.append(KiMath.rotate(IPoint(0, -radius), angle))
+            angle += delta
+        }
+        shape.append(IPoint(0, radius))
+        let halfWidth = width / 2
+        var box = PolySet()
+        box.newOutline()
+        for c in [IPoint(-radius - 2, halfWidth), IPoint(-radius - 2, -halfWidth), IPoint(radius + segLen + 2, -halfWidth),
+                  IPoint(radius + segLen + 2, halfWidth)] { box.append(c) }
+        shape.booleanIntersection(box)
+        shape.rotate(-deltaAngle)
+        shape.move(startp)
+        return shape
+    }
+
+    /// A ring as a polygon, its hole fractured into it; a circle if it has no hole (KiCad's TransformRingToPolygon)
+    public static func ring(center: IPoint, radius: Int, width: Int, maxError: Int, errorLocation: ErrorLocation) -> PolySet {
+        let inner = radius - width / 2, outer = inner + width
+        if inner <= 0 {
+            return PolySet([[circle(center: center, radius: radius + width / 2, maxError: maxError, errorLocation: errorLocation)]])
+        }
+        var buffer = PolySet([[circle(center: center, radius: outer, maxError: maxError, errorLocation: errorLocation)]])
+        // (the hole's error on the other side)
+        buffer.addHole(circleChain(center: center, radius: inner, maxError: maxError,
+                                   errorLocation: errorLocation == .outside ? .inside : .outside))
+        buffer.fracture()
+        return buffer
+    }
+
+    /// An arc `width` wide with round ends as a polygon (KiCad's TransformArcToPolygon): a segment if its middle is
+    /// within a nanometre of its chord; worked round counter-clockwise
+    public static func arc(start: IPoint, mid: IPoint, end: IPoint, width: Int, maxError: Int, errorLocation: ErrorLocation) -> PolySet {
+        let distanceToMid = Seg(start, end).distance(mid)
+        if distanceToMid <= 1 {
+            return oval(start: start, end: end, width: width + distanceToMid, maxError: maxError, errorLocation: errorLocation)
+        }
+        let startToMid = mid - start, startToEnd = end - start
+        let cross = startToMid.x * startToEnd.y - startToMid.y * startToEnd.x
+        var p0 = start, p1 = end
+        if cross < 0 { swap(&p0, &p1) }
+        guard let params = ArcChordParams(p0, mid, p1) else {
+            return oval(start: start, end: end, width: width, maxError: maxError, errorLocation: errorLocation)
+        }
+        let startAngle = params.startAngle, endAngle = params.endAngle
+        let radialOffset = width / 2
+        let innerRadius = params.radius - Double(radialOffset)
+        let innerError: ErrorLocation = errorLocation == .inside ? .outside : .inside
+        let outerError: ErrorLocation = errorLocation == .inside ? .inside : .outside
+        var outline = LineChain()
+        outline.setClosed(true)
+        // the starting end's half circle, the outside, the ending end's half circle, the inside back
+        arcToPolyline(&outline, center: p0, radius: radialOffset, startAngle: startAngle - .a180, arcAngle: .a180,
+                      accuracy: Double(maxError), errorLocation: errorLocation)
+        arcToPolyline(&outline, start: p0, mid: mid, end: p1, accuracy: Double(maxError), errorLocation: outerError,
+                      radialOffset: Double(radialOffset))
+        arcToPolyline(&outline, center: p1, radius: radialOffset, startAngle: endAngle, arcAngle: .a180,
+                      accuracy: Double(maxError), errorLocation: errorLocation)
+        if innerRadius > 0 {
+            arcToPolyline(&outline, start: p1, mid: mid, end: p0, accuracy: Double(maxError), errorLocation: innerError,
+                          radialOffset: -Double(radialOffset))
+        }
+        return PolySet([[outline]])
+    }
+
+    /// An arc through three points, `radialOffset` out from it, as a polyline added to `chain`, its points `accuracy`
+    /// from true on the side asked (KiCad's ConvertArcToPolyline by its points, working along its chord); the number
+    /// of segments
+    @discardableResult
+    static func arcToPolyline(_ chain: inout LineChain, start: IPoint, mid: IPoint, end: IPoint, accuracy: Double,
+                              errorLocation: ErrorLocation, radialOffset: Double) -> Int {
+        guard let params = ArcChordParams(start, mid, end) else {
+            chain.append(start)
+            if end != start { chain.append(end) }
+            return 0
+        }
+        let arcAngle = params.arcAngle
+        if arcAngle <= 0 {
+            chain.append(start)
+            chain.append(end)
+            return 0
+        }
+        let maxCoord = Double(Int32.max)
+        var points: [IPoint] = []
+        func point(_ alpha: Double, _ effectiveRadius: Double) -> Bool {
+            let uOffset = effectiveRadius * Foundation.sin(alpha)
+            let nOffset = params.centerOffset - effectiveRadius * Foundation.cos(alpha)
+            let x = params.midX + params.ux * uOffset + params.nx * nOffset
+            let y = params.midY + params.uy * uOffset + params.ny * nOffset
+            // (an approximation that would overflow: a straight segment instead)
+            if !x.isFinite || !y.isFinite || abs(x) > maxCoord || abs(y) > maxCoord { return false }
+            points.append(IPoint(KiMath.round(x), KiMath.round(y)))
+            return true
+        }
+        func straight() -> Int {
+            chain.clear()
+            chain.append(start)
+            chain.append(end)
+            return 0
+        }
+        let effectiveRadius = params.radius + radialOffset
+        let arcAngleEDA = EDAAngle(radians: arcAngle)
+        var n = 2
+        let radiusForSeg = KiMath.round(min(abs(effectiveRadius), maxCoord))
+        if Double(radiusForSeg) >= accuracy { n = KiMath.arcToSegmentCount(radiusForSeg, Int(accuracy), arcAngleEDA) + 1 }
+        let halfAngle = arcAngle / 2, delta = arcAngle / Double(n)
+        if errorLocation == .inside {
+            for i in 0...n where !point(-halfAngle + delta * Double(i), effectiveRadius) { return straight() }
+        } else {
+            let seg360 = abs(KiMath.round(Double(n) * 360.0 / arcAngleEDA.degrees))
+            if seg360 <= 0 {
+                for i in 0...n where !point(-halfAngle + delta * Double(i), effectiveRadius) { return straight() }
+                for p in points { chain.append(p) }
+                return n
+            }
+            let deltaRadius = KiMath.circleToEndSegmentDeltaRadius(radiusForSeg, seg360)
+            let errorRadius = effectiveRadius + Double(deltaRadius)
+            if !point(-halfAngle, effectiveRadius) { return straight() }
+            for i in 0..<n where !point(-halfAngle + delta * (Double(i) + 0.5), errorRadius) { return straight() }
+            if !point(halfAngle, effectiveRadius) { return straight() }
+        }
+        for p in points { chain.append(p) }
+        return n
+    }
+
+    /// An arc about `center`, from `startAngle` round `arcAngle`, as a polyline added to `chain`, its points
+    /// `accuracy` from true on the side asked (KiCad's ConvertArcToPolyline by its centre); the number of segments
+    @discardableResult
+    static func arcToPolyline(_ chain: inout LineChain, center: IPoint, radius: Int, startAngle: EDAAngle, arcAngle: EDAAngle,
+                              accuracy: Double, errorLocation: ErrorLocation) -> Int {
+        var n = 2
+        if Double(radius) >= accuracy { n = KiMath.arcToSegmentCount(radius, Int(accuracy), arcAngle) + 1 }
+        let delta = arcAngle / Double(n)
+        func at(_ r: Int, _ a: EDAAngle) -> IPoint {
+            IPoint(KiMath.round(Double(center.x) + Double(r) * a.cos), KiMath.round(Double(center.y) + Double(r) * a.sin))
+        }
+        if errorLocation == .inside {
+            // (the segments' ends on the arc)
+            var rot = startAngle
+            for _ in 0...n {
+                chain.append(at(radius, rot))
+                rot += delta
+            }
+        } else {
+            // (the segments' middles on the arc: half a segment more at each end)
+            let seg360 = abs(KiMath.round(Double(n) * 360.0 / arcAngle.degrees))
+            let errorRadius = radius + KiMath.circleToEndSegmentDeltaRadius(radius, seg360)
+            chain.append(at(radius, startAngle))
+            var rot = startAngle + delta / 2
+            for _ in 0..<n {
+                chain.append(at(errorRadius, rot))
+                rot += delta
+            }
+            chain.append(at(radius, startAngle + arcAngle))
+        }
+        return n
+    }
 }
+
+/// An arc worked out along its chord, from its start to its end, and the normal to it toward the arc's centre, which
+/// keeps shallow arcs exact (KiCad's ARC_CHORD_PARAMS); nil if the points are in line or two the same
+struct ArcChordParams {
+    var chordLength: Double, halfChord: Double
+    var ux: Double, uy: Double, nx: Double, ny: Double
+    var sagitta: Double, radius: Double, centerOffset: Double
+    var midX: Double, midY: Double
+
+    init?(_ start: IPoint, _ mid: IPoint, _ end: IPoint) {
+        let dx = Double(end.x) - Double(start.x), dy = Double(end.y) - Double(start.y)
+        chordLength = (dx * dx + dy * dy).squareRoot()
+        if chordLength <= 0 { return nil }
+        let mx = Double(mid.x) - Double(start.x), my = Double(mid.y) - Double(start.y)
+        let cross = mx * dy - my * dx
+        if cross == 0 { return nil }
+        sagitta = abs(cross) / chordLength
+        if sagitta <= 0 { return nil }
+        halfChord = chordLength / 2
+        radius = (halfChord * halfChord + sagitta * sagitta) / (2 * sagitta)
+        if radius <= 0 { return nil }
+        ux = dx / chordLength
+        uy = dy / chordLength
+        nx = -uy
+        ny = ux
+        if cross < 0 {
+            nx = -nx
+            ny = -ny
+        }
+        centerOffset = radius - sagitta
+        midX = (Double(start.x) + Double(end.x)) * 0.5
+        midY = (Double(start.y) + Double(end.y)) * 0.5
+    }
+
+    /// The direction from the centre to the start
+    var startAngle: EDAAngle {
+        let sinHalf = halfChord / radius, cosHalf = centerOffset / radius
+        return EDAAngle(DPoint(-sinHalf * ux - cosHalf * nx, -sinHalf * uy - cosHalf * ny))
+    }
+
+    /// The direction from the centre to the end
+    var endAngle: EDAAngle {
+        let sinHalf = halfChord / radius, cosHalf = centerOffset / radius
+        return EDAAngle(DPoint(sinHalf * ux - cosHalf * nx, sinHalf * uy - cosHalf * ny))
+    }
+
+    /// The angle the arc sweeps, in radians
+    var arcAngle: Double {
+        let base = 2 * asin(min(max(halfChord / radius, 0), 1))
+        return sagitta > radius ? 2 * Double.pi - base : base
+    }
+}
+
 
 extension LineChain {
     /// Every point turned about the origin (KiCad's SHAPE_LINE_CHAIN::Rotate)
