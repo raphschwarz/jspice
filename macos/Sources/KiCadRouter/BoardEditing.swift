@@ -38,7 +38,26 @@ public final class BoardEditing {
         public var viaSize: Double
         public var net: String?
         public var target: KiCadPoint?
+        /// What the track has shoved aside (shoving): the board's tracks and vias it moved, by id, and where they go now
+        public var moved: Set<String> = []
+        public var shovedTracks: [Track] = []
+        public var shovedVias: [Via] = []
+
+        public struct Track: Sendable, Equatable {
+            public var points: [KiCadPoint]
+            public var width: Double
+            public var layer: String
+        }
+
+        public struct Via: Sendable, Equatable {
+            public var center: KiCadPoint
+            public var size: Double
+        }
     }
+
+    /// How a track started here gets past what is in its way: walks round it (KiCad's default), or shoves it aside.
+    /// Routing every connection walks round.
+    public var mode: RouterMode = .walkaround
 
     public private(set) var router: BoardRouter
     private var project: [String: Any]?
@@ -106,6 +125,11 @@ public final class BoardEditing {
     /// Starts a track at `p` on `layer` (width in mm, nil for its net class's); whether it could (not on another
     /// net's copper, nor too close to it)
     public func start(at p: KiCadPoint, layer: String, width: Double? = nil) -> Bool {
+        start(at: p, layer: layer, width: width, mode: mode)
+    }
+
+    private func start(at p: KiCadPoint, layer: String, width: Double?, mode: RouterMode) -> Bool {
+        router.mode = mode
         let layerName = startLayer(at: p, preferring: layer)
         guard let l = router.layer(layerName) else { return false }
         return router.start(at: snap(p, layer: layerName), layer: l, width: width.map { Int(($0 * 1e6).rounded()) })
@@ -188,10 +212,21 @@ public final class BoardEditing {
 
     public var preview: Preview? {
         guard let p = router.preview else { return nil }
-        return Preview(tail: p.tail.points.map(Self.mm), head: p.head.points.map(Self.mm), width: Double(p.width) / 1e6,
-                       layer: router.layerName(p.layer), via: p.via.map(Self.mm),
-                       viaSize: Double(router.router.sizes.viaDiameter) / 1e6, net: router.routedNet,
-                       target: router.target.map(Self.mm))
+        var shown = Preview(tail: p.tail.points.map(Self.mm), head: p.head.points.map(Self.mm), width: Double(p.width) / 1e6,
+                            layer: router.layerName(p.layer), via: p.via.map(Self.mm),
+                            viaSize: Double(router.router.sizes.viaDiameter) / 1e6, net: router.routedNet,
+                            target: router.target.map(Self.mm))
+        let shoved = router.shoved
+        shown.moved = shoved.moved
+        for item in shoved.items {
+            if let s = item as? Segment {
+                shown.shovedTracks.append(.init(points: [Self.mm(s.seg.a), Self.mm(s.seg.b)], width: Double(s.width) / 1e6,
+                                                layer: router.layerName(s.layers.start)))
+            } else if let v = item as? Via {
+                shown.shovedVias.append(.init(center: Self.mm(v.pos), size: Double(v.diameter) / 1e6))
+            }
+        }
+        return shown
     }
 
     // MARK: - Routing every connection
@@ -255,7 +290,7 @@ public final class BoardEditing {
     private func route(_ wire: KiCadConnectivity.Airwire, layer: String, width: Double?) -> (added: [String], removed: [String])? {
         let other = layers.first { $0 != layer } ?? layer
         for l in (layer == other ? [layer] : [layer, other]) {
-            guard start(at: wire.from, layer: startLayer(at: wire.from, preferring: l), width: width) else { continue }
+            guard start(at: wire.from, layer: startLayer(at: wire.from, preferring: l), width: width, mode: .walkaround) else { continue }
             move(to: wire.to)
             if let edit = fix(at: wire.to) { return (edit.added, edit.removed) }
             cancel()

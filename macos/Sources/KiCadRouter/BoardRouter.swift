@@ -60,6 +60,21 @@ public final class BoardRouter {
 
     // MARK: - Routing
 
+    /// How the router gets past what is in a track's way: walks round it, or shoves it aside (KiCad's router modes)
+    public var mode: RouterMode {
+        get { router.settings.mode }
+        set { router.settings.mode = newValue }
+    }
+
+    /// What the track being routed has shoved aside, as KiCad's router shows it (the line placer's current node, its
+    /// loops taken out): the board's tracks and vias it moved (their ids), and the tracks and vias where they go now
+    public var shoved: (moved: Set<String>, items: [Item]) {
+        guard router.routingInProgress, mode == .shove, let node = router.placer?.currentNode(loopsRemoved: true) else { return ([], []) }
+        let (removed, added) = node.updatedItems()
+        let moved = Set(removed.compactMap { iface.resolver.info[ObjectIdentifier($0)]?.source })
+        return (moved, added.filter { !$0.isVirtual && ($0.kind == .segment || $0.kind == .via) })
+    }
+
     /// The routable item at `p` on `layer`: a pad, then a via, then a track (as the router tool picks its start)
     public func item(at p: IPoint, layer: Int) -> Item? {
         let hits = router.queryHoverItems(p).filter { $0.layers.overlaps(layer) && $0.isRoutable }

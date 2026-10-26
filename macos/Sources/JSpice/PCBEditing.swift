@@ -28,6 +28,12 @@ final class PCBEditing: ObservableObject {
     @Published var width: Double? {
         didSet { if width != oldValue { widthChanged() } }
     }
+    /// Whether a track shoves other nets' tracks and vias in its way aside (KiCad's shove mode) or walks round them;
+    /// the next track started takes it
+    @Published var shove = UserDefaults.standard.bool(forKey: PCBEditing.shoveKey) {
+        didSet { UserDefaults.standard.set(shove, forKey: Self.shoveKey) }
+    }
+    static let shoveKey = "pcbRouterShove"
     /// The track being routed, as it now goes
     @Published private(set) var preview: BoardEditing.Preview?
     @Published private(set) var isRouting = false
@@ -180,10 +186,11 @@ final class PCBEditing: ObservableObject {
     func clickNow(at p: KiCadPoint, double: Bool = false) async {
         if !isRouting {
             guard !double else { return }
-            let layer = self.layer, width = self.width
+            let layer = self.layer, width = self.width, mode: RouterMode = shove ? .shove : .walkaround
             await applying?.value
             if !isReady { await prepareNow() }
             let started = await engine.run { session -> (Bool, String, BoardEditing.Preview?)? in
+                session.mode = mode
                 let l = session.startLayer(at: p, preferring: layer)
                 guard session.start(at: p, layer: l, width: width) else { return (false, l, nil) }
                 return (true, l, session.move(to: p))

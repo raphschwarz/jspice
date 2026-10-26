@@ -177,6 +177,8 @@ struct PCBPainter {
     let side: PCBSide
     let selected: Set<String>
     let drc: KiCadFabrication.DRCReport?
+    /// Tracks and vias not drawn, by id (those the track being routed has shoved aside, drawn where they now go)
+    var hidden: Set<String> = []
 
     static let background = Color(red: 0, green: 0.063, blue: 0.137)
     static let substrate = Color(red: 0.05, green: 0.16, blue: 0.13)
@@ -232,7 +234,7 @@ struct PCBPainter {
                     context.fill(fill, with: .color(color(layer).opacity(dim ? 0.25 : 0.5)))
                 }
             }
-            for track in picture.tracks where track.layer == layer {
+            for track in picture.tracks where track.layer == layer && !hidden.contains(track.uuid) {
                 context.stroke(view.path(track.points, closed: false), with: .color(tint),
                                style: StrokeStyle(lineWidth: max(0.5, track.width * s), lineCap: .round, lineJoin: .round))
             }
@@ -247,7 +249,7 @@ struct PCBPainter {
         var plated = Path()
         for pad in picture.pads where pad.sides == "FB" { plated.addPath(view.path(pad.outline, closed: true)) }
         context.fill(plated, with: .color(Self.plated))
-        for via in picture.vias {
+        for via in picture.vias where !hidden.contains(via.uuid) {
             let c = view.point(via.center), r = via.size * s / 2
             context.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(Self.via))
         }
@@ -266,7 +268,7 @@ struct PCBPainter {
                 holes.addPath(slot.applying(CGAffineTransform(rotationAngle: angle * .pi / 180).concatenating(CGAffineTransform(translationX: c.x, y: c.y))))
             }
         }
-        for via in picture.vias {
+        for via in picture.vias where !hidden.contains(via.uuid) {
             let c = view.point(via.center), r = via.drill * s / 2
             holes.addEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
         }
@@ -356,7 +358,8 @@ struct PCBBoardCanvas: View {
 
     var body: some View {
         Canvas { context, _ in
-            PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc).draw(context)
+            PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc,
+                       hidden: editing.preview?.moved ?? []).draw(context)
             PCBEditPainter(picture: picture, view: view, preview: editing.preview, selection: editing.selection,
                            dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil).draw(context)
         }
@@ -516,6 +519,15 @@ struct PCBEditPainter {
             }
         }
         guard let preview else { return }
+        // what the track has shoved aside, where it now goes
+        for track in preview.shovedTracks {
+            context.stroke(view.path(track.points, closed: false), with: .color(PCBPainter.color(track.layer).opacity(0.9)),
+                           style: StrokeStyle(lineWidth: max(0.5, track.width * s), lineCap: .round, lineJoin: .round))
+        }
+        for via in preview.shovedVias {
+            let c = view.point(via.center), r = via.size * s / 2
+            context.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(PCBPainter.via))
+        }
         let color = PCBPainter.color(preview.layer)
         // the net's pads, to see where it goes
         if let net = preview.net {
@@ -592,6 +604,13 @@ struct PCBEditBar: View {
                 }
                 .fixedSize()
                 .help("The width of new tracks (W, ⇧W): their net class's, or one chosen here")
+                Picker("Obstacles", selection: $editing.shove) {
+                    Text("Walk Around").tag(false)
+                    Text("Shove").tag(true)
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("What a new track does with other nets' tracks and vias in its way: walks round them, or shoves them aside (KiCad's router modes)")
             }
             Menu {
                 Button("Route All Connections") { editing.routeAll() }

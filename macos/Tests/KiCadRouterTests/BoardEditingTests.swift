@@ -97,6 +97,62 @@ final class BoardEditingTests: XCTestCase {
         }
     }
 
+    /// Tracks routed shoving what is in their way (KiCad's shove mode): the preview shows the tracks and vias pushed
+    /// aside where they now go, and which of the board's it moved; the change takes those out and puts in the shoved;
+    /// KiCad's DRC finds nothing wrong with what was routed and shoved
+    func testATrackShovesWhatIsInItsWay() throws {
+        var shoves = 0, shown = 0
+        var finalBoards: [(URL, KiCadBoard)] = []
+        for file in try Self.boards() {
+            let board = try KiCadBoard.read(file)
+            let session = BoardEditing(board: board, project: Self.project(file))
+            session.mode = .shove
+            for (a, b, layer) in BoardRoutingTests.pairs(session.router.world, seed: file.lastPathComponent) {
+                let from = Self.mm(a), to = Self.mm(b)
+                guard session.start(at: from, layer: session.layers[layer]) else { continue }
+                XCTAssertEqual(session.router.mode, .shove)
+                let before = session.board
+                for t in [0.25, 0.5, 0.75] {
+                    let preview = try XCTUnwrap(session.move(to: KiCadPoint(from.x + (to.x - from.x) * t + 0.3, from.y + (to.y - from.y) * t - 0.2)))
+                    if !preview.moved.isEmpty {
+                        shown += 1
+                        XCTAssertFalse(preview.shovedTracks.isEmpty && preview.shovedVias.isEmpty, "what was shoved is shown where it goes")
+                        for uuid in preview.moved { XCTAssertTrue(before.copperItems.contains { $0.value("uuid") == uuid }) }
+                    }
+                }
+                session.move(to: to)
+                guard let edit = session.fix(at: to) ?? session.stop() else { continue }
+                if !edit.removed.isEmpty { shoves += 1 }
+                for uuid in edit.removed { XCTAssertFalse(edit.after.copperItems.contains { $0.value("uuid") == uuid }) }
+                for uuid in edit.added { XCTAssertTrue(edit.after.copperItems.contains { $0.value("uuid") == uuid }) }
+            }
+            finalBoards.append((file, session.board))
+        }
+        print("BoardEditingTests: \(shoves) tracks shoved others aside (\(shown) previews showed it)")
+        XCTAssertGreaterThan(shoves, 0)
+        XCTAssertGreaterThan(shown, 0)
+        guard let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor else {
+            if ProcessInfo.processInfo.environment["JSPICE_REQUIRE_KICAD"] != nil { return XCTFail("KiCad 10's kicad-cli is needed") }
+            return
+        }
+        let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-shove-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        for (file, board) in finalBoards {
+            let copy = work.appendingPathComponent(file.lastPathComponent)
+            try board.write(to: copy)
+            let pro = file.deletingPathExtension().appendingPathExtension("kicad_pro")
+            try? FileManager.default.copyItem(at: pro, to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+            let original = Set(try KiCadBoard.read(file).copperItems.compactMap { $0.value("uuid") })
+            let added = Set(board.copperItems.compactMap { $0.value("uuid") }).subtracting(original)
+            let report = try KiCadFabrication(installation: kicad).drc(copy, refillZones: false)
+            let ours = report.violations.filter { v in
+                BoardRoutingTests.routerViolations.contains(v.type) && v.items.contains { added.contains($0.uuid) }
+            }
+            XCTAssert(ours.isEmpty, "\(file.lastPathComponent): " + ours.map { "\($0.type): \($0.description)" }.joined(separator: "; "))
+        }
+    }
+
     /// Footprints moved, turned and turned over, each a change of its own; the router then sees their pads where they
     /// went
     func testFootprintsArePlaced() throws {
