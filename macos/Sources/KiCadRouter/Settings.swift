@@ -66,9 +66,22 @@ public struct SizesSettings: Sendable {
     public var diffPairViaGap = 180_000
     public var diffPairViaGapSameAsTraceGap = true
     public var holeToHole = 0
+    public var diffPairHoleToHole = 0
+    public var diffPairCopperToHole = 0
     public var layerPairs: [Int: Int] = [:]
 
     public init() {}
+
+    /// The gap between a differential pair's vias (KiCad's DiffPairViaGap): the pair's own gap, if it is to be the
+    /// same
+    public var pairViaGap: Int { diffPairViaGapSameAsTraceGap ? diffPairGap : diffPairViaGap }
+
+    /// The copper to copper gap between a pair's vias, their holes' clearances to each other and to copper allowed
+    /// for too (KiCad's EffectiveDiffPairViaGap)
+    public var effectiveDiffPairViaGap: Int {
+        let annularRing = (viaDiameter - viaDrill) / 2
+        return max(pairViaGap, diffPairHoleToHole - 2 * annularRing, diffPairCopperToHole - annularRing)
+    }
 
     public func pairedLayer(_ layer: Int) -> Int? { layerPairs[layer] }
 

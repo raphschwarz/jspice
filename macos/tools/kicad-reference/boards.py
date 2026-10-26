@@ -7,9 +7,11 @@ vias, on a four layer board blind, buried and micro ones too; drawings on copper
 shapes, some with holes, some in footprints. Each board is saved (its .kicad_pcb and .kicad_pro), and board-scene.py
 run on it (KiCad reading it afresh) writes what KiCad's router sees of it. With --custom-pads, the footprints are
 drawn from every footprint of KiCad's libraries with a custom pad (their primitives: polygons, lines, arcs, circles
-and rings, rectangles, filled or outlined, of some width or none) instead.
+and rings, rectangles, filled or outlined, of some width or none) instead. With --pairs, boards with differential
+pairs to route instead: a connector and a chip with two pairs of their pads of pairs' nets, a net class with a diff
+pair width and gap of its own, parts and tracks of other nets between.
 
-    boards.py [--custom-pads] OUTDIR COUNT [SEED]
+    boards.py [--custom-pads | --pairs] OUTDIR COUNT [SEED]
 """
 
 import math
@@ -325,10 +327,98 @@ def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None):
     pcbnew.SaveBoard(path, board)
 
 
+# differential pairs' nets, as KiCad tells them (a last P or N, + or -), and other nets
+PAIR_NETS = [("USB_D+", "USB_D-"), ("LVDS0_P", "LVDS0_N"), ("CLK_P", "CLK_N"), ("TX_P_1", "TX_N_1")]
+PAIR_ENDS = [("Connector_PinHeader_2.54mm", "PinHeader_1x04_P2.54mm_Vertical"),
+             ("Connector_PinHeader_1.27mm", "PinHeader_1x04_P1.27mm_Vertical")]
+PAIR_CHIPS = [("Package_SO", "SOIC-8_3.9x4.9mm_P1.27mm"), ("Package_SO", "TSSOP-16_4.4x5mm_P0.65mm")]
+
+
+def make_pairs(rng, path):
+    """A board with differential pairs to route: a connector on the left, a chip on the right, two pairs of their
+    pads (pins 1 and 2, 3 and 4) of two pairs' nets, in a net class of its own for some (its own diff pair width and
+    gap); parts and tracks of other nets between, on two or four layers"""
+    board = pcbnew.NewBoard(path)
+    board.SetCopperLayerCount(rng.choice([2, 2, 4]))
+    x0, y0 = 100 * MM, 50 * MM
+    x1, y1 = x0 + rng.randint(30, 45) * MM, y0 + rng.randint(25, 35) * MM
+    edge = pcbnew.PCB_SHAPE(board)
+    edge.SetShape(pcbnew.SHAPE_T_RECTANGLE)
+    edge.SetLayer(pcbnew.Edge_Cuts)
+    edge.SetWidth(100_000)
+    edge.SetStart(vec(x0, y0))
+    edge.SetEnd(vec(x1, y1))
+    board.Add(edge)
+    ds = board.GetDesignSettings()
+    ns = ds.m_NetSettings
+    default = ns.GetDefaultNetclass()
+    default.SetClearance(rng.choice([150_000, 200_000]))
+    default.SetDiffPairWidth(rng.choice([200_000, 250_000]))
+    default.SetDiffPairGap(rng.choice([250_000, 300_000]))
+    default.SetDiffPairViaGap(250_000)
+    fast = pcbnew.NETCLASS("HighSpeed")
+    fast.SetClearance(150_000)
+    fast.SetDiffPairWidth(rng.choice([120_000, 150_000]))
+    fast.SetDiffPairGap(rng.choice([150_000, 180_000]))
+    fast.SetDiffPairViaGap(200_000)
+    fast.SetPriority(0)
+    ns.SetNetclass("HighSpeed", fast)
+    ns.SetNetclassPatternAssignment("USB*", "HighSpeed")
+    ns.SetNetclassPatternAssignment("LVDS*", "HighSpeed")
+    ds.m_MinClearance = rng.choice([0, 100_000])
+    nets = {}
+    for name in [n for pair in rng.sample(PAIR_NETS, 2) for n in pair] + ["GND", "VCC", "SIG1"]:
+        nets[name] = pcbnew.NETINFO_ITEM(board, name)
+        board.Add(nets[name])
+    pairs = [n for n in nets if n not in ("GND", "VCC", "SIG1")]
+    singles = [nets["GND"], nets["VCC"], nets["SIG1"]]
+
+    def place(lib, name, x, y, ref):
+        fp = pcbnew.FootprintLoad(f"{LIBRARIES}/{lib}.pretty", name)
+        fp.SetReference(ref)
+        fp.SetPosition(vec(x, y))
+        fp.SetOrientationDegrees(rng.choice([0, 90, 180, 270]))
+        board.Add(fp)
+        return fp
+
+    ym = (y0 + y1) // 2
+    connector = place(*rng.choice(PAIR_ENDS), x0 + 5 * MM, ym + rng.randint(-4, 4) * MM, "J1")
+    chip = place(*rng.choice(PAIR_CHIPS), x1 - 6 * MM, ym + rng.randint(-4, 4) * MM, "U1")
+    for fp in (connector, chip):
+        for pad in fp.Pads():
+            n = int(pad.GetNumber()) if pad.GetNumber().isdigit() else 0
+            if 1 <= n <= 4:
+                pad.SetNet(nets[pairs[n - 1]])
+            elif rng.random() < 0.6:
+                pad.SetNet(rng.choice(singles))
+    # parts and tracks of other nets in the way
+    for i in range(rng.randint(1, 4)):
+        fp = place("Resistor_SMD", "R_0603_1608Metric", rng.randint(x0 + 12 * MM, x1 - 14 * MM),
+                   rng.randint(y0 + 4 * MM, y1 - 4 * MM), f"R{i + 1}")
+        for pad in fp.Pads():
+            pad.SetNet(rng.choice(singles))
+    copper = [pcbnew.F_Cu, pcbnew.B_Cu] + ([pcbnew.In1_Cu, pcbnew.In2_Cu] if board.GetCopperLayerCount() == 4 else [])
+    a, b = connector.GetPosition(), chip.GetPosition()
+    for _ in range(rng.randint(2, 5)):
+        # (across the way from the connector to the chip, mostly short enough to be shoved, on the top mostly)
+        f = rng.uniform(0.3, 0.7)
+        x, y = a.x + int((b.x - a.x) * f), a.y + int((b.y - a.y) * f) + rng.randint(-2, 2) * MM
+        half = rng.choice([1, 1, 2, 8]) * MM
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(vec(x, max(y0 + 2 * MM, y - half)))
+        t.SetEnd(vec(x + rng.choice([0, 0, MM, -MM]), min(y1 - 2 * MM, y + half)))
+        t.SetWidth(rng.randint(2, 5) * 50_000)
+        t.SetLayer(pcbnew.F_Cu if rng.random() < 0.7 else rng.choice(copper))
+        t.SetNet(rng.choice(singles))
+        board.Add(t)
+    pcbnew.SaveBoard(path, board)
+
+
 def main():
     args = sys.argv[1:]
     custom = "--custom-pads" in args
-    args = [a for a in args if a != "--custom-pads"]
+    pairs = "--pairs" in args
+    args = [a for a in args if a not in ("--custom-pads", "--pairs")]
     out, count = args[0], int(args[1])
     seed = int(args[2]) if len(args) > 2 else 20261016
     footprints_from = custom_pad_footprints() if custom else FOOTPRINTS
@@ -336,8 +426,11 @@ def main():
     os.makedirs(out, exist_ok=True)
     here = os.path.dirname(os.path.abspath(__file__))
     for n in range(count):
-        path = os.path.abspath(f"{out}/{'custom' if custom else 'random'}-{seed}-{n}.kicad_pcb")
-        make(rng, path, random.Random(f"keepouts-{seed}-{n}"), footprints_from, random.Random(f"vias-{seed}-{n}"))
+        path = os.path.abspath(f"{out}/{'pairs' if pairs else 'custom' if custom else 'random'}-{seed}-{n}.kicad_pcb")
+        if pairs:
+            make_pairs(rng, path)
+        else:
+            make(rng, path, random.Random(f"keepouts-{seed}-{n}"), footprints_from, random.Random(f"vias-{seed}-{n}"))
         subprocess.run([sys.executable, f"{here}/board-scene.py", path, path[:-len(".kicad_pcb")] + ".json"], check=True,
                        stderr=subprocess.DEVNULL)
     print(f"{out}: {count} boards")

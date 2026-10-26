@@ -1,6 +1,7 @@
 // Ported from KiCad 10.0.7: pcbnew/router/pns_kicad_iface.cpp (PNS_KICAD_IFACE_BASE::SyncWorld and its sync
-// functions, PNS_PCBNEW_RULE_RESOLVER::Clearance and IsKeepout) and the parts of pcbnew/drc/drc_engine.cpp
-// (DRC_ENGINE::EvalRules) that a board without rules of the user's own takes.
+// functions, PNS_PCBNEW_RULE_RESOLVER::Clearance, IsKeepout, DpCoupledNet, DpNetPolarity and DpNetPair), the parts of
+// pcbnew/drc/drc_engine.cpp (DRC_ENGINE::EvalRules) that a board without rules of the user's own takes, and
+// pcbnew/board.cpp's BOARD::MatchDpSuffix and DpCoupledNet.
 // Copyright (C) 2013-2016 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -87,6 +88,8 @@ public struct WorldRules: Sendable {
     /// Each net's net class clearance
     public var netClearance: [Int: Int] = [:]
     public var maxError = 5000
+    /// The nets' names, by net (which nets are differential pairs' goes by their names)
+    public var netNames: [Int: String] = [:]
 
     public init() {}
 }
@@ -221,6 +224,68 @@ public final class WorldResolver: RuleResolver {
     }
 
     public var clearanceEpsilon: Int { rules.epsilon }
+
+    // MARK: - Differential pairs
+
+    /// Whether a net's name is a differential pair's positive net's (1) or negative net's (-1), and the name of the
+    /// net it is coupled with (KiCad's BOARD::MatchDpSuffix): the last of its characters that is not a digit or an
+    /// underscore a '+' or 'P' (positive), '-' or 'N' (negative), the other of the two in its place; 0 if not
+    public static func matchDpSuffix(_ netName: String) -> (polarity: Int, complement: String) {
+        let chars = Array(netName.unicodeScalars)
+        var rv = 0
+        var count = 0
+        var complement = ""
+        for ch in chars.reversed() {
+            count += 1
+            if ("0"..."9").contains(ch) || ch == "_" { continue }
+            switch ch {
+            case "+": (complement, rv) = ("-", 1)
+            case "-": (complement, rv) = ("+", -1)
+            case "N": (complement, rv) = ("P", -1)
+            case "P": (complement, rv) = ("N", 1)
+            // (KiCad's loop breaks before it counts the character)
+            default: count -= 1
+            }
+            break
+        }
+        if rv != 0 && count >= 1 {
+            var name = String.UnicodeScalarView(chars.prefix(chars.count - count))
+            name.append(contentsOf: complement.unicodeScalars)
+            name.append(contentsOf: chars.suffix(count - 1))
+            complement = String(name)
+        }
+        return (rv, complement)
+    }
+
+    /// The net of that name (KiCad's BOARD::FindNet)
+    private func findNet(_ name: String) -> NetHandle? { rules.netNames.first { $0.value == name }?.key }
+
+    public func netName(_ net: NetHandle?) -> String { net.flatMap { rules.netNames[$0] } ?? "Net-\(net ?? -1)" }
+
+    public func dpCoupledNet(_ net: NetHandle?) -> NetHandle? {
+        guard let net, let name = rules.netNames[net] else { return nil }
+        let (rv, coupled) = Self.matchDpSuffix(name)
+        return rv != 0 ? findNet(coupled) : nil
+    }
+
+    public func dpNetPolarity(_ net: NetHandle?) -> Int { Self.matchDpSuffix(net.flatMap { rules.netNames[$0] } ?? "").polarity }
+
+    public func dpNetPair(_ item: Item?) -> (p: NetHandle, n: NetHandle)? {
+        guard let item, let net = item.net else { return nil }
+        var netNameP = rules.netNames[net] ?? ""
+        let netNameN: String
+        let (r, coupled) = Self.matchDpSuffix(netNameP)
+        if r == 0 {
+            return nil
+        } else if r == 1 {
+            netNameN = coupled
+        } else {
+            netNameN = netNameP
+            netNameP = coupled
+        }
+        guard let p = findNet(netNameP), let n = findNet(netNameN) else { return nil }
+        return (p, n)
+    }
 }
 
 /// The router's side of a world of items (KiCad's PNS_KICAD_IFACE_BASE): it puts them in the router's world in
@@ -359,7 +424,15 @@ public final class WorldInterface: RouterInterface {
 
     public func addItem(_ item: Item) { added.append(item) }
     public func updateItem(_ item: Item) {}
-    public func removeItem(_ item: Item) { removedItems.append(item) }
+    public func removeItem(_ item: Item) {
+        // (what the router added and has taken off again, a differential pair's fix shoving what one before it put on
+        // the board, is not added after all)
+        if let i = added.firstIndex(where: { $0 === item }) {
+            added.remove(at: i)
+        } else {
+            removedItems.append(item)
+        }
+    }
 
     /// The world item a router item was made from
     public func worldItem(_ item: Item) -> WorldItem? { resolver.info[ObjectIdentifier(item)] }
@@ -390,7 +463,7 @@ public final class WorldInterface: RouterInterface {
     public func importSizes(_ sizes: inout SizesSettings, startItem: Item?, net: NetHandle?, start: IPoint) -> Bool { false }
     public func stackupHeight(_ firstLayer: Int, _ secondLayer: Int) -> Int { 0 }
     public func netCode(_ net: NetHandle?) -> Int { net ?? -1 }
-    public func netName(_ net: NetHandle?) -> String { "Net-\(net ?? -1)" }
+    public func netName(_ net: NetHandle?) -> String { resolver.netName(net) }
     public var orphanedNetHandle: NetHandle { 0 }
     public var ruleResolver: RuleResolver { resolver }
     public var copperLayerCount: Int { layerCount }

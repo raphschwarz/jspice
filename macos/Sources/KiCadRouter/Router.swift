@@ -1,5 +1,5 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_router.h and pns_router.cpp (routing a track, and dragging a segment,
-// corner or via; not differential pairs, length tuning, or footprints dragged).
+// Ported from KiCad 10.0.7: pcbnew/router/pns_router.h and pns_router.cpp (routing a track or a differential pair, and
+// dragging a segment, corner or via; not length tuning, or footprints or pairs dragged).
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -59,6 +59,10 @@ extension RouterInterface {
 public final class Router {
     public enum State: Sendable { case idle, dragSegment, dragComponent, routeTrack }
 
+    /// What the router places (KiCad's ROUTER_MODE): a single track, or a differential pair (its length tuning modes
+    /// are not ported)
+    public enum Mode: Sendable { case routeSingle, routeDiffPair }
+
     /// The router at work (KiCad's ROUTER::GetInstance, which its geometry asks for the board's flashing)
     nonisolated(unsafe) public private(set) static weak var instance: Router?
     /// The board's side of the router at work
@@ -74,6 +78,7 @@ public final class Router {
     public var settings = RoutingSettings()
     public var sizes = SizesSettings()
     public private(set) var state: State = .idle
+    public var mode: Mode = .routeSingle
     public private(set) var world: Node?
     public private(set) var iface: RouterInterface?
     public var iterLimit = 0
@@ -93,7 +98,11 @@ public final class Router {
 
     public var ruleResolver: RuleResolver? { iface?.ruleResolver }
 
-    public private(set) var placer: LinePlacer?
+    public private(set) var placer: PlacementAlgo?
+    /// The placer, routing a single track
+    public var linePlacer: LinePlacer? { placer as? LinePlacer }
+    /// The placer, routing a differential pair
+    public var diffPairPlacer: DiffPairPlacer? { placer as? DiffPairPlacer }
     /// What drags a segment, corner or via (KiCad's GetDragger)
     public private(set) var dragger: Dragger?
 
@@ -115,7 +124,7 @@ public final class Router {
 
     /// What is at `p` (within `slopRadius`), in the placer's node or the world
     public func queryHoverItems(_ p: IPoint, slopRadius: Int = 0) -> [Item] {
-        guard let node = placer?.currentNode() ?? world else { return [] }
+        guard let node = placer?.currentNode(loopsRemoved: false) ?? world else { return [] }
         if slopRadius > 0 {
             let test = Segment(Seg(p, p), net: nil)
             test.width = 1
@@ -130,6 +139,10 @@ public final class Router {
 
     private func isStartingPointRoutable(_ at: IPoint, _ startItem: Item?, _ layer: Int) -> Bool {
         if settings.allowDRCViolations { return true }
+        if mode == .routeDiffPair && sizes.diffPairGap < sizes.minClearance {
+            failureReason = "Diff pair gap is less than board minimum clearance."
+            return false
+        }
         var failure = ""
         for item in queryHoverItems(at) {
             if let r = world?.ruleResolver, r.isOnEdgeCuts(item) { continue }
@@ -144,27 +157,63 @@ public final class Router {
             failureReason = failure
             return false
         }
-        let dummy = Line()
-        dummy.setShape(LineChain([at, at]))
-        dummy.setLayer(layer)
-        dummy.net = startItem?.net
-        dummy.setWidth(sizes.trackWidth)
-        if world!.checkColliding(dummy, kindMask: .any) != nil {
-            dummy.setWidth(sizes.boardMinTrackWidth)
+        switch mode {
+        case .routeSingle:
+            let dummy = Line()
+            dummy.setShape(LineChain([at, at]))
+            dummy.setLayer(layer)
+            dummy.net = startItem?.net
+            dummy.setWidth(sizes.trackWidth)
             if world!.checkColliding(dummy, kindMask: .any) != nil {
-                failureReason = "The routing start point violates DRC."
+                dummy.setWidth(sizes.boardMinTrackWidth)
+                if world!.checkColliding(dummy, kindMask: .any) != nil {
+                    failureReason = "The routing start point violates DRC."
+                    return false
+                }
+            }
+        case .routeDiffPair:
+            guard let startItem else {
+                failureReason = "Cannot start a differential pair in the middle of nowhere."
                 return false
+            }
+            var error = ""
+            guard let dpPair = DiffPairPlacer.findDpPrimitivePair(world!, at, startItem, error: &error) else {
+                failureReason = error
+                return false
+            }
+            // We intentionally do not reject a start point whose existing gap differs from the configured diff pair
+            // gap. Starting inside a neckdown area (e.g. a narrowed gap under a BGA) and widening out to the netclass
+            // gap is a legitimate workflow. The placer fits the widening transition starting from the existing anchor
+            // pair.
+            let dummyA = Line(), dummyB = Line()
+            dummyA.setShape(LineChain([dpPair.anchorN, dpPair.anchorN]))
+            dummyA.setLayer(layer)
+            dummyA.net = dpPair.primN!.net
+            dummyA.setWidth(sizes.diffPairWidth)
+            dummyB.setShape(LineChain([dpPair.anchorP, dpPair.anchorP]))
+            dummyB.setLayer(layer)
+            dummyB.net = dpPair.primP!.net
+            dummyB.setWidth(sizes.diffPairWidth)
+            if world!.checkColliding(dummyA, kindMask: .any) != nil || world!.checkColliding(dummyB, kindMask: .any) != nil {
+                // (as for a track: the board's minimum width tried before the start is refused)
+                dummyA.setWidth(sizes.boardMinTrackWidth)
+                dummyB.setWidth(sizes.boardMinTrackWidth)
+                if world!.checkColliding(dummyA, kindMask: .any) != nil || world!.checkColliding(dummyB, kindMask: .any) != nil {
+                    failureReason = "The routing start point violates DRC."
+                    return false
+                }
             }
         }
         return true
     }
 
-    /// Starts a track at `p`, from `startItem` (the pad or track there), on `layer`
+    /// Starts a track at `p`, from `startItem` (the pad or track there), on `layer`; in the differential pair mode, a
+    /// pair from it and the nearest item of its coupled net
     public func startRouting(_ p: IPoint, _ startItem: Item?, layer: Int) -> Bool {
         Router.instance = self
         ruleResolver?.clearCaches()
         if !isStartingPointRoutable(p, startItem, layer) { return false }
-        let placer = LinePlacer(router: self)
+        let placer: PlacementAlgo = mode == .routeDiffPair ? DiffPairPlacer(router: self) : LinePlacer(router: self)
         self.placer = placer
         placer.updateSizes(sizes)
         _ = placer.setLayer(layer)
@@ -308,7 +357,7 @@ public final class Router {
         if state == .routeTrack, let placer { _ = placer.toggleVia(!placer.isPlacingVia) }
     }
 
-    public var currentNets: [NetHandle?] { placer.map { [$0.currentNet] } ?? dragger?.currentNets ?? [] }
+    public var currentNets: [NetHandle?] { placer?.currentNets ?? dragger?.currentNets ?? [] }
     public var currentLayer: Int { placer?.currentLayer ?? dragger?.currentLayer ?? -1 }
     public var isPlacingVia: Bool { placer?.isPlacingVia ?? false }
 

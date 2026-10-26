@@ -79,6 +79,13 @@ public protocol RuleResolver: AnyObject {
     func hullCache(_ item: Item, clearance: Int, walkaroundThickness: Int, layer: Int) -> LineChain
     func clearCaches()
     func clearTemporaryCaches()
+    /// The net a differential pair's net is coupled with, by their names (nil: none)
+    func dpCoupledNet(_ net: NetHandle?) -> NetHandle?
+    /// Whether the net is a differential pair's positive net (1) or negative one (-1), by its name; 0 neither
+    func dpNetPolarity(_ net: NetHandle?) -> Int
+    /// The positive and negative nets of the pair the item's net is one of, if both are the board's
+    func dpNetPair(_ item: Item?) -> (p: NetHandle, n: NetHandle)?
+    func netName(_ net: NetHandle?) -> String
 }
 
 extension RuleResolver {
@@ -87,6 +94,10 @@ extension RuleResolver {
     }
     public func clearCaches() {}
     public func clearTemporaryCaches() {}
+    public func dpCoupledNet(_ net: NetHandle?) -> NetHandle? { nil }
+    public func dpNetPolarity(_ net: NetHandle?) -> Int { 0 }
+    public func dpNetPair(_ item: Item?) -> (p: NetHandle, n: NetHandle)? { nil }
+    public func netName(_ net: NetHandle?) -> String { "Net-\(net ?? -1)" }
 }
 
 public enum ConstraintType: Int, Sendable {

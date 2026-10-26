@@ -4,12 +4,15 @@
 // switch, a fix, an undo), whether the route was fixed, and the tracks and vias it put on the board (and, for a scene
 // that asks, those it took off: a route that shoves replaces what it shoved). Each route walks round obstacles,
 // shoves them or marks them, as it says. A route can be a drag instead (a track's segment or corner, or a via, as
-// the router tool's drag tools drag them), with what the dragger dragged after each step. KiCadRouterTests runs the
-// Swift port on the same boards and compares. build.sh builds this against KiCad's sources.
+// the router tool's drag tools drag them), with what the dragger dragged after each step; or a differential pair,
+// routed from a pad, via or track end of one of a pair's nets and the nearest of its coupled net's, with the pair's
+// two lines after each step. KiCadRouterTests runs the Swift port on the same boards and compares. build.sh builds
+// this against KiCad's sources.
 //
 // The board's rules are KiCad's default board rules made simple: one clearance between copper of different nets,
 // a hole clearance, a hole to hole clearance and an edge clearance, as PNS_PCBNEW_RULE_RESOLVER::Clearance combines
-// them (items here have no BOARD_ITEM behind them, so what it asks of them is answered from the JSON).
+// them (items here have no BOARD_ITEM behind them, so what it asks of them is answered from the JSON). Which nets
+// are differential pairs goes by their names, as the scene gives them (BOARD::MatchDpSuffix's rules).
 //
 // This program links KiCad's code: GNU General Public License version 3 or later, as KiCad.
 
@@ -45,8 +48,10 @@
 #include <pns_solid.h>
 #include <pns_via.h>
 
-// (the line placer's fixed stages and the shove's springback stack, which undefinedUndo looks at)
+// (the line placer's fixed stages and the shove's springback stack, which undefinedUndo looks at, and the diff pair
+// placer's last node, which undefinedFix looks at)
 #define private public
+#include <pns_diff_pair_placer.h>
 #include <pns_line_placer.h>
 #include <pns_shove.h>
 #undef private
@@ -128,6 +133,9 @@ public:
     // own: each net's net class clearance, a pad's or its footprint's own clearance first, the board's minimums
     bool               m_board = false;
     std::map<int, int> m_netClearance;
+
+    /// The nets' names (the scene's "netNames"), by code
+    std::map<int, wxString> m_netNames;
 
     const ITEM_INFO* info( const PNS::ITEM* aItem ) const
     {
@@ -276,11 +284,138 @@ public:
         return rv;
     }
 
-    PNS::NET_HANDLE DpCoupledNet( PNS::NET_HANDLE aNet ) override { return nullptr; }
-    int DpNetPolarity( PNS::NET_HANDLE aNet ) override { return 0; }
-    bool DpNetPair( const PNS::ITEM* aItem, PNS::NET_HANDLE& aNetP, PNS::NET_HANDLE& aNetN ) override { return false; }
+    /// BOARD::MatchDpSuffix, as KiCad's board.cpp has it: whether the net's name is a differential pair's positive
+    /// net's (1) or negative net's (-1), and the name of the net it is coupled with
+    static int MatchDpSuffix( const wxString& aNetName, wxString& aComplementNet )
+    {
+        int rv = 0;
+        int count = 0;
+
+        for( auto it = aNetName.rbegin(); it != aNetName.rend() && rv == 0; ++it, ++count )
+        {
+            int ch = *it;
+
+            if( ( ch >= '0' && ch <= '9' ) || ch == '_' )
+            {
+                continue;
+            }
+            else if( ch == '+' )
+            {
+                aComplementNet = wxT( "-" );
+                rv = 1;
+            }
+            else if( ch == '-' )
+            {
+                aComplementNet = wxT( "+" );
+                rv = -1;
+            }
+            else if( ch == 'N' )
+            {
+                aComplementNet = wxT( "P" );
+                rv = -1;
+            }
+            else if( ch == 'P' )
+            {
+                aComplementNet = wxT( "N" );
+                rv = 1;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        if( rv != 0 && count >= 1 )
+        {
+            aComplementNet = aNetName.Left( aNetName.length() - count ) + aComplementNet
+                             + aNetName.Right( count - 1 );
+        }
+
+        return rv;
+    }
+
+    /// BOARD::FindNet: the scene's net of that name
+    PNS::NET_HANDLE findNet( const wxString& aName ) const
+    {
+        for( const auto& [code, name] : m_netNames )
+        {
+            if( name == aName )
+                return netHandle( code );
+        }
+
+        return nullptr;
+    }
+
+    /// NETINFO_ITEM::GetNetname
+    wxString netName( PNS::NET_HANDLE aNet ) const
+    {
+        auto it = m_netNames.find( netCode( aNet ) );
+        return it == m_netNames.end() ? wxString() : it->second;
+    }
+
+    // (PNS_PCBNEW_RULE_RESOLVER's three, BOARD::DpCoupledNet's way)
+    PNS::NET_HANDLE DpCoupledNet( PNS::NET_HANDLE aNet ) override
+    {
+        wxString coupledNetName;
+
+        if( aNet && MatchDpSuffix( netName( aNet ), coupledNetName ) )
+            return findNet( coupledNetName );
+
+        return nullptr;
+    }
+
+    int DpNetPolarity( PNS::NET_HANDLE aNet ) override
+    {
+        wxString dummy1;
+        return MatchDpSuffix( aNet ? netName( aNet ) : wxString(), dummy1 );
+    }
+
+    bool DpNetPair( const PNS::ITEM* aItem, PNS::NET_HANDLE& aNetP, PNS::NET_HANDLE& aNetN ) override
+    {
+        if( !aItem || !aItem->Net() )
+            return false;
+
+        wxString netNameP = netName( aItem->Net() );
+        wxString netNameN, netNameCoupled;
+
+        int r = MatchDpSuffix( netNameP, netNameCoupled );
+
+        if( r == 0 )
+        {
+            return false;
+        }
+        else if( r == 1 )
+        {
+            netNameN = netNameCoupled;
+        }
+        else
+        {
+            netNameN = netNameP;
+            netNameP = netNameCoupled;
+        }
+
+        PNS::NET_HANDLE netInfoP = findNet( netNameP );
+        PNS::NET_HANDLE netInfoN = findNet( netNameN );
+
+        if( !netInfoP || !netInfoN )
+            return false;
+
+        aNetP = netInfoP;
+        aNetN = netInfoN;
+
+        return true;
+    }
+
     int NetCode( PNS::NET_HANDLE aNet ) override { return netCode( aNet ); }
-    wxString NetName( PNS::NET_HANDLE aNet ) override { return wxString::Format( "Net-%d", netCode( aNet ) ); }
+
+    /// A net's name if the scene names it, else "Net-" and its code
+    wxString NetName( PNS::NET_HANDLE aNet ) override
+    {
+        if( m_netNames.count( netCode( aNet ) ) )
+            return netName( aNet );
+
+        return wxString::Format( "Net-%d", netCode( aNet ) );
+    }
     bool IsInNetTie( const PNS::ITEM* aA ) override { return false; }
     bool IsNetTieExclusion( const PNS::ITEM*, const VECTOR2I&, const PNS::ITEM* ) override { return false; }
 
@@ -647,12 +782,18 @@ public:
         return json();
     }
 
+    /// What the route added, item by item (m_added's)
+    std::vector<const PNS::ITEM*> m_addedItems;
+
     void AddItem( PNS::ITEM* aItem ) override
     {
         json j = itemJSON( aItem );
 
         if( !j.is_null() )
+        {
             m_added.push_back( j );
+            m_addedItems.push_back( aItem );
+        }
     }
 
     /// The scene's index of a board item (-1: none, the router's own)
@@ -698,8 +839,17 @@ public:
 
     void RemoveItem( PNS::ITEM* aItem ) override
     {
-        if( int i = indexOf( aItem ); i >= 0 )
+        // (what the route added and has taken off again, a differential pair's fix shoving what an earlier one put
+        // on the board, is not added after all)
+        if( auto it = std::find( m_addedItems.begin(), m_addedItems.end(), aItem ); it != m_addedItems.end() )
+        {
+            m_added.erase( m_added.begin() + ( it - m_addedItems.begin() ) );
+            m_addedItems.erase( it );
+        }
+        else if( int i = indexOf( aItem ); i >= 0 )
+        {
             m_removed.push_back( i );
+        }
     }
     bool IsAnyLayerVisible( const PNS_LAYER_RANGE& aLayer ) const override { return true; }
     bool IsItemVisible( const PNS::ITEM* aItem ) const override { return true; }
@@ -764,7 +914,10 @@ public:
     int StackupHeight( int, int ) const override { return 0; }
     void EraseView() override {}
     int GetNetCode( PNS::NET_HANDLE aNet ) const override { return netCode( aNet ); }
-    wxString GetNetName( PNS::NET_HANDLE aNet ) const override { return wxString::Format( "Net-%d", netCode( aNet ) ); }
+    wxString GetNetName( PNS::NET_HANDLE aNet ) const override
+    {
+        return const_cast<SCENE_RESOLVER&>( m_resolver ).NetName( aNet );
+    }
     void UpdateNet( PNS::NET_HANDLE ) override {}
     PNS::NET_HANDLE GetOrphanedNetHandle() override { return netHandle( 0 ); }
     PNS::NODE* GetWorld() const override { return m_world; }
@@ -838,6 +991,15 @@ static bool undefinedUndo( PNS::LINE_PLACER* aPlacer )
     }
 
     return false;
+}
+
+/// Whether fixing the differential pair now (DIFF_PAIR_PLACER::FixRoute) would have KiCad's placer add it to a node
+/// it has not got: fixed, and fixed again with no move since (initPlacement let go of the node the last move made),
+/// it adds the pair to a null pointer. What KiCad's router does then is undefined, so such a scene is no reference.
+static bool undefinedFix( PNS::DIFF_PAIR_PLACER* aPlacer, const PNS::ROUTING_SETTINGS& aSettings )
+{
+    return !aPlacer->m_lastNode && ( aPlacer->m_fitOk || aSettings.AllowDRCViolations() )
+           && aPlacer->m_currentTrace.CP().SegmentCount() >= 1 && aPlacer->m_currentTrace.CN().SegmentCount() >= 1;
 }
 
 static json lineJSON( const PNS::LINE& aLine )
@@ -954,6 +1116,11 @@ int main()
     iface.m_items = scene["items"];
     iface.m_layers = scene.value( "layers", 2 );
 
+    json netNames = scene.value( "netNames", json::object() );
+
+    for( const auto& [code, name] : netNames.items() )
+        iface.m_resolver.m_netNames[std::stoi( code )] = wxString::FromUTF8( name.get<std::string>() );
+
     const json& rules = scene["rules"];
     iface.m_resolver.m_clearance = rules.value( "clearance", 200000 );
     iface.m_resolver.m_holeClearance = rules.value( "holeClearance", 250000 );
@@ -1002,6 +1169,11 @@ int main()
         settings.SetSmoothDraggedSegments( route.value( "smooth", true ) );
         settings.SetOptimizeEntireDraggedTrack( route.value( "optimizeEntire", false ) );
         settings.SetAllowDRCViolations( route.value( "allowViolations", false ) );
+        settings.SetFixAllSegments( route.value( "fixAll", true ) );
+
+        // (a differential pair, "diffPair": the router tool's Route Differential Pair; else a single track)
+        bool diffPair = route.value( "diffPair", false );
+        router.SetMode( diffPair ? PNS::PNS_MODE_ROUTE_DIFF_PAIR : PNS::PNS_MODE_ROUTE_SINGLE );
 
         // a world fresh from the board, with what the routes before this one added
         router.ClearWorld();
@@ -1012,16 +1184,38 @@ int main()
         sizes.SetViaDiameter( route.value( "viaDiameter", 600000 ) );
         sizes.SetViaDrill( route.value( "viaDrill", 300000 ) );
         sizes.SetClearance( iface.m_resolver.m_clearance );
+
+        // a pair's width, gap and via gap (its own, or the same as its gap), and the clearances between its vias'
+        // holes and copper, as ImportSizes takes them from the rules; the board's minimum clearance, if the route says
+        sizes.SetDiffPairWidth( route.value( "dpWidth", 125000 ) );
+        sizes.SetDiffPairGap( route.value( "dpGap", 180000 ) );
+
+        if( route.contains( "dpViaGap" ) )
+        {
+            sizes.SetDiffPairViaGap( route["dpViaGap"] );
+            sizes.SetDiffPairViaGapSameAsTraceGap( false );
+        }
+
+        sizes.SetDiffPairHoleToHole( iface.m_resolver.m_holeToHole );
+        sizes.SetDiffPairCopperToHole( iface.m_resolver.m_holeClearance );
+        sizes.SetMinClearance( route.value( "minClearance", 0 ) );
         router.UpdateSizes( sizes );
 
         auto itemAt = [&]( const char* aKey, const json& aIn ) -> PNS::ITEM*
         {
             int i = aIn.value( aKey, -1 );
+
+            // (an item taken off the board by a part of the route already committed, as a differential pair's fixes
+            // commit what they shove, is gone: the pointer is over nothing)
+            if( std::find( iface.m_removed.begin(), iface.m_removed.end(), i ) != iface.m_removed.end() )
+                return nullptr;
+
             return i >= 0 && i < (int) iface.m_byIndex.size() ? iface.m_byIndex[i] : nullptr;
         };
 
         json r;
         iface.m_added.clear();
+        iface.m_addedItems.clear();
         iface.m_removed.clear();
 
         // (with the first route, the keepout zones' triangles as the world has them, if there are any)
@@ -1064,19 +1258,34 @@ int main()
             // router tool asks of the router: a layer pair for
             // vias ("pair"), via placement on or off ("via"), a layer to route on ("layer"), the posture flipped
             // ("posture"), the route fixed where it is ("fix", which ends it when the router says it is finished),
-            // the last fixed part taken back ("undo")
+            // the last fixed part taken back ("undo"). (A pair's moves write whether the pair got there clear.)
+            auto fixRoute = [&]( const VECTOR2I& aP, PNS::ITEM* aEndItem, bool aForceFinish ) -> std::optional<bool>
+            {
+                // (a fix KiCad's code gets wrong: no reference to be had)
+                if( diffPair && undefinedFix( static_cast<PNS::DIFF_PAIR_PLACER*>( router.Placer() ), settings ) )
+                    return std::nullopt;
+
+                return router.FixRoute( aP, aEndItem, aForceFinish, false );
+            };
+
             for( const json& m : route["moves"] )
             {
                 json step;
 
                 if( m.is_array() )
                 {
-                    router.Move( pt( m ), itemAt( "endItem", route ) );
+                    bool moved = router.Move( pt( m ), itemAt( "endItem", route ) );
+
+                    if( diffPair )
+                        step["moved"] = moved;
                 }
                 else if( m.contains( "move" ) )
                 {
                     // (a pointer position with the item under it, as the router tool finds one at each move)
-                    router.Move( pt( m["move"] ), itemAt( "endItem", m ) );
+                    bool moved = router.Move( pt( m["move"] ), itemAt( "endItem", m ) );
+
+                    if( diffPair )
+                        step["moved"] = moved;
                 }
                 else if( m.contains( "pair" ) )
                 {
@@ -1102,14 +1311,23 @@ int main()
                 else if( m.contains( "fix" ) )
                 {
                     // (the item under the pointer: the route's end item, unless the step names another, or none)
-                    finished = router.FixRoute( pt( m["fix"] ), itemAt( "endItem", m.contains( "endItem" ) ? m : route ),
-                                                false, false );
+                    std::optional<bool> fixed = fixRoute( pt( m["fix"] ),
+                                                          itemAt( "endItem", m.contains( "endItem" ) ? m : route ), false );
+
+                    if( !fixed )
+                    {
+                        std::cerr << "route " << out.size() << ": a fix KiCad's router has no defined result for\n";
+                        return 3;
+                    }
+
+                    finished = *fixed;
                     step["fixed"] = finished;
                 }
                 else if( m.contains( "undo" ) )
                 {
                     // (an undo KiCad's code gets wrong: no reference to be had, exit status 3)
-                    if( settings.Mode() == PNS::RM_Shove
+                    // (a pair's placer takes nothing back)
+                    if( !diffPair && settings.Mode() == PNS::RM_Shove
                         && undefinedUndo( static_cast<PNS::LINE_PLACER*>( router.Placer() ) ) )
                     {
                         std::cerr << "route " << out.size() << ": an undo KiCad's router has no defined result for\n";
@@ -1120,10 +1338,23 @@ int main()
                     step["undone"] = p ? json( pt( *p ) ) : json();
                 }
 
-                auto placer = static_cast<PNS::LINE_PLACER*>( router.Placer() );
-                step["head"] = lineJSON( placer->Head() );
-                step["tail"] = lineJSON( placer->Tail() );
-                step["trace"] = lineJSON( placer->Trace() );
+                PNS::PLACEMENT_ALGO* placer = router.Placer();
+
+                if( diffPair )
+                {
+                    // (the pair's positive and negative lines, DIFF_PAIR_PLACER::Traces)
+                    PNS::ITEM_SET traces = placer->Traces();
+                    step["p"] = lineJSON( *static_cast<PNS::LINE*>( traces[0] ) );
+                    step["n"] = lineJSON( *static_cast<PNS::LINE*>( traces[1] ) );
+                }
+                else
+                {
+                    auto linePlacer = static_cast<PNS::LINE_PLACER*>( placer );
+                    step["head"] = lineJSON( linePlacer->Head() );
+                    step["tail"] = lineJSON( linePlacer->Tail() );
+                    step["trace"] = lineJSON( linePlacer->Trace() );
+                }
+
                 step["layer"] = router.GetCurrentLayer();
                 step["placingVia"] = router.IsPlacingVia();
 
@@ -1147,8 +1378,16 @@ int main()
 
             if( !finished && route.contains( "fix" ) )
             {
-                bool done = router.FixRoute( pt( route["fix"] ), itemAt( "endItem", route ), route.value( "forceFinish", false ), false );
-                r["fixed"] = done;
+                std::optional<bool> done = fixRoute( pt( route["fix"] ), itemAt( "endItem", route ),
+                                                     route.value( "forceFinish", false ) );
+
+                if( !done )
+                {
+                    std::cerr << "route " << out.size() << ": a fix KiCad's router has no defined result for\n";
+                    return 3;
+                }
+
+                r["fixed"] = *done;
             }
 
             router.CommitRouting();

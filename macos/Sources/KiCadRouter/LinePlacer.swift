@@ -47,9 +47,42 @@ struct FixedTail {
     var stageCount: Int { stages.count }
 }
 
+/// What places a track, or a pair of them, as the pointer moves (KiCad's PLACEMENT_ALGO)
+public protocol PlacementAlgo: AnyObject {
+    /// Starts at `p`, from `startItem` (the pad, via or track there); whether it could
+    func start(_ p: IPoint, _ startItem: Item?) -> Bool
+    /// Routed on to the pointer at `p`, `endItem` what is under it
+    func move(_ p: IPoint, _ endItem: Item?) -> Bool
+    /// Fixed up to `p`; whether that finished it
+    func fixRoute(_ p: IPoint, _ endItem: Item?, forceFinish: Bool) -> Bool
+    /// Goes back a fixed stage; where the head started, if it had
+    func unfixRoute() -> IPoint?
+    func commitPlacement() -> Bool
+    func abortPlacement() -> Bool
+    var hasPlacedAnything: Bool { get }
+    func toggleVia(_ enabled: Bool) -> Bool
+    var isPlacingVia: Bool { get }
+    func setLayer(_ layer: Int) -> Bool
+    /// What is being placed, to draw and to check
+    func traces() -> [Item]
+    var currentStart: IPoint { get }
+    var currentEnd: IPoint { get }
+    var currentNets: [NetHandle?] { get }
+    var currentLayer: Int { get }
+    /// The branch being placed in
+    func currentNode(loopsRemoved: Bool) -> Node?
+    func flipPosture()
+    func updateSizes(_ sizes: SizesSettings)
+    func setOrthoMode(_ ortho: Bool)
+}
+
+extension PlacementAlgo {
+    public func unfixRoute() -> IPoint? { nil }
+}
+
 /// Places a single track as the pointer moves (KiCad's LINE_PLACER): the head, the part being routed to the
 /// pointer, and the tail, the part already settled, in a branch of the world
-public final class LinePlacer {
+public final class LinePlacer: PlacementAlgo {
     unowned let router: Router
     var settings: RoutingSettings { router.settings }
 
@@ -67,6 +100,7 @@ public final class LinePlacer {
     private var sizes = SizesSettings()
     public private(set) var isPlacingVia = false
     public private(set) var currentNet: NetHandle?
+    public var currentNets: [NetHandle?] { [currentNet] }
     public private(set) var currentLayer = 0
     public private(set) var currentEnd = IPoint.zero
     public private(set) var currentStart = IPoint.zero
@@ -931,7 +965,7 @@ public final class LinePlacer {
         }
     }
 
-    public func setOrthoMode(_ o: Bool) { orthoMode = o }
+    public func setOrthoMode(_ ortho: Bool) { orthoMode = ortho }
 
     /// The line from the start to `p` as the posture says, with a via at its end if one is being placed (pushed
     /// clear of what is there); whether the via could be placed

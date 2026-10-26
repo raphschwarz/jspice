@@ -9,7 +9,11 @@ enum SceneRouting {
     static func route(_ scene: [String: Any]) -> [[String: Any]] {
         let copper = (scene["layers"] as? NSNumber)?.intValue ?? 2
         var items = (scene["items"] as! [[String: Any]]).compactMap { WorldItem(scene: $0, layers: copper) }
-        let rules = WorldRules(scene: scene["rules"] as? [String: Any] ?? [:])
+        var rules = WorldRules(scene: scene["rules"] as? [String: Any] ?? [:])
+        // (the nets' names, which say which are differential pairs)
+        for (code, name) in scene["netNames"] as? [String: Any] ?? [:] {
+            if let n = Int(code), let name = name as? String { rules.netNames[n] = name }
+        }
         let iface = WorldInterface(items: items, layers: copper, rules: rules)
         let router = Router()
         router.setInterface(iface)
@@ -27,6 +31,10 @@ enum SceneRouting {
             router.settings.smoothDraggedSegments = (route["smooth"] as? NSNumber)?.boolValue ?? true
             router.settings.optimizeEntireDraggedTrack = (route["optimizeEntire"] as? NSNumber)?.boolValue ?? false
             router.settings.allowDRCViolationsSetting = (route["allowViolations"] as? NSNumber)?.boolValue ?? false
+            router.settings.fixAllSegments = (route["fixAll"] as? NSNumber)?.boolValue ?? true
+            // (a differential pair, the router tool's Route Differential Pair; else a single track)
+            let diffPair = (route["diffPair"] as? NSNumber)?.boolValue ?? false
+            router.mode = diffPair ? .routeDiffPair : .routeSingle
             iface.items = items
             router.clearWorld()
             router.syncWorld()
@@ -35,9 +43,22 @@ enum SceneRouting {
             sizes.viaDiameter = (route["viaDiameter"] as? NSNumber)?.intValue ?? 600_000
             sizes.viaDrill = (route["viaDrill"] as? NSNumber)?.intValue ?? 300_000
             sizes.clearance = rules.clearance
+            // (a pair's sizes, and its vias' hole clearances as ImportSizes takes them from the rules, as router.cpp
+            // sets them)
+            sizes.diffPairWidth = (route["dpWidth"] as? NSNumber)?.intValue ?? 125_000
+            sizes.diffPairGap = (route["dpGap"] as? NSNumber)?.intValue ?? 180_000
+            if let viaGap = route["dpViaGap"] as? NSNumber {
+                sizes.diffPairViaGap = viaGap.intValue
+                sizes.diffPairViaGapSameAsTraceGap = false
+            }
+            sizes.diffPairHoleToHole = rules.holeToHole
+            sizes.diffPairCopperToHole = rules.holeClearance
+            sizes.minClearance = (route["minClearance"] as? NSNumber)?.intValue ?? 0
             router.updateSizes(sizes)
             func itemAt(_ key: String, _ from: [String: Any]? = nil) -> Item? {
                 guard let i = ((from ?? route)[key] as? NSNumber)?.intValue, i >= 0, i < iface.routerItems.count else { return nil }
+                // (an item taken off the board by a part of the route already committed is gone, as router.cpp has it)
+                if iface.removedItems.contains(where: { $0 === iface.routerItems[i] }) { return nil }
                 return iface.routerItems[i]
             }
             var r: [String: Any] = [:]
@@ -70,14 +91,16 @@ enum SceneRouting {
             } else if started {
                 var finished = false
                 // (the steps as router.cpp takes them: a pointer position, or a layer pair, via placement toggled, a
-                // layer switch, the posture flipped, a fix, an undo)
+                // layer switch, the posture flipped, a fix, an undo; a pair's moves with whether it got there clear)
                 for m in route["moves"] as! [Any] {
                     var step: [String: Any] = [:]
                     if m is [Any] {
-                        router.move(point(m), itemAt("endItem"))
+                        let moved = router.move(point(m), itemAt("endItem"))
+                        if diffPair { step["moved"] = moved }
                     } else if let m = m as? [String: Any] {
                         if let to = m["move"] {
-                            router.move(point(to), itemAt("endItem", m))
+                            let moved = router.move(point(to), itemAt("endItem", m))
+                            if diffPair { step["moved"] = moved }
                         } else if let pair = m["pair"] as? [Any] {
                             var s = router.sizes
                             s.clearLayerPairs()
@@ -97,9 +120,16 @@ enum SceneRouting {
                         }
                     }
                     let placer = router.placer!
-                    step["head"] = lineJSON(placer.head)
-                    step["tail"] = lineJSON(placer.tail)
-                    step["trace"] = lineJSON(placer.trace)
+                    if let linePlacer = router.linePlacer {
+                        step["head"] = lineJSON(linePlacer.head)
+                        step["tail"] = lineJSON(linePlacer.tail)
+                        step["trace"] = lineJSON(linePlacer.trace)
+                    } else {
+                        // (the pair's positive and negative lines)
+                        let traces = placer.traces()
+                        step["p"] = lineJSON(traces[0] as! Line)
+                        step["n"] = lineJSON(traces[1] as! Line)
+                    }
                     step["layer"] = router.currentLayer
                     step["placingVia"] = router.isPlacingVia
                     // (and the board as the router has it now, what it has shoved where, for a scene that asks: when

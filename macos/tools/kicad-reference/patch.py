@@ -21,6 +21,9 @@ each time it is run on the same board, and runs on items with no BOARD_ITEM behi
   for its joints in the order of their places (then nets and layers), not in the order of KiCad's hash map of
   joints, which comes from the hashes of their places; they go into the node's index in that order, and a search
   that stops at the first can meet one before another. The Swift port makes them in the same order.
+- The items of a differential pair's coupled net that the pair could start or end on (FindDpPrimitivePair) are
+  taken in the order they were made, not in the order of KiCad's set of pointers: of two the same distance away,
+  the first taken is the one the pair goes from. The Swift port takes them in the same order.
 
 patch.py changes only what it has not changed already, so it can be run on sources it has changed before.
 
@@ -145,6 +148,19 @@ def main():
           "\n"
           "    for( ITEM* item : bySerial( *aNode->m_index ) )\n"
           "    {")
+
+    # the coupled net's items a differential pair could start from, in the order they were made
+    patch(f"{router}/pns_diff_pair_placer.cpp",
+          "    for( ITEM* item : coupledItems )\n"
+          "    {\n"
+          "        if( item->Kind() == aItem->Kind() )",
+          "    std::vector<ITEM*> coupledBySerial( coupledItems.begin(), coupledItems.end() );\n"
+          "    std::sort( coupledBySerial.begin(), coupledBySerial.end(),\n"
+          "               []( const ITEM* a, const ITEM* b ) { return a->Serial() < b->Serial(); } );\n"
+          "\n"
+          "    for( ITEM* item : coupledBySerial )\n"
+          "    {\n"
+          "        if( item->Kind() == aItem->Kind() )")
 
     # the world's joints, as virtual vias are made for them, in the order of their places (then nets and layers)
     patch(f"{router}/pns_node.cpp",

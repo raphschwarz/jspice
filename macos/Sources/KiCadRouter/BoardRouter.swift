@@ -1,6 +1,7 @@
 // Routing on a KiCad board: the router (KiCad's, ported) on the board's world, and what it places written back into
 // the board as KiCad writes tracks and vias. The start item and sizes are as KiCad's router tool and
-// PNS_KICAD_IFACE_BASE::ImportSizes find them, and tracks and vias are dragged as its drag tools drag them
+// PNS_KICAD_IFACE_BASE::ImportSizes find them (a differential pair's too, routed as its Route Differential Pair
+// routes one), and tracks and vias are dragged as its drag tools drag them
 // (pcbnew/router/router_tool.cpp, pns_tool_base.cpp, pns_kicad_iface.cpp, KiCad 10.0.7).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as KiCad
 // (see KICAD-NOTICE.md).
@@ -248,12 +249,15 @@ public final class BoardRouter {
     }
 
     /// The sizes a track from `item` takes: its net class's track width (or the width of the track it starts on) and
-    /// via, no less than the board's minimums (KiCad's ImportSizes)
+    /// via, no less than the board's minimums; a differential pair's, its net class's diff pair width and gap, the
+    /// gap between its vias the same as its gap (as ImportSizes takes it from the net class's gap rule), and its vias'
+    /// holes kept the board's hole to hole and hole clearances from each other (KiCad's ImportSizes)
     public func sizes(for item: Item?, net name: String? = nil) -> SizesSettings {
         var s = SizesSettings()
         let net = name ?? item?.net.flatMap { world.netNames[$0] } ?? ""
         let nc = world.netClasses.effective(net)
         s.clearance = world.rules.clearance
+        s.minClearance = world.rules.clearance
         if let seg = item as? Segment {
             s.trackWidth = seg.width
         } else {
@@ -262,6 +266,13 @@ public final class BoardRouter {
         s.boardMinTrackWidth = world.minTrackWidth
         s.viaDiameter = max(world.minViaDiameter, nc.viaDiameter ?? 600_000)
         s.viaDrill = max(world.minViaDrill, nc.viaDrill ?? 300_000)
+        s.diffPairWidth = max(world.minTrackWidth, nc.diffPairWidth ?? 200_000)
+        s.diffPairGap = max(world.rules.clearance, nc.diffPairGap ?? 250_000)
+        s.diffPairViaGap = s.diffPairGap
+        s.diffPairViaGapSameAsTraceGap = false
+        s.holeToHole = world.rules.holeToHole
+        s.diffPairHoleToHole = world.rules.holeToHole
+        s.diffPairCopperToHole = world.rules.holeClearance
         return s
     }
 
@@ -277,7 +288,53 @@ public final class BoardRouter {
         iface.added.removeAll()
         iface.removedItems.removeAll()
         startItem = item
+        router.mode = .routeSingle
         return router.startRouting(q, item, layer: startLayer(for: item, layer: layer))
+    }
+
+    // MARK: - Differential pairs (the router tool's Route Differential Pair)
+
+    /// Starts a differential pair with the pointer at `p`, `layer` the layer chosen, as KiCad's router tool starts
+    /// one: from the pad, via or track end there (picked as a track's start is) and the nearest of the same kind of
+    /// its coupled net's (the net named as its pair's, its last P, N, + or - the other); its net class's diff pair
+    /// width and gap. Whether the router could start it; if not, `failureReason` says why, as KiCad says it (no
+    /// coupled net, nothing of it to start from, not at a track's end, nothing under the pointer, the gap under the
+    /// board's minimum clearance, the start too close to something).
+    @discardableResult
+    public func startPair(at p: IPoint, layer: Int) -> Bool {
+        let (q, item) = startPoint(at: p, layer: layer)
+        router.updateSizes(sizes(for: item))
+        iface.added.removeAll()
+        iface.removedItems.removeAll()
+        startItem = item
+        router.mode = .routeDiffPair
+        router.failureReason = ""
+        return router.startRouting(q, item, layer: startLayer(for: item, layer: layer))
+    }
+
+    /// Why the router would not start the last track or pair, as KiCad's says it
+    public var failureReason: String { router.failureReason }
+
+    /// Whether what is being routed is a differential pair
+    public var isRoutingPair: Bool { router.state == .routeTrack && router.mode == .routeDiffPair }
+
+    /// The nets of the pair being routed, by name: its positive and its negative net
+    public var pairNets: (positive: String, negative: String)? {
+        guard isRoutingPair, router.currentNets.count == 2 else { return nil }
+        let names = router.currentNets.map { $0.flatMap { world.netNames[$0] } ?? "" }
+        return (names[0], names[1])
+    }
+
+    /// The pair as placed so far, for drawing: its positive and negative lines from where they were last fixed (or
+    /// started) to the pointer, their width and layer, and the vias they end in if vias are being placed. (What is
+    /// fixed of a pair is in the world already: KiCad commits each part as it is fixed.)
+    public var pairPreview: (positive: LineChain, negative: LineChain, width: Int, gap: Int, layer: Int, viaP: IPoint?, viaN: IPoint?)? {
+        guard isRoutingPair, let placer = router.diffPairPlacer else { return nil }
+        let trace = placer.currentTrace
+        let p = trace.pLine(), n = trace.nLine()
+        // (the pair's width its sizes', until it has been routed)
+        return (p.cLine, n.cLine, trace.width > 0 ? trace.width : router.sizes.diffPairWidth, router.sizes.diffPairGap,
+                placer.currentLayer, p.via?.pos, n.via?.pos)
     }
 
     /// The pointer moved to `p`
@@ -351,7 +408,7 @@ public final class BoardRouter {
 
     /// The track as placed so far, for drawing: its fixed part, the part following the pointer, and where a via goes
     public var preview: (tail: LineChain, head: LineChain, width: Int, layer: Int, via: IPoint?)? {
-        guard router.routingInProgress, let p = router.placer else { return nil }
+        guard router.routingInProgress, let p = router.linePlacer else { return nil }
         return (p.tail.cLine, p.head.cLine, p.head.width, p.currentLayer, p.head.via?.pos)
     }
 
@@ -434,11 +491,14 @@ public final class BoardRouter {
         draggedLocked = false
     }
 
-    /// The track dropped
+    /// The track dropped. A pair dropped with what was fixed of it, which the router has in its world already (KiCad
+    /// keeps it, as `commit` does): the world read again from the board, which has none of it.
     public func cancel() {
+        let fixedPair = isRoutingPair && (!iface.added.isEmpty || !iface.removedItems.isEmpty)
         router.stopRouting()
         iface.added.removeAll()
         iface.removedItems.removeAll()
+        if fixedPair { reload() }
     }
 
     // MARK: - Stitching
