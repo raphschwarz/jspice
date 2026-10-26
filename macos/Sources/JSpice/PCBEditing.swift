@@ -44,6 +44,9 @@ final class PCBEditing: ObservableObject {
     @Published var footprintSelection: Set<String> = []
     /// Footprints being dragged, and how far so far
     @Published private(set) var dragging: (uuids: [String], delta: KiCadPoint)?
+    /// A track or via being dragged with the router (KiCad's drag), as it now goes
+    @Published private(set) var dragPreview: BoardEditing.DragPreview?
+    @Published private(set) var isDragging = false
     /// What the last action could not do, or how to go on
     @Published private(set) var message: String?
     @Published private(set) var undoName: String?
@@ -115,6 +118,7 @@ final class PCBEditing: ObservableObject {
         } else if isRouting {
             stop()
         }
+        if isDragging { cancelDrag() }
     }
 
     private func layerChanged() {
@@ -147,6 +151,8 @@ final class PCBEditing: ObservableObject {
 
     /// The pointer over the board, at `p` (mm)
     func pointerMoved(_ p: KiCadPoint) {
+        pointer = p
+        if isDragging && followsPointer { return dragMoved(to: p) }
         guard isRouting else { return }
         pendingMove = p
         guard !moving else { return }
@@ -296,6 +302,108 @@ final class PCBEditing: ObservableObject {
         message = tool == .route ? "Click a pad or track to start a track." : nil
     }
 
+    // MARK: - Dragging tracks and vias
+
+    /// Where the pointer last was over the board
+    private(set) var pointer: KiCadPoint?
+    /// Whether the drag follows the pointer until a click (started by a key), not a press of the button
+    private var followsPointer = false
+    private var dragStart: Task<Bool, Never>?
+    private var pendingDrag: KiCadPoint?
+    private var dragMoving = false
+
+    /// Starts dragging the track or via at `p` (mm) with the router, as KiCad's drag (D) drags it (its free angle
+    /// drag, G, with `freeAngle`): walking round what is in its way, or shoving it aside, as tracks are routed;
+    /// `follow`, the drag goes with the pointer until a click (a key started it), else until the button is let go.
+    /// Whether there was a track or via there to drag.
+    @discardableResult
+    func startDrag(at p: KiCadPoint, freeAngle: Bool = false, follow: Bool = false) async -> Bool {
+        guard !isRouting, !isDragging else { return false }
+        let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround
+        await applying?.value
+        if !isReady { await prepareNow() }
+        let shown = await engine.run { session -> BoardEditing.DragPreview? in
+            session.mode = mode
+            return session.startDrag(at: p, layer: layer, freeAngle: freeAngle)
+        }
+        guard let shown else { return false }
+        selection = []
+        isDragging = true
+        followsPointer = follow
+        dragPreview = shown
+        message = follow ? "Move to drag, click to keep it there. Esc: drop it." : nil
+        return true
+    }
+
+    /// The drag key (D, or G for its free angle drag) at the pointer
+    func dragAtPointer(freeAngle: Bool) {
+        guard let p = pointer, !isDragging else { return }
+        Task {
+            let started = await startDrag(at: p, freeAngle: freeAngle, follow: true)
+            if !started {
+                NSSound.beep()
+                message = "Put the pointer on a track or via to drag it."
+            }
+        }
+    }
+
+    /// The pointer moved to `p` (mm), dragging: only the latest place it has got to dragged to
+    func dragMoved(to p: KiCadPoint) {
+        pendingDrag = p
+        guard !dragMoving else { return }
+        dragMoving = true
+        Task {
+            if let start = dragStart { _ = await start.value }
+            while let next = pendingDrag {
+                pendingDrag = nil
+                let shown = await engine.run { $0.drag(to: next) }
+                if isDragging, let shown { dragPreview = shown }
+            }
+            dragMoving = false
+        }
+    }
+
+    /// The drag kept where it has got to with the pointer at `p` (a click, or the button let go); dropped, the
+    /// board as it was, if it could not get past what is in its way there
+    func fixDrag(at p: KiCadPoint) async {
+        if let start = dragStart { _ = await start.value }
+        guard isDragging else { return }
+        pendingDrag = nil
+        let made = await engine.run { session -> BoardEditing.Edit? in
+            session.drag(to: p)
+            if let made = session.fixDrag(at: p) { return made }
+            session.cancelDrag()
+            return nil
+        }
+        dragEnded(kept: made != nil)
+        if let made { take(made) }
+    }
+
+    /// The drag dropped, the board as it was (Escape)
+    func cancelDrag() {
+        guard isDragging else { return }
+        pendingDrag = nil
+        Task {
+            _ = await engine.run { session -> Bool? in
+                session.cancelDrag()
+                return true
+            }
+            dragEnded(kept: true)
+        }
+    }
+
+    private func dragEnded(kept: Bool) {
+        isDragging = false
+        followsPointer = false
+        dragPreview = nil
+        if kept {
+            message = nil
+        } else {
+            NSSound.beep()
+            message = "The drag can't get past what is in its way there."
+        }
+    }
+
     // MARK: - Selecting and deleting
 
     /// The track or via at `p` selected (added to the selection, or taken from it, `extending`); whether there was one
@@ -431,8 +539,22 @@ final class PCBEditing: ObservableObject {
 
     /// A drag from `start` to `now` (mm) with the select tool: the footprint there (with the others selected, if it is
     /// one of them) following it, on a 0.05 mm grid
+    /// A track or via there is dragged with the router instead (until the button is let go).
     func dragChanged(from start: KiCadPoint, to now: KiCadPoint, in picture: KiCadBoardPicture, selected: Set<String>) {
         guard tool == .select, !isRouting else { return }
+        if isDragging || dragStart != nil {
+            if !followsPointer { dragMoved(to: now) }
+            return
+        }
+        if dragging == nil, picture.copper(at: start, layers: [layer] + layers.filter { $0 != layer }, slop: 0) != nil {
+            dragStart = Task {
+                let started = await startDrag(at: start)
+                dragStart = nil
+                return started
+            }
+            dragMoved(to: now)
+            return
+        }
         if dragging == nil {
             guard let footprint = picture.footprint(at: start) else { return }
             dragging = (selected.contains(footprint.uuid) ? Array(selected) : [footprint.uuid], .zero)
@@ -441,8 +563,12 @@ final class PCBEditing: ObservableObject {
         dragging?.delta = KiCadPoint(((now.x - start.x) / grid).rounded() * grid, ((now.y - start.y) / grid).rounded() * grid)
     }
 
-    /// The drag let go: the footprints moved there
-    func dragEnded() {
+    /// The drag let go: the footprints moved there (the track or via dragged kept there)
+    func dragEnded(at p: KiCadPoint) {
+        if (isDragging || dragStart != nil) && !followsPointer {
+            Task { await fixDrag(at: p) }
+            return
+        }
         guard let (uuids, delta) = dragging else { return }
         dragging = nil
         guard delta != .zero else { return }
@@ -491,7 +617,7 @@ final class PCBEditing: ObservableObject {
     /// board; whether there was one
     @discardableResult
     func place(_ body: @escaping (BoardEditing) -> BoardEditing.Edit?) async -> Bool {
-        guard !isRouting else { return false }
+        guard !isRouting, !isDragging else { return false }
         await applying?.value
         if !isReady { await prepareNow() }
         guard let made = await engine.run(body) else { return false }
@@ -528,14 +654,14 @@ final class PCBEditing: ObservableObject {
     }
 
     func undo() {
-        guard !isRouting, let edit = undoStack.popLast() else { return }
+        guard !isRouting, !isDragging, let edit = undoStack.popLast() else { return }
         redoStack.append(edit)
         updateNames()
         send(edit.before, from: edit.after, name: "Undo " + edit.name)
     }
 
     func redo() {
-        guard !isRouting, let edit = redoStack.popLast() else { return }
+        guard !isRouting, !isDragging, let edit = redoStack.popLast() else { return }
         undoStack.append(edit)
         updateNames()
         send(edit.after, from: edit.before, name: edit.name)

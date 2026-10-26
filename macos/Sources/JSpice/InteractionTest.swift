@@ -276,6 +276,31 @@ enum InteractionTest {
             check(false, "a routed track to select")
         }
 
+        // a track dragged with the router (KiCad's drag): kept where it goes, or dropped where it cannot get past what
+        // is in its way; undone
+        if let track = pcb.picture?.tracks.last(where: { !$0.uuid.isEmpty }), let a = track.points.first,
+           let b = track.points.dropFirst().first {
+            let middle = KiCadPoint((a.x + b.x) / 2, (a.y + b.y) / 2)
+            editing.layer = track.layer
+            let before = editing.undoName
+            let started = await editing.startDrag(at: middle)
+            check(started && editing.isDragging && editing.dragPreview?.moved.contains(track.uuid) == true,
+                  "pressing on a track drags it with the router")
+            // (a step across the track, a quarter of a millimetre)
+            let length = max(1e-9, hypot(b.x - a.x, b.y - a.y))
+            await editing.fixDrag(at: KiCadPoint(middle.x - (b.y - a.y) / length * 0.25, middle.y + (b.x - a.x) / length * 0.25))
+            await editing.settled()
+            check(!editing.isDragging && editing.dragPreview == nil, "and letting go ends the drag")
+            if editing.undoName == "Drag Track" {
+                check(!(pcb.picture?.tracks.contains { $0.uuid == track.uuid } ?? true), "the dragged track is where it went")
+                editing.undo()
+                await editing.settled()
+                check(pcb.picture?.tracks.contains { $0.uuid == track.uuid } ?? false, "undo puts the dragged track back")
+            } else {
+                check(editing.undoName == before && editing.message != nil, "a drag that cannot get past what is in its way leaves the board as it was")
+            }
+        }
+
         // a part dragged, turned and turned over, and the moves undone
         if let footprint = pcb.picture?.footprints.first {
             let at = footprint.position

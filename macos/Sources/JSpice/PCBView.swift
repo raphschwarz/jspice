@@ -359,8 +359,8 @@ struct PCBBoardCanvas: View {
     var body: some View {
         Canvas { context, _ in
             PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc,
-                       hidden: editing.preview?.moved ?? []).draw(context)
-            PCBEditPainter(picture: picture, view: view, preview: editing.preview, selection: editing.selection,
+                       hidden: (editing.preview?.moved ?? []).union(editing.dragPreview?.moved ?? [])).draw(context)
+            PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview, selection: editing.selection,
                            dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil).draw(context)
         }
         .frame(width: view.size.width, height: view.size.height)
@@ -383,12 +383,17 @@ struct PCBBoardCanvas: View {
                 editing.dragChanged(from: view.board(drag.startLocation), to: view.board(drag.location), in: picture,
                                     selected: footprints)
             }
-            .onEnded { _ in editing.dragEnded() })
+            .onEnded { drag in editing.dragEnded(at: view.board(drag.location)) })
         .onTapGesture(coordinateSpace: .local) { location in
             focused = true
             let p = view.board(location)
             let flags = NSEvent.modifierFlags
             let extending = flags.contains(.command) || flags.contains(.shift)
+            // (a track or via being dragged with the pointer: kept there)
+            if editing.isDragging {
+                Task { await editing.fixDrag(at: p) }
+                return
+            }
             switch editing.tool {
             case .route:
                 editing.click(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
@@ -426,7 +431,9 @@ struct PCBBoardCanvas: View {
         guard press.modifiers.isDisjoint(with: [.command, .option, .control]) else { return false }
         switch press.key {
         case .escape:
-            if editing.isRouting {
+            if editing.isDragging {
+                editing.cancelDrag()
+            } else if editing.isRouting {
                 editing.stop()
             } else if editing.tool == .route {
                 editing.tool = .select
@@ -454,6 +461,8 @@ struct PCBBoardCanvas: View {
         }
         switch press.characters.lowercased() {
         case "x": editing.tool = .route
+        case "d" where !editing.isRouting: editing.dragAtPointer(freeAngle: false)
+        case "g" where !editing.isRouting: editing.dragAtPointer(freeAngle: true)
         case "v": editing.placeVia()
         case "/": editing.flipPosture()
         case "w": editing.stepWidth(press.modifiers.contains(.shift) ? -1 : 1)
@@ -475,6 +484,8 @@ struct PCBEditPainter {
     let picture: KiCadBoardPicture
     let view: PCBTransform
     let preview: BoardEditing.Preview?
+    /// A track or via being dragged, as it now goes
+    var drag: BoardEditing.DragPreview?
     let selection: Set<String>
     var dragging: (uuids: [String], delta: KiCadPoint)?
     /// The connection still to route under the pointer, which a click routes
@@ -516,6 +527,23 @@ struct PCBEditPainter {
             for via in picture.vias where selection.contains(via.uuid) {
                 let c = view.point(via.center), r = via.size * s / 2 + 1.5
                 context.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(.white), lineWidth: 2)
+            }
+        }
+        if let drag {
+            // what is dragged, and what it has shoved aside, where it now goes; outlined in red where it is in the way
+            for track in drag.tracks {
+                let path = view.path(track.points, closed: false)
+                let w = max(0.5, track.width * s)
+                if drag.violates {
+                    context.stroke(path, with: .color(Color.red.opacity(0.8)), style: StrokeStyle(lineWidth: w + 3, lineCap: .round, lineJoin: .round))
+                }
+                context.stroke(path, with: .color(PCBPainter.color(track.layer)), style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
+            }
+            for via in drag.vias {
+                let c = view.point(via.center), r = via.size * s / 2
+                let ring = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+                context.fill(ring, with: .color(PCBPainter.via))
+                context.stroke(ring, with: .color(drag.violates ? Color.red : Color.white), lineWidth: 1)
             }
         }
         guard let preview else { return }
@@ -575,7 +603,7 @@ struct PCBEditBar: View {
             Picker("Tool", selection: $editing.tool) {
                 ForEach(PCBEditing.Tool.allCases) { tool in
                     Image(systemName: tool.symbol).help(tool == .select
-                        ? "Select and move parts (drag; R rotates, F flips), select tracks and vias (⌫ deletes them)"
+                        ? "Select and move parts (drag; R rotates, F flips), select tracks and vias (⌫ deletes them); drag a track or via (or D, G at any angle) and the router moves it, as KiCad's drag"
                         : "Route tracks (X): click a pad, click to fix, double-click to finish; V via, / posture, Esc stop")
                         .tag(tool)
                 }
