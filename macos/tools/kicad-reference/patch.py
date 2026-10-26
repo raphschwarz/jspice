@@ -24,6 +24,12 @@ each time it is run on the same board, and runs on items with no BOARD_ITEM behi
 - The items of a differential pair's coupled net that the pair could start or end on (FindDpPrimitivePair) are
   taken in the order they were made, not in the order of KiCad's set of pointers: of two the same distance away,
   the first taken is the one the pair goes from. The Swift port takes them in the same order.
+- NearestObstacle makes the segments of a line one at a time, each in the memory of the last, and the obstacles they
+  meet go into one set with them as their heads: one head, as the set compares heads by address, whose obstacles it
+  orders by item alone and keeps once each; the line's via comes after the segments, and its obstacles are compared
+  with theirs by a head that is no longer there. Here the last segment is kept until the set is done with, so that
+  the via's obstacles are compared with the last segment's serial number, and ordered by it before theirs. The Swift
+  port does the same.
 - Where KiCad's router reads an arc as a segment (LINE_PLACER::simplifyNewLine casts a track at a joint it cleans
   up to a SEGMENT whatever it is, and reads an arc's memory as a segment's), which is undefined, it reports it to
   kicadReferenceUndefined, which stops the program with exit status 3, as router.cpp stops where it sees KiCad's
@@ -232,6 +238,21 @@ def main():
           "    for( const JOINT* placedJoint : jointsByPlace( m_joints ) )\n"
           "    {\n"
           "        JOINT joint = *placedJoint;\n")
+
+    patch(f"{router}/pns_node.cpp",
+          "        const SEGMENT s( *aLine, aLine->CLine().CSegment( i ) );\n"
+          "        QueryColliding( &s, obstacleSet, aOpts );\n",
+          "        s.emplace( *aLine, aLine->CLine().CSegment( i ) );\n"
+          "        QueryColliding( &*s, obstacleSet, aOpts );\n")
+
+    patch(f"{router}/pns_node.cpp",
+          "    OBSTACLES                 obstacleSet;\n"
+          "\n"
+          "    for( int i = 0; i < aLine->CLine().SegmentCount(); i++ )\n",
+          "    OBSTACLES                 obstacleSet;\n"
+          "    std::optional<SEGMENT>    s; // (kicad-reference) each segment in the memory of the last, kept\n"
+          "\n"
+          "    for( int i = 0; i < aLine->CLine().SegmentCount(); i++ )\n")
 
 
 if __name__ == "__main__":

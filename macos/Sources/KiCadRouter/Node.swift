@@ -40,10 +40,13 @@ public struct CollisionSearchOptions {
 /// The obstacles found so far, kept as KiCad's std::set<OBSTACLE> keeps them: one for each head and item, in the
 /// order of the head's and then the item's making. (KiCad orders them by address, so that which of two obstacles met
 /// at the same place comes first is down to its memory allocator; tools/kicad-reference has KiCad order them as here.)
+/// Heads that `share` one place are one head to it, with the serial number of the last of them, as the segments
+/// KiCad's NearestObstacle makes one at a time in the same memory are.
 public final class CollisionSearchContext {
     public let options: CollisionSearchOptions
     private(set) var obstacles: [Obstacle] = []
-    private var keys = Set<Key>()
+    private var sharing = Set<ObjectIdentifier>()
+    private var sharedSerial = 0
 
     struct Key: Hashable, Comparable {
         var head: Int, item: Int
@@ -54,10 +57,20 @@ public final class CollisionSearchContext {
 
     public var count: Int { obstacles.count }
 
+    /// `head` in the place the heads shared before it, which it takes over
+    func share(_ head: Item) {
+        sharing.insert(ObjectIdentifier(head))
+        sharedSerial = head.serial
+    }
+
+    private func key(_ o: Obstacle) -> Key {
+        Key(head: sharing.contains(ObjectIdentifier(o.head)) ? sharedSerial : o.head.serial, item: o.item.serial)
+    }
+
     func insert(_ o: Obstacle) {
-        let key = Key(head: o.head.serial, item: o.item.serial)
-        guard keys.insert(key).inserted else { return }
-        let i = obstacles.firstIndex { Key(head: $0.head.serial, item: $0.item.serial) > key } ?? obstacles.count
+        let key = key(o)
+        let i = obstacles.firstIndex { self.key($0) >= key } ?? obstacles.count
+        if i < obstacles.count && self.key(obstacles[i]) == key { return }
         obstacles.insert(o, at: i)
     }
 }
@@ -442,7 +455,9 @@ public final class Node {
         let cornerMode = Router.instance?.settings.cornerMode ?? .mitered45
         let ctx = CollisionSearchContext(options: options)
         for i in 0..<line.cLine.segmentCount {
-            queryColliding(Segment(line: line, line.cLine.segment(i)), ctx)
+            let s = Segment(line: line, line.cLine.segment(i))
+            ctx.share(s)
+            queryColliding(s, ctx)
         }
         if let via = line.via { queryColliding(via, ctx) }
         let obstacles = ctx.obstacles
