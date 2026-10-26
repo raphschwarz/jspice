@@ -153,6 +153,38 @@ final class BoardEditingTests: XCTestCase {
         }
     }
 
+    /// The pointer snapped as KiCad's router tool snaps it (TOOL_BASE::snapToItem): to a pad's centre; to a track's
+    /// end within half its width of it; else to a point of the track by the grid; else to the grid
+    func testThePointerSnapsAsKiCadsRouterToolSnapsIt() throws {
+        var tracks = 0
+        for file in try Self.boards() {
+            let session = BoardEditing(board: try KiCadBoard.read(file), project: Self.project(file))
+            let router = session.router
+            let world = router.world
+            for w in world.items where w.kind == .track && w.net != nil && w.a.distance(w.b) > Double(4 * router.grid) {
+                let (point, item) = router.startPoint(at: w.a + IPoint(w.width / 4, 0), layer: w.layer)
+                guard let segment = item as? Segment, segment.seg.a == w.a || segment.seg.b == w.a else { continue }
+                tracks += 1
+                XCTAssertEqual(point, w.a, "near its end: the track's end")
+                let middle = IPoint((w.a.x + w.b.x) / 2 + 7_000, (w.a.y + w.b.y) / 2 - 3_000)
+                let (on, picked) = router.startPoint(at: middle, layer: w.layer)
+                if let s = picked as? Segment, s.seg.a == w.a || s.seg.b == w.a {
+                    XCTAssertLessThanOrEqual(s.seg.squaredDistance(on), 4, "by its middle: a point on the track")
+                }
+            }
+            for w in world.items where w.kind == .pad && w.net != nil {
+                guard let pos = w.pos, let pad = router.startPoint(at: pos + IPoint(10_000, -10_000), layer: w.layers.start).item as? Solid,
+                      pad.pos == pos else { continue }
+                XCTAssertEqual(router.startPoint(at: pos + IPoint(10_000, -10_000), layer: w.layers.start).point, pos, "on a pad: its centre")
+            }
+            // nothing there: the grid
+            let empty = IPoint(-50_123_456, -50_987_654)
+            XCTAssertNil(router.startPoint(at: empty, layer: 0).item)
+            XCTAssertEqual(router.startPoint(at: empty, layer: 0).point, IPoint(-50_100_000, -51_000_000))
+        }
+        XCTAssertGreaterThan(tracks, 0)
+    }
+
     /// Footprints moved, turned and turned over, each a change of its own; the router then sees their pads where they
     /// went
     func testFootprintsArePlaced() throws {
@@ -174,7 +206,7 @@ final class BoardEditingTests: XCTestCase {
         // the router sees the pad where it went
         let there = KiCadPoint(start.x + 2.5 + offset.x, start.y - 1.25 + offset.y)
         let layer = pad.layers.contains("B.Cu") && !pad.layers.contains("F.Cu") && !pad.layers.contains("*.Cu") ? "B.Cu" : "F.Cu"
-        XCTAssertNotNil(session.router.item(at: BoardEditing.nm(there), layer: session.router.layer(layer) ?? 0))
+        XCTAssertTrue(session.router.startPoint(at: BoardEditing.nm(there), layer: session.router.layer(layer) ?? 0).item is Solid)
         XCTAssertNil(session.moveFootprint(uuid, to: now.position), "not moved: no change")
 
         let rotated = try XCTUnwrap(session.rotateFootprint(uuid))

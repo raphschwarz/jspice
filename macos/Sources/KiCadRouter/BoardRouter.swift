@@ -75,23 +75,158 @@ public final class BoardRouter {
         return (moved, added.filter { !$0.isVirtual && ($0.kind == .segment || $0.kind == .via) })
     }
 
-    /// The routable item at `p` on `layer`: a pad, then a via, then a track (as the router tool picks its start)
-    public func item(at p: IPoint, layer: Int) -> Item? {
-        let hits = router.queryHoverItems(p).filter { $0.layers.overlaps(layer) && $0.isRoutable }
-        return hits.first { $0.kind == .solid } ?? hits.first { $0.kind == .via } ?? hits.first { $0.kind == .segment }
+    // MARK: - The pointer, as KiCad's router tool takes it (pcbnew/router/pns_tool_base.cpp and router_tool.cpp,
+    // pcbnew/tools/pcb_grid_helper.cpp, common/tool/grid_helper.cpp)
+
+    /// The grid the pointer goes to where there is nothing to snap to, in nm (the editor's grid, its origin at 0)
+    public var grid = 50_000
+    /// What the track being routed started on (which it does not end on)
+    private var startItem: Item?
+
+    /// What a track started at the pointer `p` starts on, `layer` the layer chosen (TOOL_BASE::updateStartItem): the
+    /// item there of any net, picked as pickSingleItem picks it; and where the track starts, on it (snapToItem)
+    public func startPoint(at p: IPoint, layer: Int) -> (point: IPoint, item: Item?) {
+        let item = pickSingleItem(p, net: nil, layer: -1, topLayer: layer)
+        return (snapToItem(item, p), item)
     }
 
-    /// Where a track starting at `p` on `item` starts: a pad's or via's centre, a track's nearer end or the point on it
-    public func snap(_ p: IPoint, to item: Item?) -> IPoint {
-        switch item {
-        case let s as Solid: return s.pos
-        case let v as Via: return v.pos
-        case let s as Segment:
-            let a = s.seg.a, b = s.seg.b
-            let near = p.distance(a) < p.distance(b) ? a : b
-            return p.distance(near) <= Double(s.width) ? near : s.seg.nearestPoint(p)
-        default: return p
+    /// The layer a track started on `item` goes on, `layer` the layer chosen: that one if the item is on it, else
+    /// the item's first (ROUTER_TOOL::getStartLayer)
+    public func startLayer(for item: Item?, layer: Int) -> Int {
+        guard let item, !item.layers.overlaps(layer) else { return layer }
+        return item.layers.start
+    }
+
+    /// What the track being routed ends on with the pointer at `p` (TOOL_BASE::updateEndItem): an item of its net
+    /// there other than the one it started on, and where the track goes, on it; else nothing, and the grid point
+    public func endPoint(at p: IPoint) -> (point: IPoint, item: Item?) {
+        guard router.settings.mode == .markObstacles || (router.currentNets.first ?? nil) != nil else { return (align(p), nil) }
+        let layer = router.isPlacingVia ? -1 : router.currentLayer
+        var item: Item?
+        for net in router.currentNets {
+            item = pickSingleItem(p, net: net, layer: layer, topLayer: router.currentLayer, avoid: startItem.map { [$0] } ?? [])
+            if item != nil { break }
         }
+        // (pads and tracks both snapped to, as KiCad's magnetic items are by default in the router tool: checkSnap)
+        guard let item else { return (align(p), nil) }
+        return (snapToItem(item, p), item)
+    }
+
+    /// The item under the pointer to start or end a track on (TOOL_BASE::pickSingleItem): pads and vias first, then
+    /// tracks, those on `topLayer` before those on other layers, each the nearest; of net `net` (nil: any); none
+    /// that is not on `layer` (-1: any)
+    func pickSingleItem(_ p: IPoint, net: NetHandle?, layer: Int, topLayer: Int, ignorePads: Bool = false,
+                        avoid: [Item] = []) -> Item? {
+        let tl = layer > 0 ? layer : topLayer
+        let maxSlopRadius = grid
+        var prioritized = [Item?](repeating: nil, count: 5)
+        var dist = [Int](repeating: Int.max, count: 5)
+        for slopRadius in [0, maxSlopRadius] {
+            for item in router.queryHoverItems(p, slopRadius: slopRadius) {
+                if !item.isRoutable || avoid.contains(where: { $0 === item }) { continue }
+                if item.kind == .solid && ignorePads {
+                    continue
+                } else if iface.netCode(net) <= 0 || item.net == net {
+                    if item.kind == .via || item.kind == .solid {
+                        let d = ((item.shape(layer)?.bbox.center ?? p) - p).squaredNorm
+                        if d < dist[2] {
+                            prioritized[2] = item
+                            dist[2] = d
+                        }
+                        if item.layers.overlaps(tl) && d < dist[0] {
+                            prioritized[0] = item
+                            dist[0] = d
+                        }
+                    } else if let li = item as? Segment {
+                        let d = min((li.anchor(0) - p).squaredNorm, (li.anchor(1) - p).squaredNorm)
+                        if d < dist[3] {
+                            prioritized[3] = item
+                            dist[3] = d
+                        }
+                        if item.layers.overlaps(tl) && d < dist[1] {
+                            prioritized[1] = item
+                            dist[1] = d
+                        }
+                    }
+                } else if item.kind == .solid && item.isFreePad {
+                    // (free pads only when the pointer is inside one)
+                    if item.shape(-1)?.collide(.circle(center: p, radius: 0), clearance: 0) ?? false {
+                        prioritized[0] = item
+                        dist[0] = 0
+                    }
+                } else if item.net == nil && router.settings.mode == .markObstacles {
+                    // (unconnected items as a last resort, marking obstacles)
+                    if item.layers.overlaps(tl) { prioritized[4] = item }
+                }
+            }
+            if prioritized.contains(where: { $0 != nil }) { break }
+        }
+        for case let item? in prioritized where layer < 0 || item.layers.overlaps(layer) { return item }
+        return nil
+    }
+
+    /// Where the pointer at `p` goes on `item` (TOOL_BASE::snapToItem): a pad's or via's centre (a pad's nearest
+    /// anchor); a track's end if within half its width of the pointer, else the point of the track by the grid point
+    /// nearest the pointer (AlignToSegment); with no item, the grid point
+    public func snapToItem(_ item: Item?, _ p: IPoint) -> IPoint {
+        switch item {
+        case let solid as Solid:
+            guard !solid.anchorPoints.isEmpty else { return solid.anchor(0) }
+            var anchor = IPoint.zero, minDist = Int.max
+            for candidate in solid.anchorPoints {
+                let d = (p - candidate).squaredNorm
+                if d < minDist {
+                    minDist = d
+                    anchor = candidate
+                }
+            }
+            return anchor
+        case let via as Via:
+            return via.pos
+        case let seg as Segment:
+            let a = seg.anchor(0), b = seg.anchor(1)
+            let wSq = (seg.width / 2) * (seg.width / 2)
+            let distA = (p - a).squaredNorm, distB = (p - b).squaredNorm
+            if distA < wSq || distB < wSq { return distA < distB ? a : b }
+            return alignToSegment(p, seg.seg)
+        default:
+            return align(p)
+        }
+    }
+
+    /// The grid point nearest `p` (GRID_HELPER::Align, KiROUND's rounding)
+    public func align(_ p: IPoint) -> IPoint {
+        IPoint(Int((Double(p.x) / Double(grid)).rounded()) * grid, Int((Double(p.y) / Double(grid)).rounded()) * grid)
+    }
+
+    /// Where on `seg` the pointer at `p` goes (PCB_GRID_HELPER::AlignToSegment): its nearer end to the pointer, or
+    /// where it crosses the lines across, down and diagonally through the grid point nearest the pointer, whichever
+    /// is nearest
+    func alignToSegment(_ p: IPoint, _ seg: Seg) -> IPoint {
+        let gridSnapEpsilonSq = 4
+        let aligned = align(p)
+        var points: [IPoint] = []
+        for d in [IPoint(1, 0), IPoint(0, 1), IPoint(1, 1), IPoint(1, -1)] {
+            if let v = seg.intersectLines(Seg(aligned, aligned + d)), seg.squaredDistance(v) <= gridSnapEpsilonSq {
+                points.append(v)
+            }
+        }
+        var nearest = aligned, minDist = Int.max
+        for pt in [seg.a, seg.b] {
+            let d = (pt - p).squaredNorm
+            if d < minDist {
+                minDist = d
+                nearest = pt
+            }
+        }
+        for pt in points {
+            let d = (pt - aligned).squaredNorm
+            if d < minDist {
+                minDist = d
+                nearest = pt
+            }
+        }
+        return nearest
     }
 
     /// The sizes a track from `item` takes: its net class's track width (or the width of the track it starts on) and
@@ -112,38 +247,34 @@ public final class BoardRouter {
         return s
     }
 
-    /// Starts a track at `p` on `layer`, from what is there; whether the router could start it (a start on another
-    /// net's copper, or too close to it, cannot)
+    /// Starts a track with the pointer at `p`, `layer` the layer chosen, from what is there, as KiCad's router tool
+    /// starts one (on the item's layer if it is not on that one); whether the router could start it (a start on
+    /// another net's copper, or too close to it, cannot)
     @discardableResult
     public func start(at p: IPoint, layer: Int, width: Int? = nil) -> Bool {
-        let item = item(at: p, layer: layer)
+        let (q, item) = startPoint(at: p, layer: layer)
         var s = sizes(for: item)
         if let width { s.trackWidth = width }
         router.updateSizes(s)
         iface.added.removeAll()
         iface.removedItems.removeAll()
-        return router.startRouting(snap(p, to: item), item, layer: layer)
+        startItem = item
+        return router.startRouting(q, item, layer: startLayer(for: item, layer: layer))
     }
 
     /// The pointer moved to `p`
     @discardableResult
     public func move(to p: IPoint) -> Bool {
-        router.move(p, endItem(at: p))
+        let (q, item) = endPoint(at: p)
+        return router.move(q, item)
     }
 
-    /// What the track would end on at `p`: an item of its net there
-    private func endItem(at p: IPoint) -> Item? {
-        guard let net = router.currentNets.first ?? nil else { return nil }
-        let layer = router.currentLayer
-        let hits = router.queryHoverItems(p).filter { $0.net == net && $0.layers.overlaps(layer) && $0.isRoutable }
-        return hits.first { $0.kind == .solid } ?? hits.first { $0.kind == .via } ?? hits.first { $0.kind == .segment }
-    }
-
-    /// A click at `p`: the track fixed up to there; whether it is finished (it reached its net)
+    /// A click with the pointer at `p`: the track fixed up to there; whether it is finished (it reached its net)
     @discardableResult
     public func fix(at p: IPoint) -> Bool {
         let placingVia = router.isPlacingVia
-        let done = router.fixRoute(p, endItem(at: p))
+        let (q, item) = endPoint(at: p)
+        let done = router.fixRoute(q, item)
         // (a via placed: on to its other layer, as the router tool goes)
         if !done && placingVia {
             let current = router.currentLayer
@@ -155,7 +286,8 @@ public final class BoardRouter {
     /// The track fixed at `p` and finished there, whether or not it reached its net (a double click)
     @discardableResult
     public func finish(at p: IPoint) -> Bool {
-        router.fixRoute(p, endItem(at: p), forceFinish: true)
+        let (q, item) = endPoint(at: p)
+        return router.fixRoute(q, item, forceFinish: true)
     }
 
     /// The track routed on to the nearest pad or track of its net still to join, and fixed there (KiCad's End);

@@ -97,27 +97,19 @@ public final class BoardEditing {
     static func nm(_ p: KiCadPoint) -> IPoint { IPoint(Int((p.x * 1e6).rounded()), Int((p.y * 1e6).rounded())) }
     static func mm(_ p: IPoint) -> KiCadPoint { KiCadPoint(Double(p.x) / 1e6, Double(p.y) / 1e6) }
 
-    /// Where the pointer at `p` routes to: the centre of a pad of the track's net under it, as KiCad's magnetic
-    /// pads have it, else `p` on a 0.05 mm grid
+    /// Where the pointer at `p` routes to, as KiCad's router tool snaps it (its magnetic pads and tracks): starting,
+    /// the centre of the pad or via under it, or a track's end or the point of the track by the grid; routing, the
+    /// same of the track's net; else `p` on a 0.05 mm grid
     public func snap(_ p: KiCadPoint, layer: String) -> IPoint {
         let q = Self.nm(p)
-        let l = router.layer(layer) ?? 0
-        let net = isRouting ? router.router.currentNets.first ?? nil : nil
-        let pads = router.router.queryHoverItems(q).compactMap { $0 as? Solid }.filter {
-            $0.layers.overlaps(l) && $0.isRoutable && (!isRouting || $0.net == net)
-        }
-        if let pad = pads.first { return pad.pos }
-        let grid = 50_000
-        return IPoint(Int((Double(q.x) / Double(grid)).rounded()) * grid, Int((Double(q.y) / Double(grid)).rounded()) * grid)
+        if isRouting { return router.endPoint(at: q).point }
+        return router.startPoint(at: q, layer: router.layer(layer) ?? 0).point
     }
 
-    /// The layer a track started at `p` goes on: `layer`, unless the pad there is only on another
+    /// The layer a track started at `p` goes on: `layer`, unless what it starts on is only on another
     public func startLayer(at p: KiCadPoint, preferring layer: String) -> String {
-        let q = Self.nm(p)
         guard let l = router.layer(layer) else { return layer }
-        let pads = router.router.queryHoverItems(q).compactMap { $0 as? Solid }.filter(\.isRoutable)
-        if pads.isEmpty || pads.contains(where: { $0.layers.overlaps(l) }) { return layer }
-        return router.layerName(pads[0].layers.start)
+        return router.layerName(router.startLayer(for: router.startPoint(at: Self.nm(p), layer: l).item, layer: l))
     }
 
     // MARK: - Routing
@@ -130,30 +122,28 @@ public final class BoardEditing {
 
     private func start(at p: KiCadPoint, layer: String, width: Double?, mode: RouterMode) -> Bool {
         router.mode = mode
-        let layerName = startLayer(at: p, preferring: layer)
-        guard let l = router.layer(layerName) else { return false }
-        return router.start(at: snap(p, layer: layerName), layer: l, width: width.map { Int(($0 * 1e6).rounded()) })
+        guard let l = router.layer(layer) else { return false }
+        return router.start(at: Self.nm(p), layer: l, width: width.map { Int(($0 * 1e6).rounded()) })
     }
 
     /// The pointer moved to `p`: the track as it now goes
     @discardableResult
     public func move(to p: KiCadPoint) -> Preview? {
         guard isRouting else { return nil }
-        router.move(to: snap(p, layer: router.layerName(router.router.currentLayer)))
+        router.move(to: Self.nm(p))
         return preview
     }
 
     /// A click at `p`: the track fixed up to there; the change, if that finished it (it reached its net)
     public func fix(at p: KiCadPoint) -> Edit? {
         guard isRouting else { return nil }
-        let q = snap(p, layer: router.layerName(router.router.currentLayer))
-        return router.fix(at: q) ? commit("Route Track") : nil
+        return router.fix(at: Self.nm(p)) ? commit("Route Track") : nil
     }
 
     /// A double click at `p`: the track fixed there and finished, whether or not it reached its net
     public func finish(at p: KiCadPoint) -> Edit? {
         guard isRouting else { return nil }
-        let q = snap(p, layer: router.layerName(router.router.currentLayer))
+        let q = Self.nm(p)
         router.move(to: q)
         _ = router.finish(at: q)
         return commit("Route Track")
