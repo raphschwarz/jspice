@@ -20,7 +20,9 @@ on:
 jobs:
   kicad:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # (the router against KiCad on the arc boards and every mode takes the most of it; KiCad installing from its PPA
+    # now and then takes as long again)
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: KiCad 10
