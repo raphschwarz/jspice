@@ -28,8 +28,8 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   nanometre to ten millimetres; then a few found to need its second try, or to fail it), with what `Simplify` and
   `Fracture` make of each on the way and the fractured outlines split where they touch themselves (each case in a
   child process, as `clipper.cpp`'s). `kicad-geometry COUNT SEED` makes other random cases than `build.sh`'s.
-- `router.cpp`: KiCad's interactive router itself (`PNS::ROUTER` with its line placer, walkaround, shove, dragger,
-  optimizer) on a board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make
+- `router.cpp`: KiCad's interactive router itself (`PNS::ROUTER` with its line placer, diff pair placer, walkaround,
+  shove, dragger, optimizer) on a board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make
   on it, step by step as the router tool drives it (pointer moves, with the item under the pointer if one is given,
   vias, layer switches, clicks that fix part of a route, undo, posture flips; walking around obstacles, shoving them
   or marking them). It writes the head, tail and trace after each step, what each route fixed and what it put on the
@@ -66,6 +66,28 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   the dragger's branches of the world (`NODE::Commit` lets go of them), and `router.cpp` asks the dragger nothing more
   then. Valgrind finds nothing wrong in KiCad's dragger on these scenes but the shove's slip above, when a drag that
   shoved a via is over and its shove deleted, which changes nothing.
+  A route can be a differential pair (`"diffPair": true`, the router tool's Route Differential Pair): KiCad's diff
+  pair placer (`PNS::DIFF_PAIR_PLACER`, in the router's `PNS_MODE_ROUTE_DIFF_PAIR`) routes the pair from the pad, via
+  or track end the route starts on and the nearest of the same kind of its coupled net's. Which nets are pairs goes
+  by the names the scene gives them (`"netNames"`), as `BOARD::MatchDpSuffix` has it: a last P or N, + or - (digits
+  and underscores after it aside), the net with the other the coupled one. The pair goes at its width and gap
+  (`"dpWidth"`, `"dpGap"`, and `"dpViaGap"` for its vias' own), its vias' holes kept the rules' hole to hole and hole
+  clearances apart (as `ImportSizes` takes them), and `"minClearance"` is the board's minimum clearance, a gap under
+  which refuses the start; it goes through the route's pointer positions (the last with a pad, via or track end of the
+  pair's nets under it, where the pair snaps to the pair there), vias, layer switches (which a pair makes only from its
+  vias), posture flips, clicks (`"fixAll": false`: all of the pair but its last segments fixed) and undo (which a
+  pair's placer has none of). After each step it writes the pair's two lines (`DIFF_PAIR_PLACER::Traces`), for each
+  move whether the pair got there clear, and the board as the placer has it, when it has changed. A pair's placer
+  commits each part as it is fixed, so what it takes off the board is gone for the rest of the route too: an item the
+  route names after a fix took it off is nothing under the pointer, and what a fix takes off of what an earlier one
+  of the same route put on was not put on after all. A fix with no move since the last one (whose node the placer let
+  go of) has KiCad's placer add the pair to a node it has not got, a null pointer; `router.cpp` sees it coming and
+  stops with exit status 3, and `scenes.py` leaves such boards out. Valgrind finds nothing wrong in KiCad's pair placer
+  on these scenes but the shove's slip above (a pair's vias are the shove's heads' vias). Two of KiCad's ways a pair
+  goes that are its own: walking round, a pair none of whose walks clears what is in its way is left with no path at
+  all, and counts as clear (`tryWalkDp` takes its best walk, a pair with no path if there was none, whenever its best
+  score is above 0, which it always is); and shoving, the vias a pair ends in are committed where they were made, not
+  where the shove pushed them, off the pair's tracks. The port does both.
 - `board-scene.py`: what KiCad's router sees of a real board (`board-scene.py BOARD.kicad_pcb [OUT.json]`, through
   KiCad's `pcbnew` Python module): the items `PNS_KICAD_IFACE_BASE::SyncWorld` makes of it, in its order, with their
   shapes as KiCad's own `GetEffectiveShape` gives them, the board's rules as KiCad's design rules engine resolves
@@ -80,7 +102,11 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   added). Each is saved with its project, and `board-scene.py` run on it.
   `Tests/KiCadRouterTests/Fixtures/boards` holds five (`random-2-43` and `random-2-51`, with keepout zones, as
   `boards.py` makes them now; the other three as it made them before it drew keepouts and rounded rectangles);
-  `KICAD_BOARD_REFERENCE` names another folder of them.
+  `KICAD_BOARD_REFERENCE` names another folder of them. With `--pairs` (`boards.py --pairs OUTDIR COUNT [SEED]`),
+  boards with differential pairs to route instead: a connector and a chip, two pairs of their pads (pins 1 and 2, 3
+  and 4) of two pairs' nets, the pairs in a net class with a diff pair width and gap of its own or in the default
+  class; resistors and tracks of other nets across the way. `Tests/KiCadRouterTests/Fixtures/pairboards` holds three
+  (`boards.py --pairs ... 3 20261026`).
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
   turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them
   (now and then one starting on an unplated hole), and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is
@@ -104,6 +130,21 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   `scenes.py --mode drag --shoving ... ../../Tests/KiCadRouterTests/Fixtures/kicad-drag-routes.json 40 20261026`,
   and `kicad-board-drag-routes.json`
   `scenes.py --mode drag --boards ... 2 20261026 ../../Tests/KiCadRouterTests/Fixtures/boards/*.json`.
+  With `--mode diffpair`, differential pairs instead, on boards with pairs' nets (USB_D+ and USB_D-, LVDS0_P and
+  LVDS0_N, CLK_P1 and CLK_N1...) and others (one named as a pair's, its partner missing): a pad of each of a pair's
+  nets side by side, the same shape, at each end of where the pair goes (two ends or three; every kind of pad, surface
+  mount and through-hole), some with a pair of tracks out of them that end short, now and then a pair of its vias;
+  tracks of other nets across the way, and pads, tracks and vias as the shove mode's. Each pair starts on a pad, via
+  or track end of a pair's net (now and then of another net, or on nothing, which KiCad refuses), walks round, shoves
+  or marks, at a random width and gap (now and then a board minimum clearance over the gap, which KiCad refuses too);
+  the pointer goes to another pair of its pads, or its tracks' ends (its last move with the pad under it), or
+  anywhere, with vias placed (now and then the sizes given again with them), parts fixed, undo, posture flips and
+  layer switches on the way; each chosen on the board as the pairs before it left it (KiCad's router run on those
+  first), so that a pair fixed short is gone on from. `--shoving` keeps the boards on which a pair shoved another
+  net's track or via aside; `--boards` routes pairs on real boards. `kicad-diffpair-routes.json` is
+  `scenes.py --mode diffpair --shoving ... ../../Tests/KiCadRouterTests/Fixtures/kicad-diffpair-routes.json 30 20261027`,
+  and `kicad-board-diffpair-routes.json`
+  `scenes.py --mode diffpair --boards ... 2 20261030 ../../Tests/KiCadRouterTests/Fixtures/pairboards/*.json`.
   `KICAD_ROUTER_REFERENCE` names others (separated by colons).
 - `clipper.cpp`: the polygon clipper KiCad ships (`thirdparty/clipper2`, Clipper2, compiled as KiCad compiles it: its
   points carry a z value) on random cases, with its answers: boolean operations (union, intersection, difference,
@@ -121,7 +162,9 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   run and runs on items with no board item behind them: obstacles met at the same place are ordered by when their
   items were made rather than by their addresses in memory; a node's items go into a branch, and a branch's changes
   are taken, in that order too, rather than in the order of a hash set of pointers; virtual vias are made for joints
-  in the order of their places rather than of a hash map's (the port does all three in the same order); a start
+  in the order of their places rather than of a hash map's; the coupled net's items a differential pair could start
+  or end on are taken in the order they were made, so that of two the same distance away the first is the one the pair
+  goes from, rather than in a set of pointers' order (the port does all four in the same order); a start
   pad's board item is asked its type only when it has one; and why a route cannot start on a non-routable item (a
   hole with no plating, a rule area, a text), which KiCad asks the item's board item, is asked of `router.cpp` when
   there is none.

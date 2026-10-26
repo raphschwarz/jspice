@@ -1,5 +1,6 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_optimizer.h and pns_optimizer.cpp (single tracks; not differential
-// pairs), and the rotation and angles of libs/kimath/src/trigo.cpp and libs/kimath/include/geometry/eda_angle.h.
+// Ported from KiCad 10.0.7: pcbnew/router/pns_optimizer.h and pns_optimizer.cpp (single tracks, and differential
+// pairs' segments merged), and the rotation and angles of libs/kimath/src/trigo.cpp and
+// libs/kimath/include/geometry/eda_angle.h.
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -591,5 +592,126 @@ public final class Optimizer {
         if effort.contains(.preserveVertex) { opt.setPreserveVertex(v) }
         let tmp = line.copy()
         return opt.optimize(tmp, line)
+    }
+}
+
+// MARK: - Differential pairs
+
+extension Optimizer {
+    /// The pair's corners taken out where its lines stay coupled (KiCad's OPTIMIZER::Optimize for a DIFF_PAIR)
+    @discardableResult
+    public func optimize(_ pair: DiffPair) -> Bool { mergeDpSegments(pair) }
+
+    /// The indices of the segments of `coupled` parallel to `origSeg` and the pair's gap from `vertex` (KiCad's
+    /// findCoupledVertices)
+    private static func findCoupledVertices(_ vertex: IPoint, _ origSeg: Seg, _ coupled: LineChain, _ pair: DiffPair) -> [Int] {
+        var indices: [Int] = []
+        for i in 0..<coupled.segmentCount {
+            let s = coupled.segment(i)
+            let projOverCoupled = s.lineProject(vertex)
+            if s.approxParallel(origSeg) {
+                let dist = (projOverCoupled - vertex).norm - pair.width
+                if pair.gapConstraint.matches(dist) { indices.append(i) }
+            }
+        }
+        return indices
+    }
+
+    /// Whether the pair's lines on these paths clear each other and everything in `node` (KiCad's verifyDpBypass)
+    private static func verifyDpBypass(_ node: Node, _ pair: DiffPair, _ refIsP: Bool, _ newRef: LineChain,
+                                       _ newCoupled: LineChain) -> Bool {
+        let refLine = Line(refIsP ? pair.pLine() : pair.nLine(), newRef)
+        let coupledLine = Line(refIsP ? pair.nLine() : pair.pLine(), newCoupled)
+        if refLine.collide(coupledLine, node, layer: refLine.layer) { return false }
+        if node.checkColliding(refLine) != nil { return false }
+        if node.checkColliding(coupledLine) != nil { return false }
+        return true
+    }
+
+    /// The coupled line given a bypass alongside the reference line's `refBypass`, from one of its vertices the gap
+    /// from the bypass's start to each other vertex of it, the one that stays coupled longest and clears everything
+    /// (KiCad's coupledBypass)
+    private static func coupledBypass(_ node: Node, _ pair: DiffPair, _ refIsP: Bool, _ ref: LineChain, _ refBypass: LineChain,
+                                      _ coupled: LineChain) -> LineChain? {
+        let vStartIdx = findCoupledVertices(refBypass.point(0), refBypass.segment(0), coupled, pair)
+        let dir = Direction45(refBypass.segment(0))
+        var bestLength = -1
+        var bestBypass: LineChain?
+        for start in vStartIdx {
+            for j in stride(from: 1, to: coupled.pointCount - 1, by: 1) where abs(start - j) > 1 {
+                let vs = coupled.point(start)
+                let bypass = dir.buildInitialTrace(vs, coupled.point(j), startDiagonal: dir.isDiagonal)
+                let coupledLength = pair.coupledLength(ref, bypass)
+                var newCoupled = coupled
+                if start < j {
+                    newCoupled.replace(start, j, with: bypass)
+                } else {
+                    newCoupled.replace(j, start, with: bypass.reversed())
+                }
+                if coupledLength > bestLength && verifyDpBypass(node, pair, refIsP, ref, newCoupled) {
+                    bestBypass = newCoupled
+                    bestLength = coupledLength
+                }
+            }
+        }
+        return bestBypass
+    }
+
+    /// Corners `step` segments apart on one line of the pair cut short, the other line following, if the pair stays
+    /// coupled about as long and clear of everything (KiCad's mergeDpStep); whether one was
+    private func mergeDpStep(_ pair: DiffPair, _ tryP: Bool, _ step: Int) -> Bool {
+        var n = 1
+        let currentPath = tryP ? pair.cp : pair.cn
+        var coupledPath = tryP ? pair.cn : pair.cp
+        let nSegs = currentPath.segmentCount - 1
+        let clenPre = pair.coupledLength(currentPath, coupledPath)
+        let budget = clenPre / 10 // fixme: come up with something more intelligent here...
+        while n < nSegs - step {
+            let s1 = currentPath.segment(n), s2 = currentPath.segment(n + step)
+            let dir1 = Direction45(s1), dir2 = Direction45(s2)
+            if dir1.isObtuse(dir2) {
+                let bypass = Direction45().buildInitialTrace(s1.a, s2.b, startDiagonal: dir1.isDiagonal)
+                var newRef = currentPath
+                newRef.replace(s1.index, s2.index, with: bypass)
+                let deltaUni = pair.coupledLength(newRef, coupledPath) - clenPre + budget
+                if var newCoup = Self.coupledBypass(world, pair, tryP, newRef, bypass, coupledPath) {
+                    let deltaCoupled = pair.coupledLength(newRef, newCoup) - clenPre + budget
+                    if deltaCoupled >= 0 {
+                        newRef.simplify2()
+                        newCoup.simplify2()
+                        pair.setShape(newRef, newCoup, swapLanes: !tryP)
+                        return true
+                    }
+                } else if deltaUni >= 0 && Self.verifyDpBypass(world, pair, tryP, newRef, coupledPath) {
+                    newRef.simplify2()
+                    coupledPath.simplify2()
+                    pair.setShape(newRef, coupledPath, swapLanes: !tryP)
+                    return true
+                }
+            }
+            n += 1
+        }
+        return false
+    }
+
+    /// The pair's corners merged, the widest steps first, on either line (KiCad's mergeDpSegments)
+    private func mergeDpSegments(_ pair: DiffPair) -> Bool {
+        var stepP = pair.cp.segmentCount - 2
+        var stepN = pair.cn.segmentCount - 2
+        while true {
+            let maxStepP = pair.cp.segmentCount - 2
+            let maxStepN = pair.cn.segmentCount - 2
+            if stepP > maxStepP { stepP = maxStepP }
+            if stepN > maxStepN { stepN = maxStepN }
+            if stepP < 1 && stepN < 1 { break }
+            var foundAnythingP = false, foundAnythingN = false
+            if stepP > 1 { foundAnythingP = mergeDpStep(pair, true, stepP) }
+            if stepN > 1 { foundAnythingN = mergeDpStep(pair, false, stepN) }
+            if !foundAnythingN && !foundAnythingP {
+                stepN -= 1
+                stepP -= 1
+            }
+        }
+        return true
     }
 }

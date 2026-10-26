@@ -7,14 +7,17 @@ import XCTest
 /// the same on the boards of Fixtures/boards, as KiCad's router sees them (scenes.py --boards); kicad-shove-routes.json
 /// routes that shove what is in their way (scenes.py --mode shove), with the board as the router has it after each
 /// step, what it has shoved where; kicad-drag-routes.json and kicad-board-drag-routes.json tracks and vias dragged
-/// (scenes.py --mode drag), with what the dragger dragged and the board as it has it after each step. The port must
-/// make the same, point for point. KICAD_ROUTER_REFERENCE names other such files (separated by colons).
+/// (scenes.py --mode drag), with what the dragger dragged and the board as it has it after each step;
+/// kicad-diffpair-routes.json and kicad-board-diffpair-routes.json differential pairs routed (scenes.py --mode
+/// diffpair, on random boards and on Fixtures/pairboards), with the pair's two lines and the board as the router has
+/// it after each step. The port must make the same, point for point. KICAD_ROUTER_REFERENCE names other such files
+/// (separated by colons).
 final class RouterTests: XCTestCase {
     private static let reference: [[String: Any]] = {
         let urls = ProcessInfo.processInfo.environment["KICAD_ROUTER_REFERENCE"].map {
             $0.split(separator: ":").map { URL(fileURLWithPath: String($0)) }
         } ?? ["kicad-routes", "kicad-board-routes", "kicad-shove-routes", "kicad-drag-routes",
-              "kicad-board-drag-routes"].map {
+              "kicad-board-drag-routes", "kicad-diffpair-routes", "kicad-board-diffpair-routes"].map {
             Bundle.module.url(forResource: $0, withExtension: "json", subdirectory: "Fixtures")!
         }
         return urls.flatMap { try! JSONSerialization.jsonObject(with: Data(contentsOf: $0)) as! [[String: Any]] }

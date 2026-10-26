@@ -351,7 +351,7 @@ public final class BoardRouter {
 
     /// The track as placed so far, for drawing: its fixed part, the part following the pointer, and where a via goes
     public var preview: (tail: LineChain, head: LineChain, width: Int, layer: Int, via: IPoint?)? {
-        guard router.routingInProgress, let p = router.placer else { return nil }
+        guard router.routingInProgress, let p = router.linePlacer else { return nil }
         return (p.tail.cLine, p.head.cLine, p.head.width, p.currentLayer, p.head.via?.pos)
     }
 

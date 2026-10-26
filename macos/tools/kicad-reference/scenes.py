@@ -408,6 +408,324 @@ def drag_routes(router, rng, scene, area, count):
     return (drags, kicad), shoving
 
 
+# differential pairs' nets as KiCad recognises them (BOARD::MatchDpSuffix: a last P, N, + or -, digits and
+# underscores after it aside), and nets that are not pairs (one named as a pair's, its partner missing)
+PAIR_NAMES = [("USB_D+", "USB_D-"), ("USB_P", "USB_N"), ("LVDS0_P", "LVDS0_N"), ("CLK_P1", "CLK_N1"),
+              ("TX_P_2", "TX_N_2"), ("D+", "D-"), ("ETH_RX+", "ETH_RX-"), ("HDMI_D0_P", "HDMI_D0_N")]
+SINGLE_NAMES = ["GND", "VCC", "SIG1", "RESET", "RX_P", "SPARE_N"]
+
+
+def pad_pair(rng, nets, pos, direction, layers, through):
+    """A pad of each of a pair's nets (`nets`: positive, negative), side by side as a pair's pads are, the same shape:
+    the negative one `direction` (a unit 45 degree step) times the pitch from the positive one"""
+    x, y = pos
+    p = pad(rng, nets[0], (x, y), layers, through)
+    p.pop("npth", None)
+    p["net"] = nets[0]
+    shape = p["shape"]
+    box = shape_size(shape)
+    pitch = (max(box) + rng.randint(3, 12) * 50_000) // 50_000 * 50_000
+    d = (direction[0] * pitch, direction[1] * pitch)
+    n = json.loads(json.dumps(p))
+    n["net"] = nets[1]
+    n["pos"] = [x + d[0], y + d[1]]
+    n["shape"] = moved(shape, d)
+    if "hole" in n:
+        n["hole"] = moved(n["hole"], d)
+    if rng.random() < 0.5:
+        p, n = n, p
+    return [p, n], pitch
+
+
+def shape_size(shape):
+    """A pad shape's width and height"""
+    if "rect" in shape:
+        return shape["size"]
+    if "circle" in shape:
+        return [2 * shape["r"]] * 2
+    if "segment" in shape:
+        (ax, ay), (bx, by) = shape["segment"]
+        return [abs(bx - ax) + shape["w"], abs(by - ay) + shape["w"]]
+    xs = [q[0] for q in shape["simple"]]
+    ys = [q[1] for q in shape["simple"]]
+    return [max(xs) - min(xs), max(ys) - min(ys)]
+
+
+def moved(shape, d):
+    """A pad shape moved by `d`"""
+    s = json.loads(json.dumps(shape))
+    if "rect" in s:
+        s["rect"] = [s["rect"][0] + d[0], s["rect"][1] + d[1]]
+    elif "circle" in s:
+        s["circle"] = [s["circle"][0] + d[0], s["circle"][1] + d[1]]
+    elif "segment" in s:
+        s["segment"] = [[q[0] + d[0], q[1] + d[1]] for q in s["segment"]]
+    else:
+        s["simple"] = [[q[0] + d[0], q[1] + d[1]] for q in s["simple"]]
+    return s
+
+
+def dp_complement(name):
+    """The name of the net a net of this name is coupled with, as KiCad's BOARD::MatchDpSuffix makes it (None if it
+    names no pair's net)"""
+    for count, ch in enumerate(reversed(name), 1):
+        if ch.isdigit() or ch == "_":
+            continue
+        other = {"+": "-", "-": "+", "N": "P", "P": "N"}.get(ch)
+        return None if other is None else name[:len(name) - count] + other + name[len(name) - count + 1:]
+    return None
+
+
+def pair_of(scene, net):
+    """The nets of the pair `net` is one of (just `net`, if it is none's)"""
+    names = scene["netNames"]
+    name = names.get(str(net))
+    other = dp_complement(name or "")
+    coupled = [int(k) for k, v in names.items() if v == other]
+    return {net, coupled[0]} if coupled else {net}
+
+
+def diffpair_board(rng, n):
+    """A board with differential pairs to route: pads of each pair's nets in pairs, at each end of where the pair is to
+    go (now and then a third end), some with a pair of tracks out of them that end short, now and then a pair of vias
+    of its nets; pads of other nets, and tracks of a few segments and vias in the way, as the shove mode's"""
+    copper = rng.choice([2, 2, 2, 4])
+    last = copper - 1
+    dense = rng.random() < 0.25
+    size = rng.randint(14, 20) * MM if dense else rng.randint(20, 32) * MM
+    items = []
+    c = [[0, 0], [size, 0], [size, size], [0, size]]
+    for i in range(4):
+        items.append({"kind": "edge", "shape": {"segment": [c[i], c[(i + 1) % 4]], "w": 0}})
+    names = {}
+    pairs = []
+    for p, q in rng.sample(PAIR_NAMES, rng.randint(1, 3)):
+        names[len(names) + 1] = p
+        names[len(names) + 1] = q
+        pairs.append((len(names) - 1, len(names)))
+    for name in rng.sample(SINGLE_NAMES, rng.randint(2, 4)):
+        names[len(names) + 1] = name
+    nets = len(names)
+    lo, hi = 2 * MM, size - 2 * MM
+    dirs = [(1, 0), (0, 1), (1, 1), (1, -1)]
+    used = []
+
+    def place(gap):
+        for _ in range(50):
+            x = rng.randint(lo, hi) // 50_000 * 50_000
+            y = rng.randint(lo, hi) // 50_000 * 50_000
+            if all(abs(x - u) > gap or abs(y - v) > gap for u, v in used):
+                break
+        used.append((x, y))
+        return x, y
+
+    singles = list(range(2 * len(pairs) + 1, nets + 1))
+    crossings = []
+    for pair in pairs:
+        ends = []
+        for _ in range(rng.choice([2, 2, 2, 3])):
+            layers = rng.choice([[0, 0], [0, 0], [last, last], [0, last]])
+            through = layers == [0, last]
+            direction = rng.choice(dirs)
+            twin, pitch = pad_pair(rng, pair, place(3 * MM), direction, layers, through)
+            items += twin
+            ends.append((twin[0]["pos"], layers))
+            if rng.random() < 0.3:
+                # (a pair of tracks out of them, side by side, ending short of anything)
+                out = (-direction[1], direction[0]) if rng.random() < 0.5 else (direction[1], -direction[0])
+                if rng.random() < 0.5:
+                    out = (-out[0], -out[1])
+                length = rng.randint(2, 8) * 250_000
+                width = rng.randint(2, 5) * 50_000
+                layer = rng.randint(layers[0], layers[1])
+                for t in twin:
+                    a = t["pos"]
+                    b = [a[0] + out[0] * length, a[1] + out[1] * length]
+                    if lo <= b[0] <= hi and lo <= b[1] <= hi:
+                        items.append({"kind": "track", "net": t["net"], "layer": layer, "a": a, "b": b, "width": width})
+        # (tracks of other nets across the way from one end to the next, to walk round or shove)
+        for (a, la), (b, lb) in zip(ends, ends[1:]):
+            for _ in range(rng.choice([0, 1, 1, 2, 3])):
+                t = rng.uniform(0.25, 0.75)
+                m = [int(a[0] + (b[0] - a[0]) * t), int(a[1] + (b[1] - a[1]) * t)]
+                d = rng.choice(dirs)
+                half = rng.randint(4, 12) * 250_000
+                crossings.append({"kind": "track", "net": rng.choice(singles + [k for p in pairs if p != pair for k in p]),
+                                  "layer": rng.choice([la[0], la[1], lb[0], lb[1]]),
+                                  "a": [m[0] - d[0] * half, m[1] - d[1] * half], "b": [m[0] + d[0] * half, m[1] + d[1] * half],
+                                  "width": rng.randint(2, 6) * 50_000})
+                if rng.random() < 0.08:
+                    crossings[-1]["locked"] = True
+        if rng.random() < 0.3:
+            # (a pair of vias of its nets)
+            diameter = rng.randint(5, 8) * 100_000
+            drill = diameter * rng.randint(4, 6) // 10 // 50_000 * 50_000
+            x, y = place(3 * MM)
+            dx, dy = rng.choice(dirs)
+            pitch = diameter + rng.randint(3, 8) * 50_000
+            for k, net in enumerate(pair):
+                items.append({"kind": "via", "net": net, "pos": [x + k * dx * pitch, y + k * dy * pitch],
+                              "layers": [0, last], "diameter": diameter, "drill": drill})
+    items += crossings
+    for _ in range(rng.randint(3, 12 if dense else 8)):
+        layers = rng.choice([[0, 0], [last, last], [0, last]])
+        items.append(pad(rng, rng.choice(singles), place(1_500_000), layers, layers == [0, last]))
+    polylines(rng, items, size, nets, copper, dense)
+    rules = {"clearance": rng.choice([100_000, 150_000, 200_000]), "holeClearance": 250_000, "holeToHole": 250_000,
+             "edgeClearance": rng.choice([300_000, 500_000])}
+    return {"layers": copper, "rules": rules, "items": items, "netNames": {str(k): v for k, v in names.items()},
+            "routes": [], "removeItems": True}
+
+
+def diffpair_route(rng, scene, items, area):
+    """A random differential pair route, as the router tool's Route Differential Pair (6) routes one: started on a pad,
+    via or track end of a pair's net (now and then on another net's, or on nothing, which KiCad refuses), the pointer
+    taken to another pair of its pads (its last move and the click on one of them), now and then not; vias placed,
+    parts fixed, undo, postures flipped on the way. On the board as the routes before it left it."""
+    x0, y0, x1, y1 = area
+    copper = scene["layers"]
+    last = copper - 1
+    names = {int(k): v for k, v in scene["netNames"].items()}
+    pair_nets = {k for k in names if len(pair_of(scene, k)) == 2}
+
+    def dangling(i):
+        # (a track end that joins nothing: no other track, pad or via of its net there)
+        t = items[i]
+        ends = []
+        for e in (t["a"], t["b"]):
+            joined = any(j != i and it.get("net") == t["net"] and
+                         (e in (it.get("a"), it.get("b")) or it.get("pos") == e) for j, it in enumerate(items))
+            if not joined:
+                ends.append(e)
+        return ends
+
+    starts = [i for i, it in enumerate(items) if it["kind"] in ("pad", "via") and it.get("net") in pair_nets]
+    stubs = [i for i, it in enumerate(items) if it["kind"] == "track" and it.get("net") in pair_nets and dangling(i)]
+    others = [i for i, it in enumerate(items) if it["kind"] == "pad" and it.get("net") not in pair_nets]
+    r = rng.random()
+    if stubs and r < 0.25:
+        a = rng.choice(stubs)
+        start = rng.choice(dangling(a))
+    elif others and r < 0.33:
+        a = rng.choice(others)
+        start = items[a]["pos"]
+    elif r < 0.36:
+        a, start = -1, [rng.randint(x0 + MM, x1 - MM), rng.randint(y0 + MM, y1 - MM)]
+    else:
+        a = rng.choice(starts)
+        start = items[a]["pos"]
+    it = items[a] if a >= 0 else {}
+    lrange = it.get("layers") or ([it["layer"]] * 2 if "layer" in it else [0, last])
+    layer = rng.randint(lrange[0], lrange[1])
+    # (on a real board, the pair's gap no less than its nets' clearance)
+    rules = scene["rules"]
+    clearance = max([rules.get("clearance", rules.get("minClearance", 0))] + list(rules.get("netClearance", {}).values()))
+    route = {"diffPair": True, "start": start, "startItem": a, "layer": layer,
+             "dpWidth": rng.randint(2, 5) * 50_000, "dpGap": clearance + rng.randint(0, 4) * 50_000}
+    m = rng.random()
+    route["mode"] = "shove" if m < 0.4 else "walkaround" if m < 0.8 else "mark"
+    if route["mode"] == "walkaround":
+        del route["mode"]
+    if rng.random() < 0.3:
+        route["dpViaGap"] = clearance + rng.randint(0, 6) * 50_000
+    if rng.random() < 0.05:
+        # (a board minimum clearance over the pair's gap, which KiCad's router refuses to start)
+        route["minClearance"] = route["dpGap"] + 50_000
+    if rng.random() < 0.5:
+        route["viaDiameter"] = rng.randint(5, 8) * 100_000
+        route["viaDrill"] = route["viaDiameter"] * rng.randint(4, 6) // 10 // 50_000 * 50_000
+    if rng.random() < 0.1:
+        route["fixAll"] = False
+    if route.get("mode") == "mark" and rng.random() < 0.3:
+        route["allowViolations"] = True
+    # where to: a pad or via of the pair elsewhere (of either of its nets), or anywhere
+    coupled = pair_of(scene, it.get("net")) if it.get("net") in pair_nets else None
+    targets = [i for i, t in enumerate(items) if coupled and t.get("net") in coupled and t["kind"] in ("pad", "via")
+               and i != a and (t.get("pos") or [0, 0]) != start
+               and abs(t["pos"][0] - start[0]) + abs(t["pos"][1] - start[1]) > 2 * MM]
+    targets += [i for i in stubs if coupled and items[i]["net"] in coupled and i != a]
+    b = None
+    if targets and rng.random() < 0.8:
+        b = rng.choice(targets)
+        t = items[b]
+        end = t["pos"] if "pos" in t else rng.choice(dangling(b))
+    else:
+        end = [rng.randint(x0 + MM, x1 - MM), rng.randint(y0 + MM, y1 - MM)]
+    steps = rng.randint(2, 6)
+    points = []
+    for s in range(1, steps + 1):
+        t = s / steps
+        px = int(start[0] + (end[0] - start[0]) * t)
+        py = int(start[1] + (end[1] - start[1]) * t)
+        if s < steps:
+            px += rng.randint(-3, 3) * 300_000
+            py += rng.randint(-3, 3) * 300_000
+        points.append([px, py])
+    events = {}
+    if steps > 1 and rng.random() < 0.3:
+        events[rng.randint(1, steps - 1)] = "via"
+    for kind, chance in (("fix", 0.25), ("undo", 0.1), ("posture", 0.15), ("layer", 0.08)):
+        if steps > 1 and rng.random() < chance:
+            events.setdefault(rng.randint(1, steps - 1), kind)
+    current = layer
+    moves = []
+    for s, p in enumerate(points, 1):
+        # (the last move with the item under the pointer, the pad or via it goes to)
+        moves.append({"move": p, "endItem": b} if s == steps and b is not None else {"move": p})
+        event = events.get(s)
+        if event == "via":
+            target = rng.choice([l for l in range(copper) if l != current])
+            moves += [{"pair": [current, target]}, {"via": "on"}, {"move": p}]
+            if rng.random() < 0.3:
+                # (the sizes given again with the vias placed, as the router tool gives them when they change)
+                moves += [{"pair": [current, target]}, {"move": p}]
+            moves += [{"fix": p, "endItem": -1}, {"layer": target}, {"move": p}]
+            current = target
+        elif event == "fix":
+            moves += [{"fix": p, "endItem": -1}, {"move": p}]
+        elif event == "undo":
+            moves += [{"fix": p, "endItem": -1}, {"undo": True}, {"move": p}]
+        elif event == "posture":
+            moves += [{"posture": True}, {"move": p}]
+        elif event == "layer":
+            # (KiCad's router goes on on another layer only from vias)
+            current = rng.choice([l for l in range(copper) if l != current])
+            moves += [{"layer": current}, {"move": p}]
+    route["moves"] = moves
+    if b is not None:
+        route["endItem"] = b
+    if rng.random() < 0.85:
+        route["fix"] = points[-1]
+        if rng.random() < 0.1:
+            route["forceFinish"] = True
+    return route
+
+
+def diffpair_routes(router, rng, scene, area, count):
+    """`count` differential pair routes on the scene's board, each chosen on the board as the routes before it left it
+    (KiCad's router run on those to know: a pair fixed short can be gone on from), and what KiCad's router made of
+    them (None if what it does is undefined); and how many shoved another net's track or via"""
+    items = list(scene["items"])
+    routes, kicad, shoving = [], [], 0
+    for _ in range(count):
+        d = diffpair_route(rng, scene, items, area)
+        routes.append(d)
+        kicad = route(router, dict(scene, routes=routes))
+        if kicad is None:
+            return None, 0
+        r = kicad[-1]
+        own = pair_of(scene, items[d["startItem"]].get("net")) if d["startItem"] >= 0 else set()
+        removed = set(r.get("removed", []))
+        for m in r["moves"]:
+            removed |= set((m.get("node") or {}).get("removed", []))
+        if any(items[k].get("net") not in own for k in removed):
+            shoving += 1
+        for k in reversed(r.get("removed", [])):
+            del items[k]
+        items += r["added"]
+    return (routes, kicad), shoving
+
+
 def route(router, scene):
     """What KiCad's router makes of the scene's routes; None if what it does is undefined (router.cpp's exit status
     3: an undo of a shoving route that KiCad's line placer gets wrong, reading a node it has deleted)"""
@@ -456,6 +774,17 @@ def boards(router, out, files, per_board, seed, mode="walkaround"):
                 shoves += shoving
                 cases.append({"name": f"{name}-drag-{seed}-{k}", "scene": case, "kicad": kicad})
                 continue
+            if mode == "diffpair":
+                case["removeItems"] = True
+                done, shoving = diffpair_routes(router, rng, case, area, rng.randint(2, 4))
+                if done is None:
+                    undefined += 1
+                    continue
+                case["routes"], kicad = done
+                drags += len(case["routes"])
+                shoves += shoving
+                cases.append({"name": f"{name}-diffpair-{seed}-{k}", "scene": case, "kicad": kicad})
+                continue
             case["routes"] = routes(rng, scene["items"], scene["layers"], area, count=rng.randint(2, 6), mode=mode)
             if not case["routes"]:
                 continue
@@ -471,7 +800,21 @@ def boards(router, out, files, per_board, seed, mode="walkaround"):
         json.dump(cases, f, separators=(",", ":"))
     print(f"{out}: {len(cases)} cases on {len(files)} boards, {sum(len(c['kicad']) for c in cases)} routes"
           + (f", {shoves} of the {drags} drags shoving" if mode == "drag" else "")
+          + (f", {shoves} of the {drags} pairs shoving, {pair_stats(cases)}" if mode == "diffpair" else "")
           + (f" ({undefined} left out, KiCad's router undefined on them)" if undefined else ""))
+
+
+def pair_stats(cases):
+    """How the pairs went: how many started, were finished, placed vias"""
+    rs = [(r, k) for c in cases for r, k in zip(c["scene"]["routes"], c["kicad"])]
+    started = sum(k["started"] for _, k in rs)
+    finished = sum(any(m.get("fixed") for m in k["moves"]) or bool(k.get("fixed")) for _, k in rs)
+    vias = sum(1 for _, k in rs for a in k["added"] if a["kind"] == "via")
+    modes = {}
+    for r, _ in rs:
+        modes[r.get("mode", "walkaround")] = modes.get(r.get("mode", "walkaround"), 0) + 1
+    return (f"{started} started, {finished} finished, {vias} vias placed, "
+            + ", ".join(f"{v} {k}" for k, v in sorted(modes.items())))
 
 
 def shoved(kicad):
@@ -486,7 +829,7 @@ def main():
         flag = args.pop(0)
         if flag == "--mode":
             mode = args.pop(0)
-            if mode not in ("walkaround", "shove", "mix", "drag"):
+            if mode not in ("walkaround", "shove", "mix", "drag", "diffpair"):
                 sys.exit(f"scenes.py: no mode {mode}")
         elif flag == "--shoving":
             shoving_only = True
@@ -509,10 +852,11 @@ def main():
     quiet = 0
     drags = shoves = 0
     while len(cases) < count:
-        scene = board(rng, n, mode)
+        scene = diffpair_board(rng, n) if mode == "diffpair" else board(rng, n, mode)
         shoving = 0
-        if mode == "drag":
-            done, shoving = drag_routes(router, rng, scene, board_area(scene), rng.randint(1, 5))
+        if mode in ("drag", "diffpair"):
+            each = drag_routes if mode == "drag" else diffpair_routes
+            done, shoving = each(router, rng, scene, board_area(scene), rng.randint(1, 5 if mode == "drag" else 4))
             kicad = None
             if done is not None:
                 scene["routes"], kicad = done
@@ -520,7 +864,7 @@ def main():
             kicad = route(router, scene)
         if kicad is None:
             undefined += 1
-        elif shoving_only and not (shoving if mode == "drag" else shoved(kicad)):
+        elif shoving_only and not (shoving if mode in ("drag", "diffpair") else shoved(kicad)):
             # (--shoving: only boards on which something was shoved)
             quiet += 1
         else:
@@ -532,6 +876,7 @@ def main():
         json.dump(cases, f, separators=(",", ":"))
     print(f"{out}: {count} boards, {sum(len(c['kicad']) for c in cases)} routes"
           + (f", {shoves} of the {drags} drags shoving" if mode == "drag" else "")
+          + (f", {shoves} of the {drags} pairs shoving, {pair_stats(cases)}" if mode == "diffpair" else "")
           + (f" ({undefined} more left out, KiCad's router undefined on them)" if undefined else "")
           + (f" ({quiet} more left out, nothing shoved on them)" if quiet else ""))
 
