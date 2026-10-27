@@ -87,18 +87,22 @@ final class DRCTests: XCTestCase {
                     root[x] = r
                     return r
                 }
+                // (a zone is in as many clusters as its fill has islands: KiCad's connection is to one of them that
+                // is not joined yet, ours from one of them)
                 for e in theirsU {
-                    guard e.count == 2, let a = cn.clusterOf[e[0]], let b = cn.clusterOf[e[1]] else {
+                    guard e.count == 2, let aa = cn.clusterOf[e[0]], let bb = cn.clusterOf[e[1]] else {
                         differences.append("\(name): KiCad's missing connection \(e) between items not in the port's clusters")
                         continue
                     }
-                    if find(a) == find(b) {
+                    guard let (a, b) = aa.lazy.flatMap({ a in bb.lazy.map { (a, $0) } }).first(where: { find($0.0) != find($0.1) }) else {
                         differences.append("\(name): KiCad's missing connection \(e) joins what is joined already")
+                        continue
                     }
                     root[find(a)] = find(b)
                 }
                 for e in oursU where e.count == 2 {
-                    if let a = cn.clusterOf[e[0]], let b = cn.clusterOf[e[1]], find(a) != find(b) {
+                    if let aa = cn.clusterOf[e[0]], let bb = cn.clusterOf[e[1]],
+                       !aa.contains(where: { a in bb.contains { find($0) == find(a) } }) {
                         differences.append("\(name): KiCad's missing connections leave apart what ours joins: \(e)")
                     }
                 }

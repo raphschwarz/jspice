@@ -174,8 +174,9 @@ extension BoardDRC {
         var nets: [Int: [CNEdge]] = [:]
         /// How many clusters have been made (their serials)
         var clusterSerial = 0
-        /// The ratsnest's cluster of each board item in one (by its uuid)
-        var clusterOf: [String: Int] = [:]
+        /// The ratsnest's clusters of each board item in one (by its uuid): a zone's, one for each of its fill's
+        /// islands
+        var clusterOf: [String: [Int]] = [:]
         /// Pairs of items (their uuids) that touch tried one way round and not the other (two arcs, say: KiCad's
         /// collision of arcs is not the same both ways): KiCad tries each pair one way, which by where the two are in
         /// its memory, so whether they are joined differs from one run of KiCad to the next. The port tries them the
@@ -443,7 +444,9 @@ extension BoardDRC {
         var boardEdges: [Int: [CNEdge]] = [:]
         var order: [Int] = []
         for cl in clusters {
-            for item in cl.items { cn.clusterOf[item.parent.uuid] = cl.serial }
+            for item in cl.items where cn.clusterOf[item.parent.uuid]?.last != cl.serial {
+                cn.clusterOf[item.parent.uuid, default: []].append(cl.serial)
+            }
             if cl.isOrphaned && cl.items.count == 1 && cl.items[0].isZone { continue }
             let net = cl.originNet
             guard net > 0 else { continue }

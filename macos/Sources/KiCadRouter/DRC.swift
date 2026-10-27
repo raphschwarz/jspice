@@ -290,8 +290,14 @@ public struct BoardDRC {
 
     // MARK: - Messages
 
-    /// A length as KiCad's DRC messages give it (MessageTextFromValue, in millimetres)
-    static func messageText(_ v: Int) -> String { String(format: "%.4f mm", Double(v) / 1e6) }
+    /// A length as KiCad's DRC messages give it (MessageTextFromValue, in millimetres: one too small for its digits,
+    /// all zeros, in scientific notation)
+    static func messageText(_ v: Int) -> String {
+        let value = Double(v) / 1e6
+        let text = String(format: "%.4f", value)
+        if value != 0 && !text.contains(where: { $0 >= "1" && $0 <= "9" }) { return String(format: "%.3e mm", value) }
+        return text + " mm"
+    }
 
     /// A length as KiCad gives it more precisely (StringFromValue, in millimetres)
     static func stringFromValue(_ v: Int) -> String {

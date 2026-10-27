@@ -39,7 +39,7 @@ public enum Shape: Hashable, Sendable {
         case .circle(let c, let r): return .circle(center: c + d, radius: r)
         case .rect(let b): return .rect(IBox(minX: b.minX + d.x, minY: b.minY + d.y, maxX: b.maxX + d.x, maxY: b.maxY + d.y))
         case .segment(let s, let w): return .segment(Seg(s.a + d, s.b + d), width: w)
-        case .simple(let c): return .simple(LineChain(c.points.map { $0 + d }, closed: true))
+        case .simple(let c): return .simple(c.moved(d))
         case .chain(let c): return .chain(c.moved(d))
         case .arc(let a): return .arc(a.moved(d))
         }
@@ -137,10 +137,10 @@ public enum Shape: Hashable, Sendable {
             return hit
         case .chain(let l):
             // (KiCad's SHAPE_LINE_CHAIN case, which does not ask whether the arc is all but straight)
-            return arcChain(a, l, clearance, wantActual, &actual, &location)
+            return arcChain(a, l, polygon: false, clearance, wantActual, &actual, &location)
         case .simple(let l):
             if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual, location: &location) }
-            return arcChain(a, l, clearance, wantActual, &actual, &location)
+            return arcChain(a, l, polygon: true, clearance, wantActual, &actual, &location)
         case .arc(let o):
             if a.isEffectiveLine { return arcCollide(o, straight, clearance, wantActual, &actual, &location) }
             if o.isEffectiveLine {
@@ -150,16 +150,18 @@ public enum Shape: Hashable, Sendable {
         }
     }
 
-    /// An arc against a polyline or polygon: inside a closed one, else its segments in turn, then its arcs as arcs
-    private static func arcChain(_ a: ShapeArc, _ l: LineChain, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?,
-                                 _ location: inout IPoint?) -> Bool {
+    /// An arc against a polyline or polygon: inside a closed one, else its segments in turn, then a polyline's arcs
+    /// as arcs (a polygon's, a SHAPE_SIMPLE's, are only the segments they were made into: SHAPE_LINE_CHAIN_BASE's
+    /// case)
+    private static func arcChain(_ a: ShapeArc, _ l: LineChain, polygon: Bool, _ clearance: Int, _ wantActual: Bool,
+                                 _ actual: inout Int?, _ location: inout IPoint?) -> Bool {
         var closest = Int.max
         var nearest = IPoint.zero
         if l.isClosed && l.pointInside(a.start) {
             closest = 0
             nearest = a.start
         } else {
-            for i in 0..<l.segmentCount where !l.isArcSegment(i) {
+            for i in 0..<l.segmentCount where polygon || !l.isArcSegment(i) {
                 var d: Int?, pn: IPoint?
                 if a.collide(l.segment(i), clearance: clearance, wantActual: wantActual, actual: &d, location: &pn) {
                     // (not asked how close, KiCad counts any collision as touching)
@@ -171,7 +173,7 @@ public enum Shape: Hashable, Sendable {
                     if closest == 0 || !wantActual { break }
                 }
             }
-            for arc in l.arcs {
+            for arc in l.arcs where !polygon {
                 var d: Int?, pn: IPoint?
                 if arcCollide(a, .arc(arc), clearance, wantActual, &d, &pn) {
                     let dist = wantActual ? d ?? 0 : 0
@@ -380,6 +382,10 @@ public enum Shape: Hashable, Sendable {
                            _ location: inout IPoint?, shapes: (Shape, Shape)? = nil) -> Bool {
         var closest = Int.max
         var nearest = IPoint.zero
+        // (a polygon's arcs, a SHAPE_SIMPLE's, are only the segments they were made into; a polyline's are taken
+        // apart from its segments)
+        func isPolygon(_ s: Shape?) -> Bool { if case .simple = s { return true } else { return false } }
+        let aPolygon = isPolygon(shapes?.0), bPolygon = isPolygon(shapes?.1)
         if b.isClosed && a.pointCount > 0 && b.pointInside(a.point(0)) {
             closest = 0
             nearest = a.point(0)
@@ -388,8 +394,8 @@ public enum Shape: Hashable, Sendable {
             nearest = b.point(0)
         } else {
             let order: (Seg, Seg) -> Bool = { $0.a.x < $1.a.x || ($0.a.x == $1.a.x && $0.a.y < $1.a.y) }
-            var aSegs = (0..<a.segmentCount).filter { !a.isArcSegment($0) }.map(a.segment)
-            var bSegs = (0..<b.segmentCount).filter { !b.isArcSegment($0) }.map(b.segment)
+            var aSegs = (0..<a.segmentCount).filter { aPolygon || !a.isArcSegment($0) }.map(a.segment)
+            var bSegs = (0..<b.segmentCount).filter { bPolygon || !b.isArcSegment($0) }.map(b.segment)
             Clipper.introSort(&aSegs, order)
             Clipper.introSort(&bSegs, order)
             outer: for sa in aSegs {
@@ -406,8 +412,8 @@ public enum Shape: Hashable, Sendable {
             }
         }
         if let (sa, sb) = shapes, !wantActual || closest > 0 {
-            for arc in a.arcs where arcCollide(arc, sb, clearance, wantActual, &actual, &location) { return true }
-            for arc in b.arcs where arcCollide(arc, sa, clearance, wantActual, &actual, &location) { return true }
+            for arc in a.arcs where !aPolygon && arcCollide(arc, sb, clearance, wantActual, &actual, &location) { return true }
+            for arc in b.arcs where !bPolygon && arcCollide(arc, sa, clearance, wantActual, &actual, &location) { return true }
         }
         if closest == 0 || closest < clearance {
             actual = closest
