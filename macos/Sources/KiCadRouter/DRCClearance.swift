@@ -46,6 +46,10 @@ extension BoardDRC {
         var clearanceOverride: (value: Int, source: String)?
         /// A zone's own clearance (ZONE::GetLocalClearance)
         var localClearance: (value: Int, source: String)?
+        /// A zone's outline (ZONE::Outline), its priority, and whether it is a teardrop
+        var zoneOutline = PolySet()
+        var zonePriority = 0
+        var teardrop = false
         /// A zone's fill on each layer, its fractured outlines
         var fills: [Int: [LineChain]] = [:]
         var zoneBox: IBox?
@@ -348,6 +352,9 @@ extension BoardDRC {
             }
         }
         item.zoneBox = box
+        item.zoneOutline = BoardWorld.zoneOutline(node)
+        item.zonePriority = node.value("priority").flatMap(Int.init) ?? 0
+        item.teardrop = node["attr"]?["teardrop"] != nil
         return item
     }
 
@@ -768,7 +775,71 @@ extension BoardDRC {
                 return true
             })
         }
+        if !out.exceeded("clearance") || !out.exceeded("zones_intersect") { testZonesToZones(&out, c, rules) }
+    }
 
+    /// testZonesToZones: each pair of zones on a copper layer (teardrops left out), of one net and one priority
+    /// whose outlines touch (zones_intersect), or of two nets whose fills are nearer than their clearance, the first
+    /// pair of the fills' edges found nearer (their edges swept by x)
+    func testZonesToZones(_ out: inout Report, _ c: Copper, _ rules: [ClearanceRule]) {
+        let testClearance = !out.exceeded("clearance"), testIntersects = !out.exceeded("zones_intersect")
+        let zones = c.zones
+        // each fill's edges, each one's ends from left to right, sorted by them
+        var segments: [Int: [Int: [Seg]]] = [:]
+        func edges(_ z: Int, _ l: Int) -> [Seg] {
+            if let s = segments[z]?[l] { return s }
+            var list: [Seg] = []
+            for chain in zones[z].fills[l] ?? [] {
+                for i in 0..<chain.segmentCount {
+                    var seg = chain.segment(i)
+                    if seg.a.x > seg.b.x { seg = Seg(seg.b, seg.a) }
+                    list.append(seg)
+                }
+            }
+            list.sort { a, b in
+                if a.a.x != b.a.x { return a.a.x < b.a.x }
+                if a.a.y != b.a.y { return a.a.y < b.a.y }
+                if a.b.x != b.b.x { return a.b.x < b.b.x }
+                return a.b.y < b.b.y
+            }
+            segments[z, default: [:]][l] = list
+            return list
+        }
+        func fillSet(_ z: CopperItem, _ l: Int) -> PolySet { PolySet((z.fills[l] ?? []).map { [$0] }) }
+        for l in 0..<world.copperLayers {
+            let onLayer = zones.indices.filter { !zones[$0].teardrop && zones[$0].layers.contains(l) }
+            for (k, ia) in onLayer.enumerated() {
+                for ib in onLayer[(k + 1)...] {
+                    let a = zones[ia], b = zones[ib]
+                    let sameNet = a.net == b.net && a.net >= 0
+                    if sameNet && a.zonePriority != b.zonePriority { continue }
+                    let setA = sameNet ? a.zoneOutline : fillSet(a, l), setB = sameNet ? b.zoneOutline : fillSet(b, l)
+                    guard let boxA = Self.cachedBox(setA, width: 0), let boxB = Self.cachedBox(setB, width: 0),
+                          boxA.intersects(boxB) else { continue }
+                    if sameNet {
+                        if testIntersects && Self.polySetsCollide(setA, setB) {
+                            out.add("zones_intersect", "(intersecting zones must have distinct priorities)", [a.uuid, b.uuid])
+                        }
+                    } else if testClearance {
+                        let (clearance, name) = clearanceConstraint(a, b, rules, c)
+                        guard clearance > 0 else { continue }
+                        let testSegments = edges(ib, l)
+                        search: for ref in edges(ia, l) {
+                            for test in testSegments {
+                                if ref.b.x < test.a.x { break }
+                                let (_, _, d2) = ref.nearestPoints(test)
+                                let actual = Int((Double(d2).squareRoot() + 0.5).rounded(.down))
+                                if actual < clearance {
+                                    out.add("clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, name, clearance,
+                                                                        max(actual, 0)), [a.uuid, b.uuid])
+                                    break search
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// PAD::IsFreePad: a pad of a free pin on a net of its own

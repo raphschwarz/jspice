@@ -13,7 +13,7 @@ extension BoardDRC {
         "track_dangling", "via_dangling", "unconnected_items", "items_not_allowed",
         "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard", "npth_inside_courtyard",
         "solder_mask_bridge", "isolated_copper", "starved_thermal",
-        "invalid_outline",
+        "invalid_outline", "zones_intersect",
     ]
 
     /// The check as KiCad's report gives it: the violations, and the connections still to make apart, each item

@@ -22,7 +22,7 @@ final class DRCTests: XCTestCase {
                                        "via_dangling", "unconnected_items", "items_not_allowed",
                                        "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard",
                                        "npth_inside_courtyard", "solder_mask_bridge", "isolated_copper", "starved_thermal",
-                                       "invalid_outline"]
+                                       "invalid_outline", "zones_intersect"]
 
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
