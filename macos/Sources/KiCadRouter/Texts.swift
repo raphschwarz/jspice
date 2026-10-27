@@ -26,6 +26,9 @@ public struct TextStrokes: Sendable {
     public var visible: Bool
     /// The text it shows, its variables resolved (GetShownText)
     public var shownText: String
+    /// Where it is drawn from and how it is turned (GetDrawPos, GetDrawRotation)
+    public var position = IPoint.zero
+    public var rotation = EDAAngle.zero
 
     public var shapes: [Shape] { segments.map { .segment($0, width: width) } }
 }
@@ -524,6 +527,6 @@ struct BoardText {
         let box = textBox(shown)
         let bounding = rotation.degrees == 0 ? box : box.rotated(position, rotation)
         return TextStrokes(segments: segments, width: penWidth, textBox: box.ibox, boundingBox: bounding.ibox,
-                           visible: visible, shownText: shownString)
+                           visible: visible, shownText: shownString, position: position, rotation: rotation)
     }
 }

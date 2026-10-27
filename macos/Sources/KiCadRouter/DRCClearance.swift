@@ -60,6 +60,8 @@ extension BoardDRC {
         var castellated = false
         /// A track's or arc's ends and width
         var trackStart = IPoint.zero, trackEnd = IPoint.zero, trackWidth = 0
+        /// An arc's middle as read
+        var trackMid = IPoint.zero
         /// A drawing's connection points (PCB_SHAPE::GetConnectionPoints)
         var connectionPoints: [IPoint] = []
 
@@ -161,7 +163,7 @@ extension BoardDRC {
             case .track, .arc:
                 guard let l = world.layerIndex[t.layer] else { continue }
                 item.layers = [l]
-                (item.trackStart, item.trackEnd, item.trackWidth) = (t.start, t.end, t.width)
+                (item.trackStart, item.trackEnd, item.trackWidth, item.trackMid) = (t.start, t.end, t.width, t.mid)
                 let s: Shape
                 if t.kind == .arc {
                     let a = ShapeArc(start: t.start, mid: t.mid, end: t.end, width: t.width)

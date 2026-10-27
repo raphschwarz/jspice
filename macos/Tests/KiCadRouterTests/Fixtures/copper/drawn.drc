@@ -1,0 +1,666 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "drawn.kicad_pcb",
+ "unconnected_items": [
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track (arc) [SIG] on F.Cu, length 6.2832 mm",
+     "pos": {
+      "x": 108.0,
+      "y": 92.0
+     },
+     "uuid": "c882b81a-762a-43b0-bcc8-91674bfed1ea"
+    },
+    {
+     "description": "Track (arc) [SIG] on B.Cu, length 8.5175 mm",
+     "pos": {
+      "x": 114.0,
+      "y": 91.166667
+     },
+     "uuid": "9ccdb5c2-3fe1-422e-a6c8-e23754e83926"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track (arc) [SIG] on B.Cu, length 8.5175 mm",
+     "pos": {
+      "x": 114.0,
+      "y": 91.166667
+     },
+     "uuid": "9ccdb5c2-3fe1-422e-a6c8-e23754e83926"
+    },
+    {
+     "description": "Track (arc) [SIG] on In1.Cu, length 11.0715 mm",
+     "pos": {
+      "x": 120.0,
+      "y": 90.5
+     },
+     "uuid": "cc651efd-529e-4832-bebc-6a4ce041050d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track (arc) [SIG] on In1.Cu, length 11.0715 mm",
+     "pos": {
+      "x": 120.0,
+      "y": 90.5
+     },
+     "uuid": "cc651efd-529e-4832-bebc-6a4ce041050d"
+    },
+    {
+     "description": "Via [SIG] on F.Cu - B.Cu",
+     "pos": {
+      "x": 126.0,
+      "y": 92.0
+     },
+     "uuid": "dd10adf7-3761-4a47-8655-a033d2de6f99"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Via [SIG] on F.Cu - B.Cu",
+     "pos": {
+      "x": 126.0,
+      "y": 92.0
+     },
+     "uuid": "dd10adf7-3761-4a47-8655-a033d2de6f99"
+    },
+    {
+     "description": "Blind via [SIG] on F.Cu - In1.Cu",
+     "pos": {
+      "x": 130.0,
+      "y": 92.0
+     },
+     "uuid": "97116def-d274-4ea2-9095-ec198f070455"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Blind via [SIG] on F.Cu - In1.Cu",
+     "pos": {
+      "x": 130.0,
+      "y": 92.0
+     },
+     "uuid": "97116def-d274-4ea2-9095-ec198f070455"
+    },
+    {
+     "description": "Blind via [SIG] on In1.Cu - B.Cu",
+     "pos": {
+      "x": 134.0,
+      "y": 92.0
+     },
+     "uuid": "90757ad1-956b-4d6d-aa8f-581af268f497"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 90.0
+     },
+     "uuid": "9538a2f4-2f83-4f40-8ec7-5fce740a80c2"
+    },
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 92.0
+     },
+     "uuid": "ba0f8b45-b909-456b-8bfb-1f797095a985"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  }
+ ],
+ "violations": [
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 98.0
+     },
+     "uuid": "014c723c-afff-470c-8ba1-882c7aa6d2ed"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 96.0
+     },
+     "uuid": "022872d7-7c03-46c8-94f3-a4cb88263402"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 96.0
+     },
+     "uuid": "4433d3ac-49cd-4aa7-a6da-25cb9fd036d4"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 94.0
+     },
+     "uuid": "6a07940a-6ac3-4292-b2fa-e5c55c7622f0"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 98.0
+     },
+     "uuid": "830871ec-0058-420d-bd0e-4f0b1b9a9f51"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 90.0
+     },
+     "uuid": "9538a2f4-2f83-4f40-8ec7-5fce740a80c2"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 92.0
+     },
+     "uuid": "ba0f8b45-b909-456b-8bfb-1f797095a985"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 92.0
+     },
+     "uuid": "e38e8526-c6d9-484f-9832-b5195218283e"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 90.0
+     },
+     "uuid": "e77b95b9-9d07-434e-921e-eaf3dd22733f"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 94.0
+     },
+     "uuid": "f3ade82c-8677-4763-816a-9f6fb997436c"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Board edge clearance violation (board setup constraints edge clearance 0.5000 mm; actual 0.0000 mm)",
+   "items": [
+    {
+     "description": "Rectangle on Edge.Cuts",
+     "pos": {
+      "x": 100.0,
+      "y": 50.0
+     },
+     "uuid": "f1131978-5a67-4033-9efc-e76912eb85a9"
+    },
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 98.0
+     },
+     "uuid": "014c723c-afff-470c-8ba1-882c7aa6d2ed"
+    }
+   ],
+   "severity": "error",
+   "type": "copper_edge_clearance"
+  },
+  {
+   "description": "Copper sliver (F.Cu)",
+   "items": [],
+   "severity": "warning",
+   "type": "copper_sliver"
+  },
+  {
+   "description": "Copper sliver (F.Cu)",
+   "items": [],
+   "severity": "warning",
+   "type": "copper_sliver"
+  },
+  {
+   "description": "Copper sliver (In2.Cu)",
+   "items": [],
+   "severity": "warning",
+   "type": "copper_sliver"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Blind via [SIG] on F.Cu - In1.Cu",
+     "pos": {
+      "x": 130.0,
+      "y": 92.0
+     },
+     "uuid": "97116def-d274-4ea2-9095-ec198f070455"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [SIG] on F.Cu - B.Cu",
+     "pos": {
+      "x": 126.0,
+      "y": 92.0
+     },
+     "uuid": "dd10adf7-3761-4a47-8655-a033d2de6f99"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track (arc) [SIG] on F.Cu, length 6.2832 mm",
+     "pos": {
+      "x": 108.0,
+      "y": 92.0
+     },
+     "uuid": "c882b81a-762a-43b0-bcc8-91674bfed1ea"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track (arc) [SIG] on B.Cu, length 8.5175 mm",
+     "pos": {
+      "x": 114.0,
+      "y": 91.166667
+     },
+     "uuid": "9ccdb5c2-3fe1-422e-a6c8-e23754e83926"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Blind via [SIG] on In1.Cu - B.Cu",
+     "pos": {
+      "x": 134.0,
+      "y": 92.0
+     },
+     "uuid": "90757ad1-956b-4d6d-aa8f-581af268f497"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track (arc) [SIG] on In1.Cu, length 11.0715 mm",
+     "pos": {
+      "x": 120.0,
+      "y": 90.5
+     },
+     "uuid": "cc651efd-529e-4832-bebc-6a4ce041050d"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 98.0
+     },
+     "uuid": "014c723c-afff-470c-8ba1-882c7aa6d2ed"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 96.0
+     },
+     "uuid": "022872d7-7c03-46c8-94f3-a4cb88263402"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 96.0
+     },
+     "uuid": "4433d3ac-49cd-4aa7-a6da-25cb9fd036d4"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 94.0
+     },
+     "uuid": "6a07940a-6ac3-4292-b2fa-e5c55c7622f0"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 98.0
+     },
+     "uuid": "830871ec-0058-420d-bd0e-4f0b1b9a9f51"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 90.0
+     },
+     "uuid": "9538a2f4-2f83-4f40-8ec7-5fce740a80c2"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 92.0
+     },
+     "uuid": "ba0f8b45-b909-456b-8bfb-1f797095a985"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 92.0
+     },
+     "uuid": "e38e8526-c6d9-484f-9832-b5195218283e"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 90.0
+     },
+     "uuid": "e77b95b9-9d07-434e-921e-eaf3dd22733f"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on F.Cu, length 14.0000 mm",
+     "pos": {
+      "x": 142.0,
+      "y": 94.0
+     },
+     "uuid": "f3ade82c-8677-4763-816a-9f6fb997436c"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Isolated copper fill",
+   "items": [
+    {
+     "description": "Zone [GND] on F.Cu, priority 0",
+     "pos": {
+      "x": 140.0,
+      "y": 88.0
+     },
+     "uuid": "71e21a0e-fc09-4f4f-9b58-9b3496216a74"
+    }
+   ],
+   "severity": "warning",
+   "type": "isolated_copper"
+  },
+  {
+   "description": "Isolated copper fill",
+   "items": [
+    {
+     "description": "Zone [GND] on F.Cu, priority 0",
+     "pos": {
+      "x": 140.0,
+      "y": 88.0
+     },
+     "uuid": "71e21a0e-fc09-4f4f-9b58-9b3496216a74"
+    }
+   ],
+   "severity": "warning",
+   "type": "isolated_copper"
+  },
+  {
+   "description": "Isolated copper fill",
+   "items": [
+    {
+     "description": "Zone [GND] on F.Cu, priority 0",
+     "pos": {
+      "x": 140.0,
+      "y": 88.0
+     },
+     "uuid": "71e21a0e-fc09-4f4f-9b58-9b3496216a74"
+    }
+   ],
+   "severity": "warning",
+   "type": "isolated_copper"
+  },
+  {
+   "description": "Isolated copper fill",
+   "items": [
+    {
+     "description": "Zone [GND] on F.Cu, priority 0",
+     "pos": {
+      "x": 140.0,
+      "y": 88.0
+     },
+     "uuid": "71e21a0e-fc09-4f4f-9b58-9b3496216a74"
+    }
+   ],
+   "severity": "warning",
+   "type": "isolated_copper"
+  }
+ ]
+}

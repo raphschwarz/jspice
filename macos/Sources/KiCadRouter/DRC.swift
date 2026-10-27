@@ -103,7 +103,7 @@ public struct BoardDRC {
         "unconnected_items": "Missing connection between items", "items_not_allowed": "Items not allowed",
         "courtyards_overlap": "Courtyards overlap", "missing_courtyard": "Footprint has no courtyard defined",
         "malformed_courtyard": "Footprint has malformed courtyard", "pth_inside_courtyard": "PTH inside courtyard",
-        "npth_inside_courtyard": "NPTH inside courtyard", "invalid_outline": "Board has malformed outline", "zones_intersect": "Copper zones intersect",
+        "npth_inside_courtyard": "NPTH inside courtyard", "invalid_outline": "Board has malformed outline", "zones_intersect": "Copper zones intersect", "copper_sliver": "Copper sliver",
         "solder_mask_bridge": "Front solder mask aperture bridges items with different nets",
         "isolated_copper": "Isolated copper fill", "starved_thermal": "Thermal relief connection to zone incomplete",
     ]
@@ -285,6 +285,7 @@ public struct BoardDRC {
         checkSolderMask(&out, copper)
         checkConnectivity(&out, copper, connectivity)
         checkZoneConnections(&out, copper, connectivity)
+        checkSlivers(&out, copper)
         return out
     }
 

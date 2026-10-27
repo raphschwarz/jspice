@@ -8,11 +8,12 @@ import KiCadKit
 /// violations of the checks it makes: of the same kind, between the same items, in the same words (its rule and the
 /// actual value, to KiCad's digits). KICAD_BOARD_REFERENCE names a folder of such boards; with none,
 /// Fixtures/boards, Fixtures/courtyards (courtyards drawn malformed in their many ways, some out at the coordinates'
-/// limits) and Fixtures/outlines (boards' outlines drawn malformed in theirs).
+/// limits), Fixtures/outlines (boards' outlines drawn malformed in theirs), Fixtures/thermals (thermal reliefs) and
+/// Fixtures/copper (copper of the kinds random boards do not have, and slivers).
 final class DRCTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards", "courtyards", "outlines", "thermals"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
+        return ["boards", "courtyards", "outlines", "thermals", "copper"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
     }
 
     /// The checks BoardDRC makes
@@ -22,7 +23,7 @@ final class DRCTests: XCTestCase {
                                        "via_dangling", "unconnected_items", "items_not_allowed",
                                        "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard",
                                        "npth_inside_courtyard", "solder_mask_bridge", "isolated_copper", "starved_thermal",
-                                       "invalid_outline", "zones_intersect"]
+                                       "invalid_outline", "zones_intersect", "copper_sliver"]
 
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }

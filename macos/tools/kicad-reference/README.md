@@ -166,6 +166,15 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   circles, curves, rounded rectangles and polygons, some filled, footprints' outlines that are holes in the board's
   and those that are not, each board with kicad-cli's report next to it (`drc.py`'s), no project of its own.
   `Tests/KiCadRouterTests/Fixtures/outlines` holds them, which `DRCTests` checks.
+- `copper.py`: each copper layer's copper as KiCad's sliver check makes it (`copper.py BOARD.kicad_pcb...`): through
+  KiCad's `pcbnew` module, each item on the layer in `forEachGeometryItem`'s order made polygons by its
+  `TransformShapeToPolygon` (ARC_LOW_DEF, the error inside), zones by their fills, all united, next to the board as
+  `BOARD.copper` (JSON: each layer's polygons, outline and holes). `CopperTests` checks the port's
+  (`BoardDRC.copperLayerPolygons`) against it, point for point. With `--draw OUT.kicad_pcb`, a board of copper of the
+  kinds random boards do not have (texts on copper, every kind of drawing, footprints turned off square, arc tracks,
+  blind vias, plated and unplated holes, a custom pad, a footprint's zone, a rule area) and filled polygons with spikes
+  sharper and blunter than the sliver check's limit, then `drc.py` on it. `Tests/KiCadRouterTests/Fixtures/copper`
+  holds `drawn` (`--draw`), and the boards of `Fixtures/boards` have theirs too.
 - `thermals.py`: a board of thermal reliefs for `DRCTests`' starved thermals (`thermals.py OUT.kicad_pcb [SEED]`):
   pads of a zone's net in its fill (filled by KiCad's zone filler), their spokes cut off by tracks of other nets and
   the board's edge, the board asking three spokes of each; pads joined solidly or not at all by the pad or its
