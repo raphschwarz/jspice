@@ -9,12 +9,13 @@ import KiCadKit
 /// actual value, to KiCad's digits). KICAD_BOARD_REFERENCE names a folder of such boards; with none,
 /// Fixtures/boards, Fixtures/courtyards (courtyards drawn malformed in their many ways, some out at the coordinates'
 /// limits), Fixtures/outlines (boards' outlines drawn malformed in theirs), Fixtures/thermals (thermal reliefs) and
-/// Fixtures/copper (copper of the kinds random boards do not have, and slivers), and Fixtures/nettie (net tie
-/// footprints' pads with outlines of arcs against items of no net).
+/// Fixtures/copper (copper of the kinds random boards do not have, and slivers), and Fixtures/regressions (boards
+/// of CI runs the port once got wrong: a net tie's pad of arcs against items of no net, a footprint reaching a
+/// keepout's box by its texts only).
 final class DRCTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards", "courtyards", "outlines", "thermals", "copper", "nettie"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
+        return ["boards", "courtyards", "outlines", "thermals", "copper", "regressions"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
     }
 
     /// The checks BoardDRC makes

@@ -194,13 +194,44 @@ extension BoardDRC {
         let placement = BoardWorld.FootprintPlacement(fp)
         let pos = placement.position
         var box = IBox(minX: pos.x - 250_000, minY: pos.y - 250_000, maxX: pos.x + 250_000, maxY: pos.y + 250_000)
-        for node in fp.items where ["fp_line", "fp_rect", "fp_arc", "fp_circle", "fp_poly", "fp_curve"].contains(node.head ?? "") {
+        let privateLayers = Set(fp["private_layers"]?.arguments.map(\.text) ?? [])
+        let drawingHeads: Set<String> = ["fp_line", "fp_rect", "fp_arc", "fp_circle", "fp_poly", "fp_curve"]
+        var drawn = false
+        for node in fp.items where drawingHeads.contains(node.head ?? "") {
+            drawn = true
+            if let l = node.value("layer"), privateLayers.contains(l) { continue }
             guard let d = world.readDrawing(node, placement: placement), let shapes = world.effectiveShapes(d) else { continue }
             for s in shapes { box.merge(s.bbox) }
         }
         for pad in c.footprintPads[i] {
+            drawn = true
             box.merge(pad.bbox)
             if let p = pad.pad { box.merge(p.pad.pos) }
+        }
+        for zone in fp.all("zone") {
+            drawn = true
+            for poly in BoardWorld.zoneOutline(zone).polygons { box.merge(poly[0].bbox) }
+        }
+        // its texts (GetBoundingBox( true )): its texts and fields shown, then its value and reference (the board
+        // shows every layer); all of them where it has nothing else
+        var references: [SExpr] = []
+        for node in fp.items {
+            let head = node.head ?? ""
+            let field = head == "property" || (head == "fp_text" && node.text(at: 0) != "user")
+            guard field || head == "fp_text" else { continue }
+            // (a footprint's own text is one of its drawings)
+            if !field { drawn = true }
+            if field, ["Reference", "Value", "reference", "value"].contains(node.text(at: 0) ?? "") {
+                references.append(node)
+                continue
+            }
+            if let l = node.value("layer"), privateLayers.contains(l) { continue }
+            guard let t = BoardWorld.textStrokes(node, footprint: fp), t.visible || !field else { continue }
+            box.merge(t.boundingBox)
+        }
+        for node in references {
+            guard let t = BoardWorld.textStrokes(node, footprint: fp), t.visible || !drawn else { continue }
+            box.merge(t.boundingBox)
         }
         return box
     }
