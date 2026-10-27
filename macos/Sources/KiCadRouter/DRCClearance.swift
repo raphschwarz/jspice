@@ -54,6 +54,10 @@ extension BoardDRC {
         var outline: [Shape] = []
         /// A castellated pad (PAD_PROP::CASTELLATED)
         var castellated = false
+        /// A track's or arc's ends and width
+        var trackStart = IPoint.zero, trackEnd = IPoint.zero, trackWidth = 0
+        /// A drawing's connection points (PCB_SHAPE::GetConnectionPoints)
+        var connectionPoints: [IPoint] = []
 
         init(kind: Kind, uuid: String) { (self.kind, self.uuid) = (kind, uuid) }
 
@@ -153,6 +157,7 @@ extension BoardDRC {
             case .track, .arc:
                 guard let l = world.layerIndex[t.layer] else { continue }
                 item.layers = [l]
+                (item.trackStart, item.trackEnd, item.trackWidth) = (t.start, t.end, t.width)
                 let s: Shape
                 if t.kind == .arc {
                     let a = ShapeArc(start: t.start, mid: t.mid, end: t.end, width: t.width)
@@ -293,6 +298,7 @@ extension BoardDRC {
         guard let d = world.readDrawing(node, placement: placement), let shapes = world.effectiveShapes(d), !shapes.isEmpty else { return nil }
         let item = CopperItem(kind: .shape, uuid: node.value("uuid") ?? "")
         item.footprint = footprint
+        item.connectionPoints = Self.connectionPoints(d)
         let name = Self.netName(node)
         item.net = world.netCodes[name] ?? 0
         item.netName = name

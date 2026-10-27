@@ -93,6 +93,8 @@ public struct BoardDRC {
         "hole_to_hole": "Drilled hole too close to other hole", "holes_co_located": "Drilled holes co-located",
         "clearance": "Clearance violation", "hole_clearance": "Hole clearance violation", "shorting_items": "Items shorting two nets",
         "tracks_crossing": "Tracks crossing", "copper_edge_clearance": "Board edge clearance violation",
+        "track_dangling": "Track has unconnected end", "via_dangling": "Via is not connected or connected on only one layer",
+        "unconnected_items": "Missing connection between items",
     ]
 
     /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT; its EXTENDED_ERROR_LIMIT for
@@ -138,11 +140,41 @@ public struct BoardDRC {
         var viaType = Via.ViaType.through
         /// The copper layers it spans, as router layers
         var layers = LayerRange(0, 0)
+        /// Its padstack's unconnected layer mode
+        var unconnectedLayers = UnconnectedLayerMode.keepAll
+        /// A free via (PCB_VIA::GetIsFree: one whose net the connectivity does not change)
+        var free = false
+    }
+
+    /// PADSTACK::UNCONNECTED_LAYER_MODE: which copper layers a pad or via is kept on where nothing connects to it
+    enum UnconnectedLayerMode {
+        case keepAll, removeAll, removeExceptStartAndEnd
+
+        init(_ node: SExpr) {
+            if node.value("remove_unused_layers") != "yes" {
+                self = .keepAll
+            } else {
+                self = node.value("keep_end_layers") == "yes" ? .removeExceptStartAndEnd : .removeAll
+            }
+        }
+
+        /// ConditionallyFlashed: whether it is flashed on a layer only where something connects to it there
+        func conditionallyFlashed(_ layer: Int, start: Int, end: Int) -> Bool {
+            switch self {
+            case .keepAll: return false
+            case .removeAll: return true
+            case .removeExceptStartAndEnd: return layer != start && layer != end
+            }
+        }
     }
 
     struct Footprint {
         var reference: String
         var pads: [Pad]
+        /// Its pads of one number joined (FOOTPRINT::GetDuplicatePadNumbersAreJumpers)
+        var duplicatePadNumbersAreJumpers = false
+        /// Groups of its pads joined (FOOTPRINT::JumperPadGroups), by number
+        var jumperPadGroups: [Set<String>] = []
     }
 
     /// A pad (PAD), with what the checks ask of it
@@ -154,6 +186,7 @@ public struct BoardDRC {
         /// A custom pad's pieces
         var primitives: [SExpr] = []
         var pinType = ""
+        var unconnectedLayers = UnconnectedLayerMode.keepAll
         var hasHole: Bool { pad.drill.x > 0 && pad.drill.y > 0 }
         /// PAD::HasDrilledHole: a hole of one diameter
         var hasDrilledHole: Bool { hasHole && pad.drill.x == pad.drill.y }
@@ -193,6 +226,8 @@ public struct BoardDRC {
                     default: break
                     }
                 }
+                t.unconnectedLayers = UnconnectedLayerMode(node)
+                t.free = node.value("free") == "yes"
                 tracks.append(t)
             default:
                 break
@@ -204,9 +239,12 @@ public struct BoardDRC {
                 Pad(uuid: node.value("uuid") ?? "", number: node.text(at: 0) ?? "", net: Self.netName(node),
                     pad: world.readPad(node, placement),
                     primitives: (node["primitives"]?.arguments ?? []).filter { $0.head != "gr_bbox" && $0.head != "gr_vector" },
-                    pinType: node.value("pintype") ?? "")
+                    pinType: node.value("pintype") ?? "", unconnectedLayers: UnconnectedLayerMode(node))
             }
-            footprints.append(Footprint(reference: placement.reference, pads: pads))
+            var footprint = Footprint(reference: placement.reference, pads: pads)
+            footprint.duplicatePadNumbersAreJumpers = fp.value("duplicate_pad_numbers_are_jumpers") == "yes"
+            footprint.jumperPadGroups = (fp["jumper_pad_groups"]?.arguments ?? []).map { Set($0.items.map(\.text)) }
+            footprints.append(footprint)
         }
     }
 
@@ -220,9 +258,13 @@ public struct BoardDRC {
         checkHoleSizes(&out)
         checkAnnularWidths(&out)
         checkHolesToHoles(&out)
+        // (the connectivity built first, as KiCad builds it as it reads the board: the nets it propagates are the
+        // items' nets for the checks)
         let copper = makeCopper()
+        let connectivity = buildConnectivity(copper)
         checkCopperClearances(&out, copper)
         checkEdgeClearances(&out, copper)
+        checkConnectivity(&out, copper, connectivity)
         return out.violations
     }
 

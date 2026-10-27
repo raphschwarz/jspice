@@ -17,12 +17,13 @@ final class DRCTests: XCTestCase {
     /// The checks BoardDRC makes
     static let checked: Set<String> = ["track_width", "via_diameter", "drill_out_of_range", "microvia_drill_out_of_range",
                                        "annular_width", "hole_to_hole", "holes_co_located", "clearance", "hole_clearance",
-                                       "shorting_items", "tracks_crossing", "copper_edge_clearance"]
+                                       "shorting_items", "tracks_crossing", "copper_edge_clearance", "track_dangling",
+                                       "via_dangling", "unconnected_items"]
 
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }
-        var boards = 0, found = 0
+        var boards = 0, found = 0, exactUnconnected = 0
         var differences: [String] = []
         var byType: [String: Int] = [:]
         var all: [String] = []
@@ -54,6 +55,43 @@ final class DRCTests: XCTestCase {
             if capped.contains("shorting_items") || capped.contains("clearance") || capped.contains("hole_clearance") {
                 capped.formUnion(["clearance", "shorting_items", "hole_clearance", "tracks_crossing"])
             }
+            // (missing connections: KiCad's ratsnest picks among connections of the same length by where its
+            // items happen to be in memory, which differs from one run of it to the next; so KiCad's are checked to
+            // join the port's clusters of each net into one, as many of them as the port's)
+            if !capped.contains("unconnected_items") {
+                capped.insert("unconnected_items")
+                let cn = drc.buildConnectivity(drc.makeCopper())
+                let theirsU = report.unconnected.map { $0.items.map(\.uuid) }
+                let oursU = ourViolations.filter { $0.type == "unconnected_items" }.map(\.items)
+                exactUnconnected += Self.minus(theirsU.map { $0.joined(separator: " ") }, Self.minus(theirsU.map { $0.joined(separator: " ") }, oursU.map { $0.joined(separator: " ") })).count
+                byType["unconnected_items", default: 0] += theirsU.count
+                found += theirsU.count
+                if theirsU.count != oursU.count {
+                    differences.append("\(name): KiCad finds \(theirsU.count) missing connections, ours \(oursU.count)")
+                }
+                var root: [Int: Int] = [:]
+                func find(_ x: Int) -> Int {
+                    var r = x
+                    while let p = root[r], p != r { r = p }
+                    root[x] = r
+                    return r
+                }
+                for e in theirsU {
+                    guard e.count == 2, let a = cn.clusterOf[e[0]], let b = cn.clusterOf[e[1]] else {
+                        differences.append("\(name): KiCad's missing connection \(e) between items not in the port's clusters")
+                        continue
+                    }
+                    if find(a) == find(b) {
+                        differences.append("\(name): KiCad's missing connection \(e) joins what is joined already")
+                    }
+                    root[find(a)] = find(b)
+                }
+                for e in oursU where e.count == 2 {
+                    if let a = cn.clusterOf[e[0]], let b = cn.clusterOf[e[1]], find(a) != find(b) {
+                        differences.append("\(name): KiCad's missing connections leave apart what ours joins: \(e)")
+                    }
+                }
+            }
             let theirs = report.violations.filter { Self.checked.contains($0.type) && !capped.contains($0.type) }
                 .map { key($0.type, $0.severity, $0.description, $0.items.map(\.uuid)) }.sorted()
             let ours = ourViolations.filter { Self.checked.contains($0.type) && !capped.contains($0.type) }
@@ -71,7 +109,8 @@ final class DRCTests: XCTestCase {
             try? all.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
         }
         print("DRCTests: \(boards) boards, \(found) violations of the checks made: "
-              + byType.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", "))
+              + byType.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
+              + " (\(exactUnconnected) of the missing connections between the same items as KiCad's)")
         XCTAssertGreaterThan(boards, 0)
         XCTAssert(differences.isEmpty, "\(differences.count) differences from KiCad's DRC:\n" + differences.prefix(30).joined(separator: "\n"))
     }
