@@ -1,0 +1,1326 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "random.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (no edges found on Edge.Cuts layer)",
+   "items": [
+    {
+     "description": "PCB",
+     "pos": {
+      "x": 0.0,
+      "y": 0.0
+     },
+     "uuid": "c17879c0-cd97-4f22-8f27-fd41db839cfe"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY4",
+     "pos": {
+      "x": 145.0,
+      "y": 80.0
+     },
+     "uuid": "0cc719df-2da6-49d0-b6ed-6670b3b01cf6"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY4",
+     "pos": {
+      "x": 145.0,
+      "y": 80.0
+     },
+     "uuid": "0cc719df-2da6-49d0-b6ed-6670b3b01cf6"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY4",
+     "pos": {
+      "x": 145.0,
+      "y": 80.0
+     },
+     "uuid": "0cc719df-2da6-49d0-b6ed-6670b3b01cf6"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY4",
+     "pos": {
+      "x": 145.0,
+      "y": 80.0
+     },
+     "uuid": "0cc719df-2da6-49d0-b6ed-6670b3b01cf6"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY4",
+     "pos": {
+      "x": 145.0,
+      "y": 80.0
+     },
+     "uuid": "0cc719df-2da6-49d0-b6ed-6670b3b01cf6"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY4",
+     "pos": {
+      "x": 145.0,
+      "y": 80.0
+     },
+     "uuid": "0cc719df-2da6-49d0-b6ed-6670b3b01cf6"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY19",
+     "pos": {
+      "x": 130.0,
+      "y": 95.0
+     },
+     "uuid": "1b82db0e-1fc9-49b2-9090-6255a57047be"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY19",
+     "pos": {
+      "x": 130.0,
+      "y": 95.0
+     },
+     "uuid": "1b82db0e-1fc9-49b2-9090-6255a57047be"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY19",
+     "pos": {
+      "x": 130.0,
+      "y": 95.0
+     },
+     "uuid": "1b82db0e-1fc9-49b2-9090-6255a57047be"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY19",
+     "pos": {
+      "x": 130.0,
+      "y": 95.0
+     },
+     "uuid": "1b82db0e-1fc9-49b2-9090-6255a57047be"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY19",
+     "pos": {
+      "x": 130.0,
+      "y": 95.0
+     },
+     "uuid": "1b82db0e-1fc9-49b2-9090-6255a57047be"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY43",
+     "pos": {
+      "x": 250.0,
+      "y": 110.0
+     },
+     "uuid": "26533402-2d5b-4b11-964b-73cb24d0a076"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY17",
+     "pos": {
+      "x": 100.0,
+      "y": 95.0
+     },
+     "uuid": "26dd4e9d-3f87-48ca-a64a-456bdaea6cf1"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY17",
+     "pos": {
+      "x": 100.0,
+      "y": 95.0
+     },
+     "uuid": "26dd4e9d-3f87-48ca-a64a-456bdaea6cf1"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY17",
+     "pos": {
+      "x": 100.0,
+      "y": 95.0
+     },
+     "uuid": "26dd4e9d-3f87-48ca-a64a-456bdaea6cf1"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY17",
+     "pos": {
+      "x": 100.0,
+      "y": 95.0
+     },
+     "uuid": "26dd4e9d-3f87-48ca-a64a-456bdaea6cf1"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY58",
+     "pos": {
+      "x": 235.0,
+      "y": 125.0
+     },
+     "uuid": "37fae08e-fedc-41e2-a3d7-5a400e05f534"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY58",
+     "pos": {
+      "x": 235.0,
+      "y": 125.0
+     },
+     "uuid": "37fae08e-fedc-41e2-a3d7-5a400e05f534"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY15",
+     "pos": {
+      "x": 310.0,
+      "y": 80.0
+     },
+     "uuid": "3a6ecf62-f22c-4793-916b-edc01a40ecf7"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY14",
+     "pos": {
+      "x": 295.0,
+      "y": 80.0
+     },
+     "uuid": "3d384d43-0777-424a-af92-cdbd0cad22d7"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY32",
+     "pos": {
+      "x": 325.0,
+      "y": 95.0
+     },
+     "uuid": "422b5be0-f31b-495c-8d6a-44bab823c339"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY32",
+     "pos": {
+      "x": 325.0,
+      "y": 95.0
+     },
+     "uuid": "422b5be0-f31b-495c-8d6a-44bab823c339"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY2",
+     "pos": {
+      "x": 115.0,
+      "y": 80.0
+     },
+     "uuid": "4d3bd998-1b8d-4f53-b8b2-386e58783ca8"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY25",
+     "pos": {
+      "x": 220.0,
+      "y": 95.0
+     },
+     "uuid": "521477fe-5d25-4829-a421-082c48d5eba4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY25",
+     "pos": {
+      "x": 220.0,
+      "y": 95.0
+     },
+     "uuid": "521477fe-5d25-4829-a421-082c48d5eba4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY33",
+     "pos": {
+      "x": 100.0,
+      "y": 110.0
+     },
+     "uuid": "55f26f80-35c9-4673-bf81-a0be4f749805"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY33",
+     "pos": {
+      "x": 100.0,
+      "y": 110.0
+     },
+     "uuid": "55f26f80-35c9-4673-bf81-a0be4f749805"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY10",
+     "pos": {
+      "x": 235.0,
+      "y": 80.0
+     },
+     "uuid": "59e17b1b-4531-4fbd-8b60-0c4b472aff18"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY10",
+     "pos": {
+      "x": 235.0,
+      "y": 80.0
+     },
+     "uuid": "59e17b1b-4531-4fbd-8b60-0c4b472aff18"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY10",
+     "pos": {
+      "x": 235.0,
+      "y": 80.0
+     },
+     "uuid": "59e17b1b-4531-4fbd-8b60-0c4b472aff18"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY36",
+     "pos": {
+      "x": 145.0,
+      "y": 110.0
+     },
+     "uuid": "676e757e-0e75-4b3f-8fff-d11c03070ea4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY36",
+     "pos": {
+      "x": 145.0,
+      "y": 110.0
+     },
+     "uuid": "676e757e-0e75-4b3f-8fff-d11c03070ea4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY36",
+     "pos": {
+      "x": 145.0,
+      "y": 110.0
+     },
+     "uuid": "676e757e-0e75-4b3f-8fff-d11c03070ea4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY36",
+     "pos": {
+      "x": 145.0,
+      "y": 110.0
+     },
+     "uuid": "676e757e-0e75-4b3f-8fff-d11c03070ea4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY50",
+     "pos": {
+      "x": 115.0,
+      "y": 125.0
+     },
+     "uuid": "771bbf68-6bad-4793-90e5-39e68c8ebb34"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY56",
+     "pos": {
+      "x": 205.0,
+      "y": 125.0
+     },
+     "uuid": "798056ea-954f-4769-a2cf-25273ab5db18"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY56",
+     "pos": {
+      "x": 205.0,
+      "y": 125.0
+     },
+     "uuid": "798056ea-954f-4769-a2cf-25273ab5db18"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY56",
+     "pos": {
+      "x": 205.0,
+      "y": 125.0
+     },
+     "uuid": "798056ea-954f-4769-a2cf-25273ab5db18"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY47",
+     "pos": {
+      "x": 310.0,
+      "y": 110.0
+     },
+     "uuid": "7a1e0bf7-55f1-42b5-bf03-5366307095c6"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY16",
+     "pos": {
+      "x": 325.0,
+      "y": 80.0
+     },
+     "uuid": "7a495368-5a63-4f64-b558-a95a9fca7aab"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY16",
+     "pos": {
+      "x": 325.0,
+      "y": 80.0
+     },
+     "uuid": "7a495368-5a63-4f64-b558-a95a9fca7aab"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY16",
+     "pos": {
+      "x": 325.0,
+      "y": 80.0
+     },
+     "uuid": "7a495368-5a63-4f64-b558-a95a9fca7aab"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY46",
+     "pos": {
+      "x": 295.0,
+      "y": 110.0
+     },
+     "uuid": "908348c8-6d8e-41c9-826f-9160ddcb94e9"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY22",
+     "pos": {
+      "x": 175.0,
+      "y": 95.0
+     },
+     "uuid": "d00d2e95-7f89-447f-998f-1026b8bfcb36"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY1",
+     "pos": {
+      "x": 100.0,
+      "y": 80.0
+     },
+     "uuid": "d95d4b52-6171-4b6f-92fc-8825940473f0"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY29",
+     "pos": {
+      "x": 280.0,
+      "y": 95.0
+     },
+     "uuid": "e54ed653-ceaf-4775-aabc-accef28a2290"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY29",
+     "pos": {
+      "x": 280.0,
+      "y": 95.0
+     },
+     "uuid": "e54ed653-ceaf-4775-aabc-accef28a2290"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY9",
+     "pos": {
+      "x": 220.0,
+      "y": 80.0
+     },
+     "uuid": "e6906662-2bc5-49d9-a563-baaa5ceb9964"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY9",
+     "pos": {
+      "x": 220.0,
+      "y": 80.0
+     },
+     "uuid": "e6906662-2bc5-49d9-a563-baaa5ceb9964"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY9",
+     "pos": {
+      "x": 220.0,
+      "y": 80.0
+     },
+     "uuid": "e6906662-2bc5-49d9-a563-baaa5ceb9964"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY53",
+     "pos": {
+      "x": 160.0,
+      "y": 125.0
+     },
+     "uuid": "158b50d8-d08a-4407-8dbe-3ed075dfb762"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY24",
+     "pos": {
+      "x": 205.0,
+      "y": 95.0
+     },
+     "uuid": "336469f2-e5b5-461d-b5c2-a51ce21db872"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY24",
+     "pos": {
+      "x": 205.0,
+      "y": 95.0
+     },
+     "uuid": "336469f2-e5b5-461d-b5c2-a51ce21db872"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY60",
+     "pos": {
+      "x": 265.0,
+      "y": 125.0
+     },
+     "uuid": "387f4f45-24a2-486a-9d78-eb9b9f172800"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY60",
+     "pos": {
+      "x": 265.0,
+      "y": 125.0
+     },
+     "uuid": "387f4f45-24a2-486a-9d78-eb9b9f172800"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY57",
+     "pos": {
+      "x": 220.0,
+      "y": 125.0
+     },
+     "uuid": "39c2f5f1-f9c3-4b50-baba-fefb9b316fc4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY11",
+     "pos": {
+      "x": 250.0,
+      "y": 80.0
+     },
+     "uuid": "42b06fe8-0f91-4f46-be69-0a20b879edf5"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY51",
+     "pos": {
+      "x": 130.0,
+      "y": 125.0
+     },
+     "uuid": "8647d0c4-ddb2-414f-8473-9196ff7f1269"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY51",
+     "pos": {
+      "x": 130.0,
+      "y": 125.0
+     },
+     "uuid": "8647d0c4-ddb2-414f-8473-9196ff7f1269"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY51",
+     "pos": {
+      "x": 130.0,
+      "y": 125.0
+     },
+     "uuid": "8647d0c4-ddb2-414f-8473-9196ff7f1269"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY51",
+     "pos": {
+      "x": 130.0,
+      "y": 125.0
+     },
+     "uuid": "8647d0c4-ddb2-414f-8473-9196ff7f1269"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY6",
+     "pos": {
+      "x": 175.0,
+      "y": 80.0
+     },
+     "uuid": "a9118dae-1ec9-417a-9aba-41709cb7b9f4"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY42",
+     "pos": {
+      "x": 235.0,
+      "y": 110.0
+     },
+     "uuid": "e81ad103-f002-4f52-afc7-bb53841350f7"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY30",
+     "pos": {
+      "x": 295.0,
+      "y": 95.0
+     },
+     "uuid": "f5d18b7f-774d-4bfa-8b35-14f07a5b5974"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (not a closed shape)",
+   "items": [
+    {
+     "description": "Footprint CY26",
+     "pos": {
+      "x": 235.0,
+      "y": 95.0
+     },
+     "uuid": "f9f4df4e-e1fd-41c2-b891-03ef1437e20a"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  },
+  {
+   "description": "Footprint has malformed courtyard (self-intersecting)",
+   "items": [
+    {
+     "description": "Footprint CY39",
+     "pos": {
+      "x": 190.0,
+      "y": 110.0
+     },
+     "uuid": "fa51c67f-347b-4e3f-b877-9f6378556afe"
+    }
+   ],
+   "severity": "error",
+   "type": "malformed_courtyard"
+  }
+ ]
+}

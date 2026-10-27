@@ -121,7 +121,7 @@ extension BoardWorld {
     /// B.CrtYd, in the order it holds them, each side's made polygons (ConvertOutlineToPolygon, curves 5 µm from
     /// true at most, ends 20 µm apart chained), shrunk by 5 µm (Inflate, chamfering acute corners) and cut into
     /// triangles (CacheTriangulation( false )), or marked malformed
-    public func courtyards(_ footprint: SExpr) -> Courtyards {
+    public func courtyards(_ footprint: SExpr, errorHandler: ((String) -> Void)? = nil) -> Courtyards {
         var out = Courtyards()
         let placement = FootprintPlacement(footprint)
         var listFront: [OutlineShape] = [], listBack: [OutlineShape] = []
@@ -142,7 +142,9 @@ extension BoardWorld {
         func build(_ list: [OutlineShape], _ histogram: [Int: Int], _ polygons: inout PolySet, _ width: inout Int) -> Bool {
             // (a malformed courtyard's first outline keeps its first shape's width)
             guard Outlines.convertOutlineToPolygon(list, &polygons, maxError: maxError, chainingEpsilon: chainingEpsilon,
-                                                   allowDisjoint: true, errorHandler: nil, firstOutlineWidth: &width) else {
+                                                   allowDisjoint: true,
+                                                   errorHandler: errorHandler.map { h in { message, _, _, _ in h(message) } },
+                                                   firstOutlineWidth: &width) else {
                 return false
             }
             polygons.inflate(-maxError, .chamferAcuteCorners, maxError: maxError)

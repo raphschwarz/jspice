@@ -7,18 +7,21 @@ import KiCadKit
 /// (NAME.drc, its report, next to NAME.kicad_pcb), and BoardDRC, checking the same board itself, must find the same
 /// violations of the checks it makes: of the same kind, between the same items, in the same words (its rule and the
 /// actual value, to KiCad's digits). KICAD_BOARD_REFERENCE names a folder of such boards; with none,
-/// Fixtures/boards.
+/// Fixtures/boards and Fixtures/courtyards (courtyards drawn malformed in their many ways, some out at the coordinates'
+/// limits).
 final class DRCTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
+        return ["boards", "courtyards"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
     }
 
     /// The checks BoardDRC makes
     static let checked: Set<String> = ["track_width", "via_diameter", "drill_out_of_range", "microvia_drill_out_of_range",
                                        "annular_width", "hole_to_hole", "holes_co_located", "clearance", "hole_clearance",
                                        "shorting_items", "tracks_crossing", "copper_edge_clearance", "track_dangling",
-                                       "via_dangling", "unconnected_items", "items_not_allowed"]
+                                       "via_dangling", "unconnected_items", "items_not_allowed",
+                                       "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard",
+                                       "npth_inside_courtyard"]
 
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }

@@ -4,10 +4,14 @@
 // addHolesToPolygon, checkSelfIntersections; its arcs never kept in the polygons, as all but KiCad's STEP export ask),
 // the radius search it asks of its KD-tree of the shapes' ends (thirdparty/nanoflann: every end nearer than the
 // chaining distance, its squared distance worked out in doubles, which the search's own order then does not matter
-// to, KiCad sorting what it finds) and libs/kimath/src/bezier_curves.cpp (BEZIER_POLY::GetPoly of a cubic curve).
+// to, KiCad sorting what it finds; and the nearest ends to an open chain's end, for which its tree and its search's
+// order do matter, ported too: KDTreeSingleIndexAdaptor's build and knnSearch) and libs/kimath/src/bezier_curves.cpp
+// (BEZIER_POLY::GetPoly of a cubic curve).
 // Copyright (C) 2017 Jean-Pierre Charras; Copyright (C) 2015 SoftPLC Corporation, Dick Hollenbeck; Copyright The KiCad
 // Developers, see KiCad's AUTHORS.txt.
-// GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
+// GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md); the KD-tree (KDTree), from nanoflann:
+// Copyright 2008-2009 Marius Muja, David G. Lowe; Copyright 2011-2025 Jose Luis Blanco; BSD license (see
+// KICAD-NOTICE.md).
 
 import Foundation
 
@@ -68,6 +72,7 @@ public enum Outlines {
         var remaining = Set(shapes.indices)
         var nextSeed = 0
         let tree = EndpointTree(shapes)
+        var reportedGaps = Set<[Int]>()
         // (SKIP_STRUCT: the shapes already in a contour)
         var skip = [Bool](repeating: false, count: shapes.count)
         var owners: [SegKey: Int] = [:]
@@ -137,9 +142,17 @@ public enum Outlines {
                 }
                 contour.setClosed(true)
             } else if let errorHandler {
-                // (KiCad names the two shapes nearest each end; the ends themselves here)
-                errorHandler("(not a closed shape)", first, chain[chain.count - 1], contour.point(0))
-                errorHandler("(not a closed shape)", first, chain[chain.count - 1], contour.lastPoint)
+                // (each end's shape and the nearest other shape, among the eight ends nearest it, a lone shape with
+                // itself: each pair once; where the gap is, the ends themselves here, not the nearest points)
+                func reportGap(_ pt: IPoint) {
+                    let found = tree.knnSearch(pt, 8)
+                    guard let a = found.first.map({ tree.ends[$0].shape }) else { return }
+                    let b = found.dropFirst().map { tree.ends[$0].shape }.first { $0 != a } ?? a
+                    guard reportedGaps.insert([min(a, b), max(a, b)]).inserted else { return }
+                    errorHandler("(not a closed shape)", a, b, pt)
+                }
+                reportGap(contour.point(0))
+                reportGap(contour.lastPoint)
             }
             contours.append(contour)
         }
@@ -200,7 +213,14 @@ public enum Outlines {
             }
             self.ends = ends
             byX = ends.indices.sorted { ends[$0].p.x != ends[$1].p.x ? ends[$0].p.x < ends[$1].p.x : $0 < $1 }
+            kdTree = KDTree(ends.map { [Double($0.p.x), Double($0.p.y)] })
         }
+
+        let kdTree: KDTree
+
+        /// The `k` ends nearest `q`, nearest first, those as near in the order the KD-tree's search meets them
+        /// (knnSearch)
+        func knnSearch(_ q: IPoint, _ k: Int) -> [Int] { kdTree.knnSearch([Double(q.x), Double(q.y)], k) }
 
         /// The ends within `radius` of `q` (strictly), with their squared distances (radiusSearch)
         func radiusSearch(_ q: IPoint, _ radius: Double) -> [(index: Int, dist: Double)] {
@@ -631,5 +651,190 @@ public enum Outlines {
         func getPoly(_ out: inout [DPoint], _ maxError: Double) {
             getCubicPoly(&out, maxError <= 0.0 ? 10.0 : maxError)
         }
+    }
+}
+
+/// thirdparty/nanoflann's KDTreeSingleIndexAdaptor for points in the plane, with its L2_Simple_Adaptor's squared
+/// distances, as KiCad builds it (leaves of up to 10 points, the points' indices reordered as it splits them) and
+/// its KNNResultSet search: the order its search meets points in decides which of those as near comes first
+struct KDTree {
+    private final class Node {
+        var left = 0, right = 0
+        var divfeat = 0
+        var divlow = 0.0, divhigh = 0.0
+        var child1: Node?, child2: Node?
+    }
+
+    private let points: [[Double]]
+    private var vAcc: [Int]
+    private var root: Node?
+    private var rootBox: [(low: Double, high: Double)] = []
+    private let leafMaxSize = 10
+
+    init(_ points: [[Double]]) {
+        self.points = points
+        vAcc = Array(points.indices)
+        guard !points.isEmpty else { return }
+        var box = (0..<2).map { i in (low: points[0][i], high: points[0][i]) }
+        for k in 1..<points.count {
+            for i in 0..<2 {
+                let v = points[vAcc[k]][i]
+                if v < box[i].low { box[i].low = v }
+                if v > box[i].high { box[i].high = v }
+            }
+        }
+        rootBox = box
+        root = divideTree(0, points.count, &box)
+    }
+
+    private func value(_ k: Int, _ dim: Int) -> Double { points[vAcc[k]][dim] }
+
+    private mutating func divideTree(_ left: Int, _ right: Int, _ box: inout [(low: Double, high: Double)]) -> Node {
+        let node = Node()
+        if right - left <= leafMaxSize {
+            node.left = left
+            node.right = right
+            for i in 0..<2 { box[i] = (value(left, i), value(left, i)) }
+            for k in (left + 1)..<max(right, left + 1) {
+                for i in 0..<2 {
+                    let v = value(k, i)
+                    if box[i].low > v { box[i].low = v }
+                    if box[i].high < v { box[i].high = v }
+                }
+            }
+        } else {
+            let (idx, cutfeat, cutval) = middleSplit(left, right - left, box)
+            node.divfeat = cutfeat
+            var leftBox = box
+            leftBox[cutfeat].high = cutval
+            node.child1 = divideTree(left, left + idx, &leftBox)
+            var rightBox = box
+            rightBox[cutfeat].low = cutval
+            node.child2 = divideTree(left + idx, right, &rightBox)
+            node.divlow = leftBox[cutfeat].high
+            node.divhigh = rightBox[cutfeat].low
+            for i in 0..<2 { box[i] = (min(leftBox[i].low, rightBox[i].low), max(leftBox[i].high, rightBox[i].high)) }
+        }
+        return node
+    }
+
+    private mutating func middleSplit(_ ind: Int, _ count: Int, _ box: [(low: Double, high: Double)]) -> (Int, Int, Double) {
+        let eps = 0.00001
+        var maxSpan = box[0].high - box[0].low
+        for i in 1..<2 where box[i].high - box[i].low > maxSpan { maxSpan = box[i].high - box[i].low }
+        var maxSpread = -1.0
+        var cutfeat = 0
+        var minElem = 0.0, maxElem = 0.0
+        for i in 0..<2 where box[i].high - box[i].low >= (1 - eps) * maxSpan {
+            var lo = value(ind, i), hi = lo
+            for k in 1..<count {
+                let v = value(ind + k, i)
+                if v < lo { lo = v }
+                if v > hi { hi = v }
+            }
+            if hi - lo > maxSpread {
+                cutfeat = i
+                maxSpread = hi - lo
+                minElem = lo
+                maxElem = hi
+            }
+        }
+        let splitVal = (box[cutfeat].low + box[cutfeat].high) / 2
+        let cutval = splitVal < minElem ? minElem : splitVal > maxElem ? maxElem : splitVal
+        let (lim1, lim2) = planeSplit(ind, count, cutfeat, cutval)
+        let index = lim1 > count / 2 ? lim1 : lim2 < count / 2 ? lim2 : count / 2
+        return (index, cutfeat, cutval)
+    }
+
+    /// planeSplit: those less than the cut first, then those equal, then those greater
+    private mutating func planeSplit(_ ind: Int, _ count: Int, _ cutfeat: Int, _ cutval: Double) -> (Int, Int) {
+        var left = 0, right = count - 1
+        while true {
+            while left <= right && value(ind + left, cutfeat) < cutval { left += 1 }
+            while right != 0 && left <= right && value(ind + right, cutfeat) >= cutval { right -= 1 }
+            if left > right || right == 0 { break }
+            vAcc.swapAt(ind + left, ind + right)
+            left += 1
+            right -= 1
+        }
+        let lim1 = left
+        right = count - 1
+        while true {
+            while left <= right && value(ind + left, cutfeat) <= cutval { left += 1 }
+            while right != 0 && left <= right && value(ind + right, cutfeat) > cutval { right -= 1 }
+            if left > right || right == 0 { break }
+            vAcc.swapAt(ind + left, ind + right)
+            left += 1
+            right -= 1
+        }
+        return (lim1, left)
+    }
+
+    /// knnSearch: the `k` nearest points' indices, nearest first, a point as near as one found already after it
+    func knnSearch(_ q: [Double], _ k: Int) -> [Int] {
+        guard let root, k > 0 else { return [] }
+        var indices = [Int](repeating: 0, count: k), dists = [Double](repeating: 0, count: k)
+        var count = 0
+        func worstDist() -> Double { count < k || count == 0 ? Double.greatestFiniteMagnitude : dists[count - 1] }
+        func addPoint(_ dist: Double, _ index: Int) {
+            var i = count
+            while i > 0 {
+                if dists[i - 1] > dist {
+                    if i < k { (dists[i], indices[i]) = (dists[i - 1], indices[i - 1]) }
+                } else {
+                    break
+                }
+                i -= 1
+            }
+            if i < k { (dists[i], indices[i]) = (dist, index) }
+            if count < k { count += 1 }
+        }
+        func searchLevel(_ node: Node, _ mindist: Double, _ ds: inout [Double]) {
+            if node.child1 == nil && node.child2 == nil {
+                let worst = worstDist()
+                for i in node.left..<node.right {
+                    let p = points[vAcc[i]]
+                    var dist = 0.0
+                    for d in 0..<2 {
+                        let diff = q[d] - p[d]
+                        dist += diff * diff
+                    }
+                    if dist < worst { addPoint(dist, vAcc[i]) }
+                }
+                return
+            }
+            let idx = node.divfeat
+            let val = q[idx]
+            let diff1 = val - node.divlow, diff2 = val - node.divhigh
+            let best: Node, other: Node
+            let cutDist: Double
+            if diff1 + diff2 < 0 {
+                (best, other) = (node.child1!, node.child2!)
+                cutDist = (val - node.divhigh) * (val - node.divhigh)
+            } else {
+                (best, other) = (node.child2!, node.child1!)
+                cutDist = (val - node.divlow) * (val - node.divlow)
+            }
+            searchLevel(best, mindist, &ds)
+            let dst = ds[idx]
+            let md = mindist + cutDist - dst
+            ds[idx] = cutDist
+            if md * 1 <= worstDist() { searchLevel(other, md, &ds) }
+            ds[idx] = dst
+        }
+        var ds = [0.0, 0.0]
+        var dist = 0.0
+        for i in 0..<2 {
+            if q[i] < rootBox[i].low {
+                ds[i] = (q[i] - rootBox[i].low) * (q[i] - rootBox[i].low)
+                dist += ds[i]
+            }
+            if q[i] > rootBox[i].high {
+                ds[i] = (q[i] - rootBox[i].high) * (q[i] - rootBox[i].high)
+                dist += ds[i]
+            }
+        }
+        searchLevel(root, dist, &ds)
+        return Array(indices.prefix(count))
     }
 }
