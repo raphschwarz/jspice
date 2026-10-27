@@ -157,10 +157,22 @@ extension BoardDRC {
         return false
     }
 
-    /// DRC_RTREE::QueryColliding of a zone's fill on a layer with a polygon set, as yes or no: whether a side of one of
-    /// the fill's triangles touches the set's first outline, or the outline's first point is in one; which is whether
-    /// the fill and that outline (its holes not looked at) touch or overlap
+    /// DRC_RTREE::QueryColliding of a zone's fill on a layer with a polygon set, as yes or no. For a set of one outline
+    /// and no holes: whether a side of one of the fill's triangles touches the outline, or the outline's first point is
+    /// in one, which is whether the fill and the outline touch or overlap; for any other, whether the set collides with
+    /// one of the fill's triangles, triangle by triangle
     static func fillCollides(_ fill: [LineChain], _ set: PolySet) -> Bool {
+        guard set.polygons.count == 1, set.polygons[0].count == 1 else {
+            var f = PolySet(fill.map { [$0] })
+            f.cacheTriangulation()
+            for tpoly in f.triangulatedPolygons {
+                for i in tpoly.triangles.indices {
+                    let (a, b, c) = tpoly.triangle(i)
+                    if polySetCollide(set, [.simple(LineChain([a, b, c], closed: true))], compound: true, wantActual: false) { return true }
+                }
+            }
+            return false
+        }
         guard let outline = set.polygons.first?[0], outline.pointCount > 0 else { return false }
         for f in fill {
             for i in 0..<f.segmentCount {

@@ -582,6 +582,75 @@ public struct PolySet: Sendable {
 
     /// Whether the triangles are those of the set as it is now (KiCad's IsTriangulationUpToDate): false if they
     /// could not all be cut
+    /// Whether a polygon has a hole (HasHoles)
+    public var hasHoles: Bool { polygons.contains { $0.count > 1 } }
+
+    /// Whether two sides of a polygon, its outline's or its holes', not one after the other, touch
+    /// (IsPolygonSelfIntersecting: the sides in order of their least x, then y, each tried against those after it
+    /// that may reach it)
+    func isPolygonSelfIntersecting(_ polygon: Int) -> Bool {
+        var segments = polygons[polygon].flatMap { c in (0..<c.segmentCount).map(c.segment) }
+        Clipper.introSort(&segments) { a, b in
+            let minA = min(a.a.x, a.b.x), minB = min(b.a.x, b.b.x)
+            return minA < minB || (minA == minB && min(a.a.y, a.b.y) < min(b.a.y, b.b.y))
+        }
+        for i in segments.indices {
+            let first = segments[i]
+            let maxX = max(first.a.x, first.b.x), maxY = max(first.a.y, first.b.y)
+            for j in (i + 1)..<segments.count {
+                let second = segments[j]
+                let minX = min(second.a.x, second.b.x), minY = min(second.a.y, second.b.y)
+                if maxX < minX || (maxX == minX && maxY < minY) { break }
+                let diff = abs(first.index - second.index)
+                let adjacent = diff == 1 || diff == segments.count - 1
+                var actual: Int?
+                if !adjacent && first.collide(second, clearance: 0, actual: &actual) { return true }
+            }
+        }
+        return false
+    }
+
+    /// IsSelfIntersecting: whether one of its polygons crosses itself
+    public var isSelfIntersecting: Bool { polygons.indices.contains(where: isPolygonSelfIntersecting) }
+
+    /// partitionPolyIntoRegularCellGrid: the set cut by a grid of cells about `size` across over its bounding box,
+    /// the pieces in the odd cells, fractured, then those in the even ones; the set itself if nothing is left (or its
+    /// box is a line)
+    static func partitionIntoRegularCellGrid(_ poly: PolySet, _ size: Int) -> PolySet {
+        guard var bb = poly.polygons.first?[0].bbox else { return poly }
+        for p in poly.polygons.dropFirst() { bb.merge(p[0].bbox) }
+        let w = Double(bb.maxX - bb.minX), h = Double(bb.maxY - bb.minY)
+        if w == 0 || h == 0 { return poly }
+        let nx: Int, ny: Int
+        if w > h {
+            nx = Int(w / Double(size))
+            ny = Int((h / w * Double(nx)).rounded(.down)) + 1
+        } else {
+            ny = Int(h / Double(size))
+            nx = Int((w / h * Double(ny)).rounded(.down)) + 1
+        }
+        var ps1 = poly, ps2 = poly
+        var odd = PolySet(), even = PolySet()
+        for yy in 0..<max(ny, 0) {
+            for xx in 0..<max(nx, 0) {
+                // (a VECTOR2I's coordinates from doubles, cut towards zero)
+                func at(_ o: Int, _ size: Double, _ k: Int, _ n: Int) -> Int { Int(Double(o) + size * Double(k) / Double(n)) }
+                let px = at(bb.minX, w, xx, nx), py = at(bb.minY, h, yy, ny)
+                let qx = at(bb.minX, w, xx + 1, nx), qy = at(bb.minY, h, yy + 1, ny)
+                var mask = LineChain()
+                for q in [IPoint(px, py), IPoint(qx, py), IPoint(qx, qy), IPoint(px, qy)] { mask.append(q) }
+                mask.setClosed(true)
+                if (xx ^ yy) & 1 != 0 { odd.addOutline(mask) } else { even.addOutline(mask) }
+            }
+        }
+        ps1.booleanIntersection(odd)
+        ps2.booleanIntersection(even)
+        ps1.fracture()
+        ps2.fracture()
+        for p in ps2.polygons { ps1.addOutline(p[0]) }
+        return ps1.outlineCount > 0 ? ps1 : poly
+    }
+
     public var isTriangulationUpToDate: Bool { triangulationValid && triangulatedPoints == pointsKey }
 
     /// The set cut into triangles as KiCad cuts a zone's outline for its router (CacheTriangulation( false ): the whole
@@ -589,7 +658,11 @@ public struct PolySet: Sendable {
     /// touch themselves, then each outline cut in turn. Where one cannot be, every chain left is simplified (points
     /// within 50 nm of the line taken out) and that one tried again; if it still cannot be, or a later one cannot be,
     /// the cutting stops there and the triangulation is not valid
-    public mutating func cacheTriangulation() {
+    ///
+    /// With `partition` (CacheTriangulation( true ), as a zone's fill is cut): each outline in turn, with its holes,
+    /// fractured and split where it touches itself if it has holes or crosses itself, cut by a grid of 1 cm cells
+    /// into pieces, and those cut into triangles; valid if any outline's could be
+    public mutating func cacheTriangulation(partition: Bool = false) {
         let key = pointsKey
         if triangulationValid && triangulatedPoints == key { return }
         if failedPoints == key { return }
@@ -597,11 +670,24 @@ public struct PolySet: Sendable {
         triangulatedPoints = nil
         failedPoints = nil
         triangulatedPolygons.removeAll()
-        var tmpSet = PolySet(polygons)
-        tmpSet.clearArcs()
-        tmpSet.fracture()
-        tmpSet.splitSelfTouchingOutlines()
-        if Self.triangulate(&tmpSet, -1, &triangulatedPolygons) { triangulationValid = true }
+        if partition {
+            for ii in polygons.indices {
+                var flattened = PolySet([polygons[ii]])
+                flattened.clearArcs()
+                if flattened.hasHoles || flattened.isSelfIntersecting {
+                    flattened.fracture()
+                    flattened.splitSelfTouchingOutlines()
+                }
+                var partitions = Self.partitionIntoRegularCellGrid(flattened, 10_000_000)
+                if Self.triangulate(&partitions, ii, &triangulatedPolygons) { triangulationValid = true }
+            }
+        } else {
+            var tmpSet = PolySet(polygons)
+            tmpSet.clearArcs()
+            tmpSet.fracture()
+            tmpSet.splitSelfTouchingOutlines()
+            if Self.triangulate(&tmpSet, -1, &triangulatedPolygons) { triangulationValid = true }
+        }
         if triangulationValid {
             triangulatedPoints = key
         } else {

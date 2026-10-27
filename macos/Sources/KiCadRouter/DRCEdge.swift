@@ -95,6 +95,21 @@ extension BoardDRC {
         return (edgeTree, marginTree)
     }
 
+    /// A zone's fill (a SHAPE_POLY_SET, cut into triangles as a zone's fill is, in cells) against an edge (a
+    /// drawing's SHAPE_COMPOUND), as SHAPE_POLY_SET::Collide collides a compound: the edge's pieces against each
+    /// triangle in turn, the nearest the first found nearest, and where
+    static func fillCollideAt(_ fill: PolySet, _ edge: [Shape], _ clearance: Int) -> (actual: Int, location: IPoint)? {
+        var best: (actual: Int, location: IPoint)?
+        for tpoly in fill.triangulatedPolygons {
+            for i in tpoly.triangles.indices {
+                let (a, b, c) = tpoly.triangle(i)
+                guard let hit = collideAt(edge, [.simple(LineChain([a, b, c], closed: true))], clearance) else { continue }
+                if best == nil || hit.actual < best!.actual { best = hit }
+            }
+        }
+        return best.map { (max(0, $0.actual), $0.location) }
+    }
+
     /// DRC_TEST_PROVIDER_EDGE_CLEARANCE: copper too near the board's edges (silkscreen's not checked)
     func checkEdgeClearances(_ out: inout Report, _ c: Copper) {
         guard !out.exceeded("copper_edge_clearance") else { return }
@@ -107,10 +122,12 @@ extension BoardDRC {
         let severity = settings.severity("copper_edge_clearance")
         var emitted = Set<String>()
         /// testAgainstEdge: false where a violation is found (or one already reported there)
-        func testAgainstEdge(_ item: CopperItem, _ itemShapes: [Shape], _ edge: EdgeItem) -> Bool {
+        func testAgainstEdge(_ item: CopperItem, _ itemShapes: [Shape], _ fill: PolySet?, _ edge: EdgeItem) -> Bool {
             let minClearance = settings.edgeClearance
+            let clearance = max(0, minClearance - epsilon)
             guard severity != "ignore", minClearance >= 0,
-                  let (actual, pos) = Self.collideAt(itemShapes, edge.shapes, max(0, minClearance - epsilon)) else { return true }
+                  let (actual, pos) = fill.map({ Self.fillCollideAt($0, edge.shapes, clearance) })
+                      ?? Self.collideAt(itemShapes, edge.shapes, clearance) else { return true }
             if item.kind == .track || item.kind == .arc {
                 // (a track may run into the edge in a castellated pad's hole)
                 for pad in castellated {
@@ -128,7 +145,7 @@ extension BoardDRC {
 
         /// QueryColliding of a tree with an item's shape, the edges colliding with it at the largest edge clearance
         /// visited in the tree's order until one is reported
-        func query(_ tree: RTree<EdgeEntry, Double>, _ item: CopperItem, _ shapes: [Shape]) {
+        func query(_ tree: RTree<EdgeEntry, Double>, _ item: CopperItem, _ shapes: [Shape], _ fill: PolySet?) {
             guard var box = shapes.first?.bbox else { return }
             for s in shapes.dropFirst() { box.merge(s.bbox) }
             var colliding = Set<ObjectIdentifier>()
@@ -137,7 +154,7 @@ extension BoardDRC {
                 if colliding.contains(id) { return true }
                 guard Self.collide(shapes, [entry.shape], largest) != nil else { return true }
                 colliding.insert(id)
-                return testAgainstEdge(item, shapes, entry.edge)
+                return testAgainstEdge(item, shapes, fill, entry.edge)
             }
         }
 
@@ -166,8 +183,15 @@ extension BoardDRC {
                 tested = [item.shapes[item.layers[0]] ?? []]
             }
             for shapes in tested where !shapes.isEmpty {
-                query(edgeTree, item, shapes)
-                query(marginTree, item, shapes)
+                // (a zone's fill on the layer cut into triangles, as KiCad's DRC cuts it)
+                var fill: PolySet?
+                if item.kind == .zone {
+                    var f = PolySet(shapes.compactMap { if case .simple(let c) = $0 { return [c] } else { return nil } })
+                    f.cacheTriangulation(partition: true)
+                    fill = f
+                }
+                query(edgeTree, item, shapes, fill)
+                query(marginTree, item, shapes, fill)
             }
         }
     }

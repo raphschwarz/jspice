@@ -80,26 +80,59 @@ final class DRCTests: XCTestCase {
                 if theirsU.count != oursU.count {
                     differences.append("\(name): KiCad finds \(theirsU.count) missing connections, ours \(oursU.count)")
                 }
-                var root: [Int: Int] = [:]
-                func find(_ x: Int) -> Int {
-                    var r = x
-                    while let p = root[r], p != r { r = p }
-                    root[x] = r
-                    return r
-                }
-                // (a zone is in as many clusters as its fill has islands: KiCad's connection is to one of them that
-                // is not joined yet, ours from one of them)
+                // (a zone is in as many clusters as it has fills, one for each island on each of its layers: KiCad's
+                // connection is to one of them, which its report does not say; so the clusters of KiCad's connections
+                // are chosen, the plain ones first, so that each joins two not joined yet, if they can be)
+                var edges: [[[Int]]] = [], edgeItems: [[String]] = []
                 for e in theirsU {
                     guard e.count == 2, let aa = cn.clusterOf[e[0]], let bb = cn.clusterOf[e[1]] else {
                         differences.append("\(name): KiCad's missing connection \(e) between items not in the port's clusters")
                         continue
                     }
-                    guard let (a, b) = aa.lazy.flatMap({ a in bb.lazy.map { (a, $0) } }).first(where: { find($0.0) != find($0.1) }) else {
-                        differences.append("\(name): KiCad's missing connection \(e) joins what is joined already")
-                        continue
-                    }
-                    root[find(a)] = find(b)
+                    edges.append([aa, bb])
+                    edgeItems.append(e)
                 }
+                let order = edges.indices.sorted { (edges[$0][0].count * edges[$0][1].count, $0) < (edges[$1][0].count * edges[$1][1].count, $1) }
+                var root: [Int: Int] = [:]
+                func find(_ x: Int, _ root: inout [Int: Int]) -> Int {
+                    var r = x
+                    while let p = root[r], p != r { r = p }
+                    root[x] = r
+                    return r
+                }
+                var budget = 200_000
+                func place(_ k: Int, _ root: inout [Int: Int]) -> Bool {
+                    guard k < order.count else { return true }
+                    budget -= 1
+                    guard budget > 0 else { return false }
+                    let e = edges[order[k]]
+                    for a in e[0] {
+                        for b in e[1] {
+                            var r = root
+                            let ra = find(a, &r), rb = find(b, &r)
+                            guard ra != rb else { continue }
+                            r[ra] = rb
+                            if place(k + 1, &r) {
+                                root = r
+                                return true
+                            }
+                        }
+                    }
+                    return false
+                }
+                if !place(0, &root) {
+                    // (which one cannot, taking each in turn the first way it can be)
+                    root = [:]
+                    for k in order {
+                        let e = edges[k]
+                        guard let (a, b) = e[0].lazy.flatMap({ a in e[1].lazy.map { (a, $0) } }).first(where: { find($0.0, &root) != find($0.1, &root) }) else {
+                            differences.append("\(name): KiCad's missing connection \(edgeItems[k]) joins what is joined already")
+                            continue
+                        }
+                        root[find(a, &root)] = find(b, &root)
+                    }
+                }
+                func find(_ x: Int) -> Int { find(x, &root) }
                 for e in oursU where e.count == 2 {
                     if let aa = cn.clusterOf[e[0]], let bb = cn.clusterOf[e[1]],
                        !aa.contains(where: { a in bb.contains { find($0) == find(a) } }) {
