@@ -1,0 +1,128 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "fp-rotated-crossing.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (self-intersecting)",
+   "items": [
+    {
+     "description": "Polygon of U2 on Edge.Cuts",
+     "pos": {
+      "x": 98.232233,
+      "y": 66.06066
+     },
+     "uuid": "fa5a0329-df0c-49f2-a339-4f76a38160c4"
+    },
+    {
+     "description": "Rectangle on Edge.Cuts",
+     "pos": {
+      "x": 100.0,
+      "y": 50.0
+     },
+     "uuid": "4d48214e-10a9-413a-adac-bc0b29ecbc61"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Board has malformed outline (self-intersecting)",
+   "items": [
+    {
+     "description": "Polygon of U1 on Edge.Cuts",
+     "pos": {
+      "x": 136.39471,
+      "y": 64.956576
+     },
+     "uuid": "dabc219d-cc8c-4283-ab61-8be104919fb0"
+    },
+    {
+     "description": "Rectangle on Edge.Cuts",
+     "pos": {
+      "x": 100.0,
+      "y": 50.0
+     },
+     "uuid": "4d48214e-10a9-413a-adac-bc0b29ecbc61"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Silkscreen clipped by board edge",
+   "items": [
+    {
+     "description": "Rectangle on Edge.Cuts",
+     "pos": {
+      "x": 100.0,
+      "y": 50.0
+     },
+     "uuid": "4d48214e-10a9-413a-adac-bc0b29ecbc61"
+    },
+    {
+     "description": "Reference field of U2",
+     "pos": {
+      "x": 100.0,
+      "y": 65.0
+     },
+     "uuid": "9f7ca816-3c4b-4af6-8b4f-80ca1fab1277"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_edge_clearance"
+  },
+  {
+   "description": "Silkscreen clipped by board edge",
+   "items": [
+    {
+     "description": "Rectangle on Edge.Cuts",
+     "pos": {
+      "x": 100.0,
+      "y": 50.0
+     },
+     "uuid": "4d48214e-10a9-413a-adac-bc0b29ecbc61"
+    },
+    {
+     "description": "Reference field of U1",
+     "pos": {
+      "x": 140.0,
+      "y": 65.0
+     },
+     "uuid": "6ed6beca-7f27-449b-8034-92eb275cb89c"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_edge_clearance"
+  }
+ ]
+}

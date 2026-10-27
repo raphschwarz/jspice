@@ -12,6 +12,7 @@ extension BoardDRC {
         "holes_co_located", "clearance", "hole_clearance", "shorting_items", "tracks_crossing", "copper_edge_clearance",
         "track_dangling", "via_dangling", "unconnected_items", "items_not_allowed",
         "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard", "npth_inside_courtyard",
+        "invalid_outline",
     ]
 
     /// The check as KiCad's report gives it: the violations, and the connections still to make apart, each item
@@ -38,9 +39,13 @@ extension BoardDRC {
             return n.isEmpty ? "<no net>" : n
         }
         func length(_ v: Double) -> String { String(format: "%.4f mm", v / 1e6) }
-        let drawingKinds = ["line": "Segment", "rect": "Rectangle", "circle": "Circle", "arc": "Arc", "poly": "Polygon", "curve": "Bezier"]
+        let drawingKinds = ["line": "Segment", "rect": "Rectangle", "circle": "Circle", "arc": "Arc", "poly": "Polygon", "curve": "Curve"]
         func drawing(_ node: SExpr, of reference: String?, placement: BoardWorld.FootprintPlacement?) {
-            guard let head = node.head, let kind = drawingKinds[String(head.dropFirst(3))], let uuid = node.value("uuid") else { return }
+            guard let head = node.head, var kind = drawingKinds[String(head.dropFirst(3))], let uuid = node.value("uuid") else { return }
+            // (a footprint's rectangle turned off square is a polygon)
+            if head == "fp_rect", let placement, placement.orientation.normalized.degrees.truncatingRemainder(dividingBy: 90) != 0 {
+                kind = "Polygon"
+            }
             let layer = node.value("layer") ?? ""
             let onCopper = world.layerIndex[layer] != nil
             var d = kind + (onCopper ? " [\(net(node))]" : "")
@@ -49,6 +54,8 @@ extension BoardDRC {
             let at = world.readDrawing(node, placement: placement).map { $0.kind == .poly ? $0.poly.first ?? $0.start : $0.start }
             out[uuid] = (d, at.map(mm))
         }
+        // (the board itself: "PCB", at the origin)
+        out[Self.boardUUID] = ("PCB", KiCadPoint(0, 0))
         for node in board.root.items {
             guard let uuid = node.value("uuid") else { continue }
             switch node.head ?? "" {

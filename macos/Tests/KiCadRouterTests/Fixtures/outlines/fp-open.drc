@@ -1,0 +1,105 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "fp-open.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (not a closed shape)",
+   "items": [
+    {
+     "description": "Segment of U1 on Edge.Cuts",
+     "pos": {
+      "x": 117.0,
+      "y": 62.0
+     },
+     "uuid": "fcbfc33b-7831-4977-9f3c-96596800d009"
+    },
+    {
+     "description": "Segment of U1 on Edge.Cuts",
+     "pos": {
+      "x": 123.0,
+      "y": 62.0
+     },
+     "uuid": "802fd92a-1789-4d58-a531-c98fb06d6f16"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Board has malformed outline (not a closed shape) (gap 5.9000 mm)",
+   "items": [
+    {
+     "description": "Segment of U1 on Edge.Cuts",
+     "pos": {
+      "x": 123.0,
+      "y": 68.0
+     },
+     "uuid": "2058858b-0786-4f93-8ebf-00badb3f7edf"
+    },
+    {
+     "description": "Segment of U1 on Edge.Cuts",
+     "pos": {
+      "x": 117.0,
+      "y": 62.0
+     },
+     "uuid": "fcbfc33b-7831-4977-9f3c-96596800d009"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Silkscreen clipped by solder mask",
+   "items": [
+    {
+     "description": "Reference field of U1",
+     "pos": {
+      "x": 120.0,
+      "y": 65.0
+     },
+     "uuid": "42f2341c-0eae-460a-85d5-7938f75d0cb1"
+    },
+    {
+     "description": "Pad 1 [<no net>] of U1 on F.Cu",
+     "pos": {
+      "x": 120.0,
+      "y": 65.0
+     },
+     "uuid": "8a004136-d032-4afb-a47a-564f84570e10"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_over_copper"
+  }
+ ]
+}

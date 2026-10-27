@@ -97,7 +97,7 @@ public struct BoardDRC {
         "unconnected_items": "Missing connection between items", "items_not_allowed": "Items not allowed",
         "courtyards_overlap": "Courtyards overlap", "missing_courtyard": "Footprint has no courtyard defined",
         "malformed_courtyard": "Footprint has malformed courtyard", "pth_inside_courtyard": "PTH inside courtyard",
-        "npth_inside_courtyard": "NPTH inside courtyard",
+        "npth_inside_courtyard": "NPTH inside courtyard", "invalid_outline": "Board has malformed outline",
     ]
 
     /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT; its EXTENDED_ERROR_LIMIT for
@@ -261,6 +261,8 @@ public struct BoardDRC {
         checkHoleSizes(&out)
         checkAnnularWidths(&out)
         checkHolesToHoles(&out)
+        // (the miscellaneous checks': the board's outline)
+        checkOutline(&out)
         // (the connectivity built first, as KiCad builds it as it reads the board: the nets it propagates are the
         // items' nets for the checks)
         let copper = makeCopper()
