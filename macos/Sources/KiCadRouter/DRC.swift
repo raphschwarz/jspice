@@ -27,7 +27,8 @@ public struct DRCViolation: Hashable, Sendable {
 }
 
 /// KiCad's design rules check of a board (its DRC_ENGINE), on the rules KiCad makes of the board's design settings
-/// and net classes (no rules of the user's own, a .kicad_dru, yet), checks of copper only
+/// and net classes (no rules of the user's own, a .kicad_dru, yet): the checks of its copper, outline, courtyards,
+/// solder mask and silkscreen (checksMade)
 public struct BoardDRC {
     /// The board's design settings the checks go by (BOARD_DESIGN_SETTINGS), KiCad's defaults where its project
     /// has none
@@ -44,6 +45,8 @@ public struct BoardDRC {
         public var holeToHole = 250_000
         public var holeClearance = 250_000
         public var edgeClearance = 500_000
+        /// The silkscreen's least distance to silkscreen and to the board's edges (min_silk_clearance)
+        public var silkClearance = 0
         public var maxError = 5000
         /// GetDRCEpsilon: half a micron
         public var epsilon = 500
@@ -73,6 +76,7 @@ public struct BoardDRC {
             mm("min_hole_to_hole", &holeToHole)
             mm("min_hole_clearance", &holeClearance)
             mm("min_copper_edge_clearance", &edgeClearance)
+            mm("min_silk_clearance", &silkClearance)
             mm("max_error", &maxError)
             if let v = (rules["min_resolved_spokes"] as? NSNumber)?.intValue { minResolvedSpokes = v }
             for (key, value) in ds["rule_severities"] as? [String: Any] ?? [:] {
@@ -90,6 +94,7 @@ public struct BoardDRC {
         "holes_co_located": "warning", "hole_to_hole": "warning", "missing_courtyard": "ignore",
         "track_dangling": "warning", "via_dangling": "warning", "copper_sliver": "warning", "isolated_copper": "warning",
         "padstack": "warning", "connection_width": "warning", "track_not_centered_on_via": "ignore",
+        "silk_overlap": "warning", "silk_over_copper": "warning", "silk_edge_clearance": "warning",
     ]
 
     /// The checks' titles (DRC_ITEM's error texts)
@@ -106,6 +111,8 @@ public struct BoardDRC {
         "npth_inside_courtyard": "NPTH inside courtyard", "invalid_outline": "Board has malformed outline", "zones_intersect": "Copper zones intersect",
         "solder_mask_bridge": "Front solder mask aperture bridges items with different nets",
         "isolated_copper": "Isolated copper fill", "starved_thermal": "Thermal relief connection to zone incomplete",
+        "silk_overlap": "Silkscreen clearance", "silk_over_copper": "Silkscreen clipped by solder mask",
+        "silk_edge_clearance": "Silkscreen clipped by board edge",
     ]
 
     /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT; its EXTENDED_ERROR_LIMIT for
@@ -218,7 +225,7 @@ public struct BoardDRC {
                 t.mid = BoardWorld.point(node["mid"])
                 t.end = BoardWorld.point(node["end"])
                 t.width = node["width"].map { BoardWorld.iu($0, 0) } ?? 0
-                t.layer = node.value("layer") ?? ""
+                t.layer = BoardWorld.itemLayer(node) ?? ""
                 tracks.append(t)
             case "via":
                 var t = Track(kind: .via, uuid: node.value("uuid") ?? "", net: Self.netName(node))
@@ -278,13 +285,23 @@ public struct BoardDRC {
         // items' nets for the checks)
         let copper = makeCopper()
         let connectivity = buildConnectivity(copper)
+        // (the board's items of every kind, for the silkscreen's checks, and its outline as KiCad's cache generator
+        // makes it)
+        let items = boardItems(copper)
+        let outline = SilkOutline(boardOutline())
         checkCopperClearances(&out, copper)
-        checkEdgeClearances(&out, copper)
+        checkEdgeClearances(&out, copper, items, outline)
         checkKeepouts(&out, copper)
         checkCourtyards(&out, copper)
+        checkSilkToMask(&out, items)
         checkSolderMask(&out, copper)
+        checkSilkClearances(&out, items, outline)
         checkConnectivity(&out, copper, connectivity)
         checkZoneConnections(&out, copper, connectivity)
+        // (each violation's items as KiCad's report names them)
+        let named = reportableItems()
+        for i in out.violations.indices { out.violations[i].items = out.violations[i].items.filter(named.contains) }
+        for (type, sets) in out.unsure { out.unsure[type] = sets.map { $0.intersection(named) }.filter { !$0.isEmpty } }
         return out
     }
 
@@ -295,9 +312,18 @@ public struct BoardDRC {
         var violations: [DRCViolation] = []
         /// The items of violations KiCad may or may not find, by the order its threads happen to meet them in (a
         /// solder mask bridge of a footprint allowing them tried one way round and not the other, or an aperture
-        /// claimed by the first net to reach it): each a set of uuids, a violation with all of them unsure
-        var unsure: [Set<String>] = []
+        /// claimed by the first net to reach it) or the order its items happen to be in memory (silkscreen across a
+        /// corner of the board's two drawings meet at): by check, each a set of uuids, a violation with all of them
+        /// unsure
+        var unsure: [String: [Set<String>]] = [:]
         var counts: [String: Int] = [:]
+
+        mutating func addUnsure(_ type: String, _ items: Set<String>) { unsure[type, default: []].append(items) }
+
+        /// Whether KiCad may or may not find a violation of `type` between `items`
+        func isUnsure(_ type: String, _ items: [String]) -> Bool {
+            unsure[type]?.contains { $0.isSubset(of: items) } ?? false
+        }
 
         /// IsErrorLimitExceeded: whether as many of a check have been found as KiCad reports
         func exceeded(_ type: String) -> Bool { counts[type, default: 0] >= BoardDRC.errorLimit(type) }

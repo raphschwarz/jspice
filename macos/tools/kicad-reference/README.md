@@ -173,6 +173,17 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   hand (a track, a copper drawing), a custom pad with spoke templates, pads with spokes into islands that touch
   nothing else, and pads at random places among random tracks; then `drc.py` on it.
   `Tests/KiCadRouterTests/Fixtures/thermals` holds `drawn` (`thermals.py ... 7`).
+- `silk.py`: a board of silkscreen for `DRCTests`' silkscreen checks (`silk.py OUT.kicad_pcb [--clearance MM] [--web MM]
+  [--random SEED]`): silkscreen of every kind (drawings of each shape, filled or not, curves, board texts, footprints'
+  fields shown and hidden and their texts, a zone, pads on the silkscreen) over pads, vias tented and not, tracks and
+  an arc with solder mask of their own, drawings, a text and a zone on the mask layers and unplated holes; against
+  itself (drawings of one footprint, and the board's own, which KiCad leaves out); outside the board, across its
+  sides, a rounded corner, a cut-out and a margin, and across them without touching them (a text of strokes either
+  side, which KiCad finds crossing; at a corner two drawings meet at, KiCad names whichever its set of them holds
+  first in memory). `--clearance` gives the silkscreen a clearance, `--web` the solder mask a minimum web width (KiCad
+  then tests silkscreen against the whole mask), `--random` adds random footprints, silkscreen, vias and tracks; then
+  `drc.py` on it. `Tests/KiCadRouterTests/Fixtures/silk` holds `drawn`, `clearance` (`--clearance 0.15`) and `web`
+  (`--web 0.2`); `Fixtures/texts` has `drawn`'s report too.
 - `texts.py`: KiCad's texts of boards (`texts.py BOARD.kicad_pcb...`): each board text's, footprint field's and
   footprint text's shape as KiCad's DRC takes it (`PCB_TEXT::GetEffectiveShape`, through KiCad's `pcbnew` module: the
   KiCad font's strokes, each a segment of the text's pen width), its pen width, text box (`EDA_TEXT::GetTextBox`) and

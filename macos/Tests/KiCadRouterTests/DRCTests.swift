@@ -8,11 +8,15 @@ import KiCadKit
 /// violations of the checks it makes: of the same kind, between the same items, in the same words (its rule and the
 /// actual value, to KiCad's digits). KICAD_BOARD_REFERENCE names a folder of such boards; with none,
 /// Fixtures/boards, Fixtures/courtyards (courtyards drawn malformed in their many ways, some out at the coordinates'
-/// limits) and Fixtures/outlines (boards' outlines drawn malformed in theirs).
+/// limits), Fixtures/outlines (boards' outlines drawn malformed in theirs), Fixtures/thermals, Fixtures/texts (texts
+/// on the silkscreen over each other) and Fixtures/silk (silkscreen of every kind over pads, vias, tracks, mask and
+/// itself, across the board's edges; with a silk clearance, and with a minimum mask web).
 final class DRCTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards", "courtyards", "outlines", "thermals"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
+        return ["boards", "courtyards", "outlines", "thermals", "texts", "silk"].compactMap {
+            Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures")
+        }
     }
 
     /// The checks BoardDRC makes
@@ -22,12 +26,12 @@ final class DRCTests: XCTestCase {
                                        "via_dangling", "unconnected_items", "items_not_allowed",
                                        "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard",
                                        "npth_inside_courtyard", "solder_mask_bridge", "isolated_copper", "starved_thermal",
-                                       "invalid_outline", "zones_intersect"]
+                                       "invalid_outline", "zones_intersect", "silk_overlap", "silk_over_copper", "silk_edge_clearance"]
 
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }
-        var boards = 0, found = 0, exactUnconnected = 0, descriptions = 0, ambiguousBoards = 0, unsureMask = 0
+        var boards = 0, found = 0, exactUnconnected = 0, descriptions = 0, ambiguousBoards = 0, unsureFound = 0
         var differences: [String] = []
         var byType: [String: Int] = [:]
         var all: [String] = []
@@ -67,13 +71,13 @@ final class DRCTests: XCTestCase {
             if capped.contains("shorting_items") || capped.contains("clearance") || capped.contains("hole_clearance") {
                 capped.formUnion(["clearance", "shorting_items", "hole_clearance", "tracks_crossing"])
             }
-            // (solder mask bridges KiCad's threads may or may not find, by which way round they try a pair first:
-            // left out of both, and counted)
-            func maskUnsure(_ items: [String]) -> Bool { ourReport.unsure.contains { $0.isSubset(of: items) } }
+            // (violations KiCad may or may not find: solder mask bridges its threads find by which way round they try
+            // a pair first, silkscreen across a corner named with whichever of the corner's two edges KiCad's set of
+            // them happens to hold first; left out of both, and counted)
             let unsureBefore = report.violations.count + ourViolations.count
-            report.violations.removeAll { $0.type == "solder_mask_bridge" && maskUnsure($0.items.map(\.uuid)) }
-            ourViolations.removeAll { $0.type == "solder_mask_bridge" && maskUnsure($0.items) }
-            unsureMask += unsureBefore - report.violations.count - ourViolations.count
+            report.violations.removeAll { ourReport.isUnsure($0.type, $0.items.map(\.uuid)) }
+            ourViolations.removeAll { ourReport.isUnsure($0.type, $0.items) }
+            unsureFound += unsureBefore - report.violations.count - ourViolations.count
             // (items KiCad may or may not join, by where they are in its memory (two arcs touching one way round
             // and not the other): what is dangling and what is still to connect about them is left out, and counted)
             let cnAll = drc.buildConnectivity(drc.makeCopper())
@@ -189,7 +193,7 @@ final class DRCTests: XCTestCase {
               + byType.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
               + " (\(exactUnconnected) of the missing connections between the same items as KiCad's)"
               + (ambiguousBoards > 0 ? "; \(ambiguousBoards) boards with arcs KiCad may join or not, their connections not compared" : "")
-              + (unsureMask > 0 ? "; \(unsureMask) solder mask bridges KiCad may find or not left out" : ""))
+              + (unsureFound > 0 ? "; \(unsureFound) violations KiCad may find or not left out" : ""))
         XCTAssertGreaterThan(boards, 0)
         XCTAssert(differences.isEmpty, "\(differences.count) differences from KiCad's DRC:\n" + differences.prefix(30).joined(separator: "\n"))
     }

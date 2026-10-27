@@ -2,7 +2,8 @@
 // findClosestOutlineGap: the board's outline, DRCE_INVALID_OUTLINE), pcbnew/convert_shape_list_to_polygon.cpp
 // (TestBoardOutlinesGraphicItems, buildChainedClosedContour, BuildBoardPolygonOutlines and isCopperOutside, with the
 // conversion in Outlines.swift), pcbnew/board.cpp and pcbnew/footprint.cpp (BOARD::Visit and FOOTPRINT::Visit: the
-// order PCB_TYPE_COLLECTOR collects the drawings in, each footprint's and then the board's), common/eda_shape.cpp
+// order PCB_TYPE_COLLECTOR collects the drawings in, each footprint's and then the board's; UpdateBoardOutline and
+// GetBoardPolygonOutlines: the outline the DRC's cache generator makes), common/eda_shape.cpp
 // (makeEffectiveShapes of the drawings) and libs/kimath/src/geometry/shape_nearest_points.cpp (SHAPE::NearestPoints of
 // the shapes they are made of).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
@@ -387,8 +388,21 @@ extension BoardDRC {
     /// are holes in it (closed, and round copper of the footprint's or more than one outline); then the rest, the
     /// board's and the other footprints', with the handler, its outlines allowed to be apart
     func buildBoardPolygonOutlines(_ cuts: [EdgeCut], _ errors: inout [OutlineError]) -> Bool {
-        let maxError = BoardWorld.iuMM(0.05), chainingEpsilon = Self.outlinesChainingEpsilon
+        var outlines = PolySet()
+        var found: [OutlineError]? = []
+        let success = buildBoardPolygonOutlines(cuts, maxError: BoardWorld.iuMM(0.05), &outlines, &found)
+        errors += found ?? []
+        // (where it fails KiCad infers an outline, which says nothing more)
+        return success
+    }
+
+    /// BuildBoardPolygonOutlines with arcs made points (no outline inferred where it fails), its outlines in
+    /// `outlines` (as far as it got), the footprints' holes taken out of them; errors told `errors` where it is given
+    func buildBoardPolygonOutlines(_ cuts: [EdgeCut], maxError: Int, _ outlines: inout PolySet,
+                                   _ errors: inout [OutlineError]?) -> Bool {
+        let chainingEpsilon = Self.outlinesChainingEpsilon
         var success = false
+        var fpHoles = PolySet()
         // (SKIP_STRUCT: a hole's drawings, left set)
         var skip = [Bool](repeating: false, count: cuts.count)
         for f in footprints.indices {
@@ -398,21 +412,35 @@ extension BoardDRC {
             success = Outlines.convertOutlineToPolygon(list.map { cuts[$0].shape }, &fpOutlines, maxError: maxError,
                                                        chainingEpsilon: chainingEpsilon, allowDisjoint: false)
             if success && (isCopperOutside(f, fpOutlines) || fpOutlines.outlineCount > 1) {
+                fpHoles.append(fpOutlines)
                 for i in list { skip[i] = true }
             }
         }
         let segList = cuts.indices.filter { !skip[$0] }
         if !segList.isEmpty {
-            var outlines = PolySet()
             var found: [OutlineError] = []
-            success = Outlines.convertOutlineToPolygon(segList.map { cuts[$0].shape }, &outlines, maxError: maxError,
-                                                       chainingEpsilon: chainingEpsilon, allowDisjoint: true) { message, a, b, _ in
+            let handler: Outlines.ErrorHandler? = errors == nil ? nil : { message, a, b, _ in
                 found.append((message, a.map { segList[$0] }, b.map { segList[$0] }))
             }
-            errors += found
+            success = Outlines.convertOutlineToPolygon(segList.map { cuts[$0].shape }, &outlines, maxError: maxError,
+                                                       chainingEpsilon: chainingEpsilon, allowDisjoint: true, errorHandler: handler)
+            if errors != nil { errors! += found }
         }
-        // (where it fails KiCad infers an outline, which says nothing more)
+        fpHoles.simplify()
+        outlines.booleanSubtract(fpHoles)
         return success
+    }
+
+    /// BOARD::UpdateBoardOutline, as the DRC's cache generator makes it before the checks: GetBoardPolygonOutlines
+    /// (no outline inferred, the board's maximum error, simplified), fractured where it succeeds; empty where the board
+    /// has no outline (PCB_BOARD_OUTLINE::HasOutline)
+    func boardOutline() -> PolySet {
+        var outline = PolySet()
+        var errors: [OutlineError]?
+        let success = buildBoardPolygonOutlines(edgeCuts(), maxError: settings.maxError, &outline, &errors)
+        outline.simplify()
+        if success { outline.fracture() }
+        return outline
     }
 
     // MARK: - The check (DRC_TEST_PROVIDER_MISC::testOutline)
