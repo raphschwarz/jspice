@@ -499,7 +499,22 @@ extension BoardDRC {
     func isNetTieExclusion(_ net: Int, _ layer: Int, _ pos: IPoint, _ colliding: CopperItem, _ c: Copper) -> Bool {
         guard let f = colliding.footprint, c.isNetTie(f) else { return false }
         for pad in c.footprintPads[f] where c.netTieGroup(pad) >= 0 && pad.net == net {
-            if Self.collide(pad.anyLayerShapes(layer), [.circle(center: pos, radius: 0)], settings.epsilon) != nil { return true }
+            if Self.compoundPointCollide(pad.anyLayerShapes(layer), pos, settings.epsilon) { return true }
+        }
+        return false
+    }
+
+    /// SHAPE_COMPOUND::Collide of a point (as a segment of no length): each piece's own Collide( SEG ), a polygon's
+    /// with arcs by its straight segments and then its arcs as arcs (SHAPE_LINE_CHAIN::Collide), not the chords
+    /// its arcs were made of
+    static func compoundPointCollide(_ shapes: [Shape], _ p: IPoint, _ clearance: Int) -> Bool {
+        for s in shapes {
+            switch s {
+            case .simple(let l) where !l.arcs.isEmpty, .chain(let l) where !l.arcs.isEmpty:
+                if l.collide(Seg(p, p), clearance: clearance) { return true }
+            default:
+                if collide([s], [.circle(center: p, radius: 0)], clearance) != nil { return true }
+            }
         }
         return false
     }
