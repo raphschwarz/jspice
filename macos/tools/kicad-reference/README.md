@@ -161,6 +161,19 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   and other outlines inside them, across them or beside them; every other arc's ends then swapped in the file, as
   other tools may write them). `Tests/KiCadRouterTests/Fixtures/courtyards` holds `drawn` (`--draw`) and `random`
   (`--random ... 60 20261104`), and the boards of `Fixtures/boards` have theirs too.
+- `texts.py`: KiCad's texts of boards (`texts.py BOARD.kicad_pcb...`): each board text's, footprint field's and
+  footprint text's shape as KiCad's DRC takes it (`PCB_TEXT::GetEffectiveShape`, through KiCad's `pcbnew` module: the
+  KiCad font's strokes, each a segment of the text's pen width), its pen width, text box (`EDA_TEXT::GetTextBox`) and
+  bounding box (`PCB_TEXT::GetBoundingBox`), the text it shows and whether it is shown, next to the board as
+  `BOARD.texts` (JSON), by uuid. `TextTests` checks the port's (`BoardWorld.textStrokes`) against it, segment for
+  segment. With `--draw OUT.kicad_pcb`, a board of texts made to take KiCad's text drawing down the ways random boards
+  do not (every justification, mirrored or not, at angles on and off the axes; several lines and their spacing; bold,
+  italic, pen widths worked out or clamped; overbars, subscripts, superscripts, links, tabs, escapes, characters the
+  font does not have, empty and blank texts; footprints turned and flipped, their texts kept upright or not, showing
+  `${REFERENCE}` and the like, some hidden; a knockout text and one in another font, which the port does not make).
+  `Tests/KiCadRouterTests/Fixtures/texts` holds `drawn` (`--draw`).
+- `newstroke.py`: writes `Sources/KiCadRouter/StrokeFontData.swift`, the KiCad font's glyphs, from KiCad's
+  `common/newstroke_font.cpp` (`newstroke.py KICAD/common/newstroke_font.cpp OUT.swift`).
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
   turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them
   (now and then one starting on an unplated hole), and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is
