@@ -1,0 +1,932 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "drawn.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (no edges found on Edge.Cuts layer)",
+   "items": [
+    {
+     "description": "PCB",
+     "pos": {
+      "x": 0.0,
+      "y": 0.0
+     },
+     "uuid": "78ec0fcf-9049-45c1-9bc1-89fddfac5970"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Mirrored text on front layer",
+   "items": [
+    {
+     "description": "PCB text 'a\n\nb\n' on F.Silkscreen",
+     "pos": {
+      "x": 95.0,
+      "y": 190.0
+     },
+     "uuid": "e93d1bcf-1663-476b-a9f0-f97c5f20269c"
+    }
+   ],
+   "severity": "warning",
+   "type": "mirrored_text_on_front_layer"
+  },
+  {
+   "description": "Mirrored text on front layer",
+   "items": [
+    {
+     "description": "PCB text 'one\ntwo\nthree' on F.Silkscreen",
+     "pos": {
+      "x": 95.0,
+      "y": 160.0
+     },
+     "uuid": "01317777-f488-45f1-b5c7-4e9f39d82569"
+    }
+   ],
+   "severity": "warning",
+   "type": "mirrored_text_on_front_layer"
+  },
+  {
+   "description": "Mirrored text on front layer",
+   "items": [
+    {
+     "description": "PCB text '\nstarts empty' on F.Silkscreen",
+     "pos": {
+      "x": 95.0,
+      "y": 205.0
+     },
+     "uuid": "41a6ab5e-f15d-455f-a0d0-d9b7676bdf3c"
+    }
+   ],
+   "severity": "warning",
+   "type": "mirrored_text_on_front_layer"
+  },
+  {
+   "description": "Mirrored text on front layer",
+   "items": [
+    {
+     "description": "PCB text '\n' on F.Silkscreen",
+     "pos": {
+      "x": 95.0,
+      "y": 235.0
+     },
+     "uuid": "6c5fc632-6259-4d8c-a143-22262467a9a2"
+    }
+   ],
+   "severity": "warning",
+   "type": "mirrored_text_on_front_layer"
+  },
+  {
+   "description": "Mirrored text on front layer",
+   "items": [
+    {
+     "description": "PCB text 'x^{2}\n~{y}\nz_{3}' on F.Silkscreen",
+     "pos": {
+      "x": 95.0,
+      "y": 220.0
+     },
+     "uuid": "fe4897a0-4da2-4202-b63a-4c6708ea3b49"
+    }
+   ],
+   "severity": "warning",
+   "type": "mirrored_text_on_front_layer"
+  },
+  {
+   "description": "Mirrored text on front layer",
+   "items": [
+    {
+     "description": "PCB text 'one\ntwo' on F.Silkscreen",
+     "pos": {
+      "x": 95.0,
+      "y": 175.0
+     },
+     "uuid": "9f087925-b3bb-4123-b2cf-915a256b75e5"
+    }
+   ],
+   "severity": "warning",
+   "type": "mirrored_text_on_front_layer"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "PCB text 'a~b^c_d' on F.Silkscreen",
+     "pos": {
+      "x": 140.0,
+      "y": 140.0
+     },
+     "uuid": "17985d66-81d3-4eda-8d38-0a1e1bf553a3"
+    },
+    {
+     "description": "PCB text 'x' on F.Silkscreen",
+     "pos": {
+      "x": 140.0,
+      "y": 134.0
+     },
+     "uuid": "fc843392-8cc3-4538-bab6-95a08e95ac32"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "PCB text 'Ag|jy' on F.Silkscreen",
+     "pos": {
+      "x": 60.0,
+      "y": 110.0
+     },
+     "uuid": "155a537d-d038-4bb1-bfbe-665a86fae738"
+    },
+    {
+     "description": "PCB text 'http://example.com/a b' on F.Silkscreen",
+     "pos": {
+      "x": 60.0,
+      "y": 116.0
+     },
+     "uuid": "d057ca31-ccd1-4cd7-b10a-0523060e4a13"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "PCB text 'Bold~{IT}' on F.Silkscreen",
+     "pos": {
+      "x": 80.0,
+      "y": 309.0
+     },
+     "uuid": "85374207-4985-41c7-928b-9d166e6077d6"
+    },
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 80.0,
+      "y": 315.0
+     },
+     "uuid": "f963baeb-cd64-46bd-a1f3-ff3bdcb82efd"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 80.0,
+      "y": 285.0
+     },
+     "uuid": "1615183b-03ce-4b2f-b1a3-d56783d6d4c4"
+    },
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 80.0,
+      "y": 291.0
+     },
+     "uuid": "70b2ddfc-fcd0-42f4-b2b4-a26987078b22"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 80.0,
+      "y": 321.0
+     },
+     "uuid": "09ce68eb-78d5-49a9-8109-f76b2c76164e"
+    },
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 80.0,
+      "y": 315.0
+     },
+     "uuid": "f963baeb-cd64-46bd-a1f3-ff3bdcb82efd"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U3 (a\nb)",
+     "pos": {
+      "x": 49.0,
+      "y": 342.0
+     },
+     "uuid": "18c2c795-c506-4c97-91e5-6acfec35788d"
+    },
+    {
+     "description": "Footprint text of U3 (L0:V3~{X})",
+     "pos": {
+      "x": 49.0,
+      "y": 344.0
+     },
+     "uuid": "5b10002e-d34d-40f8-90df-b4da48c77805"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U1 (L1:V1~{X})",
+     "pos": {
+      "x": 23.0,
+      "y": 346.0
+     },
+     "uuid": "7a1dc817-c784-4f4d-960d-129566d6d510"
+    },
+    {
+     "description": "Footprint text of U1 (a\nb)",
+     "pos": {
+      "x": 23.0,
+      "y": 348.0
+     },
+     "uuid": "e6dafdad-cf9d-4a15-8478-bfd7674d692d"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U2 (L2:2k)",
+     "pos": {
+      "x": 37.0,
+      "y": 342.0
+     },
+     "uuid": "15688e6e-2ab7-4563-940f-db2df893da65"
+    },
+    {
+     "description": "Footprint text of U2 (a\nb)",
+     "pos": {
+      "x": 39.0,
+      "y": 342.0
+     },
+     "uuid": "62ad1d58-9d05-442a-af78-c17c89f115de"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Reference field of U3",
+     "pos": {
+      "x": 52.0,
+      "y": 347.0
+     },
+     "uuid": "d51fc9ef-be19-4054-816f-68dcdfca1fa2"
+    },
+    {
+     "description": "Footprint text of U3 (U3)",
+     "pos": {
+      "x": 49.0,
+      "y": 348.0
+     },
+     "uuid": "efbbe534-b4bb-477d-9eb6-80bab6c658df"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U4 (a\nb)",
+     "pos": {
+      "x": 65.0,
+      "y": 348.0
+     },
+     "uuid": "78aee33c-73d7-4ad7-9be5-4c491518d8ab"
+    },
+    {
+     "description": "Footprint text of U4 (:4k)",
+     "pos": {
+      "x": 67.0,
+      "y": 348.0
+     },
+     "uuid": "d21f4c3f-61c1-4d32-bc77-04b7c4ba699c"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U6 (a\nb)",
+     "pos": {
+      "x": 101.098076,
+      "y": 349.098076
+     },
+     "uuid": "3dc138e7-97a9-4c89-af32-417196c17add"
+    },
+    {
+     "description": "Footprint text of U6 (L0:6k)",
+     "pos": {
+      "x": 102.098076,
+      "y": 347.366025
+     },
+     "uuid": "56cba59f-99a2-4ffa-819f-a2dab2a1567e"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U5 (a\nb)",
+     "pos": {
+      "x": 84.0,
+      "y": 340.757359
+     },
+     "uuid": "2c233ff3-fae9-4956-a03c-a4d1f75f34fb"
+    },
+    {
+     "description": "Footprint text of U5 (L2:V5~{X})",
+     "pos": {
+      "x": 82.585786,
+      "y": 342.171573
+     },
+     "uuid": "6e45f6cc-e22a-4146-8da0-e818acc9d0a5"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U7 (L1:V7~{X})",
+     "pos": {
+      "x": 119.056445,
+      "y": 344.188739
+     },
+     "uuid": "9066bf18-75d6-4a56-8628-2889a646f305"
+    },
+    {
+     "description": "Footprint text of U7 (a\nb)",
+     "pos": {
+      "x": 120.154491,
+      "y": 345.860354
+     },
+     "uuid": "c958ee34-ddf4-4ba1-9df5-6817c159131a"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U11 (a\nb)",
+     "pos": {
+      "x": 55.0,
+      "y": 362.0
+     },
+     "uuid": "01fed82e-4e20-4495-beba-5b480b2e20cf"
+    },
+    {
+     "description": "Footprint text of U11 (L2:V11~{X})",
+     "pos": {
+      "x": 55.0,
+      "y": 364.0
+     },
+     "uuid": "7d4e5f5f-d329-4b20-a4f4-b6fb94e4c46b"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U16 (:16k)",
+     "pos": {
+      "x": 129.00175,
+      "y": 366.005234
+     },
+     "uuid": "4e0e491b-17e1-4fcd-936b-4aa6a1142419"
+    },
+    {
+     "description": "Footprint text of U16 (a\nb)",
+     "pos": {
+      "x": 129.005241,
+      "y": 368.005231
+     },
+     "uuid": "69bc74d0-d736-4aeb-aa67-e49daa98fd6e"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U14 (a\nb)",
+     "pos": {
+      "x": 101.098076,
+      "y": 360.901924
+     },
+     "uuid": "2bc8fca9-8d21-4c22-9caa-e516705681ff"
+    },
+    {
+     "description": "Footprint text of U14 (L2:14k)",
+     "pos": {
+      "x": 102.098076,
+      "y": 362.633975
+     },
+     "uuid": "a3bbc34b-0ba9-444b-8692-048c56ea1ce5"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U10 (L1:10k)",
+     "pos": {
+      "x": 37.0,
+      "y": 368.0
+     },
+     "uuid": "aa391528-ac43-4c1c-97d5-c9bcbe05ffc1"
+    },
+    {
+     "description": "Footprint text of U10 (a\nb)",
+     "pos": {
+      "x": 39.0,
+      "y": 368.0
+     },
+     "uuid": "b6559fdc-b197-4f42-832d-c22ffe593f16"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U15 (U15)",
+     "pos": {
+      "x": 115.139646,
+      "y": 360.845509
+     },
+     "uuid": "0735d79e-8ef0-483e-8d42-7006a2fc4fd8"
+    },
+    {
+     "description": "Reference field of U15",
+     "pos": {
+      "x": 117.098046,
+      "y": 363.328385
+     },
+     "uuid": "9f2c2dd6-9fa3-40f2-8bc6-a153a9286231"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U15 (L0:V15~{X})",
+     "pos": {
+      "x": 112.943555,
+      "y": 364.188739
+     },
+     "uuid": "06004942-d1b7-4ff0-bf81-4481ae65b480"
+    },
+    {
+     "description": "Footprint text of U15 (a\nb)",
+     "pos": {
+      "x": 111.845509,
+      "y": 365.860354
+     },
+     "uuid": "747d313d-9a88-48f2-bd96-3a9c786df373"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U9 (L0:V9~{X})",
+     "pos": {
+      "x": 17.0,
+      "y": 366.0
+     },
+     "uuid": "176da8f3-2acd-4e35-ac95-a2db38c8879c"
+    },
+    {
+     "description": "Footprint text of U9 (a\nb)",
+     "pos": {
+      "x": 17.0,
+      "y": 368.0
+     },
+     "uuid": "f0844209-0b9e-4245-a90b-6ef737b3b367"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U12 (:12k)",
+     "pos": {
+      "x": 67.0,
+      "y": 362.0
+     },
+     "uuid": "a61b16da-757e-4c6d-af32-e60d365bae7b"
+    },
+    {
+     "description": "Footprint text of U12 (a\nb)",
+     "pos": {
+      "x": 65.0,
+      "y": 362.0
+     },
+     "uuid": "e7a3a3d5-ad0c-4bcd-9959-5df248bd2075"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Footprint text of U13 (a\nb)",
+     "pos": {
+      "x": 84.0,
+      "y": 360.757359
+     },
+     "uuid": "83d62f55-9d67-414a-9b78-49e4e81bcbce"
+    },
+    {
+     "description": "Footprint text of U13 (L1:V13~{X})",
+     "pos": {
+      "x": 85.414214,
+      "y": 362.171573
+     },
+     "uuid": "8c0814c5-fb7a-462f-847c-041b1dc73182"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Text thickness out of range (board setup constraints silk text thickness min thickness 0.0800 mm; actual 0.0001 mm)",
+   "items": [
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 20.0,
+      "y": 303.0
+     },
+     "uuid": "4ed73e3f-f1ca-4604-9470-b0b3d9e289f1"
+    }
+   ],
+   "severity": "warning",
+   "type": "text_thickness"
+  },
+  {
+   "description": "Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.0010 mm)",
+   "items": [
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 20.0,
+      "y": 303.0
+     },
+     "uuid": "4ed73e3f-f1ca-4604-9470-b0b3d9e289f1"
+    }
+   ],
+   "severity": "warning",
+   "type": "text_height"
+  },
+  {
+   "description": "Text thickness out of range (board setup constraints silk text thickness min thickness 0.0800 mm; actual 0.0001 mm)",
+   "items": [
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 50.0,
+      "y": 303.0
+     },
+     "uuid": "72da2d1a-5ae7-4a3c-8e73-800c326091d5"
+    }
+   ],
+   "severity": "warning",
+   "type": "text_thickness"
+  },
+  {
+   "description": "Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.0010 mm)",
+   "items": [
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 50.0,
+      "y": 303.0
+     },
+     "uuid": "72da2d1a-5ae7-4a3c-8e73-800c326091d5"
+    }
+   ],
+   "severity": "warning",
+   "type": "text_height"
+  },
+  {
+   "description": "Text thickness out of range (board setup constraints silk text thickness min thickness 0.0800 mm; actual 0.0001 mm)",
+   "items": [
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 80.0,
+      "y": 303.0
+     },
+     "uuid": "ad169858-5e2e-499f-8321-1106bf235999"
+    }
+   ],
+   "severity": "warning",
+   "type": "text_thickness"
+  },
+  {
+   "description": "Text height out of range (board setup constraints silk text height min height 0.8000 mm; actual 0.0010 mm)",
+   "items": [
+    {
+     "description": "PCB text 'plain^{2}' on F.Silkscreen",
+     "pos": {
+      "x": 80.0,
+      "y": 303.0
+     },
+     "uuid": "ad169858-5e2e-499f-8321-1106bf235999"
+    }
+   ],
+   "severity": "warning",
+   "type": "text_height"
+  },
+  {
+   "description": "Text thickness out of range (TrueType font characters with insufficient stroke weight)",
+   "items": [
+    {
+     "description": "PCB text 'Outline' on F.Silkscreen",
+     "pos": {
+      "x": 50.0,
+      "y": 335.0
+     },
+     "uuid": "01d36c5a-31d0-4df4-bdef-46ce011c3f05"
+    }
+   ],
+   "severity": "warning",
+   "type": "text_thickness"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L1'",
+   "items": [
+    {
+     "description": "Footprint U1",
+     "pos": {
+      "x": 20.0,
+      "y": 345.0
+     },
+     "uuid": "1457d101-4955-4747-89af-8953d994db85"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L0'",
+   "items": [
+    {
+     "description": "Footprint U3",
+     "pos": {
+      "x": 52.0,
+      "y": 345.0
+     },
+     "uuid": "229617d1-150e-4487-899a-7985ea3262fe"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L0'",
+   "items": [
+    {
+     "description": "Footprint U6",
+     "pos": {
+      "x": 100.0,
+      "y": 345.0
+     },
+     "uuid": "27101317-d16f-4180-bb2c-f0d63d91fd66"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L2'",
+   "items": [
+    {
+     "description": "Footprint U5",
+     "pos": {
+      "x": 84.0,
+      "y": 345.0
+     },
+     "uuid": "6dd82302-fe14-49a4-842c-3286443367d1"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L2'",
+   "items": [
+    {
+     "description": "Footprint U2",
+     "pos": {
+      "x": 36.0,
+      "y": 345.0
+     },
+     "uuid": "9d086585-6aef-46e2-98e7-282596e9cee1"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L1'",
+   "items": [
+    {
+     "description": "Footprint U7",
+     "pos": {
+      "x": 116.0,
+      "y": 345.0
+     },
+     "uuid": "c90095d1-d7ba-4b4e-a560-df60a5c8d1fe"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L2'",
+   "items": [
+    {
+     "description": "Footprint U14",
+     "pos": {
+      "x": 100.0,
+      "y": 365.0
+     },
+     "uuid": "06c8ea85-ffe3-4a38-9b0e-92c0c5887407"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L2'",
+   "items": [
+    {
+     "description": "Footprint U11",
+     "pos": {
+      "x": 52.0,
+      "y": 365.0
+     },
+     "uuid": "2d5cef5f-079b-4572-b3b1-33e9412f5edb"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L0'",
+   "items": [
+    {
+     "description": "Footprint U9",
+     "pos": {
+      "x": 20.0,
+      "y": 365.0
+     },
+     "uuid": "555506f9-f4fe-4e1d-8f8c-f64d30596788"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L0'",
+   "items": [
+    {
+     "description": "Footprint U15",
+     "pos": {
+      "x": 116.0,
+      "y": 365.0
+     },
+     "uuid": "9b0b277c-c27b-476e-bd1a-b66600a407db"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L1'",
+   "items": [
+    {
+     "description": "Footprint U10",
+     "pos": {
+      "x": 36.0,
+      "y": 365.0
+     },
+     "uuid": "da36778d-cf26-4ad4-b5b0-f19359b81ceb"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  },
+  {
+   "description": "The current configuration does not include the footprint library 'L1'",
+   "items": [
+    {
+     "description": "Footprint U13",
+     "pos": {
+      "x": 84.0,
+      "y": 365.0
+     },
+     "uuid": "f9d10efa-75ae-40a5-b80f-e523024e5e23"
+    }
+   ],
+   "severity": "warning",
+   "type": "lib_footprint_issues"
+  }
+ ]
+}

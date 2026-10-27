@@ -300,7 +300,7 @@ extension BoardDRC {
     }
 
     func drawingItem(_ node: SExpr, placement: BoardWorld.FootprintPlacement?, footprint: Int?) -> CopperItem? {
-        guard let layerName = node.value("layer"), let l = world.layerIndex[layerName] else { return nil }
+        guard let layerName = BoardWorld.itemLayer(node), let l = world.layerIndex[layerName] else { return nil }
         guard let d = world.readDrawing(node, placement: placement), let shapes = world.effectiveShapes(d), !shapes.isEmpty else { return nil }
         let item = CopperItem(kind: .shape, uuid: node.value("uuid") ?? "")
         item.footprint = footprint

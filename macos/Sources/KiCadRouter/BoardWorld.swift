@@ -227,6 +227,10 @@ public struct BoardWorld {
         func apply(_ p: IPoint) -> IPoint { KiMath.rotate(p, orientation) + position }
     }
 
+    /// The layer of a track or drawing: its layer, or for one with solder mask (written with its layers, its copper
+    /// first) the first of them
+    static func itemLayer(_ node: SExpr) -> String? { node.value("layer") ?? node["layers"]?.text(at: 0) }
+
     private func layerNames(_ node: SExpr) -> [String] {
         if let l = node["layers"] { return l.arguments.map(\.text) }
         if let l = node.value("layer") { return [l] }
@@ -795,7 +799,9 @@ public struct BoardWorld {
             d.polyHasArcs = pts.contains { $0.head == "arc" }
             if d.polyHasArcs {
                 // (PCB_IO_KICAD_SEXPR_PARSER::parseOutlinePoints)
+                // (into the closed outline NewOutline makes: a last point the same as the first kept)
                 var chain = LineChain()
+                chain.setClosed(true)
                 for p in pts {
                     if p.head == "xy" {
                         chain.append(Self.point(p))
@@ -803,7 +809,6 @@ public struct BoardWorld {
                         chain.append(ShapeArc(start: Self.point(p["start"]), mid: Self.point(p["mid"]), end: Self.point(p["end"])))
                     }
                 }
-                chain.setClosed(true)
                 d.chain = chain
                 d.poly = chain.points
             }
@@ -904,7 +909,14 @@ public struct BoardWorld {
             return out
         case .poly:
             if d.poly.isEmpty { return nil }
-            let l = d.chain ?? LineChain(d.poly, closed: true)
+            // (its points appended to a closed outline, as KiCad's parser appends them: a point the same as the one
+            // before it left out, a last one the same as the first kept, a side of no length)
+            let l = d.chain ?? {
+                var c = LineChain()
+                c.setClosed(true)
+                for p in d.poly { c.append(p) }
+                return c
+            }()
             var out: [Shape] = []
             if d.filled { out.append(.simple(l)) }
             if w > 0 || !d.filled { for i in 0..<l.segmentCount { out.append(.segment(l.segment(i), width: w)) } }
@@ -915,7 +927,7 @@ public struct BoardWorld {
     }
 
     private mutating func graphic(_ node: SExpr, placement: FootprintPlacement?) {
-        guard let layerName = node.value("layer") else { return }
+        guard let layerName = Self.itemLayer(node) else { return }
         let edge = layerName == "Edge.Cuts" || layerName == "Margin"
         let cu = layerIndex[layerName]
         guard edge || cu != nil else { return }
@@ -998,7 +1010,7 @@ public struct BoardWorld {
     // MARK: - Tracks and vias (syncTrack, syncVia)
 
     private mutating func track(_ node: SExpr) {
-        guard let layer = node.value("layer").flatMap({ layerIndex[$0] }) else { return }
+        guard let layer = Self.itemLayer(node).flatMap({ layerIndex[$0] }) else { return }
         var w = WorldItem(kind: .track)
         w.net = netCode(node)
         w.a = Self.point(node["start"])
@@ -1011,7 +1023,7 @@ public struct BoardWorld {
     }
 
     private mutating func arcTrack(_ node: SExpr) {
-        guard let layer = node.value("layer").flatMap({ layerIndex[$0] }) else { return }
+        guard let layer = Self.itemLayer(node).flatMap({ layerIndex[$0] }) else { return }
         var w = WorldItem(kind: .arc)
         w.net = netCode(node)
         w.a = Self.point(node["start"])
