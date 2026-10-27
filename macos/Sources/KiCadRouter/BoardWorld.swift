@@ -733,6 +733,8 @@ public struct BoardWorld {
         var width = 0
         var filled = false
         var polyHasArcs = false
+        /// A polygon with arcs: its outline as KiCad reads it (each arc appended as its polyline, the arc kept)
+        var chain: LineChain?
         /// A rectangle's rounded corners (EDA_SHAPE::GetCornerRadius)
         var cornerRadius = 0
 
@@ -784,6 +786,20 @@ public struct BoardWorld {
             let pts = node["pts"]?.arguments ?? []
             d = Drawing(kind: .poly, poly: pts.filter { $0.head == "xy" }.map(Self.point))
             d.polyHasArcs = pts.contains { $0.head == "arc" }
+            if d.polyHasArcs {
+                // (PCB_IO_KICAD_SEXPR_PARSER::parseOutlinePoints)
+                var chain = LineChain()
+                for p in pts {
+                    if p.head == "xy" {
+                        chain.append(Self.point(p))
+                    } else if p.head == "arc" {
+                        chain.append(ShapeArc(start: Self.point(p["start"]), mid: Self.point(p["mid"]), end: Self.point(p["end"])))
+                    }
+                }
+                chain.setClosed(true)
+                d.chain = chain
+                d.poly = chain.points
+            }
         case "curve":
             d = Drawing(kind: .bezier)
         default:
@@ -815,6 +831,7 @@ public struct BoardWorld {
                 }
             case .poly:
                 d.poly = d.poly.map { KiMath.rotate($0, a) }
+                d.chain = d.chain?.rotated(a)
             case .bezier:
                 break
             }
@@ -822,6 +839,7 @@ public struct BoardWorld {
             d.end += placement.position
             d.center += placement.position
             d.poly = d.poly.map { $0 + placement.position }
+            d.chain = d.chain?.moved(placement.position)
         }
         return d
     }
@@ -878,8 +896,8 @@ public struct BoardWorld {
             if w > 0 || !d.filled { out.append(.arc(ShapeArc(center: d.start, start: d.end, angle: .a360, width: w))) }
             return out
         case .poly:
-            if d.polyHasArcs || d.poly.isEmpty { return nil }
-            let l = LineChain(d.poly, closed: true)
+            if d.poly.isEmpty { return nil }
+            let l = d.chain ?? LineChain(d.poly, closed: true)
             var out: [Shape] = []
             if d.filled { out.append(.simple(l)) }
             if w > 0 || !d.filled { for i in 0..<l.segmentCount { out.append(.segment(l.segment(i), width: w)) } }

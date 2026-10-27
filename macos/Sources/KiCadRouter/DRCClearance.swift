@@ -357,8 +357,9 @@ extension BoardDRC {
         switch s {
         case .circle(let c, let r): return .circle(center: t(c), radius: r)
         case .segment(let g, let w): return .segment(Seg(t(g.a), t(g.b)), width: w)
-        case .simple(let c): return .simple(LineChain(c.points.map(t), closed: true))
-        case .chain(let c): return .chain(LineChain(c.points.map(t), closed: c.isClosed))
+        // (SHAPE_SIMPLE::Rotate and Move: its arcs turned and moved too)
+        case .simple(let c): return .simple(c.rotated(angle).moved(d))
+        case .chain(let c): return .chain(c.rotated(angle).moved(d))
         case .arc(let a):
             // (SHAPE_ARC::Rotate and Move: its three points turned and moved, its centre found again from them)
             return .arc(ShapeArc(start: t(a.start), mid: t(a.mid), end: t(a.end), width: a.width))
