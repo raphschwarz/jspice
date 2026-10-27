@@ -147,6 +147,20 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   board is (its zones not refilled), errors and warnings, next to it as `BOARD.drc` (JSON, its date taken out).
   `DRCTests` checks the port's DRC (`BoardDRC`) against it: the same violations of the checks it makes, between the
   same items, in the same words. The boards of `Tests/KiCadRouterTests/Fixtures/boards` have theirs.
+- `courtyards.py`: KiCad's courtyards of boards' footprints (`courtyards.py BOARD.kicad_pcb...`): each footprint's
+  `FOOTPRINT::BuildCourtyardCaches`, through KiCad's `pcbnew` module, its front and back courtyards (each polygon's
+  outline and holes, their points), the width it gives the first outline and whether it found either side
+  malformed, next to the board as `BOARD.courtyards` (JSON). `CourtyardTests` checks the port's
+  (`BoardDRC.courtyards`, made with `Outlines.convertOutlineToPolygon`, the port of `ConvertOutlineToPolygon`)
+  against it, point for point. With `--draw OUT.kicad_pcb`, a board of footprints whose courtyards are drawn to take
+  the conversion down its other ways (holes, islands in them, holes and outlines crossing, chains that do not close,
+  close within the chaining distance, cross themselves or branch, arcs, circles, curves, rounded rectangles and
+  rectangles turned off square, a chain through the origin, where a polygon's ends are); with
+  `--random OUT.kicad_pcb COUNT [SEED]`, footprints of random courtyards (outlines of lines, arcs and curves in no
+  order, some drawn the other way round, their ends now and then a little apart, with circles, rectangles, polygons
+  and other outlines inside them, across them or beside them; every other arc's ends then swapped in the file, as
+  other tools may write them). `Tests/KiCadRouterTests/Fixtures/courtyards` holds `drawn` (`--draw`) and `random`
+  (`--random ... 60 20261104`), and the boards of `Fixtures/boards` have theirs too.
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
   turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them
   (now and then one starting on an unplated hole), and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is

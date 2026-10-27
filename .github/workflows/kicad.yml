@@ -107,6 +107,9 @@ jobs:
       - name: KiCad's design rules check of the 100 boards
         # (kicad-cli's report of each, next to it, for the port's DRC)
         run: python3 macos/tools/kicad-reference/drc.py "$RUNNER_TEMP"/boards/*.kicad_pcb
+      - name: KiCad's courtyards of the 100 boards' footprints
+        # (each footprint's BuildCourtyardCaches, next to its board, for the port's)
+        run: python3 macos/tools/kicad-reference/courtyards.py "$RUNNER_TEMP"/boards/*.kicad_pcb
       - name: KiCadRouter against KiCad's code, on 2000 cases of each kind, the 1000, two 400, 100, 200 and 150 boards and the 90 real ones
         # (the real boards' worlds as KiCad's router sees them, their routes as it routes them, their DRC as KiCad's
         # finds it, and routes the port makes on them through kicad-cli's DRC)
