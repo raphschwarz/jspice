@@ -342,7 +342,7 @@ public struct BoardWorld {
     }
 
     /// The pads' (and its footprint's) own clearance (PAD::GetClearanceOverrides)
-    private func clearanceOverride(_ pad: SExpr, _ fp: SExpr) -> Int? {
+    func clearanceOverride(_ pad: SExpr, _ fp: SExpr) -> Int? {
         if let c = pad["clearance"] { return Self.iu(c, 0) }
         if let c = fp["clearance"] { return Self.iu(c, 0) }
         return nil
@@ -373,9 +373,14 @@ public struct BoardWorld {
             } else if kind == .trapezoid {
                 td = p.delta.divided(by: 2)
             }
-            var corners = LineChain([IPoint(-half.x - td.y, half.y + td.x), IPoint(half.x + td.y, half.y - td.x),
-                                     IPoint(half.x - td.y, -half.y + td.x), IPoint(-half.x + td.y, -half.y - td.x)])
-            corners = corners.rotated(p.orientation).moved(shapePos)
+            // (a corner the same as the one before is left out, as SHAPE_LINE_CHAIN::Append does: a rounded rectangle
+            // whose straight part is a line has two or three)
+            var points: [IPoint] = []
+            for q in [IPoint(-half.x - td.y, half.y + td.x), IPoint(half.x + td.y, half.y - td.x),
+                      IPoint(half.x - td.y, -half.y + td.x), IPoint(-half.x + td.y, -half.y - td.x)] where points.last != q {
+                points.append(q)
+            }
+            let corners = LineChain(points).rotated(p.orientation).moved(shapePos)
             let c = corners.points
             var shapes: [Shape]
             if c.count == 4 && ((c[0].y == c[1].y && c[1].x == c[2].x && c[2].y == c[3].y && c[3].x == c[0].x)
@@ -387,7 +392,9 @@ public struct BoardWorld {
                 shapes = [.simple(LineChain(c, closed: true))]
             }
             if r != 0 {
-                for i in 0..<4 { shapes.append(.segment(Seg(c[i], c[(i + 1) % 4]), width: r * 2)) }
+                // (CPoint 0 to 3, an index past the end counted from the start again)
+                let at = { (k: Int) in c[k >= c.count ? k - c.count : k] }
+                for (i, j) in [(0, 1), (1, 2), (2, 3), (3, 0)] { shapes.append(.segment(Seg(at(i), at(j)), width: r * 2)) }
             }
             return shapes
         case .chamferedRect:
@@ -692,7 +699,7 @@ public struct BoardWorld {
     }
 
     /// PAD::IsOnCopperLayer: on a copper layer, unless an unplated hole without a ring round it
-    private func isOnCopper(_ p: Pad, _ lmsk: [Int]) -> Bool {
+    func isOnCopper(_ p: Pad, _ lmsk: [Int]) -> Bool {
         if p.attribute == .npth {
             switch p.kind {
             case .circle where p.offset == .zero && p.size.x <= p.drill.x: return false
@@ -704,7 +711,7 @@ public struct BoardWorld {
     }
 
     /// PAD::FlashLayer on a copper layer (a through-hole pad keeping all its layers, as boards mostly do)
-    private func flash(_ p: Pad, _ lmsk: [Int], _ layer: Int) -> Bool {
+    func flash(_ p: Pad, _ lmsk: [Int], _ layer: Int) -> Bool {
         guard lmsk.contains(layer) else { return false }
         if p.attribute == .npth {
             if p.kind == .circle && !p.oblong && p.offset == .zero && p.drill.x >= p.size.x { return false }
@@ -1036,6 +1043,8 @@ struct NetClasses {
     struct Effective {
         var name: String
         var clearance: Int?
+        /// The class its clearance comes from (NETCLASS::GetClearanceParent)
+        var clearanceParent: String? = nil
         var trackWidth: Int?
         var viaDiameter: Int?
         var viaDrill: Int?
@@ -1085,7 +1094,7 @@ struct NetClasses {
     func effective(_ net: String) -> Effective {
         let d = defaultClass
         func whole(_ c: NetClass) -> Effective {
-            Effective(name: c.name, clearance: c.clearance ?? d.clearance, trackWidth: c.trackWidth ?? d.trackWidth,
+            Effective(name: c.name, clearance: c.clearance ?? d.clearance, clearanceParent: c.clearance != nil ? c.name : d.name, trackWidth: c.trackWidth ?? d.trackWidth,
                       viaDiameter: c.viaDiameter ?? d.viaDiameter, viaDrill: c.viaDrill ?? d.viaDrill,
                       diffPairWidth: c.diffPairWidth ?? d.diffPairWidth, diffPairGap: c.diffPairGap ?? d.diffPairGap,
                       diffPairViaGap: c.diffPairViaGap ?? d.diffPairViaGap, microViaDiameter: c.microViaDiameter ?? d.microViaDiameter,
@@ -1109,7 +1118,8 @@ struct NetClasses {
         resolved.sort { $0.priority != $1.priority ? $0.priority < $1.priority : $0.name < $1.name }
         func first(_ k: KeyPath<NetClass, Int?>) -> Int? { resolved.first(where: { $0[keyPath: k] != nil })?[keyPath: k] ?? d[keyPath: k] }
         return Effective(name: resolved.count == 1 ? resolved[0].name : resolved.map(\.name).joined(separator: ","),
-                         clearance: first(\.clearance), trackWidth: first(\.trackWidth), viaDiameter: first(\.viaDiameter),
+                         clearance: first(\.clearance),
+                         clearanceParent: resolved.first(where: { $0.clearance != nil })?.name ?? d.name, trackWidth: first(\.trackWidth), viaDiameter: first(\.viaDiameter),
                          viaDrill: first(\.viaDrill), diffPairWidth: first(\.diffPairWidth), diffPairGap: first(\.diffPairGap),
                          diffPairViaGap: first(\.diffPairViaGap), microViaDiameter: first(\.microViaDiameter),
                          microViaDrill: first(\.microViaDrill))

@@ -61,118 +61,131 @@ public enum Shape: Hashable, Sendable {
     /// (`wantActual`: whether KiCad was asked how close, which for arcs can change whether exactly the clearance
     /// away collides)
     func collide(_ other: Shape, clearance: Int, wantActual: Bool, actual: inout Int?) -> Bool {
-        if case .arc(let a) = self { return Self.arcCollide(a, other, clearance, wantActual, &actual) }
-        if case .arc(let a) = other { return Self.arcCollide(a, self, clearance, wantActual, &actual) }
+        var location: IPoint?
+        return collide(other, clearance: clearance, wantActual: wantActual, actual: &actual, location: &location)
+    }
+
+    /// Whether this shape and `other` come closer than `clearance`, how close, and where, as KiCad's collisions say
+    /// where (asked how close and where both)
+    public func collide(_ other: Shape, clearance: Int, actual: inout Int?, location: inout IPoint?) -> Bool {
+        collide(other, clearance: clearance, wantActual: true, actual: &actual, location: &location)
+    }
+
+    func collide(_ other: Shape, clearance: Int, wantActual: Bool, actual: inout Int?, location: inout IPoint?) -> Bool {
+        if case .arc(let a) = self { return Self.arcCollide(a, other, clearance, wantActual, &actual, &location) }
+        if case .arc(let a) = other { return Self.arcCollide(a, self, clearance, wantActual, &actual, &location) }
         switch (self, other) {
         case let (.rect(a), .rect(b)):
-            return Self.chainChain(Self.rectOutline(a), Self.rectOutline(b), clearance, wantActual, &actual)
+            return Self.chainChain(Self.rectOutline(a), Self.rectOutline(b), clearance, wantActual, &actual, &location)
         case let (.rect(a), .circle(c, r)), let (.circle(c, r), .rect(a)):
-            return Self.rectCircle(a, c, r, clearance, &actual)
+            return Self.rectCircle(a, c, r, clearance, &actual, &location)
         case let (.rect(a), .chain(l)), let (.rect(a), .simple(l)), let (.chain(l), .rect(a)), let (.simple(l), .rect(a)):
-            return Self.rectChain(a, l, clearance, &actual)
+            return Self.rectChain(a, l, clearance, &actual, &location)
         case let (.rect(a), .segment(s, w)), let (.segment(s, w), .rect(a)):
-            return Self.withWidth(Self.rectSeg(a, s, clearance + w / 2, &actual), w, &actual)
+            return Self.withWidth(Self.rectSeg(a, s, clearance + w / 2, &actual, &location), w, &actual)
         case let (.circle(c1, r1), .circle(c2, r2)):
-            return Self.circleCircle(c1, r1, c2, r2, clearance, &actual)
+            return Self.circleCircle(c1, r1, c2, r2, clearance, &actual, &location)
         case let (.circle(c, r), .chain(l)), let (.circle(c, r), .simple(l)), let (.chain(l), .circle(c, r)), let (.simple(l), .circle(c, r)):
-            return Self.circleChain(c, r, l, clearance, &actual)
+            return Self.circleChain(c, r, l, clearance, &actual, &location)
         case let (.circle(c, r), .segment(s, w)), let (.segment(s, w), .circle(c, r)):
-            return Self.withWidth(Self.circleSeg(c, r, s, clearance + w / 2, &actual), w, &actual)
+            return Self.withWidth(Self.circleSeg(c, r, s, clearance + w / 2, &actual, &location), w, &actual)
         case let (.segment(s1, w1), .segment(s2, w2)):
-            return Self.withWidth(Self.capsuleSeg(s1, w1, s2, clearance + w2 / 2, &actual), w2, &actual)
+            return Self.withWidth(Self.capsuleSeg(s1, w1, s2, clearance + w2 / 2, &actual, &location), w2, &actual)
         case let (.chain(l), .segment(s, w)), let (.simple(l), .segment(s, w)), let (.segment(s, w), .chain(l)), let (.segment(s, w), .simple(l)):
-            var location: IPoint?
             let hit = l.collide(s, clearance: clearance + w / 2, wantActual: wantActual, actual: &actual, location: &location)
             return Self.withWidth(hit, w, &actual)
         case (.chain(let a), .chain(let b)), (.chain(let a), .simple(let b)), (.simple(let a), .simple(let b)):
-            return Self.chainChain(a, b, clearance, wantActual, &actual, shapes: (self, other))
+            return Self.chainChain(a, b, clearance, wantActual, &actual, &location, shapes: (self, other))
         case (.simple(let a), .chain(let b)):
             // (KiCad takes the polyline first)
-            return Self.chainChain(b, a, clearance, wantActual, &actual, shapes: (other, self))
+            return Self.chainChain(b, a, clearance, wantActual, &actual, &location, shapes: (other, self))
         case (.arc, _), (_, .arc):
             return false
         }
     }
 
+    /// Half way between two points, as a VECTOR2I divided by two (cut towards zero)
+    static func halfway(_ a: IPoint, _ b: IPoint) -> IPoint { IPoint((a.x + b.x) / 2, (a.y + b.y) / 2) }
+
     /// An arc against any shape (shape_collisions.cpp's arc cases, the arc first)
     static func arcCollide(_ a: ShapeArc, _ b: Shape, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?) -> Bool {
+        var location: IPoint?
+        return arcCollide(a, b, clearance, wantActual, &actual, &location)
+    }
+
+    static func arcCollide(_ a: ShapeArc, _ b: Shape, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?,
+                           _ location: inout IPoint?) -> Bool {
         let straight = Shape.segment(Seg(a.start, a.end), width: a.width)
         func near(_ r: (IPoint, IPoint, Int)) -> Bool {
             let dsq = r.2
             guard dsq == 0 || dsq < clearance * clearance else { return false }
             actual = max(0, KiMath.round(Double(dsq).squareRoot()))
+            location = halfway(r.0, r.1)
             return true
         }
         switch b {
         case .circle(let c, let r):
-            if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual) }
+            if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual, location: &location) }
             return near(a.nearestPoints(circle: c, r))
         case .rect(let box):
-            if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual) }
+            if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual, location: &location) }
             return near(a.nearestPoints(rect: box))
         case .segment(let s, let w):
-            if a.isEffectiveLine { return straight.collide(b, clearance: clearance, wantActual: wantActual, actual: &actual) }
-            var location: IPoint?
+            if a.isEffectiveLine { return straight.collide(b, clearance: clearance, wantActual: wantActual, actual: &actual, location: &location) }
             let hit = a.collide(s, clearance: clearance + w / 2, wantActual: wantActual, actual: &actual, location: &location)
             if hit, wantActual, let d = actual { actual = max(0, d - w / 2) }
             return hit
         case .chain(let l):
             // (KiCad's SHAPE_LINE_CHAIN case, which does not ask whether the arc is all but straight)
-            return arcChain(a, l, clearance, wantActual, &actual)
+            return arcChain(a, l, clearance, wantActual, &actual, &location)
         case .simple(let l):
-            if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual) }
-            return arcChain(a, l, clearance, wantActual, &actual)
+            if a.isEffectiveLine { return b.collide(straight, clearance: clearance, wantActual: wantActual, actual: &actual, location: &location) }
+            return arcChain(a, l, clearance, wantActual, &actual, &location)
         case .arc(let o):
-            if a.isEffectiveLine { return arcCollide(o, straight, clearance, wantActual, &actual) }
+            if a.isEffectiveLine { return arcCollide(o, straight, clearance, wantActual, &actual, &location) }
             if o.isEffectiveLine {
-                return arcCollide(a, .segment(Seg(o.start, o.end), width: o.width), clearance, wantActual, &actual)
+                return arcCollide(a, .segment(Seg(o.start, o.end), width: o.width), clearance, wantActual, &actual, &location)
             }
             return near(a.nearestPoints(o))
         }
     }
 
     /// An arc against a polyline or polygon: inside a closed one, else its segments in turn, then its arcs as arcs
-    private static func arcChain(_ a: ShapeArc, _ l: LineChain, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?) -> Bool {
+    private static func arcChain(_ a: ShapeArc, _ l: LineChain, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?,
+                                 _ location: inout IPoint?) -> Bool {
         var closest = Int.max
+        var nearest = IPoint.zero
         if l.isClosed && l.pointInside(a.start) {
             closest = 0
+            nearest = a.start
         } else {
             for i in 0..<l.segmentCount where !l.isArcSegment(i) {
-                var d: Int?, location: IPoint?
-                if a.collide(l.segment(i), clearance: clearance, wantActual: wantActual, actual: &d, location: &location) {
+                var d: Int?, pn: IPoint?
+                if a.collide(l.segment(i), clearance: clearance, wantActual: wantActual, actual: &d, location: &pn) {
                     // (not asked how close, KiCad counts any collision as touching)
                     let dist = wantActual ? d ?? 0 : 0
-                    if dist < closest { closest = dist }
+                    if dist < closest {
+                        closest = dist
+                        nearest = pn ?? .zero
+                    }
                     if closest == 0 || !wantActual { break }
                 }
             }
             for arc in l.arcs {
-                var d: Int?
-                if arcCollide(a, .arc(arc), clearance, wantActual, &d) {
+                var d: Int?, pn: IPoint?
+                if arcCollide(a, .arc(arc), clearance, wantActual, &d, &pn) {
                     let dist = wantActual ? d ?? 0 : 0
-                    if dist < closest { closest = dist }
+                    if dist < closest {
+                        closest = dist
+                        nearest = pn ?? .zero
+                    }
                     if closest == 0 || !wantActual { break }
                 }
             }
         }
         guard closest == 0 || closest < clearance else { return false }
         actual = closest
-        return true
-    }
-
-    /// Whether this shape and `other` come closer than `clearance`, how close, and about where. (KiCad works out
-    /// where for each pair of shapes; here it is the point of `other` nearest this shape's middle, which is all the
-    /// router asks of it: whether the place is a castellated pad's, or a net tie's.)
-    public func collide(_ other: Shape, clearance: Int, actual: inout Int?, location: inout IPoint?) -> Bool {
-        guard collide(other, clearance: clearance, actual: &actual) else { return false }
-        let c = bbox.center
-        switch other {
-        case .circle(let o, let r): location = c == o ? o : o + (c - o).resized(r)
-        case .rect(let b): location = b.nearestPoint(c)
-        case .segment(let s, _): location = s.nearestPoint(c)
-        case .simple(let l), .chain(let l): location = l.nearestPoint(c)
-        case .arc(let a): location = a.nearestPoint(c)
-        }
+        location = nearest
         return true
     }
 
@@ -186,11 +199,13 @@ public enum Shape: Hashable, Sendable {
         LineChain([IPoint(b.minX, b.minY), IPoint(b.maxX, b.minY), IPoint(b.maxX, b.maxY), IPoint(b.minX, b.maxY)], closed: true)
     }
 
-    static func circleCircle(_ c1: IPoint, _ r1: Int, _ c2: IPoint, _ r2: Int, _ clearance: Int, _ actual: inout Int?) -> Bool {
+    static func circleCircle(_ c1: IPoint, _ r1: Int, _ c2: IPoint, _ r2: Int, _ clearance: Int, _ actual: inout Int?,
+                             _ location: inout IPoint?) -> Bool {
         let minDist = clearance + r1 + r2
         let dsq = (c2 - c1).squaredNorm
         if dsq == 0 || dsq < minDist * minDist {
             actual = max(0, Int(Double(dsq).squareRoot()) - r1 - r2)
+            location = halfway(c1, c2)
             return true
         }
         return false
@@ -198,10 +213,21 @@ public enum Shape: Hashable, Sendable {
 
     /// A circle against a segment (KiCad's SHAPE_CIRCLE::Collide(SEG))
     static func circleSeg(_ c: IPoint, _ r: Int, _ s: Seg, _ clearance: Int, _ actual: inout Int?) -> Bool {
+        var location: IPoint?
+        return circleSeg(c, r, s, clearance, &actual, &location)
+    }
+
+    static func circleSeg(_ c: IPoint, _ r: Int, _ s: Seg, _ clearance: Int, _ actual: inout Int?, _ location: inout IPoint?) -> Bool {
         let minDist = clearance + r
         let pn = s.nearestPoint(c)
         let dsq = (pn - c).squaredNorm
         if dsq == 0 || dsq < minDist * minDist {
+            // (where the segment goes through the centre, where it crosses the circle)
+            if dsq == 0, let first = Circle(c, r).intersect(s).first {
+                location = first
+            } else {
+                location = pn
+            }
             actual = max(0, Int(Double(dsq).squareRoot()) - r)
             return true
         }
@@ -209,12 +235,13 @@ public enum Shape: Hashable, Sendable {
     }
 
     /// A segment of some width against a segment (KiCad's SHAPE_SEGMENT::Collide(SEG))
-    static func capsuleSeg(_ s1: Seg, _ w1: Int, _ s2: Seg, _ clearance: Int, _ actual: inout Int?) -> Bool {
+    static func capsuleSeg(_ s1: Seg, _ w1: Int, _ s2: Seg, _ clearance: Int, _ actual: inout Int?, _ location: inout IPoint?) -> Bool {
         let minDist = (w1 + 1) / 2 + clearance
         if s2.a == s2.b {
             let dsq = s1.squaredDistance(s2.a)
             if dsq == 0 || dsq < minDist * minDist {
                 actual = max(0, Int(Double(dsq).squareRoot()) - (w1 + 1) / 2)
+                location = s1.nearestPoint(s2.a)
                 return true
             }
             return false
@@ -222,79 +249,120 @@ public enum Shape: Hashable, Sendable {
         let dsq = s1.squaredDistance(s2)
         if dsq == 0 || dsq < minDist * minDist {
             actual = max(0, Int(Double(dsq).squareRoot()) - (w1 + 1) / 2)
+            location = s1.nearestPoint(s2)
             return true
         }
         return false
     }
 
     /// An upright rectangle against a segment (KiCad's SHAPE_RECT::Collide(SEG))
-    static func rectSeg(_ b: IBox, _ s: Seg, _ clearance: Int, _ actual: inout Int?) -> Bool {
-        if b.contains(s.a) || b.contains(s.b) {
+    static func rectSeg(_ b: IBox, _ s: Seg, _ clearance: Int, _ actual: inout Int?, _ location: inout IPoint?) -> Bool {
+        if b.contains(s.a) {
             actual = 0
+            location = s.a
+            return true
+        }
+        if b.contains(s.b) {
+            actual = 0
+            location = s.b
             return true
         }
         let c = [IPoint(b.minX, b.minY), IPoint(b.minX, b.maxY), IPoint(b.maxX, b.maxY), IPoint(b.maxX, b.minY), IPoint(b.minX, b.minY)]
         var closest = Int.max
-        for i in 0..<4 { closest = min(closest, Seg(c[i], c[i + 1]).squaredDistance(s)) }
+        var nearest = IPoint.zero
+        for i in 0..<4 {
+            let side = Seg(c[i], c[i + 1])
+            let d = side.squaredDistance(s)
+            if d < closest {
+                nearest = side.nearestPoint(s)
+                closest = d
+            } else if d == closest {
+                // (of two as near, the one nearer the segment's start)
+                let near = side.nearestPoint(s)
+                if (near - s.a).squaredNorm < (nearest - s.a).squaredNorm { nearest = near }
+            }
+        }
         if closest == 0 || closest < clearance * clearance {
             actual = Int(Double(closest).squareRoot())
+            location = nearest
             return true
         }
         return false
     }
 
-    static func rectCircle(_ b: IBox, _ c: IPoint, _ r: Int, _ clearance: Int, _ actual: inout Int?) -> Bool {
+    static func rectCircle(_ b: IBox, _ c: IPoint, _ r: Int, _ clearance: Int, _ actual: inout Int?, _ location: inout IPoint?) -> Bool {
         let minDist = clearance + r
         let v = [IPoint(b.minX, b.minY), IPoint(b.minX, b.maxY), IPoint(b.maxX, b.maxY), IPoint(b.maxX, b.minY), IPoint(b.minX, b.minY)]
         var nearestSq = Int.max
+        var nearest = IPoint.zero
         let inside = b.contains(c)
         for i in 0..<4 {
             let pn = Seg(v[i], v[i + 1]).nearestPoint(c)
-            nearestSq = min(nearestSq, (pn - c).squaredNorm)
+            let d = (pn - c).squaredNorm
+            if d < nearestSq {
+                nearest = pn
+                nearestSq = d
+                if nearestSq == 0 { break }
+            }
         }
         if inside || nearestSq == 0 || nearestSq < minDist * minDist {
-            // (inside it, the distance KiCad gives is still the one to its nearest side)
+            // (inside it, the distance KiCad gives is still the one to its nearest side, and the place its nearest
+            // point)
             actual = max(0, Int(Double(nearestSq).squareRoot()) - r)
+            location = nearest
             return true
         }
         return false
     }
 
-    static func circleChain(_ c: IPoint, _ r: Int, _ l: LineChain, _ clearance: Int, _ actual: inout Int?) -> Bool {
+    static func circleChain(_ c: IPoint, _ r: Int, _ l: LineChain, _ clearance: Int, _ actual: inout Int?,
+                            _ location: inout IPoint?) -> Bool {
         var closest = Int.max
+        var nearest = IPoint.zero
         if l.isClosed && l.pointInside(c) {
             closest = 0
+            nearest = c
         } else {
             for s in 0..<l.segmentCount {
-                var d: Int?
-                if circleSeg(c, r, l.segment(s), clearance, &d) {
-                    closest = min(closest, d ?? 0)
+                var d: Int?, pn: IPoint?
+                if circleSeg(c, r, l.segment(s), clearance, &d, &pn) {
+                    if (d ?? 0) < closest {
+                        closest = d ?? 0
+                        nearest = pn ?? .zero
+                    }
                     if closest == 0 { break }
                 }
             }
         }
         if closest == 0 || closest < clearance {
             actual = closest
+            location = nearest
             return true
         }
         return false
     }
 
-    static func rectChain(_ b: IBox, _ l: LineChain, _ clearance: Int, _ actual: inout Int?) -> Bool {
+    static func rectChain(_ b: IBox, _ l: LineChain, _ clearance: Int, _ actual: inout Int?, _ location: inout IPoint?) -> Bool {
         var closest = Int.max
+        var nearest = IPoint.zero
         if l.isClosed && l.pointInside(b.center) {
             closest = 0
+            nearest = b.center
         } else {
             for s in 0..<l.segmentCount {
-                var d: Int?
-                if rectSeg(b, l.segment(s), clearance, &d) {
-                    closest = min(closest, d ?? 0)
+                var d: Int?, pn: IPoint?
+                if rectSeg(b, l.segment(s), clearance, &d, &pn) {
+                    if (d ?? 0) < closest {
+                        closest = d ?? 0
+                        nearest = pn ?? .zero
+                    }
                     if closest == 0 { break }
                 }
             }
         }
         if closest == 0 || closest < clearance {
             actual = closest
+            location = nearest
             return true
         }
         return false
@@ -304,11 +372,20 @@ public enum Shape: Hashable, Sendable {
     /// each one's arcs as arcs against the other (`shapes`, the two as shapes)
     static func chainChain(_ a: LineChain, _ b: LineChain, _ clearance: Int, _ wantActual: Bool = true, _ actual: inout Int?,
                            shapes: (Shape, Shape)? = nil) -> Bool {
+        var location: IPoint?
+        return chainChain(a, b, clearance, wantActual, &actual, &location, shapes: shapes)
+    }
+
+    static func chainChain(_ a: LineChain, _ b: LineChain, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?,
+                           _ location: inout IPoint?, shapes: (Shape, Shape)? = nil) -> Bool {
         var closest = Int.max
+        var nearest = IPoint.zero
         if b.isClosed && a.pointCount > 0 && b.pointInside(a.point(0)) {
             closest = 0
+            nearest = a.point(0)
         } else if a.isClosed && b.pointCount > 0 && a.pointInside(b.point(0)) {
             closest = 0
+            nearest = b.point(0)
         } else {
             let order: (Seg, Seg) -> Bool = { $0.a.x < $1.a.x || ($0.a.x == $1.a.x && $0.a.y < $1.a.y) }
             var aSegs = (0..<a.segmentCount).filter { !a.isArcSegment($0) }.map(a.segment)
@@ -319,18 +396,22 @@ public enum Shape: Hashable, Sendable {
                 for sb in bSegs {
                     var d: Int?
                     if sa.collide(sb, clearance: clearance, actual: &d) {
-                        closest = min(closest, d ?? 0)
+                        if (d ?? 0) < closest {
+                            nearest = sa.nearestPoint(sb)
+                            closest = d ?? 0
+                        }
                         if closest == 0 { break outer }
                     }
                 }
             }
         }
         if let (sa, sb) = shapes, !wantActual || closest > 0 {
-            for arc in a.arcs where arcCollide(arc, sb, clearance, wantActual, &actual) { return true }
-            for arc in b.arcs where arcCollide(arc, sa, clearance, wantActual, &actual) { return true }
+            for arc in a.arcs where arcCollide(arc, sb, clearance, wantActual, &actual, &location) { return true }
+            for arc in b.arcs where arcCollide(arc, sa, clearance, wantActual, &actual, &location) { return true }
         }
         if closest == 0 || closest < clearance {
             actual = closest
+            location = nearest
             return true
         }
         return false

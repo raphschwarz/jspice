@@ -91,10 +91,13 @@ public struct BoardDRC {
         "track_width": "Track width", "via_diameter": "Via diameter", "annular_width": "Annular width",
         "drill_out_of_range": "Hole size out of range", "microvia_drill_out_of_range": "Micro via hole size out of range",
         "hole_to_hole": "Drilled hole too close to other hole", "holes_co_located": "Drilled holes co-located",
+        "clearance": "Clearance violation", "hole_clearance": "Hole clearance violation", "shorting_items": "Items shorting two nets",
+        "tracks_crossing": "Tracks crossing",
     ]
 
-    /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT)
-    static let errorLimit = 199
+    /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT; its EXTENDED_ERROR_LIMIT for
+    /// clearances and missing connections)
+    public static func errorLimit(_ type: String) -> Int { type == "clearance" || type == "unconnected_items" ? 499 : 199 }
 
     public let settings: Settings
     let board: KiCadBoard
@@ -124,6 +127,8 @@ public struct BoardDRC {
         var kind: Kind
         var uuid: String
         var net: String
+        /// Whether it was read with a net clause
+        var hasNet = false
         var start = IPoint.zero, mid = IPoint.zero, end = IPoint.zero
         var width = 0
         var layer = ""
@@ -148,12 +153,13 @@ public struct BoardDRC {
         var pad: BoardWorld.Pad
         /// A custom pad's pieces
         var primitives: [SExpr] = []
+        var pinType = ""
         var hasHole: Bool { pad.drill.x > 0 && pad.drill.y > 0 }
         /// PAD::HasDrilledHole: a hole of one diameter
         var hasDrilledHole: Bool { hasHole && pad.drill.x == pad.drill.y }
     }
 
-    private static func netName(_ node: SExpr) -> String {
+    static func netName(_ node: SExpr) -> String {
         guard let n = node["net"] else { return "" }
         return (n.items.count >= 3 ? n.text(at: 1) : n.text(at: 0)) ?? ""
     }
@@ -163,6 +169,7 @@ public struct BoardDRC {
             switch node.head ?? "" {
             case "segment", "arc":
                 var t = Track(kind: node.head == "arc" ? .arc : .track, uuid: node.value("uuid") ?? "", net: Self.netName(node))
+                t.hasNet = node["net"] != nil
                 t.start = BoardWorld.point(node["start"])
                 t.mid = BoardWorld.point(node["mid"])
                 t.end = BoardWorld.point(node["end"])
@@ -171,6 +178,7 @@ public struct BoardDRC {
                 tracks.append(t)
             case "via":
                 var t = Track(kind: .via, uuid: node.value("uuid") ?? "", net: Self.netName(node))
+                t.hasNet = node["net"] != nil
                 t.start = BoardWorld.point(node["at"])
                 t.end = t.start
                 t.diameter = node["size"].map { BoardWorld.iu($0, 0) } ?? 0
@@ -195,7 +203,8 @@ public struct BoardDRC {
             let pads = fp.all("pad").map { node in
                 Pad(uuid: node.value("uuid") ?? "", number: node.text(at: 0) ?? "", net: Self.netName(node),
                     pad: world.readPad(node, placement),
-                    primitives: (node["primitives"]?.arguments ?? []).filter { $0.head != "gr_bbox" && $0.head != "gr_vector" })
+                    primitives: (node["primitives"]?.arguments ?? []).filter { $0.head != "gr_bbox" && $0.head != "gr_vector" },
+                    pinType: node.value("pintype") ?? "")
             }
             footprints.append(Footprint(reference: placement.reference, pads: pads))
         }
@@ -211,6 +220,7 @@ public struct BoardDRC {
         checkHoleSizes(&out)
         checkAnnularWidths(&out)
         checkHolesToHoles(&out)
+        checkCopperClearances(&out)
         return out.violations
     }
 
@@ -221,9 +231,12 @@ public struct BoardDRC {
         var violations: [DRCViolation] = []
         var counts: [String: Int] = [:]
 
+        /// IsErrorLimitExceeded: whether as many of a check have been found as KiCad reports
+        func exceeded(_ type: String) -> Bool { counts[type, default: 0] >= BoardDRC.errorLimit(type) }
+
         mutating func add(_ type: String, _ detail: String?, _ items: [String]) {
             let severity = settings.severity(type)
-            guard severity != "ignore", counts[type, default: 0] < BoardDRC.errorLimit else { return }
+            guard severity != "ignore", counts[type, default: 0] < BoardDRC.errorLimit(type) else { return }
             counts[type, default: 0] += 1
             let title = BoardDRC.titles[type] ?? type
             violations.append(DRCViolation(type: type, severity: severity,
