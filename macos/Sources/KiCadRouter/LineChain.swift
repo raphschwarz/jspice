@@ -855,7 +855,8 @@ public struct LineChain: Hashable, Sendable, CustomStringConvertible {
                 out.append(x)
             }
         }
-        return out.sorted { (s.a - $0.p).norm < (s.a - $1.p).norm }
+        Clipper.introSort(&out) { (s.a - $0.p).norm < (s.a - $1.p).norm }
+        return out
     }
 
     public func intersects(_ s: Seg) -> Bool {
@@ -873,11 +874,13 @@ public struct LineChain: Hashable, Sendable, CustomStringConvertible {
         if ours == 0 || theirs == 0 { return [] }
         let other = chain.bbox
         let theirSegs = (0..<theirs).map(chain.segment)
-        // their segments by their leftmost x (stable, where KiCad's sort leaves ties as they fall)
-        let sorted = theirSegs.indices.map { i -> (minX: Int, maxX: Int, minY: Int, maxY: Int, i: Int) in
+        // their segments by their leftmost x, as std::sort sorts them (segments with the same leftmost x end up in the
+        // order its introsort leaves them in, which on longer chains is not the order they came in)
+        var sorted = theirSegs.indices.map { i -> (minX: Int, maxX: Int, minY: Int, maxY: Int, i: Int) in
             let s = theirSegs[i]
             return (min(s.a.x, s.b.x), max(s.a.x, s.b.x), min(s.a.y, s.b.y), max(s.a.y, s.b.y), i)
-        }.enumerated().sorted { $0.element.minX != $1.element.minX ? $0.element.minX < $1.element.minX : $0.offset < $1.offset }.map(\.element)
+        }
+        Clipper.introSort(&sorted) { $0.minX < $1.minX }
         var out: [Intersection] = []
         let n = points.count
         for s1 in 0..<ours {

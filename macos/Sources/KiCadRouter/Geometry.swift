@@ -46,11 +46,18 @@ public enum KiMath {
         return r
     }
 
-    /// KiCad's KiROUND: to the nearest, halves away from zero (what is not a number, or too big for 64 bits, at the
-    /// end of the range an int holds, as KiROUND clamps it)
+    /// KiCad's KiROUND: to the nearest, halves away from zero, clamped to what an int holds (what is not a number,
+    /// or too big for 64 bits, the smallest int, as llround makes it on x86-64 before KiROUND clamps it)
     @inline(__always)
     public static func round(_ v: Double) -> Int {
-        guard v.isFinite && abs(v) < 9.2e18 else { return v > 0 ? Int(Int32.max) : Int(Int32.min) }
+        min(max(round64(v), Int(Int32.min)), Int(Int32.max))
+    }
+
+    /// KiCad's KiROUND to 64 bits (KiROUND<double, int64_t>): to the nearest, halves away from zero (what is not a
+    /// number, or too big for 64 bits, the smallest)
+    @inline(__always)
+    public static func round64(_ v: Double) -> Int {
+        guard v >= -0x1p63 && v < 0x1p63 else { return Int.min }
         return Int(v.rounded())
     }
 
@@ -299,7 +306,7 @@ public struct Seg: Hashable, Sendable, CustomStringConvertible {
         }
         let g = Double(ap.squaredNorm) - (Double(e) * Double(e)) / Double(f)
         if g < 0 || g > Double(Int.max) { return 0 }
-        return KiMath.round(g)
+        return KiMath.round64(g)
     }
 
     public func distance(_ p: IPoint) -> Int { KiMath.isqrt(squaredDistance(p)) }

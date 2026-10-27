@@ -311,8 +311,10 @@ public enum Shape: Hashable, Sendable {
             closest = 0
         } else {
             let order: (Seg, Seg) -> Bool = { $0.a.x < $1.a.x || ($0.a.x == $1.a.x && $0.a.y < $1.a.y) }
-            let aSegs = (0..<a.segmentCount).filter { !a.isArcSegment($0) }.map(a.segment).sorted(by: order)
-            let bSegs = (0..<b.segmentCount).filter { !b.isArcSegment($0) }.map(b.segment).sorted(by: order)
+            var aSegs = (0..<a.segmentCount).filter { !a.isArcSegment($0) }.map(a.segment)
+            var bSegs = (0..<b.segmentCount).filter { !b.isArcSegment($0) }.map(b.segment)
+            Clipper.introSort(&aSegs, order)
+            Clipper.introSort(&bSegs, order)
             outer: for sa in aSegs {
                 for sb in bSegs {
                     var d: Int?
