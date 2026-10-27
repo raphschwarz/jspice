@@ -49,6 +49,8 @@ public struct BoardDRC {
         public var epsilon = 500
         /// The solder mask's least distance to copper (solder_mask_to_copper_clearance)
         public var solderMaskToCopperClearance = 0
+        /// How many spokes a thermal relief needs at least (min_resolved_spokes)
+        public var minResolvedSpokes = 2
         /// Each check's severity by its key ("error", "warning" or "ignore")
         public var severities: [String: String] = BoardDRC.defaultSeverities
 
@@ -72,6 +74,7 @@ public struct BoardDRC {
             mm("min_hole_clearance", &holeClearance)
             mm("min_copper_edge_clearance", &edgeClearance)
             mm("max_error", &maxError)
+            if let v = (rules["min_resolved_spokes"] as? NSNumber)?.intValue { minResolvedSpokes = v }
             for (key, value) in ds["rule_severities"] as? [String: Any] ?? [:] {
                 if let s = value as? String { severities[key] = s }
             }
@@ -102,6 +105,7 @@ public struct BoardDRC {
         "malformed_courtyard": "Footprint has malformed courtyard", "pth_inside_courtyard": "PTH inside courtyard",
         "npth_inside_courtyard": "NPTH inside courtyard",
         "solder_mask_bridge": "Front solder mask aperture bridges items with different nets",
+        "isolated_copper": "Isolated copper fill", "starved_thermal": "Thermal relief connection to zone incomplete",
     ]
 
     /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT; its EXTENDED_ERROR_LIMIT for
@@ -278,6 +282,7 @@ public struct BoardDRC {
         checkCourtyards(&out, copper)
         checkSolderMask(&out, copper)
         checkConnectivity(&out, copper, connectivity)
+        checkZoneConnections(&out, copper, connectivity)
         return out
     }
 

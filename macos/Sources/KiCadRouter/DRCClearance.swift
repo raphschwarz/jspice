@@ -371,11 +371,13 @@ extension BoardDRC {
     // MARK: - Rules (EvalRules on the implicit rules)
 
     /// An effective net class's clearance rule: the class's name, its clearance, and the name of the class it comes
-    /// from (NETCLASS::GetClearanceParent)
+    /// from (NETCLASS::GetClearanceParent); `named` false where KiCad takes its fast way to net classes' clearances,
+    /// which gives the clearance no rule's name
     struct ClearanceRule {
         var netClass: String
         var clearance: Int
         var parent: String
+        var named = true
     }
 
     /// The net classes' clearance rules as KiCad orders them (the default class, the classes by name, then the
@@ -393,6 +395,15 @@ extension BoardDRC {
             }
         }
         for name in composites.keys.sorted() { rules.append(composites[name]!) }
+        // EvalRules' fast way (no rules of the user's own): unless a class's diff pair gap is less than its clearance,
+        // which makes a rule of its own for coupled pairs
+        var diffPairOverrides = netClasses.defaultClass.diffPairGap.map { $0 < netClasses.defaultClass.clearance ?? -1 } ?? false
+        for c in netClasses.classes.values where c.diffPairGap.map({ $0 < c.clearance ?? -1 }) ?? false { diffPairOverrides = true }
+        for item in items where !diffPairOverrides {
+            let e = netClasses.effective(item.netName)
+            if e.name.contains(","), let gap = e.diffPairGap, gap < e.clearance ?? -1 { diffPairOverrides = true }
+        }
+        if !diffPairOverrides { for i in rules.indices { rules[i].named = false } }
         // (few enough for std::sort's insertion sort: ties keep their order)
         return rules.enumerated().sorted { $0.element.clearance != $1.element.clearance ? $0.element.clearance < $1.element.clearance
                                                                                         : $0.offset < $1.offset }.map(\.element)
@@ -423,7 +434,7 @@ extension BoardDRC {
         if !aNonCopper && !bNonCopper {
             let ca = netClasses.effective(a.netName).name, cb = netClasses.effective(b.netName).name
             for r in rules where (a.connected && r.netClass == ca) || (b.connected && r.netClass == cb) {
-                (clearance, name) = (r.clearance, "netclass '\(r.parent)'")
+                (clearance, name) = (r.clearance, r.named ? "netclass '\(r.parent)'" : "")
             }
         }
         if clearance > BoardWorld.maximumClearance { clearance = BoardWorld.maximumClearance }

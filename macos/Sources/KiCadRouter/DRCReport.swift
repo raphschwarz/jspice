@@ -12,7 +12,7 @@ extension BoardDRC {
         "holes_co_located", "clearance", "hole_clearance", "shorting_items", "tracks_crossing", "copper_edge_clearance",
         "track_dangling", "via_dangling", "unconnected_items", "items_not_allowed",
         "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard", "npth_inside_courtyard",
-        "solder_mask_bridge",
+        "solder_mask_bridge", "isolated_copper", "starved_thermal",
     ]
 
     /// The check as KiCad's report gives it: the violations, and the connections still to make apart, each item

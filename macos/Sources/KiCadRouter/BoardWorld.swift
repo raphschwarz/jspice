@@ -490,8 +490,10 @@ public struct BoardWorld {
     /// the board's maximum error with round corners and fractured (PAD::TransformShapeToPolygon); nil if a primitive
     /// is one the port cannot make a polygon of yet (a curve, an outlined rectangle with round corners, an arc in
     /// the old format). With the error inside, its polygon as PAD::TransformShapeToPolygon makes it so: merged, turned
-    /// and moved, not grown.
-    func customPolygon(_ primitives: [SExpr], _ p: Pad, errorLocation: ErrorLocation = .outside) -> PolySet? {
+    /// and moved, not grown. With a clearance, grown by it too (round its corners; a negative one shrinks it), the
+    /// growing to within `arcError` (the board's maximum error unless given).
+    func customPolygon(_ primitives: [SExpr], _ p: Pad, errorLocation: ErrorLocation = .outside, clearance: Int = 0,
+                       arcError: Int? = nil) -> PolySet? {
         let maxError = rules.maxError
         var merged = PolySet()
         if p.anchorRect {
@@ -513,42 +515,47 @@ public struct BoardWorld {
         }
         merged.rotate(p.orientation)
         merged.move(p.shapePos)
-        if errorLocation == .outside {
-            merged.inflate(maxError, .roundAllCorners, maxError: maxError)
+        let error = arcError ?? maxError
+        if clearance > 0 || errorLocation == .outside {
+            merged.inflate(clearance + (errorLocation == .outside ? error : 0), .roundAllCorners, maxError: error)
+            merged.fracture()
+        } else if clearance < 0 {
+            merged.inflate(clearance, .allowAcuteCorners, maxError: error)
             merged.fracture()
         }
         return merged
     }
 
-    /// The pad's polygon (PAD::TransformShapeToPolygon, with no clearance), its custom pieces from `primitives`; nil
-    /// for a custom pad with a piece the port cannot make a polygon of yet
-    func padPolygon(_ p: Pad, primitives: [SExpr], errorLocation: ErrorLocation) -> PolySet? {
+    /// The pad's polygon (PAD::TransformShapeToPolygon), grown by a clearance, to within `arcError` (the board's
+    /// maximum error unless given), its custom pieces from `primitives`; nil for a custom pad with a piece the port
+    /// cannot make a polygon of yet
+    func padPolygon(_ p: Pad, primitives: [SExpr], errorLocation: ErrorLocation, clearance: Int = 0, arcError: Int? = nil) -> PolySet? {
         // (at least 16 segments to a circle, for very small pads)
         let minSegs = 16
-        let maxError = rules.maxError
+        let maxError = arcError ?? rules.maxError
         let half = IPoint(p.size.x / 2, p.size.y / 2)
         switch p.kind {
         case .circle, .oval:
             if half.x == half.y || p.kind == .circle {
-                return PolySet([[PadPolygon.circle(center: p.shapePos, radius: half.x, maxError: maxError, errorLocation: errorLocation,
+                return PolySet([[PadPolygon.circle(center: p.shapePos, radius: half.x + clearance, maxError: maxError, errorLocation: errorLocation,
                                                    minSegCount: minSegs)]])
             }
             let hw = min(half.x, half.y)
             let delta = KiMath.rotate(IPoint(half.x - hw, half.y - hw), p.orientation)
-            return PadPolygon.oval(start: p.shapePos - delta, end: p.shapePos + delta, width: hw * 2, maxError: maxError,
+            return PadPolygon.oval(start: p.shapePos - delta, end: p.shapePos + delta, width: (hw + clearance) * 2, maxError: maxError,
                                    errorLocation: errorLocation, minSegCount: minSegs)
         case .rect, .trapezoid:
             let d = p.kind == .trapezoid ? IPoint(p.delta.x / 2, p.delta.y / 2) : .zero
             return PolySet([[PadPolygon.trapezoid(position: p.shapePos, size: p.size, rotation: p.orientation, deltaX: d.x, deltaY: d.y,
-                                                  inflate: 0, maxError: maxError, errorLocation: errorLocation)]])
+                                                  inflate: clearance, maxError: maxError, errorLocation: errorLocation)]])
         case .roundrect, .chamferedRect:
             let chamfer = p.kind == .chamferedRect
             return PolySet([[PadPolygon.roundChamferedRect(position: p.shapePos, size: p.size, rotation: p.orientation,
                                                            cornerRadius: p.cornerRadius, chamferRatio: chamfer ? p.chamferRatio : 0,
-                                                           chamferCorners: chamfer ? p.chamfers : 0, inflate: 0, maxError: maxError,
+                                                           chamferCorners: chamfer ? p.chamfers : 0, inflate: clearance, maxError: maxError,
                                                            errorLocation: errorLocation)]])
         case .custom:
-            return customPolygon(primitives, p, errorLocation: errorLocation)
+            return customPolygon(primitives, p, errorLocation: errorLocation, clearance: clearance, arcError: arcError)
         }
     }
 

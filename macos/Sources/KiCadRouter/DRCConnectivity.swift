@@ -168,6 +168,8 @@ extension BoardDRC {
     /// ratsnest
     final class Connectivity {
         var items: [CNItem] = []
+        /// The clusters the ratsnest was made of (SearchClusters( CSM_RATSNEST ), as CSM_CONNECTIVITY_CHECK makes them)
+        var clusters: [CNCluster] = []
         /// Each board item's connectivity items
         var entries: [ObjectIdentifier: [CNItem]] = [:]
         /// The ratsnest's nets, by net code: each one's missing connections
@@ -440,6 +442,7 @@ extension BoardDRC {
     func ratsnest(_ cn: Connectivity) {
         var serial = cn.clusterSerial
         let clusters = searchClusters(cn, ratsnest: true, serial: &serial)
+        cn.clusters = clusters
         var nodes: [Int: [CNAnchor]] = [:]
         var boardEdges: [Int: [CNEdge]] = [:]
         var order: [Int] = []
@@ -748,6 +751,7 @@ extension BoardDRC {
             if t.kind != .via && exceedT { continue }
             if trackDangling(cn, t) { out.add(t.kind == .via ? "via_dangling" : "track_dangling", nil, [t.uuid]) }
         }
+        checkIsolatedCopper(&out, c, cn)
         guard !out.exceeded("unconnected_items") else { return }
         for net in cn.nets.keys.sorted() {
             // (GetEdges: by their source's place)
@@ -761,6 +765,36 @@ extension BoardDRC {
             for e in edges {
                 guard !out.exceeded("unconnected_items") else { return }
                 out.add("unconnected_items", nil, [e.source.item.parent.uuid, e.target.item.parent.uuid])
+            }
+        }
+    }
+}
+
+extension BoardDRC {
+    /// The connectivity provider's isolated copper (FillIsolatedIslandsMap of the board's own zones, rule areas and
+    /// teardrops left out): each island of a zone's fill on a copper layer whose cluster holds no pad, and the first
+    /// island of a fill none of whose islands is in a cluster (a zone of no net, whose items no cluster takes)
+    func checkIsolatedCopper(_ out: inout Report, _ c: Copper, _ cn: Connectivity) {
+        var zoneNodes: [String: SExpr] = [:]
+        for z in board.root.all("zone") { if let u = z.value("uuid") { zoneNodes[u] = z } }
+        for zone in c.zones where zone.footprint == nil {
+            guard !out.exceeded("isolated_copper") else { return }
+            if zoneNodes[zone.uuid]?["attr"]?["teardrop"] != nil { continue }
+            for l in zone.layers {
+                guard let fill = zone.fills[l], !fill.isEmpty else { continue }
+                var isolated: [Int] = []
+                var inConnectivity = false
+                for cluster in cn.clusters {
+                    for item in cluster.items where item.parent === zone && item.zoneLayer == l {
+                        inConnectivity = true
+                        if cluster.isOrphaned { isolated.append(item.subpoly) }
+                    }
+                }
+                if !inConnectivity { isolated.append(0) }
+                for _ in isolated {
+                    guard !out.exceeded("isolated_copper") else { return }
+                    out.add("isolated_copper", nil, [zone.uuid])
+                }
             }
         }
     }

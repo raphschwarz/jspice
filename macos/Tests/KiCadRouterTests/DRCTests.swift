@@ -12,7 +12,7 @@ import KiCadKit
 final class DRCTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards", "courtyards"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
+        return ["boards", "courtyards", "thermals"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
     }
 
     /// The checks BoardDRC makes
@@ -21,7 +21,7 @@ final class DRCTests: XCTestCase {
                                        "shorting_items", "tracks_crossing", "copper_edge_clearance", "track_dangling",
                                        "via_dangling", "unconnected_items", "items_not_allowed",
                                        "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard",
-                                       "npth_inside_courtyard", "solder_mask_bridge"]
+                                       "npth_inside_courtyard", "solder_mask_bridge", "isolated_copper", "starved_thermal"]
 
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }

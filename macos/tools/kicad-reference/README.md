@@ -161,6 +161,13 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   and other outlines inside them, across them or beside them; every other arc's ends then swapped in the file, as
   other tools may write them). `Tests/KiCadRouterTests/Fixtures/courtyards` holds `drawn` (`--draw`) and `random`
   (`--random ... 60 20261104`), and the boards of `Fixtures/boards` have theirs too.
+- `thermals.py`: a board of thermal reliefs for `DRCTests`' starved thermals (`thermals.py OUT.kicad_pcb [SEED]`):
+  pads of a zone's net in its fill (filled by KiCad's zone filler), their spokes cut off by tracks of other nets and
+  the board's edge, the board asking three spokes of each; pads joined solidly or not at all by the pad or its
+  footprint, pads with thermal gaps of their own, plated holes in a zone that relieves them only, spokes drawn by
+  hand (a track, a copper drawing), a custom pad with spoke templates, pads with spokes into islands that touch
+  nothing else, and pads at random places among random tracks; then `drc.py` on it.
+  `Tests/KiCadRouterTests/Fixtures/thermals` holds `drawn` (`thermals.py ... 7`).
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
   turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them
   (now and then one starting on an unplated hole), and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is
