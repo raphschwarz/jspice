@@ -23,7 +23,7 @@ final class DRCTests: XCTestCase {
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }
-        var boards = 0, found = 0, exactUnconnected = 0
+        var boards = 0, found = 0, exactUnconnected = 0, descriptions = 0
         var differences: [String] = []
         var byType: [String: Int] = [:]
         var all: [String] = []
@@ -89,6 +89,16 @@ final class DRCTests: XCTestCase {
                 for e in oursU where e.count == 2 {
                     if let a = cn.clusterOf[e[0]], let b = cn.clusterOf[e[1]], find(a) != find(b) {
                         differences.append("\(name): KiCad's missing connections leave apart what ours joins: \(e)")
+                    }
+                }
+            }
+            // (the items as KiCad describes them, in the report the app shows)
+            let described = drc.itemDescriptions()
+            for v in report.violations + report.unconnected where Self.checked.contains(v.type) {
+                for item in v.items where described[item.uuid]?.description != item.description {
+                    descriptions += 1
+                    if descriptions <= 10 {
+                        differences.append("\(name): KiCad describes \(item.uuid) as \"\(item.description)\", ours as \"\(described[item.uuid]?.description ?? "nothing")\"")
                     }
                 }
             }

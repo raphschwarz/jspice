@@ -361,7 +361,7 @@ struct PCBBoardCanvas: View {
 
     var body: some View {
         Canvas { context, _ in
-            PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc,
+            PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc ?? editing.quickDRC,
                        hidden: (editing.preview?.moved ?? []).union(editing.dragPreview?.moved ?? []).union(editing.pairPreview?.moved ?? []))
                 .draw(context)
             PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview, pair: editing.pairPreview,
@@ -1017,7 +1017,7 @@ struct PCBSidePanel: View {
                     ForEach(board.notes, id: \.self) { Text($0).font(.callout) }
                 }
             }
-            if let drc = board.drc { drcSection(drc) }
+            PCBDRCSection(board: board, editing: board.editing)
             if let picture = board.picture, !picture.footprints.isEmpty { parts(picture) }
             if !board.log.isEmpty {
                 Section("Changes") {
@@ -1092,30 +1092,6 @@ struct PCBSidePanel: View {
         .buttonStyle(.borderless)
     }
 
-    private func drcSection(_ drc: KiCadFabrication.DRCReport) -> some View {
-        Section("Design rules check") {
-            if drc.isClean {
-                Label("No problems", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
-            } else {
-                if !drc.violations.isEmpty {
-                    Label("\(drc.errors.count) errors, \(drc.violations.count - drc.errors.count) warnings", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(drc.errors.isEmpty ? Color.orange : Color.red)
-                }
-                if !drc.unconnected.isEmpty {
-                    Label("\(drc.unconnected.count) connections not yet routed", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                }
-                ForEach(Array(drc.violations.prefix(40).enumerated()), id: \.offset) { _, violation in
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(violation.description).font(.callout).foregroundStyle(violation.severity == "error" ? Color.red : Color.primary)
-                        ForEach(Array(violation.items.prefix(2).enumerated()), id: \.offset) { _, item in
-                            Text(item.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     private func parts(_ picture: KiCadBoardPicture) -> some View {
         Section("Parts") {
             ForEach(picture.footprints.sorted { $0.reference.localizedStandardCompare($1.reference) == .orderedAscending }, id: \.uuid) { footprint in
@@ -1139,6 +1115,50 @@ struct PCBSidePanel: View {
                 }
                 .buttonStyle(.plain)
                 .listRowBackground(!parts.isEmpty && !editor.selection.isDisjoint(with: parts) ? Color.accentColor.opacity(0.2) : nil)
+            }
+        }
+    }
+}
+
+
+/// What the design rules check found: KiCad's, when asked for and the board has not changed since, else JSpice's
+/// own, made again as the board changes
+struct PCBDRCSection: View {
+    @ObservedObject var board: BoardController
+    @ObservedObject var editing: PCBEditing
+
+    var body: some View {
+        if let drc = board.drc {
+            section(drc, title: "Design rules check")
+        } else if let drc = editing.quickDRC {
+            section(drc, title: "Design rules, as you edit")
+        }
+    }
+
+    private func section(_ drc: KiCadFabrication.DRCReport, title: String) -> some View {
+        Section(title) {
+            if drc.isClean {
+                Label("No problems", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+            } else {
+                if !drc.violations.isEmpty {
+                    Label("\(drc.errors.count) errors, \(drc.violations.count - drc.errors.count) warnings", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(drc.errors.isEmpty ? Color.orange : Color.red)
+                }
+                if !drc.unconnected.isEmpty {
+                    Label("\(drc.unconnected.count) connections not yet routed", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                }
+                ForEach(Array(drc.violations.prefix(40).enumerated()), id: \.offset) { _, violation in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(violation.description).font(.callout).foregroundStyle(violation.severity == "error" ? Color.red : Color.primary)
+                        ForEach(Array(violation.items.prefix(2).enumerated()), id: \.offset) { _, item in
+                            Text(item.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                    }
+                }
+            }
+            if board.drc == nil {
+                Text("JSpice's own check: KiCad's checks of clearances, track widths, holes, the board's edges and connections. PCB ▸ Check Design Rules runs KiCad's full check.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }

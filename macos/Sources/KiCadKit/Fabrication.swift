@@ -15,6 +15,10 @@ public struct KiCadFabrication: Sendable {
             public var description: String
             public var position: KiCadPoint?
             public var uuid: String
+
+            public init(description: String, position: KiCadPoint?, uuid: String) {
+                (self.description, self.position, self.uuid) = (description, position, uuid)
+            }
         }
 
         /// KiCad's key for the rule, "clearance", "unconnected_items", "shorting_items"…
@@ -23,6 +27,10 @@ public struct KiCadFabrication: Sendable {
         /// error, warning or exclusion
         public var severity: String
         public var items: [Item]
+
+        public init(type: String, description: String, severity: String, items: [Item]) {
+            (self.type, self.description, self.severity, self.items) = (type, description, severity, items)
+        }
     }
 
     public struct DRCReport: Sendable {
@@ -32,6 +40,10 @@ public struct KiCadFabrication: Sendable {
         /// The schematic's and the board's differences, where KiCad could check them
         public var parity: [Violation]
         public var kicadVersion: String
+
+        public init(violations: [Violation], unconnected: [Violation], parity: [Violation], kicadVersion: String) {
+            (self.violations, self.unconnected, self.parity, self.kicadVersion) = (violations, unconnected, parity, kicadVersion)
+        }
 
         public var errors: [Violation] { violations.filter { $0.severity == "error" } }
         public var isClean: Bool { violations.isEmpty && unconnected.isEmpty }

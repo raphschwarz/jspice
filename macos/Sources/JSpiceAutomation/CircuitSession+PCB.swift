@@ -1,6 +1,7 @@
 import Foundation
 import CircuitKit
 import KiCadKit
+import KiCadRouter
 
 /// The circuit's printed circuit board, for AI agents: made in KiCad beside the circuit's file, kept in step with the
 /// schematic both ways (BoardLink), checked and made ready for a board house. Driving the app, the window's own link to
@@ -40,8 +41,9 @@ extension CircuitSession {
                                   "library": string("One library to list or search (optional)")]),
              run: { session, arguments in try session.pcbFootprints(arguments) }),
         Tool(name: "pcb_drc",
-             description: "KiCad's design rules check of the board (as saved, or as KiCad's editor has it open): each violation with its severity and the items involved and where, the connections not yet routed, and the board's differences from the schematic. The zones are filled first.",
-             inputSchema: schema([:]), run: { session, _ in try session.pcbDRC() }),
+             description: "KiCad's design rules check of the board (as saved, or as KiCad's editor has it open): each violation with its severity and the items involved and where, the connections not yet routed, and the board's differences from the schematic. The zones are filled first. With engine \"jspice\", JSpice's own check instead, in a moment and without KiCad: KiCad's checks of copper clearances, shorts, track widths, holes and annular rings, the board's edges, dangling tracks and vias, and connections still to make, as KiCad makes them (of the board as saved, its zones as they were filled).",
+             inputSchema: schema(["engine": string("\"kicad\" (the default) or \"jspice\"")]),
+             run: { session, arguments in try session.pcbDRC(arguments) }),
         Tool(name: "pcb_render",
              description: "A picture of the board as made (KiCad's 3D view, ray traced, with the parts' 3D models), from the top or the bottom, as a PNG file: to look at the layout.",
              inputSchema: schema(["side": string("\"top\" (the default) or \"bottom\""),
@@ -61,7 +63,7 @@ extension CircuitSession {
     // MARK: - The board
 
     /// Does `body` with the circuit's board: the app window's, or the server's own beside the circuit's file
-    func withBoard<T>(_ body: (BoardLink) throws -> T) throws -> T {
+    func withBoard<T>(needsKiCad: Bool = true, _ body: (BoardLink) throws -> T) throws -> T {
         if let boardHost { return try boardHost.withBoard(body) }
         guard let fileURL else {
             throw ToolError("The circuit has no file yet: save it (save_circuit, or pass path), and its board goes beside it")
@@ -69,7 +71,7 @@ extension CircuitSession {
         let file = BoardLink.boardFile(for: fileURL, design: circuit.pcb)
         if ownBoard?.boardFile != file { ownBoard = BoardLink(boardFile: file) }
         guard let link = ownBoard else { throw ToolError("No board") }
-        if let problem = link.problem { throw ToolError(problem) }
+        if needsKiCad, let problem = link.problem { throw ToolError(problem) }
         return try body(link)
     }
 
@@ -301,8 +303,10 @@ extension CircuitSession {
         return ["footprints": Array(found.prefix(80)), "more": max(0, found.count - 80)]
     }
 
-    func pcbDRC() throws -> Any {
-        let report = try withBoard { try $0.drc() }
+    func pcbDRC(_ arguments: [String: Any] = [:]) throws -> Any {
+        let engine = (arguments["engine"] as? String ?? "kicad").lowercased()
+        guard engine == "kicad" || engine == "jspice" else { throw ToolError("engine should be \"kicad\" or \"jspice\"") }
+        let report = engine == "jspice" ? try withBoard(needsKiCad: false) { try $0.quickDRC() } : try withBoard { try $0.drc() }
         func item(_ v: KiCadFabrication.Violation) -> [String: Any] {
             ["type": v.type, "severity": v.severity, "description": v.description,
              "items": v.items.map { i -> [String: Any] in
@@ -314,7 +318,8 @@ extension CircuitSession {
         return ["clean": report.isClean, "errors": report.errors.count, "warnings": report.violations.count - report.errors.count,
                 "violations": report.violations.prefix(100).map(item), "unrouted": report.unconnected.count,
                 "unrouted_items": report.unconnected.prefix(40).map(item),
-                "schematic_differences": report.parity.prefix(40).map(item), "kicad": report.kicadVersion]
+                "schematic_differences": report.parity.prefix(40).map(item),
+                "checked_by": engine == "jspice" ? "JSpice (\(BoardDRC.checksMade.joined(separator: ", ")))" : "KiCad \(report.kicadVersion)"]
     }
 
     func pcbRender(_ arguments: [String: Any]) throws -> Any {

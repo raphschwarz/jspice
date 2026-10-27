@@ -74,6 +74,8 @@ final class PCBEditing: ObservableObject {
     @Published private(set) var undoName: String?
     @Published private(set) var redoName: String?
     @Published private(set) var isReady = false
+    /// JSpice's own design rules check of the board, made again each time it changes
+    @Published private(set) var quickDRC: KiCadFabrication.DRCReport?
     /// The connection still to route under the pointer, which the select tool routes when it is clicked
     @Published var hoveredAirwire: KiCadConnectivity.Airwire?
 
@@ -87,6 +89,8 @@ final class PCBEditing: ObservableObject {
     private var moving = false
     /// A change on its way to the board, which the next waits for
     private var applying: Task<Void, Never>?
+    /// The design rules checks begun
+    private var checks = 0
 
     // MARK: - The board
 
@@ -95,9 +99,24 @@ final class PCBEditing: ObservableObject {
 
     func prepareNow() async {
         guard let controller, let (board, project) = await controller.boardForEditing() else { return }
-        layers = await engine.load(board, project: project)
+        await take(board, project: project)
         if !layers.contains(layer) { layer = layers.first ?? "F.Cu" }
         isReady = true
+    }
+
+    /// The board taken up by the session (its copper layers), and checked
+    private func take(_ board: KiCadBoard, project: [String: Any]?) async {
+        layers = await engine.load(board, project: project)
+        await check()
+    }
+
+    /// The board checked as it now is, off the router's queue; a check overtaken by the next one is dropped
+    private func check() async {
+        checks += 1
+        let serial = checks
+        guard let drc = await engine.run({ $0.designRulesCheck() }) else { return }
+        let report = await Task.detached(priority: .utility) { drc.report() }.value
+        if serial == checks { quickDRC = report }
     }
 
     /// Once the changes made so far have gone to the board (a track stopped among them)
@@ -110,17 +129,21 @@ final class PCBEditing: ObservableObject {
     /// routed on it (which carries over onto the board as it then is)
     func boardChanged(_ board: KiCadBoard, project: [String: Any]?) {
         guard isReady, !isRouting else { return }
-        Task { layers = await engine.load(board, project: project) }
+        Task { await take(board, project: project) }
     }
 
     /// The board's rules changed (its net classes): the router takes them
     func rulesChanged(_ project: [String: Any]) {
         guard isReady else { return }
-        Task { layers = await engine.reload(project: project) }
+        Task {
+            layers = await engine.reload(project: project)
+            await check()
+        }
     }
 
     func close() {
         engine.close()
+        quickDRC = nil
         isReady = false
         isRouting = false
         preview = nil
@@ -639,7 +662,7 @@ final class PCBEditing: ObservableObject {
         guard let controller, !isRouting else { return }
         await applying?.value
         if let (board, project) = await controller.fillZones() {
-            layers = await engine.load(board, project: project)
+            await take(board, project: project)
         }
     }
 
@@ -787,10 +810,10 @@ final class PCBEditing: ObservableObject {
         applying = Task {
             await previous?.value
             if let board = await controller.boardEdited(after, from: before, name: name) {
-                layers = await engine.load(board.board, project: board.project)
+                await take(board.board, project: board.project)
             } else {
                 // the board could not take it: back to the board as it was
-                if let (board, project) = await controller.boardForEditing() { layers = await engine.load(board, project: project) }
+                if let (board, project) = await controller.boardForEditing() { await take(board, project: project) }
                 undoStack.removeAll { $0.after === after || $0.before === after }
                 redoStack.removeAll { $0.after === after || $0.before === after }
                 updateNames()

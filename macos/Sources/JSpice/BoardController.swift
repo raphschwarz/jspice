@@ -582,6 +582,8 @@ final class BoardController: ObservableObject {
             }
             picture = made
             failure = nil
+            // (KiCad's check was of the board as it was; JSpice's own goes on checking it as it changes)
+            drc = nil
             var lines = [name + (live == nil ? "" : " in KiCad's PCB editor")]
             if live == .reloaded { lines.append("KiCad's PCB editor read the board again from its file") }
             log = (lines.reversed().map { LogEntry(date: now, text: $0) } + log).prefix(60).map { $0 }

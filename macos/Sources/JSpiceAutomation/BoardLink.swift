@@ -2,6 +2,7 @@ import Foundation
 import CircuitKit
 import KiCadKit
 import KiCadLink
+import KiCadRouter
 
 /// Where a circuit's board is changed when something else holds it too: an app window's own link to its board, through
 /// which a session driving that window changes the board, so that the two never change it at once
@@ -328,6 +329,14 @@ public final class BoardLink {
     /// KiCad's design rules check of the board (saved first, if the editor has it)
     public func drc() throws -> KiCadFabrication.DRCReport {
         try KiCadFabrication(installation: kicad()).drc(saved())
+    }
+
+    /// JSpice's own design rules check of the board as its file has it (KiCad's checks of copper clearances, track
+    /// widths, holes and annular rings, the board's edges, dangling tracks and vias and connections still to make,
+    /// brought over from KiCad: BoardDRC.checksMade), in a moment and without KiCad; its zones as they were filled
+    public func quickDRC() throws -> KiCadFabrication.DRCReport {
+        guard exists else { throw Failure.noBoard }
+        return BoardDRC(board: try KiCadBoard.read(boardFile), project: projectSettings()).report()
     }
 
     /// A picture of the board as made, from above or below (KiCad's 3D view, ray traced)

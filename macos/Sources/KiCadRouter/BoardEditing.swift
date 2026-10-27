@@ -111,6 +111,10 @@ public final class BoardEditing {
         router = BoardRouter(board: base.copy(), project: project)
     }
 
+    /// JSpice's own design rules check of the board as the last change left it (BoardDRC: KiCad's checks of copper,
+    /// widths, holes, the board's edges and connections), ready to run (on a copy of the board, anywhere)
+    public func designRulesCheck() -> BoardDRC { BoardDRC(board: base.copy(), project: project) }
+
     /// The board read anew (changed elsewhere: in KiCad, or by the schematic's update); a track being routed is
     /// dropped. `project` nil keeps the project's settings as they were.
     public func load(_ board: KiCadBoard, project: [String: Any]? = nil) {
