@@ -40,7 +40,7 @@ flags="-std=c++20 -O1 -DNDEBUG -DUSINGZ -DFMT_HEADER_ONLY -I$work/generated -I$s
     -I$src/libs/kiplatform/include -I$src/include -I$src/common -I$src/pcbnew -I$src/pcbnew/router
     -I$src/thirdparty/clipper2/Clipper2Lib/include -I$src/thirdparty/rtree -I$src/thirdparty/nlohmann_json
     -I$src/thirdparty/dynamic_bitset -I$src/thirdparty/magic_enum -I$src/thirdparty/fmt/include
-    -I$src/thirdparty/expected/include -I$src/thirdparty/thread-pool $(wx-config --cxxflags)"
+    -I$src/thirdparty/expected/include -I$src/thirdparty/thread-pool -I$src/thirdparty/delaunator $(wx-config --cxxflags)"
 
 # Changes made to KiCad's sources here (patch.py says what and why): ties between obstacles broken by the order
 # the items were made in, not their addresses, and a node's items as a branch copies them and the joints virtual
@@ -56,6 +56,7 @@ python3 "$here/patch.py" "$src"
 sources=$(
     ls "$src"/libs/kimath/src/*.cpp "$src"/libs/kimath/src/geometry/*.cpp "$src"/libs/kimath/src/math/*.cpp
     ls "$src"/thirdparty/clipper2/Clipper2Lib/src/*.cpp
+    ls "$src"/thirdparty/delaunator/delaunator.cpp
     ls "$src"/pcbnew/router/pns_*.cpp "$src"/pcbnew/router/time_limit.cpp | grep -v "pns_kicad_iface\|pns_tool_base"
     for f in advanced_config gal/color4d kiid eda_units origin_transforms thread_pool json_conversions locale_io \
              config_params trace_helpers settings/json_settings settings/nested_settings settings/parameters \

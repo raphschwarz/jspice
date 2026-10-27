@@ -17,7 +17,8 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   lengths and resizing, `rescale`, segment distances, intersections and collisions, `DIRECTION_45` and the traces it
   starts, line chain simplification, splitting, intersections, inside tests and collisions, shape against shape
   collisions with their distances, and the router's hulls (`BuildHullForPrimitiveShape`) and where paths cross them
-  (`HullIntersection`). `GeometryTests.swift` checks the port gives the same answers, to the nanometre.
+  (`HullIntersection`), and points triangulated as the ratsnest triangulates a net's anchors (`delaunator`: its
+  triangles and half edges). `GeometryTests.swift` checks the port gives the same answers, to the nanometre.
   Also the line walkarounds (`LINE::Walkaround`) the router's walkaround mode is made of; arcs (`SHAPE_ARC`: their
   centres, angles, boxes, polylines, hulls, and collisions with every shape either way round, asked how close or
   not); pads' shapes as KiCad makes them polygons (rectangles with rounded or cut corners, trapezoids, circles,

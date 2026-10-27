@@ -274,6 +274,23 @@ final class GeometryTests: XCTestCase {
         report(m, "triangulations", of: all.count)
     }
 
+    /// Points triangulated as KiCad's ratsnest triangulates a net's anchors (KiCad's delaunator): the same triangles,
+    /// in the same order, and the same half edges, or no triangulation where KiCad finds none
+    func testDelaunay() throws {
+        let m = Mismatches(), all = cases("delaunay")
+        // (fixtures made before triangulations of points were checked have none)
+        if all.isEmpty { throw XCTSkip("no Delaunay cases") }
+        for c in all {
+            let ps = points(c["points"])
+            let d = try? Delaunator(x: ps.map { Double($0.x) }, y: ps.map { Double($0.y) })
+            m.check(d == nil, c["error"] != nil, "no triangulation", c)
+            guard let d, c["error"] == nil else { continue }
+            m.check(d.triangles, (c["triangles"] as! [Any]).map(int), "triangles", c)
+            m.check(d.halfedges, (c["halfedges"] as! [Any]).map(int), "half edges", c)
+        }
+        report(m, "Delaunay triangulations", of: all.count)
+    }
+
     /// Polygon sets cut into triangles as KiCad cuts a keepout zone's outline for its router (SHAPE_POLY_SET::
     /// CacheTriangulation( false )), and what Simplify and Fracture make of them on the way, the fractured outlines
     /// split where they touch themselves: each polygon's points, in order, and each triangulated polygon's

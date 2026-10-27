@@ -4,6 +4,7 @@
 //
 // This program links KiCad's code: GNU General Public License version 3 or later, as KiCad.
 
+#include <delaunator.hpp>
 #include <convert_basic_shapes_to_polygon.h>
 #include <geometry/direction45.h>
 #include <geometry/polygon_triangulation.h>
@@ -2062,6 +2063,57 @@ int main( int argc, char** argv )
     }
 
     out["polySets"] = polySets;
+
+    // points triangulated as KiCad's ratsnest triangulates a net's anchors (delaunator::Delaunator on their
+    // coordinates as doubles): on a coarse grid (many in a line, or in one place), on a fine one, or anywhere
+    json delaunay = json::array();
+
+    for( int i = 0; i < n; i++ )
+    {
+        int                 count = uniform( 3, chance( 20 ) ? 300 : 40 );
+        int                 grid = chance( 30 ) ? 1270000 : chance( 50 ) ? 50000 : 1;
+        int                 span = uniform( 2, 60 );
+        std::vector<double> coords;
+        json                pts = json::array();
+
+        for( int k = 0; k < count; k++ )
+        {
+            VECTOR2I p( uniform( -span, span ) * grid, uniform( -span, span ) * grid );
+
+            // (now and then one where an earlier one is)
+            if( k > 0 && chance( 10 ) )
+                p = VECTOR2I( (int) coords[2 * uniform( 0, k - 1 )], (int) coords[2 * uniform( 0, k - 1 ) + 1] );
+
+            coords.push_back( p.x );
+            coords.push_back( p.y );
+            pts.push_back( pt( p ) );
+        }
+
+        json j = { { "points", pts } };
+
+        try
+        {
+            delaunator::Delaunator d( coords );
+            json tris = json::array(), halves = json::array();
+
+            for( size_t t : d.triangles )
+                tris.push_back( (long long) t );
+
+            for( size_t h : d.halfedges )
+                halves.push_back( h == delaunator::INVALID_INDEX ? -1LL : (long long) h );
+
+            j["triangles"] = tris;
+            j["halfedges"] = halves;
+        }
+        catch( const std::runtime_error& )
+        {
+            j["error"] = true;
+        }
+
+        delaunay.push_back( j );
+    }
+
+    out["delaunay"] = delaunay;
 
     std::cout << out.dump() << std::endl;
     return 0;
