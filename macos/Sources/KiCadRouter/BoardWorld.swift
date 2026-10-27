@@ -954,10 +954,16 @@ public struct BoardWorld {
         let ls = copper(layerNames(node))
         w.layers = LayerRange(ls.first ?? 0, ls.last ?? 0)
         w.zoneLayers = ls
-        // the outline as KiCad's parser reads it: each polygon's points (one the same as the one before it left out;
-        // an arc as a polyline a micrometre from it at most, a fifth of the usual for display, as SHAPE_LINE_CHAIN's
-        // Append of an arc makes it, its first point left out if it is the one before it), closed,
-        // the first polygon the outline and the others holes in it (ZONE::AddPolygon)
+        w.polygons = Self.zoneOutline(node).polygons
+        w.source = node.value("uuid")
+        items.append(w)
+    }
+
+    /// A zone's outline as KiCad's parser reads it: each polygon's points (one the same as the one before it left out;
+    /// an arc as a polyline a micrometre from it at most, a fifth of the usual for display, as SHAPE_LINE_CHAIN's
+    /// Append of an arc makes it, its first point left out if it is the one before it), closed, the first polygon the
+    /// outline and the others holes in it (ZONE::AddPolygon)
+    static func zoneOutline(_ node: SExpr) -> PolySet {
         var outline = PolySet()
         for poly in node.all("polygon") {
             let pts = poly["pts"]?.arguments ?? []
@@ -979,9 +985,7 @@ public struct BoardWorld {
                 outline.addHole(chain)
             }
         }
-        w.polygons = outline.polygons
-        w.source = node.value("uuid")
-        items.append(w)
+        return outline
     }
 
     // MARK: - Tracks and vias (syncTrack, syncVia)

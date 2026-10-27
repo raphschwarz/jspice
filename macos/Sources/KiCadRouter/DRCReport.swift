@@ -5,12 +5,12 @@ import KiCadKit
 extension BoardDRC: @unchecked Sendable {}
 
 extension BoardDRC {
-    /// The checks BoardDRC makes, by KiCad's keys: the rest of KiCad's (silkscreen, solder mask, courtyards, keepouts,
+    /// The checks BoardDRC makes, by KiCad's keys: the rest of KiCad's (silkscreen, solder mask, courtyards,
     /// zones' own checks, the schematic's) it leaves to kicad-cli
     public static let checksMade: [String] = [
         "track_width", "via_diameter", "drill_out_of_range", "microvia_drill_out_of_range", "annular_width", "hole_to_hole",
         "holes_co_located", "clearance", "hole_clearance", "shorting_items", "tracks_crossing", "copper_edge_clearance",
-        "track_dangling", "via_dangling", "unconnected_items",
+        "track_dangling", "via_dangling", "unconnected_items", "items_not_allowed",
     ]
 
     /// The check as KiCad's report gives it: the violations, and the connections still to make apart, each item
@@ -73,6 +73,9 @@ extension BoardDRC {
         for (i, fp) in board.root.all("footprint").enumerated() {
             let placement = BoardWorld.FootprintPlacement(fp)
             let reference = placement.reference
+            if let uuid = fp.value("uuid") {
+                out[uuid] = ("Footprint \(reference.isEmpty ? "<no reference designator>" : reference)", mm(placement.position))
+            }
             for (j, node) in fp.all("pad").enumerated() {
                 guard let uuid = node.value("uuid") else { continue }
                 let p = footprints[i].pads[j]

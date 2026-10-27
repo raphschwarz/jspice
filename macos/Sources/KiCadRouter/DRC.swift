@@ -94,7 +94,7 @@ public struct BoardDRC {
         "clearance": "Clearance violation", "hole_clearance": "Hole clearance violation", "shorting_items": "Items shorting two nets",
         "tracks_crossing": "Tracks crossing", "copper_edge_clearance": "Board edge clearance violation",
         "track_dangling": "Track has unconnected end", "via_dangling": "Via is not connected or connected on only one layer",
-        "unconnected_items": "Missing connection between items",
+        "unconnected_items": "Missing connection between items", "items_not_allowed": "Items not allowed",
     ]
 
     /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT; its EXTENDED_ERROR_LIMIT for
@@ -264,6 +264,7 @@ public struct BoardDRC {
         let connectivity = buildConnectivity(copper)
         checkCopperClearances(&out, copper)
         checkEdgeClearances(&out, copper)
+        checkKeepouts(&out, copper)
         checkConnectivity(&out, copper, connectivity)
         return out.violations
     }
