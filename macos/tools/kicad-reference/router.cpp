@@ -725,7 +725,14 @@ public:
 
                 item = seg.get();
                 m_resolver.m_info[item] = info;
-                aWorld->Add( std::move( seg ), true );
+
+                // (a track with both ends in one place is refused, and freed: nothing of it kept, where another item
+                // could be made in its memory and taken for it)
+                if( !aWorld->Add( std::move( seg ), true ) )
+                {
+                    m_resolver.m_info.erase( item );
+                    item = nullptr;
+                }
             }
             else if( kind == "via" )
             {
