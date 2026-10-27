@@ -7,12 +7,12 @@ import KiCadKit
 /// (NAME.drc, its report, next to NAME.kicad_pcb), and BoardDRC, checking the same board itself, must find the same
 /// violations of the checks it makes: of the same kind, between the same items, in the same words (its rule and the
 /// actual value, to KiCad's digits). KICAD_BOARD_REFERENCE names a folder of such boards; with none,
-/// Fixtures/boards and Fixtures/courtyards (courtyards drawn malformed in their many ways, some out at the coordinates'
-/// limits).
+/// Fixtures/boards, Fixtures/courtyards (courtyards drawn malformed in their many ways, some out at the coordinates'
+/// limits) and Fixtures/outlines (boards' outlines drawn malformed in theirs).
 final class DRCTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards", "courtyards", "thermals"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
+        return ["boards", "courtyards", "outlines", "thermals"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
     }
 
     /// The checks BoardDRC makes
@@ -21,7 +21,8 @@ final class DRCTests: XCTestCase {
                                        "shorting_items", "tracks_crossing", "copper_edge_clearance", "track_dangling",
                                        "via_dangling", "unconnected_items", "items_not_allowed",
                                        "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard",
-                                       "npth_inside_courtyard", "solder_mask_bridge", "isolated_copper", "starved_thermal"]
+                                       "npth_inside_courtyard", "solder_mask_bridge", "isolated_copper", "starved_thermal",
+                                       "invalid_outline"]
 
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
@@ -34,6 +35,12 @@ final class DRCTests: XCTestCase {
             let reportURL = file.deletingPathExtension().appendingPathExtension("drc")
             guard let data = try? Data(contentsOf: reportURL) else { continue }
             var report = try KiCadFabrication.parseDRC(data)
+            // (the board itself, which KiCad gives a new uuid each time it reads it, by the port's uuid for it)
+            for (i, v) in report.violations.enumerated() {
+                for (j, item) in v.items.enumerated() where item.description == "PCB" {
+                    report.violations[i].items[j].uuid = BoardDRC.boardUUID
+                }
+            }
             let pro = file.deletingPathExtension().appendingPathExtension("kicad_pro")
             let drc = BoardDRC(board: try KiCadBoard.read(file), projectURL: FileManager.default.fileExists(atPath: pro.path) ? pro : nil)
             boards += 1

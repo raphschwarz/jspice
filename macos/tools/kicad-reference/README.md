@@ -161,6 +161,11 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   and other outlines inside them, across them or beside them; every other arc's ends then swapped in the file, as
   other tools may write them). `Tests/KiCadRouterTests/Fixtures/courtyards` holds `drawn` (`--draw`) and `random`
   (`--random ... 60 20261104`), and the boards of `Fixtures/boards` have theirs too.
+- `outlines.py`: boards whose outlines take KiCad's outline check (`invalid_outline`) down its ways (`outlines.py
+  OUT`): no edges, drawings too small to see, outlines crossing, chains open, branching or doubling back, arcs,
+  circles, curves, rounded rectangles and polygons, some filled, footprints' outlines that are holes in the board's
+  and those that are not, each board with kicad-cli's report next to it (`drc.py`'s), no project of its own.
+  `Tests/KiCadRouterTests/Fixtures/outlines` holds them, which `DRCTests` checks.
 - `thermals.py`: a board of thermal reliefs for `DRCTests`' starved thermals (`thermals.py OUT.kicad_pcb [SEED]`):
   pads of a zone's net in its fill (filled by KiCad's zone filler), their spokes cut off by tracks of other nets and
   the board's edge, the board asking three spokes of each; pads joined solidly or not at all by the pad or its

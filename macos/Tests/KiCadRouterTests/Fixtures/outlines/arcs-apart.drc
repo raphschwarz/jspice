@@ -1,0 +1,59 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "arcs-apart.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (not a closed shape) (gap 3.4806 mm)",
+   "items": [
+    {
+     "description": "Arc on Edge.Cuts",
+     "pos": {
+      "x": 105.0,
+      "y": 50.0
+     },
+     "uuid": "9d514c92-953a-42b5-9760-75c19c09918a"
+    },
+    {
+     "description": "Arc on Edge.Cuts",
+     "pos": {
+      "x": 117.0,
+      "y": 53.0
+     },
+     "uuid": "2f0936e3-20d6-4c75-b461-21095fc51978"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  }
+ ]
+}

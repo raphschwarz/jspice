@@ -1,0 +1,82 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "fp-arcs.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (not a closed shape)",
+   "items": [
+    {
+     "description": "Arc of U1 on Edge.Cuts",
+     "pos": {
+      "x": 120.002061,
+      "y": 64.995581
+     },
+     "uuid": "092f6f93-79a3-4363-bb24-7f72ad227440"
+    },
+    {
+     "description": "Arc of U1 on Edge.Cuts",
+     "pos": {
+      "x": 120.0,
+      "y": 65.0
+     },
+     "uuid": "19bbd1e0-9ff3-40dd-aaa4-33836a9b769a"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Silkscreen clipped by solder mask",
+   "items": [
+    {
+     "description": "Reference field of U1",
+     "pos": {
+      "x": 120.0,
+      "y": 65.0
+     },
+     "uuid": "ecd2f21f-ced6-4f79-84c8-c6eb3226cb9e"
+    },
+    {
+     "description": "Pad 1 [<no net>] of U1 on F.Cu",
+     "pos": {
+      "x": 120.0,
+      "y": 65.0
+     },
+     "uuid": "9153f6b1-a698-4ace-9078-cdba0707ea6c"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_over_copper"
+  }
+ ]
+}

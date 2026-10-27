@@ -1,0 +1,82 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "fp-two-open.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (not a closed shape)",
+   "items": [
+    {
+     "description": "Segment of U1 on Edge.Cuts",
+     "pos": {
+      "x": 108.0,
+      "y": 58.0
+     },
+     "uuid": "242d6121-8126-4f8d-b662-e4aef39ed7a8"
+    },
+    {
+     "description": "Segment of U1 on Edge.Cuts",
+     "pos": {
+      "x": 112.0,
+      "y": 58.0
+     },
+     "uuid": "dd6aa568-99d0-4625-91fd-7d0a73c0938d"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Board has malformed outline (not a closed shape) (gap 3.9000 mm)",
+   "items": [
+    {
+     "description": "Segment of U2 on Edge.Cuts",
+     "pos": {
+      "x": 132.0,
+      "y": 68.0
+     },
+     "uuid": "a4ce3a46-da4f-4646-a65d-b6516371ccee"
+    },
+    {
+     "description": "Segment of U2 on Edge.Cuts",
+     "pos": {
+      "x": 128.0,
+      "y": 72.0
+     },
+     "uuid": "02887a02-8b76-4e57-a212-26138f48c18b"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  }
+ ]
+}
