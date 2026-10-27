@@ -47,6 +47,8 @@ public struct BoardDRC {
         public var maxError = 5000
         /// GetDRCEpsilon: half a micron
         public var epsilon = 500
+        /// The solder mask's least distance to copper (solder_mask_to_copper_clearance)
+        public var solderMaskToCopperClearance = 0
         /// Each check's severity by its key ("error", "warning" or "ignore")
         public var severities: [String: String] = BoardDRC.defaultSeverities
 
@@ -59,6 +61,7 @@ public struct BoardDRC {
                 if let v = (rules[key] as? NSNumber)?.doubleValue { value = BoardWorld.iuScaled(v) }
             }
             mm("min_clearance", &minClearance)
+            mm("solder_mask_to_copper_clearance", &solderMaskToCopperClearance)
             mm("min_track_width", &minTrackWidth)
             mm("min_via_annular_width", &minViaAnnularWidth)
             mm("min_via_diameter", &minViaDiameter)
@@ -98,6 +101,7 @@ public struct BoardDRC {
         "courtyards_overlap": "Courtyards overlap", "missing_courtyard": "Footprint has no courtyard defined",
         "malformed_courtyard": "Footprint has malformed courtyard", "pth_inside_courtyard": "PTH inside courtyard",
         "npth_inside_courtyard": "NPTH inside courtyard",
+        "solder_mask_bridge": "Front solder mask aperture bridges items with different nets",
     ]
 
     /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT; its EXTENDED_ERROR_LIMIT for
@@ -254,7 +258,10 @@ public struct BoardDRC {
     // MARK: - Running the checks
 
     /// The violations KiCad's DRC would find, those of each check in the order KiCad's finds them
-    public func run() -> [DRCViolation] {
+    public func run() -> [DRCViolation] { runReport().violations }
+
+    /// The check's report, with what it found that KiCad may or may not (`unsure`)
+    func runReport() -> Report {
         var out = Report(settings: settings)
         checkTrackWidths(&out)
         checkViaDiameters(&out)
@@ -269,8 +276,9 @@ public struct BoardDRC {
         checkEdgeClearances(&out, copper)
         checkKeepouts(&out, copper)
         checkCourtyards(&out, copper)
+        checkSolderMask(&out, copper)
         checkConnectivity(&out, copper, connectivity)
-        return out.violations
+        return out
     }
 
     /// The violations found so far, each check's up to KiCad's limit, those of checks set to be ignored left out
@@ -278,10 +286,22 @@ public struct BoardDRC {
     struct Report {
         let settings: Settings
         var violations: [DRCViolation] = []
+        /// The items of violations KiCad may or may not find, by the order its threads happen to meet them in (a
+        /// solder mask bridge of a footprint allowing them tried one way round and not the other, or an aperture
+        /// claimed by the first net to reach it): each a set of uuids, a violation with all of them unsure
+        var unsure: [Set<String>] = []
         var counts: [String: Int] = [:]
 
         /// IsErrorLimitExceeded: whether as many of a check have been found as KiCad reports
         func exceeded(_ type: String) -> Bool { counts[type, default: 0] >= BoardDRC.errorLimit(type) }
+
+        /// A violation reported in words of its own (DRC_ITEM::SetErrorMessage)
+        mutating func addMessage(_ type: String, _ message: String, _ items: [String]) {
+            let severity = settings.severity(type)
+            guard severity != "ignore", counts[type, default: 0] < BoardDRC.errorLimit(type) else { return }
+            counts[type, default: 0] += 1
+            violations.append(DRCViolation(type: type, severity: severity, description: message, items: items))
+        }
 
         mutating func add(_ type: String, _ detail: String?, _ items: [String]) {
             let severity = settings.severity(type)

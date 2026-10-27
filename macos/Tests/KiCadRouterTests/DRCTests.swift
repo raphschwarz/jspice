@@ -21,12 +21,12 @@ final class DRCTests: XCTestCase {
                                        "shorting_items", "tracks_crossing", "copper_edge_clearance", "track_dangling",
                                        "via_dangling", "unconnected_items", "items_not_allowed",
                                        "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard",
-                                       "npth_inside_courtyard"]
+                                       "npth_inside_courtyard", "solder_mask_bridge"]
 
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }
-        var boards = 0, found = 0, exactUnconnected = 0, descriptions = 0, ambiguousBoards = 0
+        var boards = 0, found = 0, exactUnconnected = 0, descriptions = 0, ambiguousBoards = 0, unsureMask = 0
         var differences: [String] = []
         var byType: [String: Int] = [:]
         var all: [String] = []
@@ -38,10 +38,12 @@ final class DRCTests: XCTestCase {
             let drc = BoardDRC(board: try KiCadBoard.read(file), projectURL: FileManager.default.fileExists(atPath: pro.path) ? pro : nil)
             boards += 1
             let name = file.deletingPathExtension().lastPathComponent
+            // (a solder mask bridge's items in no order: KiCad's threads decide which of two it tries first)
             func key(_ type: String, _ severity: String, _ description: String, _ items: [String]) -> String {
-                "\(type) [\(severity)] \(description) \(items.joined(separator: " "))"
+                "\(type) [\(severity)] \(description) \((type == "solder_mask_bridge" ? items.sorted() : items).joined(separator: " "))"
             }
-            var ourViolations = drc.run()
+            let ourReport = drc.runReport()
+            var ourViolations = ourReport.violations
             // (a check KiCad stopped at its limit of: which it found first goes by its threads, so only that the port
             // stops at the limit too)
             var capped: Set<String> = []
@@ -58,6 +60,13 @@ final class DRCTests: XCTestCase {
             if capped.contains("shorting_items") || capped.contains("clearance") || capped.contains("hole_clearance") {
                 capped.formUnion(["clearance", "shorting_items", "hole_clearance", "tracks_crossing"])
             }
+            // (solder mask bridges KiCad's threads may or may not find, by which way round they try a pair first:
+            // left out of both, and counted)
+            func maskUnsure(_ items: [String]) -> Bool { ourReport.unsure.contains { $0.isSubset(of: items) } }
+            let unsureBefore = report.violations.count + ourViolations.count
+            report.violations.removeAll { $0.type == "solder_mask_bridge" && maskUnsure($0.items.map(\.uuid)) }
+            ourViolations.removeAll { $0.type == "solder_mask_bridge" && maskUnsure($0.items) }
+            unsureMask += unsureBefore - report.violations.count - ourViolations.count
             // (items KiCad may or may not join, by where they are in its memory (two arcs touching one way round
             // and not the other): what is dangling and what is still to connect about them is left out, and counted)
             let cnAll = drc.buildConnectivity(drc.makeCopper())
@@ -172,7 +181,8 @@ final class DRCTests: XCTestCase {
         print("DRCTests: \(boards) boards, \(found) violations of the checks made: "
               + byType.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
               + " (\(exactUnconnected) of the missing connections between the same items as KiCad's)"
-              + (ambiguousBoards > 0 ? "; \(ambiguousBoards) boards with arcs KiCad may join or not, their connections not compared" : ""))
+              + (ambiguousBoards > 0 ? "; \(ambiguousBoards) boards with arcs KiCad may join or not, their connections not compared" : "")
+              + (unsureMask > 0 ? "; \(unsureMask) solder mask bridges KiCad may find or not left out" : ""))
         XCTAssertGreaterThan(boards, 0)
         XCTAssert(differences.isEmpty, "\(differences.count) differences from KiCad's DRC:\n" + differences.prefix(30).joined(separator: "\n"))
     }
