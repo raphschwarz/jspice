@@ -779,12 +779,7 @@ public struct BoardWorld {
         case "circle":
             d = Drawing(kind: .circle, start: Self.point(node["center"]), end: Self.point(node["end"]))
         case "arc":
-            // SetArcGeometry: the centre through the three points, the ends swapped if they run the other way
-            let s = Self.point(node["start"]), m = Self.point(node["mid"]), e = Self.point(node["end"])
-            d = Drawing(kind: .arc, start: s, end: e, center: KiMath.arcCenter(s, m, e))
-            let newMid = KiMath.rotate(d.start, around: d.center, -d.arcAngle / 2.0)
-            let dist = DPoint(newMid - m), dist2 = DPoint(newMid - d.center)
-            if dist.squaredNorm > dist2.squaredNorm { swap(&d.start, &d.end) }
+            d = Self.arcDrawing(Self.point(node["start"]), Self.point(node["mid"]), Self.point(node["end"]))
         case "poly":
             let pts = node["pts"]?.arguments ?? []
             d = Drawing(kind: .poly, poly: pts.filter { $0.head == "xy" }.map(Self.point))
@@ -828,6 +823,16 @@ public struct BoardWorld {
             d.center += placement.position
             d.poly = d.poly.map { $0 + placement.position }
         }
+        return d
+    }
+
+    /// An arc drawn through three points (EDA_SHAPE::SetArcGeometry: the centre through the three points, the ends
+    /// swapped if they run the other way)
+    static func arcDrawing(_ s: IPoint, _ m: IPoint, _ e: IPoint) -> Drawing {
+        var d = Drawing(kind: .arc, start: s, end: e, center: KiMath.arcCenter(s, m, e))
+        let newMid = KiMath.rotate(d.start, around: d.center, -d.arcAngle / 2.0)
+        let dist = DPoint(newMid - m), dist2 = DPoint(newMid - d.center)
+        if dist.squaredNorm > dist2.squaredNorm { swap(&d.start, &d.end) }
         return d
     }
 

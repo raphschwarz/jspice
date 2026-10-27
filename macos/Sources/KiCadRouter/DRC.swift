@@ -92,7 +92,7 @@ public struct BoardDRC {
         "drill_out_of_range": "Hole size out of range", "microvia_drill_out_of_range": "Micro via hole size out of range",
         "hole_to_hole": "Drilled hole too close to other hole", "holes_co_located": "Drilled holes co-located",
         "clearance": "Clearance violation", "hole_clearance": "Hole clearance violation", "shorting_items": "Items shorting two nets",
-        "tracks_crossing": "Tracks crossing",
+        "tracks_crossing": "Tracks crossing", "copper_edge_clearance": "Board edge clearance violation",
     ]
 
     /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT; its EXTENDED_ERROR_LIMIT for
@@ -220,7 +220,9 @@ public struct BoardDRC {
         checkHoleSizes(&out)
         checkAnnularWidths(&out)
         checkHolesToHoles(&out)
-        checkCopperClearances(&out)
+        let copper = makeCopper()
+        checkCopperClearances(&out, copper)
+        checkEdgeClearances(&out, copper)
         return out.violations
     }
 

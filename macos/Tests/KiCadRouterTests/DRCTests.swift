@@ -17,7 +17,7 @@ final class DRCTests: XCTestCase {
     /// The checks BoardDRC makes
     static let checked: Set<String> = ["track_width", "via_diameter", "drill_out_of_range", "microvia_drill_out_of_range",
                                        "annular_width", "hole_to_hole", "holes_co_located", "clearance", "hole_clearance",
-                                       "shorting_items", "tracks_crossing"]
+                                       "shorting_items", "tracks_crossing", "copper_edge_clearance"]
 
     func testViolationsAsKiCadFindsThem() throws {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }

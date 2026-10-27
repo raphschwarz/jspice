@@ -52,6 +52,8 @@ extension BoardDRC {
         var bbox = IBox(minX: 0, minY: 0, maxX: 0, maxY: 0)
         /// A pad's shape on a layer it is not on (PAD::GetEffectiveShape asked of any layer: its outline)
         var outline: [Shape] = []
+        /// A castellated pad (PAD_PROP::CASTELLATED)
+        var castellated = false
 
         init(kind: Kind, uuid: String) { (self.kind, self.uuid) = (kind, uuid) }
 
@@ -257,6 +259,7 @@ extension BoardDRC {
         case .smd, .conn: item.layers = lmsk.first.map { [$0] } ?? []
         }
         item.copper = world.isOnCopper(p.pad, lmsk)
+        item.castellated = node["property"]?.arguments.contains { $0.text == "pad_prop_castellated" } == true
         item.flashed = Set(item.layers.filter { world.flash(p.pad, lmsk, $0) })
         if p.hasHole { item.hole = world.holeShape(p.pad) }
         if let o = world.clearanceOverride(node, fp) {
@@ -482,8 +485,7 @@ extension BoardDRC {
 
     // MARK: - The checks (DRC_TEST_PROVIDER_COPPER_CLEARANCE)
 
-    func checkCopperClearances(_ out: inout Report) {
-        let c = makeCopper()
+    func checkCopperClearances(_ out: inout Report, _ c: Copper) {
         guard c.maxClearance > 0 else { return }
         let rules = clearanceRules(c.items + c.zones)
         let epsilon = settings.epsilon
