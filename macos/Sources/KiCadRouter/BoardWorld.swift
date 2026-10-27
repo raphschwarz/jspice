@@ -482,8 +482,9 @@ public struct BoardWorld {
     /// its primitives merged into one polygon (PAD::MergePrimitivesAsPolygon), turned and moved with the pad, grown by
     /// the board's maximum error with round corners and fractured (PAD::TransformShapeToPolygon); nil if a primitive
     /// is one the port cannot make a polygon of yet (a curve, an outlined rectangle with round corners, an arc in
-    /// the old format)
-    func customPolygon(_ primitives: [SExpr], _ p: Pad) -> PolySet? {
+    /// the old format). With the error inside, its polygon as PAD::TransformShapeToPolygon makes it so: merged, turned
+    /// and moved, not grown.
+    func customPolygon(_ primitives: [SExpr], _ p: Pad, errorLocation: ErrorLocation = .outside) -> PolySet? {
         let maxError = rules.maxError
         var merged = PolySet()
         if p.anchorRect {
@@ -491,11 +492,11 @@ public struct BoardWorld {
                                          IPoint(-p.size.x / 2 + p.size.x, -p.size.y / 2 + p.size.y),
                                          IPoint(-p.size.x / 2, -p.size.y / 2 + p.size.y)], closed: true))
         } else {
-            merged.append(PolySet([[PadPolygon.circle(center: .zero, radius: p.size.x / 2, maxError: maxError, errorLocation: .outside)]]))
+            merged.append(PolySet([[PadPolygon.circle(center: .zero, radius: p.size.x / 2, maxError: maxError, errorLocation: errorLocation)]]))
         }
         var pieces = PolySet()
         for prim in primitives {
-            guard let piece = Self.primitivePolygon(prim, maxError: maxError, errorLocation: .outside) else { return nil }
+            guard let piece = Self.primitivePolygon(prim, maxError: maxError, errorLocation: errorLocation) else { return nil }
             pieces.append(piece)
         }
         pieces.simplify()
@@ -505,9 +506,43 @@ public struct BoardWorld {
         }
         merged.rotate(p.orientation)
         merged.move(p.shapePos)
-        merged.inflate(maxError, .roundAllCorners, maxError: maxError)
-        merged.fracture()
+        if errorLocation == .outside {
+            merged.inflate(maxError, .roundAllCorners, maxError: maxError)
+            merged.fracture()
+        }
         return merged
+    }
+
+    /// The pad's polygon (PAD::TransformShapeToPolygon, with no clearance), its custom pieces from `primitives`; nil
+    /// for a custom pad with a piece the port cannot make a polygon of yet
+    func padPolygon(_ p: Pad, primitives: [SExpr], errorLocation: ErrorLocation) -> PolySet? {
+        // (at least 16 segments to a circle, for very small pads)
+        let minSegs = 16
+        let maxError = rules.maxError
+        let half = IPoint(p.size.x / 2, p.size.y / 2)
+        switch p.kind {
+        case .circle, .oval:
+            if half.x == half.y || p.kind == .circle {
+                return PolySet([[PadPolygon.circle(center: p.shapePos, radius: half.x, maxError: maxError, errorLocation: errorLocation,
+                                                   minSegCount: minSegs)]])
+            }
+            let hw = min(half.x, half.y)
+            let delta = KiMath.rotate(IPoint(half.x - hw, half.y - hw), p.orientation)
+            return PadPolygon.oval(start: p.shapePos - delta, end: p.shapePos + delta, width: hw * 2, maxError: maxError,
+                                   errorLocation: errorLocation, minSegCount: minSegs)
+        case .rect, .trapezoid:
+            let d = p.kind == .trapezoid ? IPoint(p.delta.x / 2, p.delta.y / 2) : .zero
+            return PolySet([[PadPolygon.trapezoid(position: p.shapePos, size: p.size, rotation: p.orientation, deltaX: d.x, deltaY: d.y,
+                                                  inflate: 0, maxError: maxError, errorLocation: errorLocation)]])
+        case .roundrect, .chamferedRect:
+            let chamfer = p.kind == .chamferedRect
+            return PolySet([[PadPolygon.roundChamferedRect(position: p.shapePos, size: p.size, rotation: p.orientation,
+                                                           cornerRadius: p.cornerRadius, chamferRatio: chamfer ? p.chamferRatio : 0,
+                                                           chamferCorners: chamfer ? p.chamfers : 0, inflate: 0, maxError: maxError,
+                                                           errorLocation: errorLocation)]])
+        case .custom:
+            return customPolygon(primitives, p, errorLocation: errorLocation)
+        }
     }
 
     /// A pad's primitive (a drawing in the pad's own coordinates) as polygons, its line's width round it and its
@@ -992,6 +1027,9 @@ struct NetClasses {
         var diffPairWidth: Int? = nil
         var diffPairGap: Int? = nil
         var diffPairViaGap: Int? = nil
+        /// Its micro vias' diameter and drill
+        var microViaDiameter: Int? = nil
+        var microViaDrill: Int? = nil
     }
 
     /// A net's net class values, each from the most important class that has it, else the default class's
@@ -1004,11 +1042,14 @@ struct NetClasses {
         var diffPairWidth: Int? = nil
         var diffPairGap: Int? = nil
         var diffPairViaGap: Int? = nil
+        var microViaDiameter: Int? = nil
+        var microViaDrill: Int? = nil
     }
 
     var classes: [String: NetClass] = [:]
     var defaultClass = NetClass(name: "Default", priority: Int.max, clearance: 200_000, trackWidth: 200_000, viaDiameter: 600_000,
-                                viaDrill: 300_000, diffPairWidth: 200_000, diffPairGap: 250_000, diffPairViaGap: 250_000)
+                                viaDrill: 300_000, diffPairWidth: 200_000, diffPairGap: 250_000, diffPairViaGap: 250_000,
+                                microViaDiameter: 300_000, microViaDrill: 100_000)
     var assignments: [String: [String]] = [:]
     var patterns: [(pattern: String, netClass: String)] = []
 
@@ -1020,12 +1061,14 @@ struct NetClasses {
             let nc = NetClass(name: name, priority: (c["priority"] as? NSNumber)?.intValue ?? Int.max, clearance: mm("clearance"),
                               trackWidth: mm("track_width"), viaDiameter: mm("via_diameter"), viaDrill: mm("via_drill"),
                               diffPairWidth: mm("diff_pair_width"), diffPairGap: mm("diff_pair_gap"),
-                              diffPairViaGap: mm("diff_pair_via_gap"))
+                              diffPairViaGap: mm("diff_pair_via_gap"), microViaDiameter: mm("microvia_diameter"),
+                              microViaDrill: mm("microvia_drill"))
             if name == "Default" {
                 defaultClass = NetClass(name: name, priority: Int.max, clearance: nc.clearance ?? 200_000,
                                         trackWidth: nc.trackWidth ?? 200_000, viaDiameter: nc.viaDiameter ?? 600_000,
                                         viaDrill: nc.viaDrill ?? 300_000, diffPairWidth: nc.diffPairWidth ?? 200_000,
-                                        diffPairGap: nc.diffPairGap ?? 250_000, diffPairViaGap: nc.diffPairViaGap ?? 250_000)
+                                        diffPairGap: nc.diffPairGap ?? 250_000, diffPairViaGap: nc.diffPairViaGap ?? 250_000,
+                                        microViaDiameter: nc.microViaDiameter ?? 300_000, microViaDrill: nc.microViaDrill ?? 100_000)
             } else {
                 classes[name] = nc
             }
@@ -1045,7 +1088,8 @@ struct NetClasses {
             Effective(name: c.name, clearance: c.clearance ?? d.clearance, trackWidth: c.trackWidth ?? d.trackWidth,
                       viaDiameter: c.viaDiameter ?? d.viaDiameter, viaDrill: c.viaDrill ?? d.viaDrill,
                       diffPairWidth: c.diffPairWidth ?? d.diffPairWidth, diffPairGap: c.diffPairGap ?? d.diffPairGap,
-                      diffPairViaGap: c.diffPairViaGap ?? d.diffPairViaGap)
+                      diffPairViaGap: c.diffPairViaGap ?? d.diffPairViaGap, microViaDiameter: c.microViaDiameter ?? d.microViaDiameter,
+                      microViaDrill: c.microViaDrill ?? d.microViaDrill)
         }
         if net.isEmpty { return whole(d) }
         var resolved: [NetClass] = []
@@ -1067,7 +1111,8 @@ struct NetClasses {
         return Effective(name: resolved.count == 1 ? resolved[0].name : resolved.map(\.name).joined(separator: ","),
                          clearance: first(\.clearance), trackWidth: first(\.trackWidth), viaDiameter: first(\.viaDiameter),
                          viaDrill: first(\.viaDrill), diffPairWidth: first(\.diffPairWidth), diffPairGap: first(\.diffPairGap),
-                         diffPairViaGap: first(\.diffPairViaGap))
+                         diffPairViaGap: first(\.diffPairViaGap), microViaDiameter: first(\.microViaDiameter),
+                         microViaDrill: first(\.microViaDrill))
     }
 
     /// The worst of the classes' clearances

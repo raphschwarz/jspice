@@ -181,6 +181,9 @@ public struct IBox: Hashable, Sendable {
 
     public func contains(_ p: IPoint) -> Bool { p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY }
 
+    /// Whether `b` is within it, its edges too (KiCad's BOX2::Contains of a box)
+    public func contains(_ b: IBox) -> Bool { contains(IPoint(b.minX, b.minY)) && contains(IPoint(b.maxX, b.maxY)) }
+
     public func intersects(_ b: IBox) -> Bool { minX <= b.maxX && b.minX <= maxX && minY <= b.maxY && b.minY <= maxY }
 
     /// The box both boxes cover (KiCad's BOX2::Intersect): an empty box at the origin when they do not overlap

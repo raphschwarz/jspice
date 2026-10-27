@@ -1,0 +1,901 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "random-2-74.kicad_pcb",
+ "unconnected_items": [
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 3 [D12] of U6 on F.Cu",
+     "pos": {
+      "x": 106.066565,
+      "y": 65.722601
+     },
+     "uuid": "ec53149c-9c3f-4e04-88dc-62267a880c94"
+    },
+    {
+     "description": "Track [D12] on B.Cu, length 7.5413 mm",
+     "pos": {
+      "x": 106.066565,
+      "y": 65.722601
+     },
+     "uuid": "2e048bc4-ea2b-4146-84c2-9509dac6cdb8"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [D12] of U5 on F.Cu",
+     "pos": {
+      "x": 113.515852,
+      "y": 64.547844
+     },
+     "uuid": "1e9e1018-2890-4b7a-9dca-fbaa8c33001a"
+    },
+    {
+     "description": "Track [D12] on B.Cu, length 7.5413 mm",
+     "pos": {
+      "x": 106.066565,
+      "y": 65.722601
+     },
+     "uuid": "2e048bc4-ea2b-4146-84c2-9509dac6cdb8"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track [D12] on B.Cu, length 3.9000 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.81325
+     },
+     "uuid": "bf83c45a-54ee-4980-bacc-c67cbdfd378a"
+    },
+    {
+     "description": "Track [D12] on B.Cu, length 7.5413 mm",
+     "pos": {
+      "x": 106.066565,
+      "y": 65.722601
+     },
+     "uuid": "2e048bc4-ea2b-4146-84c2-9509dac6cdb8"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [D7] of U6 on F.Cu",
+     "pos": {
+      "x": 104.366565,
+      "y": 65.722601
+     },
+     "uuid": "13355f6b-4ec1-4b0d-84c1-6c5d507fa64f"
+    },
+    {
+     "description": "Pad 2 [D7] of U5 on F.Cu",
+     "pos": {
+      "x": 111.763054,
+      "y": 65.21367
+     },
+     "uuid": "66a7bc93-f25b-48a9-993f-2e6ff0fada0c"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [D7] of U5 on F.Cu",
+     "pos": {
+      "x": 111.763054,
+      "y": 65.21367
+     },
+     "uuid": "66a7bc93-f25b-48a9-993f-2e6ff0fada0c"
+    },
+    {
+     "description": "Pad 3 [D7] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 64.16325
+     },
+     "uuid": "1856080a-2888-4a91-9b26-448acc172275"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 5 [D7] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 62.86325
+     },
+     "uuid": "566ce147-8162-4573-9561-217bacadd2b8"
+    },
+    {
+     "description": "Track [D7] on F.Cu, length 5.8707 mm",
+     "pos": {
+      "x": 115.821506,
+      "y": 62.21325
+     },
+     "uuid": "9a8c9eff-7a73-4ed3-bbc8-ed9dcd421a39"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 5 [D7] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 62.86325
+     },
+     "uuid": "566ce147-8162-4573-9561-217bacadd2b8"
+    },
+    {
+     "description": "Pad 3 [D7] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 64.16325
+     },
+     "uuid": "1856080a-2888-4a91-9b26-448acc172275"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track [D7] on F.Cu, length 7.2801 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 61.56325
+     },
+     "uuid": "ab98ba07-4f91-4231-88f8-1dcd88c4715b"
+    },
+    {
+     "description": "Pad 10 [D7] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 61.56325
+     },
+     "uuid": "f3ef9346-ac31-45c2-a7bf-905f230f3fee"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 104.366565,
+      "y": 63.522601
+     },
+     "uuid": "b9b2da25-76e6-4d9e-b4fe-8a9d1ea2ea2b"
+    },
+    {
+     "description": "Pad 4 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 106.066565,
+      "y": 63.522601
+     },
+     "uuid": "d72d25a4-5599-458e-abae-431cd7f134e3"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [GND] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 65.46325
+     },
+     "uuid": "3b0d90ca-39a5-41cd-862b-c9223a32aaf9"
+    },
+    {
+     "description": "Pad 14 [GND] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.16325
+     },
+     "uuid": "63452ab1-5684-4745-ae7a-16816663edf5"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 8 [N2] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 60.91325
+     },
+     "uuid": "cdaed6a5-ff9e-4b92-b3b1-6bbd39433cc1"
+    },
+    {
+     "description": "Pad 4 [N2] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 63.51325
+     },
+     "uuid": "498406a9-a2d7-47ad-8de1-3016d60461c2"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 11 [N2] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 62.21325
+     },
+     "uuid": "3f104e81-7042-4386-a6c7-4394d6b2a435"
+    },
+    {
+     "description": "Pad 8 [N2] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 60.91325
+     },
+     "uuid": "cdaed6a5-ff9e-4b92-b3b1-6bbd39433cc1"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  }
+ ],
+ "violations": [
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [D12] on B.Cu, length 3.9000 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.81325
+     },
+     "uuid": "bf83c45a-54ee-4980-bacc-c67cbdfd378a"
+    },
+    {
+     "description": "Pad 9 [<no net>] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 60.91325
+     },
+     "uuid": "7d081ba6-6abb-47cd-81d3-04648f32a51c"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "NPTH pad of U2",
+     "pos": {
+      "x": 117.67086,
+      "y": 60.431415
+     },
+     "uuid": "b2bae52e-3a35-4bae-88f3-8a179d8955c1"
+    },
+    {
+     "description": "Pad 8 [N2] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 60.91325
+     },
+     "uuid": "cdaed6a5-ff9e-4b92-b3b1-6bbd39433cc1"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [D12] on B.Cu, length 3.9000 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.81325
+     },
+     "uuid": "bf83c45a-54ee-4980-bacc-c67cbdfd378a"
+    },
+    {
+     "description": "Pad 10 [D7] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 61.56325
+     },
+     "uuid": "f3ef9346-ac31-45c2-a7bf-905f230f3fee"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "NPTH pad of U2",
+     "pos": {
+      "x": 117.67086,
+      "y": 60.431415
+     },
+     "uuid": "b2bae52e-3a35-4bae-88f3-8a179d8955c1"
+    },
+    {
+     "description": "Pad 7 [<no net>] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 61.56325
+     },
+     "uuid": "91c0a8da-bec5-4b3c-8f36-c92b8d3da720"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [D12] on B.Cu, length 3.9000 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.81325
+     },
+     "uuid": "bf83c45a-54ee-4980-bacc-c67cbdfd378a"
+    },
+    {
+     "description": "Pad 11 [N2] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 62.21325
+     },
+     "uuid": "3f104e81-7042-4386-a6c7-4394d6b2a435"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [D12] on B.Cu, length 3.9000 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.81325
+     },
+     "uuid": "bf83c45a-54ee-4980-bacc-c67cbdfd378a"
+    },
+    {
+     "description": "Pad 12 [<no net>] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 62.86325
+     },
+     "uuid": "f69bd28e-8cf1-46fe-b00e-b09d6fbea45e"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [D12] on B.Cu, length 3.9000 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.81325
+     },
+     "uuid": "bf83c45a-54ee-4980-bacc-c67cbdfd378a"
+    },
+    {
+     "description": "Pad 13 [<no net>] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 63.51325
+     },
+     "uuid": "d20aec22-d459-4bcf-ac67-245edf6a5155"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [D12] on B.Cu, length 3.9000 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.81325
+     },
+     "uuid": "bf83c45a-54ee-4980-bacc-c67cbdfd378a"
+    },
+    {
+     "description": "Pad 14 [GND] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.16325
+     },
+     "uuid": "63452ab1-5684-4745-ae7a-16816663edf5"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [/net3] on B.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 115.821506,
+      "y": 62.21325
+     },
+     "uuid": "2fb7690e-a724-4ee0-8d4e-3fdd867e58ac"
+    },
+    {
+     "description": "Pad 8 [N2] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 60.91325
+     },
+     "uuid": "cdaed6a5-ff9e-4b92-b3b1-6bbd39433cc1"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [/net3] on B.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 115.821506,
+      "y": 62.21325
+     },
+     "uuid": "2fb7690e-a724-4ee0-8d4e-3fdd867e58ac"
+    },
+    {
+     "description": "Pad 7 [<no net>] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 61.56325
+     },
+     "uuid": "91c0a8da-bec5-4b3c-8f36-c92b8d3da720"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [D7] on F.Cu, length 7.2801 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 61.56325
+     },
+     "uuid": "ab98ba07-4f91-4231-88f8-1dcd88c4715b"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Track width (board setup constraints min width 0.2000 mm; actual 0.1500 mm)",
+   "items": [
+    {
+     "description": "Track [D12] on B.Cu, length 7.5413 mm",
+     "pos": {
+      "x": 106.066565,
+      "y": 65.722601
+     },
+     "uuid": "2e048bc4-ea2b-4146-84c2-9509dac6cdb8"
+    }
+   ],
+   "severity": "error",
+   "type": "track_width"
+  },
+  {
+   "description": "Courtyards overlap",
+   "items": [
+    {
+     "description": "Footprint U1",
+     "pos": {
+      "x": 116.082954,
+      "y": 56.813267
+     },
+     "uuid": "50fbf1e6-d9e9-4604-8b82-b84ecbb564e3"
+    },
+    {
+     "description": "Footprint U2",
+     "pos": {
+      "x": 117.67086,
+      "y": 60.431415
+     },
+     "uuid": "958b674c-986f-4678-8571-476bf6b16f17"
+    }
+   ],
+   "severity": "error",
+   "type": "courtyards_overlap"
+  },
+  {
+   "description": "NPTH inside courtyard",
+   "items": [
+    {
+     "description": "NPTH pad of U2",
+     "pos": {
+      "x": 117.67086,
+      "y": 60.431415
+     },
+     "uuid": "b2bae52e-3a35-4bae-88f3-8a179d8955c1"
+    },
+    {
+     "description": "Footprint U1",
+     "pos": {
+      "x": 116.082954,
+      "y": 56.813267
+     },
+     "uuid": "50fbf1e6-d9e9-4604-8b82-b84ecbb564e3"
+    }
+   ],
+   "severity": "error",
+   "type": "npth_inside_courtyard"
+  },
+  {
+   "description": "NPTH inside courtyard",
+   "items": [
+    {
+     "description": "NPTH pad of U1",
+     "pos": {
+      "x": 116.082954,
+      "y": 56.813267
+     },
+     "uuid": "ed7d2515-0e0a-4b16-a6e3-51b9aef797fa"
+    },
+    {
+     "description": "Footprint U2",
+     "pos": {
+      "x": 117.67086,
+      "y": 60.431415
+     },
+     "uuid": "958b674c-986f-4678-8571-476bf6b16f17"
+    }
+   ],
+   "severity": "error",
+   "type": "npth_inside_courtyard"
+  },
+  {
+   "description": "NPTH inside courtyard",
+   "items": [
+    {
+     "description": "NPTH pad of U2",
+     "pos": {
+      "x": 117.67086,
+      "y": 60.431415
+     },
+     "uuid": "b2bae52e-3a35-4bae-88f3-8a179d8955c1"
+    },
+    {
+     "description": "Footprint U4",
+     "pos": {
+      "x": 118.684006,
+      "y": 63.18825
+     },
+     "uuid": "7ca73a08-4942-44cc-bace-4fd4648561dc"
+    }
+   ],
+   "severity": "error",
+   "type": "npth_inside_courtyard"
+  },
+  {
+   "description": "Items shorting two nets (nets <no net> and D12)",
+   "items": [
+    {
+     "description": "Pad 9 [<no net>] of U4 on B.Cu",
+     "pos": {
+      "x": 121.546506,
+      "y": 60.91325
+     },
+     "uuid": "7d081ba6-6abb-47cd-81d3-04648f32a51c"
+    },
+    {
+     "description": "Track [D12] on B.Cu, length 3.9000 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.81325
+     },
+     "uuid": "bf83c45a-54ee-4980-bacc-c67cbdfd378a"
+    }
+   ],
+   "severity": "error",
+   "type": "shorting_items"
+  },
+  {
+   "description": "Hole clearance violation (board setup constraints hole clearance 0 mm; actual < 0)",
+   "items": [
+    {
+     "description": "Track [D7] on F.Cu, length 5.8707 mm",
+     "pos": {
+      "x": 115.821506,
+      "y": 62.21325
+     },
+     "uuid": "9a8c9eff-7a73-4ed3-bbc8-ed9dcd421a39"
+    },
+    {
+     "description": "NPTH pad of U2",
+     "pos": {
+      "x": 117.67086,
+      "y": 60.431415
+     },
+     "uuid": "b2bae52e-3a35-4bae-88f3-8a179d8955c1"
+    }
+   ],
+   "severity": "error",
+   "type": "hole_clearance"
+  },
+  {
+   "description": "Hole clearance violation (board setup constraints hole clearance 0 mm; actual < 0)",
+   "items": [
+    {
+     "description": "Track [D7] on F.Cu, length 8.4853 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.16325
+     },
+     "uuid": "876b02a0-a06c-4699-9c2c-323e485fd953"
+    },
+    {
+     "description": "NPTH pad of U1",
+     "pos": {
+      "x": 116.082954,
+      "y": 56.813267
+     },
+     "uuid": "ed7d2515-0e0a-4b16-a6e3-51b9aef797fa"
+    }
+   ],
+   "severity": "error",
+   "type": "hole_clearance"
+  },
+  {
+   "description": "Items shorting two nets (nets /net3 and <no net>)",
+   "items": [
+    {
+     "description": "Track [/net3] on B.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 115.821506,
+      "y": 62.21325
+     },
+     "uuid": "2fb7690e-a724-4ee0-8d4e-3fdd867e58ac"
+    },
+    {
+     "description": "Pad 7 [<no net>] of U4 on B.Cu",
+     "pos": {
+      "x": 115.821506,
+      "y": 61.56325
+     },
+     "uuid": "91c0a8da-bec5-4b3c-8f36-c92b8d3da720"
+    }
+   ],
+   "severity": "error",
+   "type": "shorting_items"
+  },
+  {
+   "description": "Silkscreen clipped by solder mask",
+   "items": [
+    {
+     "description": "Reference field of U2",
+     "pos": {
+      "x": 117.67086,
+      "y": 56.281415
+     },
+     "uuid": "902f4d3d-1b4f-4008-817e-8381298037a0"
+    },
+    {
+     "description": "NPTH pad of U1",
+     "pos": {
+      "x": 116.082954,
+      "y": 56.813267
+     },
+     "uuid": "ed7d2515-0e0a-4b16-a6e3-51b9aef797fa"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_over_copper"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Reference field of U4",
+     "pos": {
+      "x": 118.684006,
+      "y": 66.63825
+     },
+     "uuid": "1aaa9aff-ba65-4337-a302-3eb4f7afc4a0"
+    },
+    {
+     "description": "Segment of U4 on B.Silkscreen",
+     "pos": {
+      "x": 116.374006,
+      "y": 65.92325
+     },
+     "uuid": "dca21fc8-996e-48ba-85f4-dd610ad6b0ff"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clipped by solder mask",
+   "items": [
+    {
+     "description": "Segment of U4 on B.Silkscreen",
+     "pos": {
+      "x": 120.994006,
+      "y": 60.45325
+     },
+     "uuid": "d30fafcd-d086-4bb0-a86a-bbe5385c15ce"
+    },
+    {
+     "description": "NPTH pad of U2",
+     "pos": {
+      "x": 117.67086,
+      "y": 60.431415
+     },
+     "uuid": "b2bae52e-3a35-4bae-88f3-8a179d8955c1"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_over_copper"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [D7] on F.Cu, length 8.4853 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 64.16325
+     },
+     "uuid": "876b02a0-a06c-4699-9c2c-323e485fd953"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [D7] on F.Cu, length 5.8707 mm",
+     "pos": {
+      "x": 115.821506,
+      "y": 62.21325
+     },
+     "uuid": "9a8c9eff-7a73-4ed3-bbc8-ed9dcd421a39"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [D7] on F.Cu, length 7.2801 mm",
+     "pos": {
+      "x": 121.546506,
+      "y": 61.56325
+     },
+     "uuid": "ab98ba07-4f91-4231-88f8-1dcd88c4715b"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [D12] on B.Cu, length 7.5413 mm",
+     "pos": {
+      "x": 106.066565,
+      "y": 65.722601
+     },
+     "uuid": "2e048bc4-ea2b-4146-84c2-9509dac6cdb8"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [/net3] on B.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 115.821506,
+      "y": 62.21325
+     },
+     "uuid": "2fb7690e-a724-4ee0-8d4e-3fdd867e58ac"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  }
+ ]
+}

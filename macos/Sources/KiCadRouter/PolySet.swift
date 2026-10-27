@@ -150,6 +150,9 @@ public struct PolySet: Sendable {
     /// The set made its intersection with `b` (KiCad's BooleanIntersection)
     public mutating func booleanIntersection(_ b: PolySet) { booleanOp(.intersection, self, b) }
 
+    /// What of it is not in `b` (BooleanSubtract)
+    public mutating func booleanSubtract(_ b: PolySet) { booleanOp(.difference, self, b) }
+
     /// How an outline's corners are offset (KiCad's CORNER_STRATEGY)
     public enum CornerStrategy { case allowAcuteCorners, chamferAcuteCorners, roundAcuteCorners, chamferAllCorners, roundAllCorners }
 

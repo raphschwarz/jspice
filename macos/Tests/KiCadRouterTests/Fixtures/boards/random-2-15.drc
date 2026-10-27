@@ -1,0 +1,472 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.7",
+ "schematic_parity": [],
+ "source": "random-2-15.kicad_pcb",
+ "unconnected_items": [
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [N3] of U3 on F.Cu",
+     "pos": {
+      "x": 123.935426,
+      "y": 69.055555
+     },
+     "uuid": "690a54fc-e00f-4475-9208-473d2e78c3d8"
+    },
+    {
+     "description": "PTH pad 1 [N3] of U6",
+     "pos": {
+      "x": 128.063083,
+      "y": 68.729149
+     },
+     "uuid": "97c054e2-cda3-49ea-94d2-627ab12a638d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "PTH pad 1 [N3] of U6",
+     "pos": {
+      "x": 128.063083,
+      "y": 68.729149
+     },
+     "uuid": "97c054e2-cda3-49ea-94d2-627ab12a638d"
+    },
+    {
+     "description": "Track [N3] on B.Cu, length 8.6023 mm",
+     "pos": {
+      "x": 128.063083,
+      "y": 66.189149
+     },
+     "uuid": "1296b519-076f-44a9-90a0-d8260b89b9b8"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "PTH pad 1 [N3] of U1",
+     "pos": {
+      "x": 144.419455,
+      "y": 70.96585
+     },
+     "uuid": "c3070d60-5ab5-4543-8ec7-f4b302c81790"
+    },
+    {
+     "description": "PTH pad 1 [N3] of U6",
+     "pos": {
+      "x": 128.063083,
+      "y": 68.729149
+     },
+     "uuid": "97c054e2-cda3-49ea-94d2-627ab12a638d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [N2] of U2 on B.Cu",
+     "pos": {
+      "x": 122.555953,
+      "y": 70.475359
+     },
+     "uuid": "2f052eed-4910-498f-b1d2-fcea02e4bb44"
+    },
+    {
+     "description": "Pad 2 [N2] of U2 on B.Cu",
+     "pos": {
+      "x": 125.755953,
+      "y": 70.475359
+     },
+     "uuid": "7c5a73a8-36ff-4594-be33-1ea9118029f1"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Via [PWR_5V] on F.Cu - B.Cu",
+     "pos": {
+      "x": 108.975046,
+      "y": 66.644742
+     },
+     "uuid": "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65"
+    },
+    {
+     "description": "PTH pad 3 [PWR_5V] of U6",
+     "pos": {
+      "x": 128.063083,
+      "y": 63.649149
+     },
+     "uuid": "d7ecaf99-6b82-4c43-8782-09f2c548e117"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  }
+ ],
+ "violations": [
+  {
+   "description": "Front solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [N3] on F.Cu, length 10.8653 mm",
+     "pos": {
+      "x": 128.063083,
+      "y": 61.109149
+     },
+     "uuid": "900652df-021c-48ce-a4e1-fcd39bf1bc88"
+    },
+    {
+     "description": "PTH pad 4 [<no net>] of U6",
+     "pos": {
+      "x": 128.063083,
+      "y": 61.109149
+     },
+     "uuid": "03bf9086-9782-46d8-9b5b-b3889003ef27"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Board has malformed outline (not a closed shape) (gap 3.4000 mm)",
+   "items": [
+    {
+     "description": "Segment of U2 on Edge.Cuts",
+     "pos": {
+      "x": 122.405953,
+      "y": 76.475359
+     },
+     "uuid": "1b9169b7-5c16-496c-b5a8-5d1bb0740a87"
+    },
+    {
+     "description": "Segment of U2 on Edge.Cuts",
+     "pos": {
+      "x": 125.905953,
+      "y": 71.975359
+     },
+     "uuid": "89484171-836d-4edc-9f11-51322118a1f9"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Hole size out of range (board setup constraints min hole 0.3000 mm; actual 0.2000 mm)",
+   "items": [
+    {
+     "description": "Via [PWR1] on F.Cu - B.Cu",
+     "pos": {
+      "x": 131.446008,
+      "y": 62.718056
+     },
+     "uuid": "31e60474-e62a-40a9-b96b-412f779e69e8"
+    }
+   ],
+   "severity": "error",
+   "type": "drill_out_of_range"
+  },
+  {
+   "description": "Hole size out of range (board setup constraints min hole 0.3000 mm; actual 0.2400 mm)",
+   "items": [
+    {
+     "description": "Via [PWR_5V] on F.Cu - B.Cu",
+     "pos": {
+      "x": 108.975046,
+      "y": 66.644742
+     },
+     "uuid": "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65"
+    }
+   ],
+   "severity": "error",
+   "type": "drill_out_of_range"
+  },
+  {
+   "description": "Board edge clearance violation (board setup constraints edge clearance 0.5000 mm; actual 0.0000 mm)",
+   "items": [
+    {
+     "description": "Segment of U2 on Edge.Cuts",
+     "pos": {
+      "x": 122.405953,
+      "y": 71.975359
+     },
+     "uuid": "0dee4f65-4310-427d-b589-20f331669432"
+    },
+    {
+     "description": "Pad 2 [N2] of U2 on B.Cu",
+     "pos": {
+      "x": 122.555953,
+      "y": 70.475359
+     },
+     "uuid": "2f052eed-4910-498f-b1d2-fcea02e4bb44"
+    }
+   ],
+   "severity": "error",
+   "type": "copper_edge_clearance"
+  },
+  {
+   "description": "Board edge clearance violation (board setup constraints edge clearance 0.5000 mm; actual 0.0000 mm)",
+   "items": [
+    {
+     "description": "Segment of U2 on Edge.Cuts",
+     "pos": {
+      "x": 122.405953,
+      "y": 71.975359
+     },
+     "uuid": "0dee4f65-4310-427d-b589-20f331669432"
+    },
+    {
+     "description": "Pad 2 [N2] of U2 on B.Cu",
+     "pos": {
+      "x": 125.755953,
+      "y": 70.475359
+     },
+     "uuid": "7c5a73a8-36ff-4594-be33-1ea9118029f1"
+    }
+   ],
+   "severity": "error",
+   "type": "copper_edge_clearance"
+  },
+  {
+   "description": "Courtyards overlap",
+   "items": [
+    {
+     "description": "Footprint U2",
+     "pos": {
+      "x": 124.155953,
+      "y": 72.725359
+     },
+     "uuid": "17db98d1-5d60-41f7-8ec7-37e37fe822f4"
+    },
+    {
+     "description": "Footprint U6",
+     "pos": {
+      "x": 128.063083,
+      "y": 68.729149
+     },
+     "uuid": "ae3320da-3061-48a4-8782-f2b425f65d16"
+    }
+   ],
+   "severity": "error",
+   "type": "courtyards_overlap"
+  },
+  {
+   "description": "Items shorting two nets (nets <no net> and N3)",
+   "items": [
+    {
+     "description": "PTH pad 4 [<no net>] of U6",
+     "pos": {
+      "x": 128.063083,
+      "y": 61.109149
+     },
+     "uuid": "03bf9086-9782-46d8-9b5b-b3889003ef27"
+    },
+    {
+     "description": "Track [N3] on F.Cu, length 10.8653 mm",
+     "pos": {
+      "x": 128.063083,
+      "y": 61.109149
+     },
+     "uuid": "900652df-021c-48ce-a4e1-fcd39bf1bc88"
+    }
+   ],
+   "severity": "error",
+   "type": "shorting_items"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Segment of U6 on B.Silkscreen",
+     "pos": {
+      "x": 126.683083,
+      "y": 68.729149
+     },
+     "uuid": "c4da9019-038e-4c52-b38a-02baf1148097"
+    },
+    {
+     "description": "Segment of U2 on B.Silkscreen",
+     "pos": {
+      "x": 121.595953,
+      "y": 68.715359
+     },
+     "uuid": "e6a0bce5-a837-4e78-a7bb-4629292e357d"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Segment of U2 on B.Silkscreen",
+     "pos": {
+      "x": 126.715953,
+      "y": 76.415359
+     },
+     "uuid": "355d22f0-cb70-4155-aa72-c388f7fe063e"
+    },
+    {
+     "description": "Segment of U6 on B.Silkscreen",
+     "pos": {
+      "x": 126.683083,
+      "y": 68.729149
+     },
+     "uuid": "c4da9019-038e-4c52-b38a-02baf1148097"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clearance",
+   "items": [
+    {
+     "description": "Segment of U2 on B.Silkscreen",
+     "pos": {
+      "x": 126.715953,
+      "y": 76.415359
+     },
+     "uuid": "355d22f0-cb70-4155-aa72-c388f7fe063e"
+    },
+    {
+     "description": "Segment of U6 on B.Silkscreen",
+     "pos": {
+      "x": 126.683083,
+      "y": 70.109149
+     },
+     "uuid": "3dc88fe9-94e1-4d91-8135-0921a553d0fe"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_overlap"
+  },
+  {
+   "description": "Silkscreen clipped by board edge",
+   "items": [
+    {
+     "description": "Circle on Edge.Cuts",
+     "pos": {
+      "x": 112.515196,
+      "y": 58.70676
+     },
+     "uuid": "5f7b8ef8-c88b-41dc-a653-4031c44d75c9"
+    },
+    {
+     "description": "Reference field of U5",
+     "pos": {
+      "x": 112.973991,
+      "y": 59.289574
+     },
+     "uuid": "bda03cf7-f496-4992-9424-071b3dae57e7"
+    }
+   ],
+   "severity": "warning",
+   "type": "silk_edge_clearance"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [PWR1] on F.Cu - B.Cu",
+     "pos": {
+      "x": 131.446008,
+      "y": 62.718056
+     },
+     "uuid": "31e60474-e62a-40a9-b96b-412f779e69e8"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [N3] on F.Cu, length 10.8653 mm",
+     "pos": {
+      "x": 128.063083,
+      "y": 61.109149
+     },
+     "uuid": "900652df-021c-48ce-a4e1-fcd39bf1bc88"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [N3] on B.Cu, length 8.6023 mm",
+     "pos": {
+      "x": 128.063083,
+      "y": 66.189149
+     },
+     "uuid": "1296b519-076f-44a9-90a0-d8260b89b9b8"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [PWR_5V] on F.Cu - B.Cu",
+     "pos": {
+      "x": 108.975046,
+      "y": 66.644742
+     },
+     "uuid": "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  }
+ ]
+}

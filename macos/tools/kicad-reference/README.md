@@ -141,6 +141,10 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   rest of each board is as it is without them): lines of segments and arcs, each arc tangent to the segments either
   side, out of pads of their net or from anywhere, some arcs one after another, now and then a locked one.
   `Tests/KiCadRouterTests/Fixtures/arcboards` holds three (`boards.py --arcs ... 3 20261103`).
+- `drc.py`: kicad-cli's design rules check of boards (`drc.py BOARD.kicad_pcb...`): its report of each, as the
+  board is (its zones not refilled), errors and warnings, next to it as `BOARD.drc` (JSON, its date taken out).
+  `DRCTests` checks the port's DRC (`BoardDRC`) against it: the same violations of the checks it makes, between the
+  same items, in the same words. The boards of `Tests/KiCadRouterTests/Fixtures/boards` have theirs.
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and
   turned pads, surface mount and through-hole, unplated holes; tracks already there) with random routes on them
   (now and then one starting on an unplated hole), and KiCad's answers: `scenes.py KICAD_ROUTER OUT.json [COUNT [SEED]]`. The router tests' fixture is
