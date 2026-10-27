@@ -176,6 +176,11 @@ extension BoardDRC {
         var clusterSerial = 0
         /// The ratsnest's cluster of each board item in one (by its uuid)
         var clusterOf: [String: Int] = [:]
+        /// Pairs of items (their uuids) that touch tried one way round and not the other (two arcs, say: KiCad's
+        /// collision of arcs is not the same both ways): KiCad tries each pair one way, which by where the two are in
+        /// its memory, so whether they are joined differs from one run of KiCad to the next. The port tries them the
+        /// way round it makes them in.
+        var ambiguous: [(String, String)] = []
     }
 
     func buildConnectivity(_ c: Copper) -> Connectivity {
@@ -337,7 +342,10 @@ extension BoardDRC {
                     if Self.collide(sa, sb, 0) != nil {
                         m.connect(cand)
                         cand.connect(m)
+                        if a.kind == .arc || b.kind == .arc, Self.collide(sb, sa, 0) == nil { cn.ambiguous.append((a.uuid, b.uuid)) }
                         break
+                    } else if a.kind == .arc || b.kind == .arc, Self.collide(sb, sa, 0) != nil {
+                        cn.ambiguous.append((a.uuid, b.uuid))
                     }
                 }
             }
@@ -657,6 +665,24 @@ extension BoardDRC {
 
     // MARK: - The checks
 
+    /// SHAPE::Collide of a point: a segment's, an arc's and a line chain's own (a track's, an arc track's), else, of
+    /// a compound (a pad's or a drawing's shapes) or a circle, as a segment of no length
+    static func pointCollide(_ shapes: [Shape], compound: Bool, _ p: IPoint, _ clearance: Int) -> Bool {
+        if !compound, shapes.count == 1 {
+            var actual: Int?, location: IPoint?
+            switch shapes[0] {
+            case .arc(let a): return a.collide(p, clearance: clearance, actual: &actual, location: &location)
+            case .segment(let s, let w):
+                let minDist = (w + 1) / 2 + clearance
+                let dsq = s.squaredDistance(p)
+                return dsq == 0 || dsq < minDist * minDist
+            case .chain(let l), .simple(let l): return l.collide(p, clearance: clearance, actual: &actual, location: &location)
+            default: break
+            }
+        }
+        return collide(shapes, [.segment(Seg(p, p), width: 0)], clearance) != nil
+    }
+
     /// CONNECTIVITY_DATA::TestTrackEndpointDangling (pads and vias a track lies in not counted as dangling)
     func trackDangling(_ cn: Connectivity, _ t: CopperItem) -> Bool {
         guard let item = cn.entries[ObjectIdentifier(t)]?.first else { return false }
@@ -692,8 +718,10 @@ extension BoardDRC {
                 case .via: shapes = [.circle(center: other.via!.start, radius: other.via!.diameter / 2)]
                 default: shapes = other.shapes[layer] ?? []
                 }
-                hitStart = Self.collide(shapes, [.segment(Seg(start, start), width: 0)], accuracy) != nil
-                hitEnd = Self.collide(shapes, [.segment(Seg(end, end), width: 0)], accuracy) != nil
+                // (a pad's and a drawing's shapes a compound; a track's, an arc's and a via's one shape)
+                let compound = other.kind == .pad || other.kind == .shape
+                hitStart = Self.pointCollide(shapes, compound: compound, start, accuracy)
+                hitEnd = Self.pointCollide(shapes, compound: compound, end, accuracy)
             }
             if hitStart && hitEnd {
                 if other.kind == .zone || other.kind == .pad || other.kind == .via { return false }
