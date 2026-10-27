@@ -4,7 +4,7 @@ world of a board against KiCad's: footprints with every kind of pad (rectangles,
 trapezoids, circles, unplated holes, custom pads), turned and flipped, on two or four layers; nets in net classes (by
 pattern, of different priorities, regular expressions among them), pads' and footprints' own clearances; tracks and
 vias, on a four layer board blind, buried and micro ones too; drawings on copper; outlines with rounded corners and round cut-outs; keepout zones (rule areas) of several
-shapes, some with holes, some in footprints. Each board is saved (its .kicad_pcb and .kicad_pro), and board-scene.py
+shapes, some with holes, some in footprints; on half of them copper zones, filled by KiCad. Each board is saved (its .kicad_pcb and .kicad_pro), and board-scene.py
 run on it (KiCad reading it afresh) writes what KiCad's router sees of it. With --custom-pads, the footprints are
 drawn from every footprint of KiCad's libraries with a custom pad (their primitives: polygons, lines, arcs, circles
 and rings, rectangles, filled or outlined, of some width or none) instead. With --pairs, boards with differential
@@ -210,6 +210,42 @@ def keepouts(rng, board, x0, y0, x1, y1, copper, footprints):
             board.Add(zone)
 
 
+def copper_zones(rng, board, x0, y0, x1, y1, copper, nets):
+    """Copper zones on half the boards, filled by KiCad's own zone filler as the board is saved: boxes and polygons of
+    a net (now and then of none), on one copper layer or a few, of different priorities, their pads joined by thermal
+    reliefs, solidly or not at all, some with a clearance of their own, now and then two of one net overlapping"""
+    if rng.random() < 0.5:
+        return False
+    for _ in range(rng.randint(1, 3)):
+        zone = pcbnew.ZONE(board)
+        layers = pcbnew.LSET()
+        chosen = [rng.choice(copper)] if rng.random() < 0.7 else [l for l in copper if rng.random() < 0.6] or [copper[0]]
+        for l in chosen:
+            layers.AddLayer(l)
+        zone.SetLayerSet(layers)
+        if rng.random() < 0.9:
+            zone.SetNet(rng.choice(nets))
+        zone.SetAssignedPriority(rng.randint(0, 3))
+        zone.SetPadConnection(rng.choice([pcbnew.ZONE_CONNECTION_THERMAL, pcbnew.ZONE_CONNECTION_THERMAL,
+                                          pcbnew.ZONE_CONNECTION_FULL, pcbnew.ZONE_CONNECTION_NONE]))
+        if rng.random() < 0.3:
+            zone.SetLocalClearance(rng.choice([300_000, 500_000]))
+        poly = zone.Outline()
+        poly.NewOutline()
+        w, h = rng.randint(5, 30) * MM, rng.randint(5, 30) * MM
+        cx, cy = rng.randint(x0 - 2 * MM, x1 - w // 2), rng.randint(y0 - 2 * MM, y1 - h // 2)
+        if rng.random() < 0.6:
+            pts = [(0, 0), (w, 0), (w, h), (0, h)]
+        else:
+            angles = sorted(rng.uniform(0, 2 * math.pi) for _ in range(rng.randint(4, 9)))
+            pts = [(w / 2 + w / 2 * rng.uniform(0.5, 1) * math.cos(a), h / 2 + h / 2 * rng.uniform(0.5, 1) * math.sin(a))
+                   for a in angles]
+        for x, y in pts:
+            poly.Append(cx + int(x) // 10_000 * 10_000, cy + int(y) // 10_000 * 10_000)
+        board.Add(zone)
+    return True
+
+
 def layered_vias(rng, board, x0, y0, x1, y1, nets):
     """On a four layer board, vias that go through some of it: blind (from the top or the bottom to an inner layer),
     buried (between the inner layers) and micro (one layer deep)"""
@@ -310,7 +346,7 @@ def custom_pad_footprints():
     return found
 
 
-def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None, arng=None):
+def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None, arng=None, zrng=None):
     board = pcbnew.NewBoard(path)
     board.SetCopperLayerCount(rng.choice([2, 2, 4]))
     size = rng.randint(30, 70) * MM
@@ -395,6 +431,10 @@ def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None, arng=None):
     if arng is not None:
         plated = [p for p in pads if p.GetAttribute() != pcbnew.PAD_ATTRIB_NPTH]
         arc_tracks(arng, board, x0, y0, x1, y1, copper, nets, plated)
+    # copper zones, filled (the same)
+    if zrng is not None and copper_zones(zrng, board, x0, y0, x1, y1, copper, nets):
+        board.BuildConnectivity()
+        pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     pcbnew.SaveBoard(path, board)
 
 
@@ -504,7 +544,7 @@ def main():
             make_pairs(rng, path)
         else:
             make(rng, path, random.Random(f"keepouts-{seed}-{n}"), footprints_from, random.Random(f"vias-{seed}-{n}"),
-                 random.Random(f"arcs-{seed}-{n}") if arcs else None)
+                 random.Random(f"arcs-{seed}-{n}") if arcs else None, random.Random(f"zones-{seed}-{n}"))
         subprocess.run([sys.executable, f"{here}/board-scene.py", path, path[:-len(".kicad_pcb")] + ".json"], check=True,
                        stderr=subprocess.DEVNULL)
     print(f"{out}: {count} boards")

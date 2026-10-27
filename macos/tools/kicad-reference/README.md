@@ -128,7 +128,8 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   with rounded corners (arcs, or a rectangle's own corner radius) and round cut-outs; keepout zones of several shapes
   on some of the copper layers, some with holes, some in footprints, now and then one KiCad's router cannot cut into
   triangles (drawn from random numbers of their own, so that the rest of each board is what it was before they were
-  added). Each is saved with its project, and `board-scene.py` run on it. With `--custom-pads`, the footprints are
+  added); on half of them copper zones (of a net or none, on one layer or a few, of different priorities and pad
+  connections, also from random numbers of their own), filled by KiCad's zone filler. Each is saved with its project, and `board-scene.py` run on it. With `--custom-pads`, the footprints are
   drawn from all of KiCad's library footprints with a custom pad instead (some 600: pads of polygons, lines, arcs,
   circles and rings, rectangles, filled or outlined, of some width or none; keepout zones of their own, some with
   arcs, some on no copper layer).
