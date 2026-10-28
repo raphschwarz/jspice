@@ -190,17 +190,39 @@ public final class BoardLink {
         return (board, nil)
     }
 
-    /// The board's zones filled as KiCad fills them: in the open editor (KiCad's API), else in its file (KiCad's
-    /// command line fills them and saves the board). The board as it then is.
-    public func fillZones() throws -> KiCadBoard {
+    /// What filled a board's zones
+    public enum FillEngine: String {
+        /// KiCad itself: its open editor, or its command line in the board's file
+        case kicad = "KiCad"
+        /// KiCadRouter's ZoneFiller, the port of KiCad's zone filler, in the board's file
+        case port = "JSpice"
+    }
+
+    /// The board's zones filled as KiCad fills them. The board as it then is.
+    public func fillZones() throws -> KiCadBoard { try fillZonesReporting().board }
+
+    /// The board's zones filled as KiCad fills them: in the open editor by KiCad (its API); else in its file by the
+    /// port of KiCad's zone filler (ZoneFiller), or by KiCad's command line where the board has what the port does not
+    /// fill yet (its `unsupported`: a design rules file of its own, padstacks...) and KiCad is installed, or where
+    /// `engine` asks for KiCad. The board as it then is, and what filled it.
+    public func fillZonesReporting(engine: FillEngine? = nil) throws -> (board: KiCadBoard, engine: FillEngine) {
         if let live = live() {
             try live.api.refillZones(live.document)
-            return try live.snapshot()
+            return (try live.snapshot(), .kicad)
         }
         guard exists else { throw Failure.noBoard }
         if isOpenInKiCad { throw Failure.openUnreachable }
+        if engine != .kicad {
+            let board = try KiCadBoard.read(boardFile)
+            let filler = ZoneFiller(board: board, project: projectSettings())
+            if engine == .port || filler.unsupported.isEmpty || problem != nil {
+                let filled = filler.refilledBoard(board)
+                try filled.write(to: boardFile)
+                return (filled, .port)
+            }
+        }
         try KiCadFabrication(installation: kicad()).fillZones(boardFile)
-        return try KiCadBoard.read(boardFile)
+        return (try KiCadBoard.read(boardFile), .kicad)
     }
 
     /// The board's net classes: the widths and gaps its tracks are routed with

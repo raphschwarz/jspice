@@ -8,6 +8,33 @@ import KiCadKit
 /// circuit and its file, a part deleted on the board and put back, footprints searched, the design rules checked and
 /// a board house's files made
 final class BoardToolsTests: XCTestCase {
+    /// A board's zones filled in its file without KiCad, by the port of KiCad's zone filler: the blinker's ground pour,
+    /// its fill taken away, filled again as KiCad fills it (FillTests checks the port's fill against KiCad's own)
+    func testZonesAreFilledInTheBoardsFileWithoutKiCad() throws {
+        let docs = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../docs/pcb").standardized
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-board-fill-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.copyItem(at: docs.appendingPathComponent("blinker.kicad_pro"), to: folder.appendingPathComponent("blinker.kicad_pro"))
+        let board = try KiCadBoard.read(docs.appendingPathComponent("blinker.kicad_pcb"))
+        let filled = board.zones.filter { !$0.isRuleArea && !$0.fills.isEmpty }.map(\.uuid)
+        XCTAssertFalse(filled.isEmpty)
+        for zone in board.root.all("zone") { zone.remove("filled_polygon") }
+        let file = folder.appendingPathComponent("blinker.kicad_pcb")
+        try board.write(to: file)
+        XCTAssertTrue(try KiCadBoard.read(file).zones.allSatisfy { $0.fills.isEmpty })
+
+        let link = BoardLink(boardFile: file, installation: nil)
+        let (after, engine) = try link.fillZonesReporting()
+        XCTAssertEqual(engine, .port)
+        let saved = try KiCadBoard.read(file)
+        for uuid in filled {
+            let zone = try XCTUnwrap(saved.zones.first { $0.uuid == uuid })
+            XCTAssertFalse(zone.fills.isEmpty, "\(zone.net) filled again")
+            XCTAssertEqual(zone.fills.map(\.points.count), after.zones.first { $0.uuid == uuid }?.fills.map(\.points.count))
+        }
+    }
+
     func testABoardMadeKeptInStepBothWaysCheckedAndMadeReadyForABoardHouse() throws {
         guard let kicad = KiCadInstallation.find(), kicad.problem == nil else { throw XCTSkip("KiCad 10 or later is not installed") }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-board-tools-\(UUID().uuidString)")
@@ -103,8 +130,10 @@ final class BoardToolsTests: XCTestCase {
         XCTAssertLessThan(try XCTUnwrap(call("pcb_status")["unrouted"] as? Int), unrouted)
         XCTAssertEqual(try KiCadBoard.read(folder.appendingPathComponent("blinker.kicad_pcb")).copperItems.count, added)
 
-        // ground poured on the bottom, filled by KiCad: the ground connections made by the pour
+        // ground poured on the bottom, filled as KiCad fills it (in the board's file, by the port of its filler): the
+        // ground connections made by the pour
         let poured = try call("pcb_pour")
+        XCTAssertEqual(poured["filled_by"] as? String, "JSpice")
         let zones = try XCTUnwrap(poured["zones"] as? [[String: Any]])
         XCTAssertTrue(zones.contains { $0["net"] as? String == "GND" && $0["filled"] as? Bool == true })
         XCTAssertLessThan(try XCTUnwrap(poured["unrouted"] as? Int), try XCTUnwrap(call("pcb_status")["unrouted"] as? Int) + 1)

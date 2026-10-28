@@ -633,22 +633,23 @@ final class BoardController: ObservableObject {
         }
     }
 
-    /// The board's zones filled as KiCad fills them: in its open editor, else by its command line in the board's
-    /// file. The board as it then is, or nil if KiCad could not (or there is no KiCad: a board only shown).
+    /// The board's zones filled as KiCad fills them: in its open editor by KiCad, else in the board's file by the
+    /// port of KiCad's zone filler (or KiCad's command line, for what the port does not fill yet). The board as it
+    /// then is, or nil if they could not be (a board only shown).
     func fillZones() async -> (KiCadBoard, [String: Any]?)? {
         guard shownBoard == nil else { return nil }
         busy = "Filling the zones…"
         defer { busy = nil }
         do {
-            let (board, made, project) = try await worker.run { w -> (KiCadBoard, KiCadBoardPicture, [String: Any]?) in
+            let (board, made, project, engine) = try await worker.run { w -> (KiCadBoard, KiCadBoardPicture, [String: Any]?, BoardLink.FillEngine) in
                 guard let link = w.link else { throw BoardLink.Failure.noBoard }
-                let board = try link.fillZones()
+                let (board, engine) = try link.fillZonesReporting()
                 w.fingerprint = link.fingerprint()
-                return (board, KiCadBoardPicture(board), link.projectSettings())
+                return (board, KiCadBoardPicture(board), link.projectSettings(), engine)
             }
             picture = made
             failure = nil
-            log.insert(LogEntry(date: Date(), text: "Zones filled by KiCad"), at: 0)
+            log.insert(LogEntry(date: Date(), text: "Zones filled by \(engine.rawValue)"), at: 0)
             return (board, project)
         } catch {
             failure = "\(error)"

@@ -18,7 +18,7 @@ extension CircuitSession {
                                   "max": ["type": "integer", "description": "At most this many connections (default 200)"]]),
              run: { session, arguments in try session.pcbRoute(arguments) }),
         Tool(name: "pcb_pour",
-             description: "Pours copper of a net (by default the ground net) over the whole board on the layers given (by default the bottom), as KiCad's zones: kept clear of other nets' copper, joined to the net's pads by thermal reliefs, and filled by KiCad itself (its editor, or its command line in the board's file). fill_only fills the board's zones again (after routing changes them) without adding one. Returns the zones and the connections left to route.",
+             description: "Pours copper of a net (by default the ground net) over the whole board on the layers given (by default the bottom), as KiCad's zones: kept clear of other nets' copper, joined to the net's pads by thermal reliefs, and filled as KiCad fills them (by KiCad in its open editor; else in the board's file by JSpice's port of KiCad's zone filler, or KiCad's command line for what the port does not fill yet; filled_by says which). fill_only fills the board's zones again (after routing changes them) without adding one. Returns the zones and the connections left to route.",
              inputSchema: schema(["net": string("The net to pour (default: the board's ground net, GND)"),
                                   "layers": ["type": "array", "items": ["type": "string"], "description": "\"top\", \"bottom\" or copper layer names (default: bottom)"],
                                   "fill_only": ["type": "boolean", "description": "Only fill the board's zones again"],
@@ -123,7 +123,8 @@ extension CircuitSession {
                 result["changed_in"] = Self.place(live)
                 result["added"] = ["net": net, "layers": names]
             }
-            var board = try link.fillZones()
+            var (board, engine) = try link.fillZonesReporting()
+            result["filled_by"] = engine.rawValue
             if let pitch = try Self.number(arguments["stitch_pitch_mm"], "stitch_pitch_mm") {
                 guard pitch >= 1 else { throw ToolError("stitch_pitch_mm should be 1 or more") }
                 let session = BoardEditing(board: board, project: link.projectSettings())

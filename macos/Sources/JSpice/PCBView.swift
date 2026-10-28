@@ -732,7 +732,7 @@ struct PCBEditBar: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .disabled(editing.isRouting)
-            .help("Pour ground copper over the board, filled by KiCad round everything else (B fills the zones again after a change)")
+            .help("Pour ground copper over the board, filled as KiCad fills it round everything else (B fills the zones again after a change)")
             Button { editing.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(editing.undoName == nil || editing.isRouting)
                 .help(editing.undoName.map { "Undo \($0)" } ?? "Undo")

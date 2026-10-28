@@ -604,7 +604,7 @@ final class PCBEditing: ObservableObject {
 
     // MARK: - Pours
 
-    /// A ground pour over the whole board on `layers`, filled by KiCad (`net`: the board's ground net if nil)
+    /// A ground pour over the whole board on `layers`, filled as KiCad fills it (`net`: the board's ground net if nil)
     func addPour(net: String? = nil, layers: [String]) {
         Task {
             await applying?.value
