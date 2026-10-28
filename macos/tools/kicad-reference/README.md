@@ -369,6 +369,10 @@ involve a track or via the router placed. `BoardEditingTests.swift` does the sam
 the fixture boards (`BoardEditing`'s drag), walking round and shoving: no clearance, crossing or short with them; and
 with differential pairs routed on the pair boards (`BoardEditing`'s `startPair`, as the router tool's Route
 Differential Pair starts one, at the net class's diff pair width and gap), walking round through vias and shoving.
+`BoardTuningTests.swift` tunes tracks' lengths on the fixture boards, and the pairs it routes on the pair boards their
+lengths and skews (`BoardEditing`'s `startTuning`, `moveTuning`, `fixTuning`, as KiCad's tuning patterns drive the
+meander placers): the length each tuning reports is the length its tracks then have on the board, and KiCad's DRC
+finds no clearance, crossing or short with the meanders that it did not find on the board before them.
 `BoardRoutingTests` routes the arc boards too (`Fixtures/arcboards`), each route in a corner mode of its own,
 rounded ones among them: the arcs the port puts on go into the board file as KiCad writes arc tracks (start, mid,
 end, width, layer, net, uuid), and KiCad's DRC reads them and finds nothing wrong with them.
