@@ -25,6 +25,8 @@ public final class BoardEditing {
         public var zones: [String] = []
         /// Whether the board's outline changed
         public var outline = false
+        /// Whether the board's zones were filled again with it (refillsZones)
+        public var refilled = false
         /// What it was, for an undo menu (and KiCad's own)
         public let name: String
     }
@@ -98,6 +100,13 @@ public final class BoardEditing {
     /// How a track started here turns its corners (KiCad's track corner modes): mitred at 45° (KiCad's default) or
     /// 90°, or rounded with an arc, which goes into the board as an arc track; a pair and a drag too
     public var cornerMode: Direction45.CornerMode = .mitered45
+
+    /// Whether each change fills the board's zones again, as KiCad's zone filler fills them (ZoneFiller), where the
+    /// board has zones and nothing the filler does not fill yet; the router goes on from the board as filled. Off,
+    /// the zones keep their fills until they are filled again elsewhere (KiCad's editor fills its own).
+    public var refillsZones = false
+    /// Whether the last change filled the zones again
+    private var lastRefilled = false
 
     public private(set) var router: BoardRouter
     private var project: [String: Any]?
@@ -421,6 +430,10 @@ public final class BoardEditing {
         let start = base
         var added: [String] = [], removed: [String] = []
         var tried = Set<KiCadConnectivity.Airwire>()
+        // (the zones filled again once, after the last connection, not after each)
+        let refills = refillsZones
+        refillsZones = false
+        defer { refillsZones = refills }
         var wires = KiCadConnectivity(router.board).ratsnest()
         func wanted(_ w: KiCadConnectivity.Airwire) -> Bool { (nets?.contains(w.net) ?? true) && !skip.contains(w.net) }
         while out.routed.count + out.failed.count < most, let wire = wires.first(where: { wanted($0) && !tried.contains($0) }) {
@@ -438,8 +451,14 @@ public final class BoardEditing {
         out.left = wires.count
         if !added.isEmpty || !removed.isEmpty {
             let n = out.routed.count
+            let filled = refills ? refilled(base) : nil
+            if let filled {
+                base = filled
+                router = BoardRouter(board: base.copy(), project: project)
+            }
             out.edit = Edit(before: start, after: base, added: added, removed: removed,
                             name: n == 1 ? "Route 1 Connection" : "Route \(n) Connections")
+            out.edit?.refilled = filled != nil
         }
         return out
     }
@@ -450,7 +469,9 @@ public final class BoardEditing {
         guard !isRouting else { return nil }
         let start = base
         guard let (added, removed) = route(wire, layer: layer, width: width) else { return nil }
-        return Edit(before: start, after: base, added: added, removed: removed, name: "Route Connection")
+        var edit = Edit(before: start, after: base, added: added, removed: removed, name: "Route Connection")
+        edit.refilled = lastRefilled
+        return edit
     }
 
     /// A track from one end of `wire` to the other, on `layer` (the side a one-sided pad is on), else on the other
@@ -481,13 +502,31 @@ public final class BoardEditing {
 
     private func change(_ name: String, footprints: [String] = [], zones: [String] = [], outline: Bool = false) -> Edit? {
         guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty || outline else { return nil }
-        let after = router.board.copy()
-        var edit = Edit(before: base, after: after, added: router.lastAdded, removed: router.lastRemoved, name: name)
+        var after = router.board.copy()
+        let (added, removed) = (router.lastAdded, router.lastRemoved)
+        // (not while a track or pair is still being routed, which goes on in the router as it is)
+        let filled = refillsZones && !router.router.routingInProgress ? refilled(after) : nil
+        if let filled {
+            after = filled
+            router = BoardRouter(board: after.copy(), project: project)
+        }
+        var edit = Edit(before: base, after: after, added: added, removed: removed, name: name)
         edit.footprints = footprints
         edit.zones = zones
         edit.outline = outline
+        edit.refilled = filled != nil
+        lastRefilled = edit.refilled
         base = after
         return edit
+    }
+
+    /// `board` with its zones filled again as KiCad's zone filler fills them; nil where it has no zones, or has what
+    /// the filler does not fill yet
+    private func refilled(_ board: KiCadBoard) -> KiCadBoard? {
+        guard board.zones.contains(where: { !$0.isRuleArea }) else { return nil }
+        let filler = ZoneFiller(board: board, project: project)
+        guard filler.unsupported.isEmpty else { return nil }
+        return filler.refilledBoard(board)
     }
 
     /// Stitching vias for `net`'s pours: a via every `pitch` (mm, on whole multiples of it) where the net's pours

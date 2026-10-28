@@ -549,6 +549,51 @@ final class BoardEditingTests: XCTestCase {
         XCTAssertGreaterThan(routed, 0)
     }
 
+    /// Each change filling the board's zones again (refillsZones): a ground pour added and filled with it, then a
+    /// track taken away and the pour filled again round where it was; each fill KiCad's own, where KiCad is installed
+    /// (it fills the same board, and its fills are compared point for point)
+    func testEachChangeFillsTheZonesAgain() throws {
+        let kicad = KiCadInstallation.find().flatMap { $0.major >= KiCadInstallation.minimumMajor ? $0 : nil }
+        var checked = 0, compared = 0
+        for file in try Self.boards().prefix(4) {
+            let session = BoardEditing(board: try KiCadBoard.read(file), project: Self.project(file))
+            session.refillsZones = true
+            guard let net = session.groundNets.first, let pour = session.addPour(net: net, layers: ["B.Cu"]) else { continue }
+            XCTAssertTrue(pour.refilled)
+            let zone = try XCTUnwrap(pour.after.zones.first { $0.uuid == pour.zones.first })
+            XCTAssertFalse(zone.fills.isEmpty, "\(file.lastPathComponent): the pour filled as it is added")
+            XCTAssertEqual(session.board.zones.first { $0.uuid == zone.uuid }?.fills.count, zone.fills.count,
+                           "the router goes on from the board as filled")
+            var edits = [pour]
+            if let track = pour.after.tracks.first(where: { $0.layer == "B.Cu" && $0.net != net }) ?? pour.after.tracks.first,
+               let removed = session.remove([track.uuid]) {
+                XCTAssertTrue(removed.refilled)
+                edits.append(removed)
+            }
+            checked += edits.count
+            guard let kicad else { continue }
+            for edit in edits {
+                let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-refill-\(UUID().uuidString)")
+                try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: work) }
+                let copy = work.appendingPathComponent(file.lastPathComponent)
+                try edit.after.write(to: copy)
+                try? FileManager.default.copyItem(at: file.deletingPathExtension().appendingPathExtension("kicad_pro"),
+                                                  to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+                try KiCadFabrication(installation: kicad).fillZones(copy)
+                let theirs = try KiCadBoard.read(copy)
+                for ours in edit.after.zones where !ours.isRuleArea {
+                    let k = try XCTUnwrap(theirs.zones.first { $0.uuid == ours.uuid })
+                    XCTAssertTrue(ours.fills.map(\.layer) == k.fills.map(\.layer) && ours.fills.map(\.points) == k.fills.map(\.points),
+                                  "\(file.lastPathComponent) \(edit.name): \(ours.net)'s fill is not KiCad's")
+                    compared += 1
+                }
+            }
+        }
+        print("BoardEditingTests: \(checked) changes filling the zones again, \(compared) fills compared with KiCad's")
+        XCTAssertGreaterThan(checked, 0)
+    }
+
     /// A ground pour added, filled by KiCad, and taken away again
     func testAPourIsAddedAndFilledByKiCad() throws {
         let file = try XCTUnwrap(Self.boards().first)

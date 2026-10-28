@@ -91,6 +91,8 @@ final class PCBEditing: ObservableObject {
     private var applying: Task<Void, Never>?
     /// The design rules checks begun
     private var checks = 0
+    /// The last change made here
+    private var lastTaken: BoardEditing.Edit?
 
     // MARK: - The board
 
@@ -104,9 +106,15 @@ final class PCBEditing: ObservableObject {
         isReady = true
     }
 
-    /// The board taken up by the session (its copper layers), and checked
+    /// The board taken up by the session (its copper layers), and checked. Each change fills the board's zones again
+    /// as KiCad's filler does, unless KiCad's editor has the board open (and fills its own).
     private func take(_ board: KiCadBoard, project: [String: Any]?) async {
         layers = await engine.load(board, project: project)
+        let refills = !(controller?.isLive ?? false) && !(controller?.isOpenInKiCad ?? false)
+        _ = await engine.run { session -> Bool? in
+            session.refillsZones = refills
+            return true
+        }
         await check()
     }
 
@@ -619,7 +627,7 @@ final class PCBEditing: ObservableObject {
                 return
             }
             take(made)
-            await fillZonesNow()
+            if !made.refilled { await fillZonesNow() }
         }
     }
 
@@ -633,7 +641,7 @@ final class PCBEditing: ObservableObject {
         }
     }
 
-    /// The board's zones filled anew by KiCad (B, as in KiCad)
+    /// The board's zones filled anew (B, as in KiCad)
     func fillZones() { Task { await fillZonesNow() } }
 
     /// Stitching vias for the ground pours, every 5 mm where both sides' are filled (as KiCad last filled them) and
@@ -654,7 +662,7 @@ final class PCBEditing: ObservableObject {
             }
             take(made)
             message = "\(made.added.count) stitching via\(made.added.count == 1 ? "" : "s") placed; filling the pours round them."
-            await fillZonesNow()
+            if !made.refilled { await fillZonesNow() }
         }
     }
 
@@ -722,7 +730,7 @@ final class PCBEditing: ObservableObject {
     func fitOutline() {
         Task {
             await place { $0.fitOutline() }
-            if undoName == "Fit Outline to Parts" { await fillZonesNow() }
+            if undoName == "Fit Outline to Parts", lastTaken?.refilled != true { await fillZonesNow() }
         }
     }
 
@@ -731,7 +739,7 @@ final class PCBEditing: ObservableObject {
     func setOutline(width: Double, height: Double, radius: Double) {
         Task {
             await place { $0.setOutline(width: width, height: height, radius: radius) }
-            if undoName == "Change Board Outline" { await fillZonesNow() }
+            if undoName == "Change Board Outline", lastTaken?.refilled != true { await fillZonesNow() }
         }
     }
 
@@ -778,6 +786,7 @@ final class PCBEditing: ObservableObject {
 
     /// A change made here, sent to the board
     private func take(_ edit: BoardEditing.Edit) {
+        lastTaken = edit
         undoStack.append(edit)
         redoStack = []
         updateNames()
