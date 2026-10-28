@@ -187,6 +187,15 @@ extension BoardDRC {
     }
 
     func buildConnectivity(_ c: Copper) -> Connectivity {
+        let cn = connectivityItems(c)
+        searchConnections(cn)
+        propagateNets(cn)
+        ratsnest(cn)
+        return cn
+    }
+
+    /// The connectivity's items of the board's copper (CN_CONNECTIVITY_ALGO::Build's Add of each), not yet joined
+    func connectivityItems(_ c: Copper) -> Connectivity {
         let cn = Connectivity()
         func add(_ item: CNItem) {
             cn.items.append(item)
@@ -257,9 +266,6 @@ extension BoardDRC {
             it.endLayer = it.startLayer
             add(it)
         }
-        searchConnections(cn)
-        propagateNets(cn)
-        ratsnest(cn)
         return cn
     }
 

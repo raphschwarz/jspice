@@ -22,13 +22,14 @@ extension BoardDRC {
         return (width == 0 && (kind == "rect" || kind == "circle")) || (kind == "poly" && node.value("layer") != "Edge.Cuts")
     }
 
-    /// EDA_SHAPE::TransformShapeToPolygon of a drawing (placed on the board if it is a footprint's), no clearance;
-    /// nil for one the port does not make (an outlined rectangle with round corners, an arc in the oldest format)
+    /// EDA_SHAPE::TransformShapeToPolygon of a drawing (placed on the board if it is a footprint's);
+    /// nil for one the port does not make (an arc in the oldest format);
+    /// with a clearance, its line that much wider each side (none with `ignoreLineWidth`)
     func drawingPolygon(_ node: SExpr, placement: BoardWorld.FootprintPlacement?, maxError: Int,
-                        errorLocation: ErrorLocation) -> PolySet? {
+                        errorLocation: ErrorLocation, clearance: Int = 0, ignoreLineWidth: Bool = false) -> PolySet? {
         guard let o = world.outlineShape(node, placement: placement) else { return nil }
         let solid = Self.solidFill(node)
-        let width = o.width
+        let width = (ignoreLineWidth ? 0 : o.width) + 2 * clearance
         var out = PolySet()
         func oval(_ a: IPoint, _ b: IPoint) {
             out.append(PadPolygon.oval(start: a, end: b, width: width, maxError: maxError, errorLocation: errorLocation))
@@ -43,8 +44,25 @@ extension BoardDRC {
                                            errorLocation: errorLocation))
             }
         case .rect:
-            if o.cornerRadius > 0 {
-                guard solid else { return nil }
+            if o.cornerRadius > 0 && !solid {
+                // ROUNDRECT::TransformToPolygon's outline (its arcs to a fifth of the error), each side a segment of
+                // the line's width and each arc one
+                let outline = BoardWorld.roundRect(start: o.start, width: o.end.x - o.start.x, height: o.end.y - o.start.y,
+                                                   radius: o.cornerRadius, maxError: maxError / 5)
+                var handled = Set<Int>()
+                for i in 0..<outline.segmentCount {
+                    if outline.isArcSegment(i) {
+                        let a = outline.arcIndex(i)
+                        guard handled.insert(a).inserted else { continue }
+                        let arc = outline.arcs[a]
+                        out.append(PadPolygon.arc(start: arc.start, mid: arc.mid, end: arc.end, width: width, maxError: maxError,
+                                                  errorLocation: errorLocation))
+                    } else {
+                        let s = outline.segment(i)
+                        oval(s.a, s.b)
+                    }
+                }
+            } else if o.cornerRadius > 0 {
                 let size = IPoint(abs(o.end.x - o.start.x), abs(o.end.y - o.start.y))
                 let box = IBox(o.start, o.end)
                 let center = IPoint(box.minX + (box.maxX - box.minX) / 2, box.minY + (box.maxY - box.minY) / 2)
@@ -94,16 +112,22 @@ extension BoardDRC {
 
     /// PCB_TEXT::TransformShapeToPolygon: a text on copper as the box round its strokes' polygons, turned with it;
     /// nil for one the port does not make
-    static func textHull(_ node: SExpr, footprint: SExpr?, maxError: Int, errorLocation: ErrorLocation) -> PolySet? {
+    static func textHull(_ node: SExpr, footprint: SExpr?, maxError: Int, errorLocation: ErrorLocation, clearance: Int = 0) -> PolySet? {
         guard let t = BoardWorld.textStrokes(node, footprint: footprint) else { return nil }
         var rendered = PolySet()
         for s in t.segments {
             rendered.append(PadPolygon.oval(start: s.a, end: s.b, width: t.width, maxError: maxError, errorLocation: errorLocation))
         }
         guard !rendered.polygons.isEmpty else { return PolySet() }
+        // (TransformTextToPolySet: the strokes united, and with the error outside grown by it)
+        if errorLocation == .outside {
+            rendered.simplify()
+            rendered.inflate(maxError, .roundAllCorners, maxError: maxError)
+        }
         rendered.rotate(-t.rotation, around: t.position)
         guard var box = rendered.polygons.first.map({ $0[0].bbox }) else { return PolySet() }
         for p in rendered.polygons.dropFirst() { box.merge(p[0].bbox) }
+        box = box.inflated(clearance)
         let corners = [IPoint(box.minX, box.minY), IPoint(box.maxX, box.minY), IPoint(box.maxX, box.maxY), IPoint(box.minX, box.maxY)]
         var out = PolySet()
         out.newOutline()
