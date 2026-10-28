@@ -598,6 +598,12 @@ public struct LineChain: Hashable, Sendable, CustomStringConvertible {
         return r
     }
 
+    /// The chain mirrored in the line through `axis`, its points and its arcs (KiCad's Mirror( SEG ))
+    public mutating func mirror(_ axis: Seg) {
+        for i in points.indices { points[i] = axis.reflectPoint(points[i]) }
+        for i in arcs.indices { arcs[i].mirror(axis) }
+    }
+
     /// The chain split at the points of it nearest `start` and `end` (an arc's nearer end, not a point inside it):
     /// what comes before, between and after them (KiCad's Split)
     public func split(_ start: IPoint, _ end: IPoint) -> (pre: LineChain, mid: LineChain, post: LineChain) {
