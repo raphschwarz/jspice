@@ -31,6 +31,7 @@ public final class BoardRouter {
         self.project = project
         world = BoardWorld(board: board, project: project)
         iface = WorldInterface(items: world.items, layers: world.copperLayers, rules: world.rules)
+        iface.stackupHeights = world.stackupHeights
         router.setInterface(iface)
         router.settings.mode = .walkaround
         router.syncWorld()
@@ -48,6 +49,7 @@ public final class BoardRouter {
     public func reload() {
         world = BoardWorld(board: board, project: project)
         iface.items = world.items
+        iface.stackupHeights = world.stackupHeights
         router.syncWorld()
     }
 

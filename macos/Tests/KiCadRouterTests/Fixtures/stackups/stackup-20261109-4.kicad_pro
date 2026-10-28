@@ -1,0 +1,13 @@
+{
+  "board": {
+    "design_settings": {
+      "rules": {
+        "use_height_for_length_calcs": true
+      }
+    }
+  },
+  "meta": {
+    "filename": "stackup-20261109-4.kicad_pro",
+    "version": 3
+  }
+}

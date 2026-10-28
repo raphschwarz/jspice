@@ -173,6 +173,18 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   rest of each board is as it is without them): lines of segments and arcs, each arc tangent to the segments either
   side, out of pads of their net or from anywhere, some arcs one after another, now and then a locked one.
   `Tests/KiCadRouterTests/Fixtures/arcboards` holds three (`boards.py --arcs ... 3 20261103`).
+- `stackups.py`: boards of random stackups (`stackups.py OUTDIR COUNT [SEED]`: two to eight copper layers; a
+  stackup of their own, copper and dielectrics of random thicknesses, dielectrics of up to three sublayers, now and
+  then a thickness not given, or none, KiCad's default from the board's thickness and layers, now and then a solder
+  mask layer left out; now and then a project that does not use heights for lengths), and the board's thickness
+  between each two of their copper layers as KiCad's length calculation counts it for a via
+  (`LENGTH_DELAY_CALCULATION::StackupHeight`), which a length tuning adds for each via on its path. KiCad's Python
+  module does not reach the stackup, so the heights come from kicad-cli's DRC: a net for each pair of layers (a track
+  on the one, a through via, a track on the other) and a rule that no net be longer than a micrometre, the DRC's length
+  of each (to a tenth of a micrometre) less its tracks'. Each board is written with its project and BOARD.stackup
+  (JSON: each pair of layers and the height between them). `StackupTests` checks the port's (`Stackup`, which
+  `BoardWorld` gives the router's interface) against them; `Tests/KiCadRouterTests/Fixtures/stackups` holds
+  `stackups.py ... 12 20261109`, and `KICAD_STACKUP_REFERENCE` names another folder of them.
 - `drc.py`: kicad-cli's design rules check of boards (`drc.py BOARD.kicad_pcb...`): its report of each, as the
   board is (its zones not refilled), errors and warnings, next to it as `BOARD.drc` (JSON, its date taken out).
   `DRCTests` checks the port's DRC (`BoardDRC`) against it: the same violations of the checks it makes, between the
@@ -381,7 +393,7 @@ CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 
 arcs too), 2000 clipper cases of each kind, 1000 random router boards, 400 random boards with routes that shove, 400
 random boards with tracks and vias dragged, 100 random boards with differential pairs, 200 random boards with arc
 tracks and routes in every corner mode, 150 with arc tracks and drags, 300 random boards with tracks tuned and 200
-with differential pairs' lengths and skews tuned (arc tracks among them), 60 real boards made by `boards.py` (their
+with differential pairs' lengths and skews tuned (arc tracks among them), 40 boards of random stackups, 60 real boards made by `boards.py` (their
 worlds, routes on them that walk round, mark and shove, drags and length tunings on them, and KiCad's DRC on the
 port's routes), 10 with pairs (`boards.py --pairs`, pairs routed on them) and 20 with arc tracks (`boards.py --arcs`:
 their worlds, routes in every corner mode and drags on them); each run has a new seed, the run number, which the names

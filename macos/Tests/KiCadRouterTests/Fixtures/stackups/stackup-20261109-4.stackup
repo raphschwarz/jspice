@@ -1,0 +1,53 @@
+{
+ "heights": [
+  {
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ],
+   "height": 1660000
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "height": 1660000
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "In1.Cu"
+   ],
+   "height": 559200
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "In2.Cu"
+   ],
+   "height": 1100800
+  },
+  {
+   "layers": [
+    "In1.Cu",
+    "B.Cu"
+   ],
+   "height": 1100800
+  },
+  {
+   "layers": [
+    "In1.Cu",
+    "In2.Cu"
+   ],
+   "height": 541700
+  },
+  {
+   "layers": [
+    "In2.Cu",
+    "B.Cu"
+   ],
+   "height": 559200
+  }
+ ]
+}
