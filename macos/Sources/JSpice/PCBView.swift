@@ -124,6 +124,11 @@ struct PCBView: View {
         if let pair = board.editing.pairPreview {
             return "Routing \(pair.positiveNet) and \(pair.negativeNet)  ·  \(String(format: "%.2f mm, gap %.2f mm", pair.width, pair.gap))  ·  \(PCBEditBar.title(pair.layer))  ·  \(position)"
         }
+        if let tuning = board.editing.tuning {
+            let what = board.editing.tuneMode == .skew ? "Skew" : "Length"
+            let status = tuning.status == .tuned ? "tuned" : tuning.status == .tooShort ? "too short" : "too long"
+            return "Tuning \(tuning.nets.filter { !$0.isEmpty }.joined(separator: " and "))  ·  \(what) \(String(format: "%.3f mm", tuning.length)), \(status)  ·  \(position)"
+        }
         if let preview = board.editing.preview {
             return "Routing \(preview.net ?? "no net")  ·  \(String(format: "%.2f mm", preview.width))  ·  \(PCBEditBar.title(preview.layer))  ·  \(position)"
         }
@@ -373,7 +378,8 @@ struct PCBBoardCanvas: View {
             PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview, pair: editing.pairPreview,
                            selection: editing.selection,
                            dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil,
-                           zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePointer, editing.layer, editing.zoneKind == .keepout) : nil)
+                           zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePointer, editing.layer, editing.zoneKind == .keepout) : nil,
+                           tuning: editing.tuning)
                 .draw(context)
         }
         .frame(width: view.size.width, height: view.size.height)
@@ -412,6 +418,8 @@ struct PCBBoardCanvas: View {
                 editing.click(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
             case .zone:
                 editing.zoneClick(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
+            case .tune:
+                editing.tuneClick(at: p)
             case .select:
                 // a track or via, else a connection still to route (routed), else a part
                 if editing.select(at: p, in: picture, slop: 3 / view.scale, extending: extending) {
@@ -455,6 +463,8 @@ struct PCBBoardCanvas: View {
                 editing.stop()
             } else if editing.cancelZone() {
                 // (the zone being drawn dropped)
+            } else if editing.tuning != nil {
+                editing.cancelTuning()
             } else if editing.tool != .select {
                 editing.tool = .select
             } else {
@@ -484,6 +494,13 @@ struct PCBBoardCanvas: View {
         case "x": editing.tool = .route
         case "6": editing.tool = .pair
         case "z" where !editing.isRouting: editing.tool = .zone
+        case "7" where !editing.isRouting, "8" where !editing.isRouting, "9" where !editing.isRouting:
+            editing.tuneMode = press.characters == "7" ? .single : press.characters == "8" ? .diffPair : .skew
+            editing.tool = .tune
+        case "1" where editing.tuning != nil: editing.stepTuning(spacing: 1)
+        case "2" where editing.tuning != nil: editing.stepTuning(spacing: -1)
+        case "3" where editing.tuning != nil: editing.stepTuning(amplitude: 1)
+        case "4" where editing.tuning != nil: editing.stepTuning(amplitude: -1)
         case "d" where !editing.isRouting: editing.dragAtPointer(freeAngle: false)
         case "g" where !editing.isRouting: editing.dragAtPointer(freeAngle: true)
         case "v": editing.placeVia()
@@ -517,9 +534,21 @@ struct PCBEditPainter {
     var airwire: KiCadConnectivity.Airwire?
     /// The zone being drawn: its corners, the pointer, its layer, and whether it is a rule area
     var zone: (corners: [KiCadPoint], pointer: KiCadPoint?, layer: String, keepout: Bool)?
+    /// The length tuning under way
+    var tuning: BoardEditing.TuningPreview?
 
     func draw(_ context: GraphicsContext) {
         let s = view.scale
+        if let tuning {
+            // the meandered line (a pair's two), outlined green when tuned, orange when still short, red when long
+            let mark: Color = tuning.status == .tuned ? .green : tuning.status == .tooShort ? .orange : .red
+            let w = max(0.5, tuning.width * s)
+            for line in tuning.lines where line.count > 1 {
+                let path = view.path(line, closed: false)
+                context.stroke(path, with: .color(mark.opacity(0.7)), style: StrokeStyle(lineWidth: w + 3, lineCap: .round, lineJoin: .round))
+                context.stroke(path, with: .color(PCBPainter.color(tuning.layer)), style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
+            }
+        }
         if let zone, !zone.corners.isEmpty {
             // its sides so far, the next to the pointer and the last back to the first dashed, its corners marked
             let color = zone.keepout ? Color.red : PCBPainter.color(zone.layer)
@@ -669,6 +698,8 @@ struct PCBEditBar: View {
             return "Route tracks (X): click a pad, click to fix, double-click to finish; V via, / posture, Esc stop"
         case .pair:
             return "Route differential pairs (6): click a pad of a pair's net (USB_P and USB_N, D+ and D-), both tracks follow at the net class's pair width and gap; V vias, / posture, Esc stop"
+        case .tune:
+            return "Tune a track's length (7), a differential pair's (8) or its skew (9), as KiCad's length tuner: click the track, move along it, click to keep the meanders; 1 2 spacing, 3 4 amplitude, Esc drops it"
         case .zone:
             return "Draw a zone (Z): click its corners, double-click the last: a copper zone of a net, filled round everything else as KiCad fills it, or a rule area keeping tracks, vias, pads or pours out (⌫ takes a corner back, Esc drops it)"
         }
@@ -729,6 +760,26 @@ struct PCBEditBar: View {
                 .labelsHidden()
                 .fixedSize()
                 .help("The corners new tracks take: at 45° or 90°, mitred, or rounded into arcs (KiCad's track corner mode)")
+            }
+            if editing.tool == .tune {
+                Picker("Tune", selection: $editing.tuneMode) {
+                    Text("Track Length").tag(BoardRouter.TuningMode.single)
+                    Text("Pair Length").tag(BoardRouter.TuningMode.diffPair)
+                    Text("Pair Skew").tag(BoardRouter.TuningMode.skew)
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("What to tune: a track's length (7), a differential pair's (8), or the skew between its two lines (9)")
+                if editing.tuneMode == .skew {
+                    TextField("Skew", value: $editing.tuneSkew, format: .number.precision(.fractionLength(0...3)))
+                        .frame(width: 70)
+                        .help("The skew to reach, mm (the positive line longer by it), within 0.1 mm")
+                } else {
+                    TextField("Length", value: $editing.tuneLength, format: .number.precision(.fractionLength(0...3)))
+                        .frame(width: 70)
+                        .help("The length to reach, mm, within 0.1 mm")
+                }
+                Text("mm").foregroundStyle(.secondary)
             }
             if editing.tool == .zone {
                 Picker("Layer", selection: $editing.layer) {

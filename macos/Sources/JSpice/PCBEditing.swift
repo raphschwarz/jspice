@@ -10,7 +10,7 @@ import KiCadRouter
 @MainActor
 final class PCBEditing: ObservableObject {
     enum Tool: String, CaseIterable, Identifiable {
-        case select, route, pair, zone
+        case select, route, pair, zone, tune
         var id: Self { self }
         var title: String {
             switch self {
@@ -18,6 +18,7 @@ final class PCBEditing: ObservableObject {
             case .route: return "Route"
             case .pair: return "Route Differential Pair"
             case .zone: return "Draw Zone"
+            case .tune: return "Tune Length"
             }
         }
         var symbol: String {
@@ -26,6 +27,7 @@ final class PCBEditing: ObservableObject {
             case .route: return "point.topleft.down.to.point.bottomright.curvepath"
             case .pair: return "equal"
             case .zone: return "pentagon"
+            case .tune: return "waveform.path"
             }
         }
         /// Whether it routes (a track, or a pair)
@@ -97,6 +99,20 @@ final class PCBEditing: ObservableObject {
     @Published var zoneKeepout = KiCadBoard.Keepout()
     /// The board's nets, for a zone's
     @Published private(set) var nets: [String] = []
+    /// What the tune tool tunes (KiCad's Tune Length of a Single Track, of a Differential Pair, Tune Skew), and the
+    /// length (mm) or skew (mm) to reach
+    @Published var tuneMode = BoardRouter.TuningMode.single {
+        didSet { if tuneMode != oldValue, tuning != nil { cancelTuning() } }
+    }
+    @Published var tuneLength = 50.0 {
+        didSet { if tuneLength != oldValue { tuneSettingsChanged() } }
+    }
+    @Published var tuneSkew = 0.0 {
+        didSet { if tuneSkew != oldValue { tuneSettingsChanged() } }
+    }
+    /// The tuning under way, as it now goes: its meandered line (a pair's two), how its length compares with what is
+    /// asked, and its length (or skew)
+    @Published private(set) var tuning: BoardEditing.TuningPreview?
 
     static let widths: [Double] = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0]
 
@@ -156,7 +172,7 @@ final class PCBEditing: ObservableObject {
     /// The board changed elsewhere (in KiCad, or by the schematic's update): taken up anew, unless a track is being
     /// routed on it (which carries over onto the board as it then is)
     func boardChanged(_ board: KiCadBoard, project: [String: Any]?) {
-        guard isReady, !isRouting else { return }
+        guard isReady, !isRouting, tuning == nil else { return }
         Task { await take(board, project: project) }
     }
 
@@ -186,7 +202,13 @@ final class PCBEditing: ObservableObject {
         message = nil
         zoneCorners = []
         zonePointer = nil
+        if tuning != nil { cancelTuning() }
         if isRouting { stop() }
+        if tool == .tune {
+            selection = []
+            if !isReady { prepare() }
+            message = "Click a track to tune its length, move along it, click to keep the meanders; 1 2 spacing, 3 4 amplitude, Esc drops it"
+        }
         if tool == .zone {
             selection = []
             if !isReady { prepare() }
@@ -236,6 +258,7 @@ final class PCBEditing: ObservableObject {
     func pointerMoved(_ p: KiCadPoint) {
         pointer = p
         if tool == .zone && !zoneCorners.isEmpty { zonePointer = Self.onGrid(p) }
+        if tool == .tune && tuning != nil { return tuneMoved(to: p) }
         if isDragging && followsPointer { return dragMoved(to: p) }
         guard isRouting else { return }
         pendingMove = p
@@ -700,6 +723,94 @@ final class PCBEditing: ObservableObject {
         if let (board, project) = await controller.fillZones() {
             await take(board, project: project)
         }
+    }
+
+    // MARK: - Tuning lengths
+
+    /// The length or skew to reach, for the router
+    private var tuneSettings: MeanderSettings {
+        var settings = MeanderSettings()
+        if tuneMode == .skew {
+            settings.setTargetSkew(Int((tuneSkew * 1e6).rounded()))
+        } else {
+            settings.setTargetLength(Int((tuneLength * 1e6).rounded()))
+        }
+        return settings
+    }
+
+    /// A click with the tune tool at `p`: a tuning started on the track (or pair) there, or the one under way kept
+    /// there, as one change
+    func tuneClick(at p: KiCadPoint) {
+        guard tool == .tune, !isRouting else { return }
+        let previous = clicking
+        clicking = Task {
+            await previous?.value
+            if tuning == nil {
+                let (mode, settings, layer) = (tuneMode, tuneSettings, layer)
+                let started = await engine.run { session -> (BoardEditing.TuningPreview?, String) in
+                    (session.startTuning(at: p, layer: layer, mode: mode, settings: settings), session.failureReason)
+                }
+                if let preview = started?.0 {
+                    tuning = preview
+                    message = nil
+                } else {
+                    NSSound.beep()
+                    message = started?.1.isEmpty == false ? started?.1 : "There is no track there to tune."
+                }
+                return
+            }
+            pendingTune = nil
+            guard let made = await engine.run({ $0.fixTuning(at: p) }) else { return }
+            tuning = nil
+            take(made)
+        }
+    }
+
+    private var pendingTune: KiCadPoint?
+    private var tuneMoving = false
+
+    /// The pointer moved to `p`, tuning: the meanders fitted to the stretch up to it (only the latest place it got to)
+    private func tuneMoved(to p: KiCadPoint) {
+        pendingTune = p
+        guard !tuneMoving else { return }
+        tuneMoving = true
+        Task {
+            while let next = pendingTune {
+                pendingTune = nil
+                let shown = await engine.run { $0.moveTuning(to: next) }
+                if tuning != nil, let shown { tuning = shown }
+            }
+            tuneMoving = false
+        }
+    }
+
+    /// The meanders' spacing (1 wider, 2 narrower) or amplitude (3 higher, 4 lower) a step, as KiCad's keys step them
+    func stepTuning(spacing: Int = 0, amplitude: Int = 0) {
+        guard tuning != nil else { return }
+        Task {
+            let shown = await engine.run { session -> BoardEditing.TuningPreview? in
+                if spacing != 0 { return session.stepTuningSpacing(spacing) }
+                return session.stepTuningAmplitude(amplitude)
+            }
+            if tuning != nil, let shown { tuning = shown }
+        }
+    }
+
+    private func tuneSettingsChanged() {
+        guard tuning != nil else { return }
+        let settings = tuneSettings
+        Task {
+            let shown = await engine.run { $0.updateTuningSettings(settings) }
+            if tuning != nil, let shown { tuning = shown }
+        }
+    }
+
+    /// The tuning dropped (Esc), the track as it was
+    func cancelTuning() {
+        guard tuning != nil else { return }
+        tuning = nil
+        pendingTune = nil
+        Task { _ = await engine.run { session -> Bool? in session.cancelTuning(); return true } }
     }
 
     // MARK: - Drawing zones
