@@ -192,7 +192,9 @@ public struct PolySet: Sendable {
         c.miterLimit = miterLimit
         let tree = Clipper.PolyTree64()
         if simplify {
-            let paths = Clipper.simplifyPaths(c.execute(Double(amount)), Double(abs(amount)) * coeff, isClosedPath: true)
+            // (KiCad calls SimplifyPaths on the offset's paths and drops what it returns: the paths are united as
+            // they are)
+            let paths = c.execute(Double(amount))
             let c2 = Clipper.Clipper64()
             c2.preserveCollinear = false
             c2.reverseSolution = false
