@@ -34,7 +34,8 @@ final class FillTests: XCTestCase {
             let project = (try? Data(contentsOf: pro)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
             var stages: [[String: Any]] = []
             let dumping = ProcessInfo.processInfo.environment["FILL_DUMP"] != nil
-            let filler = ZoneFiller(board: try KiCadBoard.read(file), project: project, debug: dumping ? { stage, zone, set in
+            let board = try KiCadBoard.read(file)
+            let filler = ZoneFiller(board: board, project: project, debug: dumping ? { stage, zone, set in
                 stages.append(["stage": stage, "zone": zone.uuid, "polygons": set.polygons.map { $0.map { $0.points.map { [$0.x, $0.y] } } }])
             } : nil)
             boards += 1
@@ -56,10 +57,23 @@ final class FillTests: XCTestCase {
                 try json.write(to: URL(fileURLWithPath: dump).appendingPathComponent(name + ".ours"))
                 try JSONSerialization.data(withJSONObject: stages).write(to: URL(fileURLWithPath: dump).appendingPathComponent(name + ".stages"))
             }
-            if !filler.unsupported.isEmpty {
+            var notMade = filler.unsupported
+            if FileManager.default.fileExists(atPath: file.deletingPathExtension().appendingPathExtension("kicad_dru").path) {
+                notMade.insert("design rules file")
+            }
+            if !notMade.isEmpty {
                 unsupportedBoards += 1
-                for u in filler.unsupported { unsupported[u, default: 0] += 1 }
+                for u in notMade { unsupported[u, default: 0] += 1 }
                 continue
+            }
+            // the fills written back as KiCad writes them, and read again
+            var written: [String: [String: [[IPoint]]]] = [:]
+            for node in filler.refilledBoard(board).root.all("zone") {
+                guard let uuid = node.value("uuid") else { continue }
+                for fill in node.all("filled_polygon") {
+                    let pts = (fill["pts"]?.arguments ?? []).filter { $0.head == "xy" }.map { BoardWorld.point($0) }
+                    written[uuid, default: [:]][fill.value("layer") ?? "", default: []].append(pts)
+                }
             }
             for (uuid, kicadLayers) in theirs.sorted(by: { $0.key < $1.key }) {
                 zones += 1
@@ -89,6 +103,8 @@ final class FillTests: XCTestCase {
                         differences.append("\(name) zone \(uuid) \(layerName): KiCad's \(k.count) polygons, ours \(o.count)\(detail)")
                     } else if kIslands != oIslands {
                         differences.append("\(name) zone \(uuid) \(layerName): KiCad's islands \(kIslands), ours \(oIslands)")
+                    } else if (written[uuid]?[layerName] ?? []) != k.map({ $0[0] }) {
+                        differences.append("\(name) zone \(uuid) \(layerName): not written back as made")
                     }
                 }
             }

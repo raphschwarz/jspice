@@ -119,6 +119,11 @@ extension BoardDRC {
             rendered.append(PadPolygon.oval(start: s.a, end: s.b, width: t.width, maxError: maxError, errorLocation: errorLocation))
         }
         guard !rendered.polygons.isEmpty else { return PolySet() }
+        // (TransformTextToPolySet: the strokes united, and with the error outside grown by it)
+        if errorLocation == .outside {
+            rendered.simplify()
+            rendered.inflate(maxError, .roundAllCorners, maxError: maxError)
+        }
         rendered.rotate(-t.rotation, around: t.position)
         guard var box = rendered.polygons.first.map({ $0[0].bbox }) else { return PolySet() }
         for p in rendered.polygons.dropFirst() { box.merge(p[0].bbox) }

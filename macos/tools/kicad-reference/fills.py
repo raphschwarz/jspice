@@ -428,13 +428,13 @@ def draw(path):
                               (135, 92), (142.85, 92), (142.85, 89), (135, 89)], min_thickness=0.5)
     track(board, (137, 90.5), (148, 90.6), sig, layer=In2, width=0.3)
     # 8. hatched zones with thermal reliefs of pads and vias, smoothed holes, turned
-    zone(board, vcc, [F], rect(135, 85, 190, 115), hatch=(1.0, 1.5, 30, 2, 0.5))
-    zone(board, vcc, [B], rect(135, 85, 190, 115), hatch=(0.8, 1.2, 0, 1, 0.3), connection=pcbnew.ZONE_CONNECTION_FULL)
+    zone(board, vcc, [F], rect(155, 85, 180, 105), hatch=(1.0, 1.5, 30, 2, 0.5))
+    zone(board, vcc, [B], rect(155, 85, 180, 105), hatch=(0.8, 1.2, 0, 1, 0.3), connection=pcbnew.ZONE_CONNECTION_FULL)
     for i in range(3):
-        lone_pad(board, f"Q{i}", (142 + 12 * i, 95), vcc, kind=["circle", "rect", "oval"][i], size=(1.8, 1.4), drill=(0.8, 0.8))
-        via(board, (142 + 12 * i, 103), vcc, size=0.6, drill=0.3)
-    via(board, (175, 108), gnd)
-    track(board, (138, 110), (185, 110), sig)
+        lone_pad(board, f"Q{i}", (159 + 7 * i, 90), vcc, kind=["circle", "rect", "oval"][i], size=(1.8, 1.4), drill=(0.8, 0.8))
+        via(board, (159 + 7 * i, 96), vcc, size=0.6, drill=0.3)
+    via(board, (176, 100), gnd)
+    track(board, (152, 102), (183, 102), sig)
     # 9. smoothed corners
     zone(board, gnd, [B], [(105, 10), (125, 10), (125, 30), (115, 30), (115, 40), (105, 40)],
          smoothing=(pcbnew.ZONE_SETTINGS.CORNER_SMOOTHING_CHAMFER, 1.0))

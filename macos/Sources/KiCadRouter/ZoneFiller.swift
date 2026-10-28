@@ -82,12 +82,19 @@ public final class ZoneFiller {
         readLayers()
         readZones()
         noteUnsupported()
+        let ds = (project?["board"] as? [String: Any])?["design_settings"] as? [String: Any]
+        if (ds?["zones_allow_external_fillets"] as? Bool) == true { unsupported.insert("zones keeping their external fillets") }
         fill()
     }
 
+    /// The same, the project read from its file; a rule file of the user's own beside it is one of what the port
+    /// does not take
     public convenience init(board: KiCadBoard, projectURL: URL?) {
         let json = projectURL.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
         self.init(board: board, project: json)
+        if let p = projectURL, FileManager.default.fileExists(atPath: p.deletingPathExtension().appendingPathExtension("kicad_dru").path) {
+            unsupported.insert("design rules file")
+        }
     }
 
     let connectivity: BoardDRC.Connectivity
