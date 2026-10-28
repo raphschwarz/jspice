@@ -62,12 +62,29 @@ final class DRCTests: XCTestCase {
             // (a check KiCad stopped at its limit of: which it found first goes by its threads, so only that the port
             // stops at the limit too)
             var capped: Set<String> = []
+            var unlimited: BoardDRC.Report?
             for type in Self.checked {
                 let limit = BoardDRC.errorLimit(type)
                 let n = report.violations.filter { $0.type == type }.count
+                // (a check the port stopped at the limit of and KiCad did not, where some of the port's are ones
+                // KiCad may find or not: its threads found fewer of them, so all the port would find, past the limit)
+                if n < limit && ourViolations.filter({ $0.type == type }).count == limit
+                    && ourViolations.contains(where: { $0.type == type && ourReport.isUnsure(type, $0.items) }) {
+                    if unlimited == nil { unlimited = drc.runReport(limited: false) }
+                    ourViolations.removeAll { $0.type == type }
+                    ourViolations += unlimited!.violations.filter { $0.type == type }
+                }
                 guard n == limit else { continue }
                 capped.insert(type)
                 let m = ourViolations.filter { $0.type == type }.count
+                // (hole clearances once KiCad's clearances are at their limit: its threads test the holes of pairs
+                // they would have found too near, which come before then by how they happen to run; so as many as
+                // the port finds with the clearances at their limit from the start, at most)
+                if m < limit && type == "hole_clearance"
+                    && report.violations.filter({ $0.type == "clearance" }).count == BoardDRC.errorLimit("clearance")
+                    && drc.runReport(exhausted: ["clearance"]).violations.filter({ $0.type == type }).count == limit {
+                    continue
+                }
                 if m != limit { differences.append("\(name): KiCad finds \(limit) \(type), its limit, ours \(m)") }
             }
             // (and once the shorts are, the copper's checks: KiCad reports what it would have as a short as a
@@ -79,8 +96,9 @@ final class DRCTests: XCTestCase {
             // a pair first, silkscreen across a corner named with whichever of the corner's two edges KiCad's set of
             // them happens to hold first; left out of both, and counted)
             let unsureBefore = report.violations.count + ourViolations.count
-            report.violations.removeAll { ourReport.isUnsure($0.type, $0.items.map(\.uuid)) }
-            ourViolations.removeAll { ourReport.isUnsure($0.type, $0.items) }
+            let unsureReport = unlimited ?? ourReport
+            report.violations.removeAll { unsureReport.isUnsure($0.type, $0.items.map(\.uuid)) }
+            ourViolations.removeAll { unsureReport.isUnsure($0.type, $0.items) }
             unsureFound += unsureBefore - report.violations.count - ourViolations.count
             // (items KiCad may or may not join, by where they are in its memory (two arcs touching one way round
             // and not the other): what is dangling and what is still to connect about them is left out, and counted)

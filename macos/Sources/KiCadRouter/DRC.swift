@@ -271,9 +271,10 @@ public struct BoardDRC {
     /// The violations KiCad's DRC would find, those of each check in the order KiCad's finds them
     public func run() -> [DRCViolation] { runReport().violations }
 
-    /// The check's report, with what it found that KiCad may or may not (`unsure`)
-    func runReport() -> Report {
-        var out = Report(settings: settings)
+    /// The check's report, with what it found that KiCad may or may not (`unsure`); `limited` false, each check's
+    /// violations all, past KiCad's limit; the checks of `exhausted` as if at their limit from the start
+    func runReport(limited: Bool = true, exhausted: Set<String> = []) -> Report {
+        var out = Report(settings: settings, limited: limited, exhausted: exhausted)
         checkTrackWidths(&out)
         checkViaDiameters(&out)
         checkHoleSizes(&out)
@@ -310,6 +311,8 @@ public struct BoardDRC {
     /// (DRC_ENGINE::ReportViolation and the severities KiCad's markers are given)
     struct Report {
         let settings: Settings
+        var limited = true
+        var exhausted: Set<String> = []
         var violations: [DRCViolation] = []
         /// The items of violations KiCad may or may not find, by the order its threads happen to meet them in (a
         /// solder mask bridge of a footprint allowing them tried one way round and not the other, or an aperture
@@ -327,19 +330,21 @@ public struct BoardDRC {
         }
 
         /// IsErrorLimitExceeded: whether as many of a check have been found as KiCad reports
-        func exceeded(_ type: String) -> Bool { counts[type, default: 0] >= BoardDRC.errorLimit(type) }
+        func exceeded(_ type: String) -> Bool {
+            exhausted.contains(type) || (limited && counts[type, default: 0] >= BoardDRC.errorLimit(type))
+        }
 
         /// A violation reported in words of its own (DRC_ITEM::SetErrorMessage)
         mutating func addMessage(_ type: String, _ message: String, _ items: [String]) {
             let severity = settings.severity(type)
-            guard severity != "ignore", counts[type, default: 0] < BoardDRC.errorLimit(type) else { return }
+            guard severity != "ignore", !exceeded(type) else { return }
             counts[type, default: 0] += 1
             violations.append(DRCViolation(type: type, severity: severity, description: message, items: items))
         }
 
         mutating func add(_ type: String, _ detail: String?, _ items: [String]) {
             let severity = settings.severity(type)
-            guard severity != "ignore", counts[type, default: 0] < BoardDRC.errorLimit(type) else { return }
+            guard severity != "ignore", !exceeded(type) else { return }
             counts[type, default: 0] += 1
             let title = BoardDRC.titles[type] ?? type
             violations.append(DRCViolation(type: type, severity: severity,

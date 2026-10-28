@@ -736,9 +736,10 @@ extension BoardDRC {
             }
         }
 
-        // tracks and vias
+        // tracks and vias (each pass run while one of what it finds is not at its limit yet)
         var freePadsUsage: [ObjectIdentifier: Int] = [:]
-        for track in c.tracks {
+        let testTracks = !out.exceeded("clearance") || !out.exceeded("hole_clearance")
+        for track in c.tracks where testTracks {
             for layer in track.layers {
                 let trackShape = track.shapes[layer] ?? []
                 query(track, layer, filter: { other in
@@ -762,7 +763,8 @@ extension BoardDRC {
         }
 
         // pads
-        for (fi, pads) in c.footprintPads.enumerated() {
+        let testPads = !out.exceeded("clearance") || !out.exceeded("shorting_items") || !out.exceeded("hole_clearance")
+        for (fi, pads) in c.footprintPads.enumerated() where testPads {
             for pad in pads {
                 for layer in pad.layers {
                     let padShape = pad.shapes[layer] ?? []
@@ -777,7 +779,8 @@ extension BoardDRC {
         }
 
         // drawings on copper
-        for graphic in c.drawings + c.footprintDrawings.flatMap({ $0 }) {
+        let testGraphics = !out.exceeded("clearance") || !out.exceeded("hole_clearance")
+        for graphic in c.drawings + c.footprintDrawings.flatMap({ $0 }) where testGraphics {
             guard let layer = graphic.layers.first else { continue }
             for zone in c.zones { testAgainstZone(graphic, zone, layer) }
             let shape = graphic.shapes[layer] ?? []
