@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """KiCad's zone fills of boards, for checking the port's (KiCadRouter's ZoneFiller) against: through KiCad's pcbnew
-module, each board's zones (BOARD::Zones, not its footprints' own) filled by its ZONE_FILLER, as the GUI's Fill All
-Zones and pcbnew.ZONE_FILLER(board).Fill(board.Zones()) fill them, and each zone's filled polygons on each of its
-layers (each polygon's outline and holes, their points; whether it is an island kept by the zone's island removal
-mode) written next to the board as BOARD.fills (JSON), the zones by their uuids. With --twice, each board filled a
-second time from its first fill too, and any difference between the two said (KiCad's filler runs on threads).
+module, each board's zones (BOARD::Zones, not its footprints' own) filled by pcbnew.ZONE_FILLER(board).Fill(
+board.Zones()), and each zone's filled polygons on each of its layers (each polygon's outline and holes, their points;
+whether KiCad keeps it as an island) written next to the board as BOARD.fills (JSON), the zones by their uuids (a
+teardrop, which KiCad writes with none, as "zone #N", N its place among the board's zones). With --twice, each board
+filled a second time from its first fill too, and any difference between the two said (KiCad's filler runs on
+threads).
 
     fills.py [--twice] BOARD.kicad_pcb...
 
@@ -18,6 +19,10 @@ with a cut-out and unplated holes, tracks, arc tracks, vias, texts and drawings 
 footprint's own zone, zones on several layers and on no copper, corner smoothing, and a hatched fill.
 
     fills.py --draw OUT.kicad_pcb
+
+With --draw-open, a small board whose edges do not close, the outline KiCad infers from their box cutting its zone.
+
+    fills.py --draw-open OUT.kicad_pcb
 """
 
 import json
@@ -40,7 +45,7 @@ def pts(chain):
 
 def fills(board):
     out = {}
-    for z in board.Zones():
+    for n, z in enumerate(board.Zones()):
         if z.GetIsRuleArea():
             continue
         layers = {}
@@ -51,7 +56,8 @@ def fills(board):
             layers[pcbnew.LSET.Name(layer)] = [
                 {"polygon": [pts(p.Outline(i))] + [pts(p.CHole(i, j)) for j in range(p.HoleCount(i))],
                  "island": z.IsIsland(layer, i)} for i in range(p.OutlineCount())]
-        out[z.m_Uuid.AsString()] = layers
+        # (a teardrop is written without a uuid, and given a new one each time it is read: by its place among the zones)
+        out[f"zone #{n}" if z.IsTeardropArea() else z.m_Uuid.AsString()] = layers
     return out
 
 
@@ -75,8 +81,8 @@ def write(path, twice=False):
 
 def main():
     args = sys.argv[1:]
-    if args and args[0] == "--draw":
-        draw(args[1])
+    if args and args[0] in ("--draw", "--draw-open"):
+        (draw if args[0] == "--draw" else draw_open)(args[1])
         write(args[1])
         return
     twice = bool(args) and args[0] == "--twice"
@@ -328,6 +334,23 @@ def zone(board, net, layers, outline, priority=0, connection=pcbnew.ZONE_CONNECT
 
 def rect(x0, y0, x1, y1):
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+def draw_open(path):
+    """A board whose edges do not close: the outline KiCad infers from their box, which cuts the fill of a zone
+    reaching past it and drops an island of it outside"""
+    board = pcbnew.NewBoard(path)
+    for a, b in [((0, 0), (30, 0)), ((30, 0), (30, 20)), ((30, 20), (0, 20)), ((0, 20), (0, 2))]:
+        edge(board, a, b)
+    gnd = pcbnew.NETINFO_ITEM(board, "GND")
+    board.Add(gnd)
+    sig = pcbnew.NETINFO_ITEM(board, "SIG")
+    board.Add(sig)
+    zone(board, gnd, [pcbnew.F_Cu], rect(-5, 5, 26, 25))
+    lone_pad(board, "P1", (10, 10), gnd)
+    lone_pad(board, "P2", (20, 15), sig, kind="circle", size=(1.6, 1.6), drill=(0.8, 0.8))
+    track(board, (-6, 17), (31, 17), sig)
+    pcbnew.SaveBoard(path, board)
 
 
 def draw(path):

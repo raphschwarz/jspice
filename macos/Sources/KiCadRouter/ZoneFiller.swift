@@ -17,8 +17,9 @@ import KiCadKit
 /// (a rule file of the user's own, padstacks, pads and vias kept only on layers where something joins them, a barcode
 /// or dimension on copper...) is named in `unsupported`, and a fill made where it matters may not be KiCad's.
 public final class ZoneFiller {
-    /// The fills: by zone (its uuid), by layer (its name), the polygons as KiCad holds them once filled (each an outline
-    /// with its holes fractured into it)
+    /// The fills: by zone (its uuid; a teardrop, which KiCad writes with none, by "zone #N", N its place among the
+    /// board's zones), by layer (its name), the polygons as KiCad holds them once filled (each an outline with its
+    /// holes fractured into it)
     public private(set) var fills: [String: [String: PolySet]] = [:]
     /// The outlines of each fill KiCad keeps as islands (ZONE::IsIsland: those of a zone of no net, and those a zone
     /// that never removes islands, or removes them below an area, keeps)
@@ -108,6 +109,8 @@ public final class ZoneFiller {
     final class FillZone {
         let node: SExpr
         let uuid: String
+        /// What the fills are kept by: its uuid, a teardrop's (which KiCad writes with none) "zone #N"
+        let key: String
         /// The footprint it is of (its index), nil for the board's own
         let footprint: Int?
         let ruleArea: Bool
@@ -146,12 +149,12 @@ public final class ZoneFiller {
         var islands: [Int: Set<Int>] = [:]
         var filled = false
 
-        init(node: SExpr, uuid: String, footprint: Int?, ruleArea: Bool, keepout: [Bool], layers: [Int], net: Int, priority: Int,
+        init(node: SExpr, uuid: String, key: String, footprint: Int?, ruleArea: Bool, keepout: [Bool], layers: [Int], net: Int, priority: Int,
              teardropType: Int, minThickness: Int, localClearance: Int, padConnection: BoardDRC.ZoneConnection, thermalGap: Int,
              spokeWidth: Int, hatched: Bool, hatch: (Int, Int, EDAAngle, Int, Double, Double), hatchOffsets: [Int: IPoint],
              smoothing: Int, cornerRadius: Int, islandRemoval: IslandRemoval, minIslandArea: Double, outline: PolySet,
              item: BoardDRC.CopperItem?) {
-            (self.node, self.uuid, self.footprint, self.ruleArea) = (node, uuid, footprint, ruleArea)
+            (self.node, self.uuid, self.key, self.footprint, self.ruleArea) = (node, uuid, key, footprint, ruleArea)
             (doNotAllowTracks, doNotAllowVias, doNotAllowPads, doNotAllowFootprints, doNotAllowZoneFills) =
                 (keepout[0], keepout[1], keepout[2], keepout[3], keepout[4])
             (self.layers, self.net, self.priority, self.teardropType) = (layers, net, priority, teardropType)
@@ -208,9 +211,10 @@ public final class ZoneFiller {
 
     private func readZones() {
         let fps = drc.board.root.all("footprint")
-        var items: [String: BoardDRC.CopperItem] = [:]
-        for z in copper.zones { items[z.uuid] = z }
-        func add(_ node: SExpr, footprint: Int?) {
+        // (the copper items of the zones, in the order the clearance checks make them: the copper zones that are no
+        // rule areas, the board's then the footprints')
+        var items = copper.zones[...]
+        func add(_ node: SExpr, footprint: Int?, key: String) {
             let uuid = node.value("uuid") ?? ""
             let keepout = node["keepout"]
             let ruleArea = keepout != nil || node["placement"] != nil
@@ -220,7 +224,10 @@ public final class ZoneFiller {
                 : [notAllowed("tracks"), notAllowed("vias"), notAllowed("pads"), notAllowed("footprints"), notAllowed("copperpour")]
             let layers = zoneLayers(node)
             let onCopper = layers.contains(where: isCopperLayer)
-            let item = items[uuid]
+            var item: BoardDRC.CopperItem?
+            if keepout == nil, !world.copper(node["layers"]?.arguments.map(\.text) ?? node.value("layer").map { [$0] } ?? []).isEmpty {
+                item = items.popFirst()
+            }
             let net = onCopper && !ruleArea ? item?.net ?? 0 : 0
             let connect = node["connect_pads"]
             let connectArgs = connect?.arguments.map(\.text) ?? []
@@ -255,7 +262,7 @@ public final class ZoneFiller {
             }
             var outline = BoardWorld.zoneOutline(node)
             outline.clearArcs()
-            zones.append(FillZone(node: node, uuid: uuid, footprint: footprint, ruleArea: ruleArea, keepout: k, layers: layers, net: net,
+            zones.append(FillZone(node: node, uuid: uuid, key: key, footprint: footprint, ruleArea: ruleArea, keepout: k, layers: layers, net: net,
                                   priority: node.value("priority").flatMap(Int.init) ?? 0, teardropType: teardropType,
                                   minThickness: minThickness,
                                   localClearance: connect?["clearance"].map { BoardWorld.iu($0, 0) } ?? 500_000,
@@ -276,8 +283,14 @@ public final class ZoneFiller {
                 z.fills[l, default: PolySet()].addOutline(chain)
             }
         }
-        for node in drc.board.root.all("zone") { add(node, footprint: nil) }
-        for (i, fp) in fps.enumerated() { for node in fp.all("zone") { add(node, footprint: i) } }
+        for (n, node) in drc.board.root.all("zone").enumerated() { add(node, footprint: nil, key: Self.zoneKey(node, n)) }
+        for (i, fp) in fps.enumerated() { for node in fp.all("zone") { add(node, footprint: i, key: "") } }
+    }
+
+    /// The key a board's zone's fills are kept by: its uuid, or for a teardrop "zone #N", N its place among the
+    /// board's zones
+    static func zoneKey(_ node: SExpr, _ n: Int) -> String {
+        node["attr"]?["teardrop"] != nil ? "zone #\(n)" : node.value("uuid") ?? "zone #\(n)"
     }
 
     /// What the board has that the filler does not make
@@ -289,12 +302,16 @@ public final class ZoneFiller {
         if removes.contains(where: { $0.value("remove_unused_layers") == "yes" || $0.flag("remove_unused_layers") }) {
             unsupported.insert("pad or via without unconnected layers")
         }
+        // (items the filler knocks out of copper and of the board's edges and margin: those the port does not make)
+        func knockedOut(_ node: SExpr) -> Bool {
+            let names = node["layers"]?.arguments.map(\.text) ?? node.value("layer").map { [$0] } ?? []
+            return names.contains { $0 == "Edge.Cuts" || $0 == "Margin" || $0.hasSuffix(".Cu") }
+        }
         root.walk { node in
             switch node.head ?? "" {
             case "backdrill", "post_machining", "tertiary_drill", "secondary_drill": self.unsupported.insert("backdrilled hole")
-            case "barcode": self.unsupported.insert("barcode")
-            case "dimension": self.unsupported.insert("dimension")
-            case "table", "gr_text_box", "fp_text_box", "target": self.unsupported.insert(node.head!)
+            case "barcode", "dimension", "table", "gr_text_box", "fp_text_box", "target":
+                if knockedOut(node) { self.unsupported.insert(node.head!) }
             default: break
             }
         }
@@ -421,8 +438,8 @@ public final class ZoneFiller {
                 if z.net < 1 { set = Set(0..<(z.fills[l]?.outlineCount ?? 0)) }
                 isl[name] = set
             }
-            fills[z.uuid] = layers
-            islands[z.uuid] = isl
+            fills[z.key] = layers
+            islands[z.key] = isl
         }
     }
 
@@ -590,8 +607,9 @@ public final class ZoneFiller {
     /// layer by layer, an island marked, the zone marked filled)
     public func refilledBoard(_ board: KiCadBoard) -> KiCadBoard {
         let out = board.copy()
-        for node in out.root.all("zone") {
-            guard let uuid = node.value("uuid"), let layers = fills[uuid] else { continue }
+        for (n, node) in out.root.all("zone").enumerated() {
+            let uuid = Self.zoneKey(node, n)
+            guard let layers = fills[uuid] else { continue }
             node.remove("filled_polygon")
             if let fill = node["fill"], fill.items.count >= 1, fill.text(at: 0) != "yes" {
                 fill.items.insert(SExpr(symbol: "yes"), at: 1)

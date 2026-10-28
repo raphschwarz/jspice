@@ -1004,7 +1004,8 @@ extension ZoneFiller {
             }
         }
         var holes = PolySet()
-        let offset = z.hatchOffsets[layer] ?? hatchingOffsets[layer] ?? .zero
+        if drc.board.root["setup"]?["zone_defaults"] != nil { unsupported.insert("the board's default hatch offsets") }
+        let offset = z.hatchOffsets[layer] ?? .zero
         let xOffset = bbox.minX - bbox.minX % gridsize - gridsize
         let yOffset = bbox.minY - bbox.minY % gridsize - gridsize
         var xx = xOffset
@@ -1053,13 +1054,15 @@ extension ZoneFiller {
         fill.booleanSubtract(holes)
     }
 
-    /// The board's default hatching offsets by layer (its zone layer properties)
-    var hatchingOffsets: [Int: IPoint] { [:] }
-
     // MARK: - fillNonCopperZone
 
     func fillNonCopperZone(_ z: FillZone, _ layer: Int, _ smoothedOutline: PolySet) -> PolySet {
-        // (knockout items: none made here)
+        // (knockout items on the layer, which KiCad takes out of the fill: not made here)
+        drc.board.root.walk { node in
+            if let l = node["layer"], l.text(at: 0) == layerNames[layer], l.arguments.contains(where: { $0.text == "knockout" }) {
+                unsupported.insert("knockout item")
+            }
+        }
         var fill = smoothedOutline
         var keepoutHoles = PolySet()
         for k in zones where isZoneFillKeepout(k, layer, z.bbox) { keepoutHoles.append(k.outline) }

@@ -8,8 +8,8 @@ import KiCadKit
 /// zone's polygons on each of its layers, outline and holes, their points, and whether KiCad keeps it as an island),
 /// and ZoneFiller must make the same, polygon for polygon, point for point. KICAD_BOARD_REFERENCE names a folder of
 /// such boards (or several, separated by colons); with none, Fixtures/fills (a board drawn by fills.py --draw to take
-/// the filler down the ways random boards do not, and boards of thermal reliefs, priorities and islands).
-/// FILL_BOARD keeps to the boards whose names contain it.
+/// the filler down the ways random boards do not, and one by --draw-open whose edges do not close). FILL_BOARD keeps
+/// to the boards whose names contain it; FILL_DUMP names a folder to write the port's fills and their stages to.
 final class FillTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] {
@@ -68,8 +68,8 @@ final class FillTests: XCTestCase {
             }
             // the fills written back as KiCad writes them, and read again
             var written: [String: [String: [[IPoint]]]] = [:]
-            for node in filler.refilledBoard(board).root.all("zone") {
-                guard let uuid = node.value("uuid") else { continue }
+            for (n, node) in filler.refilledBoard(board).root.all("zone").enumerated() {
+                let uuid = ZoneFiller.zoneKey(node, n)
                 for fill in node.all("filled_polygon") {
                     let pts = (fill["pts"]?.arguments ?? []).filter { $0.head == "xy" }.map { BoardWorld.point($0) }
                     written[uuid, default: [:]][fill.value("layer") ?? "", default: []].append(pts)

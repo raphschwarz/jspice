@@ -190,7 +190,8 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   zone of no net, a zone too thin in places, tracks, arcs, vias, texts and drawings of other nets, the board's edge
   with a cut-out, unplated holes, hatched zones turned and with smoothed holes, chamfered and filleted corners, zones
   on no copper and on three copper layers with a hole, a footprint's own zones, a net tie, a teardrop), filled and
-  written as above; `Tests/KiCadRouterTests/Fixtures/fills` holds it (`drawn`).
+  written as above; with `--draw-open OUT.kicad_pcb`, a small board whose edges do not close, its outline inferred
+  from their box. `Tests/KiCadRouterTests/Fixtures/fills` holds both (`drawn`, `open`).
 - `thermals.py`: a board of thermal reliefs for `DRCTests`' starved thermals (`thermals.py OUT.kicad_pcb [SEED]`):
   pads of a zone's net in its fill (filled by KiCad's zone filler), their spokes cut off by tracks of other nets and
   the board's edge, the board asking three spokes of each; pads joined solidly or not at all by the pad or its
