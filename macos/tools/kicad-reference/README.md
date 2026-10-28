@@ -175,6 +175,22 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   blind vias, plated and unplated holes, a custom pad, a footprint's zone, a rule area) and filled polygons with spikes
   sharper and blunter than the sliver check's limit, then `drc.py` on it. `Tests/KiCadRouterTests/Fixtures/copper`
   holds `drawn` (`--draw`), and the boards of `Fixtures/boards` have theirs too.
+- `fills.py`: KiCad's zone fills of boards (`fills.py [--twice] BOARD.kicad_pcb...`): through KiCad's `pcbnew` module,
+  each board's zones filled by `pcbnew.ZONE_FILLER(board).Fill(board.Zones())` (its footprints' zones are not
+  filled, and keep what they were read with), and each zone's filled polygons on each of its layers (outline and
+  holes, their points, and whether KiCad keeps each as an island) written next to the board as `BOARD.fills` (JSON,
+  the zones by uuid, the layers by their canonical names). With `--twice` each board is filled a second time from
+  its first fill and any difference is said: none of the reference boards differs, so KiCad's threads do not change
+  what it makes. `FillTests` checks the port's (`ZoneFiller`) against it, polygon for polygon and point for point,
+  and the fills written back as KiCad writes them. With `--draw OUT.kicad_pcb`, a board taking the filler down the
+  ways random boards do not (thermal reliefs on pads of every shape at several angles, custom pads with and without
+  spoke templates, solid, no and through-hole-only connections, pads' and footprints' own connections, gaps, spoke
+  widths and angles and clearances, a custom pad by its convex hull, coincident pads, zones of several priorities of
+  one net and of others, keepouts of fills and of tracks only, islands removed always, never and below an area, a
+  zone of no net, a zone too thin in places, tracks, arcs, vias, texts and drawings of other nets, the board's edge
+  with a cut-out, unplated holes, hatched zones turned and with smoothed holes, chamfered and filleted corners, zones
+  on no copper and on three copper layers with a hole, a footprint's own zones, a net tie, a teardrop), filled and
+  written as above; `Tests/KiCadRouterTests/Fixtures/fills` holds it (`drawn`).
 - `thermals.py`: a board of thermal reliefs for `DRCTests`' starved thermals (`thermals.py OUT.kicad_pcb [SEED]`):
   pads of a zone's net in its fill (filled by KiCad's zone filler), their spokes cut off by tracks of other nets and
   the board's edge, the board asking three spokes of each; pads joined solidly or not at all by the pad or its
