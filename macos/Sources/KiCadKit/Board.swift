@@ -193,16 +193,52 @@ public final class KiCadBoard {
     /// board's tracks; empty until KiCad fills it. Its id.
     @discardableResult
     public func addPour(net: String, layers: [String], outline: [KiCadPoint], clearance: Double = 0.5,
-                        minThickness: Double = 0.25, thermalGap: Double = 0.5, thermalBridge: Double = 0.5) -> String {
+                        minThickness: Double = 0.25, thermalGap: Double = 0.5, thermalBridge: Double = 0.5,
+                        priority: Int = 0) -> String {
         let uuid = Self.newUUID()
+        var items: [SExprConvertible] = [
+            layers.count == 1 ? SExpr("layer", layers[0]) : SExpr("layers", layers.map { $0 as SExprConvertible }),
+            SExpr("uuid", uuid), SExpr("name", net), SExpr("hatch", SExpr(symbol: "edge"), 0.5)]
+        if priority > 0 { items.append(SExpr("priority", priority)) }
+        items += [SExpr("connect_pads", SExpr("clearance", clearance)), SExpr("min_thickness", minThickness),
+                  SExpr("filled_areas_thickness", SExpr(symbol: "no")),
+                  SExpr("fill", SExpr("thermal_gap", thermalGap), SExpr("thermal_bridge_width", thermalBridge)),
+                  SExpr("polygon", SExpr("pts", outline.map { SExpr("xy", $0.x, $0.y) as SExprConvertible }))]
+        let node = SExpr("zone", items)
+        KiCadZone(node, board: self).setNet(net)
+        insertZone(node)
+        return uuid
+    }
+
+    /// What a rule area keeps out (KiCad's keepout settings), each kept out where true
+    public struct Keepout: Equatable, Sendable {
+        public var tracks = true, vias = true, pads = true, copperPour = true, footprints = false
+        public init(tracks: Bool = true, vias: Bool = true, pads: Bool = true, copperPour: Bool = true, footprints: Bool = false) {
+            (self.tracks, self.vias, self.pads, self.copperPour, self.footprints) = (tracks, vias, pads, copperPour, footprints)
+        }
+    }
+
+    /// A rule area (a keepout) added on `layers` within `outline` (mm), as KiCad writes one: of no net, keeping out
+    /// what `keepout` says; its id
+    @discardableResult
+    public func addRuleArea(layers: [String], outline: [KiCadPoint], keepout: Keepout = Keepout()) -> String {
+        let uuid = Self.newUUID()
+        func rule(_ name: String, _ out: Bool) -> SExpr { SExpr(name, SExpr(symbol: out ? "not_allowed" : "allowed")) }
         let node = SExpr("zone",
                          layers.count == 1 ? SExpr("layer", layers[0]) : SExpr("layers", layers.map { $0 as SExprConvertible }),
-                         SExpr("uuid", uuid), SExpr("name", net), SExpr("hatch", SExpr(symbol: "edge"), 0.5),
-                         SExpr("connect_pads", SExpr("clearance", clearance)), SExpr("min_thickness", minThickness),
-                         SExpr("filled_areas_thickness", SExpr(symbol: "no")),
-                         SExpr("fill", SExpr("thermal_gap", thermalGap), SExpr("thermal_bridge_width", thermalBridge)),
+                         SExpr("uuid", uuid), SExpr("hatch", SExpr(symbol: "edge"), 0.5),
+                         SExpr("connect_pads", SExpr("clearance", 0)), SExpr("min_thickness", 0.25),
+                         SExpr("keepout", rule("tracks", keepout.tracks), rule("vias", keepout.vias), rule("pads", keepout.pads),
+                               rule("copperpour", keepout.copperPour), rule("footprints", keepout.footprints)),
+                         SExpr("placement", SExpr("enabled", SExpr(symbol: "no")), SExpr("sheetname", "")),
+                         SExpr("fill", SExpr("thermal_gap", 0.5), SExpr("thermal_bridge_width", 0.5)),
                          SExpr("polygon", SExpr("pts", outline.map { SExpr("xy", $0.x, $0.y) as SExprConvertible })))
-        KiCadZone(node, board: self).setNet(net)
+        insertZone(node)
+        return uuid
+    }
+
+    /// A zone put after the board's others (or its copper, or before its groups)
+    private func insertZone(_ node: SExpr) {
         let items = root.items
         if let last = items.lastIndex(where: { $0.head == "zone" }) ?? items.lastIndex(where: { Self.copperHeads.contains($0.head ?? "") }) {
             root.items.insert(node, at: last + 1)
@@ -211,7 +247,6 @@ public final class KiCadBoard {
         } else {
             root.items.append(node)
         }
-        return uuid
     }
 
     /// The board's own drawings on Edge.Cuts (its outline, as drawn on the board rather than by footprints)

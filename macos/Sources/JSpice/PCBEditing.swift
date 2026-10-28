@@ -10,13 +10,14 @@ import KiCadRouter
 @MainActor
 final class PCBEditing: ObservableObject {
     enum Tool: String, CaseIterable, Identifiable {
-        case select, route, pair
+        case select, route, pair, zone
         var id: Self { self }
         var title: String {
             switch self {
             case .select: return "Select"
             case .route: return "Route"
             case .pair: return "Route Differential Pair"
+            case .zone: return "Draw Zone"
             }
         }
         var symbol: String {
@@ -24,10 +25,18 @@ final class PCBEditing: ObservableObject {
             case .select: return "cursorarrow"
             case .route: return "point.topleft.down.to.point.bottomright.curvepath"
             case .pair: return "equal"
+            case .zone: return "pentagon"
             }
         }
         /// Whether it routes (a track, or a pair)
-        var routes: Bool { self != .select }
+        var routes: Bool { self == .route || self == .pair }
+    }
+
+    /// What the zone tool draws: a copper zone of a net (as KiCad's Add Filled Zone), or a rule area keeping things
+    /// out (as its Add Rule Area)
+    enum ZoneKind: String, CaseIterable, Identifiable {
+        case copper, keepout
+        var id: Self { self }
     }
 
     @Published var tool: Tool = .select {
@@ -78,6 +87,16 @@ final class PCBEditing: ObservableObject {
     @Published private(set) var quickDRC: KiCadFabrication.DRCReport?
     /// The connection still to route under the pointer, which the select tool routes when it is clicked
     @Published var hoveredAirwire: KiCadConnectivity.Airwire?
+    /// The zone being drawn: its corners so far (mm), and where the pointer is, for the side still to place
+    @Published private(set) var zoneCorners: [KiCadPoint] = []
+    @Published private(set) var zonePointer: KiCadPoint?
+    /// What the zone tool draws, the net of a copper zone (nil: the board's ground net), and what a rule area
+    /// keeps out
+    @Published var zoneKind = ZoneKind.copper
+    @Published var zoneNet: String?
+    @Published var zoneKeepout = KiCadBoard.Keepout()
+    /// The board's nets, for a zone's
+    @Published private(set) var nets: [String] = []
 
     static let widths: [Double] = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0]
 
@@ -110,6 +129,7 @@ final class PCBEditing: ObservableObject {
     /// as KiCad's filler does, unless KiCad's editor has the board open (and fills its own).
     private func take(_ board: KiCadBoard, project: [String: Any]?) async {
         layers = await engine.load(board, project: project)
+        nets = await engine.run { Array(Set($0.router.world.netNames.values)).filter { !$0.isEmpty }.sorted() } ?? []
         let refills = !(controller?.isLive ?? false) && !(controller?.isOpenInKiCad ?? false)
         _ = await engine.run { session -> Bool? in
             session.refillsZones = refills
@@ -164,7 +184,14 @@ final class PCBEditing: ObservableObject {
 
     private func toolChanged() {
         message = nil
+        zoneCorners = []
+        zonePointer = nil
         if isRouting { stop() }
+        if tool == .zone {
+            selection = []
+            if !isReady { prepare() }
+            message = "Click the zone's corners, double-click the last; ⌫ takes the last back, Esc drops it"
+        }
         if tool.routes {
             selection = []
             if !isReady { prepare() }
@@ -208,6 +235,7 @@ final class PCBEditing: ObservableObject {
     /// The pointer over the board, at `p` (mm)
     func pointerMoved(_ p: KiCadPoint) {
         pointer = p
+        if tool == .zone && !zoneCorners.isEmpty { zonePointer = Self.onGrid(p) }
         if isDragging && followsPointer { return dragMoved(to: p) }
         guard isRouting else { return }
         pendingMove = p
@@ -672,6 +700,68 @@ final class PCBEditing: ObservableObject {
         if let (board, project) = await controller.fillZones() {
             await take(board, project: project)
         }
+    }
+
+    // MARK: - Drawing zones
+
+    /// A point on the 0.05 mm grid footprints are moved on
+    static func onGrid(_ p: KiCadPoint) -> KiCadPoint {
+        let grid = 0.05
+        return KiCadPoint((p.x / grid).rounded() * grid, (p.y / grid).rounded() * grid)
+    }
+
+    /// A click with the zone tool at `p`: a corner of the zone being drawn (on the grid); `double`: its last, the zone
+    /// (or rule area) then made on the layer chosen, filled as it is made
+    func zoneClick(at p: KiCadPoint, double: Bool) {
+        guard tool == .zone, !isRouting else { return }
+        let corner = Self.onGrid(p)
+        if zoneCorners.last != corner { zoneCorners.append(corner) }
+        zonePointer = corner
+        guard double else { return }
+        let outline = zoneCorners
+        zoneCorners = []
+        zonePointer = nil
+        guard outline.count >= 3 else {
+            NSSound.beep()
+            message = "A zone needs three corners or more: click them, then double-click the last."
+            return
+        }
+        let (kind, layer, keepout, chosen) = (zoneKind, layer, zoneKeepout, zoneNet)
+        Task {
+            let made = await place { session -> BoardEditing.Edit? in
+                switch kind {
+                case .copper:
+                    guard let net = chosen ?? session.groundNets.first else { return nil }
+                    return session.addZone(net: net, layers: [layer], outline: outline)
+                case .keepout:
+                    return session.addRuleArea(layers: [layer], outline: outline, keepout: keepout)
+                }
+            }
+            if !made {
+                NSSound.beep()
+                message = "Choose the zone's net first: the board has no ground net."
+            } else if lastTaken?.refilled != true {
+                await fillZonesNow()
+            }
+        }
+    }
+
+    /// The zone's last corner taken back (⌫); whether there was one
+    @discardableResult
+    func undoZoneCorner() -> Bool {
+        guard tool == .zone, !zoneCorners.isEmpty else { return false }
+        zoneCorners.removeLast()
+        if zoneCorners.isEmpty { zonePointer = nil }
+        return true
+    }
+
+    /// The zone being drawn dropped (Esc); whether there was one
+    @discardableResult
+    func cancelZone() -> Bool {
+        guard !zoneCorners.isEmpty else { return false }
+        zoneCorners = []
+        zonePointer = nil
+        return true
     }
 
     // MARK: - Placing

@@ -590,6 +590,26 @@ public final class BoardEditing {
         return change("Add \(net) Pour", zones: [uuid])
     }
 
+    /// A zone of `net` drawn by hand on `layers`, its corners `outline` (mm, three or more), as KiCad's Add Filled
+    /// Zone draws one: kept clear of other nets' copper and joined to the net's pads by thermal reliefs as a pour is,
+    /// filled over those of lower `priority` (KiCad's zone priority)
+    public func addZone(net: String, layers: [String], outline: [KiCadPoint], priority: Int = 0) -> Edit? {
+        guard !isRouting, !layers.isEmpty, outline.count >= 3 else { return nil }
+        let uuid = router.board.addPour(net: net, layers: layers, outline: outline, priority: priority)
+        router.boardChanged()
+        return change("Add \(net) Zone", zones: [uuid])
+    }
+
+    /// A rule area drawn by hand on `layers`, its corners `outline` (mm, three or more), as KiCad's Add Rule Area
+    /// draws one: what it keeps out (tracks, vias, pads, pours, footprints) the router, the pours and the board's
+    /// check keep out of it
+    public func addRuleArea(layers: [String], outline: [KiCadPoint], keepout: KiCadBoard.Keepout = .init()) -> Edit? {
+        guard !isRouting, !layers.isEmpty, outline.count >= 3 else { return nil }
+        let uuid = router.board.addRuleArea(layers: layers, outline: outline, keepout: keepout)
+        router.boardChanged()
+        return change("Add Rule Area", zones: [uuid])
+    }
+
     /// Zones taken away, by id
     public func removeZones(_ uuids: Set<String>) -> Edit? {
         let gone = router.board.zones.filter { uuids.contains($0.uuid) }

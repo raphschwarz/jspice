@@ -237,6 +237,12 @@ struct PCBPainter {
                     context.fill(fill, with: .color(color(layer).opacity(dim ? 0.25 : 0.5)))
                 }
             }
+            // rule areas (keepouts) on the layer: outlined, as KiCad draws them, in red
+            for zone in picture.zones where zone.layer == layer && zone.isRuleArea {
+                let outline = view.path(zone.outline, closed: true)
+                context.fill(outline, with: .color(Color.red.opacity(dim ? 0.05 : 0.1)))
+                context.stroke(outline, with: .color(Color.red.opacity(dim ? 0.4 : 0.8)), style: StrokeStyle(lineWidth: 1, dash: [6, 3]))
+            }
             for track in picture.tracks where track.layer == layer && !hidden.contains(track.uuid) {
                 context.stroke(view.path(track.points, closed: false), with: .color(tint),
                                style: StrokeStyle(lineWidth: max(0.5, track.width * s), lineCap: .round, lineJoin: .round))
@@ -366,7 +372,9 @@ struct PCBBoardCanvas: View {
                 .draw(context)
             PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview, pair: editing.pairPreview,
                            selection: editing.selection,
-                           dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil).draw(context)
+                           dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil,
+                           zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePointer, editing.layer, editing.zoneKind == .keepout) : nil)
+                .draw(context)
         }
         .frame(width: view.size.width, height: view.size.height)
         .overlay {
@@ -402,6 +410,8 @@ struct PCBBoardCanvas: View {
             switch editing.tool {
             case .route, .pair:
                 editing.click(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
+            case .zone:
+                editing.zoneClick(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
             case .select:
                 // a track or via, else a connection still to route (routed), else a part
                 if editing.select(at: p, in: picture, slop: 3 / view.scale, extending: extending) {
@@ -426,9 +436,12 @@ struct PCBBoardCanvas: View {
         .focused($focused)
         .focusEffectDisabled()
         .onKeyPress(phases: .down) { press in key(press) ? .handled : .ignored }
-        .onDeleteCommand { editing.isRouting ? editing.undoSegment() : editing.deleteSelection() }
+        .onDeleteCommand {
+            if editing.undoZoneCorner() { return }
+            editing.isRouting ? editing.undoSegment() : editing.deleteSelection()
+        }
         .onChange(of: editing.tool) { _, _ in focused = true }
-        .onAppear { if editing.tool.routes { focused = true } }
+        .onAppear { if editing.tool != .select { focused = true } }
     }
 
     private func key(_ press: KeyPress) -> Bool {
@@ -440,7 +453,9 @@ struct PCBBoardCanvas: View {
                 editing.cancelDrag()
             } else if editing.isRouting {
                 editing.stop()
-            } else if editing.tool.routes {
+            } else if editing.cancelZone() {
+                // (the zone being drawn dropped)
+            } else if editing.tool != .select {
                 editing.tool = .select
             } else {
                 editing.selection = []
@@ -449,6 +464,7 @@ struct PCBBoardCanvas: View {
             }
             return true
         case .delete, .deleteForward:
+            if editing.undoZoneCorner() { return true }
             if editing.isRouting { editing.undoSegment() } else { editing.deleteSelection() }
             return true
         case .return, .end:
@@ -467,6 +483,7 @@ struct PCBBoardCanvas: View {
         switch press.characters.lowercased() {
         case "x": editing.tool = .route
         case "6": editing.tool = .pair
+        case "z" where !editing.isRouting: editing.tool = .zone
         case "d" where !editing.isRouting: editing.dragAtPointer(freeAngle: false)
         case "g" where !editing.isRouting: editing.dragAtPointer(freeAngle: true)
         case "v": editing.placeVia()
@@ -498,9 +515,26 @@ struct PCBEditPainter {
     var dragging: (uuids: [String], delta: KiCadPoint)?
     /// The connection still to route under the pointer, which a click routes
     var airwire: KiCadConnectivity.Airwire?
+    /// The zone being drawn: its corners, the pointer, its layer, and whether it is a rule area
+    var zone: (corners: [KiCadPoint], pointer: KiCadPoint?, layer: String, keepout: Bool)?
 
     func draw(_ context: GraphicsContext) {
         let s = view.scale
+        if let zone, !zone.corners.isEmpty {
+            // its sides so far, the next to the pointer and the last back to the first dashed, its corners marked
+            let color = zone.keepout ? Color.red : PCBPainter.color(zone.layer)
+            let placed = view.path(zone.corners, closed: false)
+            context.fill(view.path(zone.corners + (zone.pointer.map { [$0] } ?? []), closed: true), with: .color(color.opacity(0.18)))
+            context.stroke(placed, with: .color(color), lineWidth: 1.5)
+            if let pointer = zone.pointer, let last = zone.corners.last, let first = zone.corners.first {
+                context.stroke(view.path([last, pointer, first], closed: false), with: .color(color),
+                               style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
+            }
+            for corner in zone.corners {
+                let c = view.point(corner)
+                context.stroke(Path(CGRect(x: c.x - 3, y: c.y - 3, width: 6, height: 6)), with: .color(.white), lineWidth: 1)
+            }
+        }
         if let airwire {
             var line = Path()
             line.move(to: view.point(airwire.from))
@@ -635,6 +669,8 @@ struct PCBEditBar: View {
             return "Route tracks (X): click a pad, click to fix, double-click to finish; V via, / posture, Esc stop"
         case .pair:
             return "Route differential pairs (6): click a pad of a pair's net (USB_P and USB_N, D+ and D-), both tracks follow at the net class's pair width and gap; V vias, / posture, Esc stop"
+        case .zone:
+            return "Draw a zone (Z): click its corners, double-click the last: a copper zone of a net, filled round everything else as KiCad fills it, or a rule area keeping tracks, vias, pads or pours out (⌫ takes a corner back, Esc drops it)"
         }
     }
 
@@ -693,6 +729,40 @@ struct PCBEditBar: View {
                 .labelsHidden()
                 .fixedSize()
                 .help("The corners new tracks take: at 45° or 90°, mitred, or rounded into arcs (KiCad's track corner mode)")
+            }
+            if editing.tool == .zone {
+                Picker("Layer", selection: $editing.layer) {
+                    ForEach(editing.layers, id: \.self) { layer in
+                        Label { Text(Self.title(layer)) } icon: { Image(systemName: "square.fill").foregroundStyle(PCBPainter.color(layer)) }
+                            .tag(layer)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("The copper layer the zone is drawn on")
+                Picker("Zone", selection: $editing.zoneKind) {
+                    Text("Copper Zone").tag(PCBEditing.ZoneKind.copper)
+                    Text("Rule Area").tag(PCBEditing.ZoneKind.keepout)
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("A copper zone of a net (KiCad's Add Filled Zone), or a rule area keeping things out (its Add Rule Area)")
+                if editing.zoneKind == .copper {
+                    Picker("Net", selection: $editing.zoneNet) {
+                        Text("Ground").tag(String?.none)
+                        Divider()
+                        ForEach(editing.nets, id: \.self) { net in Text(net).tag(Optional(net)) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("The zone's net: by default the board's ground")
+                } else {
+                    Toggle("Tracks", isOn: $editing.zoneKeepout.tracks).help("Keep tracks out of the rule area")
+                    Toggle("Vias", isOn: $editing.zoneKeepout.vias).help("Keep vias out of the rule area")
+                    Toggle("Pads", isOn: $editing.zoneKeepout.pads).help("Keep pads out of the rule area")
+                    Toggle("Pours", isOn: $editing.zoneKeepout.copperPour).help("Keep copper pours out of the rule area")
+                    Toggle("Footprints", isOn: $editing.zoneKeepout.footprints).help("Keep footprints out of the rule area")
+                }
             }
             Menu {
                 Button("Route All Connections") { editing.routeAll() }

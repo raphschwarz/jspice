@@ -594,6 +594,59 @@ final class BoardEditingTests: XCTestCase {
         XCTAssertGreaterThan(checked, 0)
     }
 
+    /// A zone drawn by hand, then a rule area keeping pours out drawn across it: each filled as it is drawn, and
+    /// KiCad, reading the board, takes the rule area for one (keeping out what it says) and fills the zone the same,
+    /// point for point
+    func testZonesAndRuleAreasAreDrawn() throws {
+        let kicad = KiCadInstallation.find().flatMap { $0.major >= KiCadInstallation.minimumMajor ? $0 : nil }
+        var drawn = 0, compared = 0
+        for file in try Self.boards().prefix(3) {
+            let session = BoardEditing(board: try KiCadBoard.read(file), project: Self.project(file))
+            session.refillsZones = true
+            guard let net = session.groundNets.first, let box = session.board.edgeBounds else { continue }
+            let (w, h) = (box.maxX - box.minX, box.maxY - box.minY)
+            func at(_ u: Double, _ v: Double) -> KiCadPoint { KiCadPoint(box.minX + u * w, box.minY + v * h) }
+            XCTAssertNil(session.addZone(net: net, layers: ["F.Cu"], outline: [at(0.1, 0.1), at(0.9, 0.1)]), "two corners make no zone")
+            let zone = try XCTUnwrap(session.addZone(net: net, layers: ["F.Cu"], outline: [at(0.1, 0.1), at(0.9, 0.1), at(0.9, 0.9), at(0.1, 0.9)],
+                                                     priority: 1))
+            XCTAssertEqual(zone.name, "Add \(net) Zone")
+            let added = try XCTUnwrap(zone.after.zones.first { $0.uuid == zone.zones.first })
+            XCTAssertEqual(added.net, net)
+            XCTAssertEqual(added.node.value("priority"), "1")
+            XCTAssertTrue(zone.refilled)
+            let keepout = KiCadBoard.Keepout(tracks: false, vias: false, pads: false, copperPour: true)
+            let area = try XCTUnwrap(session.addRuleArea(layers: ["F.Cu", "B.Cu"], outline: [at(0.4, 0.4), at(0.6, 0.4), at(0.5, 0.6)],
+                                                         keepout: keepout))
+            let rule = try XCTUnwrap(area.after.zones.first { $0.uuid == area.zones.first })
+            XCTAssertTrue(rule.isRuleArea)
+            let before = try XCTUnwrap(zone.after.zones.first { $0.uuid == added.uuid })
+            let after = try XCTUnwrap(area.after.zones.first { $0.uuid == added.uuid })
+            XCTAssertNotEqual(before.fills.map(\.points), after.fills.map(\.points), "the pour kept out of the rule area")
+            drawn += 2
+            guard let kicad else { continue }
+            let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-zones-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: work) }
+            let copy = work.appendingPathComponent(file.lastPathComponent)
+            try area.after.write(to: copy)
+            try? FileManager.default.copyItem(at: file.deletingPathExtension().appendingPathExtension("kicad_pro"),
+                                              to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+            try KiCadFabrication(installation: kicad).fillZones(copy)
+            let theirs = try KiCadBoard.read(copy)
+            let theirRule = try XCTUnwrap(theirs.zones.first { $0.uuid == rule.uuid })
+            XCTAssertTrue(theirRule.isRuleArea)
+            XCTAssertEqual(theirRule.node["keepout"]?.compact, rule.node["keepout"]?.compact)
+            for ours in area.after.zones where !ours.isRuleArea {
+                let k = try XCTUnwrap(theirs.zones.first { $0.uuid == ours.uuid })
+                XCTAssertTrue(ours.fills.map(\.layer) == k.fills.map(\.layer) && ours.fills.map(\.points) == k.fills.map(\.points),
+                              "\(file.lastPathComponent): \(ours.net)'s fill is not KiCad's")
+                compared += 1
+            }
+        }
+        print("BoardEditingTests: \(drawn) zones and rule areas drawn, \(compared) fills compared with KiCad's")
+        XCTAssertGreaterThan(drawn, 0)
+    }
+
     /// A ground pour added, filled by KiCad, and taken away again
     func testAPourIsAddedAndFilledByKiCad() throws {
         let file = try XCTUnwrap(Self.boards().first)
