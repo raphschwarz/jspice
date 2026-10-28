@@ -1204,7 +1204,8 @@ final class ConnectorVertex {
 final class VertexConnector {
     private var vertices: [ConnectorVertex] = []
     private let bbox: IBox
-    private let simplificationLevel = 50
+    /// (VERTEX_SET squares the level it is made with: 50 nm)
+    private let simplificationLevel = 50 * 50
     private var outlineDistances: [[Double]] = []
     private let dist: Int
     private(set) var results = Set<ConnectorResult>()
@@ -1217,7 +1218,7 @@ final class VertexConnector {
             let outline = polys.polygons[i][0]
             var distances: [Double] = [0]
             for j in 0..<outline.pointCount {
-                distances.append(distances.last! + DPoint(outline.point(j + 1) - outline.point(j)).norm)
+                distances.append(distances.last! + Double((outline.point(j + 1) - outline.point(j)).norm))
             }
             outlineDistances.append(distances)
             tail = createList(outline, tail, i)
