@@ -60,6 +60,8 @@ extension BoardDRC {
         var castellated = false
         /// A track's or arc's ends and width
         var trackStart = IPoint.zero, trackEnd = IPoint.zero, trackWidth = 0
+        /// A drawing's position (GetPosition)
+        var position = IPoint.zero
         /// An arc's middle as read
         var trackMid = IPoint.zero
         /// A drawing's connection points (PCB_SHAPE::GetConnectionPoints)
@@ -305,6 +307,8 @@ extension BoardDRC {
         let item = CopperItem(kind: .shape, uuid: node.value("uuid") ?? "")
         item.footprint = footprint
         item.connectionPoints = Self.connectionPoints(d)
+        // (EDA_SHAPE::getPosition: an arc's centre, a polygon's first corner, else its start, a circle's centre)
+        item.position = d.kind == .arc ? d.center : d.kind == .poly ? d.poly.first ?? d.start : d.start
         let name = Self.netName(node)
         item.net = world.netCodes[name] ?? 0
         item.netName = name

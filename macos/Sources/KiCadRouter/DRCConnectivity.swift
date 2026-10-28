@@ -713,7 +713,7 @@ extension BoardDRC {
             case .pad: return it.pad!.pad.pos.distance(p)
             case .via: return it.via!.start.distance(p)
             case .zone: return (it.fills.values.first?.first?.point(0) ?? .zero).distance(p)
-            case .shape: return (item.anchors.first?.pos ?? .zero).distance(p)
+            case .shape: return it.position.distance(p)
             }
         }
         for connected in item.connected {
