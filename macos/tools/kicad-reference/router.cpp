@@ -887,6 +887,12 @@ public:
         else if( int i = indexOf( aItem ); i >= 0 )
         {
             m_removed.push_back( i );
+
+            // (the world frees it as it commits: nothing of it kept, where another item could be made in its memory
+            // and taken for it, its index reported for it and its rules read for it, as when a differential pair's
+            // fix commits what it shoved and goes on)
+            m_byIndex[i] = nullptr;
+            m_resolver.m_info.erase( aItem );
         }
     }
     bool IsAnyLayerVisible( const PNS_LAYER_RANGE& aLayer ) const override { return true; }
