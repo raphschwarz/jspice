@@ -1,9 +1,11 @@
 // Routing on a KiCad board: the router (KiCad's, ported) on the board's world, and what it places written back into
 // the board as KiCad writes tracks, arc tracks and vias. The start item and sizes are as KiCad's router tool and
 // PNS_KICAD_IFACE_BASE::ImportSizes find them (a differential pair's too, routed as its Route Differential Pair
-// routes one), and tracks and vias are dragged as its drag tools drag them
+// routes one), tracks and vias are dragged as its drag tools drag them, and tracks' and pairs' lengths tuned as its
+// tuning patterns drive the router's meander placers
 // (pcbnew/router/router_tool.cpp, pns_tool_base.cpp, pns_kicad_iface.cpp, pcbnew/tools/pcb_grid_helper.cpp,
-// pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp, pcbnew/pcb_track.cpp, KiCad 10.0.7).
+// pcbnew/generators/pcb_tuning_pattern.cpp, pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp, pcbnew/pcb_track.cpp,
+// KiCad 10.0.7).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as KiCad
 // (see KICAD-NOTICE.md).
 
@@ -11,8 +13,8 @@ import Foundation
 import KiCadKit
 
 /// Interactive routing on a KiCad board: start on a pad, track or via (or anywhere), move the pointer, fix, place
-/// vias, switch layers, and commit; or drag a track or via; what the router places goes into the board's file as
-/// KiCad writes it
+/// vias, switch layers, and commit; or drag a track or via; or tune a track's or a pair's length; what the router
+/// places goes into the board's file as KiCad writes it
 public final class BoardRouter {
     public let board: KiCadBoard
     public private(set) var world: BoardWorld
@@ -29,6 +31,7 @@ public final class BoardRouter {
         self.project = project
         world = BoardWorld(board: board, project: project)
         iface = WorldInterface(items: world.items, layers: world.copperLayers, rules: world.rules)
+        iface.stackupHeights = world.stackupHeights
         router.setInterface(iface)
         router.settings.mode = .walkaround
         router.syncWorld()
@@ -46,6 +49,7 @@ public final class BoardRouter {
     public func reload() {
         world = BoardWorld(board: board, project: project)
         iface.items = world.items
+        iface.stackupHeights = world.stackupHeights
         router.syncWorld()
     }
 
@@ -541,6 +545,117 @@ public final class BoardRouter {
         iface.removedItems.removeAll()
         if fixedPair { reload() }
     }
+
+    // MARK: - Length tuning (PCB_TUNING_PATTERN's router side: Update and EditFinish)
+
+    /// What a length tuning tunes (the tuning pattern's modes, KiCad's Tune Length of a Single Track, Tune Length of
+    /// a Differential Pair and Tune Skew of a Differential Pair)
+    public enum TuningMode: Sendable {
+        case single, diffPair, skew
+
+        var routerMode: Router.Mode {
+            switch self {
+            case .single: return .tuneSingle
+            case .diffPair: return .tuneDiffPair
+            case .skew: return .tuneDiffPairSkew
+            }
+        }
+    }
+
+    /// Starts tuning the length of the track under the pointer at `p` (or of the differential pair it is a line of,
+    /// or the pair's skew), `layer` the layer chosen, as KiCad's tuning pattern starts the router's meander placer:
+    /// on the track or arc picked as a drag picks it, from its point nearest the pointer (an arc's nearer end), on its
+    /// layer, with `settings` (the length or skew to reach, the meanders' sizes and corners), the tuned part keeping
+    /// the points it is cut from the rest of the line at, as the pattern keeps them. Whether it could; if not,
+    /// `failureReason` says why, as KiCad says it (no track there, no coupled net for a pair).
+    @discardableResult
+    public func startTuning(at p: IPoint, layer: Int, mode: TuningMode = .single, settings: MeanderSettings = MeanderSettings()) -> Bool {
+        let item = pickSingleItem(p, net: nil, layer: -1, topLayer: layer, ignorePads: true)
+        iface.added.removeAll()
+        iface.removedItems.removeAll()
+        startItem = item
+        router.updateSizes(sizes(for: item))
+        router.mode = mode.routerMode
+        router.failureReason = ""
+        let q = (item as? Segment)?.seg.nearestPoint(p) ?? p
+        guard router.startRouting(q, item, layer: item?.layers.start ?? layer), let placer = router.meanderPlacer else {
+            return false
+        }
+        placer.updateSettings(Self.placerSettings(settings))
+        return true
+    }
+
+    /// The settings as the placer takes them from the pattern: the tuned part keeping the points it is cut at, as the
+    /// pattern keeps them; and a step of the amplitude and spacing of a nanometre at least (KiCad's placer, stepping
+    /// its amplitude down by none as it fits a meander, would go round for ever)
+    private static func placerSettings(_ settings: MeanderSettings) -> MeanderSettings {
+        var s = settings
+        s.keepEndpoints = true
+        s.step = max(s.step, 1)
+        return s
+    }
+
+    /// Whether a length is being tuned
+    public var isTuning: Bool { router.state == .routeTrack && router.meanderPlacer != nil }
+
+    /// The end of the stretch tuned taken to the pointer at `p` (the point of the track's line nearest it), the
+    /// meanders fitted again from where the tuning started; whether the placer could (not where it started, nor, for a
+    /// pair, where its lines are not coupled)
+    @discardableResult
+    public func moveTuning(to p: IPoint) -> Bool {
+        guard isTuning else { return false }
+        return router.move(p, nil)
+    }
+
+    /// The meanders' amplitude a step up or down (KiCad's tuning pattern's Increase and Decrease Amplitude), fitted
+    /// again where the pointer last was
+    public func stepTuningAmplitude(_ sign: Int, at p: IPoint) {
+        guard isTuning, let placer = router.meanderPlacer else { return }
+        placer.amplitudeStep(sign)
+        router.move(p, nil)
+    }
+
+    /// The meanders' spacing a step up or down (Increase and Decrease Spacing), fitted again where the pointer last was
+    public func stepTuningSpacing(_ sign: Int, at p: IPoint) {
+        guard isTuning, let placer = router.meanderPlacer else { return }
+        placer.spacingStep(sign)
+        router.move(p, nil)
+    }
+
+    /// The tuning's settings changed (the pattern's properties: the length to reach, the meanders' sizes and
+    /// corners), the meanders fitted again where the pointer last was
+    public func updateTuningSettings(_ settings: MeanderSettings, at p: IPoint) {
+        guard isTuning, let placer = router.meanderPlacer else { return }
+        placer.updateSettings(Self.placerSettings(settings))
+        router.move(p, nil)
+    }
+
+    /// The tuning as it now is, for drawing and for the pattern's status: the tuned line (a pair's two, positive
+    /// first), its width and layer, how its length compares with what is asked (too short, too long, tuned), and the
+    /// length (a skew tuning's skew), and the settings as the placer has them now (a move can turn the side the
+    /// meanders start on round; the steps change their amplitude and spacing)
+    public var tuning: (lines: [LineChain], width: Int, layer: Int, status: MeanderPlacerBase.TuningStatus, length: Int,
+                        settings: MeanderSettings)? {
+        guard isTuning, let placer = router.meanderPlacer else { return nil }
+        let lines = placer.traces().compactMap { ($0 as? Line)?.cLine }
+        let width = (placer.traces().first as? Line)?.width ?? 0
+        return (lines, width, placer.currentLayer, placer.tuningStatus, placer.tuningLengthResult, placer.meanderSettings)
+    }
+
+    /// The tuning kept, as the pattern's EditFinish keeps it (the placer's fix, forced to finish, then the router
+    /// stopped): the tuned line (or pair) written into the board in place of the track's (or pair's); whether there
+    /// was one to keep (none before the pointer has moved)
+    @discardableResult
+    public func fixTuning(at p: IPoint) -> Bool {
+        guard isTuning else { return false }
+        let done = router.fixRoute(p, nil, forceFinish: true)
+        router.stopRouting()
+        if done { apply() } else { iface.added.removeAll(); iface.removedItems.removeAll() }
+        return done
+    }
+
+    /// The tuning dropped, the board as it was (EditCancel)
+    public func cancelTuning() { cancel() }
 
     // MARK: - Stitching
 

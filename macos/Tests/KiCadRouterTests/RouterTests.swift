@@ -13,16 +13,20 @@ import XCTest
 /// it after each step; kicad-arc-routes.json and kicad-board-arc-routes.json routes on boards with arc tracks (from
 /// them, to them, walking round, shoving and marking), each in a corner mode of its own, rounded ones among them, and
 /// kicad-arc-drag-routes.json and kicad-board-arc-drag-routes.json drags on such boards, arcs dragged among them
-/// (scenes.py --arcs, --rounded, on random boards and on Fixtures/arcboards), the lines with their arcs. The port
-/// must make the same, point for point. KICAD_ROUTER_REFERENCE names other such files
-/// (separated by colons).
+/// (scenes.py --arcs, --rounded, on random boards and on Fixtures/arcboards), the lines with their arcs;
+/// kicad-meander-routes.json and kicad-board-meander-routes.json tracks' lengths tuned by KiCad's meander placer
+/// (scenes.py --mode meander, on random boards with arc tracks and on Fixtures/boards), and kicad-dpmeander-routes.json
+/// differential pairs' lengths and skews tuned (scenes.py --mode dpmeander), with the tuned lines, the tuning's status
+/// and length, and the board as the placer has it after each step. The port must make the same, point for point.
+/// KICAD_ROUTER_REFERENCE names other such files (separated by colons).
 final class RouterTests: XCTestCase {
     private static let reference: [[String: Any]] = {
         let urls = ProcessInfo.processInfo.environment["KICAD_ROUTER_REFERENCE"].map {
             $0.split(separator: ":").map { URL(fileURLWithPath: String($0)) }
         } ?? ["kicad-routes", "kicad-board-routes", "kicad-shove-routes", "kicad-drag-routes",
               "kicad-board-drag-routes", "kicad-diffpair-routes", "kicad-board-diffpair-routes", "kicad-arc-routes",
-              "kicad-arc-drag-routes", "kicad-board-arc-routes", "kicad-board-arc-drag-routes"].map {
+              "kicad-arc-drag-routes", "kicad-board-arc-routes", "kicad-board-arc-drag-routes", "kicad-meander-routes",
+              "kicad-board-meander-routes", "kicad-dpmeander-routes"].map {
             Bundle.module.url(forResource: $0, withExtension: "json", subdirectory: "Fixtures")!
         }
         return urls.flatMap { try! JSONSerialization.jsonObject(with: Data(contentsOf: $0)) as! [[String: Any]] }

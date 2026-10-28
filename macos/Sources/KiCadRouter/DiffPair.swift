@@ -482,8 +482,26 @@ public final class DiffPair: Item {
     private var maxUncoupledLength = 0
     private var chamferLimit = 0
     public private(set) var gapConstraint = RangedNum()
+    /// The lines the pair was made of, linked to the world's tracks (KiCad's m_line_p and m_line_n, which
+    /// DIFF_PAIR( LINE, LINE ) keeps): PLine and NLine give them as they are while they are linked, and bring them up
+    /// to date with the pair once they are not. (A pair made of its paths has none: its lines are made each time.)
+    private var heldP: Line?
+    private var heldN: Line?
 
     public init() {
+        super.init(kind: .diffPair)
+    }
+
+    /// The pair of two lines, kept as they are (KiCad's DIFF_PAIR( LINE, LINE )): their paths and nets; its width and
+    /// gap none yet
+    public init(lineP: Line, lineN: Line, gap: Int = 0) {
+        heldP = lineP.copy()
+        heldN = lineN.copy()
+        gapConstraint = RangedNum(gap)
+        netP = lineP.net
+        netN = lineN.net
+        cp = lineP.cLine
+        cn = lineN.cLine
         super.init(kind: .diffPair)
     }
 
@@ -523,6 +541,8 @@ public final class DiffPair: Item {
         maxUncoupledLength = o.maxUncoupledLength
         chamferLimit = o.chamferLimit
         gapConstraint = o.gapConstraint
+        heldP = o.heldP?.copy()
+        heldN = o.heldN?.copy()
     }
 
     // (KiCad's Clone asserts: a pair is never cloned)
@@ -575,9 +595,30 @@ public final class DiffPair: Item {
     }
 
     /// The positive line: its path, the pair's width and layer, its net, and its via if the pair ends in vias
-    /// (KiCad's PLine, which brings its line up to date each time it is asked)
-    public func pLine() -> Line { line(cp, netP, viaP) }
-    public func nLine() -> Line { line(cn, netN, viaN) }
+    /// (KiCad's PLine, which brings its line up to date each time it is asked, unless it is the line the pair was
+    /// made of and still linked to the world's tracks)
+    public func pLine() -> Line {
+        guard let heldP else { return line(cp, netP, viaP) }
+        if !heldP.isLinked { updateLine(heldP, cp, netP, viaP) }
+        return heldP
+    }
+
+    public func nLine() -> Line {
+        guard let heldN else { return line(cn, netN, viaN) }
+        if !heldN.isLinked { updateLine(heldN, cn, netN, viaN) }
+        return heldN
+    }
+
+    /// A line the pair was made of brought up to date with it (KiCad's updateLine)
+    private func updateLine(_ l: Line, _ shape: LineChain, _ net: NetHandle?, _ via: Via?) {
+        l.setShape(shape)
+        l.setWidth(width)
+        l.net = net
+        l.setLayer(layers.start)
+        l.parent = parent
+        l.sourceItem = sourceItem
+        if endsWithVias, let via { l.appendVia(via) }
+    }
 
     private func line(_ shape: LineChain, _ net: NetHandle?, _ via: Via?) -> Line {
         let l = Line()

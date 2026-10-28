@@ -150,6 +150,9 @@ public struct DPoint: Hashable, Sendable, CustomStringConvertible {
 
     public var squaredNorm: Double { x * x + y * y }
 
+    /// The vector turned a quarter turn (KiCad's Perpendicular)
+    public var perpendicular: DPoint { DPoint(-y, x) }
+
     /// KiCad's EuclideanNorm for a VECTOR2D: exact on the axes, the diagonals by √2
     public var norm: Double {
         if abs(x) == abs(y) { return abs(x) * 2.0.squareRoot() }

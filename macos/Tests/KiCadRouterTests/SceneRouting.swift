@@ -15,6 +15,8 @@ enum SceneRouting {
             if let n = Int(code), let name = name as? String { rules.netNames[n] = name }
         }
         let iface = WorldInterface(items: items, layers: copper, rules: rules)
+        // (the board's thickness between its copper layers, which a length tuning counts for a via)
+        iface.stackupHeights = (scene["stackupHeights"] as? [[Any]] ?? []).map { $0.map(int) }
         let router = Router()
         router.setInterface(iface)
         var out: [[String: Any]] = []
@@ -34,9 +36,13 @@ enum SceneRouting {
             router.settings.fixAllSegments = (route["fixAll"] as? NSNumber)?.boolValue ?? true
             // (the track corner mode: mitered or rounded, at 45 or 90 degrees)
             router.settings.cornerMode = Direction45.CornerMode(rawValue: (route["cornerMode"] as? NSNumber)?.intValue ?? 0) ?? .mitered45
-            // (a differential pair, the router tool's Route Differential Pair; else a single track)
+            // (a differential pair, the router tool's Route Differential Pair; a length tuning, the tuning pattern
+            // generator's, of a track, a pair or a pair's skew; else a single track)
             let diffPair = (route["diffPair"] as? NSNumber)?.boolValue ?? false
-            router.mode = diffPair ? .routeDiffPair : .routeSingle
+            let tune = route["tune"] as? [String: Any]
+            let tuneMode: Router.Mode = tune?["mode"] as? String == "diffpair" ? .tuneDiffPair
+                : tune?["mode"] as? String == "skew" ? .tuneDiffPairSkew : .tuneSingle
+            router.mode = diffPair ? .routeDiffPair : tune != nil ? tuneMode : .routeSingle
             iface.items = items
             router.clearWorld()
             router.syncWorld()
@@ -80,6 +86,9 @@ enum SceneRouting {
             if let drag {
                 started = router.startDragging(point(drag["at"]!), itemAt("item", drag),
                                                mode: (drag["freeAngle"] as? NSNumber)?.boolValue == true ? [.any, .freeAngle] : .any)
+            } else if let tune {
+                started = router.startRouting(point(tune["at"]!), itemAt("item", tune),
+                                              layer: (tune["layer"] as? NSNumber)?.intValue ?? 0)
             } else {
                 started = router.startRouting(point(route["start"]!), itemAt("startItem"),
                                               layer: (route["layer"] as? NSNumber)?.intValue ?? 0)
@@ -90,6 +99,8 @@ enum SceneRouting {
             var lastNode = canonical(NSNull())
             if started && drag != nil {
                 moves = dragSteps(router, route, &r, iface, removeItems)
+            } else if started && tune != nil {
+                moves = tuneSteps(router, route, &r, iface, removeItems)
             } else if started {
                 var finished = false
                 // (the steps as router.cpp takes them: a pointer position, or a layer pair, via placement toggled, a
@@ -202,6 +213,93 @@ enum SceneRouting {
         }
         if !finished, let fix = route["fix"] {
             r["fixed"] = router.fixRoute(point(fix), nil, forceCommit: (route["force"] as? NSNumber)?.boolValue ?? false)
+        }
+        router.stopRouting()
+        return moves
+    }
+
+    /// A length tuning's settings as router.cpp reads them from a route ("meander"), KiCad's defaults for the rest
+    static func meanderSettings(_ j: [String: Any]) -> MeanderSettings {
+        var s = MeanderSettings()
+        func value(_ key: String) -> Int? { (j[key] as? NSNumber)?.intValue }
+        if let t = value("targetLength") { s.setTargetLength(t) }
+        if let t = value("targetMin") { s.targetLength.min = t }
+        if let t = value("targetMax") { s.targetLength.max = t }
+        if let t = value("targetSkew") { s.setTargetSkew(t) }
+        if let t = value("skewMin") { s.targetSkew.min = t }
+        if let t = value("skewMax") { s.targetSkew.max = t }
+        s.minAmplitude = value("minAmplitude") ?? s.minAmplitude
+        s.maxAmplitude = value("maxAmplitude") ?? s.maxAmplitude
+        s.spacing = value("spacing") ?? s.spacing
+        s.step = value("step") ?? s.step
+        s.cornerStyle = j["cornerStyle"] as? String == "chamfer" ? .chamfer : .round
+        s.cornerRadiusPercentage = value("cornerRadius") ?? s.cornerRadiusPercentage
+        s.singleSided = (j["singleSided"] as? NSNumber)?.boolValue ?? s.singleSided
+        s.initialSide = value("initialSide").flatMap(MeanderSide.init(rawValue:)) ?? s.initialSide
+        s.keepEndpoints = (j["keepEndpoints"] as? NSNumber)?.boolValue ?? s.keepEndpoints
+        return s
+    }
+
+    /// What a meander placer has, as router.cpp writes it: the tuned line (or a pair's two), the tuning's status and
+    /// length, and its settings now
+    static func tuningJSON(_ placer: MeanderPlacerBase, _ step: inout [String: Any]) {
+        let traces = placer.traces()
+        if traces.count == 2 {
+            step["p"] = lineJSON(traces[0] as! Line)
+            step["n"] = lineJSON(traces[1] as! Line)
+        } else {
+            step["trace"] = lineJSON(traces[0] as! Line)
+        }
+        step["status"] = placer.tuningStatus.rawValue
+        step["length"] = placer.tuningLengthResult
+        step["initialSide"] = placer.meanderSettings.initialSide.rawValue
+        step["maxAmplitude"] = placer.meanderSettings.maxAmplitude
+        step["spacing"] = placer.meanderSettings.spacing
+    }
+
+    /// A length tuning's steps, as router.cpp drives them (as the tuning pattern generator does): the settings given,
+    /// then pointer positions, amplitude and spacing steps and a fix; after each, what router.cpp writes; then the
+    /// router stopped
+    static func tuneSteps(_ router: Router, _ route: [String: Any], _ r: inout [String: Any], _ iface: WorldInterface,
+                          _ removeItems: Bool) -> [[String: Any]] {
+        let placer = router.meanderPlacer!
+        placer.updateSettings(meanderSettings(route["meander"] as? [String: Any] ?? [:]))
+        r["tunedPath"] = placer.tunedPath().map { item -> Any in
+            if let l = item as? Line { return lineJSON(l) }
+            return addedJSON(item) ?? NSNull()
+        }
+        r["startLength"] = placer.tuningLengthResult
+        var moves: [[String: Any]] = []
+        var finished = false
+        var lastNode = canonical(NSNull())
+        for m in route["moves"] as! [Any] {
+            var step: [String: Any] = [:]
+            if m is [Any] {
+                step["moved"] = router.move(point(m), nil)
+            } else if let m = m as? [String: Any] {
+                if let a = m["amplitude"] {
+                    placer.amplitudeStep(int(a))
+                } else if let s = m["spacing"] {
+                    placer.spacingStep(int(s))
+                } else if let fix = m["fix"] {
+                    finished = router.fixRoute(point(fix), nil, forceFinish: true)
+                    step["fixed"] = finished
+                }
+            }
+            if !finished {
+                tuningJSON(placer, &step)
+                if removeItems {
+                    let node = nodeJSON(placer.currentNode(loopsRemoved: true), iface)
+                    let key = canonical(node)
+                    if key != lastNode { step["node"] = node }
+                    lastNode = key
+                }
+            }
+            moves.append(step)
+            if finished { break }
+        }
+        if !finished, let fix = route["fix"] {
+            r["fixed"] = router.fixRoute(point(fix), nil, forceFinish: true)
         }
         router.stopRouting()
         return moves

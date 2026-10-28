@@ -1,0 +1,18 @@
+{
+ "heights": [
+  {
+   "layers": [
+    "B.Cu",
+    "F.Cu"
+   ],
+   "height": 0
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "height": 0
+  }
+ ]
+}

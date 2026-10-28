@@ -46,7 +46,7 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   round keeps the centre it had) and the same note of which point is on which arc. The fixture,
   `kicad-arc-geometry.json`, is `kicad-geometry --arcs 25`.
 - `router.cpp`: KiCad's interactive router itself (`PNS::ROUTER` with its line placer, diff pair placer, walkaround,
-  shove, dragger, optimizer) on a board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make
+  shove, dragger, optimizer, meander placers) on a board given as JSON: pads, tracks, vias, an outline, simple clearance rules, and the routes to make
   on it, step by step as the router tool drives it (pointer moves, with the item under the pointer if one is given,
   vias, layer switches, clicks that fix part of a route, undo, posture flips; walking around obstacles, shoving them
   or marking them). It writes the head, tail and trace after each step, what each route fixed and what it put on the
@@ -113,6 +113,36 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   all, and counts as clear (`tryWalkDp` takes its best walk, a pair with no path if there was none, whenever its best
   score is above 0, which it always is); and shoving, the vias a pair ends in are committed where they were made, not
   where the shove pushed them, off the pair's tracks. The port does both.
+  A route can be a length tuning (`"tune": {"item": INDEX, "at": POINT, "layer": LAYER, "mode": MODE}`): KiCad's
+  meander placers, in the router's `PNS_MODE_TUNE_SINGLE` (`"mode": "single"`, the default: `MEANDER_PLACER`, a
+  track's length), `PNS_MODE_TUNE_DIFF_PAIR` (`"diffpair"`: `DP_MEANDER_PLACER`, a differential pair's, both its
+  lines meandered together) or `PNS_MODE_TUNE_DIFF_PAIR_SKEW` (`"skew"`: `MEANDER_SKEW_PLACER`, one line of a pair
+  tuned to a skew against the other), started on the track the route names, from where it says, as KiCad's tuning
+  pattern starts one (`PCB_TUNING_PATTERN::Update`), and given the route's settings (`"meander"`: the target length,
+  `"targetLength"`, and its `"targetMin"` and `"targetMax"`, else KiCad's default tolerance either side; or the target
+  skew, `"targetSkew"`, `"skewMin"`, `"skewMax"`; the amplitudes, `"minAmplitude"` and `"maxAmplitude"`, the
+  `"spacing"`, the `"step"` they change by, the `"cornerStyle"` (`"round"` or `"chamfer"`) and `"cornerRadius"` (a
+  percentage of the spacing), `"singleSided"`, the `"initialSide"` (-1 left, 0 the pointer's, 1 right), and
+  `"keepEndpoints"`, whether the tuned part keeps the points it is cut from the rest of the line at, as the pattern
+  has it); then pointer positions (the end of the stretch to tune), the meanders' amplitude or spacing stepped
+  (`{"amplitude": SIGN}`, `{"spacing": SIGN}`) and a click that keeps the tuning (`{"fix": POINT}`, forced to finish,
+  as the pattern's EditFinish keeps it), the router stopped after, whether it was kept or not. It writes the path the
+  tuning measures (`TunedPath`: its lines and vias, from pad to pad or as far as the net goes, through vias and pads
+  in line, the longest way on from each end of the track's line) and the length it starts at, and after each step
+  the tuned line (or the pair's two, `"p"` and `"n"`), the tuning's status (0 too short, 1 too long, 2 tuned) and
+  length (`TuningLengthResult`: a skew tuning's skew), the settings as the placer has them then (a move can turn the
+  side the meanders start on round, the steps change the amplitude and spacing), and the board as the placer has it,
+  when it has changed; then what the tuning put on the board and took off it. The length is KiCad's
+  `PNS_KICAD_IFACE_BASE::CalculateRoutedPathLength`, as `LENGTH_DELAY_CALCULATION::CalculateLength` works it out for
+  the path with none of its optimisations asked for: the lines' lengths, and for each via between lines on two
+  layers the board's thickness between them (`StackupHeight`; the scene's `"stackupHeights"`, by router layer). The
+  router's items have no board items behind them, so what KiCad asks of a PAD or PCB_VIA of the path (its lines cut
+  to the pads' and vias' copper, the pads' pad-to-die lengths, a via inferred in a pad) is not asked here, nor in the
+  port (`MeanderPlacer.swift` says so); and neither tunes in the time domain (delays, from a board's tuning profiles).
+  KiCad's walk along the net gives up after half a second by the clock (`FollowBranchTimeoutMs`), which would make
+  what it measures depend on how fast the machine is; `router.cpp` sets no limit, nor does the port. A pair's tuning
+  fixed before any move has made it a node adds the pair to a null pointer; `router.cpp` sees it coming and stops
+  with exit status 3, and `scenes.py` leaves such boards out.
 - `board-scene.py`: what KiCad's router sees of a real board (`board-scene.py BOARD.kicad_pcb [OUT.json]`, through
   KiCad's `pcbnew` Python module): the items `PNS_KICAD_IFACE_BASE::SyncWorld` makes of it, in its order, with their
   shapes as KiCad's own `GetEffectiveShape` gives them, the board's rules as KiCad's design rules engine resolves
@@ -143,6 +173,18 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   rest of each board is as it is without them): lines of segments and arcs, each arc tangent to the segments either
   side, out of pads of their net or from anywhere, some arcs one after another, now and then a locked one.
   `Tests/KiCadRouterTests/Fixtures/arcboards` holds three (`boards.py --arcs ... 3 20261103`).
+- `stackups.py`: boards of random stackups (`stackups.py OUTDIR COUNT [SEED]`: two to eight copper layers; a
+  stackup of their own, copper and dielectrics of random thicknesses, dielectrics of up to three sublayers, now and
+  then a thickness not given, or none, KiCad's default from the board's thickness and layers, now and then a solder
+  mask layer left out; now and then a project that does not use heights for lengths), and the board's thickness
+  between each two of their copper layers as KiCad's length calculation counts it for a via
+  (`LENGTH_DELAY_CALCULATION::StackupHeight`), which a length tuning adds for each via on its path. KiCad's Python
+  module does not reach the stackup, so the heights come from kicad-cli's DRC: a net for each pair of layers (a track
+  on the one, a through via, a track on the other) and a rule that no net be longer than a micrometre, the DRC's length
+  of each (to a tenth of a micrometre) less its tracks'. Each board is written with its project and BOARD.stackup
+  (JSON: each pair of layers and the height between them). `StackupTests` checks the port's (`Stackup`, which
+  `BoardWorld` gives the router's interface) against them; `Tests/KiCadRouterTests/Fixtures/stackups` holds
+  `stackups.py ... 12 20261109`, and `KICAD_STACKUP_REFERENCE` names another folder of them.
 - `drc.py`: kicad-cli's design rules check of boards (`drc.py BOARD.kicad_pcb...`): its report of each, as the
   board is (its zones not refilled), errors and warnings, next to it as `BOARD.drc` (JSON, its date taken out).
   `DRCTests` checks the port's DRC (`BoardDRC`) against it: the same violations of the checks it makes, between the
@@ -274,6 +316,28 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   `scenes.py --arcs --rounded --mode mix --boards ... 2 20261103 ../../Tests/KiCadRouterTests/Fixtures/arcboards/*.json`
   and `kicad-board-arc-drag-routes.json`
   `scenes.py --arcs --mode drag --boards ... 2 20261103 ../../Tests/KiCadRouterTests/Fixtures/arcboards/*.json`.
+  With `--mode meander`, length tunings, each chosen on the board as the tunings before it left it (KiCad's router
+  run on those first), so that a track tuned can be tuned again: on boards with tracks to tune (lines of a few long
+  segments at 45 and 90 degrees from a pad of their net to another, some through a via to another layer and on, now
+  and then through a pad in line, or from or to nowhere; with `--arcs`, some of their turns arcs) and pads, tracks and
+  vias of other nets about them, the board's thickness between its layers at random (now and then none); each started
+  on a track or arc, mostly a long one (now and then on a via, a pad or nothing, which KiCad refuses), from a point
+  along it, and the pointer taken along its line (to points of its net's tracks on its layer, a little to one side or
+  the other, now and then past them, or back to where it started, where the placer does nothing), the amplitude or
+  spacing stepped on the way now and then, most kept; each with settings of its own (amplitudes, spacing, step,
+  corners, sides), its target from KiCad's own measure of the path (from a tuning that goes nowhere, run first):
+  shorter than the path (too long already), about it, longer by a little or by more than the meanders can make, or
+  none. With `--mode dpmeander`, differential pairs' tunings instead: on boards with pairs of coupled tracks of
+  pairs' nets (the negative line the pair's gap from the positive, its corners where the two lines' offsets meet,
+  now and then from and to pads of their nets; with `--arcs`, now and then a right-angled corner of the pair rounded,
+  each line's arc about one centre) and pads, tracks and vias of other nets about them; each pair's length tuned, or
+  its skew (from its own measure), or now and then one line's length alone. Both take `--boards`, tuning the tracks of
+  real boards. `kicad-meander-routes.json` is
+  `scenes.py --arcs --mode meander ... ../../Tests/KiCadRouterTests/Fixtures/kicad-meander-routes.json 30 20261108`,
+  `kicad-board-meander-routes.json`
+  `scenes.py --mode meander --boards ... 2 20261108 ../../Tests/KiCadRouterTests/Fixtures/boards/*.json`, and
+  `kicad-dpmeander-routes.json`
+  `scenes.py --arcs --mode dpmeander ... ../../Tests/KiCadRouterTests/Fixtures/kicad-dpmeander-routes.json 30 20261108`.
   `KICAD_ROUTER_REFERENCE` names others (separated by colons).
 - `clipper.cpp`: the polygon clipper KiCad ships (`thirdparty/clipper2`, Clipper2, compiled as KiCad compiles it: its
   points carry a z value) on random cases, with its answers: boolean operations (union, intersection, difference,
@@ -293,8 +357,10 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   are taken, in that order too, rather than in the order of a hash set of pointers; virtual vias are made for joints
   in the order of their places rather than of a hash map's; the coupled net's items a differential pair could start
   or end on are taken in the order they were made, so that of two the same distance away the first is the one the pair
-  goes from, rather than in a set of pointers' order (the port does all four in the same order); a start
-  pad's board item is asked its type only when it has one; and why a route cannot start on a non-routable item (a
+  goes from, rather than in a set of pointers' order, and so are the coupled net's tracks a pair's length or skew
+  tuning could take for its other line (the port does all five in the same order); a start
+  pad's board item is asked its type only when it has one; a length tuning's net class is none when the track it
+  starts on has no board item; and why a route cannot start on a non-routable item (a
   hole with no plating, a rule area, a text), which KiCad asks the item's board item, is asked of `router.cpp` when
   there is none. Where the line placer reads an arc as a segment, which is undefined, it says so, and the program
   stops (exit status 3). The dot product `DRAGGER::startDragArc` takes to choose which way the stub it puts at an
@@ -315,6 +381,10 @@ involve a track or via the router placed. `BoardEditingTests.swift` does the sam
 the fixture boards (`BoardEditing`'s drag), walking round and shoving: no clearance, crossing or short with them; and
 with differential pairs routed on the pair boards (`BoardEditing`'s `startPair`, as the router tool's Route
 Differential Pair starts one, at the net class's diff pair width and gap), walking round through vias and shoving.
+`BoardTuningTests.swift` tunes tracks' lengths on the fixture boards, and the pairs it routes on the pair boards their
+lengths and skews (`BoardEditing`'s `startTuning`, `moveTuning`, `fixTuning`, as KiCad's tuning patterns drive the
+meander placers): the length each tuning reports is the length its tracks then have on the board, and KiCad's DRC
+finds no clearance, crossing or short with the meanders that it did not find on the board before them.
 `BoardRoutingTests` routes the arc boards too (`Fixtures/arcboards`), each route in a corner mode of its own,
 rounded ones among them: the arcs the port puts on go into the board file as KiCad writes arc tracks (start, mid,
 end, width, layer, net, uuid), and KiCad's DRC reads them and finds nothing wrong with them.
@@ -322,8 +392,9 @@ end, width, layer, net, uuid), and KiCad's DRC reads them and finds nothing wron
 CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 geometry cases of each kind (with
 arcs too), 2000 clipper cases of each kind, 1000 random router boards, 400 random boards with routes that shove, 400
 random boards with tracks and vias dragged, 100 random boards with differential pairs, 200 random boards with arc
-tracks and routes in every corner mode, 150 with arc tracks and drags, 60 real boards made by `boards.py` (their
-worlds, routes on them that walk round, mark and shove, drags on them, and KiCad's DRC on the port's routes), 10
-with pairs (`boards.py --pairs`, pairs routed on them) and 20 with arc tracks (`boards.py --arcs`: their worlds,
-routes in every corner mode and drags on them); each run has a new seed, the run number, which the names a failure
-reports carry.
+tracks and routes in every corner mode, 150 with arc tracks and drags, 300 random boards with tracks tuned and 200
+with differential pairs' lengths and skews tuned (arc tracks among them), 40 boards of random stackups, 60 real boards made by `boards.py` (their
+worlds, routes on them that walk round, mark and shove, drags and length tunings on them, and KiCad's DRC on the
+port's routes), 10 with pairs (`boards.py --pairs`, pairs routed on them) and 20 with arc tracks (`boards.py --arcs`:
+their worlds, routes in every corner mode and drags on them); each run has a new seed, the run number, which the names
+a failure reports carry.

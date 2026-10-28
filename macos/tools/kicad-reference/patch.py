@@ -39,6 +39,13 @@ each time it is run on the same board, and runs on items with no BOARD_ITEM behi
   products and their sum round in 32 bits, the same every time (the stub then often goes back along the arc), and
   nearly every drag of an arc at a track's end comes to it, so it is made to wrap round explicitly (in unsigned
   ints, which C++ defines), not reported. The Swift port wraps them round the same way.
+- The coupled net's tracks a differential pair's length or skew tuning could take for the other line of the pair
+  (TOPOLOGY::AssembleDiffPair), and the tracks at the ends of the one it starts on, which it tries when none of
+  those runs alongside it, are taken in the order they were made, not in the order of KiCad's sets of pointers: of
+  two the same distance from it, the first taken is the pair's. The Swift port takes them in the same order.
+- A length tuning's placers (MEANDER_PLACER, DP_MEANDER_PLACER, MEANDER_SKEW_PLACER) take the net class of the
+  track they start on from its BOARD_ITEM, for the time domain tuning, which these programs do not do; with none
+  behind the track, they take none.
 
 patch.py changes only what it has not changed already, so it can be run on sources it has changed before.
 
@@ -191,6 +198,36 @@ def main():
           "                        kicadReferenceUndefined( \"simplifyNewLine reads an arc as a segment\" );\n"
           "\n"
           "                    const SEG& testSeg = static_cast<const SEGMENT*>( neighbor )->Seg();")
+
+    # the coupled net's tracks a pair's tuning could take for its other line, and the tracks at its start's ends, in
+    # the order they were made
+    patch(f"{router}/pns_topology.cpp",
+          "    for( ITEM* item : coupledItems )\n"
+          "    {\n"
+          "        if( item->OfKind( ITEM::SEGMENT_T | ITEM::ARC_T ) && item->Layers() == startItem->Layers() )",
+          "    std::vector<ITEM*> coupledBySerial( coupledItems.begin(), coupledItems.end() );\n"
+          "    std::sort( coupledBySerial.begin(), coupledBySerial.end(),\n"
+          "               []( const ITEM* a, const ITEM* b ) { return a->Serial() < b->Serial(); } );\n"
+          "\n"
+          "    for( ITEM* item : coupledBySerial ) // (kicad-reference)\n"
+          "    {\n"
+          "        if( item->OfKind( ITEM::SEGMENT_T | ITEM::ARC_T ) && item->Layers() == startItem->Layers() )")
+
+    patch(f"{router}/pns_topology.cpp",
+          "        for( ITEM* link : linksToTest )\n"
+          "            findNItem( link );",
+          "        std::vector<ITEM*> linksBySerial( linksToTest.begin(), linksToTest.end() );\n"
+          "        std::sort( linksBySerial.begin(), linksBySerial.end(),\n"
+          "                   []( const ITEM* a, const ITEM* b ) { return a->Serial() < b->Serial(); } );\n"
+          "\n"
+          "        for( ITEM* link : linksBySerial ) // (kicad-reference)\n"
+          "            findNItem( link );")
+
+    # a length tuning's net class, none if the track it starts on has no BOARD_ITEM behind it
+    for placer in ("pns_meander_placer.cpp", "pns_dp_meander_placer.cpp", "pns_meander_skew_placer.cpp"):
+        patch(f"{router}/{placer}",
+              "    m_netClass = conItem->GetEffectiveNetClass();",
+              "    m_netClass = conItem ? conItem->GetEffectiveNetClass() : nullptr; // (kicad-reference)")
 
     # the dot product of an arc drag's stub direction, which overflows its ints, wrapped round as KiCad's builds wrap it
     patch(f"{router}/pns_dragger.cpp",

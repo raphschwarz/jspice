@@ -406,6 +406,95 @@ public final class BoardEditing {
         return shown
     }
 
+    // MARK: - Length tuning
+
+    /// A length tuning as it is drawn: the tuned line (a pair's two, positive first), its width and layer, its nets,
+    /// how its length compares with what is asked, and the length (a skew tuning's skew), in mm
+    public struct TuningPreview: Sendable, Equatable {
+        public enum Status: Sendable { case tooShort, tooLong, tuned }
+
+        public var lines: [[KiCadPoint]]
+        public var width: Double
+        public var layer: String
+        public var nets: [String]
+        public var status: Status
+        public var length: Double
+    }
+
+    /// Starts tuning the length of the track at `p` on `layer` (the one a track is on is taken first), or of the
+    /// differential pair it is a line of, or the pair's skew, as KiCad's Tune Length of a Single Track, Tune Length of
+    /// a Differential Pair and Tune Skew of a Differential Pair start a tuning pattern there: `settings` the length
+    /// (or skew) to reach and the meanders' sizes, corners and sides. Nil if the router will not start it,
+    /// `failureReason` saying why as KiCad says it (no track there, no coupled net). `moveTuning` takes the end of the
+    /// stretch to tune to the pointer, `fixTuning` keeps it, `cancelTuning` drops it.
+    public func startTuning(at p: KiCadPoint, layer: String, mode: BoardRouter.TuningMode = .single,
+                            settings: MeanderSettings = MeanderSettings()) -> TuningPreview? {
+        guard !isRouting, let l = router.layer(layer) else { return nil }
+        guard router.startTuning(at: Self.nm(p), layer: l, mode: mode, settings: settings) else { return nil }
+        tuningMode = mode
+        tuningPointer = Self.nm(p)
+        return tuningPreview
+    }
+
+    /// The pointer moved to `p`, tuning: the meanders from where the tuning started to the point of the track
+    /// nearest it, fitted again
+    @discardableResult
+    public func moveTuning(to p: KiCadPoint) -> TuningPreview? {
+        guard router.isTuning else { return nil }
+        tuningPointer = Self.nm(p)
+        router.moveTuning(to: tuningPointer)
+        return tuningPreview
+    }
+
+    /// The meanders' amplitude a step up (1) or down (-1), fitted again
+    @discardableResult
+    public func stepTuningAmplitude(_ sign: Int) -> TuningPreview? {
+        guard router.isTuning else { return nil }
+        router.stepTuningAmplitude(sign, at: tuningPointer)
+        return tuningPreview
+    }
+
+    /// The meanders' spacing a step up (1) or down (-1), fitted again
+    @discardableResult
+    public func stepTuningSpacing(_ sign: Int) -> TuningPreview? {
+        guard router.isTuning else { return nil }
+        router.stepTuningSpacing(sign, at: tuningPointer)
+        return tuningPreview
+    }
+
+    /// The tuning's settings changed (the length or skew to reach, the meanders' sizes, corners and sides), the
+    /// meanders fitted again
+    @discardableResult
+    public func updateTuningSettings(_ settings: MeanderSettings) -> TuningPreview? {
+        guard router.isTuning else { return nil }
+        router.updateTuningSettings(settings, at: tuningPointer)
+        return tuningPreview
+    }
+
+    /// A click at `p`, tuning: the tuning kept, the change ("Tune Length", "Tune Skew"); nil if there was none to keep
+    /// (the pointer not moved since it started)
+    public func fixTuning(at p: KiCadPoint) -> Edit? {
+        guard router.isTuning else { return nil }
+        let name = tuningMode == .skew ? "Tune Skew" : "Tune Length"
+        guard router.fixTuning(at: Self.nm(p)) else { return nil }
+        return change(name)
+    }
+
+    /// The tuning dropped, the board as it was
+    public func cancelTuning() { router.cancelTuning() }
+
+    /// What is being tuned, as it now is
+    public var tuningPreview: TuningPreview? {
+        guard let t = router.tuning else { return nil }
+        let status: TuningPreview.Status = t.status == .tooShort ? .tooShort : t.status == .tooLong ? .tooLong : .tuned
+        let nets = router.router.currentNets.map { $0.flatMap { router.world.netNames[$0] } ?? "" }
+        return TuningPreview(lines: t.lines.map { $0.points.map(Self.mm) }, width: Double(t.width) / 1e6,
+                             layer: router.layerName(t.layer), nets: nets, status: status, length: Double(t.length) / 1e6)
+    }
+
+    private var tuningMode = BoardRouter.TuningMode.single
+    private var tuningPointer = IPoint.zero
+
     // MARK: - Routing every connection
 
     /// What routing the connections left

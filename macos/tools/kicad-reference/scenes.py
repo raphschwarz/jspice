@@ -31,9 +31,17 @@ some of their turns rounded), routes start on arcs and go to them, and drags gra
 board on which KiCad's line placer would read an arc as a segment is left out (router.cpp stops there, with exit
 status 3, as above).
 
-    scenes.py [--mode shove|mix|drag|diffpair] [--shoving] [--arcs] [--rounded] KICAD_ROUTER OUT.json [COUNT [SEED]]
-    scenes.py [--mode shove|mix|drag|diffpair] [--arcs] [--rounded] --boards KICAD_ROUTER OUT.json ROUTES_PER_BOARD SEED
-        SCENE.json...   (real boards, from board-scene.py)
+With `--mode meander`, the routes are length tunings instead, by KiCad's meander placer, on boards with tracks to
+tune from pad to pad (some through vias, some with arcs) among others: each started on a track, the pointer taken
+along its line, the meanders' amplitude or spacing stepped now and then, most kept; each to a length of its own,
+chosen from the length KiCad measures the track's path to be (shorter, about it, longer), and each on the board as the
+tunings before it left it. With `--mode dpmeander`, differential pairs' lengths and skews tuned, on boards with
+coupled tracks of pairs' nets.
+
+    scenes.py [--mode shove|mix|drag|diffpair|meander|dpmeander] [--shoving] [--arcs] [--rounded] KICAD_ROUTER OUT.json
+        [COUNT [SEED]]
+    scenes.py [--mode shove|mix|drag|diffpair|meander|dpmeander] [--arcs] [--rounded] --boards KICAD_ROUTER OUT.json
+        ROUTES_PER_BOARD SEED SCENE.json...   (real boards, from board-scene.py)
 """
 
 import json
@@ -828,6 +836,433 @@ def diffpair_routes(router, rng, scene, area, count):
     return (routes, kicad), shoving
 
 
+def stackup_heights(rng, copper):
+    """The board's thickness between each two of its copper layers (BOARD_STACKUP::GetLayerDistance's, which a length
+    tuning counts for a via): copper layers at random depths through a board of 0.8 to 2.4 mm, now and then none
+    given (KiCad then counts nothing for vias)"""
+    if rng.random() < 0.15:
+        return []
+    total = rng.randint(16, 48) * 50_000
+    cuts = sorted(rng.sample(range(1, total // 10_000), copper - 2)) if copper > 2 else []
+    z = [0] + [c * 10_000 for c in cuts] + [total]
+    return [[abs(a - b) for b in z] for a in z]
+
+
+def tunable_lines(rng, items, size, nets, copper, arcs=False):
+    """Tracks to tune: lines of a few long segments at 45 and 90 degrees from a pad of their net to another (now and
+    then from or to nowhere), some through a via to another layer and on, now and then through a pad in line; with
+    `arcs`, some of their turns rounded"""
+    last = copper - 1
+    lo, hi = 2 * MM, size - 2 * MM
+    for _ in range(rng.randint(1, 4)):
+        net = rng.randint(1, nets)
+        width = rng.randint(2, 6) * 50_000
+        layer = rng.randint(0, last)
+        p = [rng.randint(lo, hi) // 50_000 * 50_000, rng.randint(lo, hi) // 50_000 * 50_000]
+
+        def end_pad(at, layer):
+            through = rng.random() < 0.3
+            pd = pad(rng, net, at, [0, last] if through else [layer, layer], through)
+            pd.pop("npth", None)
+            pd["net"] = net
+            items.append(pd)
+
+        if rng.random() < 0.8:
+            end_pad(p, layer)
+        d = rng.randrange(8)
+        for k in range(rng.randint(1, 5)):
+            turn = 0 if k == 0 else rng.choice([0, 1, -1, 2, -2])
+            if arcs and turn and rng.random() < 0.5:
+                mid, end = arc_turn(p, d, turn, rng.randint(2, 16) * 125_000)
+                if not (lo <= end[0] <= hi and lo <= end[1] <= hi):
+                    break
+                items.append({"kind": "arc", "net": net, "layer": layer, "start": p, "mid": mid, "end": end,
+                              "width": width})
+                p = end
+            d = (d + turn) % 8
+            step = rng.randint(4, 40) * 250_000
+            q = [p[0] + DIRS[d][0] * step, p[1] + DIRS[d][1] * step]
+            if not (lo <= q[0] <= hi and lo <= q[1] <= hi):
+                break
+            items.append({"kind": "track", "net": net, "layer": layer, "a": p, "b": q, "width": width})
+            p = q
+            r = rng.random()
+            if r < 0.15 and copper > 1:
+                # (through a via, on on another layer)
+                diameter = rng.randint(5, 8) * 100_000
+                items.append({"kind": "via", "net": net, "pos": p, "layers": [0, last], "diameter": diameter,
+                              "drill": diameter * rng.randint(4, 6) // 10 // 50_000 * 50_000})
+                layer = rng.choice([l for l in range(copper) if l != layer])
+            elif r < 0.2:
+                # (through a pad in line)
+                end_pad(p, layer)
+        if rng.random() < 0.7:
+            end_pad(p, layer)
+
+
+def meander_board(rng, n, arcs=False):
+    """A board with tracks to tune (tunable_lines), and pads, tracks and vias of other nets about them, as the drag
+    mode's, that the meanders must keep clear of"""
+    copper = rng.choice([2, 2, 2, 4])
+    last = copper - 1
+    dense = rng.random() < 0.25
+    size = rng.randint(14, 20) * MM if dense else rng.randint(20, 40) * MM
+    items = []
+    c = [[0, 0], [size, 0], [size, size], [0, size]]
+    for i in range(4):
+        items.append({"kind": "edge", "shape": {"segment": [c[i], c[(i + 1) % 4]], "w": 0}})
+    nets = rng.randint(2, 6)
+    tunable_lines(rng, items, size, nets, copper, arcs)
+    used = []
+    for _ in range(rng.randint(2, 12 if dense else 8)):
+        x = rng.randint(2 * MM, size - 2 * MM) // 50_000 * 50_000
+        y = rng.randint(2 * MM, size - 2 * MM) // 50_000 * 50_000
+        layers = rng.choice([[0, 0], [last, last], [0, last]])
+        items.append(pad(rng, rng.randint(1, nets), (x, y), layers, layers == [0, last]))
+    polylines(rng, items, size, nets, copper, dense, arcs)
+    if arcs:
+        arc_tracks(rng, items, size, nets, copper)
+    rules = {"clearance": rng.choice([100_000, 150_000, 200_000, 250_000]), "holeClearance": 250_000,
+             "holeToHole": 250_000, "edgeClearance": rng.choice([300_000, 500_000])}
+    return {"layers": copper, "rules": rules, "items": items, "stackupHeights": stackup_heights(rng, copper),
+            "routes": [], "removeItems": True}
+
+
+def meander_settings(rng, length):
+    """Random tuning settings (MEANDER_SETTINGS), for a path `length` long: a target shorter than it (too long
+    already), about it, longer by a little or a lot (more than the meanders can make: too short), or none; its
+    tolerance KiCad's default or its own; the meanders' amplitudes, spacing, step, corners, sides"""
+    s = {}
+    r = rng.random()
+    if r < 0.9 and length:
+        factor = rng.choice([rng.uniform(0.7, 0.98), rng.uniform(0.99, 1.02), rng.uniform(1.02, 1.3),
+                             rng.uniform(1.3, 2.0), rng.uniform(2.0, 4.0)])
+        s["targetLength"] = int(length * factor)
+        if rng.random() < 0.3:
+            tol = rng.randint(1, 40) * 50_000
+            s["targetMin"] = s["targetLength"] - tol
+            s["targetMax"] = s["targetLength"] + rng.choice([tol, rng.randint(0, 40) * 50_000])
+    if rng.random() < 0.8:
+        s["minAmplitude"] = rng.randint(1, 12) * 50_000
+        s["maxAmplitude"] = s["minAmplitude"] + rng.randint(0, 50) * 50_000
+    if rng.random() < 0.8:
+        s["spacing"] = rng.randint(4, 40) * 50_000
+    if rng.random() < 0.3:
+        s["step"] = rng.choice([25_000, 50_000, 100_000, 200_000])
+    if rng.random() < 0.35:
+        s["cornerStyle"] = "chamfer"
+    if rng.random() < 0.5:
+        s["cornerRadius"] = rng.choice([0, 10, 25, 50, 80, 100, rng.randint(0, 100)])
+    if rng.random() < 0.2:
+        s["singleSided"] = True
+    s["initialSide"] = rng.choice([-1, -1, 0, 0, 1])
+    # (the tuning pattern generator keeps the points the tuned part is cut at; now and then not)
+    s["keepEndpoints"] = rng.random() < 0.8
+    return s
+
+
+def meander_route(rng, scene, items, area, length_of):
+    """A random length tuning, as the tuning pattern generator starts one: on a track's segment or arc (now and then on
+    a via, a pad or nothing, which KiCad refuses), from a point along it, the pointer then taken along its line (to a
+    point of a segment of it, a little off it on one side or the other, to its end, or past it), now and then back,
+    the meanders' amplitude or spacing stepped on the way; most fixed. `length_of` gives the length KiCad measures
+    along the path from the track (None: a track it will not tune)."""
+    x0, y0, x1, y1 = area
+    tracks = [i for i, it in enumerate(items) if it["kind"] in ("track", "arc")]
+    r = rng.random()
+    route = {}
+    if not tracks or r < 0.04:
+        others = [i for i, it in enumerate(items) if it["kind"] in ("via", "pad")]
+        i = rng.choice(others) if others and rng.random() < 0.7 else -1
+        at = items[i]["pos"] if i >= 0 else [rng.randint(x0, x1), rng.randint(y0, y1)]
+        route["tune"] = {"item": i, "at": at, "layer": 0}
+        route["moves"] = [[at[0] + MM, at[1]]]
+        return route
+    # (mostly the long ones, which have room to meander)
+    weights = []
+    for i in tracks:
+        it = items[i]
+        a, b = (it["a"], it["b"]) if it["kind"] == "track" else (it["start"], it["end"])
+        weights.append(1 + math.hypot(b[0] - a[0], b[1] - a[1]) / MM)
+    i = rng.choices(tracks, weights)[0]
+    it = items[i]
+    if it["kind"] == "arc":
+        a, b = it["start"], it["end"]
+        at = list(it["mid"]) if rng.random() < 0.5 else list(rng.choice([a, b]))
+    else:
+        a, b = it["a"], it["b"]
+        t = rng.choice([0.0, 1.0, rng.uniform(0, 1), rng.uniform(0, 1)])
+        at = [int(a[0] + (b[0] - a[0]) * t), int(a[1] + (b[1] - a[1]) * t)]
+    if rng.random() < 0.3:
+        w = it["width"]
+        at = [at[0] + rng.randint(-w, w), at[1] + rng.randint(-w, w)]
+    layer = it["layer"] if rng.random() < 0.95 else rng.randint(0, scene["layers"] - 1)
+    route["tune"] = {"item": i, "at": at, "layer": layer}
+    route["meander"] = meander_settings(rng, length_of(route))
+    # the pointer along the line: to points of the net's tracks on its layer (its line's, mostly), a little to one
+    # side or the other, now and then past them
+    net = it["net"]
+    own = [t for t in items if t["kind"] in ("track", "arc") and t["net"] == net and t["layer"] == it["layer"]]
+    moves = []
+    for _ in range(rng.choice([1, 1, 1, 2, 2, 3, 4])):
+        r = rng.random()
+        if r < 0.1:
+            # (where it started: the placer does nothing)
+            moves.append(list(at))
+            continue
+        t = rng.choice(own)
+        p, q = (t["a"], t["b"]) if t["kind"] == "track" else (t["start"], t["end"])
+        f = rng.choice([0.0, 1.0, rng.uniform(0, 1), rng.uniform(0, 1), rng.uniform(-0.3, 1.3)])
+        e = [int(p[0] + (q[0] - p[0]) * f), int(p[1] + (q[1] - p[1]) * f)]
+        if rng.random() < 0.6:
+            off = rng.randint(-8, 8) * 125_000
+            n = math.hypot(q[0] - p[0], q[1] - p[1]) or 1
+            e = [int(e[0] - (q[1] - p[1]) / n * off), int(e[1] + (q[0] - p[0]) / n * off)]
+        moves.append([min(max(e[0], x0), x1), min(max(e[1], y0), y1)])
+        if rng.random() < 0.12:
+            moves.append({rng.choice(["amplitude", "spacing"]): rng.choice([1, -1, 1, -1, 2])})
+            moves.append(moves[-2])
+    if rng.random() < 0.08:
+        k = rng.randrange(len(moves))
+        moves.insert(k + 1, {"fix": moves[k] if isinstance(moves[k], list) else at})
+    route["moves"] = moves
+    if rng.random() < 0.85:
+        route["fix"] = next(m for m in reversed(moves) if isinstance(m, list))
+    return route
+
+
+def meander_routes(router, rng, scene, area, count):
+    """`count` length tunings on the scene's board, each chosen on the board as the tunings before it left it (KiCad's
+    router run on those to know: a track tuned can be tuned again), and what KiCad's router made of them (None if
+    what it does is undefined); and how many were fixed"""
+    items = list(scene["items"])
+    routes, kicad, tuned = [], [], 0
+    for _ in range(count):
+        def length_of(tuning):
+            # (KiCad's own measure of the path, from a tuning that starts and goes nowhere)
+            probe = dict(tuning, moves=[])
+            probe.pop("fix", None)
+            k = route(router, dict(scene, items=items, routes=[probe]))
+            return k[0].get("startLength") if k else None
+
+        d = meander_route(rng, scene, items, area, length_of)
+        routes.append(d)
+        kicad = route(router, dict(scene, routes=routes))
+        if kicad is None:
+            return None, 0
+        r = kicad[-1]
+        if r.get("fixed") or any(m.get("fixed") for m in r["moves"]):
+            tuned += 1
+        for k in reversed(r.get("removed", [])):
+            del items[k]
+        items += r["added"]
+    return (routes, kicad), tuned
+
+
+def coupled_lines(rng, items, size, pair, copper, arcs=False):
+    """A differential pair's tracks to tune: the positive net's line of a few long segments at 45 and 90 degrees, the
+    negative's alongside it the pair's gap apart (its corners where the two lines' offsets meet), now and then from
+    and to a pair of pads of their nets; with `arcs`, some turns arcs about one centre. Which line is on which side,
+    and which is the inner one round a turn, at random."""
+    last = copper - 1
+    lo, hi = 2 * MM, size - 2 * MM
+    net_p, net_n = pair if rng.random() < 0.5 else (pair[1], pair[0])
+    width = rng.randint(2, 5) * 50_000
+    gap = rng.randint(2, 8) * 50_000
+    s = gap + width
+    layer = rng.randint(0, last)
+    side = rng.choice([1, -1])
+    p = [rng.randint(lo, hi) // 50_000 * 50_000, rng.randint(lo, hi) // 50_000 * 50_000]
+    d = rng.randrange(8)
+
+    def unit(d):
+        n = math.hypot(*DIRS[d])
+        return DIRS[d][0] / n, DIRS[d][1] / n
+
+    def normal(d):
+        ux, uy = unit(d)
+        return -uy * side, ux * side
+
+    # the positive line: its points, and its segments' directions
+    pts = [p]
+    dirs = []
+    for k in range(rng.randint(1, 4)):
+        turn = 0 if k == 0 else rng.choice([1, -1, 2, -2])
+        nd = (d + turn) % 8
+        step = rng.randint(8, 40) * 250_000
+        q = [p[0] + DIRS[nd][0] * step, p[1] + DIRS[nd][1] * step]
+        if not (lo <= q[0] <= hi and lo <= q[1] <= hi):
+            break
+        pts.append(q)
+        dirs.append(nd)
+        d, p = nd, q
+    if len(pts) < 2:
+        return
+
+    def off(i):
+        # (the negative line's point for the positive's i-th: its offset, mitred at a corner)
+        if i == 0:
+            nx, ny = normal(dirs[0])
+            return [round(pts[0][0] + nx * s), round(pts[0][1] + ny * s)]
+        if i == len(pts) - 1:
+            nx, ny = normal(dirs[-1])
+            return [round(pts[-1][0] + nx * s), round(pts[-1][1] + ny * s)]
+        (ax, ay), (bx, by) = normal(dirs[i - 1]), normal(dirs[i])
+        k = 1 + ax * bx + ay * by
+        return [round(pts[i][0] + s * (ax + bx) / k), round(pts[i][1] + s * (ay + by) / k)]
+
+    npts = [off(i) for i in range(len(pts))]
+    # (now and then a right-angled corner of the pair rounded: an arc of each line about one centre)
+    rounded = None
+    corners = [i for i in range(1, len(pts) - 1) if (dirs[i] - dirs[i - 1]) % 8 in (2, 6)]
+    if arcs and corners and rng.random() < 0.6:
+        i = rng.choice(corners)
+        shortest = min(math.dist(pts[i - 1], pts[i]), math.dist(pts[i], pts[i + 1]),
+                       math.dist(npts[i - 1], npts[i]), math.dist(npts[i], npts[i + 1]))
+        r = rng.uniform(s + width, max(s + width, shortest / 2 - s))
+        if r + s < shortest / 2:
+            rounded = (i, r)
+    for line, net, base in ((pts, net_p, True), (npts, net_n, False)):
+        cut = {}
+        if rounded:
+            i, r = rounded
+            u0, u1 = unit(dirs[i - 1]), unit(dirs[i])
+            w = (u1[0] - u0[0], u1[1] - u0[1])
+            c = line[i]
+            # (the negative line's radius such that its arc has the positive's centre)
+            rl = r if base else r - ((c[0] - pts[i][0]) * w[0] + (c[1] - pts[i][1]) * w[1]) / 2
+            a = [round(c[0] - u0[0] * rl), round(c[1] - u0[1] * rl)]
+            b = [round(c[0] + u1[0] * rl), round(c[1] + u1[1] * rl)]
+            centre = (c[0] + w[0] * rl, c[1] + w[1] * rl)
+            mid = [round(centre[0] - w[0] * rl / 2 ** 0.5), round(centre[1] - w[1] * rl / 2 ** 0.5)]
+            cut = {i: (a, b)}
+            items.append({"kind": "arc", "net": net, "layer": layer, "start": a, "mid": mid, "end": b,
+                          "width": width})
+        for j in range(len(line) - 1):
+            a = cut[j][1] if j in cut else line[j]
+            b = cut[j + 1][0] if j + 1 in cut else line[j + 1]
+            items.append({"kind": "track", "net": net, "layer": layer, "a": a, "b": b, "width": width})
+    if rng.random() < 0.6:
+        # (a pad of each net at each end of the pair, the same shape)
+        for line, net in ((pts, net_p), (npts, net_n)):
+            for e in (line[0], line[-1]):
+                # (no wider than keeps it off the other line)
+                w = width + 50_000 * rng.randint(0, max(0, (gap - 150_000) // 50_000))
+                items.append({"kind": "pad", "net": net, "layers": [layer, layer], "pos": e,
+                              "shape": {"rect": [e[0] - w // 2, e[1] - w // 2], "size": [w, w]}})
+
+
+def dpmeander_board(rng, n, arcs=False):
+    """A board with differential pairs to tune (coupled_lines), named as KiCad recognises pairs' nets, with pads,
+    tracks and vias of other nets about them"""
+    copper = rng.choice([2, 2, 2, 4])
+    last = copper - 1
+    dense = rng.random() < 0.25
+    size = rng.randint(14, 20) * MM if dense else rng.randint(20, 40) * MM
+    items = []
+    c = [[0, 0], [size, 0], [size, size], [0, size]]
+    for i in range(4):
+        items.append({"kind": "edge", "shape": {"segment": [c[i], c[(i + 1) % 4]], "w": 0}})
+    names = {}
+    pairs = []
+    for p, q in rng.sample(PAIR_NAMES, rng.randint(1, 3)):
+        names[len(names) + 1] = p
+        names[len(names) + 1] = q
+        pairs.append((len(names) - 1, len(names)))
+    for name in rng.sample(SINGLE_NAMES, rng.randint(2, 4)):
+        names[len(names) + 1] = name
+    nets = len(names)
+    for pair in pairs:
+        for _ in range(rng.choice([1, 1, 2])):
+            coupled_lines(rng, items, size, pair, copper, arcs)
+    for _ in range(rng.randint(2, 10 if dense else 6)):
+        x = rng.randint(2 * MM, size - 2 * MM) // 50_000 * 50_000
+        y = rng.randint(2 * MM, size - 2 * MM) // 50_000 * 50_000
+        layers = rng.choice([[0, 0], [last, last], [0, last]])
+        items.append(pad(rng, rng.randint(2 * len(pairs) + 1, nets), (x, y), layers, layers == [0, last]))
+    # (tracks and vias in the way, of other nets mostly, now and then of a pair's)
+    n0 = len(items)
+    polylines(rng, items, size, nets, copper, dense, arcs)
+    singles = list(range(2 * len(pairs) + 1, nets + 1))
+    for it in items[n0:]:
+        if it.get("net", 0) <= 2 * len(pairs) and rng.random() < 0.97:
+            it["net"] = rng.choice(singles)
+    rules = {"clearance": rng.choice([100_000, 150_000, 200_000]), "holeClearance": 250_000, "holeToHole": 250_000,
+             "edgeClearance": rng.choice([300_000, 500_000])}
+    return {"layers": copper, "rules": rules, "items": items, "netNames": {str(k): v for k, v in names.items()},
+            "stackupHeights": stackup_heights(rng, copper), "routes": [], "removeItems": True}
+
+
+def dpmeander_route(rng, scene, items, area, length_of):
+    """A random differential pair tuning, of the pair's length or its skew (now and then a single track's of one of
+    its lines), as the tuning pattern generator starts one: on a track of a pair's net (now and then of another, or
+    on a via or nothing), the pointer along it, as meander_route takes it"""
+    names = {int(k): v for k, v in scene["netNames"].items()}
+    pair_nets = {k for k in names if len(pair_of(scene, k)) == 2}
+    tracks = [i for i, it in enumerate(items) if it["kind"] in ("track", "arc") and it["net"] in pair_nets]
+    others = [i for i, it in enumerate(items) if it["kind"] in ("track", "arc") and it["net"] not in pair_nets]
+    mode = rng.choice(["diffpair", "diffpair", "skew", "skew", "single"])
+    pool = tracks if tracks and (not others or rng.random() < 0.93) else others or tracks
+    sub = [it if i in pool else dict(it, kind="keep") for i, it in enumerate(items)]
+    route = meander_route(rng, scene, sub, area, lambda r: None)
+    route["tune"]["mode"] = mode
+    probe = dict(route, tune=dict(route["tune"]))
+    route["meander"] = meander_settings(rng, length_of(probe) if mode != "skew" else None)
+    if mode == "skew":
+        skew = length_of(probe)
+        if skew is not None and rng.random() < 0.9:
+            route["meander"]["targetSkew"] = skew + rng.choice([rng.randint(-20, 0), rng.randint(0, 20),
+                                                                rng.randint(20, 120)]) * 50_000
+            if rng.random() < 0.3:
+                tol = rng.randint(1, 20) * 50_000
+                route["meander"]["skewMin"] = route["meander"]["targetSkew"] - tol
+                route["meander"]["skewMax"] = route["meander"]["targetSkew"] + tol
+    return route
+
+
+def dpmeander_routes(router, rng, scene, area, count):
+    """`count` differential pair tunings on the scene's board, each on the board as the tunings before it left it,
+    and what KiCad's router made of them (None if what it does is undefined); and how many were fixed"""
+    items = list(scene["items"])
+    routes, kicad, fixed = [], [], 0
+    for _ in range(count):
+        def length_of(tuning):
+            probe = dict(tuning, moves=[])
+            probe.pop("fix", None)
+            k = route(router, dict(scene, items=items, routes=[probe]))
+            return k[0].get("startLength") if k else None
+
+        d = dpmeander_route(rng, scene, items, area, length_of)
+        routes.append(d)
+        kicad = route(router, dict(scene, routes=routes))
+        if kicad is None:
+            return None, 0
+        r = kicad[-1]
+        if r.get("fixed") or any(m.get("fixed") for m in r["moves"]):
+            fixed += 1
+        for k in reversed(r.get("removed", [])):
+            del items[k]
+        items += r["added"]
+    return (routes, kicad), fixed
+
+
+def meander_stats(cases):
+    """How the tunings went: how many started and were fixed, how their last steps came out (too short, too long,
+    tuned), how many measured a path through a via or ended with arcs in the tuned line"""
+    rs = [k for c in cases for k in c["kicad"]]
+    started = sum(k["started"] for k in rs)
+    fixed = sum(bool(k.get("fixed")) or any(m.get("fixed") for m in k["moves"]) for k in rs)
+    status = [0, 0, 0]
+    for k in rs:
+        last = [m for m in k["moves"] if "status" in m]
+        if last:
+            status[last[-1]["status"]] += 1
+    vias = sum(any(p.get("kind") == "via" for p in k.get("tunedPath", [])) for k in rs)
+    arcs = sum(any("arcs" in m.get("trace", {}) or "arcs" in m.get("p", {}) for m in k["moves"]) for k in rs)
+    return (f"{started} started, {fixed} fixed, {status[0]} too short, {status[1]} too long, {status[2]} tuned, "
+            f"{vias} measured through vias, {arcs} with arcs in their lines")
+
+
 def route(router, scene):
     """What KiCad's router makes of the scene's routes; None if what it does is undefined (router.cpp's exit status
     3: an undo of a shoving route that KiCad's line placer gets wrong, reading a node it has deleted; its line placer
@@ -877,6 +1312,16 @@ def boards(router, out, files, per_board, seed, mode="walkaround", arcs=False, r
                 shoves += shoving
                 cases.append({"name": f"{name}-drag-{seed}-{k}", "scene": case, "kicad": kicad})
                 continue
+            if mode in ("meander", "dpmeander"):
+                case["removeItems"] = True
+                tunings = meander_routes if mode == "meander" else dpmeander_routes
+                done, fixed = tunings(router, rng, case, area, rng.randint(2, 5))
+                if done is None:
+                    undefined += 1
+                    continue
+                case["routes"], kicad = done
+                cases.append({"name": f"{name}-{mode}-{seed}-{k}", "scene": case, "kicad": kicad})
+                continue
             if mode == "diffpair":
                 case["removeItems"] = True
                 done, shoving = diffpair_routes(router, rng, case, area, rng.randint(2, 4))
@@ -905,6 +1350,7 @@ def boards(router, out, files, per_board, seed, mode="walkaround", arcs=False, r
     print(f"{out}: {len(cases)} cases on {len(files)} boards, {sum(len(c['kicad']) for c in cases)} routes"
           + (f", {shoves} of the {drags} drags shoving" if mode == "drag" else "")
           + (f", {shoves} of the {drags} pairs shoving, {pair_stats(cases)}" if mode == "diffpair" else "")
+          + (f", {meander_stats(cases)}" if mode in ("meander", "dpmeander") else "")
           + (f", {arc_stats(cases)}" if arcs or rounded else "")
           + (f" ({undefined} left out, KiCad's router undefined on them)" if undefined else ""))
 
@@ -932,7 +1378,7 @@ def arc_stats(cases):
         # (the board as each route found it, what the routes before it took off and put on)
         items = list(c["scene"]["items"])
         for r, k in zip(c["scene"]["routes"], c["kicad"]):
-            i = r["drag"]["item"] if "drag" in r else r.get("startItem", -1)
+            i = r["drag"]["item"] if "drag" in r else r["tune"]["item"] if "tune" in r else r.get("startItem", -1)
             if 0 <= i < len(items) and items[i]["kind"] == "arc":
                 dragged += "drag" in r
                 starts += "drag" not in r
@@ -960,7 +1406,7 @@ def main():
         flag = args.pop(0)
         if flag == "--mode":
             mode = args.pop(0)
-            if mode not in ("walkaround", "shove", "mix", "drag", "diffpair"):
+            if mode not in ("walkaround", "shove", "mix", "drag", "diffpair", "meander", "dpmeander"):
                 sys.exit(f"scenes.py: no mode {mode}")
         elif flag == "--shoving":
             shoving_only = True
@@ -987,12 +1433,18 @@ def main():
     quiet = 0
     drags = shoves = 0
     while len(cases) < count:
-        scene = diffpair_board(rng, n, arcs) if mode == "diffpair" else board(rng, n, mode, arcs, rounded)
+        scene = (diffpair_board(rng, n, arcs) if mode == "diffpair" else meander_board(rng, n, arcs)
+                 if mode == "meander" else dpmeander_board(rng, n, arcs) if mode == "dpmeander"
+                 else board(rng, n, mode, arcs, rounded))
         shoving = 0
-        if mode in ("drag", "diffpair"):
+        if mode in ("drag", "diffpair", "meander", "dpmeander"):
             area = board_area(scene)
             if mode == "drag":
                 done, shoving = drag_routes(router, rng, scene, area, rng.randint(1, 5), arcs)
+            elif mode == "meander":
+                done, shoving = meander_routes(router, rng, scene, area, rng.randint(1, 4))
+            elif mode == "dpmeander":
+                done, shoving = dpmeander_routes(router, rng, scene, area, rng.randint(1, 4))
             else:
                 done, shoving = diffpair_routes(router, rng, scene, area, rng.randint(1, 4))
             kicad = None
@@ -1015,6 +1467,7 @@ def main():
     print(f"{out}: {count} boards, {sum(len(c['kicad']) for c in cases)} routes"
           + (f", {shoves} of the {drags} drags shoving" if mode == "drag" else "")
           + (f", {shoves} of the {drags} pairs shoving, {pair_stats(cases)}" if mode == "diffpair" else "")
+          + (f", {meander_stats(cases)}" if mode in ("meander", "dpmeander") else "")
           + (f", {arc_stats(cases)}" if arcs or rounded else "")
           + (f" ({undefined} more left out, KiCad's router undefined on them)" if undefined else "")
           + (f" ({quiet} more left out, nothing shoved on them)" if quiet else ""))

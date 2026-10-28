@@ -28,6 +28,9 @@ public struct BoardWorld {
     public private(set) var unsupported: Set<String> = []
     /// The board's copper layers by name, as router layers (F.Cu 0, the inner ones in turn, B.Cu last)
     public private(set) var layerIndex: [String: Int] = [:]
+    /// The board's thickness between each two of its copper layers, by router layer, as a length tuning counts it for
+    /// a via (Stackup.heights: its stackup's, or KiCad's default stackup's; none if it does not use heights)
+    public private(set) var stackupHeights: [[Int]] = []
     /// The board's minimum track width, via diameter and via drill (its design settings)
     public private(set) var minTrackWidth = 0
     public private(set) var minViaDiameter = 500_000
@@ -39,6 +42,7 @@ public struct BoardWorld {
     public init(board: KiCadBoard, project: [String: Any]? = nil) {
         netClasses = NetClasses(project: project)
         readLayers(board)
+        stackupHeights = Stackup.heights(board, project: project, layerIndex: layerIndex, copperLayers: copperLayers)
         numberNets(board.root)
         readRules(board, project: project)
         sync(board)

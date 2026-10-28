@@ -7,7 +7,9 @@
 // shoves them or marks them, as it says. A route can be a drag instead (a track's segment or corner, an arc track,
 // or a via, as the router tool's drag tools drag them), with what the dragger dragged after each step; or a
 // differential pair, routed from a pad, via or track end of one of a pair's nets and the nearest of its coupled net's,
-// with the pair's two lines after each step. KiCadRouterTests runs the Swift port on the same boards and compares.
+// with the pair's two lines after each step; or a length tuning, of a track, of a differential pair or of a pair's
+// skew, by KiCad's meander placers as its tuning patterns drive them, with the tuned lines, the tuning's status and
+// length after each step. KiCadRouterTests runs the Swift port on the same boards and compares.
 // build.sh builds this against KiCad's sources.
 //
 // The board's rules are KiCad's default board rules made simple: one clearance between copper of different nets,
@@ -31,6 +33,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <advanced_config.h>
 #include <geometry/shape_arc.h>
 #include <geometry/shape_circle.h>
 #include <geometry/shape_poly_set.h>
@@ -43,6 +46,7 @@
 #include <pns_drag_algo.h>
 #include <pns_hole.h>
 #include <pns_line.h>
+#include <pns_meander_placer_base.h>
 #include <pns_node.h>
 #include <pns_router.h>
 #include <pns_routing_settings.h>
@@ -50,10 +54,12 @@
 #include <pns_solid.h>
 #include <pns_via.h>
 
-// (the line placer's fixed stages and the shove's springback stack, which undefinedUndo looks at, and the diff pair
-// placer's last node, which undefinedFix looks at)
+// (the line placer's fixed stages and the shove's springback stack, which undefinedUndo looks at, the diff pair
+// placer's last node, which undefinedFix looks at, and the diff pair meander placer's node, which undefinedTuningFix
+// looks at)
 #define private public
 #include <pns_diff_pair_placer.h>
+#include <pns_dp_meander_placer.h>
 #include <pns_line_placer.h>
 #include <pns_shove.h>
 #undef private
@@ -955,7 +961,18 @@ public:
     void HideItem( PNS::ITEM* ) override {}
     void Commit() override {}
     bool ImportSizes( PNS::SIZES_SETTINGS&, PNS::ITEM*, PNS::NET_HANDLE, VECTOR2D ) override { return false; }
-    int StackupHeight( int, int ) const override { return 0; }
+    /// The board's thickness between two copper layers (the scene's "stackupHeights", by router layer: KiCad's
+    /// BOARD_STACKUP::GetLayerDistance of the board's layers), 0 if the scene gives none
+    json m_stackupHeights = json::array();
+
+    int StackupHeight( int aFirstLayer, int aSecondLayer ) const override
+    {
+        if( aFirstLayer < 0 || aSecondLayer < 0 || aFirstLayer >= (int) m_stackupHeights.size() )
+            return 0;
+
+        const json& row = m_stackupHeights[aFirstLayer];
+        return aSecondLayer < (int) row.size() ? row[aSecondLayer].get<int>() : 0;
+    }
     void EraseView() override {}
     int GetNetCode( PNS::NET_HANDLE aNet ) const override { return netCode( aNet ); }
     wxString GetNetName( PNS::NET_HANDLE aNet ) const override
@@ -969,7 +986,38 @@ public:
     TRACE_DECORATOR*             m_trace = nullptr;
 
     PNS::DEBUG_DECORATOR* GetDebugDecorator() override { return m_trace; }
-    long long int CalculateRoutedPathLength( const PNS::ITEM_SET&, const PNS::SOLID*, const PNS::SOLID*, const NETCLASS* ) override { return 0; }
+    /// PNS_KICAD_IFACE_BASE::CalculateRoutedPathLength, as KiCad's LENGTH_DELAY_CALCULATION::CalculateLength works
+    /// it out for the path the meander placer gives it (getLengthDelayCalculationItems' items, none of the path's
+    /// optimisations asked for): each line's length, and for each via between lines on two layers the board's
+    /// thickness between them (StackupHeight, KiCad's "use height for length calculations" on, as boards have it by
+    /// default). (A pad at either end would add a via it infers where the line is on a layer the pad is not, but
+    /// that is asked of its PAD, and these pads have none: AssembleTuningPath gives the placer no pads.)
+    long long int CalculateRoutedPathLength( const PNS::ITEM_SET& aLine, const PNS::SOLID*, const PNS::SOLID*,
+                                             const NETCLASS* ) override
+    {
+        int64_t trackLength = 0;
+        int     viaLength = 0;
+
+        for( int idx = 0; idx < aLine.Size(); idx++ )
+        {
+            const PNS::ITEM* item = aLine[idx];
+
+            if( item->Kind() == PNS::ITEM::LINE_T )
+            {
+                trackLength += static_cast<const PNS::LINE*>( item )->CLine().Length();
+            }
+            else if( item->OfKind( PNS::ITEM::VIA_T ) && idx > 0 && idx < aLine.Size() - 1 )
+            {
+                int layerPrev = aLine[idx - 1]->Layer();
+                int layerNext = aLine[idx + 1]->Layer();
+
+                if( layerPrev != layerNext )
+                    viaLength += StackupHeight( layerPrev, layerNext );
+            }
+        }
+
+        return viaLength + trackLength;
+    }
     int64_t CalculateRoutedPathDelay( const PNS::ITEM_SET&, const PNS::SOLID*, const PNS::SOLID*, const NETCLASS* ) override { return 0; }
     int64_t CalculateLengthForDelay( int64_t, int, bool, int, int, const NETCLASS* ) override { return 0; }
     int64_t CalculateDelayForShapeLineChain( const SHAPE_LINE_CHAIN&, int, bool, int, int, const NETCLASS* ) override { return 0; }
@@ -1149,6 +1197,176 @@ static void dragSteps( PNS::ROUTER& aRouter, SCENE_IFACE& aIface, const json& aR
     aRouter.StopRouting();
 }
 
+/// A length tuning's settings (MEANDER_SETTINGS) as the route gives them ("meander"), KiCad's defaults for the rest:
+/// the target length (its opt, and its min and max if given, else the opt less and more KiCad's default tolerance),
+/// or skew (the same),
+/// the amplitudes the meanders may have, their spacing, the step amplitudes and spacings change by, the corners'
+/// style ("round" or "chamfer") and radius (a percentage of the spacing), whether the meanders go on one side only
+/// and on which side they start (-1 left, 0 the pointer's side, 1 right), and whether the tuned part keeps the
+/// points it is cut from the rest of the line at (the tuning pattern generator has it so)
+static PNS::MEANDER_SETTINGS meanderSettings( const json& aJson )
+{
+    PNS::MEANDER_SETTINGS s;
+
+    if( aJson.contains( "targetLength" ) )
+        s.SetTargetLength( aJson["targetLength"].get<long long int>() );
+
+    if( aJson.contains( "targetMin" ) )
+        s.m_targetLength.SetMin( aJson["targetMin"].get<long long int>() );
+
+    if( aJson.contains( "targetMax" ) )
+        s.m_targetLength.SetMax( aJson["targetMax"].get<long long int>() );
+
+    // (a pair's skew to reach, the positive line's length less the negative's, for a skew tuning)
+    if( aJson.contains( "targetSkew" ) )
+        s.SetTargetSkew( aJson["targetSkew"].get<int>() );
+
+    if( aJson.contains( "skewMin" ) )
+        s.m_targetSkew.SetMin( aJson["skewMin"].get<int>() );
+
+    if( aJson.contains( "skewMax" ) )
+        s.m_targetSkew.SetMax( aJson["skewMax"].get<int>() );
+
+    s.m_minAmplitude = aJson.value( "minAmplitude", s.m_minAmplitude );
+    s.m_maxAmplitude = aJson.value( "maxAmplitude", s.m_maxAmplitude );
+    s.m_spacing = aJson.value( "spacing", s.m_spacing );
+    s.m_step = aJson.value( "step", s.m_step );
+    s.m_cornerStyle = aJson.value( "cornerStyle", std::string( "round" ) ) == "chamfer" ? PNS::MEANDER_STYLE_CHAMFER
+                                                                                       : PNS::MEANDER_STYLE_ROUND;
+    s.m_cornerRadiusPercentage = aJson.value( "cornerRadius", s.m_cornerRadiusPercentage );
+    s.m_singleSided = aJson.value( "singleSided", s.m_singleSided );
+    s.m_initialSide = static_cast<PNS::MEANDER_SIDE>( aJson.value( "initialSide", (int) s.m_initialSide ) );
+    s.m_keepEndpoints = aJson.value( "keepEndpoints", s.m_keepEndpoints );
+    return s;
+}
+
+/// What a meander placer has: the tuned line, or a pair's two (Traces), its tuning status (0 too short, 1 too long, 2
+/// tuned) and the length it comes to (TuningLengthResult; a skew tuning's skew), and the settings it has now (a move
+/// can turn the side meanders start on round; the amplitude and spacing steps change them)
+static void tuningJSON( PNS::MEANDER_PLACER_BASE* aPlacer, json& aStep )
+{
+    PNS::ITEM_SET traces = aPlacer->Traces();
+
+    if( traces.Size() == 2 )
+    {
+        aStep["p"] = lineJSON( *static_cast<PNS::LINE*>( traces[0] ) );
+        aStep["n"] = lineJSON( *static_cast<PNS::LINE*>( traces[1] ) );
+    }
+    else
+    {
+        aStep["trace"] = lineJSON( *static_cast<PNS::LINE*>( traces[0] ) );
+    }
+
+    aStep["status"] = (int) aPlacer->TuningStatus();
+    aStep["length"] = aPlacer->TuningLengthResult();
+
+    const PNS::MEANDER_SETTINGS& s = aPlacer->MeanderSettings();
+    aStep["initialSide"] = (int) s.m_initialSide;
+    aStep["maxAmplitude"] = s.m_maxAmplitude;
+    aStep["spacing"] = s.m_spacing;
+}
+
+/// A length tuning's steps, as the tuning pattern generator drives the router's meander placer
+/// (PCB_TUNING_PATTERN::Update and EditFinish): its settings given to the placer once it has started, then pointer
+/// positions (the end of the part of the line to tune, the start being where it started), the meanders' amplitude
+/// or spacing stepped up or down ("amplitude", "spacing": the sign of the step), and a click that fixes it ("fix",
+/// as the generator fixes it, forced to finish). After each, whether the move did anything and what the placer has
+/// (tuningJSON), and the board as the placer has it, when it has changed, for a scene that asks. A last fix if the
+/// route says ("fix"); then the router is stopped, as the generator stops it, whether the tuning was fixed or not.
+/// False where KiCad's router would do what is undefined.
+/// Whether fixing a pair's tuning now (DP_MEANDER_PLACER::FixRoute) would have KiCad's placer add the pair to a node
+/// it has not got: a fix before any move has made one adds it to a null pointer. What KiCad's router does then is
+/// undefined, so such a scene is no reference. (A single track's placer, and a skew tuning's, fix nothing then.)
+static bool undefinedTuningFix( PNS::MEANDER_PLACER_BASE* aPlacer )
+{
+    auto dp = dynamic_cast<PNS::DP_MEANDER_PLACER*>( aPlacer );
+    return dp && !dp->m_currentNode;
+}
+
+static bool tuneSteps( PNS::ROUTER& aRouter, SCENE_IFACE& aIface, const json& aRoute, json& aMoves, json& aResult,
+                       bool aRemoveItems )
+{
+    auto placer = static_cast<PNS::MEANDER_PLACER_BASE*>( aRouter.Placer() );
+    placer->UpdateSettings( meanderSettings( aRoute.value( "meander", json::object() ) ) );
+
+    // (the path it tunes, from pad to pad or wherever the track's net goes, and the length it starts at)
+    json                path = json::array();
+    const PNS::ITEM_SET tunedPath = placer->TunedPath();
+
+    for( const PNS::ITEM* item : tunedPath.CItems() )
+    {
+        if( item->Kind() == PNS::ITEM::LINE_T )
+            path.push_back( lineJSON( *static_cast<const PNS::LINE*>( item ) ) );
+        else
+            path.push_back( SCENE_IFACE::itemJSON( item ) );
+    }
+
+    aResult["tunedPath"] = path;
+    aResult["startLength"] = placer->TuningLengthResult();
+
+    bool finished = false;
+    json lastNode;
+
+    for( const json& m : aRoute["moves"] )
+    {
+        json step;
+
+        if( m.is_array() )
+        {
+            step["moved"] = aRouter.Move( pt( m ), nullptr );
+        }
+        else if( m.contains( "amplitude" ) )
+        {
+            placer->AmplitudeStep( m["amplitude"].get<int>() );
+        }
+        else if( m.contains( "spacing" ) )
+        {
+            placer->SpacingStep( m["spacing"].get<int>() );
+        }
+        else if( m.contains( "fix" ) )
+        {
+            // (a fix KiCad's code gets wrong: no reference to be had)
+            if( undefinedTuningFix( placer ) )
+                return false;
+
+            finished = aRouter.FixRoute( pt( m["fix"] ), nullptr, true, false );
+            step["fixed"] = finished;
+        }
+
+        // (a tuning fixed is in the world, the placer's branches gone with it)
+        if( !finished )
+        {
+            tuningJSON( placer, step );
+
+            if( aRemoveItems )
+            {
+                json node = aIface.nodeJSON( placer->CurrentNode( true ) );
+
+                if( node != lastNode )
+                    step["node"] = node;
+
+                lastNode = node;
+            }
+        }
+
+        aMoves.push_back( step );
+
+        if( finished )
+            break;
+    }
+
+    if( !finished && aRoute.contains( "fix" ) )
+    {
+        if( undefinedTuningFix( placer ) )
+            return false;
+
+        aResult["fixed"] = aRouter.FixRoute( pt( aRoute["fix"] ), nullptr, true, false );
+    }
+
+    aRouter.StopRouting();
+    return true;
+}
+
 extern std::function<wxString( const PNS::ITEM* )> g_kicadReferenceNonRoutableReason;
 
 int main()
@@ -1177,6 +1395,7 @@ int main()
     };
     iface.m_items = scene["items"];
     iface.m_layers = scene.value( "layers", 2 );
+    iface.m_stackupHeights = scene.value( "stackupHeights", json::array() );
 
     json netNames = scene.value( "netNames", json::object() );
 
@@ -1213,6 +1432,9 @@ int main()
     // (no time limit on a shove, set as the router's settings file would set it: it gives up after a second, by the
     // clock, which makes what it does depend on how fast the machine is; it stops on its iteration limit alone)
     settings.Set<int>( "shove_time_limit", std::numeric_limits<int>::max() );
+    // (nor on the walk along a net a length tuning measures, TOPOLOGY::walkTuningPath, which gives up after half a
+    // second by the clock, as KiCad's advanced settings have it by default)
+    const_cast<ADVANCED_CFG&>( ADVANCED_CFG::GetCfg() ).m_FollowBranchTimeout = std::numeric_limits<int>::max();
     settings.Load();
     router.SetInterface( &iface );
     router.LoadSettings( &settings );
@@ -1235,9 +1457,17 @@ int main()
         // (the track corner mode: mitered or rounded, at 45 or 90 degrees)
         settings.SetCornerMode( static_cast<DIRECTION_45::CORNER_MODE>( route.value( "cornerMode", 0 ) ) );
 
-        // (a differential pair, "diffPair": the router tool's Route Differential Pair; else a single track)
+        // (a differential pair, "diffPair": the router tool's Route Differential Pair; a length tuning, "tune": the
+        // tuning pattern generator's, of a single track, a differential pair's length ("mode": "diffpair") or its
+        // skew ("skew"); else a single track)
         bool diffPair = route.value( "diffPair", false );
-        router.SetMode( diffPair ? PNS::PNS_MODE_ROUTE_DIFF_PAIR : PNS::PNS_MODE_ROUTE_SINGLE );
+        bool tuning = route.contains( "tune" );
+        std::string tuneMode = tuning ? route["tune"].value( "mode", std::string( "single" ) ) : std::string();
+        PNS::ROUTER_MODE tuneRouterMode = tuneMode == "diffpair" ? PNS::PNS_MODE_TUNE_DIFF_PAIR
+                                          : tuneMode == "skew"   ? PNS::PNS_MODE_TUNE_DIFF_PAIR_SKEW
+                                                                 : PNS::PNS_MODE_TUNE_SINGLE;
+        router.SetMode( diffPair ? PNS::PNS_MODE_ROUTE_DIFF_PAIR
+                        : tuning ? tuneRouterMode : PNS::PNS_MODE_ROUTE_SINGLE );
 
         // a world fresh from the board, with what the routes before this one added
         router.ClearWorld();
@@ -1297,6 +1527,13 @@ int main()
             started = router.StartDragging( pt( d["at"] ), itemAt( "item", d ),
                                             d.value( "freeAngle", false ) ? PNS::DM_ANY | PNS::DM_FREE_ANGLE : PNS::DM_ANY );
         }
+        else if( tuning )
+        {
+            // (a tuning of the track the route names, from where it says, on the layer it says, as the generator
+            // starts one from the point of the track its pattern starts at)
+            const json& t = route["tune"];
+            started = router.StartRouting( pt( t["at"] ), itemAt( "item", t ), t.value( "layer", 0 ) );
+        }
         else
         {
             started = router.StartRouting( pt( route["start"] ), itemAt( "startItem", route ), route.value( "layer", 0 ) );
@@ -1313,6 +1550,14 @@ int main()
         if( started && dragging )
         {
             dragSteps( router, iface, route, moves, r, removeItems );
+        }
+        else if( started && tuning )
+        {
+            if( !tuneSteps( router, iface, route, moves, r, removeItems ) )
+            {
+                std::cerr << "route " << out.size() << ": a fix KiCad's router has no defined result for\n";
+                return 3;
+            }
         }
         else if( started )
         {

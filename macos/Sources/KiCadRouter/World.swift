@@ -303,6 +303,9 @@ public final class WorldInterface: RouterInterface {
     /// The keepout zones that could not be cut into triangles, which KiCad's router leaves out (warning that each is
     /// malformed, perhaps crossing itself): their indices among the items
     public private(set) var malformedZones: [Int] = []
+    /// The board's thickness between copper layers, by router layer (KiCad's BOARD_STACKUP::GetLayerDistance),
+    /// which a length tuning counts for a via: none, 0
+    public var stackupHeights: [[Int]] = []
 
     public init(items: [WorldItem], layers: Int, rules: WorldRules) {
         self.items = items
@@ -457,7 +460,11 @@ public final class WorldInterface: RouterInterface {
 
     public func isCopperLayer(_ layer: Int) -> Bool { layer >= 0 && layer < layerCount }
     public func importSizes(_ sizes: inout SizesSettings, startItem: Item?, net: NetHandle?, start: IPoint) -> Bool { false }
-    public func stackupHeight(_ firstLayer: Int, _ secondLayer: Int) -> Int { 0 }
+    public func stackupHeight(_ firstLayer: Int, _ secondLayer: Int) -> Int {
+        guard firstLayer >= 0, secondLayer >= 0, firstLayer < stackupHeights.count,
+              secondLayer < stackupHeights[firstLayer].count else { return 0 }
+        return stackupHeights[firstLayer][secondLayer]
+    }
     public func netCode(_ net: NetHandle?) -> Int { net ?? -1 }
     public func netName(_ net: NetHandle?) -> String { resolver.netName(net) }
     public var orphanedNetHandle: NetHandle { 0 }

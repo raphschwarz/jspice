@@ -18,6 +18,14 @@ public struct ShapeArc: Hashable, Sendable, CustomStringConvertible {
     /// Its box, without its width
     private var box = IBox(.zero, .zero)
 
+    /// An arc of no size at the origin, its centre and radius not worked out (KiCad's SHAPE_ARC())
+    public init() {
+        start = .zero
+        mid = .zero
+        end = .zero
+        width = 0
+    }
+
     public init(start: IPoint, mid: IPoint, end: IPoint, width: Int = 0) {
         self.start = start
         self.mid = mid
@@ -128,6 +136,14 @@ public struct ShapeArc: Hashable, Sendable, CustomStringConvertible {
         if width != 0 { b = b.inflated(KiMath.round(Double(width) / 2.0) + 1) }
         if clearance != 0 { b = b.inflated(clearance) }
         return b
+    }
+
+    /// The arc mirrored in the line through `axis` (KiCad's Mirror( SEG )), its centre worked out again
+    public mutating func mirror(_ axis: Seg) {
+        start = axis.reflectPoint(start)
+        end = axis.reflectPoint(end)
+        mid = axis.reflectPoint(mid)
+        update()
     }
 
     public var reversed: ShapeArc { ShapeArc(start: end, mid: mid, end: start, width: width) }
