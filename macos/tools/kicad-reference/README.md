@@ -173,8 +173,10 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   the path with none of its optimisations asked for: the lines' lengths, and for each via between lines on two
   layers the board's thickness between them (`StackupHeight`; the scene's `"stackupHeights"`, by router layer). The
   router's items have no board items behind them, so what KiCad asks of a PAD or PCB_VIA of the path (its lines cut
-  to the pads' and vias' copper, the pads' pad-to-die lengths, a via inferred in a pad) is not asked here, nor in the
-  port (`MeanderPlacer.swift` says so); and neither tunes in the time domain (delays, from a board's tuning profiles).
+  to the pads' and vias' copper, the pads' pad-to-die lengths, a via inferred in a pad) is not asked here, nor by the
+  port of a scene's world; the port asks it of a board's (`BoardWorld`'s pads, `TuningPatternTests` checking it on
+  real boards against KiCad's editor, below); and neither tunes in the time domain (delays, from a board's tuning
+  profiles).
   KiCad's walk along the net gives up after half a second by the clock (`FollowBranchTimeoutMs`), which would make
   what it measures depend on how fast the machine is; `router.cpp` sets no limit, nor does the port. A pair's tuning
   fixed before any move has made it a node adds the pair to a null pointer; `router.cpp` sees it coming and stops
@@ -259,6 +261,48 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   and touched by it, next to the board as `BOARD.boxes` (JSON). `BoxSelectionTests` checks the port's
   (`BoxSelection`, which the PCB view's box selection goes by) against them; the boards of
   `Tests/KiCadRouterTests/Fixtures/boards`, `arcboards`, `courtyards` and `silk` have theirs.
+- `tuning.py`: KiCad's tuning patterns (`PCB_TUNING_PATTERN`, a generator kept in the board) made, tuned again and
+  deleted by KiCad's own PCB editor, for checking the port's (`TuningPatterns.swift`, `TuningPatternGenerator.swift`,
+  `TuningPatternEditing.swift`). KiCad's Python module reaches neither its tuning tools nor its generators (a board's
+  `Generators()` are bare pointers), so, as `boardsetup.py` does, it runs pcbnew under Xvfb with an action plugin of its
+  own (in a folder of its own, with a copy of the user's KiCad configuration whose grid is a micrometre), driving the
+  editor as a user does: its window made the size of a large screen, the view zoomed to fit, the pointer moved to two
+  places and the status bar read at each (the view's scale and offset worked out from them), then KiCad's tools used
+  with the pointer itself (`wx.UIActionSimulator`: X's pointer moved and clicked, keys pressed) and its menus by their
+  events. `tuning.py boards OUTDIR COUNT [SEED]` makes random boards to tune, saved by KiCad (lines of tracks between
+  pads at 0, 45 and 90 degrees, now and then a corner rounded by an arc track; single tracks and differential pairs of
+  a net class of their own; pads of other nets beside them; the project's tuning pattern settings random), and beside
+  each `BOARD.plan`: the tunings to make (a mode, the point of a straight run of a line to click, a way point, and the
+  end, off the line on the side the meanders are to start on). `tuning.py place BOARD...` makes them with KiCad's Tune
+  Length of a Single Track, Tune Length of a Differential Pair and Tune Skew of a Differential Pair
+  (`DRAWING_TOOL::PlaceTuningPattern`): the tool picked from the Route menu, a click on the track, the pointer moved
+  on twice, a click, Escape; File ▸ Save: `BOARD-placed`, and `BOARD.placed`, where KiCad's pointer was at each step.
+  `tuning.py edit BOARD-placed...` changes its patterns' properties in the file (a target from the length each came to,
+  amplitudes, spacing, corners, side, single-sidedness, an end moved) and adds patterns of no base line on lines not
+  tuned yet (`BOARD-edit`), then KiCad's Edit ▸ Update All Tuning Patterns (`GENERATOR_TOOL::RegenerateAllOfType`:
+  `EditStart`, `Update` and `EditFinish` of each in turn) and Save: `BOARD-updated`; given a board of no patterns
+  (such as one of `Fixtures/boards`) it adds patterns only. `tuning.py remove
+  BOARD-updated...` deletes one pattern as a user does (a click on one of its tracks, which selects the pattern, and
+  Delete: `genRemove`, its line made straight along its base line again): `BOARD-removed`, and `BOARD.removed`.
+  `tuning.py check BOARD...` gives each board as KiCad reads it (JSON): its generators by the items of their uuids
+  (`PCB_GROUP` underneath: their names, layers and members), each generated item as KiCad writes it again
+  (`pcbnew.SaveBoard`: the properties as its `SetProperties` took them and `GetProperties` gives them back), and
+  kicad-cli's DRC of it (each violation by its type and the items it names, described); `tuning.py saved BOARD...`
+  writes `BOARD.saved` beside each, its generated items as KiCad writes them having read it (KiCad cuts a length to
+  the nanometre toward 0 as it reads it, so that one it wrote can come back a nanometre short). `TuningPatternTests`
+  makes the same with the port on `Tests/KiCadRouterTests/Fixtures/tuning` (`tuning.py boards ... 3 20261129`, then
+  `place`, `edit` and `remove`; `KICAD_TUNING_REFERENCE` names a folder of more, with `saved` run on its boards) and
+  `Fixtures/tuningboards` (`edit` on boards of `Fixtures/boards` and `Fixtures/arcboards`, whose lines end in pads on
+  one side and in vias: the lengths KiCad measures clipped to their copper, with the vias it infers in the pads):
+  every track and every pattern (its properties, its members by their shapes) to the nanometre; KiCad's patterns read
+  and written back as KiCad wrote them (or as `BOARD.saved` has them); and, where
+  KiCad is installed, the port's boards read by KiCad (`check`) with the port's members, written back as the port wrote
+  them, its DRC finding on them what it finds on its own. The pointer's places that the view's scale gives only to a
+  micrometre are taken where KiCad's patterns keep them (a pattern's origin and end are the points of its line its
+  clicks came to; a skew pattern's other base line ends at the point of the other line nearest the way point), each
+  move on the side of the line KiCad's pointer was on. A pattern's end dragged with KiCad's point editor is not driven
+  (the port's drag is its `EditStart`, `Update` and `EditFinish`, as KiCad's), nor the time domain (delays, from a
+  board's tuning profiles), which the port does not tune in.
 - `courtyards.py`: KiCad's courtyards of boards' footprints (`courtyards.py BOARD.kicad_pcb...`): each footprint's
   `FOOTPRINT::BuildCourtyardCaches`, through KiCad's `pcbnew` module, its front and back courtyards (each polygon's
   outline and holes, their points), the width it gives the first outline and whether it found either side
@@ -525,8 +569,10 @@ leaves clear (on one of the fixture boards KiCad's DRC then reports a short it r
 own router, run on that board and drag, makes the same tracks).
 `BoardTuningTests.swift` tunes tracks' lengths on the fixture boards, and the pairs it routes on the pair boards their
 lengths and skews (`BoardEditing`'s `startTuning`, `moveTuning`, `fixTuning`, as KiCad's tuning patterns drive the
-meander placers): the length each tuning reports is the length its tracks then have on the board, and KiCad's DRC
-finds no clearance, crossing or short with the meanders that it did not find on the board before them.
+meander placers): the length each tuning reports is the length its tracks then have on the board (KiCad's measure of
+them: more, where its meanders went into the copper of a pad the line ends in, which the measure cuts away), and
+KiCad's DRC finds no clearance, crossing or short with the meanders that it did not find on the board before them.
+Each tuning kept is a tuning pattern in the board as KiCad keeps one (`TuningPatternTests`, `tuning.py` above).
 `BoardRoutingTests` routes the arc boards too (`Fixtures/arcboards`), each route in a corner mode of its own,
 rounded ones among them: the arcs the port puts on go into the board file as KiCad writes arc tracks (start, mid,
 end, width, layer, net, uuid), and KiCad's DRC reads them and finds nothing wrong with them.
