@@ -22,12 +22,16 @@ public final class BoardLink {
         case noBoard
         /// KiCad has the project open, and would keep its own settings
         case projectOpen
+        /// The same, of the project's pre-defined sizes
+        case sizesProjectOpen
 
         public var description: String {
             switch self {
             case .noKiCad(let why): return why
             case .projectOpen:
                 return "KiCad has the board open: change its net classes in KiCad's Board Setup (Net Classes), or close the board in KiCad and change them here."
+            case .sizesProjectOpen:
+                return "KiCad has the board open: change its pre-defined sizes in KiCad's Board Setup (Pre-defined Sizes), or close the board in KiCad and change them here."
             case .openUnreachable:
                 return "KiCad has the board open, but JSpice cannot reach it: turn on KiCad's API (Preferences ▸ Plugins ▸ Enable KiCad API) so the board can be kept in step while it is open."
             case .noBoard: return "The circuit has no board yet."
@@ -185,6 +189,7 @@ public final class BoardLink {
             current.carryZones(from: before, to: after)
             current.carryOutline(from: before, to: after)
             current.carryDrawings(from: before, to: after)
+            current.carrySetup(from: before, to: after)
             board = current
         }
         try board.write(to: boardFile)
@@ -236,6 +241,18 @@ public final class BoardLink {
         if isOpenInKiCad { throw Failure.projectOpen }
         var project = projectSettings() ?? [:]
         KiCadProject.setNetClass(netClass, in: &project)
+        let data = try JSONSerialization.data(withJSONObject: project, options: [.prettyPrinted, .sortedKeys])
+        try (String(decoding: data, as: UTF8.self) + "\n").write(to: projectFile, atomically: true, encoding: .utf8)
+        return project
+    }
+
+    /// The project's pre-defined track widths and via sizes set in its file as KiCad's Board Setup writes them (refused
+    /// while KiCad has the project open, as a net class is). The project's settings as they then are.
+    @discardableResult
+    public func setPredefinedSizes(_ sizes: KiCadProject.PredefinedSizes) throws -> [String: Any] {
+        if isOpenInKiCad { throw Failure.sizesProjectOpen }
+        var project = projectSettings() ?? [:]
+        KiCadProject.setPredefinedSizes(sizes, in: &project)
         let data = try JSONSerialization.data(withJSONObject: project, options: [.prettyPrinted, .sortedKeys])
         try (String(decoding: data, as: UTF8.self) + "\n").write(to: projectFile, atomically: true, encoding: .utf8)
         return project

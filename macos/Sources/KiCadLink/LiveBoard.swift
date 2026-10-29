@@ -96,6 +96,12 @@ public final class KiCadLiveBoard {
         }
         let oldDrawn = Dictionary(before.zones.map { ($0.uuid, drawn($0)) }, uniquingKeysWith: { a, _ in a })
         let newDrawn = Dictionary(after.zones.map { ($0.uuid, drawn($0)) }, uniquingKeysWith: { a, _ in a })
+        // the board's copper layers or stackup changed here (its copper layer count): the board by its file
+        if before.root["layers"]?.compact != after.root["layers"]?.compact
+            || before.root["setup"]?["stackup"]?.compact != after.root["setup"]?["stackup"]?.compact {
+            reloadReason = "the board's layers changed"
+            return try reload(after)
+        }
         let zonesRedrawn = Set(oldDrawn.keys) != Set(newDrawn.keys) || oldDrawn.contains { uuid, text in newDrawn[uuid].map { $0 != text } ?? false }
         if zonesRedrawn || before.edgeDrawings.map(\.compact) != after.edgeDrawings.map(\.compact) {
             reloadReason = zonesRedrawn ? "zones added, taken away or redrawn" : "the board's outline changed"
