@@ -21,17 +21,22 @@ public final class BoardRouter {
     public let router = Router()
     let iface: WorldInterface
     private let project: [String: Any]?
+    /// The rules of the board's .kicad_dru, which its router follows as KiCad's does
+    private let designRules: String?
 
     /// The tracks and vias added to the board (their uuids), and those it took away, by the last commit
     public private(set) var lastAdded: [String] = []
     public private(set) var lastRemoved: [String] = []
 
-    public init(board: KiCadBoard, project: [String: Any]? = nil) {
+    /// The router on `board`, its project's JSON in `project` and the rules of its .kicad_dru in `designRules`
+    public init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
         self.board = board
         self.project = project
+        self.designRules = designRules
         world = BoardWorld(board: board, project: project)
         iface = WorldInterface(items: world.items, layers: world.copperLayers, rules: world.rules)
         iface.stackupHeights = world.stackupHeights
+        loadRules()
         router.setInterface(iface)
         router.settings.mode = .walkaround
         router.syncWorld()
@@ -50,11 +55,31 @@ public final class BoardRouter {
         world = BoardWorld(board: board, project: project)
         iface.items = world.items
         iface.stackupHeights = world.stackupHeights
+        loadRules()
         router.syncWorld()
     }
 
+    /// The board's rules for the resolver, where it has rules of the user's own, made of the board as it is now; and
+    /// the world's worst clearance with theirs (GetMaxClearanceValue)
+    private func loadRules() {
+        guard let designRules else { return }
+        let drc = BoardDRC(board: board, project: project, designRules: designRules)
+        let rules = drc.routerRules()
+        iface.resolver.designRules = rules
+        if let rules {
+            world.raiseMaxClearance(rules.engine.biggestClearanceValue(drc.settings))
+            iface.resolver.rules.maxClearance = world.rules.maxClearance
+        }
+        rulesUnsupported = drc.unsupported
+    }
+
+    /// What of the board's rules the router does not follow as KiCad's does
+    private var rulesUnsupported: Set<String> = []
+
     /// What the world holds that the router cannot see as KiCad's does yet
-    public var unsupported: Set<String> { world.unsupported.union(iface.unsupported) }
+    public var unsupported: Set<String> {
+        world.unsupported.union(iface.unsupported).union(rulesUnsupported).union(iface.resolver.designRules?.engine.board.unsupported ?? [])
+    }
 
     // MARK: - Layers
 
@@ -297,7 +322,15 @@ public final class BoardRouter {
     /// via, no less than the board's minimums; a differential pair's, its net class's diff pair width and gap, the
     /// gap between its vias the same as its gap (as ImportSizes takes it from the net class's gap rule), and its vias'
     /// holes kept the board's hole to hole and hole clearances from each other (KiCad's ImportSizes)
-    public func sizes(for item: Item?, net name: String? = nil) -> SizesSettings {
+    public func sizes(for item: Item?, net name: String? = nil, layer: Int? = nil, start: IPoint? = nil) -> SizesSettings {
+        if let item, let r = iface.resolver.designRules {
+            return rulesSizes(item, layer: layer ?? item.layer, start: start, r, iface.resolver)
+        }
+        return implicitSizes(for: item, net: name)
+    }
+
+    /// The same by the implicit rules: the net class's
+    func implicitSizes(for item: Item?, net name: String? = nil) -> SizesSettings {
         var s = SizesSettings()
         let net = name ?? item?.net.flatMap { world.netNames[$0] } ?? ""
         let nc = world.netClasses.effective(net)
@@ -327,7 +360,7 @@ public final class BoardRouter {
     @discardableResult
     public func start(at p: IPoint, layer: Int, width: Int? = nil, via: (diameter: Int, drill: Int)? = nil) -> Bool {
         let (q, item) = startPoint(at: p, layer: layer)
-        var s = sizes(for: item)
+        var s = sizes(for: item, layer: startLayer(for: item, layer: layer), start: q)
         if let width { s.trackWidth = width }
         if let via {
             s.viaDiameter = via.diameter

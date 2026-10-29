@@ -178,7 +178,8 @@ final class PCBEditing: ObservableObject {
     /// The board taken up by the session (its copper layers), and checked. Each change fills the board's zones again
     /// as KiCad's filler does, unless KiCad's editor has the board open (and fills its own).
     private func take(_ board: KiCadBoard, project: [String: Any]?) async {
-        layers = await engine.load(board, project: project)
+        let rules = await controller?.designRulesForEditing()
+        layers = await engine.load(board, project: project, designRules: rules)
         nets = await engine.run { Array(Set($0.router.world.netNames.values)).filter { !$0.isEmpty }.sorted() } ?? []
         let refills = !(controller?.isLive ?? false) && !(controller?.isOpenInKiCad ?? false)
         let choice = sizeChoice
@@ -1472,11 +1473,15 @@ final class PCBRouteEngine: @unchecked Sendable {
         }
     }
 
-    /// The board taken up (anew, if it changed), its copper layers
-    func load(_ board: KiCadBoard, project: [String: Any]?) async -> [String] {
+    /// The board taken up (anew, if it changed), its copper layers; the board's design rules with it
+    func load(_ board: KiCadBoard, project: [String: Any]?, designRules: String?) async -> [String] {
         await withCheckedContinuation { continuation in
             queue.async {
-                if let session = self.session { session.load(board, project: project) } else { self.session = BoardEditing(board: board, project: project) }
+                if let session = self.session {
+                    session.load(board, project: project, designRules: .some(designRules))
+                } else {
+                    self.session = BoardEditing(board: board, project: project, designRules: designRules)
+                }
                 continuation.resume(returning: self.session?.layers ?? [])
             }
         }

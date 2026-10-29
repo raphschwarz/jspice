@@ -164,41 +164,87 @@ extension ZoneFiller {
         return PadKey(position: p.pos, size: size, shape: p.kind, orientation: p.orientation.degrees, net: pad.item.net)
     }
 
-    // MARK: - The rules (EvalRules on the implicit rules)
+    // MARK: - The rules (DRC_ENGINE::EvalRules, EvalZoneConnection)
 
-    /// EvalRules of a clearance between the zone and an item (CLEARANCE_CONSTRAINT): its minimum
-    func clearance(_ z: FillZone, _ item: BoardDRC.CopperItem) -> Int {
-        guard let zi = z.item else { return 0 }
-        return drc.clearanceConstraint(zi, item, rules, copper).0
+    /// The zone as the rules see it
+    func ruleZone(_ z: FillZone) -> RuleItem {
+        if let r = z.rule { return r }
+        let r = drc.ruleZone(z.node, uuid: z.uuid, footprint: z.footprint) ?? RuleItem(.zone, uuid: z.uuid)
+        z.rule = r
+        return r
     }
 
-    /// EvalRules of HOLE_CLEARANCE_CONSTRAINT: the board's minimum, or a pad's own clearance where it is more
-    func holeClearance(_ z: FillZone, _ item: BoardDRC.CopperItem) -> Int {
-        guard let zi = z.item else { return drc.settings.holeClearance }
-        return drc.holeClearanceConstraint(item, zi).0
+    /// evalRulesForItems: EvalRules of a constraint between the zone and an item on a layer, its minimum; -1 where no
+    /// rule sets it
+    func evalRules(_ type: DRCConstraintType, _ z: FillZone, _ item: RuleItem, _ layer: Int) -> Int {
+        let c = drc.ruleState.engine.evalRules(type, ruleZone(z), item, layer: layer)
+        return c.type == .null ? -1 : c.value.min
     }
 
-    /// EDGE_CLEARANCE_CONSTRAINT: the board's
-    var edgeClearance: Int { min(drc.settings.edgeClearance, BoardWorld.maximumClearance) }
-
-    /// EvalZoneConnection: the pad's own, its footprint's, the zone's; a through-hole thermal one thermal for a plated
-    /// pad, solid for another
-    func zoneConnection(_ pad: FillPad?, _ z: FillZone) -> BoardDRC.ZoneConnection {
-        var c = pad?.zoneConnection ?? pad?.footprintZoneConnection ?? z.padConnection
-        if c == .thtThermal { c = pad?.p.attribute == .pth ? .thermal : .full }
-        return c
+    func evalRules(_ type: DRCConstraintType, _ z: FillZone, _ item: BoardDRC.CopperItem, _ layer: Int) -> Int {
+        evalRules(type, z, drc.ruleItem(item, copper), layer)
     }
 
-    /// THERMAL_RELIEF_GAP_CONSTRAINT: the pad's own gap, else the zone's
-    func thermalGap(_ pad: FillPad?, _ z: FillZone) -> Int {
-        if let pad, pad.thermalGap > 0 { return pad.thermalGap }
-        return z.thermalGap
+    /// EvalRules of a constraint between an item and the zone (the item first, as the thermal reliefs ask)
+    func itemConstraint(_ type: DRCConstraintType, _ item: BoardDRC.CopperItem, _ z: FillZone, _ layer: Int) -> DRCConstraint {
+        drc.ruleState.engine.evalRules(type, drc.ruleItem(item, copper), ruleZone(z), layer: layer)
     }
 
-    /// THERMAL_SPOKE_WIDTH_CONSTRAINT: the pad's own width (no less than the zone's minimum thickness), else the zone's
-    func spokeWidth(_ pad: FillPad?, _ z: FillZone) -> Int {
-        if let pad, pad.spokeWidth > 0 { return max(pad.spokeWidth, z.minThickness) }
-        return z.spokeWidth
+    /// EvalZoneConnection of a pad or via and the zone: the pad's own, its footprint's, the zone's (or a rule's); a
+    /// through-hole thermal one thermal for a plated pad, solid for another
+    func zoneConnection(_ item: BoardDRC.CopperItem, _ z: FillZone, _ layer: Int) -> BoardDRC.ZoneConnection {
+        let c = drc.ruleState.engine.evalZoneConnection(drc.ruleItem(item, copper), ruleZone(z), layer: layer).zoneConnection
+        switch c {
+        case .none: return .none
+        case .full: return .full
+        case .thtThermal: return .thtThermal
+        default: return .thermal
+        }
+    }
+
+    /// THERMAL_RELIEF_GAP_CONSTRAINT: the pad's own gap, else the zone's (or a rule's)
+    func thermalGap(_ item: BoardDRC.CopperItem, _ z: FillZone, _ layer: Int) -> Int {
+        itemConstraint(.thermalReliefGap, item, z, layer).value.min
+    }
+
+    /// THERMAL_SPOKE_WIDTH_CONSTRAINT: its opt (the pad's own width, no less than the zone's minimum thickness, else
+    /// the zone's, or a rule's), and the constraint's min and max a pad's is clamped to
+    func spokeWidth(_ item: BoardDRC.CopperItem, _ z: FillZone, _ layer: Int) -> (opt: Int, min: Int, max: Int) {
+        let c = itemConstraint(.thermalSpokeWidth, item, z, layer)
+        return (c.value.opt, c.value.min, c.value.max)
+    }
+
+    /// A text or field as the rules see it (PCB_TEXT, PCB_FIELD): its layer, footprint and box
+    func textRuleItem(_ node: SExpr, layerName: String, footprint: Int?, box: IBox) -> RuleItem {
+        let r = RuleItem(node.head == "property" ? .field : .text, uuid: node.value("uuid") ?? "")
+        r.parentFootprint = footprint.map { drc.ruleState.footprints[$0] }
+        r.layer = KiLayer.id(layerName) ?? KiLayer.undefined
+        r.layerSet = KiLayerSet([r.layer])
+        r.isOnCopper = KiLayer.isCopper(r.layer)
+        r.bbox = box
+        r.netClass = drc.ruleNetClass("")
+        if node.head == "property", let name = node.text(at: 0) { r.properties["Name"] = .string(name) }
+        return r
+    }
+
+    /// knockoutCourtyardClearance: a footprint's courtyard taken out by a physical clearance rule between the zone and
+    /// it, on the layer's side (an inner layer's, the footprint's), grown by the clearance; only of a footprint whose
+    /// box (FOOTPRINT::GetBoundingBox, its texts in it) reaches the zone's grown by the worst clearance
+    func knockoutCourtyard(_ z: FillZone, _ layer: Int, _ footprint: Int, _ zoneBox: IBox, _ holes: inout PolySet) {
+        guard drc.ruleState.engine.hasRules(.physicalClearance) else { return }
+        let fp = drc.ruleState.footprints[footprint]
+        guard let box = fp.bbox, box.intersects(zoneBox) else { return }
+        let gap = evalRules(.physicalClearance, z, fp, layer)
+        guard gap >= 0, let yards = fp.courtyards else { return }
+        let side = KiLayer.isCopper(layer) && layer != KiLayer.fCu && layer != KiLayer.bCu ? fp.layer : layer
+        let yard = KiLayerSet.back.contains(side) ? yards.back : yards.front
+        if gap == 0 {
+            holes.append(yard)
+        } else {
+            var grown = yard
+            grown.inflate(gap, .roundAllCorners, maxError: maxError)
+            holes.append(grown)
+        }
     }
 
     // MARK: - fillSingleZone
@@ -434,13 +480,13 @@ extension ZoneFiller {
                 continue
             }
             if z.hatched {
-                var connection = zoneConnection(pad, z)
+                var connection = zoneConnection(pad.item, z, layer)
                 if connection == .thermal && !padFlashLayer(pad, layer) { connection = .none }
                 switch connection {
                 case .thermal:
                     if fillCollides(pad.item.outline) {
                         thermalPads.append(.pad(pad))
-                        addPadKnockout(pad, thermalGap(pad, z), &holes)
+                        addPadKnockout(pad, thermalGap(pad.item, z, layer), &holes)
                     }
                 case .none:
                     noConnectionPads.append(pad)
@@ -449,21 +495,23 @@ extension ZoneFiller {
                 }
                 continue
             }
-            var connection = z.isTeardrop ? .full : zoneConnection(pad, z)
+            var connection = z.isTeardrop ? .full : zoneConnection(pad.item, z, layer)
             if connection == .thermal && !padFlashLayer(pad, layer) { connection = .none }
             switch connection {
             case .thermal:
                 if fillCollides(pad.item.outline) {
                     thermalPads.append(.pad(pad))
-                    addPadKnockout(pad, thermalGap(pad, z), &holes)
+                    addPadKnockout(pad, thermalGap(pad.item, z, layer), &holes)
                 }
             case .none:
-                // (no physical clearance rule: the zone's own clearance)
-                let padClearance = max(0, z.localClearance)
+                // (a physical clearance rule's, where more than the zone's own clearance)
+                let physical = itemConstraint(.physicalClearance, pad.item, z, layer).value.min
+                let padClearance = physical > z.localClearance ? physical : z.localClearance
                 if padFlashLayer(pad, layer) {
                     addPadKnockout(pad, padClearance, &holes)
                 } else if pad.p.drill.x > 0 {
-                    holes.append(holePolygon(pad, padClearance))
+                    let physicalHole = itemConstraint(.physicalHoleClearance, pad.item, z, layer).value.min
+                    holes.append(holePolygon(pad, physicalHole > padClearance ? physicalHole : padClearance))
                 }
             default:
                 continue
@@ -480,9 +528,9 @@ extension ZoneFiller {
                     noConnection = true
                 }
                 if noConnection { continue }
-                switch zoneConnection(nil, z) {
+                switch zoneConnection(t, z, layer) {
                 case .thermal:
-                    let gap = thermalGap(nil, z)
+                    let gap = thermalGap(t, z, layer)
                     if gap > 0 {
                         thermalPads.append(.via(t))
                         holes.addOutline(PadPolygon.circle(center: v.start, radius: v.diameter / 2 + gap, maxError: maxError,
@@ -526,18 +574,18 @@ extension ZoneFiller {
         var processed = Set<PadKey>()
         for pad in noConnectionPads {
             if let key = padKey(pad), !processed.insert(key).inserted { continue }
-            // (no physical clearance rule: -1)
-            let initGap = -1
+            let initGap = evalRules(.physicalClearance, z, pad.item, layer)
             var gap = initGap
             let hasHole = pad.p.drill.x > 0
             let flash = padFlashLayer(pad, layer)
             let platedHole = hasHole && pad.p.attribute == .pth
-            if flash || platedHole { gap = max(gap, clearance(z, pad.item)) }
+            if flash || platedHole { gap = max(gap, evalRules(.clearance, z, pad.item, layer)) }
             if flash && gap >= 0 { addPadKnockout(pad, gap + extraMargin, &holes) }
             if hasHole {
                 if pad.p.attribute == .npth { gap = initGap }
-                gap = max(gap, holeClearance(z, pad.item))
-                if pad.p.attribute == .npth && pad.p.drill.x != pad.p.drill.y { gap = max(gap, edgeClearance) }
+                gap = max(gap, evalRules(.physicalHoleClearance, z, pad.item, layer))
+                gap = max(gap, evalRules(.holeClearance, z, pad.item, layer))
+                if pad.p.attribute == .npth && pad.p.drill.x != pad.p.drill.y { gap = max(gap, evalRules(.edgeClearance, z, pad.item, layer)) }
                 if gap >= 0 { holes.append(holePolygon(pad, gap + extraMargin)) }
             }
         }
@@ -558,14 +606,15 @@ extension ZoneFiller {
             guard box.intersects(zoneBox) else { continue }
             var sameNet = t.net == z.net
             if !z.isTeardrop && z.net == 0 { sameNet = false }
-            var gap = -1
-            if !sameNet { gap = max(gap, clearance(z, t)) }
+            var gap = evalRules(.physicalClearance, z, t, layer)
+            if !sameNet { gap = max(gap, evalRules(.clearance, z, t, layer)) }
             if let v = t.via {
                 if gap > 0 {
                     holes.addOutline(PadPolygon.circle(center: v.start, radius: v.diameter / 2 + gap + extraMargin, maxError: maxError,
                                                        errorLocation: .outside))
                 }
-                if !sameNet { gap = max(gap, holeClearance(z, t)) }
+                gap = max(gap, evalRules(.physicalHoleClearance, z, t, layer))
+                if !sameNet { gap = max(gap, evalRules(.holeClearance, z, t, layer)) }
                 if gap >= 0 {
                     holes.addOutline(PadPolygon.circle(center: v.start, radius: v.drill / 2 + gap + extraMargin, maxError: maxError,
                                                        errorLocation: .outside))
@@ -585,6 +634,7 @@ extension ZoneFiller {
         let fps = drc.board.root.all("footprint")
         for (f, fp) in fps.enumerated() {
             let placement = BoardWorld.FootprintPlacement(fp)
+            knockoutCourtyard(z, layer, f, zoneBox, &holes)
             for field in fp.all("property") where ["Reference", "Value"].contains(field.text(at: 0) ?? "") {
                 knockoutGraphic(z, layer, field, footprint: fp, footprintIndex: f, placement: placement, zoneBox, &holes)
             }
@@ -646,6 +696,7 @@ extension ZoneFiller {
         guard onLayer || layerName == "Edge.Cuts" || layerName == "Margin" else { return }
         // the item as the rules see it, and its box
         var item: BoardDRC.CopperItem?
+        var rule: RuleItem?
         let box: IBox
         var text: TextStrokes?
         if isText {
@@ -655,13 +706,7 @@ extension ZoneFiller {
             if node.flag("knockout") || node["layer"]?.arguments.contains(where: { $0.text == "knockout" }) == true {
                 unsupported.insert("knockout text")
             }
-            if onLayer {
-                let it = BoardDRC.CopperItem(kind: .shape, uuid: node.value("uuid") ?? "")
-                it.connected = false
-                it.footprint = footprintIndex
-                if let rl = routerLayer(layer) { it.layers = [rl] }
-                item = it
-            }
+            rule = textRuleItem(node, layerName: layerName, footprint: footprintIndex, box: box)
         } else {
             guard let o = world.outlineShape(node, placement: placement) else {
                 unsupported.insert("drawing")
@@ -682,15 +727,29 @@ extension ZoneFiller {
         var sameNet = shapeNet == z.net
         if !z.isTeardrop && z.net == 0 { sameNet = false }
         guard box.intersects(zoneBox) else { return }
+        if rule == nil {
+            if let item {
+                rule = drc.ruleItem(item, copper)
+            } else {
+                // (a drawing off copper: its layer and box)
+                let r = RuleItem(.shape, uuid: node.value("uuid") ?? "")
+                r.parentFootprint = footprintIndex.map { drc.ruleState.footprints[$0] }
+                r.layer = KiLayer.id(layerName) ?? KiLayer.undefined
+                r.layerSet = KiLayerSet([r.layer])
+                r.bbox = box
+                r.netClass = drc.ruleNetClass("")
+                rule = r
+            }
+        }
         var ignoreLineWidth = false
-        var gap = -1
+        var gap = evalRules(.physicalClearance, z, rule!, layer)
         if onLayer && !sameNet {
-            if let item { gap = max(gap, clearance(z, item)) }
+            gap = max(gap, evalRules(.clearance, z, rule!, layer))
         } else if layerName == "Edge.Cuts" {
-            gap = max(gap, edgeClearance)
+            gap = max(gap, evalRules(.edgeClearance, z, rule!, layer))
             ignoreLineWidth = true
         } else if layerName == "Margin" {
-            gap = max(gap, edgeClearance)
+            gap = max(gap, evalRules(.edgeClearance, z, rule!, layer))
         }
         guard gap >= 0 else { return }
         gap += extraMargin
@@ -713,8 +772,8 @@ extension ZoneFiller {
         for k in zones {
             if k.ruleArea || !k.isOnLayer(layer) { continue }
             guard k.higherPriority(z) && !k.sameNet(z) && zoneKnockoutMayInteract(z, k) else { continue }
-            var gap = 0
-            if let ki = k.item { gap = max(gap, clearance(z, ki)) }
+            var gap = max(0, evalRules(.physicalClearance, z, ruleZone(k), layer))
+            gap = max(gap, evalRules(.clearance, z, ruleZone(k), layer))
             guard let f = k.fills[layer] else { continue }
             holes.append(zoneShapePolygon(f, gap + extraMargin))
         }
@@ -773,8 +832,7 @@ extension ZoneFiller {
         var spokes: [LineChain] = []
         var zoneHalfWidth = z.minThickness / 2
         if z.hatched { zoneHalfWidth = z.hatchThickness / 2 }
-        let biggest = min(max(drc.settings.minClearance, drc.settings.holeClearance, drc.settings.holeToHole, drc.settings.edgeClearance,
-                              netClassWorstClearance, 1_000_000), BoardWorld.maximumClearance)
+        let biggest = drc.ruleState.engine.biggestClearanceValue(drc.settings)
         let zoneBB = z.bbox.inflated(max(biggest, z.localClearance))
         let epsilon = maxError
         for t in items {
@@ -793,14 +851,15 @@ extension ZoneFiller {
             }
             var gap = 0, spokeW = 0
             if let pad {
-                gap = thermalGap(pad, z)
-                spokeW = spokeWidth(pad, z)
+                gap = thermalGap(pad.item, z, layer)
+                let w = spokeWidth(pad.item, z, layer)
+                spokeW = min(max(w.opt, w.min), w.max)
                 spokeW = min(spokeW, min(pad.p.size.x, pad.p.size.y))
                 if spokeW < z.minThickness { continue }
-            } else if let v = via?.via {
+            } else if let via, let v = via.via {
                 guard z.hatched else { continue }
-                gap = thermalGap(nil, z)
-                spokeW = min(spokeWidth(nil, z), v.diameter)
+                gap = thermalGap(via, z, layer)
+                spokeW = min(spokeWidth(via, z, layer).opt, v.diameter)
                 if spokeW < z.minThickness { continue }
             }
             let spokeHalfW = spokeW / 2
@@ -884,9 +943,6 @@ extension ZoneFiller {
         return spokes
     }
 
-    /// The worst clearance of the net classes (the DRC engine's worst clearance rule)
-    var netClassWorstClearance: Int { drc.netClasses.worstClearance }
-
     /// A custom pad's spokes along its spoke templates, trimmed to the pad and its thermal relief
     func customSpokes(_ pad: FillPad, _ z: FillZone, _ layer: Int, _ gap: Int, _ epsilon: Int, _ spokeHalfW: Int) -> [LineChain] {
         var out: [LineChain] = []
@@ -943,15 +999,15 @@ extension ZoneFiller {
                 position = p.p.shapePos
                 isCircular = p.p.kind == .circle || (p.p.kind == .oval && p.p.size.x == p.p.size.y)
                 if isCircular { padRadius = max(p.p.size.x, p.p.size.y) / 2 }
-                gap = thermalGap(p, z)
-                spokeW = min(spokeWidth(p, z), min(p.p.size.x, p.p.size.y))
+                gap = thermalGap(p.item, z, layer)
+                spokeW = min(spokeWidth(p.item, z, layer).opt, min(p.p.size.x, p.p.size.y))
             case .via(let v):
                 guard let rl = routerLayer(layer), v.layers.contains(rl), let via = v.via else { continue }
                 position = via.start
                 isCircular = true
                 padRadius = via.diameter / 2
-                gap = thermalGap(nil, z)
-                spokeW = min(spokeWidth(nil, z), padRadius * 2)
+                gap = thermalGap(v, z, layer)
+                spokeW = min(spokeWidth(v, z, layer).opt, padRadius * 2)
             }
             if spokeW < z.minThickness { continue }
             var ring: PolySet
@@ -1098,8 +1154,8 @@ extension ZoneFiller {
                 let ownsOutline = k.hatched && k.priority > z.priority
                 if ownsOutline { sameNet.append(k.outline) } else { sameNet.append(f) }
             } else {
-                var gap = 0
-                if let ki = k.item { gap = max(gap, clearance(z, ki)) }
+                var gap = max(0, evalRules(.physicalClearance, z, ruleZone(k), layer))
+                gap = max(gap, evalRules(.clearance, z, ruleZone(k), layer))
                 var inflated = f
                 inflated.inflate(gap + extraMargin + maxError, .roundAllCorners, maxError: maxError)
                 diffNet.append(inflated)

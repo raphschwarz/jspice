@@ -1,0 +1,20 @@
+(version 1)
+
+(rule r0
+  (condition "A.getField('Reference') != 'U5' || L == 'B.Cu' && A.NetClass == 'Digital'")
+  (constraint edge_clearance (min 0.25mm))
+)
+
+(rule r1
+  (condition "B.Width + 0.11mm < 14.2mil && A.insideArea('Keepout 1')")
+  (constraint clearance (min 0.0213in))
+  (constraint assertion "A.Type != 'Zone'")
+)
+
+(rule r2
+  (condition "(A.Hole < 0.78mm || B.Type == 'Zone' && B.Size_X <= 1.69mm)")
+  (constraint via_diameter (min 0.66mm))
+  (constraint clearance (min 0.39mm))
+)
+
+(rule broken (condition "A.NetClass == 'Default'") (constraint clearance (min 0.2mm))

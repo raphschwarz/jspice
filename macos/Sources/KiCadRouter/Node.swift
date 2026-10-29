@@ -848,6 +848,7 @@ public final class Node {
         pl.layers = seg.layers
         pl.net = seg.net
         pl.parent = nil
+        pl.boardItem = nil
         pl.sourceItem = seg.sourceItem
         pl.owner = self
         followLine(seg, false, &iStart, maxVerts, &corners, &segs, &arcReversed, &guardHit, stopAtLockedJoints,

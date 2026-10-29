@@ -1,0 +1,13 @@
+(version 1)
+
+(rule r0
+  (condition "A.isPlated() && A.Size_Y < 2.02mm || B.existsOnLayer('F.Cu')")
+  (constraint track_width (max 0.0142in))
+  (constraint hole_to_hole (min 0.9mm))
+  (severity error)
+)
+
+(rule r1
+  (condition "B.Locked")
+  (constraint hole_clearance (min 0.47mm))
+)

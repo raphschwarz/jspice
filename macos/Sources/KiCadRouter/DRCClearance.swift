@@ -27,6 +27,8 @@ extension BoardDRC {
         var netIdentity = 0
         /// BOARD_ITEM::IsConnected: all but a footprint's drawings (only the board's own copper drawings are)
         var connected = true
+        /// A zone's node in the board, which tells it apart from the rest (a teardrop has no uuid)
+        var zoneNode: SExpr?
         /// The footprint it is of (its index), nil for the board's own
         var footprint: Int?
         /// The copper layers it is on (router layers), in KiCad's order of them (F.Cu, B.Cu, then the inner ones)
@@ -67,6 +69,8 @@ extension BoardDRC {
         var trackMid = IPoint.zero
         /// A drawing's connection points (PCB_SHAPE::GetConnectionPoints)
         var connectionPoints: [IPoint] = []
+        /// The item as the design rules see it, once made
+        var ruleItem: RuleItem?
 
         init(kind: Kind, uuid: String) { (self.kind, self.uuid) = (kind, uuid) }
 
@@ -339,6 +343,7 @@ extension BoardDRC {
         guard !ls.isEmpty else { return nil }
         let item = CopperItem(kind: .zone, uuid: node.value("uuid") ?? "")
         item.footprint = footprint
+        item.zoneNode = node
         let name = Self.netName(node)
         item.net = world.netCodes[name] ?? 0
         item.netName = name
@@ -383,98 +388,17 @@ extension BoardDRC {
         }
     }
 
-    // MARK: - Rules (EvalRules on the implicit rules)
+    // MARK: - Rules (DRC_ENGINE::EvalRules)
 
-    /// An effective net class's clearance rule: the class's name, its clearance, and the name of the class it comes
-    /// from (NETCLASS::GetClearanceParent); `named` false where KiCad takes its fast way to net classes' clearances,
-    /// which gives the clearance no rule's name
-    struct ClearanceRule {
-        var netClass: String
-        var clearance: Int
-        var parent: String
-        var named = true
+    /// EvalRules(CLEARANCE_CONSTRAINT, a, b, layer): the clearance between two copper items on a (router's) layer,
+    /// the rule that sets it, its name and severity
+    func clearanceConstraint(_ a: CopperItem, _ b: CopperItem, _ layer: Int, _ c: Copper) -> DRCConstraint {
+        ruleState.engine.evalRules(.clearance, ruleItem(a, c), ruleItem(b, c), layer: kiLayer(layer))
     }
 
-    /// The net classes' clearance rules as KiCad orders them (the default class, the classes by name, then the
-    /// composite ones by name, sorted by clearance, least first: the last that applies wins)
-    func clearanceRules(_ items: [CopperItem]) -> [ClearanceRule] {
-        var rules = [ClearanceRule(netClass: "Default", clearance: netClasses.defaultClass.clearance ?? 0, parent: "Default")]
-        for name in netClasses.classes.keys.sorted() {
-            if let c = netClasses.classes[name]?.clearance { rules.append(ClearanceRule(netClass: name, clearance: c, parent: name)) }
-        }
-        var composites: [String: ClearanceRule] = [:]
-        for item in items {
-            let e = netClasses.effective(item.netName)
-            if e.name.contains(",") && composites[e.name] == nil {
-                composites[e.name] = ClearanceRule(netClass: e.name, clearance: e.clearance ?? 0, parent: e.clearanceParent ?? "Default")
-            }
-        }
-        for name in composites.keys.sorted() { rules.append(composites[name]!) }
-        // EvalRules' fast way (no rules of the user's own): unless a class's diff pair gap is less than its clearance,
-        // which makes a rule of its own for coupled pairs
-        var diffPairOverrides = netClasses.defaultClass.diffPairGap.map { $0 < netClasses.defaultClass.clearance ?? -1 } ?? false
-        for c in netClasses.classes.values where c.diffPairGap.map({ $0 < c.clearance ?? -1 }) ?? false { diffPairOverrides = true }
-        for item in items where !diffPairOverrides {
-            let e = netClasses.effective(item.netName)
-            if e.name.contains(","), let gap = e.diffPairGap, gap < e.clearance ?? -1 { diffPairOverrides = true }
-        }
-        if !diffPairOverrides { for i in rules.indices { rules[i].named = false } }
-        // (few enough for std::sort's insertion sort: ties keep their order)
-        return rules.enumerated().sorted { $0.element.clearance != $1.element.clearance ? $0.element.clearance < $1.element.clearance
-                                                                                        : $0.offset < $1.offset }.map(\.element)
-    }
-
-    /// EvalRules(CLEARANCE_CONSTRAINT, a, b): the clearance between two copper items and the name of what sets it
-    func clearanceConstraint(_ a: CopperItem, _ b: CopperItem, _ rules: [ClearanceRule], _ c: Copper) -> (Int, String) {
-        let aNonCopper = !a.copper, bNonCopper = !b.copper
-        // a footprint's net tie: no clearance between its items and the nets it ties them to (between an item
-        // connected and one not, or two of one footprint)
-        if (a.connected != b.connected || (a.footprint != nil && a.footprint == b.footprint)) && !aNonCopper && !bNonCopper {
-            if a.footprint != nil, b.connected, c.netTies[ObjectIdentifier(a)]?.contains(b.net) == true { return (0, "net tie") }
-            if b.footprint != nil, a.connected, c.netTies[ObjectIdentifier(b)]?.contains(a.net) == true { return (0, "net tie") }
-        }
-        // local overrides take precedence over everything but the board's minimum
-        let oa = a.connected && !bNonCopper ? a.clearanceOverride : nil
-        let ob = b.connected && !aNonCopper ? b.clearanceOverride : nil
-        if oa != nil || ob != nil {
-            var value = 0, source = ""
-            if let oa { (value, source) = oa }
-            if let ob, ob.value > value { (value, source) = ob }
-            if value != 0 {
-                if value < settings.minClearance { return (settings.minClearance, "board minimum") }
-                return (value, source)
-            }
-        }
-        var clearance = 0, name = ""
-        if !aNonCopper && !bNonCopper {
-            let ca = netClasses.effective(a.netName).name, cb = netClasses.effective(b.netName).name
-            for r in rules where (a.connected && r.netClass == ca) || (b.connected && r.netClass == cb) {
-                (clearance, name) = (r.clearance, r.named ? "netclass '\(r.parent)'" : "")
-            }
-        }
-        if clearance > BoardWorld.maximumClearance { clearance = BoardWorld.maximumClearance }
-        for local in [a.connected ? a.localClearance : nil, b.connected ? b.localClearance : nil].compactMap({ $0 })
-            where local.value > clearance {
-            (clearance, name) = (local.value, local.source)
-        }
-        if !aNonCopper && !bNonCopper && clearance < settings.minClearance { (clearance, name) = (settings.minClearance, "board minimum") }
-        return (clearance, name)
-    }
-
-    /// EvalRules(HOLE_CLEARANCE_CONSTRAINT, hole's item, other)
-    func holeClearanceConstraint(_ a: CopperItem, _ b: CopperItem) -> (Int, String) {
-        let oa = a.connected && b.copper ? a.clearanceOverride : nil
-        let ob = b.connected && a.copper ? b.clearanceOverride : nil
-        if oa != nil || ob != nil {
-            var value = 0, source = ""
-            if let oa { (value, source) = oa }
-            if let ob, ob.value > value { (value, source) = ob }
-            if value != 0 {
-                if value < settings.holeClearance { return (settings.holeClearance, "board minimum hole") }
-                return (value, source)
-            }
-        }
-        return (min(settings.holeClearance, BoardWorld.maximumClearance), "board setup constraints hole")
+    /// EvalRules(HOLE_CLEARANCE_CONSTRAINT, hole's item, other, layer)
+    func holeClearanceConstraint(_ a: CopperItem, _ b: CopperItem, _ layer: Int, _ c: Copper) -> DRCConstraint {
+        ruleState.engine.evalRules(.holeClearance, ruleItem(a, c), ruleItem(b, c), layer: kiLayer(layer))
     }
 
     // MARK: - Collisions
@@ -535,7 +459,6 @@ extension BoardDRC {
 
     func checkCopperClearances(_ out: inout Report, _ c: Copper) {
         guard c.maxClearance > 0 else { return }
-        let rules = clearanceRules(c.items + c.zones)
         let epsilon = settings.epsilon
         func subE(_ v: Int) -> Int { max(0, v - epsilon) }
 
@@ -561,9 +484,12 @@ extension BoardDRC {
                 swap(&item, &other)
                 swap(&itemShape, &otherShape)
             }
-            var clearance = -1, name = ""
-            if testClearance || testShorting { (clearance, name) = clearanceConstraint(item, other, rules, c) }
-            if clearance > 0 {
+            var constraint = DRCConstraint(.clearance), clearance = -1
+            if testClearance || testShorting {
+                constraint = clearanceConstraint(item, other, layer, c)
+                clearance = constraint.value.min
+            }
+            if constraint.severity != .ignore && clearance > 0 {
                 if item.kind == .track && other.kind == .track,
                    case .segment(let s1, _)? = item.shapes[layer]?.first, case .segment(let s2, _)? = other.shapes[layer]?.first,
                    s1.intersect(s2) != nil {
@@ -577,8 +503,8 @@ extension BoardDRC {
                         out.add("shorting_items", "(nets \(netNameOrNone(item)) and \(netNameOrNone(other)))", [item.uuid, other.uuid])
                         return false
                     } else if testClearance {
-                        out.add("clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, name, clearance, actual),
-                                [item.uuid, other.uuid])
+                        out.add("clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, constraint.ruleName, clearance,
+                                                            actual), [item.uuid, other.uuid], rule: constraint.parentRule)
                         return false
                     }
                 }
@@ -594,11 +520,17 @@ extension BoardDRC {
                         guard let h = b.hole else { continue }
                         hole = h
                     }
-                    let (hc, hname) = holeClearanceConstraint(b, a)
-                    if let actual = Self.collide(aShape, [hole], subE(hc)) {
+                    // (a hole of a net tie's net in its pad, where it may be)
+                    if b.connected && b.net != 0, case .segment(let s, _) = hole, isNetTieExclusion(b.net, layer, s.center, a, c) {
+                        continue
+                    }
+                    let k = holeClearanceConstraint(b, a, layer, c)
+                    let hc = k.value.min, hname = k.ruleName
+                    // (even of no clearance: the item cannot be in the hole)
+                    if k.severity != .ignore, let actual = Self.collide(aShape, [hole], subE(hc)) {
                         let detail = hc != 0 ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, hname, hc, actual)
                                              : Self.formatMsg({ c, v, _ in "(\(c) clearance \(v); actual < 0)" }, hname, hc, actual)
-                        out.add("hole_clearance", detail, [a.uuid, b.uuid])
+                        out.add("hole_clearance", detail, [a.uuid, b.uuid], rule: k.parentRule)
                         return false
                     }
                 }
@@ -637,17 +569,20 @@ extension BoardDRC {
                 if !flashedPad && !platedHole { testClearance = false }
             }
             if testClearance {
-                let (clearance, name) = clearanceConstraint(item, zone, rules, c)
-                if clearance > 0, let actual = Self.collide(item.shapes[layer] ?? [], fill: fill, subE(clearance)) {
-                    out.add("clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, name, clearance, actual),
-                            [item.uuid, zone.uuid])
+                let k = clearanceConstraint(item, zone, layer, c)
+                let clearance = k.value.min
+                if k.severity != .ignore && clearance > 0,
+                   let actual = Self.collide(item.shapes[layer] ?? [], fill: fill, subE(clearance)) {
+                    out.add("clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, k.ruleName, clearance, actual),
+                            [item.uuid, zone.uuid], rule: k.parentRule)
                 }
             }
             if testHoles, let hole = item.hole, item.kind != .via || item.layers.contains(layer) {
-                let (hc, hname) = holeClearanceConstraint(item, zone)
-                if hc > 0, let actual = Self.collide([hole], fill: fill, subE(hc)) {
-                    out.add("hole_clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, hname, hc, actual),
-                            [item.uuid, zone.uuid])
+                let k = holeClearanceConstraint(item, zone, layer, c)
+                let hc = k.value.min
+                if k.severity != .ignore && hc > 0, let actual = Self.collide([hole], fill: fill, subE(hc)) {
+                    out.add("hole_clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, k.ruleName, hc, actual),
+                            [item.uuid, zone.uuid], rule: k.parentRule)
                 }
             }
         }
@@ -708,26 +643,29 @@ extension BoardDRC {
                 return
             }
             if testClearance || testShorting {
-                let (clearance, name) = clearanceConstraint(pad, other, rules, c)
-                if clearance > 0, let (actual, pos) = Self.collideAt(padShape, otherShape, subE(clearance)) {
+                let k = clearanceConstraint(pad, other, layer, c)
+                let clearance = k.value.min
+                if k.severity != .ignore && clearance > 0, let (actual, pos) = Self.collideAt(padShape, otherShape, subE(clearance)) {
                     if isNetTieExclusion(pad.net, layer, pos, other, c) {
                         // (pads of a net tie's nets may touch its drawings)
                     } else if actual == 0 && pad.net != 0 && other.netCode != 0 && testShorting {
                         out.add("shorting_items", "(nets \(netNameOrNone(pad)) and \(netNameOrNone(other)))", [pad.uuid, other.uuid])
                         testHoles = false
                     } else if testClearance {
-                        out.add("clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, name, clearance, actual),
-                                [pad.uuid, other.uuid])
+                        out.add("clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, k.ruleName, clearance, actual),
+                                [pad.uuid, other.uuid], rule: k.parentRule)
                         testHoles = false
                     }
                 }
             }
             guard testHoles else { return }
-            let (hc, hname) = holeClearanceConstraint(pad, other)
+            let hk = holeClearanceConstraint(pad, other, layer, c)
+            guard hk.severity != .ignore else { return }
+            let hc = hk.value.min
             func doTestHole(_ a: CopperItem, _ shape: [Shape], _ b: CopperItem, _ hole: Shape, _ clearance: Int) -> Bool {
                 guard let actual = Self.collide(shape, [hole], subE(clearance)) else { return false }
-                out.add("hole_clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, hname, clearance, actual),
-                        [a.uuid, b.uuid])
+                out.add("hole_clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, hk.ruleName, clearance, actual),
+                        [a.uuid, b.uuid], rule: hk.parentRule)
                 return true
             }
             if let op = otherPad, let h = op.hole, pad.flashed.contains(layer), hc > 0 {
@@ -801,13 +739,13 @@ extension BoardDRC {
                 return true
             })
         }
-        if !out.exceeded("clearance") || !out.exceeded("zones_intersect") { testZonesToZones(&out, c, rules) }
+        if !out.exceeded("clearance") || !out.exceeded("zones_intersect") { testZonesToZones(&out, c) }
     }
 
     /// testZonesToZones: each pair of zones on a copper layer (teardrops left out), of one net and one priority
     /// whose outlines touch (zones_intersect), or of two nets whose fills are nearer than their clearance, the first
     /// pair of the fills' edges found nearer (their edges swept by x)
-    func testZonesToZones(_ out: inout Report, _ c: Copper, _ rules: [ClearanceRule]) {
+    func testZonesToZones(_ out: inout Report, _ c: Copper) {
         let testClearance = !out.exceeded("clearance"), testIntersects = !out.exceeded("zones_intersect")
         let zones = c.zones
         // each fill's edges, each one's ends from left to right, sorted by them
@@ -847,8 +785,9 @@ extension BoardDRC {
                             out.add("zones_intersect", "(intersecting zones must have distinct priorities)", [a.uuid, b.uuid])
                         }
                     } else if testClearance {
-                        let (clearance, name) = clearanceConstraint(a, b, rules, c)
-                        guard clearance > 0 else { continue }
+                        let k = clearanceConstraint(a, b, l, c)
+                        let clearance = k.value.min
+                        guard k.severity != .ignore && clearance > 0 else { continue }
                         let testSegments = edges(ib, l)
                         search: for ref in edges(ia, l) {
                             for test in testSegments {
@@ -856,8 +795,8 @@ extension BoardDRC {
                                 let (_, _, d2) = ref.nearestPoints(test)
                                 let actual = Int((Double(d2).squareRoot() + 0.5).rounded(.down))
                                 if actual < clearance {
-                                    out.add("clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, name, clearance,
-                                                                        max(actual, 0)), [a.uuid, b.uuid])
+                                    out.add("clearance", Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, k.ruleName,
+                                                                        clearance, max(actual, 0)), [a.uuid, b.uuid], rule: k.parentRule)
                                     break search
                                 }
                             }

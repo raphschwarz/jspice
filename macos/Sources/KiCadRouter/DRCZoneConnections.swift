@@ -1,6 +1,6 @@
 // Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_zone_connections.cpp (thermal reliefs with too few spokes:
-// starved thermals), with pcbnew/drc/drc_engine.cpp (EvalZoneConnection, and the zone connection's and thermal
-// relief gap's overrides as EvalRules finds them), pcbnew/connectivity/connectivity_algo.cpp (FillIsolatedIslandsMap:
+// starved thermals), with pcbnew/drc/drc_engine.cpp (EvalZoneConnection, and EvalRules of the minimum spoke count and
+// the thermal relief gap, whose rule names the violation), pcbnew/connectivity/connectivity_algo.cpp (FillIsolatedIslandsMap:
 // a fill's islands that touch one item only) and pcbnew/connectivity/connectivity_data.cpp (GetConnectedTracks,
 // GetConnectedItems).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
@@ -61,13 +61,9 @@ extension BoardDRC {
         let fill = zone.fills[l] ?? []
         let fillSet = PolySet(fill.map { [$0] })
         let singles = singleConnectionOutlines(cn, zone, l)
-        let zoneConnect = zoneNode["connect_pads"]?.arguments ?? []
-        let zoneConnection: ZoneConnection = zoneConnect.contains { $0.text == "yes" } ? .full
-            : zoneConnect.contains { $0.text == "no" } ? .none
-            : zoneConnect.contains { $0.text == "thru_hole_only" } ? .thtThermal : .thermal
-        // (ZONE_SETTINGS' default where the file gives none)
-        let zoneGap = zoneNode["fill"]?["thermal_gap"].map { BoardWorld.iu($0, 0) } ?? 500_000
         let layerName = boardLayerName(l)
+        let engine = ruleState.engine
+        let zoneRule = ruleItem(zone, c), layer = kiLayer(l)
 
         for (f, pads) in c.footprintPads.enumerated() {
             let nodes = fps[f].all("pad")
@@ -76,24 +72,20 @@ extension BoardDRC {
                 guard let p = pad.pad, pad.net == zone.net, pad.net > 0 else { continue }
                 guard let zbox = zone.zoneBox, boundingBox(p).intersects(zbox), pad.flashed.contains(l) else { continue }
                 let padNode = nodes[j]
+                let padRule = ruleItem(pad, c)
 
-                // EvalZoneConnection: the pad's own, its footprint's, the zone's
-                var conn = zoneConnection
-                if let v = padNode.value("zone_connect").flatMap(Int.init), v >= 0, let z = ZoneConnection(rawValue: v) {
-                    conn = z
-                } else if let v = fps[f].value("zone_connect").flatMap(Int.init), v >= 0, let z = ZoneConnection(rawValue: v) {
-                    conn = z
-                }
-                if conn == .thtThermal { conn = p.pad.attribute == .pth ? .thermal : .full }
-                guard conn == .thermal else { continue }
+                // EvalZoneConnection: the pad's own, its footprint's, the zone's (or a rule's)
+                guard engine.evalZoneConnection(padRule, zoneRule, layer: layer).zoneConnection == .thermal else { continue }
 
-                let minCount = settings.minResolvedSpokes
-                guard settings.severity("starved_thermal") != "ignore", minCount > 0 else { continue }
+                let spokesConstraint = engine.evalRules(.minResolvedSpokes, padRule, zoneRule, layer: layer)
+                let minCount = spokesConstraint.value.min
+                guard settings.severity("starved_thermal") != "ignore", spokesConstraint.severity != .ignore, minCount > 0 else { continue }
 
-                // the thermal relief gap: the pad's own, else the zone's
-                var gap = zoneGap, gapSource = "zone"
-                if let g = padNode["thermal_gap"].map({ BoardWorld.iu($0, 0) }), g > 0 { (gap, gapSource) = (g, "pad") }
-                let midGap = gap / 2
+                // the thermal relief gap: the pad's own, else the zone's (or a rule's); its constraint names what the
+                // violation is of
+                let constraint = engine.evalRules(.thermalReliefGap, padRule, zoneRule, layer: layer)
+                let gapSource = constraint.ruleName
+                let midGap = constraint.value.min / 2
 
                 guard let padPoly = world.padPolygon(p.pad, primitives: p.primitives, errorLocation: .outside,
                                                      clearance: midGap, arcError: arcLowDef),
@@ -118,7 +110,7 @@ extension BoardDRC {
                 if p.pad.kind == .custom {
                     customSpokes = (padNode["primitives"]?.arguments ?? []).filter { $0.head == "gr_vector" }.count
                 }
-                func report(_ detail: String) { out.add("starved_thermal", detail, [zone.uuid, pad.uuid]) }
+                func report(_ detail: String) { out.add("starved_thermal", detail, [zone.uuid, pad.uuid], rule: constraint.parentRule) }
                 if customSpokes > 0 {
                     if spokes < customSpokes {
                         report(ignoredSpokes > 0 ? "(layer \(layerName); \(ignoredSpokes) spokes connected to isolated island)"

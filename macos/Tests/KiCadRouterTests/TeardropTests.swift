@@ -28,6 +28,8 @@ final class TeardropTests: XCTestCase {
         var name: String
         var board: KiCadBoard
         var project: [String: Any]?
+        /// The board's own design rules (its .kicad_dru), which kicad-cli made the teardrops by
+        var designRules: String?
         var settings: TeardropSettings
         var teardrops: [[String: Any]]
         var fills: [String: [String: [[String: Any]]]]
@@ -67,7 +69,8 @@ final class TeardropTests: XCTestCase {
                                             trackToTrack: (s["trackToTrack"] as? Bool) ?? false)
                 settings = Teardrops.applySettings(settings, to: board)
             }
-            out.append(Reference(name: file.deletingPathExtension().lastPathComponent, board: board, project: project, settings: settings,
+            out.append(Reference(name: file.deletingPathExtension().lastPathComponent, board: board, project: project,
+                                 designRules: BoardDRC.designRules(pro), settings: settings,
                                  teardrops: json["teardrops"] as? [[String: Any]] ?? [],
                                  fills: json["fills"] as? [String: [String: [[String: Any]]]] ?? [:], order: json["order"] as? [String]))
         }
@@ -105,7 +108,7 @@ final class TeardropTests: XCTestCase {
         var unsupported: [String: Int] = [:]
         var differences: [String] = []
         for r in try references() {
-            let made = Teardrops(board: r.board, project: r.project, settings: r.settings)
+            let made = Teardrops(board: r.board, project: r.project, settings: r.settings, designRules: r.designRules)
             if !made.unsupported.isEmpty {
                 unsupportedBoards += 1
                 for u in made.unsupported { unsupported[u, default: 0] += 1 }
@@ -176,10 +179,10 @@ final class TeardropTests: XCTestCase {
         for r in try references() where !r.teardrops.isEmpty {
             let original = try KiCadBoard.read(Self.folders.map { $0.appendingPathComponent(r.name + ".kicad_pcb") }
                 .first { FileManager.default.fileExists(atPath: $0.path) }!)
-            let session = BoardEditing(board: original, project: r.project)
+            let session = BoardEditing(board: original, project: r.project, designRules: r.designRules)
             session.refillsZones = true
-            guard Teardrops(board: r.board, project: r.project, settings: r.settings).unsupported.isEmpty,
-                  ZoneFiller(board: r.board, project: r.project).unsupported.isEmpty else { continue }
+            guard Teardrops(board: r.board, project: r.project, settings: r.settings, designRules: r.designRules).unsupported.isEmpty,
+                  ZoneFiller(board: r.board, project: r.project, designRules: r.designRules).unsupported.isEmpty else { continue }
             // (a board KiCad made its own teardrops on, with no settings set, is not one to set them on)
             guard let settings = try settingsOf(r) else { continue }
             let edit = try XCTUnwrap(session.addTeardrops(settings: settings), "\(r.name): teardrops added")
@@ -207,7 +210,7 @@ final class TeardropTests: XCTestCase {
             let removed = try XCTUnwrap(session.removeTeardrops(), "\(r.name): teardrops taken away")
             XCTAssertFalse(removed.after.root.all("zone").contains { $0["attr"]?["teardrop"] != nil })
             XCTAssertFalse((removed.teardropSettings ?? session.teardropSettings).track.enabled)
-            XCTAssertTrue(Teardrops(board: removed.after, project: r.project, settings: removed.teardropSettings).teardrops.isEmpty,
+            XCTAssertTrue(Teardrops(board: removed.after, project: r.project, settings: removed.teardropSettings, designRules: r.designRules).teardrops.isEmpty,
                           "\(r.name): none made again")
             XCTAssertNil(session.removeTeardrops(), "nothing more to take away")
         }
@@ -232,10 +235,10 @@ final class TeardropTests: XCTestCase {
         var boards = 0, zones = 0, polygons = 0, points = 0, orders = 0
         var differences: [String] = []
         for r in try references() {
-            let made = Teardrops(board: r.board, project: r.project, settings: r.settings)
+            let made = Teardrops(board: r.board, project: r.project, settings: r.settings, designRules: r.designRules)
             guard made.unsupported.isEmpty else { continue }
             let board = made.board(r.board)
-            let filler = ZoneFiller(board: board, project: r.project)
+            let filler = ZoneFiller(board: board, project: r.project, designRules: r.designRules)
             guard filler.unsupported.isEmpty else { continue }
             boards += 1
             // the port's teardrops' keys among the board's zones, as the filler keeps them

@@ -224,7 +224,7 @@ public final class BoardLink {
         if isOpenInKiCad { throw Failure.openUnreachable }
         if engine != .kicad {
             let board = try KiCadBoard.read(boardFile)
-            let filler = ZoneFiller(board: board, project: projectSettings())
+            let filler = ZoneFiller(board: board, project: projectSettings(), designRules: designRules())
             if engine == .port || filler.unsupported.isEmpty || problem != nil {
                 let filled = filler.refilledBoard(board)
                 try filled.write(to: boardFile)
@@ -282,6 +282,10 @@ public final class BoardLink {
     public func projectSettings() -> [String: Any]? {
         (try? Data(contentsOf: projectFile)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
     }
+
+    /// The board's own design rules (its .kicad_dru beside the project, where KiCad's DRC engine finds them), nil
+    /// where it has none
+    public func designRules() -> String? { BoardDRC.designRules(projectFile) }
 
     /// The schematic's parts each footprint of `board` stands for: top-level parts (the block for a part inside one)
     public static func parts(_ result: PCBSync.Result, _ board: KiCadBoard, _ circuit: Circuit) -> [String: [UUID]] {
@@ -396,7 +400,7 @@ public final class BoardLink {
     /// brought over from KiCad: BoardDRC.checksMade), in a moment and without KiCad; its zones as they were filled
     public func quickDRC() throws -> KiCadFabrication.DRCReport {
         guard exists else { throw Failure.noBoard }
-        return BoardDRC(board: try KiCadBoard.read(boardFile), project: projectSettings()).report()
+        return BoardDRC(board: try KiCadBoard.read(boardFile), project: projectSettings(), designRules: designRules()).report()
     }
 
     /// A picture of the board as made, from above or below (KiCad's 3D view, ray traced)

@@ -287,6 +287,7 @@ extension BoardDRC {
     func silkZone(_ node: SExpr, footprint: Int?) -> BoardItem? {
         let item = BoardItem(kind: .zone, uuid: node.value("uuid") ?? "")
         item.footprint = footprint
+        item.node = node
         item.layers = layerSet(node)
         item.ruleArea = node["keepout"] != nil
         item.compound = false
@@ -353,7 +354,8 @@ extension BoardDRC {
         let webWidth = board.root["setup"]?["solder_mask_min_width"].map { BoardWorld.iu($0, 0) } ?? 0
         let checkIndividualMaskItems = webWidth <= 0
         guard !(silkLimitReached(out, overlap) && silkLimitReached(out, overCopper)) else { return }
-        let largest = settings.silkClearance
+        let engine = ruleState.engine, copper = ruleState.copper(self)
+        let largest = engine.worstConstraint(.silkClearance)?.value.min ?? 0
         // the silk items' R-trees and the targets' (rule areas left out; a hidden field put in neither), the targets'
         // only of the layers a pair can be found on (no rule gives silkscreen a clearance to the others)
         let silkLayers = ["F.SilkS", "B.SilkS"]
@@ -415,8 +417,11 @@ extension BoardDRC {
                 guard hit else { continue }
             }
             let mask = p.target.hasSuffix(".Mask")
-            // (the silk rule is of the silk layers only: on a mask layer no rule, unless each mask item is tested)
-            var minClearance = mask ? -1 : settings.silkClearance
+            // (the implicit silk rule is of the silk layers only: on a mask layer none, unless each mask item is tested)
+            let constraint = engine.evalRules(.silkClearance, ruleItem(refItem, copper), ruleItem(testItem, copper),
+                                              layer: KiLayer.id(p.target) ?? KiLayer.undefined)
+            var minClearance = -1
+            if constraint.type != .null && constraint.severity != .ignore { minClearance = constraint.value.min }
             if mask && checkIndividualMaskItems { minClearance = max(minClearance, 0) }
             let type = mask ? overCopper : overlap
             if minClearance < 0 || silkLimitReached(out, type) { continue }
@@ -428,9 +433,9 @@ extension BoardDRC {
             }
             var actual: Int?, location: IPoint?
             guard refShape.collide(testShape, clearance: minClearance, actual: &actual, location: &location) else { continue }
-            let detail = minClearance > 0 ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, "board setup constraints silk",
+            let detail = minClearance > 0 ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, constraint.ruleName,
                                                            minClearance, actual ?? 0) : nil
-            out.add(type, detail, [refItem.uuid, testItem.uuid])
+            out.add(type, detail, [refItem.uuid, testItem.uuid], rule: constraint.parentRule)
             colliding.insert(key)
         }
     }

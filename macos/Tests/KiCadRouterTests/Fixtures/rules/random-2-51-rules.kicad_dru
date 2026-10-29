@@ -1,0 +1,18 @@
+(version 1)
+
+# A rule KiCad cannot compile (an unknown property): the rules before it stay, theirs with the implicit rules made again
+
+(rule w1
+  (condition "A.NetClass == 'Digital' || A.NetClass == 'Power'")
+  (constraint track_width (min 0.35mm) (max 0.31mm)))
+
+(rule c1
+  (condition "A.NetName == 'SIG?' && B.NetName != 'SIG?'")
+  (constraint clearance (min 0.5mm)))
+
+(rule bad
+  (condition "A.No_Such_Property == 3mm")
+  (constraint clearance (min 1mm)))
+
+(rule after
+  (constraint clearance (min 2mm)))

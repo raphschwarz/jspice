@@ -1,0 +1,40 @@
+(version 1)
+
+# The filler's constraints: thermal relief gaps and spoke widths, zone connections, clearances by net and by layer,
+# hole and edge clearances, physical clearances
+
+(rule gaps
+  (condition "A.memberOfFootprint('T0*')")
+  (constraint thermal_relief_gap (min 0.3mm))
+  (constraint thermal_spoke_width (min 0.25mm) (opt 0.35mm)))
+
+(rule solid
+  (condition "A.memberOfFootprint('T1*')")
+  (constraint zone_connection solid))
+
+(rule none
+  (condition "A.memberOfFootprint('T2?')")
+  (constraint zone_connection none))
+
+(rule spokes
+  (condition "A.Type == 'Via'")
+  (constraint thermal_spoke_width (min 0.2mm) (opt 0.3mm)))
+
+(rule nets
+  (condition "A.NetName == 'VCC' && B.NetName == 'GND'")
+  (constraint clearance (min 0.6mm)))
+
+(rule inner
+  (layer inner)
+  (constraint clearance (min 0.45mm)))
+
+(rule holes
+  (condition "B.isPlated()")
+  (constraint hole_clearance (min 0.4mm)))
+
+(rule edge
+  (constraint edge_clearance (min 0.8mm)))
+
+(rule physical
+  (condition "B.Type == 'Track'")
+  (constraint physical_clearance (min 0.55mm)))

@@ -209,8 +209,10 @@ def write(path, settings=None):
     with tempfile.TemporaryDirectory() as tmp:
         copy = os.path.join(tmp, name + ".kicad_pcb")
         shutil.copy(path, copy)
-        if os.path.exists(base + ".kicad_pro"):
-            shutil.copy(base + ".kicad_pro", os.path.join(tmp, name + ".kicad_pro"))
+        # (the project, and the board's own design rules, which the teardrops keep their clearances by)
+        for ext in (".kicad_pro", ".kicad_dru"):
+            if os.path.exists(base + ext):
+                shutil.copy(base + ext, os.path.join(tmp, name + ext))
         if settings:
             board = pcbnew.LoadBoard(copy)
             apply_settings(board, settings)

@@ -1,0 +1,12 @@
+(version 1)
+
+(rule r0
+  (condition "A.hasExactNetclass('Digital') && (L != 'F.Cu' && A.hasNetclass('Signal'))")
+  (constraint assertion "A.NetName == 'GND'")
+)
+
+(rule r1
+  (condition "A.NetName == 'GND'")
+  (constraint assertion "A.Pad_Number == '6'")
+  (constraint assertion "(A.NetName == '/?et3' && A.intersectsBackCourtyard('U3'))")
+)

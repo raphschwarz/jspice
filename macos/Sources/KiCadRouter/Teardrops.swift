@@ -240,7 +240,6 @@ public final class Teardrops {
     let copper: BoardDRC.Copper
     let cn: BoardDRC.Connectivity
     let settings: TeardropSettings
-    private let rules: [BoardDRC.ClearanceRule]
     private var maxError: Int { drc.world.rules.maxError }
     /// m_tolerance: how far a track's end may be from another's for them to be joined (UpdateTeardrops' 0.01 mm)
     private let tolerance = 10_000
@@ -277,13 +276,12 @@ public final class Teardrops {
 
     /// The teardrops of `board` (its own teardrops left out: they are all made again), from each pad's and via's own
     /// settings and the track ends' in `settings` (the project's unless given)
-    public init(board: KiCadBoard, project: [String: Any]? = nil, settings: TeardropSettings? = nil) {
+    public init(board: KiCadBoard, project: [String: Any]? = nil, settings: TeardropSettings? = nil, designRules: String? = nil) {
         let b = Self.withoutTeardrops(board)
         self.settings = settings ?? TeardropSettings(project: project)
-        drc = BoardDRC(board: b, project: project)
+        drc = BoardDRC(board: b, project: project, designRules: designRules)
         copper = drc.makeCopper()
         cn = drc.buildConnectivity(copper)
-        rules = drc.clearanceRules(copper.items)
         for (name, l) in drc.world.layerIndex { layerNames[l] = name }
         readParameters(b)
         readTrackMasks(b)
@@ -291,6 +289,8 @@ public final class Teardrops {
         legacy = Self.legacyTeardrops(board)
         guard unsupported.isEmpty, !legacy else { return }
         update()
+        // (what of the rules' conditions the port could not evaluate as the clearances asked)
+        unsupported.formUnion(drc.ruleState.board.unsupported)
     }
 
     /// BOARD::LegacyTeardrops: a board of teardrops made the old way (its general settings say so, or it was written
@@ -882,9 +882,9 @@ public final class Teardrops {
         }
     }
 
-    /// pairClearance: what the rules ask between the track and the item, less the DRC's epsilon
-    private func pairClearance(_ track: BoardDRC.CopperItem, _ item: BoardDRC.CopperItem) -> Int {
-        max(0, drc.clearanceConstraint(track, item, rules, copper).0 - drc.settings.epsilon)
+    /// pairClearance: what the rules ask between the track and the item on the layer, less the DRC's epsilon
+    private func pairClearance(_ track: BoardDRC.CopperItem, _ item: BoardDRC.CopperItem, _ layer: Int) -> Int {
+        max(0, (drc.clearanceConstraint(track, item, layer, copper).value.min ?? 0) - drc.settings.epsilon)
     }
 
     /// zoneConnections: what each island of the zone's fill on the layer touches
@@ -993,7 +993,7 @@ public final class Teardrops {
                 if exempt.contains(where: { $0 === entry.item }) || isSameConductor(entry.item, entry.teardrop) {
                     resolved[id] = (false, 0)
                 } else {
-                    resolved[id] = (true, pairClearance(sourceTrack, entry.item))
+                    resolved[id] = (true, pairClearance(sourceTrack, entry.item, layer))
                 }
             }
             let (test, clearance) = resolved[id]!

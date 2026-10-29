@@ -129,33 +129,42 @@ public final class BoardEditing {
 
     public private(set) var router: BoardRouter
     var project: [String: Any]?
+    /// The rules of the board's .kicad_dru (its design rules file), which the router, the zone filler and the design
+    /// rules check follow as KiCad's do
+    var designRules: String?
     /// The board as the last change left it (each change is made from it)
     private var base: KiCadBoard
 
     /// `board` is the board as it is: the session works on a copy of it, and leaves it as it is
-    public init(board: KiCadBoard, project: [String: Any]? = nil) {
+    public init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
         self.project = project
+        self.designRules = designRules
         base = board.copy()
-        router = BoardRouter(board: base.copy(), project: project)
+        router = BoardRouter(board: base.copy(), project: project, designRules: designRules)
     }
 
     /// JSpice's own design rules check of the board as the last change left it (BoardDRC: KiCad's checks of copper,
     /// widths, holes, the board's edges and connections), ready to run (on a copy of the board, anywhere)
-    public func designRulesCheck() -> BoardDRC { BoardDRC(board: base.copy(), project: project) }
+    public func designRulesCheck() -> BoardDRC { BoardDRC(board: base.copy(), project: project, designRules: designRules) }
 
     /// The board read anew (changed elsewhere: in KiCad, or by the schematic's update); a track being routed is
-    /// dropped. `project` nil keeps the project's settings as they were.
-    public func load(_ board: KiCadBoard, project: [String: Any]? = nil) {
+    /// dropped. `project` nil keeps the project's settings as they were; `designRules` nil keeps its rules file's
+    /// rules (`.some(nil)`: it has none).
+    public func load(_ board: KiCadBoard, project: [String: Any]? = nil, designRules: String?? = nil) {
         var rulesChanged = false
         if let project {
             rulesChanged = !NSDictionary(dictionary: project).isEqual(to: self.project ?? [:])
             self.project = project
         }
+        if let rules = designRules, rules != self.designRules {
+            rulesChanged = true
+            self.designRules = rules
+        }
         let text = board.text
         if text == base.text && !rulesChanged && !router.router.routingInProgress { return }
         router.cancel()
         base = board.copy()
-        router = BoardRouter(board: base.copy(), project: self.project)
+        router = BoardRouter(board: base.copy(), project: self.project, designRules: self.designRules)
     }
 
     /// The board as it now is
@@ -564,7 +573,7 @@ public final class BoardEditing {
             let filled = refills ? refilled(base) : nil
             if let filled {
                 base = filled
-                router = BoardRouter(board: base.copy(), project: project)
+                router = BoardRouter(board: base.copy(), project: project, designRules: designRules)
             }
             out.edit = Edit(before: start, after: base, added: added, removed: removed,
                             name: n == 1 ? "Route 1 Connection" : "Route \(n) Connections")
@@ -659,7 +668,7 @@ public final class BoardEditing {
         let filled = refillsZones && !router.router.routingInProgress ? refilled(after) : nil
         if let filled {
             after = filled
-            router = BoardRouter(board: after.copy(), project: project)
+            router = BoardRouter(board: after.copy(), project: project, designRules: designRules)
         }
         var edit = Edit(before: base, after: after, added: added, removed: removed, name: name)
         edit.footprints = footprints
@@ -678,7 +687,7 @@ public final class BoardEditing {
     /// the filler does not fill yet
     private func refilled(_ board: KiCadBoard) -> KiCadBoard? {
         guard board.zones.contains(where: { !$0.isRuleArea }) else { return nil }
-        let filler = ZoneFiller(board: board, project: project)
+        let filler = ZoneFiller(board: board, project: project, designRules: designRules)
         guard filler.unsupported.isEmpty else { return nil }
         return filler.refilledBoard(board)
     }
@@ -789,7 +798,7 @@ public final class BoardEditing {
         guard !isRouting else { return nil }
         let board = router.board.copy()
         let kept = Teardrops.applySettings(settings, to: board)
-        let made = Teardrops(board: board, project: project, settings: kept)
+        let made = Teardrops(board: board, project: project, settings: kept, designRules: designRules)
         guard made.unsupported.isEmpty else { return nil }
         return replaceTeardrops(made.board(board), kept, "Add Teardrops")
     }

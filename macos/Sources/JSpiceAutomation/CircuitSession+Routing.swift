@@ -67,7 +67,7 @@ extension CircuitSession {
         return try withBoard { link -> Any in
             guard link.exists else { throw ToolError("The circuit has no board yet: pcb_create makes one") }
             let board = try link.board().board
-            let session = BoardEditing(board: board, project: link.projectSettings())
+            let session = BoardEditing(board: board, project: link.projectSettings(), designRules: link.designRules())
             let layer: String
             switch (arguments["layer"] as? String ?? "top").lowercased() {
             case "top", "front", "f.cu": layer = "F.Cu"
@@ -103,7 +103,7 @@ extension CircuitSession {
             var result: [String: Any] = [:]
             if arguments["fill_only"] as? Bool != true {
                 let before = try link.board().board
-                let session = BoardEditing(board: before, project: link.projectSettings())
+                let session = BoardEditing(board: before, project: link.projectSettings(), designRules: link.designRules())
                 let names = (arguments["layers"] as? [String] ?? ["bottom"]).map { name -> String in
                     switch name.lowercased() {
                     case "top", "front": return session.layers.first ?? "F.Cu"
@@ -127,7 +127,7 @@ extension CircuitSession {
             result["filled_by"] = engine.rawValue
             if let pitch = try Self.number(arguments["stitch_pitch_mm"], "stitch_pitch_mm") {
                 guard pitch >= 1 else { throw ToolError("stitch_pitch_mm should be 1 or more") }
-                let session = BoardEditing(board: board, project: link.projectSettings())
+                let session = BoardEditing(board: board, project: link.projectSettings(), designRules: link.designRules())
                 guard let net = (arguments["net"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) ?? session.groundNets.first else {
                     throw ToolError("The board has no ground net: name one with net")
                 }
@@ -190,7 +190,7 @@ extension CircuitSession {
             guard link.exists else { throw ToolError("The circuit has no board yet: pcb_create makes one") }
             let before = try link.board().board
             guard fit || width != nil || height != nil || radius != nil else { return ["outline": describe(before)] }
-            let session = BoardEditing(board: before, project: link.projectSettings())
+            let session = BoardEditing(board: before, project: link.projectSettings(), designRules: link.designRules())
             let edit: BoardEditing.Edit?
             if fit {
                 guard margin >= 0 else { throw ToolError("margin_mm can't be negative") }
@@ -229,7 +229,7 @@ extension CircuitSession {
             let before = try link.board().board
             guard before.outlineRectangle != nil else { throw ToolError("The board's outline is not one rectangle: pcb_outline draws one") }
             let footprint = try link.footprints().footprint(libID)
-            let session = BoardEditing(board: before, project: link.projectSettings())
+            let session = BoardEditing(board: before, project: link.projectSettings(), designRules: link.designRules())
             guard let edit = session.addMountingHoles(footprint, libID: libID, inset: inset) else {
                 return ["added": [], "note": "Each corner has a mounting hole already"]
             }

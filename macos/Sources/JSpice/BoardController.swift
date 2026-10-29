@@ -565,6 +565,13 @@ final class BoardController: ObservableObject {
     // MARK: - Editing here
 
     /// The board as it stands, for editing here, and its project's settings (design rules, net classes)
+    /// The board's own design rules (its .kicad_dru), which the PCB view's router, checks and filler go by; none for
+    /// a board only shown
+    func designRulesForEditing() async -> String? {
+        if shownBoard != nil { return nil }
+        return try? await worker.run { w -> String? in w.link?.designRules() }
+    }
+
     func boardForEditing() async -> (KiCadBoard, [String: Any]?)? {
         if let shownBoard { return (shownBoard.copy(), shownProject) }
         return try? await worker.run { w -> (KiCadBoard, [String: Any]?) in

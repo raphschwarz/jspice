@@ -132,6 +132,10 @@ jobs:
       - name: 40 boards of random stackups, and KiCad's via heights through them
         # (also a new seed each run; what kicad-cli's DRC measures of a via between each pair of their copper layers)
         run: python3 macos/tools/kicad-reference/stackups.py "$RUNNER_TEMP/stackups" 40 "$GITHUB_RUN_NUMBER"
+      - name: Random design rules for two in three of the 100 boards
+        # (also a new seed each run; each board's rules file beside it, NAME.kicad_dru, which KiCad's DRC and zone filler
+        # then go by, and the port's DRC, zone filler and router)
+        run: python3 macos/tools/kicad-reference/rules.py --seed "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP"/boards/*.kicad_pcb
       - name: KiCad's design rules check of the 100 boards
         # (kicad-cli's report of each, next to it, for the port's DRC)
         run: python3 macos/tools/kicad-reference/drc.py "$RUNNER_TEMP"/boards/*.kicad_pcb
@@ -158,8 +162,9 @@ jobs:
         # close by, random settings)
         run: python3 macos/tools/kicad-reference/teardrops.py --boards "$RUNNER_TEMP/teardropboards" 10 "$GITHUB_RUN_NUMBER"
       - name: KiCadRouter against KiCad's code, on 2000 cases of each kind, the 1000, two 400, 100, 200, 150, four 300 and 200 boards, the 90 real ones and the 10 of teardrops
-        # (the real boards' worlds as KiCad's router sees them, their routes as it routes them, their DRC as KiCad's
-        # finds it, their teardrops as KiCad makes them, and routes the port makes on them through kicad-cli's DRC)
+        # (the real boards' worlds as KiCad's router sees them, their routes as it routes them, their DRC and fills as
+        # KiCad's finds and makes them by their rules, their teardrops as KiCad makes them, and routes the port makes
+        # on them by their rules through kicad-cli's DRC)
         env:
           JSPICE_REQUIRE_KICAD: "1"
           KICAD_GEOMETRY_REFERENCE: ${{ runner.temp }}/kicad-reference/kicad-geometry-2000.json

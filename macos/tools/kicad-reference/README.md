@@ -259,6 +259,24 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   and touched by it, next to the board as `BOARD.boxes` (JSON). `BoxSelectionTests` checks the port's
   (`BoxSelection`, which the PCB view's box selection goes by) against them; the boards of
   `Tests/KiCadRouterTests/Fixtures/boards`, `arcboards`, `courtyards` and `silk` have theirs.
+- `rules.py`: random design rules for boards (`rules.py [--fills] [--all] [--seed SEED] BOARD.kicad_pcb...`): a
+  rules file beside each board (`BOARD.kicad_dru`, where KiCad's DRC engine finds it, and the port's `BoardDRC`,
+  `ZoneFiller` and `BoardRouter` with it), of one to six rules of random conditions on what the board has: its net
+  classes, nets (now and then by a wildcard), layers, footprints' references and library links, pads' numbers, types
+  and shapes, via types, widths and sizes with units (millimetres, mils, inches), its named rule areas for
+  `intersectsArea` and `enclosedByArea`, the courtyard functions, `memberOfFootprint`, `hasNetclass`, `inDiffPair`,
+  `getField`, `L`, arithmetic, `!`, `&&` and `||`; one or two constraints each (copper, hole and edge clearances,
+  track widths, via diameters, hole sizes, annular widths, hole to hole, disallows, assertions of a random test, so
+  that KiCad's report has each item's evaluation of it), now and then a rule's layer and a severity; and now and then
+  a rule KiCad cannot read (none of the file's rules then) or compile (an unknown property or function, a number
+  without units: the rules before it kept, as KiCad keeps them). Each board's rules come from random numbers of its own
+  (its name and the seed); about one board in three gets none (all of them with `--all`). With `--fills`, the zone
+  filler's constraints too (physical clearances, thermal relief gaps and spoke widths, zone connections). Then `drc.py`
+  and `fills.py` on the boards have KiCad check and fill them by their rules, and `DRCTests` and `FillTests` check the
+  port's against them; a board with what the port does not follow as KiCad does (`BoardDRC.unsupported`,
+  `ZoneFiller.unsupported`) is left out and counted. `BoardRoutingTests` routes such boards by their rules too, and
+  KiCad's DRC checks the routes by them (their clearances: KiCad's router takes sizes from the rules' minimums and
+  optimums, and leaves their maximums to the DRC).
 - `courtyards.py`: KiCad's courtyards of boards' footprints (`courtyards.py BOARD.kicad_pcb...`): each footprint's
   `FOOTPRINT::BuildCourtyardCaches`, through KiCad's `pcbnew` module, its front and back courtyards (each polygon's
   outline and holes, their points), the width it gives the first outline and whether it found either side
@@ -540,5 +558,6 @@ with differential pairs' lengths and skews tuned (arc tracks among them), 300 ra
 40 boards of random stackups, 60 real boards made by `boards.py` (their
 worlds, routes on them that walk round, mark and shove, drags, footprints and tracks dragged together and length tunings on them, and
 KiCad's DRC on the port's routes), 10 with pairs (`boards.py --pairs`, pairs routed on them) and 20 with arc tracks (`boards.py --arcs`:
-their worlds, routes in every corner mode and drags on them); each run has a new seed, the run number, which the names
-a failure reports carry.
+their worlds, routes in every corner mode and drags on them); two in three of the 100 boards get random rules
+(`rules.py`) before KiCad checks and fills them, which `DRCTests`, `FillTests` and `BoardRoutingTests` then check the
+port by; each run has a new seed, the run number, which the names a failure reports carry.

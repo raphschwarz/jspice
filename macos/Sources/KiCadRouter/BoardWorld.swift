@@ -16,8 +16,9 @@ import KiCadKit
 
 /// A KiCad board as KiCad's router sees it: its items in the order KiCad's SyncWorld puts them in the router's world,
 /// with the shapes KiCad makes of them, and the board's rules as its DRC engine works them out with no rules of the
-/// user's own. What KiCad's router would see and this cannot make yet (a text on copper, a custom pad with a curve
-/// among its pieces) is named in `unsupported`.
+/// user's own (a board's own rules file the router goes by through BoardRouter's rules engine). What KiCad's router
+/// would see and this cannot make yet (a text on copper, a custom pad with a curve among its pieces) is named in
+/// `unsupported`.
 public struct BoardWorld {
     public private(set) var copperLayers = 2
     public private(set) var items: [WorldItem] = []
@@ -160,6 +161,12 @@ public struct BoardWorld {
             }
         }
         rules.maxClearance = worst
+    }
+
+    /// The board's worst clearance raised to a greater one (GetBiggestClearanceValue with the design rules'
+    /// clearances in it)
+    mutating func raiseMaxClearance(_ biggest: Int) {
+        rules.maxClearance = max(rules.maxClearance ?? 0, min(biggest, Self.maximumClearance))
     }
 
     /// KiCad's MAXIMUM_CLEARANCE: half a metre
@@ -1087,6 +1094,17 @@ struct NetClasses {
         /// Its micro vias' diameter and drill
         var microViaDiameter: Int? = nil
         var microViaDrill: Int? = nil
+        /// Whether it has a schematic wire and bus width, and a tuning profile (the values but these do not matter
+        /// here; a class lacking one has the default class made one of its constituents)
+        var hasWireWidth = true
+        var hasBusWidth = true
+        var tuningProfile = ""
+
+        /// addMissingDefaults: whether a net of this class alone takes values from the default class
+        var lacksValues: Bool {
+            clearance == nil || trackWidth == nil || viaDiameter == nil || viaDrill == nil || microViaDiameter == nil
+                || microViaDrill == nil || diffPairWidth == nil || diffPairGap == nil || !hasWireWidth || !hasBusWidth
+        }
     }
 
     /// A net's net class values, each from the most important class that has it, else the default class's
@@ -1103,6 +1121,8 @@ struct NetClasses {
         var diffPairViaGap: Int? = nil
         var microViaDiameter: Int? = nil
         var microViaDrill: Int? = nil
+        /// The classes it is made of, the most important first (the default class last where it fills values in)
+        var constituents: [String] = []
     }
 
     var classes: [String: NetClass] = [:]
@@ -1117,11 +1137,14 @@ struct NetClasses {
         for c in ns["classes"] as? [[String: Any]] ?? [] {
             guard let name = c["name"] as? String else { continue }
             func mm(_ key: String) -> Int? { (c[key] as? NSNumber).map { BoardWorld.iuMM($0.doubleValue) } }
-            let nc = NetClass(name: name, priority: (c["priority"] as? NSNumber)?.intValue ?? Int.max, clearance: mm("clearance"),
+            var nc = NetClass(name: name, priority: (c["priority"] as? NSNumber)?.intValue ?? Int.max, clearance: mm("clearance"),
                               trackWidth: mm("track_width"), viaDiameter: mm("via_diameter"), viaDrill: mm("via_drill"),
                               diffPairWidth: mm("diff_pair_width"), diffPairGap: mm("diff_pair_gap"),
                               diffPairViaGap: mm("diff_pair_via_gap"), microViaDiameter: mm("microvia_diameter"),
                               microViaDrill: mm("microvia_drill"))
+            nc.hasWireWidth = c["wire_width"] is NSNumber
+            nc.hasBusWidth = c["bus_width"] is NSNumber
+            nc.tuningProfile = c["tuning_profile"] as? String ?? ""
             if name == "Default" {
                 defaultClass = NetClass(name: name, priority: Int.max, clearance: nc.clearance ?? 200_000,
                                         trackWidth: nc.trackWidth ?? 200_000, viaDiameter: nc.viaDiameter ?? 600_000,
@@ -1140,6 +1163,42 @@ struct NetClasses {
         }
     }
 
+    /// The classes a net's effective class is made of (NET_SETTINGS::GetEffectiveNetClass and makeEffectiveNetclass):
+    /// those assigned to it or whose pattern it matches (a class named but not set up having no values), the most
+    /// important first (the lowest priority number, then the name), the default class after them if one lacks a
+    /// value; the default class alone for a net of none
+    func effectiveConstituents(_ net: String) -> [NetClass] {
+        if net.isEmpty { return [defaultClass] }
+        var resolved: [NetClass] = []
+        func add(_ name: String) {
+            guard !resolved.contains(where: { $0.name == name }) else { return }
+            if name == "Default" {
+                resolved.append(defaultClass)
+            } else if let c = classes[name] {
+                resolved.append(c)
+            } else {
+                var c = NetClass(name: name, priority: Int.max - 1, clearance: nil, trackWidth: nil, viaDiameter: nil, viaDrill: nil)
+                (c.hasWireWidth, c.hasBusWidth) = (false, false)
+                resolved.append(c)
+            }
+        }
+        for name in assignments[net] ?? [] { add(name) }
+        for (pattern, name) in patterns where Self.matches(pattern, net) { add(name) }
+        if resolved.isEmpty { return [defaultClass] }
+        resolved.sort { $0.priority != $1.priority ? $0.priority < $1.priority : $0.name < $1.name }
+        // (addMissingDefaults: the values the classes lack from the default class, which is then one of them)
+        let keys: [KeyPath<NetClass, Int?>] = [\.clearance, \.trackWidth, \.viaDiameter, \.viaDrill, \.microViaDiameter,
+                                               \.microViaDrill, \.diffPairWidth, \.diffPairGap]
+        let lacks = keys.contains { k in !resolved.contains { $0[keyPath: k] != nil } }
+            || !resolved.contains(where: \.hasWireWidth) || !resolved.contains(where: \.hasBusWidth)
+            || (!resolved.contains { !$0.tuningProfile.isEmpty } && !defaultClass.tuningProfile.isEmpty)
+        if lacks { resolved.append(defaultClass) }
+        return resolved
+    }
+
+    /// Whether a class has a tuning profile (whose implicit rules the port does not make)
+    var hasTuningProfiles: Bool { !defaultClass.tuningProfile.isEmpty || classes.values.contains { !$0.tuningProfile.isEmpty } }
+
     /// A net's effective net class (NET_SETTINGS::GetEffectiveNetClass)
     func effective(_ net: String) -> Effective {
         let d = defaultClass
@@ -1148,31 +1207,19 @@ struct NetClasses {
                       viaDiameter: c.viaDiameter ?? d.viaDiameter, viaDrill: c.viaDrill ?? d.viaDrill,
                       diffPairWidth: c.diffPairWidth ?? d.diffPairWidth, diffPairGap: c.diffPairGap ?? d.diffPairGap,
                       diffPairViaGap: c.diffPairViaGap ?? d.diffPairViaGap, microViaDiameter: c.microViaDiameter ?? d.microViaDiameter,
-                      microViaDrill: c.microViaDrill ?? d.microViaDrill)
+                      microViaDrill: c.microViaDrill ?? d.microViaDrill, constituents: [c.name])
         }
         if net.isEmpty { return whole(d) }
-        var resolved: [NetClass] = []
-        func add(_ name: String) {
-            if name == "Default" {
-                if !resolved.contains(where: { $0.name == "Default" }) { resolved.append(defaultClass) }
-            } else if let c = classes[name] {
-                if !resolved.contains(where: { $0.name == name }) { resolved.append(c) }
-            } else if !resolved.contains(where: { $0.name == name }) {
-                // (a class named on a net but not set up: no values of its own)
-                resolved.append(NetClass(name: name, priority: Int.max - 1, clearance: nil, trackWidth: nil, viaDiameter: nil, viaDrill: nil))
-            }
-        }
-        for name in assignments[net] ?? [] { add(name) }
-        for (pattern, name) in patterns where Self.matches(pattern, net) { add(name) }
-        if resolved.isEmpty { return whole(d) }
-        resolved.sort { $0.priority != $1.priority ? $0.priority < $1.priority : $0.name < $1.name }
+        let constituents = effectiveConstituents(net)
+        if constituents.count == 1 { return whole(constituents[0]) }
+        let resolved = constituents
         func first(_ k: KeyPath<NetClass, Int?>) -> Int? { resolved.first(where: { $0[keyPath: k] != nil })?[keyPath: k] ?? d[keyPath: k] }
-        return Effective(name: resolved.count == 1 ? resolved[0].name : resolved.map(\.name).joined(separator: ","),
+        return Effective(name: resolved.map(\.name).joined(separator: ","),
                          clearance: first(\.clearance),
                          clearanceParent: resolved.first(where: { $0.clearance != nil })?.name ?? d.name, trackWidth: first(\.trackWidth), viaDiameter: first(\.viaDiameter),
                          viaDrill: first(\.viaDrill), diffPairWidth: first(\.diffPairWidth), diffPairGap: first(\.diffPairGap),
                          diffPairViaGap: first(\.diffPairViaGap), microViaDiameter: first(\.microViaDiameter),
-                         microViaDrill: first(\.microViaDrill))
+                         microViaDrill: first(\.microViaDrill), constituents: resolved.map(\.name))
     }
 
     /// The worst of the classes' clearances
