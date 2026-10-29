@@ -384,7 +384,9 @@ extension BoardDRC {
             guard let v = c.via else { break }
             r.viaType = v.viaType
             r.layerSet = KiLayerSet(c.layers.map(kiLayer))
-            r.layer = KiLayer.fCu
+            // (PCB_VIA::GetLayer: its drill's start, the upper of its layers once SanitizeLayers has put them in
+            // order, F.Cu for a through via)
+            r.layer = v.viaType == .through ? KiLayer.fCu : c.layers.min().map(kiLayer) ?? KiLayer.fCu
             r.hasHole = true
             r.hasDrilledHole = true
             r.holeShape = c.hole
