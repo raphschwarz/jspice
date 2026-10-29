@@ -1,0 +1,5 @@
+(version 1)
+(rule "length S4" (condition "A.NetName == 'S4'") (constraint length (max 104.30428mm)))
+(rule "length S5" (condition "A.NetName == 'S5'") (constraint length (min 123.813591mm) (max 124.813591mm)))
+(rule "length S3" (condition "A.NetName == 'S3'") (constraint length (min 123.387917mm) (opt 123.687917mm) (max 124.287917mm)))
+(rule "length S2" (condition "A.NetName == 'S2'") (constraint length (opt 85.735985mm)))

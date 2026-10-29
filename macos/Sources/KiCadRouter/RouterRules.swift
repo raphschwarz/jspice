@@ -275,6 +275,7 @@ final class RouterRules {
         let v = constraint.value
         var c = Constraint(type: type, min: v.min, opt: v.opt, max: v.hasMax ? v.max : Int.max)
         c.ruleName = constraint.ruleName
+        (c.hasMin, c.hasMax) = (v.hasMin, v.hasMax)
         return c
     }
 }

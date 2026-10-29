@@ -1,0 +1,6 @@
+(version 1)
+(rule "length S3" (condition "A.NetName == 'S3'") (constraint length (max 78.163216mm)))
+(rule "length S2" (condition "A.NetName == 'S2'") (constraint length (min 66.323933mm) (max 67.323933mm)))
+(rule "length S1" (condition "A.NetName == 'S1'") (constraint length (min 93.96978mm) (opt 94.26978mm) (max 94.86978mm)))
+(rule "length S4" (condition "A.NetName == 'S4'") (constraint length (opt 92.257017mm)))
+(rule "skew D5_P" (condition "A.inDiffPair('D5')") (constraint skew (min -0.1mm) (opt 0.3mm) (max 0.8mm)))

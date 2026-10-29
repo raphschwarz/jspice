@@ -283,17 +283,17 @@ extension BoardRouter {
     }
 
     /// A length or skew constraint's values as the pattern's target (MEANDER_SETTINGS::SetTargetLength and
-    /// SetTargetSkew of a MINOPTMAX: its opt, KiCad's tolerance either side, its min and max where it has them:
-    /// here a min other than 0, a max other than none)
+    /// SetTargetSkew of a MINOPTMAX: its opt (its min where it has none), KiCad's tolerance either side, its min and
+    /// max where its rule gave them)
     static func applyConstraint(_ c: Constraint, to settings: inout MeanderSettings, skew: Bool) {
         if skew {
             settings.setTargetSkew(c.opt)
-            if c.min != 0 { settings.targetSkew.min = c.min }
-            if c.max != Int.max { settings.targetSkew.max = c.max }
+            if c.hasMin { settings.targetSkew.min = c.min }
+            if c.hasMax { settings.targetSkew.max = c.max }
         } else {
             settings.setTargetLength(c.opt)
-            if c.min != 0 { settings.targetLength.min = c.min }
-            if c.max != Int.max { settings.targetLength.max = c.max }
+            if c.hasMin { settings.targetLength.min = c.min }
+            if c.hasMax { settings.targetLength.max = c.max }
         }
     }
 
@@ -337,9 +337,13 @@ extension BoardRouter {
         let (origin, track) = snapToNearestTrack(p.origin, net: nil)
         p.origin = origin
         guard let track else { return }
+        // (a rule's target in place of the pattern's own; a length's taking the target delay's place too, as an empty
+        // MINOPTMAX: SetTargetLengthDelay of none, 0 and KiCad's tolerance either side. The port reads no rule of the
+        // time domain.)
         if !p.settings.overrideCustomRules {
             if p.mode == .single {
                 if let c = tuningConstraint(.length, track: track, coupled: nil, layer: pnsLayer) {
+                    p.setTargetDelay(0)
                     Self.applyConstraint(c, to: &p.settings, skew: false)
                     p.isTimeDomain = false
                 }
@@ -347,6 +351,7 @@ extension BoardRouter {
                 let coupledTrack = dpCoupledNet(track.net).flatMap { snapToNearestTrack(p.origin, net: $0).track }
                 if let c = tuningConstraint(p.mode == .diffPair ? .length : .diffPairSkew, track: track, coupled: coupledTrack,
                                             layer: pnsLayer) {
+                    if p.mode == .diffPair { p.setTargetDelay(0) }
                     Self.applyConstraint(c, to: &p.settings, skew: p.mode == .skew)
                     p.isTimeDomain = false
                 }

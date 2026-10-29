@@ -302,6 +302,10 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   (such as one of `Fixtures/boards`) it adds patterns only. `tuning.py remove
   BOARD-updated...` deletes one pattern as a user does (a click on one of its tracks, which selects the pattern, and
   Delete: `genRemove`, its line made straight along its base line again): `BOARD-removed`, and `BOARD.removed`.
+  `tuning.py rules BOARD-placed...` gives the patterns targets by rules of the board's own (`BOARD-rules.kicad_dru`:
+  length rules of the single tracks' nets, mostly shorter than they came to, in each way a rule gives a length (min,
+  opt and max; opt; max; min and max), length rules of pairs and skew rules of pairs, one pattern overriding the
+  rules), then Update All Tuning Patterns (`EditStart` taking each target from the rules: `BOARD-rules-updated`).
   `tuning.py check BOARD...` gives each board as KiCad reads it (JSON): its generators by the items of their uuids
   (`PCB_GROUP` underneath: their names, layers and members), each generated item as KiCad writes it again
   (`pcbnew.SaveBoard`: the properties as its `SetProperties` took them and `GetProperties` gives them back), and
@@ -309,7 +313,9 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   writes `BOARD.saved` beside each, its generated items as KiCad writes them having read it (KiCad cuts a length to
   the nanometre toward 0 as it reads it, so that one it wrote can come back a nanometre short). `TuningPatternTests`
   makes the same with the port on `Tests/KiCadRouterTests/Fixtures/tuning` (`tuning.py boards ... 3 20261129`, then
-  `place`, `edit` and `remove`; `KICAD_TUNING_REFERENCE` names a folder of more, with `saved` run on its boards) and
+  `place`, `edit`, `remove` and `rules`, and `saved` on `BOARD-rules-updated`, whose lengths KiCad reads back a
+  nanometre short; `KICAD_TUNING_REFERENCE` names a folder of more, with `saved` run on its boards), the rules' boards
+  by their rules as the port's router has them (`RouterRules`), and
   `Fixtures/tuningboards` (`edit` on boards of `Fixtures/boards` and `Fixtures/arcboards`, whose lines end in pads on
   one side and in vias: the lengths KiCad measures clipped to their copper, with the vias it infers in the pads):
   every track and every pattern (its properties, its members by their shapes) to the nanometre; KiCad's patterns read

@@ -169,6 +169,35 @@ final class TuningPatternTests: XCTestCase {
         XCTAssertGreaterThan(count, 0)
     }
 
+    /// The same patterns given targets by the board's own rules (BOARD-rules: BOARD-placed with a design rules file,
+    /// tuning.py rules: length rules of single tracks' nets in each way a rule can give a length, and of pairs, skew
+    /// rules of pairs, one pattern overriding the rules), tuned again as KiCad's Update All tuned them by the rules
+    /// (BOARD-rules-updated): EditStart's targets from the rules (PNS_PCBNEW_RULE_RESOLVER::QueryConstraint's
+    /// CT_LENGTH and CT_DIFF_PAIR_SKEW, the DRC engine's length and skew constraints)
+    func testPatternsAreTargetedByTheBoardsRules() throws {
+        var count = 0, retargeted = 0
+        for board in try Self.boards() {
+            let edited = Self.sibling(board, "-rules")
+            guard FileManager.default.fileExists(atPath: edited.path) else { continue }
+            let project = edited.deletingPathExtension().appendingPathExtension("kicad_pro")
+            let rules = try XCTUnwrap(BoardDRC.designRules(project), edited.lastPathComponent)
+            let session = BoardEditing(board: try KiCadBoard.read(edited), project: BoardEditingTests.project(project),
+                                       designRules: rules)
+            XCTAssertNotNil(session.updateAllTuningPatterns(), edited.lastPathComponent)
+            let kicad = try KiCadBoard.read(Self.sibling(board, "-rules-updated"))
+            XCTAssertEqual(Self.differences(session.board, kicad), [], edited.lastPathComponent)
+            let before = Dictionary(TuningPattern.all(try KiCadBoard.read(edited)).map { ($0.uuid, $0.settings) },
+                                    uniquingKeysWith: { a, _ in a })
+            for p in TuningPattern.all(kicad) {
+                count += 1
+                guard let was = before[p.uuid] else { continue }
+                if was.targetLength != p.settings.targetLength || was.targetSkew != p.settings.targetSkew { retargeted += 1 }
+            }
+        }
+        print("TuningPatternTests: \(count) patterns tuned again by the boards' rules as KiCad tuned them (\(retargeted) given new targets)")
+        XCTAssertGreaterThan(retargeted, 0)
+    }
+
     /// Patterns on boards of Fixtures/boards and Fixtures/arcboards (Fixtures/tuningboards: NAME-edit, the board with
     /// patterns written into it on lines of its own, of no base line, by tuning.py edit), tuned as KiCad's Update All
     /// Tuning Patterns tuned them (NAME-updated): their tracks ending in pads that are on one side only, or on vias,
@@ -246,7 +275,7 @@ final class TuningPatternTests: XCTestCase {
     func testPatternsAreReadAndWrittenAsKiCadWritesThem() throws {
         var count = 0, cut = 0
         for board in try Self.boards() {
-            for suffix in ["-placed", "-updated", "-removed"] {
+            for suffix in ["-placed", "-updated", "-removed", "-rules-updated"] {
                 let url = Self.sibling(board, suffix)
                 guard FileManager.default.fileExists(atPath: url.path) else { continue }
                 let text = try String(contentsOf: url, encoding: .utf8)

@@ -126,12 +126,16 @@ public struct Constraint: Sendable {
     public var max: Int
     public var allowed = true
     public var ruleName = ""
+    /// Whether its rule gave it a minimum and a maximum (MINOPTMAX's HasMin and HasMax): a length tuning takes only
+    /// those it gave
+    public var hasMin = true, hasMax: Bool
 
     public init(type: ConstraintType, min: Int, opt: Int? = nil, max: Int = Int.max) {
         self.type = type
         self.min = min
         self.opt = opt ?? min
         self.max = max
+        hasMax = max != Int.max
     }
 }
 

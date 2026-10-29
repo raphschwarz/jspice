@@ -35,6 +35,13 @@ KiCad's own tools used with the pointer (wx.UIActionSimulator: X's pointer moved
         pattern: its members are not selectable on their own) and Delete (EDIT_TOOL::DeleteItems: genRemove, the line
         made straight along its base line again); File > Save: BOARD-removed.kicad_pcb, and BOARD.removed (JSON): the
         uuid of the pattern deleted.
+    tuning.py rules BOARD-placed.kicad_pcb...
+        each pattern given a target by a rule of the board's own (BOARD-rules.kicad_dru: a length rule of each single
+        track's net, mostly shorter than it came to, by turns a min, opt and max, an opt alone, a max alone, a min and
+        a max; a length rule of each
+        differential pair, a skew rule of each skew pattern's pair; the third single track's pattern overriding the
+        rules), saved as BOARD-rules.kicad_pcb; then KiCad's Edit > Update All Tuning Patterns (EditStart takes a target
+        from the rules where a pattern does not override them) and File > Save: BOARD-rules-updated.kicad_pcb.
     tuning.py check BOARD.kicad_pcb...
         each board as KiCad reads it (JSON on standard output, by path): through KiCad's pcbnew module, its generators
         (their uuids, names, layers, and their members as PCB_GROUP has them), and the board read and saved again by
@@ -600,9 +607,10 @@ def drive(board, steps, ticks=1500):
 
 def copy_board(src, dst):
     shutil.copy(src, dst)
-    pro = src[:-len(".kicad_pcb")] + ".kicad_pro"
-    if os.path.exists(pro):
-        shutil.copy(pro, dst[:-len(".kicad_pcb")] + ".kicad_pro")
+    for ext in (".kicad_pro", ".kicad_dru"):
+        other = src[:-len(".kicad_pcb")] + ext
+        if os.path.exists(other):
+            shutil.copy(other, dst[:-len(".kicad_pcb")] + ext)
 
 
 TOOLS = {"single": "Tune Length of a Single Track", "diffpair": "Tune Length of a Differential Pair",
@@ -783,6 +791,63 @@ def remove(boards, seed=20261130):
         print(out, file=sys.stderr)
 
 
+# MARK: - Targets from the board's rules
+
+def rules(boards, seed=20261131):
+    """Each board's patterns given targets by rules of its own (BOARD-rules.kicad_dru), then KiCad's Update All"""
+    for board in boards:
+        rng = random.Random(f"{seed}-{os.path.basename(board)}")
+        base = board[:-len("-placed.kicad_pcb")] if board.endswith("-placed.kicad_pcb") else board[:-len(".kicad_pcb")]
+        root = parse(open(board).read())
+        gens = [c for c in root if head(c) == "generated"]
+        lines = ["(version 1)"]
+        singles = 0
+        shift = rng.randrange(4)
+        for g in gens:
+            mode = text(child(g, "tuning_mode")[1])
+            net = text(child(g, "last_netname")[1])
+            length = float(child(g, "last_tuning_length")[1])
+            pair = re.sub(r"_[PN]$", "", net)
+            if mode == "single":
+                # (shorter than the pattern came to, mostly: its meanders made again to fit)
+                opt = length + rng.choice([-4.0, -2.0, -1.0, 0.5])
+                # (each way a rule can give a length, by turns from a board's own: all three, an opt alone, a max
+                # alone, a min and a max)
+                shape = (singles + shift) % 4
+                singles += 1
+                values = [("min", opt - 0.3), ("opt", opt), ("max", opt + 0.6)] if shape == 0 else \
+                    [("opt", opt)] if shape == 1 else [("max", opt)] if shape == 2 else [("min", opt - 0.5), ("max", opt + 0.5)]
+                constraint = "length"
+                condition = f"A.NetName == '{net}'"
+                # (and one pattern that overrides the rules: its own target kept)
+                if singles == 3:
+                    node = child(g, "override_custom_rules")
+                    node[1] = "yes"
+            elif mode == "diff_pair":
+                opt = length + rng.choice([-2.0, -1.0, 1.0])
+                values = [("min", opt - 0.2), ("opt", opt), ("max", opt + 0.4)]
+                constraint = "length"
+                condition = f"A.inDiffPair('{pair}')"
+            else:
+                values = [("min", -0.1), ("opt", rng.choice([0.3, 0.6])), ("max", 0.8)]
+                constraint = "skew"
+                condition = f"A.inDiffPair('{pair}')"
+            spec = " ".join(f"({k} {fmt(v)}mm)" for k, v in values)
+            lines.append(f'(rule "{constraint} {net}" (condition "{condition}") (constraint {constraint} {spec}))')
+        out = base + "-rules.kicad_pcb"
+        with open(out, "w") as f:
+            f.write(write(root) + "\n")
+        pro = base + ".kicad_pro"
+        if os.path.exists(pro):
+            shutil.copy(pro, base + "-rules.kicad_pro")
+        with open(base + "-rules.kicad_dru", "w") as f:
+            f.write("\n".join(lines) + "\n")
+        updated = base + "-rules-updated.kicad_pcb"
+        copy_board(out, updated)
+        drive(updated, [["menu", "Edit", "Update All Tuning Patterns", 20], ["save"]])
+        print(updated, len(gens), file=sys.stderr)
+
+
 # MARK: - Boards as KiCad reads them
 
 def generated_texts(text):
@@ -877,6 +942,8 @@ if __name__ == "__main__":
         edit(sys.argv[2:])
     elif len(sys.argv) >= 2 and sys.argv[1] == "remove":
         remove(sys.argv[2:])
+    elif len(sys.argv) >= 2 and sys.argv[1] == "rules":
+        rules(sys.argv[2:])
     elif len(sys.argv) >= 2 and sys.argv[1] == "check":
         check(sys.argv[2:])
     elif len(sys.argv) >= 2 and sys.argv[1] == "saved":
