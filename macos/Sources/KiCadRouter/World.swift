@@ -45,6 +45,8 @@ public struct WorldItem: Sendable {
     /// PAD::FlashLayer, PCB_VIA::FlashLayer, by router layer (empty: by the item's layers)
     public var flashed: [Bool] = []
     public var freePad = false
+    /// A pad's PAD::GetPadToDieLength (its file's die_length)
+    public var padToDie = 0
     public var compound = false
     public var locked = false
     /// A via's PCB_VIA::GetIsFree
@@ -362,6 +364,7 @@ public final class WorldInterface: RouterInterface {
                 }
                 if let s = w.shape { solid.solidShape = s }
                 if w.compound { solid.isCompoundShapePrimitive = true }
+                solid.padToDie = w.padToDie
                 item = solid
                 resolver.info[ObjectIdentifier(solid)] = w
                 resolver.originals[solid.serial] = solid
@@ -477,6 +480,45 @@ public final class WorldInterface: RouterInterface {
 
     public func isCopperLayer(_ layer: Int) -> Bool { layer >= 0 && layer < layerCount }
     public func importSizes(_ sizes: inout SizesSettings, startItem: Item?, net: NetHandle?, start: IPoint) -> Bool { false }
+    /// A board pad's polygon, its error inside (PAD::GetEffectivePolygon( layer, ERROR_INSIDE )), where the world's
+    /// pads have the board's behind them, as KiCad's router's have (a board's world, not a scene's): a tuned path is
+    /// then clipped to the pads at its ends, and its length counts a via KiCad infers in either of them
+    public var boardPadPolygon: ((WorldItem) -> PolySet?)?
+
+    /// The length of a tuned path, as KiCad's LENGTH_DELAY_CALCULATION::CalculateLength works it out
+    /// (CalculateRoutedPathLength: its lines and vias, as RouterInterface's), and with a board pad at either end (only
+    /// a board's world finds them), a via KiCad infers in it (inferViaInPad: the path's first or last item a line on
+    /// a layer the pad is not on, the board's thickness from it to the pad's side, its front if it is on the front)
+    public func calculateRoutedPathLength(_ path: [Item], startPad: Solid?, endPad: Solid?) -> Int {
+        var trackLength = 0
+        var viaLength = 0
+        var first: Item?, last: Item?
+        for (idx, item) in path.enumerated() {
+            if let l = item as? Line {
+                trackLength += l.cLine.length
+                if first == nil { first = l }
+                last = l
+            } else if item.ofKind(.via) && idx > 0 && idx < path.count - 1 {
+                let layerPrev = path[idx - 1].layer
+                let layerNext = path[idx + 1].layer
+                if layerPrev != layerNext {
+                    viaLength += stackupHeight(layerPrev, layerNext)
+                    if first == nil { first = item }
+                    last = item
+                }
+            }
+        }
+        func inferred(_ pad: Solid?, _ item: Item?) -> Int {
+            guard let pad, let line = item as? Line, resolver.infoOf(pad)?.kind == .pad else { return 0 }
+            let layer = line.layer
+            if pad.layers.overlaps(layer) { return 0 }
+            let padLayer = pad.layers.overlaps(0) ? 0 : layerCount - 1
+            return stackupHeight(layer, padLayer)
+        }
+        viaLength += inferred(startPad, first) + inferred(endPad, last)
+        return viaLength + trackLength
+    }
+
     public func stackupHeight(_ firstLayer: Int, _ secondLayer: Int) -> Int {
         guard firstLayer >= 0, secondLayer >= 0, firstLayer < stackupHeights.count,
               secondLayer < stackupHeights[firstLayer].count else { return 0 }
