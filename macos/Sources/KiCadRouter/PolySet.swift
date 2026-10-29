@@ -206,6 +206,48 @@ public struct PolySet: Sendable {
         importTree(tree, zValues, arcBuffer)
     }
 
+    /// The set made the outline of `line` (an open chain) offset by `amount` either side of it, its ends cut square
+    /// at them, by Clipper2's offset, its round corners `maxError` from true (KiCad's OffsetLineChain and
+    /// inflateLine2); what the set had before replaced
+    public mutating func offsetLineChain(_ line: LineChain, _ amount: Int, _ cornerStrategy: CornerStrategy, maxError: Int,
+                                         simplify: Bool = false) {
+        let circleSegCount = KiMath.arcToSegmentCount(abs(amount), maxError, .a360)
+        var joinType = Clipper.JoinType.round
+        var miterLimit = 2.0
+        switch cornerStrategy {
+        case .allowAcuteCorners:
+            joinType = .miter
+            miterLimit = 10
+        case .chamferAcuteCorners, .roundAcuteCorners:
+            joinType = .miter
+        case .chamferAllCorners:
+            joinType = .square
+        case .roundAllCorners:
+            joinType = .round
+        }
+        var zValues: [ClipperZValue] = []
+        var arcBuffer: [ShapeArc] = []
+        let c = Clipper.ClipperOffset()
+        c.addPath(line.convertToClipper2(true, &zValues, &arcBuffer), joinType, .butt)
+        let segCount = max(circleSegCount, 6)
+        let coeff = 1.0 - Foundation.cos(Double.pi / Double(segCount))
+        c.arcTolerance = Double(abs(amount)) * coeff
+        c.miterLimit = miterLimit
+        let tree = Clipper.PolyTree64()
+        if simplify {
+            // (KiCad calls SimplifyPaths on the offset's paths and drops what it returns, as inflate2 does)
+            let paths = c.execute(Double(amount))
+            let c2 = Clipper.Clipper64()
+            c2.preserveCollinear = false
+            c2.reverseSolution = false
+            c2.addSubject(paths)
+            _ = c2.execute(.union, .positive, polytree: tree)
+        } else {
+            c.execute(Double(amount), polytree: tree)
+        }
+        importTree(tree, zValues, arcBuffer)
+    }
+
     /// The set made the union, intersection, difference or exclusive or of `a` and `b` under the non-zero rule, by
     /// Clipper2, with the z values KiCad follows its arcs through it with (KiCad's booleanOp)
     private mutating func booleanOp(_ type: Clipper.ClipType, _ a: PolySet, _ b: PolySet) {

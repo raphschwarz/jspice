@@ -193,6 +193,7 @@ public final class BoardLink {
             current.carryZones(from: before, to: after)
             current.carryOutline(from: before, to: after)
             current.carryDrawings(from: before, to: after)
+            current.carryGenerators(from: before, to: after)
             current.carrySetup(from: before, to: after)
             board = current
         }

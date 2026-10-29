@@ -129,6 +129,11 @@ struct PCBView: View {
             let status = tuning.status == .tuned ? "tuned" : tuning.status == .tooShort ? "too short" : "too long"
             return "Tuning \(tuning.nets.filter { !$0.isEmpty }.joined(separator: " and "))  ·  \(what) \(String(format: "%.3f mm", tuning.length)), \(status)  ·  \(position)"
         }
+        if let pattern = board.editing.selectedPattern, board.editing.tool == .select {
+            let what = pattern.mode == .skew ? "skew" : "length"
+            let status = pattern.status == .tuned ? "tuned" : pattern.status == .tooShort ? "too short" : "too long"
+            return "Tuning pattern of \(pattern.nets.filter { !$0.isEmpty }.joined(separator: " and "))  ·  its \(what) \(String(format: "%.3f mm", pattern.length)), \(status)  ·  \(position)"
+        }
         if let preview = board.editing.preview {
             return "Routing \(preview.net ?? "no net")  ·  \(String(format: "%.2f mm", preview.width))  ·  \(PCBEditBar.title(preview.layer))  ·  \(position)"
         }
@@ -411,7 +416,7 @@ struct PCBBoardCanvas: View {
                            selection: editing.selection,
                            dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil,
                            zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePointer, editing.layer, editing.zoneKind == .keepout) : nil,
-                           tuning: editing.tuning)
+                           tuning: editing.tuning, pattern: editing.tool == .select ? editing.selectedPattern : nil)
                 .draw(context)
             // the box being drawn to select with: solid taking what is wholly in it, dashed what it touches
             if let area = editing.selectionArea {
@@ -479,8 +484,15 @@ struct PCBBoardCanvas: View {
             case .footprint:
                 editing.footprintClick(at: p)
             case .select:
-                // a track or via, else a connection still to route (routed), else a part
-                if editing.select(at: p, in: picture, slop: 3 / view.scale, extending: extending) {
+                // a tuning pattern (a click on one of its tracks, as KiCad selects one), else a track or via, else a
+                // connection still to route (routed), else a part
+                if !extending { editing.patternSelection = nil }
+                if !extending, let pattern = editing.pattern(at: p, in: picture, slop: 3 / view.scale) {
+                    editing.patternSelection = pattern
+                    editing.selection = []
+                    board.select(footprint: nil, extending: false)
+                    editing.footprintSelection = []
+                } else if editing.select(at: p, in: picture, slop: 3 / view.scale, extending: extending) {
                     if !extending {
                         board.select(footprint: nil, extending: false)
                         editing.footprintSelection = []
@@ -537,6 +549,7 @@ struct PCBBoardCanvas: View {
             } else {
                 editing.selection = []
                 editing.footprintSelection = []
+                editing.patternSelection = nil
                 board.select(footprint: nil, extending: false)
             }
             return true
@@ -605,9 +618,28 @@ struct PCBEditPainter {
     var zone: (corners: [KiCadPoint], pointer: KiCadPoint?, layer: String, keepout: Bool)?
     /// The length tuning under way
     var tuning: BoardEditing.TuningPreview?
+    /// The tuning pattern selected
+    var pattern: BoardEditing.TuningPatternInfo?
 
     func draw(_ context: GraphicsContext) {
         let s = view.scale
+        if let pattern {
+            // its tracks, the outline its meanders keep within and the line it was placed over, dashed, as KiCad draws
+            // a pattern selected
+            let members = Set(pattern.members)
+            for track in picture.tracks where members.contains(track.uuid) {
+                let path = view.path(track.points, closed: false)
+                let w = max(0.5, track.width * s)
+                context.stroke(path, with: .color(.white), style: StrokeStyle(lineWidth: w + 3, lineCap: .round, lineJoin: .round))
+                context.stroke(path, with: .color(PCBPainter.color(track.layer)), style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
+            }
+            if pattern.outline.count > 2 {
+                context.stroke(view.path(pattern.outline, closed: true), with: .color(.white), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+            }
+            if pattern.baseLine.count > 1 {
+                context.stroke(view.path(pattern.baseLine, closed: false), with: .color(Color.white.opacity(0.7)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+            }
+        }
         if let tuning {
             // the meandered line (a pair's two), outlined green when tuned, orange when still short, red when long
             let mark: Color = tuning.status == .tuned ? .green : tuning.status == .tooShort ? .orange : .red
@@ -914,6 +946,24 @@ struct PCBEditBar: View {
                 .fixedSize()
                 .help("The diameter and drill of the vias selected")
             }
+            if editing.tool == .select, let pattern = editing.selectedPattern {
+                // (the tuning pattern selected: its target and largest amplitude, as its properties panel sets them)
+                Text(pattern.mode == .skew ? "Skew" : "Length").foregroundStyle(.secondary)
+                TextField("Target", value: Binding<Double?>(
+                    get: { pattern.target.opt >= Double(MeanderSettings.lengthUnconstrained) / 1e6 ? nil : pattern.target.opt },
+                    set: { editing.setPatternTarget($0) }), format: .number.precision(.fractionLength(0...3)))
+                    .frame(width: 70)
+                    .help(pattern.mode == .skew ? "The skew the pattern is tuned to, mm (the positive line longer by it), within 0.1 mm"
+                          : "The length the pattern is tuned to, mm, within 0.1 mm (empty: as long as its meanders make it)")
+                Text("mm").foregroundStyle(.secondary)
+                TextField("Amplitude", value: Binding<Double>(
+                    get: { Double(pattern.settings.maxAmplitude) / 1e6 },
+                    set: { editing.setPatternAmplitude($0) }), format: .number.precision(.fractionLength(0...3)))
+                    .frame(width: 60)
+                    .help("The meanders' largest amplitude, mm")
+                Button("Delete Pattern") { editing.deleteSelectedPattern() }
+                    .help("The pattern deleted, its line made straight again along the line it was placed over")
+            }
             if editing.tool == .tune {
                 Picker("Tune", selection: $editing.tuneMode) {
                     Text("Track Length").tag(BoardRouter.TuningMode.single)
@@ -1009,6 +1059,9 @@ struct PCBEditBar: View {
                 Divider()
                 Button("Teardrops…") { editing.editTeardrops() }
                 Button("Remove Teardrops") { editing.removeTeardrops() }
+                Divider()
+                Button("Update All Tuning Patterns") { editing.updateAllPatterns() }
+                    .disabled(editing.patterns.isEmpty)
                 Divider()
                 Button("Fill Zones") { editing.fillZones() }
                 Button("Remove Pours") { editing.removePours() }

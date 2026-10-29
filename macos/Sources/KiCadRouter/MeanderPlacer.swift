@@ -500,9 +500,10 @@ extension Topology {
     }
 
     /// The path a length tuning of `start` measures (KiCad's AssembleTuningPath): its line, and the longest ways on
-    /// from either end through vias and pads in line; and the pads it ends on, which only a board's pads are (none
-    /// here: KiCad asks a pad's board item, and its parts cut to the pads' and vias' copper, which this port does
-    /// not have, are left out with them)
+    /// from either end through vias and pads in line; and the pads it ends on, which only a board's pads are (KiCad
+    /// asks a pad's board item: none in a scene's world). With a board pad at either end, its lines cut to the
+    /// copper of the pads they end in, those at its ends and those on its way, and of the board vias next to them
+    /// (OptimiseTraceInPad, OptimiseTraceInVia)
     func assembleTuningPath(_ iface: RouterInterface, _ start: Item) -> (path: [Item], startPad: Solid?, endPad: Solid?) {
         var seg: LinkedItem?
         if let via = start as? Via {
@@ -533,6 +534,226 @@ extension Topology {
         for item in left.items { path.insert(item, at: 0) }
         path.append(l.copy())
         path += right.items
-        return (path, nil, nil)
+
+        // (the ends' pads only where they are board pads, which only a board's world has)
+        guard let board = iface as? WorldInterface, let padPolygon = board.boardPadPolygon else { return (path, nil, nil) }
+        func boardPad(_ s: Solid?) -> (solid: Solid, info: WorldItem)? {
+            guard let s, let info = board.resolver.infoOf(s), info.kind == .pad else { return nil }
+            return (s, info)
+        }
+        let padA = boardPad(left.endPad)
+        let padB = boardPad(right.endPad)
+        if padA == nil && padB == nil { return (path, nil, nil) }
+
+        func processPad(_ pad: (solid: Solid, info: WorldItem)) {
+            var polygon: PolySet??
+            func shape() -> PolySet? {
+                if polygon == nil { polygon = .some(padPolygon(pad.info)) }
+                return polygon!
+            }
+            for idx in path.indices {
+                guard let line = path[idx] as? Line else { continue }
+                var slc = line.cLine
+                if Self.optimiseTraceInPad(&slc, pad.solid, pad.info, line.layer, shape) {
+                    let c = line.copy()
+                    c.setShape(slc)
+                    path[idx] = c
+                }
+            }
+        }
+        if let padA { processPad(padA) }
+        if let padB { processPad(padB) }
+
+        // (pads the path passes through on its way)
+        // (a board pad known by its uuid, as KiCad knows its PAD)
+        func key(_ pad: (solid: Solid, info: WorldItem)) -> String { pad.info.source ?? "serial \(pad.solid.originSerial)" }
+        var processed = Set([padA, padB].compactMap { $0.map(key) })
+        for idx in path.indices {
+            guard let line = path[idx] as? Line else { continue }
+            for pt in [line.cPoint(0), line.cLastPoint] {
+                for item in world.hitTest(pt) where item.ofKind(.solid) && item.net == line.net {
+                    if let pad = boardPad(item as? Solid), !processed.contains(key(pad)) {
+                        processPad(pad)
+                        processed.insert(key(pad))
+                    }
+                    break
+                }
+            }
+        }
+
+        // (the parts of lines in a via clipped, and the rest of the way to its centre added)
+        for idx in path.indices {
+            guard let via = path[idx] as? Via, board.resolver.infoOf(via)?.kind == .via else { continue }
+            for delta in [-1, 1] {
+                let j = idx + delta
+                guard j >= 0, j < path.count, let line = path[j] as? Line else { continue }
+                var slc = line.cLine
+                if Self.optimiseTraceInVia(&slc, via) {
+                    let c = line.copy()
+                    c.setShape(slc)
+                    path[j] = c
+                }
+            }
+        }
+        return (path, padA?.solid, padB?.solid)
+    }
+
+    /// A line ending in a pad clipped where it leaves the pad, and a straight line from the pad's centre to there put
+    /// in its place (KiCad's LENGTH_DELAY_CALCULATION::OptimiseTraceInPad): only a line that ends at the pad's
+    /// position, on a layer the pad is flashed on, and that starts (or else ends) in its polygon. Whether it changed
+    static func optimiseTraceInPad(_ line: inout LineChain, _ pad: Solid, _ info: WorldItem, _ layer: Int,
+                                   _ polygon: () -> PolySet?) -> Bool {
+        guard line.pointCount >= 2 else { return false }
+        if line.point(0) != pad.pos && line.lastPoint != pad.pos { return false }
+        let flashed = info.flashed.isEmpty ? info.layers.overlaps(layer) : (layer >= 0 && layer < info.flashed.count && info.flashed[layer])
+        guard flashed, let shape = polygon() else { return false }
+        if shape.contains(line.point(0)) {
+            return clipLineToPad(&line, pad.pos, shape, forward: true)
+        } else if shape.contains(line.lastPoint) {
+            return clipLineToPad(&line, pad.pos, shape, forward: false)
+        }
+        return false
+    }
+
+    /// KiCad's clipLineToPad: the line from its first point outside the pad on (or up to its last one outside, going
+    /// back), where it crosses the pad's edge (on an arc, the crossing nearest the point inside; else its segment's,
+    /// as SHAPE_POLY_SET::Collide finds it), and the pad's centre
+    static func clipLineToPad(_ line: inout LineChain, _ center: IPoint, _ shape: PolySet, forward: Bool) -> Bool {
+        let start = forward ? 0 : line.pointCount - 1
+        let delta = forward ? 1 : -1
+        var firstOutside = -1
+        var intersection: IPoint?
+        var vertex = start + delta
+        while forward ? vertex < line.pointCount : vertex >= 0 {
+            defer { vertex += delta }
+            if shape.contains(line.point(vertex)) { continue }
+            firstOutside = vertex
+            let prevVertex = vertex - delta
+            let arcIdx = line.arcIndex(prevVertex)
+            if arcIdx >= 0 && line.arcIndex(vertex) == arcIdx {
+                intersection = findArcPadIntersection(line.arcs[arcIdx], shape, line.point(prevVertex))
+            }
+            if intersection == nil {
+                let seg = Seg(line.point(vertex), line.point(prevVertex))
+                if let (d, nearest) = squaredDistanceToSeg(shape, seg), d == 0 { intersection = nearest }
+            }
+            break
+        }
+        if firstOutside < 0 { return false }
+        var newChain = LineChain()
+        if forward {
+            newChain.append(center)
+            if let intersection { newChain.append(intersection) }
+            newChain.append(line.slice(firstOutside, -1))
+        } else {
+            newChain.append(line.slice(0, firstOutside))
+            if let intersection { newChain.append(intersection) }
+            newChain.append(center)
+        }
+        line = newChain
+        return true
+    }
+
+    /// KiCad's findArcPadIntersection: of where the arc crosses the pad's outlines' segments, the point nearest
+    /// `inside`
+    static func findArcPadIntersection(_ arc: ShapeArc, _ shape: PolySet, _ inside: IPoint) -> IPoint? {
+        var best: IPoint?
+        var bestDistSq = Int.max
+        for poly in shape.polygons {
+            let outline = poly[0]
+            for j in 0..<outline.segmentCount {
+                let seg = outline.segment(j)
+                for pt in arc.intersectLine(seg) where seg.contains(pt) {
+                    let d = (pt - inside).squaredNorm
+                    if d < bestDistSq {
+                        bestDistSq = d
+                        best = pt
+                    }
+                }
+            }
+        }
+        return best
+    }
+
+    /// SHAPE_POLY_SET::SquaredDistanceToSeg with its nearest point: per polygon, 0 and the segment's middle if both
+    /// its ends are in it, else the least distance to an edge (outline, then holes) and the edge's point nearest the
+    /// segment (the first edge as near as any); nil for an empty set
+    static func squaredDistanceToSeg(_ set: PolySet, _ s: Seg) -> (Int, IPoint)? {
+        var best: (Int, IPoint)?
+        for poly in set.polygons {
+            var d: Int
+            var nearest: IPoint
+            if BoardDRC.containsSingle(poly, s.a, 1) && BoardDRC.containsSingle(poly, s.b, 1) {
+                d = 0
+                nearest = (s.a + s.b).divided(by: 2)
+            } else {
+                let segs = BoardDRC.segmentsWithHoles(poly)
+                guard let first = segs.first else { continue }
+                d = first.squaredDistance(s)
+                nearest = first.nearestPoint(s)
+                for e in segs.dropFirst() where d > 0 {
+                    let c = e.squaredDistance(s)
+                    if c < d {
+                        d = c
+                        nearest = e.nearestPoint(s)
+                    }
+                }
+            }
+            if best == nil || d < best!.0 { best = (d, nearest) }
+        }
+        return best
+    }
+
+    /// A line ending in a via clipped where it leaves the via's circle, and a straight line from the via's centre to
+    /// there put in its place (KiCad's OptimiseTraceInVia and clipLineToVia: the crossing nearest the point outside).
+    /// Whether it changed
+    static func optimiseTraceInVia(_ line: inout LineChain, _ via: Via) -> Bool {
+        guard line.pointCount >= 2 else { return false }
+        let r = via.diameter / 2
+        // (SHAPE_CIRCLE::Collide of a point, at no clearance: at the centre, or nearer than the radius)
+        func inside(_ p: IPoint) -> Bool {
+            let d = (p - via.pos).squaredNorm
+            return d == 0 || d < r * r
+        }
+        let forward: Bool
+        if inside(line.point(0)) {
+            forward = true
+        } else if inside(line.lastPoint) {
+            forward = false
+        } else {
+            return false
+        }
+        let start = forward ? 0 : line.pointCount - 1
+        let delta = forward ? 1 : -1
+        var firstOutside = -1
+        var intersection: IPoint?
+        var vertex = start + delta
+        while forward ? vertex < line.pointCount : vertex >= 0 {
+            defer { vertex += delta }
+            if inside(line.point(vertex)) { continue }
+            firstOutside = vertex
+            let prevVertex = vertex - delta
+            let seg = Seg(line.point(vertex), line.point(prevVertex))
+            let pts = Circle(via.pos, r).intersect(seg)
+            if var best = pts.first {
+                let outside = line.point(vertex)
+                for p in pts.dropFirst() where (p - outside).squaredNorm < (best - outside).squaredNorm { best = p }
+                intersection = best
+            }
+            break
+        }
+        if firstOutside < 0 { return false }
+        var newChain = LineChain()
+        if forward {
+            newChain.append(via.pos)
+            if let intersection { newChain.append(intersection) }
+            newChain.append(line.slice(firstOutside, -1))
+        } else {
+            newChain.append(line.slice(0, firstOutside))
+            if let intersection { newChain.append(intersection) }
+            newChain.append(via.pos)
+        }
+        line = newChain
+        return true
     }
 }

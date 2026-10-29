@@ -112,6 +112,12 @@ public final class KiCadLiveBoard {
             reloadReason = "the board's texts or drawings changed"
             return try reload(after)
         }
+        // the board's tuning patterns (its generators) made, changed or taken away here: the board by its file too
+        // (KiCad's API does not take a generator)
+        if before.root.all("generated").map(\.compact) != after.root.all("generated").map(\.compact) {
+            reloadReason = "the board's tuning patterns changed"
+            return try reload(after)
+        }
         guard count > 0 else { return .nothing }
 
         // the footprints, tracks and vias to make, as KiCad's API takes them; any KiCad cannot take sends the whole

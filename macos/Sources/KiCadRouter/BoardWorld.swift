@@ -39,14 +39,31 @@ public struct BoardWorld {
 
     let netClasses: NetClasses
 
-    /// The world of `board`, its rules from its project file's JSON (`project`, nil for KiCad's defaults)
-    public init(board: KiCadBoard, project: [String: Any]? = nil) {
+    /// The world of `board`, its rules from its project file's JSON (`project`, nil for KiCad's defaults); the
+    /// tracks of its tuning patterns locked, as KiCad's router has them (syncTrack, syncArc, syncVia), but those of
+    /// the pattern being edited (`editing`, its uuid)
+    public init(board: KiCadBoard, project: [String: Any]? = nil, editing: String? = nil) {
         netClasses = NetClasses(project: project)
         readLayers(board)
         stackupHeights = Stackup.heights(board, project: project, layerIndex: layerIndex, copperLayers: copperLayers)
         numberNets(board.root)
         readRules(board, project: project)
+        lockedMembers = Self.lockedMembers(board, editing: editing)
         sync(board)
+    }
+
+    /// The tracks and vias KiCad's router takes as locked for the groups they are in (their uuids): those of a
+    /// locked group or generator (BOARD_ITEM::IsLocked), and those of a generator that is not being edited
+    private var lockedMembers: Set<String> = []
+
+    static func lockedMembers(_ board: KiCadBoard, editing: String?) -> Set<String> {
+        var out = Set<String>()
+        for node in board.root.items where node.head == "group" || node.head == "generated" {
+            let locked = node.flag("locked") || node["locked"]?.text(at: 0) == "yes"
+            guard locked || (node.head == "generated" && node.value("uuid") != editing) else { continue }
+            for m in node["members"]?.arguments ?? [] where m.kind != .list { out.insert(m.text) }
+        }
+        return out
     }
 
     public init(board: KiCadBoard, projectURL: URL?) {
@@ -436,6 +453,21 @@ public struct BoardWorld {
         }
     }
 
+    /// A pad's polygon as KiCad's length tuning clips a track to it (PAD::GetEffectivePolygon( layer, ERROR_INSIDE ):
+    /// PAD::TransformShapeToPolygon to within the board's maximum error, the error inside), the pad found in the
+    /// board by its uuid
+    func tuningPolygon(_ w: WorldItem, in board: KiCadBoard) -> PolySet? {
+        guard w.kind == .pad, let uuid = w.source else { return nil }
+        for fp in board.root.all("footprint") {
+            for node in fp.all("pad") where node.value("uuid") == uuid {
+                let p = readPad(node, FootprintPlacement(fp))
+                let primitives = (node["primitives"]?.arguments ?? []).filter { $0.head != "gr_bbox" && $0.head != "gr_vector" }
+                return padPolygon(p, primitives: primitives, errorLocation: .inside)
+            }
+        }
+        return nil
+    }
+
     /// The pad's hole (PAD::GetEffectiveHoleShape)
     func holeShape(_ p: Pad) -> Shape {
         let half = p.drill.divided(by: 2)
@@ -476,6 +508,7 @@ public struct BoardWorld {
         w.clearanceOverride = clearanceOverride(node, fp)
         w.footprint = placement.reference
         w.source = node.value("uuid")
+        w.padToDie = Self.iu(node["die_length"], 0)
         if p.drill.x > 0 { w.hole = holeShape(p) }
         let shapes = effectiveShapes(p)
         let primitives = (node["primitives"]?.arguments ?? []).filter { $0.head != "gr_bbox" && $0.head != "gr_vector" }
@@ -1028,7 +1061,7 @@ public struct BoardWorld {
         w.b = Self.point(node["end"])
         w.width = node["width"].map { Self.iu($0, 0) } ?? 0
         w.layer = layer
-        w.locked = node.flag("locked") || node["locked"]?.text(at: 0) == "yes"
+        w.locked = node.flag("locked") || node["locked"]?.text(at: 0) == "yes" || lockedMembers.contains(node.value("uuid") ?? "")
         w.source = node.value("uuid")
         items.append(w)
     }
@@ -1042,7 +1075,7 @@ public struct BoardWorld {
         w.b = Self.point(node["end"])
         w.width = node["width"].map { Self.iu($0, 0) } ?? 0
         w.layer = layer
-        w.locked = node.flag("locked") || node["locked"]?.text(at: 0) == "yes"
+        w.locked = node.flag("locked") || node["locked"]?.text(at: 0) == "yes" || lockedMembers.contains(node.value("uuid") ?? "")
         w.source = node.value("uuid")
         items.append(w)
     }
@@ -1058,7 +1091,7 @@ public struct BoardWorld {
         w.diameter = node["size"].map { Self.iu($0, 0) } ?? 0
         w.drill = node["drill"].map { Self.iu($0, 0) } ?? 0
         w.free = node["free"]?.text(at: 0) == "yes" || node.flag("free")
-        w.locked = node.flag("locked") || node["locked"]?.text(at: 0) == "yes"
+        w.locked = node.flag("locked") || node["locked"]?.text(at: 0) == "yes" || lockedMembers.contains(node.value("uuid") ?? "")
         w.flashed = (0..<copperLayers).map { $0 >= lo && $0 <= hi }
         w.source = node.value("uuid")
         // (its type the word after "via": a KiCad 9 board's blind and buried vias both "blind")

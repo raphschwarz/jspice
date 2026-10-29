@@ -20,13 +20,15 @@ public final class BoardRouter {
     public private(set) var world: BoardWorld
     public let router = Router()
     let iface: WorldInterface
-    private let project: [String: Any]?
+    let project: [String: Any]?
     /// The rules of the board's .kicad_dru, which its router follows as KiCad's does
     private let designRules: String?
+    /// The board's tuning patterns as KiCad has them in memory (a session's, shared by its routers)
+    var patternMemory = TuningPatternMemory()
 
     /// The tracks and vias added to the board (their uuids), and those it took away, by the last commit
-    public private(set) var lastAdded: [String] = []
-    public private(set) var lastRemoved: [String] = []
+    public internal(set) var lastAdded: [String] = []
+    public internal(set) var lastRemoved: [String] = []
 
     /// The router on `board`, its project's JSON in `project` and the rules of its .kicad_dru in `designRules`
     public init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
@@ -39,6 +41,7 @@ public final class BoardRouter {
         loadRules()
         router.setInterface(iface)
         router.settings.mode = .walkaround
+        iface.boardPadPolygon = { [unowned self] w in self.world.tuningPolygon(w, in: self.board) }
         router.syncWorld()
     }
 
@@ -51,8 +54,12 @@ public final class BoardRouter {
     }
 
     /// The board read again after it changed elsewhere (a footprint moved, a track deleted)
-    public func reload() {
-        world = BoardWorld(board: board, project: project)
+    public func reload() { reload(editing: nil) }
+
+    /// The board read again, the tuning pattern `editing` (its uuid) being edited: its tracks not locked, as KiCad's
+    /// router does not lock a generator's that is being edited
+    func reload(editing: String?) {
+        world = BoardWorld(board: board, project: project, editing: editing)
         iface.items = world.items
         iface.stackupHeights = world.stackupHeights
         loadRules()
@@ -510,6 +517,7 @@ public final class BoardRouter {
             board.root.remove(node)
             lastRemoved.append(uuid)
         }
+        TuningPattern.leaveGroups(board, Set(lastRemoved), memory: patternMemory)
         reload()
     }
 
@@ -625,7 +633,7 @@ public final class BoardRouter {
     /// The settings as the placer takes them from the pattern: the tuned part keeping the points it is cut at, as the
     /// pattern keeps them; and a step of the amplitude and spacing of a nanometre at least (KiCad's placer, stepping
     /// its amplitude down by none as it fits a meander, would go round for ever)
-    private static func placerSettings(_ settings: MeanderSettings) -> MeanderSettings {
+    static func placerSettings(_ settings: MeanderSettings) -> MeanderSettings {
         var s = settings
         s.keepEndpoints = true
         s.step = max(s.step, 1)
@@ -739,36 +747,37 @@ public final class BoardRouter {
         }
         iface.added.removeAll()
         iface.removedItems.removeAll()
+        TuningPattern.leaveGroups(board, Set(lastRemoved), memory: patternMemory)
         reload()
     }
 
-    private static func mm(_ v: Int) -> Double { Double(v) / 1_000_000 }
+    static func mm(_ v: Int) -> Double { Double(v) / 1_000_000 }
 
     private func netList(_ net: NetHandle?) -> SExpr {
         board.netList(net.flatMap { world.netNames[$0] } ?? "", pad: false)
     }
 
-    private func insert(segment s: Segment) -> String {
+    func insert(segment s: Segment, width: Int? = nil) -> String {
         let uuid = KiCadBoard.newUUID()
         let node = SExpr("segment", SExpr("start", Self.mm(s.seg.a.x), Self.mm(s.seg.a.y)), SExpr("end", Self.mm(s.seg.b.x), Self.mm(s.seg.b.y)),
-                         SExpr("width", Self.mm(s.width)), SExpr("layer", layerName(s.layer)), netList(s.net), SExpr("uuid", uuid))
+                         SExpr("width", Self.mm(width ?? s.width)), SExpr("layer", layerName(s.layer)), netList(s.net), SExpr("uuid", uuid))
         insertTrack(node)
         return uuid
     }
 
     /// An arc track as KiCad writes one (PCB_IO_KICAD_SEXPR::format of a PCB_ARC): its start, the middle of the arc
     /// and its end, as PNS_KICAD_IFACE::createBoardItem makes the PCB_ARC of the router's arc (SHAPE_ARC::GetArcMid)
-    private func insert(arc a: Arc) -> String {
+    func insert(arc a: Arc, width: Int? = nil) -> String {
         let uuid = KiCadBoard.newUUID()
         let start = a.arc.start, mid = a.arc.mid, end = a.arc.end
         let node = SExpr("arc", SExpr("start", Self.mm(start.x), Self.mm(start.y)), SExpr("mid", Self.mm(mid.x), Self.mm(mid.y)),
-                         SExpr("end", Self.mm(end.x), Self.mm(end.y)), SExpr("width", Self.mm(a.width)), SExpr("layer", layerName(a.layer)),
+                         SExpr("end", Self.mm(end.x), Self.mm(end.y)), SExpr("width", Self.mm(width ?? a.width)), SExpr("layer", layerName(a.layer)),
                          netList(a.net), SExpr("uuid", uuid))
         insertTrack(node)
         return uuid
     }
 
-    private func insert(via v: Via, free: Bool = false) -> String {
+    func insert(via v: Via, free: Bool = false) -> String {
         let uuid = KiCadBoard.newUUID()
         let node = SExpr("via", SExpr("at", Self.mm(v.pos.x), Self.mm(v.pos.y)), SExpr("size", Self.mm(v.diameter)), SExpr("drill", Self.mm(v.drill)),
                          SExpr("layers", layerName(v.layers.start), layerName(v.layers.end)), netList(v.net), SExpr("uuid", uuid))

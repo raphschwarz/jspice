@@ -37,6 +37,8 @@ public final class BoardEditing {
         /// The board's teardrop settings as the change left them, where it changed them (for its project's board
         /// design settings: TeardropSettings.projectSettings)
         public var teardropSettings: TeardropSettings?
+        /// The tuning patterns made, changed or taken away, by id
+        public var generators: [String] = []
         /// What it was, for an undo menu (and KiCad's own)
         public let name: String
     }
@@ -127,7 +129,9 @@ public final class BoardEditing {
     /// menu): the net class's (0), or the project's (BoardSetup.swift)
     public var sizeChoice = SizeChoice()
 
-    public private(set) var router: BoardRouter
+    public private(set) var router: BoardRouter {
+        didSet { router.patternMemory = patternMemory }
+    }
     var project: [String: Any]?
     /// The rules of the board's .kicad_dru (its design rules file), which the router, the zone filler and the design
     /// rules check follow as KiCad's do
@@ -139,9 +143,18 @@ public final class BoardEditing {
     public init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
         self.project = project
         self.designRules = designRules
+        let memory = TuningPatternMemory()
         base = board.copy()
+        memory.read(base)
+        patternMemory = memory
         router = BoardRouter(board: base.copy(), project: project, designRules: designRules)
+        router.patternMemory = memory
     }
+
+    /// The board's tuning patterns as KiCad has them once it has read the board (as read, which it writes so when it
+    /// next saves the board: lengths cut to the nanometre, patterns of no members dropped), and those the session
+    /// makes as KiCad makes them
+    private var patternMemory = TuningPatternMemory()
 
     /// JSpice's own design rules check of the board as the last change left it (BoardDRC: KiCad's checks of copper,
     /// widths, holes, the board's edges and connections), ready to run (on a copy of the board, anywhere)
@@ -160,10 +173,14 @@ public final class BoardEditing {
             rulesChanged = true
             self.designRules = rules
         }
-        let text = board.text
-        if text == base.text && !rulesChanged && !router.router.routingInProgress { return }
+        let memory = TuningPatternMemory()
+        let read = board.copy()
+        memory.read(read)
+        if read.text == base.text && !rulesChanged && !router.router.routingInProgress { return }
         router.cancel()
-        base = board.copy()
+        patternSession = nil
+        base = read
+        patternMemory = memory
         router = BoardRouter(board: base.copy(), project: self.project, designRules: self.designRules)
     }
 
@@ -436,94 +453,10 @@ public final class BoardEditing {
         return shown
     }
 
-    // MARK: - Length tuning
+    // MARK: - Length tuning (TuningPatternEditing.swift)
 
-    /// A length tuning as it is drawn: the tuned line (a pair's two, positive first), its width and layer, its nets,
-    /// how its length compares with what is asked, and the length (a skew tuning's skew), in mm
-    public struct TuningPreview: Sendable, Equatable {
-        public enum Status: Sendable { case tooShort, tooLong, tuned }
-
-        public var lines: [[KiCadPoint]]
-        public var width: Double
-        public var layer: String
-        public var nets: [String]
-        public var status: Status
-        public var length: Double
-    }
-
-    /// Starts tuning the length of the track at `p` on `layer` (the one a track is on is taken first), or of the
-    /// differential pair it is a line of, or the pair's skew, as KiCad's Tune Length of a Single Track, Tune Length of
-    /// a Differential Pair and Tune Skew of a Differential Pair start a tuning pattern there: `settings` the length
-    /// (or skew) to reach and the meanders' sizes, corners and sides. Nil if the router will not start it,
-    /// `failureReason` saying why as KiCad says it (no track there, no coupled net). `moveTuning` takes the end of the
-    /// stretch to tune to the pointer, `fixTuning` keeps it, `cancelTuning` drops it.
-    public func startTuning(at p: KiCadPoint, layer: String, mode: BoardRouter.TuningMode = .single,
-                            settings: MeanderSettings = MeanderSettings()) -> TuningPreview? {
-        guard !isRouting, let l = router.layer(layer) else { return nil }
-        guard router.startTuning(at: Self.nm(p), layer: l, mode: mode, settings: settings) else { return nil }
-        tuningMode = mode
-        tuningPointer = Self.nm(p)
-        return tuningPreview
-    }
-
-    /// The pointer moved to `p`, tuning: the meanders from where the tuning started to the point of the track
-    /// nearest it, fitted again
-    @discardableResult
-    public func moveTuning(to p: KiCadPoint) -> TuningPreview? {
-        guard router.isTuning else { return nil }
-        tuningPointer = Self.nm(p)
-        router.moveTuning(to: tuningPointer)
-        return tuningPreview
-    }
-
-    /// The meanders' amplitude a step up (1) or down (-1), fitted again
-    @discardableResult
-    public func stepTuningAmplitude(_ sign: Int) -> TuningPreview? {
-        guard router.isTuning else { return nil }
-        router.stepTuningAmplitude(sign, at: tuningPointer)
-        return tuningPreview
-    }
-
-    /// The meanders' spacing a step up (1) or down (-1), fitted again
-    @discardableResult
-    public func stepTuningSpacing(_ sign: Int) -> TuningPreview? {
-        guard router.isTuning else { return nil }
-        router.stepTuningSpacing(sign, at: tuningPointer)
-        return tuningPreview
-    }
-
-    /// The tuning's settings changed (the length or skew to reach, the meanders' sizes, corners and sides), the
-    /// meanders fitted again
-    @discardableResult
-    public func updateTuningSettings(_ settings: MeanderSettings) -> TuningPreview? {
-        guard router.isTuning else { return nil }
-        router.updateTuningSettings(settings, at: tuningPointer)
-        return tuningPreview
-    }
-
-    /// A click at `p`, tuning: the tuning kept, the change ("Tune Length", "Tune Skew"); nil if there was none to keep
-    /// (the pointer not moved since it started)
-    public func fixTuning(at p: KiCadPoint) -> Edit? {
-        guard router.isTuning else { return nil }
-        let name = tuningMode == .skew ? "Tune Skew" : "Tune Length"
-        guard router.fixTuning(at: Self.nm(p)) else { return nil }
-        return change(name)
-    }
-
-    /// The tuning dropped, the board as it was
-    public func cancelTuning() { router.cancelTuning() }
-
-    /// What is being tuned, as it now is
-    public var tuningPreview: TuningPreview? {
-        guard let t = router.tuning else { return nil }
-        let status: TuningPreview.Status = t.status == .tooShort ? .tooShort : t.status == .tooLong ? .tooLong : .tuned
-        let nets = router.router.currentNets.map { $0.flatMap { router.world.netNames[$0] } ?? "" }
-        return TuningPreview(lines: t.lines.map { $0.points.map(Self.mm) }, width: Double(t.width) / 1e6,
-                             layer: router.layerName(t.layer), nets: nets, status: status, length: Double(t.length) / 1e6)
-    }
-
-    private var tuningMode = BoardRouter.TuningMode.single
-    private var tuningPointer = IPoint.zero
+    /// The tuning pattern being placed or edited, as KiCad's Tune Length tool and point editor hold it
+    var patternSession: PatternSession?
 
     // MARK: - Routing every connection
 
@@ -660,8 +593,9 @@ public final class BoardEditing {
 
     func change(_ name: String, footprints: [String] = [], zones: [String] = [], outline: Bool = false,
                         changed: [String] = [], drawings: [String] = [], setup: Bool = false) -> Edit? {
+        let generators = Self.generatorsChanged(base, router.board)
         guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty || outline
-                || !changed.isEmpty || !drawings.isEmpty || setup else { return nil }
+                || !changed.isEmpty || !drawings.isEmpty || setup || !generators.isEmpty else { return nil }
         var after = router.board.copy()
         let (added, removed) = (router.lastAdded, router.lastRemoved)
         // (not while a track or pair is still being routed, which goes on in the router as it is)
@@ -677,6 +611,7 @@ public final class BoardEditing {
         edit.changed = changed
         edit.drawings = drawings
         edit.setup = setup
+        edit.generators = generators
         edit.refilled = filled != nil
         lastRefilled = edit.refilled
         base = after

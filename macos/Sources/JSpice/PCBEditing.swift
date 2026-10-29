@@ -142,6 +142,10 @@ final class PCBEditing: ObservableObject {
     /// The tuning under way, as it now goes: its meandered line (a pair's two), how its length compares with what is
     /// asked, and its length (or skew)
     @Published private(set) var tuning: BoardEditing.TuningPreview?
+    /// The board's tuning patterns (KiCad's, kept in the board: each tuning kept is one), as the session has them
+    @Published private(set) var patterns: [BoardEditing.TuningPatternInfo] = []
+    /// The tuning pattern selected (its uuid), as KiCad selects one: a click on one of its tracks
+    @Published var patternSelection: String?
 
     static let widths: [Double] = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0]
     /// Vias' diameters and drills to choose from (mm)
@@ -181,6 +185,8 @@ final class PCBEditing: ObservableObject {
         let rules = await controller?.designRulesForEditing()
         layers = await engine.load(board, project: project, designRules: rules)
         nets = await engine.run { Array(Set($0.router.world.netNames.values)).filter { !$0.isEmpty }.sorted() } ?? []
+        patterns = await engine.run { $0.tuningPatterns } ?? []
+        if let chosen = patternSelection, !patterns.contains(where: { $0.uuid == chosen }) { patternSelection = nil }
         let refills = !(controller?.isLive ?? false) && !(controller?.isOpenInKiCad ?? false)
         let choice = sizeChoice
         _ = await engine.run { session -> Bool? in
@@ -241,10 +247,11 @@ final class PCBEditing: ObservableObject {
         zonePointer = nil
         if tuning != nil { cancelTuning() }
         if isRouting { stop() }
+        if tool != .select { patternSelection = nil }
         if tool == .tune {
             selection = []
             if !isReady { prepare() }
-            message = "Click a track to tune its length, move along it, click to keep the meanders; 1 2 spacing, 3 4 amplitude, Esc drops it"
+            message = "Click a track to tune its length, move along it, click to keep the meanders (a tuned track: its pattern's end dragged); 1 2 spacing, 3 4 amplitude, Esc drops it"
         }
         if tool == .via {
             selection = []
@@ -670,6 +677,10 @@ final class PCBEditing: ObservableObject {
     func deleteSelection() { Task { await deleteSelectionNow() } }
 
     func deleteSelectionNow() async {
+        if selection.isEmpty, patternSelection != nil {
+            deleteSelectedPattern()
+            return
+        }
         guard !selection.isEmpty, !isRouting else { return }
         let uuids = selection
         selection = []
@@ -876,13 +887,14 @@ final class PCBEditing: ObservableObject {
 
     // MARK: - Tuning lengths
 
-    /// The length or skew to reach, for the router
-    private var tuneSettings: MeanderSettings {
-        var settings = MeanderSettings()
-        if tuneMode == .skew {
-            settings.setTargetSkew(Int((tuneSkew * 1e6).rounded()))
+    /// The length or skew to reach, on `base` (the settings KiCad's tool of the mode starts with, the board's
+    /// project's: its tuning pattern defaults; or the pattern's own, one being edited)
+    nonisolated static func tuneSettings(_ base: MeanderSettings, mode: BoardRouter.TuningMode, length: Double, skew: Double) -> MeanderSettings {
+        var settings = base
+        if mode == .skew {
+            settings.setTargetSkew(Int((skew * 1e6).rounded()))
         } else {
-            settings.setTargetLength(Int((tuneLength * 1e6).rounded()))
+            settings.setTargetLength(Int((length * 1e6).rounded()))
         }
         return settings
     }
@@ -895,9 +907,11 @@ final class PCBEditing: ObservableObject {
         clicking = Task {
             await previous?.value
             if tuning == nil {
-                let (mode, settings, layer) = (tuneMode, tuneSettings, layer)
+                let (mode, length, skew, layer) = (tuneMode, tuneLength, tuneSkew, layer)
                 let started = await engine.run { session -> (BoardEditing.TuningPreview?, String) in
-                    (session.startTuning(at: p, layer: layer, mode: mode, settings: settings), session.failureReason)
+                    let settings = Self.tuneSettings(session.defaultTuningSettings(mode), mode: mode, length: length, skew: skew)
+                    // (a track of a pattern: the pattern's end dragged, as KiCad's point editor drags it)
+                    return (session.startTuning(at: p, layer: layer, mode: mode, settings: settings), session.failureReason)
                 }
                 if let preview = started?.0 {
                     tuning = preview
@@ -947,11 +961,73 @@ final class PCBEditing: ObservableObject {
 
     private func tuneSettingsChanged() {
         guard tuning != nil else { return }
-        let settings = tuneSettings
+        let (mode, length, skew) = (tuneMode, tuneLength, tuneSkew)
         Task {
-            let shown = await engine.run { $0.updateTuningSettings(settings) }
+            let shown = await engine.run { session -> BoardEditing.TuningPreview? in
+                let base = session.tuningPatternPreview?.settings ?? session.defaultTuningSettings(mode)
+                return session.updateTuningSettings(Self.tuneSettings(base, mode: mode, length: length, skew: skew))
+            }
             if tuning != nil, let shown { tuning = shown }
         }
+    }
+
+    // MARK: - Tuning patterns
+
+    /// The tuning pattern selected, as the session has it
+    var selectedPattern: BoardEditing.TuningPatternInfo? { patterns.first { $0.uuid == patternSelection } }
+
+    /// The tuning pattern a click at `p` selects (KiCad's: its tracks are not selectable on their own, a click on one
+    /// selects the pattern), nil if there is none there
+    func pattern(at p: KiCadPoint, in picture: KiCadBoardPicture, slop: Double) -> String? {
+        let order = [layer] + layers.filter { $0 != layer }
+        guard let uuid = picture.copper(at: p, layers: order, slop: slop) else { return nil }
+        return patterns.first { $0.members.contains(uuid) }?.uuid
+    }
+
+    /// The selected pattern's target (mm: the length to reach, a skew pattern's skew), within KiCad's 0.1 mm either
+    /// side (none: a length as long as the meanders make it), the pattern tuned again with it, as its properties panel
+    /// changes it: one change
+    func setPatternTarget(_ value: Double?) {
+        guard let pattern = selectedPattern, !isRouting, tuning == nil else { return }
+        let uuid = pattern.uuid
+        var settings = pattern.settings
+        if let value {
+            settings = Self.tuneSettings(pattern.settings, mode: pattern.mode, length: value, skew: value)
+        } else if pattern.mode != .skew {
+            settings.setTargetLength(MeanderSettings.lengthUnconstrained)
+        }
+        Task {
+            if !(await place { $0.editTuningPattern(uuid, settings: settings) }) {
+                NSSound.beep()
+                message = "The pattern is tuned to that already."
+            }
+        }
+    }
+
+    /// The selected pattern's meanders' largest amplitude (mm), tuned again with it: one change
+    func setPatternAmplitude(_ value: Double) {
+        guard let pattern = selectedPattern, !isRouting, tuning == nil, value > 0 else { return }
+        let uuid = pattern.uuid
+        var settings = pattern.settings
+        settings.maxAmplitude = Int((value * 1e6).rounded())
+        if settings.minAmplitude > settings.maxAmplitude { settings.minAmplitude = settings.maxAmplitude }
+        Task { _ = await place { $0.editTuningPattern(uuid, settings: settings) } }
+    }
+
+    /// The board's tuning patterns tuned again, each in turn (KiCad's Edit > Update All Tuning Patterns): one change
+    func updateAllPatterns() {
+        guard !isRouting, tuning == nil else { return }
+        Task {
+            if !(await place { $0.updateAllTuningPatterns() }) { message = "The tuning patterns are as they would be tuned already." }
+        }
+    }
+
+    /// The selected pattern deleted, its line made straight again along the line it was placed over (KiCad's Delete
+    /// of a pattern): one change
+    func deleteSelectedPattern() {
+        guard let uuid = patternSelection, !isRouting else { return }
+        patternSelection = nil
+        Task { _ = await place { $0.removeTuningPattern(uuid) } }
     }
 
     /// The tuning dropped (Esc), the track as it was
