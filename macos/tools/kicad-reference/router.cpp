@@ -6,6 +6,9 @@
 // that asks, those it took off: a route that shoves replaces what it shoved). Each route walks round obstacles,
 // shoves them or marks them, as it says. A route can be a drag instead (a track's segment or corner, an arc track,
 // or a via, as the router tool's drag tools drag them), with what the dragger dragged after each step; or a
+// footprint's drag, its pads (and its zones and drawings on copper) with the tracks on them, as the router tool drags
+// a footprint, with what it dragged after each step and the footprint's items moved as the commit moves the
+// footprint; or several tracks dragged together, as the router tool drags tracks selected together; or a
 // differential pair, routed from a pad, via or track end of one of a pair's nets and the nearest of its coupled net's,
 // with the pair's two lines after each step; or a length tuning, of a track, of a differential pair or of a pair's
 // skew, by KiCad's meander placers as its tuning patterns drive them, with the tuned lines, the tuning's status and
@@ -55,9 +58,10 @@
 #include <pns_via.h>
 
 // (the line placer's fixed stages and the shove's springback stack, which undefinedUndo looks at, the diff pair
-// placer's last node, which undefinedFix looks at, and the diff pair meander placer's node, which undefinedTuningFix
-// looks at)
+// placer's last node, which undefinedFix looks at, the diff pair meander placer's node, which undefinedTuningFix
+// looks at, and the tracks a footprint's drag moves whole, which undefinedComponentDrag looks at)
 #define private public
+#include <pns_component_dragger.h>
 #include <pns_diff_pair_placer.h>
 #include <pns_dp_meander_placer.h>
 #include <pns_line_placer.h>
@@ -152,8 +156,20 @@ public:
 
         const PNS::ITEM* key = aItem->OfKind( PNS::ITEM::HOLE_T ) && aItem->ParentPadVia() ? aItem->ParentPadVia() : aItem;
         auto it = m_info.find( key );
+
+        // (a copy a footprint's drag made of a pad, or of a zone's or drawing's solid: its original's, as KiCad reads
+        // a copy's rules from the BOARD_ITEM it keeps)
+        if( it == m_info.end() && key->OfKind( PNS::ITEM::SOLID_T ) && key->Origin() != key->Serial() )
+        {
+            if( auto o = m_originals.find( key->Origin() ); o != m_originals.end() )
+                it = m_info.find( o->second );
+        }
+
         return it == m_info.end() ? nullptr : &it->second;
     }
+
+    /// The board's solids by their serial numbers, whose copies take their rules
+    std::map<uint64_t, const PNS::ITEM*> m_originals;
 
     bool isHole( const PNS::ITEM* aItem ) const { return aItem && aItem->OfKind( PNS::ITEM::HOLE_T ); }
 
@@ -593,6 +609,8 @@ public:
     int                          m_layers = 2;
     SCENE_RESOLVER               m_resolver;
     std::vector<PNS::ITEM*>      m_byIndex;
+    /// All the router items made of each of the board's items (a keepout zone's triangles), by index
+    std::vector<std::vector<PNS::ITEM*>> m_allByIndex;
     std::vector<json>            m_added;
     json                         m_triangles;     // the keepout zones' triangles, as SyncWorld made them
     int                          m_maxClearance = -1;
@@ -602,13 +620,16 @@ public:
     {
         m_world = aWorld;
         m_byIndex.clear();
+        m_allByIndex.clear();
         m_resolver.m_info.clear();
+        m_resolver.m_originals.clear();
         m_triangles = json::array();
 
         for( const json& j : m_items )
         {
             std::string kind = j["kind"];
             PNS::ITEM*  item = nullptr;
+            std::vector<PNS::ITEM*> made;
             ITEM_INFO   info{ kind, j.value( "npth", false ) };
             info.copper = j.value( "copper", kind != "edge" );
             info.drilled = j.value( "drilled", false );
@@ -662,6 +683,7 @@ public:
 
                 item = solid.get();
                 m_resolver.m_info[item] = info;
+                m_resolver.m_originals[item->Serial()] = item;
                 aWorld->Add( std::move( solid ) );
             }
             else if( kind == "keepout" )
@@ -713,7 +735,10 @@ public:
                             if( !item )
                                 item = solid.get();
 
+                            made.push_back( solid.get() );
+
                             m_resolver.m_info[solid.get()] = info;
+                            m_resolver.m_originals[solid->Serial()] = solid.get();
                             m_triangles.push_back( { { "layer", layer }, { "triangle", chainPoints( triShape->Vertices() ) } } );
                             aWorld->Add( std::move( solid ) );
                         }
@@ -779,6 +804,12 @@ public:
             }
 
             m_byIndex.push_back( item );
+
+            // (and all the router items made of it: a keepout zone's triangles, on each of its layers)
+            if( made.empty() && item )
+                made.push_back( item );
+
+            m_allByIndex.push_back( made );
         }
 
         int worst = m_maxClearance >= 0 ? m_maxClearance
@@ -822,8 +853,85 @@ public:
 
             return j;
         }
+        else if( aItem->Kind() == PNS::ITEM::SOLID_T )
+        {
+            // (a pad, or a footprint's drawing on copper, as a footprint's drag moves it: where it is)
+            auto s = static_cast<const PNS::SOLID*>( aItem );
+            return { { "kind", "solid" }, { "net", netCode( s->Net() ) }, { "pos", pt( s->Pos() ) },
+                     { "layers", json::array( { s->Layers().Start(), s->Layers().End() } ) } };
+        }
 
         return json();
+    }
+
+    /// A shape of the scene's moved by `aD`
+    static json movedShape( const json& aShape, const VECTOR2I& aD )
+    {
+        json s = aShape;
+
+        auto move = [&]( json& p ) { p = pt( pt( p ) + aD ); };
+
+        if( s.contains( "circle" ) )
+            move( s["circle"] );
+        else if( s.contains( "rect" ) )
+            move( s["rect"] );
+        else if( s.contains( "segment" ) )
+            for( json& p : s["segment"] ) move( p );
+        else if( s.contains( "arc" ) )
+            for( json& p : s["arc"] ) move( p );
+        else if( s.contains( "simple" ) )
+            for( json& p : s["simple"] ) move( p );
+
+        return s;
+    }
+
+    /// An item of the scene moved by `aD`, as a footprint moved takes its pads, drawings and zones with it
+    static json movedItem( const json& aItem, const VECTOR2I& aD )
+    {
+        json j = aItem;
+
+        if( j.contains( "pos" ) )
+            j["pos"] = pt( pt( j["pos"] ) + aD );
+
+        if( j.contains( "shape" ) )
+            j["shape"] = movedShape( j["shape"], aD );
+
+        if( j.contains( "hole" ) && !j["hole"].is_null() )
+            j["hole"] = movedShape( j["hole"], aD );
+
+        if( j.contains( "polygons" ) )
+        {
+            for( json& polygon : j["polygons"] )
+                for( json& chain : polygon )
+                    for( json& p : chain )
+                        p = pt( pt( p ) + aD );
+        }
+
+        return j;
+    }
+
+    /// The solids a footprint's drag committed, as the board's side sees them (PNS_KICAD_IFACE's m_fpOffsets): those
+    /// taken off, with their scene indices and where they were, and those put on, where they are, each in the order
+    /// the commit hands them over (the order they were made in, the copies in their originals' order)
+    std::vector<std::pair<int, VECTOR2I>> m_removedSolids;
+    std::vector<VECTOR2I>                 m_addedSolids;
+
+    /// The scene's items the drag moved, each moved as its solid was (by the offset KiCad's commit moves its
+    /// footprint by), added for the next route; false if what was taken off and put on do not pair up
+    bool addMovedSolids()
+    {
+        if( m_removedSolids.size() != m_addedSolids.size() )
+            return false;
+
+        for( size_t k = 0; k < m_removedSolids.size(); k++ )
+        {
+            auto [index, was] = m_removedSolids[k];
+
+            if( index >= 0 )
+                m_added.push_back( movedItem( m_items[index], m_addedSolids[k] - was ) );
+        }
+
+        return true;
     }
 
     /// What the route added, item by item (m_added's)
@@ -831,6 +939,13 @@ public:
 
     void AddItem( PNS::ITEM* aItem ) override
     {
+        // (a pad or drawing a footprint's drag moved: where it went, which the scene's item is moved by)
+        if( aItem->Kind() == PNS::ITEM::SOLID_T )
+        {
+            m_addedSolids.push_back( static_cast<PNS::SOLID*>( aItem )->Pos() );
+            return;
+        }
+
         json j = itemJSON( aItem );
 
         if( !j.is_null() )
@@ -883,6 +998,10 @@ public:
 
     void RemoveItem( PNS::ITEM* aItem ) override
     {
+        // (a pad or drawing a footprint's drag moves: which it is, and where it was)
+        if( aItem->Kind() == PNS::ITEM::SOLID_T )
+            m_removedSolids.push_back( { indexOf( aItem ), static_cast<PNS::SOLID*>( aItem )->Pos() } );
+
         // (what the route added and has taken off again, a differential pair's fix shoving what an earlier one put
         // on the board, is not added after all)
         if( auto it = std::find( m_addedItems.begin(), m_addedItems.end(), aItem ); it != m_addedItems.end() )
@@ -898,6 +1017,12 @@ public:
             // and taken for it, its index reported for it and its rules read for it, as when a differential pair's
             // fix commits what it shoved and goes on)
             m_byIndex[i] = nullptr;
+            m_allByIndex[i].clear();
+            m_resolver.m_info.erase( aItem );
+        }
+        else
+        {
+            // (nor of a keepout zone's other triangles, which a footprint's drag moves with the footprint)
             m_resolver.m_info.erase( aItem );
         }
     }
@@ -1094,6 +1219,68 @@ static bool undefinedFix( PNS::DIFF_PAIR_PLACER* aPlacer, const PNS::ROUTING_SET
            && aPlacer->m_currentTrace.CP().SegmentCount() >= 1 && aPlacer->m_currentTrace.CN().SegmentCount() >= 1;
 }
 
+/// Whether a footprint's drag moved to `aP` now (COMPONENT_DRAGGER::Drag) would have KiCad's dragger keep a track it
+/// has freed: the tracks it moves whole with the footprint (from one of its pads to another) it takes off its branch
+/// and puts on again moved, one at a time, each copy put on unless the branch has a track of the same net on the same
+/// layer between the same two points (NODE::Add refuses it as redundant, and frees it), which it keeps among what it
+/// dragged all the same; the router then asks the freed track what it collides with (markViolations). Such a track
+/// is one of the board's of that net there (not one of those moved whole the drag has taken off already), or the
+/// copy of one moved before it (two tracks between the same two pads, or a footprint moved by the distance between
+/// two of its pads). What KiCad's router does then is undefined, so such a scene is no reference.
+static bool undefinedComponentDrag( PNS::ROUTER& aRouter, const VECTOR2I& aP )
+{
+    auto dragger = dynamic_cast<PNS::COMPONENT_DRAGGER*>( aRouter.GetDragger() );
+
+    if( !dragger )
+        return false;
+
+    PNS::NODE*                    world = aRouter.GetWorld(); // (the dragger's world)
+    VECTOR2I                      d = aP - dragger->m_p0;
+    std::set<const PNS::ITEM*>    taken;
+    std::vector<const PNS::ITEM*> fixed( dragger->m_fixedItems.begin(), dragger->m_fixedItems.end() );
+    std::vector<std::pair<const PNS::ITEM*, std::pair<VECTOR2I, VECTOR2I>>> copies;
+
+    // (in the order the patched dragger takes them: the order they were made in)
+    std::sort( fixed.begin(), fixed.end(), []( const PNS::ITEM* a, const PNS::ITEM* b ) { return a->Serial() < b->Serial(); } );
+
+    for( const PNS::ITEM* item : fixed )
+    {
+        taken.insert( item );
+        VECTOR2I a = item->Anchor( 0 ) + d, b = item->Anchor( 1 ) + d;
+
+        auto same = [&]( const PNS::ITEM* o, const VECTOR2I& oa, const VECTOR2I& ob )
+        {
+            return o->Kind() == item->Kind() && o->Net() == item->Net() && o->Layers().Start() == item->Layers().Start()
+                   && ( ( oa == a && ob == b ) || ( oa == b && ob == a ) );
+        };
+
+        if( a == b )
+            continue;
+
+        if( const PNS::JOINT* jt = world->FindJoint( a, item->Layers().Start(), item->Net() ) )
+        {
+            for( const PNS::ITEM* o : jt->CLinks().CItems() )
+            {
+                if( !taken.count( o ) && o->OfKind( PNS::ITEM::SEGMENT_T | PNS::ITEM::ARC_T )
+                    && same( o, o->Anchor( 0 ), o->Anchor( 1 ) ) )
+                {
+                    return true;
+                }
+            }
+        }
+
+        for( const auto& [o, ends] : copies )
+        {
+            if( same( o, ends.first, ends.second ) )
+                return true;
+        }
+
+        copies.push_back( { item, { a, b } } );
+    }
+
+    return false;
+}
+
 static json lineJSON( const PNS::LINE& aLine )
 {
     json j = { { "points", chainPoints( aLine.CLine() ) }, { "width", aLine.Width() }, { "layer", aLine.Layer() } };
@@ -1143,7 +1330,8 @@ static json tracesJSON( const PNS::ITEM_SET& aTraces )
 /// ends the drag when the dragger keeps it. After each, whether the move worked, what it dragged, whether the dragger
 /// marks obstacles now (its first move failed) and whether what it dragged is clear, and the board as the dragger has
 /// it, when it has changed, for a scene that asks. A last click ("fix" of the route) if the drag is still going on.
-static void dragSteps( PNS::ROUTER& aRouter, SCENE_IFACE& aIface, const json& aRoute, json& aMoves, json& aResult,
+/// (A footprint's drag, ROUTER_TOOL::InlineDrag's, goes the same way.) False if a move would be undefined in KiCad.
+static bool dragSteps( PNS::ROUTER& aRouter, SCENE_IFACE& aIface, const json& aRoute, json& aMoves, json& aResult,
                        bool aRemoveItems )
 {
     bool finished = false;
@@ -1155,6 +1343,10 @@ static void dragSteps( PNS::ROUTER& aRouter, SCENE_IFACE& aIface, const json& aR
 
         if( m.is_array() )
         {
+            // (a footprint's drag KiCad's dragger gets wrong: no reference to be had)
+            if( undefinedComponentDrag( aRouter, pt( m ) ) )
+                return false;
+
             step["moved"] = aRouter.Move( pt( m ), nullptr );
         }
         else if( m.contains( "fix" ) )
@@ -1195,6 +1387,7 @@ static void dragSteps( PNS::ROUTER& aRouter, SCENE_IFACE& aIface, const json& aR
         aResult["fixed"] = aRouter.FixRoute( pt( aRoute["fix"] ), nullptr, false, aRoute.value( "force", false ) );
 
     aRouter.StopRouting();
+    return true;
 }
 
 /// A length tuning's settings (MEANDER_SETTINGS) as the route gives them ("meander"), KiCad's defaults for the rest:
@@ -1511,6 +1704,8 @@ int main()
         iface.m_added.clear();
         iface.m_addedItems.clear();
         iface.m_removed.clear();
+        iface.m_removedSolids.clear();
+        iface.m_addedSolids.clear();
 
         // (with the first route, the keepout zones' triangles as the world has them, if there are any)
         if( out.empty() && !iface.m_triangles.empty() )
@@ -1519,9 +1714,47 @@ int main()
         // (a drag: of the item the route names, from where it says, as the router tool's drag (D) or free angle drag
         // (G) starts one; else a track from its start)
         bool dragging = route.contains( "drag" );
+        // (a footprint's drag: its items the route names, from where it says, as ROUTER_TOOL::InlineDrag drags a
+        // footprint: the solids of its pads, zones and drawings, all of each item's, in the order the route gives
+        // them; from the pointer, or the footprint's anchor where the move warps the pointer to it)
+        bool componentDrag = route.contains( "cdrag" );
+        // (several tracks dragged together: the segments and arcs the route names, in its order, from where it says,
+        // as InlineDrag drags the tracks selected)
+        bool multiDrag = route.contains( "mdrag" );
         bool started;
 
-        if( dragging )
+        if( multiDrag )
+        {
+            const json&   d = route["mdrag"];
+            PNS::ITEM_SET items;
+
+            for( const json& i : d["items"] )
+            {
+                if( PNS::ITEM* item = itemAt( "i", json{ { "i", i } } ) )
+                    items.Add( item );
+            }
+
+            started = router.StartDragging( pt( d["at"] ), items, PNS::DM_ANY );
+        }
+        else if( componentDrag )
+        {
+            const json&   d = route["cdrag"];
+            PNS::ITEM_SET items;
+
+            for( const json& i : d["items"] )
+            {
+                int k = i.get<int>();
+
+                if( k >= 0 && k < (int) iface.m_allByIndex.size() )
+                {
+                    for( PNS::ITEM* item : iface.m_allByIndex[k] )
+                        items.Add( item );
+                }
+            }
+
+            started = router.StartDragging( pt( d["at"] ), items, PNS::DM_ANY );
+        }
+        else if( dragging )
         {
             const json& d = route["drag"];
             started = router.StartDragging( pt( d["at"] ), itemAt( "item", d ),
@@ -1547,9 +1780,20 @@ int main()
         json moves = json::array();
         json lastNode;
 
-        if( started && dragging )
+        if( started && ( dragging || componentDrag || multiDrag ) )
         {
-            dragSteps( router, iface, route, moves, r, removeItems );
+            if( !dragSteps( router, iface, route, moves, r, removeItems ) )
+            {
+                std::cerr << "route " << out.size() << ": a footprint's drag KiCad's router has no defined result for\n";
+                return 3;
+            }
+
+            // (the footprint's items, moved as KiCad's commit moves the footprint, put on for the routes after it)
+            if( componentDrag && !iface.addMovedSolids() )
+            {
+                std::cerr << "route " << out.size() << ": the solids a footprint's drag took off and put on differ\n";
+                return 1;
+            }
         }
         else if( started && tuning )
         {

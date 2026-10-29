@@ -685,7 +685,7 @@ public final class BoardRouter {
 
     // MARK: - Writing the board
 
-    private func apply() {
+    func apply() {
         lastAdded = []
         lastRemoved = []
         for item in iface.removedItems {

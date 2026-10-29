@@ -47,9 +47,10 @@ flags="-std=c++20 -O1 -DNDEBUG -DUSINGZ -DFMT_HEADER_ONLY -I$work/generated -I$s
 # vias are made for in an order of their own; a missing BOARD_ITEM asked nothing, or asked of router.cpp; KiCad's
 # undefined behaviour reported. Those made before .patched-1 changed headers, so everything was compiled again after
 # them; those since change a .cpp only, which is then newer than its object. (.patched-2 came with NDEBUG, which
-# everything was compiled again for too.)
+# everything was compiled again for too, and .patched-3 with a copy's original's serial number, in pns_item.h.)
 python3 "$here/patch.py" "$src"
 [ -e "$work/.patched-2" ] || touch "$work/.patched-2"
+[ -e "$work/.patched-3" ] || touch "$work/.patched-3"
 
 # KiCad's geometry, its polygon clipper, its router (all but its glue to the PCB editor), and what they call of
 # common/: advanced settings (their defaults), the router's settings, colours for its debug drawing, ids, units
@@ -70,7 +71,7 @@ echo "compiling $(echo "$sources" | wc -l) files"
 export CXX flags obj work
 echo "$sources" | xargs -P "$(nproc 2>/dev/null || sysctl -n hw.ncpu)" -I{} sh -c '
     o="$obj/$(echo "{}" | cksum | cut -d" " -f1)-$(basename "{}" .cpp).o"
-    { [ "$o" -nt "{}" ] && [ "$o" -nt "$work/.patched-2" ]; } || $CXX $flags -c "{}" -o "$o"'
+    { [ "$o" -nt "{}" ] && [ "$o" -nt "$work/.patched-2" ] && [ "$o" -nt "$work/.patched-3" ]; } || $CXX $flags -c "{}" -o "$o"'
 objects=$(echo "$sources" | while read -r f; do echo "$obj/$(echo "$f" | cksum | cut -d" " -f1)-$(basename "$f" .cpp).o"; done)
 
 for program in geometry router clipper; do

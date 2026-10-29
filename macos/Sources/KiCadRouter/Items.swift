@@ -397,14 +397,20 @@ public final class Solid: Item {
     public var orientation = 0.0
     public var anchorPoints: [IPoint] = []
     private var _hole: Hole?
+    /// The serial number of the solid this is a copy of (a copy's original's), its own if none: a footprint's drag
+    /// moves copies of its pads, which keep their originals' board items, and so their rules (as tools/kicad-reference
+    /// has KiCad's copies keep their originals' serial numbers, for router.cpp's rules)
+    public private(set) var originSerial = 0
 
     public init() {
         super.init(kind: .solid)
         movable = false
+        originSerial = serial
     }
 
     private init(copying s: Solid) {
         super.init(copying: s)
+        originSerial = s.originSerial
         solidShape = s.solidShape
         if let h = s._hole { setHole(h.clone() as! Hole) }
         pos = s.pos
@@ -544,6 +550,10 @@ public final class Arc: LinkedItem {
         a.isRoutable = isRoutable
         return a
     }
+
+    /// The arc moved by `d` (KiCad's SHAPE_ARC::Move on the arc's own shape: its three points moved, the rest made
+    /// again from them)
+    public func move(_ d: IPoint) { arc = arc.moved(d) }
 
     public override var width: Int {
         get { arc.width }

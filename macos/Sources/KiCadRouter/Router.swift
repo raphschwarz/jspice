@@ -1,6 +1,6 @@
 // Ported from KiCad 10.0.7: pcbnew/router/pns_router.h and pns_router.cpp (routing a track or a differential pair,
-// tuning a track's or a pair's length or a pair's skew, and dragging a segment, corner or via; not footprints or
-// pairs dragged), and PNS_KICAD_IFACE_BASE::CalculateRoutedPathLength (pcbnew/router/pns_kicad_iface.cpp) with the
+// tuning a track's or a pair's length or a pair's skew, dragging a segment, corner or via, a footprint's pads with
+// the tracks on them, and several tracks at once), and PNS_KICAD_IFACE_BASE::CalculateRoutedPathLength (pcbnew/router/pns_kicad_iface.cpp) with the
 // parts of pcbnew/length_delay_calculation/length_delay_calculation.cpp it uses (CalculateLengthDetails, its length).
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
@@ -131,8 +131,14 @@ public final class Router {
     public var diffPairPlacer: DiffPairPlacer? { placer as? DiffPairPlacer }
     /// The placer, tuning a length
     public var meanderPlacer: MeanderPlacerBase? { placer as? MeanderPlacerBase }
-    /// What drags a segment, corner or via (KiCad's GetDragger)
-    public private(set) var dragger: Dragger?
+    /// What drags (KiCad's GetDragger)
+    private(set) var dragAlgo: DragAlgo?
+    /// What drags a segment, corner or via
+    public var dragger: Dragger? { dragAlgo as? Dragger }
+    /// What drags a footprint's pads with the tracks on them
+    public var componentDragger: ComponentDragger? { dragAlgo as? ComponentDragger }
+    /// What drags several tracks together
+    public var multiDragger: MultiDragger? { dragAlgo as? MultiDragger }
 
     public func clearWorld() {
         world?.killChildren()
@@ -267,21 +273,41 @@ public final class Router {
     /// Starts dragging `item` (a track's segment, or a via) from `p` (KiCad's StartDragging): its segment, or its
     /// corner if `p` is at one of its ends, as `mode` allows; whether it could
     public func startDragging(_ p: IPoint, _ item: Item?, mode: DragMode = .any) -> Bool {
+        startDragging(p, item.map { [$0] } ?? [], mode: mode)
+    }
+
+    /// Starts dragging `items` from `p` (KiCad's StartDragging of an ITEM_SET): solids all of them (a footprint's
+    /// pads, zones and drawings, as the router tool hands them over), with the tracks on them (COMPONENT_DRAGGER);
+    /// more than one segment or arc, their lines together (MULTI_DRAGGER); else the first, a track's segment, its
+    /// corner or a via, as `mode` allows (DRAGGER); whether it could.
+    public func startDragging(_ p: IPoint, _ items: [Item], mode: DragMode = .any) -> Bool {
         Router.instance = self
         failureReason = ""
-        guard let item else { return false }
+        if items.isEmpty { return false }
         ruleResolver?.clearCaches()
-        // (footprints' pads, and several segments at once, which KiCad's COMPONENT_DRAGGER and MULTI_DRAGGER drag, are
-        // not ported)
-        if item.ofKind(.solid) { return false }
         guard let world else { return false }
-        let dragger = Dragger(router: self, world: world)
-        self.dragger = dragger
-        state = .dragSegment
-        dragger.setMode(mode)
-        dragger.setWorld(world)
-        if dragger.start(p, [item]) { return true }
-        self.dragger = nil
+        if items.allSatisfy({ $0.ofKind(.solid) }) {
+            let dragger = ComponentDragger(router: self, world: world)
+            dragAlgo = dragger
+            state = .dragComponent
+            dragger.setWorld(world)
+            if dragger.start(p, items) { return true }
+        } else if items.filter({ $0.ofKind([.segment, .arc]) }).count > 1 {
+            // (more than one segment or arc: dragged together)
+            let dragger = MultiDragger(router: self, world: world)
+            dragAlgo = dragger
+            state = .dragSegment
+            dragger.setWorld(world)
+            if dragger.start(p, items) { return true }
+        } else {
+            let dragger = Dragger(router: self, world: world)
+            dragAlgo = dragger
+            state = .dragSegment
+            dragger.setMode(mode)
+            dragger.setWorld(world)
+            if dragger.start(p, items) { return true }
+        }
+        dragAlgo = nil
         state = .idle
         return false
     }
@@ -300,9 +326,9 @@ public final class Router {
 
     /// KiCad's moveDragging, without the drawing
     private func moveDragging(_ p: IPoint, _ endItem: Item?) -> Bool {
-        guard let dragger else { return false }
-        let ret = dragger.drag(p)
-        markViolations(dragger.currentNode, dragger.traces)
+        guard let dragAlgo else { return false }
+        let ret = dragAlgo.drag(p)
+        markViolations(dragAlgo.currentNode, dragAlgo.traces)
         return ret
     }
 
@@ -321,7 +347,7 @@ public final class Router {
     /// The obstacles of what is being routed marked (KiCad's markViolations, without the drawing), not what is being
     /// dragged
     private func markViolations(_ node: Node, _ current: [Item]) {
-        let dragged = dragger?.traces ?? []
+        let dragged = dragAlgo?.traces ?? []
         for item in current {
             var obstacles = node.queryColliding(item)
             if let l = item as? Line, let via = l.via { obstacles += node.queryColliding(via.clone() as! Via) }
@@ -338,7 +364,7 @@ public final class Router {
         Router.instance = self
         switch state {
         case .routeTrack: return placer?.fixRoute(p, endItem, forceFinish: forceFinish) ?? false
-        case .dragSegment, .dragComponent: return dragger?.fixRoute(forceCommit: forceCommit) ?? false
+        case .dragSegment, .dragComponent: return dragAlgo?.fixRoute(forceCommit: forceCommit) ?? false
         case .idle: return false
         }
     }
@@ -376,7 +402,7 @@ public final class Router {
     public func stopRouting() {
         if !routingInProgress { return }
         placer = nil
-        dragger = nil
+        dragAlgo = nil
         state = .idle
         world?.killChildren()
         world?.clearRanks()
@@ -399,8 +425,8 @@ public final class Router {
         if state == .routeTrack, let placer { _ = placer.toggleVia(!placer.isPlacingVia) }
     }
 
-    public var currentNets: [NetHandle?] { placer?.currentNets ?? dragger?.currentNets ?? [] }
-    public var currentLayer: Int { placer?.currentLayer ?? dragger?.currentLayer ?? -1 }
+    public var currentNets: [NetHandle?] { placer?.currentNets ?? dragAlgo?.currentNets ?? [] }
+    public var currentLayer: Int { placer?.currentLayer ?? dragAlgo?.currentLayer ?? -1 }
     public var isPlacingVia: Bool { placer?.isPlacingVia ?? false }
 
     /// Where the track being routed should go next, and what is there (KiCad's GetNearestRatnestAnchor)

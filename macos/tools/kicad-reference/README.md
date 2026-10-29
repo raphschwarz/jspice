@@ -91,6 +91,42 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   the dragger's branches of the world (`NODE::Commit` lets go of them), and `router.cpp` asks the dragger nothing more
   then. Valgrind finds nothing wrong in KiCad's dragger on these scenes but the shove's slip above, when a drag that
   shoved a via is over and its shove deleted, which changes nothing.
+  A route can be a footprint's drag (`"cdrag": {"items": [INDEX...], "at": POINT}`): the items the route names (a
+  footprint's pads, then its keepout zones and drawings on copper, as `ROUTER_TOOL::InlineDrag` gathers them; all the
+  router's items made of each, a zone's triangles on each of its layers) handed to `ROUTER::StartDragging`, which
+  drags solids all of them with KiCad's `PNS::COMPONENT_DRAGGER`, from where the route says (the footprint's anchor,
+  where the move warps the pointer to it, or the pointer), through the route's pointer positions and clicks as a drag
+  goes. The dragger moves the solids by the pointer's offset, a track from one dragged pad to another (a line of them)
+  whole with them, and the end of each line out of a dragged pad with its pad, as a line's corner is dragged; it walks
+  round nothing and shoves nothing, and keeps a drag (a click) only where what it moved collides with nothing, unless
+  forced (Ctrl) or violations allowed. After each step it writes what the drag dragged (`Traces`: the solids moved,
+  where they are now, the tracks moved whole, the lines) and the board as the dragger has it, as a drag's; then what
+  the drag kept put on the board and took off it, the footprint's items among them, each moved by the offset of its
+  solid, as `PNS_KICAD_IFACE::Commit` moves the footprint, for the routes after it. A copy of a pad the drag makes
+  takes its rules from its original's (KiCad's copy keeps its `BOARD_ITEM`; `patch.py` has a copy keep its original's
+  serial number for this). The dragger also looks for tracks ending inside a pad's hull off its centre, to drag their
+  ends with it, but asks whether such a track collides with the pad, which one of the pad's net never does where the
+  user has no net-blind rules of their own: KiCad leaves them where they are, and so does the port. A drag that would
+  move a track whole onto one of the same net the branch has already (two between the same two pads, or a footprint
+  moved by the distance between two of its pads) has KiCad's branch refuse the copy and free it, which the dragger
+  keeps among what it dragged and the router then asks what it collides with, a use after free: `router.cpp` sees it
+  coming and stops with exit status 3, and `scenes.py` leaves such boards out. Valgrind finds nothing wrong in KiCad's
+  dragger on these scenes (400 of them).
+  A route can be several tracks dragged together (`"mdrag": {"items": [INDEX...], "at": POINT}`), as the router tool
+  drags the tracks selected: the segments and arcs the route names, in its order, handed to `ROUTER::StartDragging`,
+  which drags more than one with KiCad's `PNS::MULTI_DRAGGER`, from where the route says, through its pointer
+  positions and clicks as a drag goes. KiCad's dragger (a demonstration, its comment says) takes the line of each, the
+  one the pointer is on (or nearest it) the primary one, and drags their ends, where the pointer is at the end of one
+  and every line's end is free, else their segments: the primary's to the pointer, each other line's as far off it as
+  it was, those running its way, in the first of three postures that works; then walks round what is in the way
+  (each line in turn, nearest first and then nearest last, the way that adds less kept), shoves it (the lines all
+  heads of one shove) or marks it (each line cut short of those before it), as the route's mode says; a click keeps
+  the drag only where the last move got there, or violations are allowed. After each step `router.cpp` writes what
+  the dragger lists as dragged (the other lines, dragging their ends) and the board as it has it, as a drag's. Two of
+  KiCad's ways the port keeps: the second walk's lines are given back to the lines the other way round, by their
+  places in the walk; and a corner drag's line that comes to nothing is left out of what is kept, the primary too.
+  Valgrind finds nothing wrong in KiCad's dragger on these scenes (400 of them) but the shove's slip above (in 2),
+  the shove's destructor asking a via freed when a drag that shoved it was kept.
   A route can be a differential pair (`"diffPair": true`, the router tool's Route Differential Pair): KiCad's diff
   pair placer (`PNS::DIFF_PAIR_PLACER`, in the router's `PNS_MODE_ROUTE_DIFF_PAIR`) routes the pair from the pad, via
   or track end the route starts on and the nearest of the same kind of its coupled net's. Which nets are pairs goes
@@ -404,6 +440,31 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   `scenes.py --mode meander --boards ... 2 20261108 ../../Tests/KiCadRouterTests/Fixtures/boards/*.json`, and
   `kicad-dpmeander-routes.json`
   `scenes.py --arcs --mode dpmeander ... ../../Tests/KiCadRouterTests/Fixtures/kicad-dpmeander-routes.json 30 20261108`.
+  With `--mode cdrag`, footprints dragged with the tracks on their pads, on boards with footprints of a few pads of
+  one shape in a row or two (surface mount on either side or through-hole; now and then a hole with no plating among
+  them, now and then a drawing on copper of one of their nets), tracks on their pads (out of a pad, of a few segments,
+  half of the boards with arcs among them; from one of a footprint's pads to another of its own of the same net, which
+  the drag moves whole; from a pad of one footprint to one of another's; some ending inside a pad off its centre),
+  other nets' tracks, vias and pads about them: each drag of one footprint (its pads, then its drawings), from its
+  first pad (as the move warps the pointer to the footprint's anchor) or a point by one of them, walking round,
+  shoving or marking (which changes only whether violations are allowed), the pointer taken away by a way of its own,
+  mostly into another net's track, via or pad near by, now and then back or resting, and clicked to keep the drag (now
+  and then with Ctrl); each on the board as the drags before it left it, the footprints moved. With `--boards`, the
+  footprints of real boards (their pads by the `"footprint"` board-scene.py gives them, and the keepout zones in
+  them). With `--mode mdrag`, several tracks dragged together, on boards like the drag mode's with buses on them
+  (two to five lines of different nets side by side, a straight run and now and then a turn of 45 or 90 degrees
+  after it, some ending free, some on a via or a pad of their net): a segment of each of a bus's lines (the pointer on
+  one, or near), or their last segments (the pointer at one's end, or near), or segments near each other anywhere,
+  dragged across mostly, now and then into another net's track or via, walking round, shoving or marking, and
+  clicked to keep the drag (now and then with Ctrl); each on the board as the drags before it left it. With
+  `--boards`, segments near each other on real boards. `kicad-mdrag-routes.json` is
+  `scenes.py --mode mdrag ... ../../Tests/KiCadRouterTests/Fixtures/kicad-mdrag-routes.json 25 20261105`, and
+  `kicad-board-mdrag-routes.json`
+  `scenes.py --mode mdrag --boards ... 1 20261105 ../../Tests/KiCadRouterTests/Fixtures/boards/*.json ../../Tests/KiCadRouterTests/Fixtures/arcboards/*.json`.
+  `kicad-cdrag-routes.json` is
+  `scenes.py --mode cdrag ... ../../Tests/KiCadRouterTests/Fixtures/kicad-cdrag-routes.json 25 20261104`, and
+  `kicad-board-cdrag-routes.json`
+  `scenes.py --mode cdrag --boards ... 1 20261104 ../../Tests/KiCadRouterTests/Fixtures/boards/*.json ../../Tests/KiCadRouterTests/Fixtures/arcboards/*.json`.
   `KICAD_ROUTER_REFERENCE` names others (separated by colons).
 - `clipper.cpp`: the polygon clipper KiCad ships (`thirdparty/clipper2`, Clipper2, compiled as KiCad compiles it: its
   points carry a z value) on random cases, with its answers: boolean operations (union, intersection, difference,
@@ -432,7 +493,10 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   stops (exit status 3). The dot product `DRAGGER::startDragArc` takes to choose which way the stub it puts at an
   arc's free end goes overflows its ints for an arc of more than some 46 µm radius, which is undefined too, but
   KiCad's builds wrap it round in 32 bits, the same every time, and nearly every drag of an arc at a line's end comes
-  to it: it is made to wrap round in unsigned ints, which C++ defines, as the port wraps it.
+  to it: it is made to wrap round in unsigned ints, which C++ defines, as the port wraps it. A footprint's drag takes
+  the pads it drags and the tracks it moves whole in the order they were made, rather than in sets of pointers', and
+  the joints of tracks ending in a pad's hull in the order of their places rather than a hash map's; and a copy keeps
+  its original's serial number, which `router.cpp`'s rules take a moved pad's rules by.
 - `stubs.cpp`: what the router and KiCad's settings call from the rest of KiCad, as these programs need it (no
   program object, no settings folder, no boards), the hook `router.cpp` answers that last question through, and the
   stop where KiCad's router would do what is undefined (`kicadReferenceUndefined`).
@@ -447,6 +511,18 @@ involve a track or via the router placed. `BoardEditingTests.swift` does the sam
 the fixture boards (`BoardEditing`'s drag), walking round and shoving: no clearance, crossing or short with them; and
 with differential pairs routed on the pair boards (`BoardEditing`'s `startPair`, as the router tool's Route
 Differential Pair starts one, at the net class's diff pair width and gap), walking round through vias and shoving.
+`BoardFootprintDragTests.swift` drags footprints with the tracks on their pads on the fixture boards (`BoardEditing`'s
+`startFootprintDrag`, `dragFootprint`, `fixFootprintDrag`, as the router tool's drag of a footprint drags it), each
+a little way that the dragger finds clear (a way it does not is dropped, a click there keeping nothing), walking round
+and shoving: the footprint moved in the board file by the offset, its pads with it, the tracks on its pads taken away
+and tracks ending on them where they are now; and KiCad's DRC finds no clearance, crossing or short that it did not
+find before the drags, and no more left unconnected. (Footprints with a track ending inside a pad off its centre, or
+a via on a pad, which KiCad's drag leaves where they are, are not dragged there.) `BoardMultiDragTests.swift` drags
+segments of different nets near each other, running the same way, together (`BoardEditing`'s `startMultiDrag`,
+`multiDrag`, `fixMultiDrag`), walking round and shoving: what the drags keep goes into the board file, and KiCad's DRC
+of the boards they leave is reported rather than judged, since KiCad's multi dragger itself does not keep what it
+leaves clear (on one of the fixture boards KiCad's DRC then reports a short it reported otherwise before, and KiCad's
+own router, run on that board and drag, makes the same tracks).
 `BoardTuningTests.swift` tunes tracks' lengths on the fixture boards, and the pairs it routes on the pair boards their
 lengths and skews (`BoardEditing`'s `startTuning`, `moveTuning`, `fixTuning`, as KiCad's tuning patterns drive the
 meander placers): the length each tuning reports is the length its tracks then have on the board, and KiCad's DRC
@@ -459,8 +535,10 @@ CI (`.github/workflows/kicad.yml`) builds them and checks the port against 2000 
 arcs too), 2000 clipper cases of each kind, 1000 random router boards, 400 random boards with routes that shove, 400
 random boards with tracks and vias dragged, 100 random boards with differential pairs, 200 random boards with arc
 tracks and routes in every corner mode, 150 with arc tracks and drags, 300 random boards with tracks tuned and 200
-with differential pairs' lengths and skews tuned (arc tracks among them), 40 boards of random stackups, 60 real boards made by `boards.py` (their
-worlds, routes on them that walk round, mark and shove, drags and length tunings on them, and KiCad's DRC on the
-port's routes), 10 with pairs (`boards.py --pairs`, pairs routed on them) and 20 with arc tracks (`boards.py --arcs`:
+with differential pairs' lengths and skews tuned (arc tracks among them), 300 random boards with footprints dragged,
+300 with several tracks dragged together,
+40 boards of random stackups, 60 real boards made by `boards.py` (their
+worlds, routes on them that walk round, mark and shove, drags, footprints and tracks dragged together and length tunings on them, and
+KiCad's DRC on the port's routes), 10 with pairs (`boards.py --pairs`, pairs routed on them) and 20 with arc tracks (`boards.py --arcs`:
 their worlds, routes in every corner mode and drags on them); each run has a new seed, the run number, which the names
 a failure reports carry.

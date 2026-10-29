@@ -8,7 +8,10 @@ enum SceneRouting {
     /// Routes the scene's routes as router.cpp does; its output, as router.cpp writes it
     static func route(_ scene: [String: Any]) -> [[String: Any]] {
         let copper = (scene["layers"] as? NSNumber)?.intValue ?? 2
-        var items = (scene["items"] as! [[String: Any]]).compactMap { WorldItem(scene: $0, layers: copper) }
+        // (the items with their scene forms, which a footprint's drag moves for the routes after it)
+        let pairs = (scene["items"] as! [[String: Any]]).compactMap { j in WorldItem(scene: j, layers: copper).map { (j, $0) } }
+        var items = pairs.map(\.1)
+        var sceneItems = pairs.map(\.0)
         var rules = WorldRules(scene: scene["rules"] as? [String: Any] ?? [:])
         // (the nets' names, which say which are differential pairs)
         for (code, name) in scene["netNames"] as? [String: Any] ?? [:] {
@@ -80,10 +83,24 @@ enum SceneRouting {
                 }
                 if !triangles.isEmpty { r["keepoutTriangles"] = triangles }
             }
-            // (a drag, of the item the route names, from where it says; else a track from its start)
+            // (a drag, of the item the route names, from where it says; a footprint's drag, of the items it names, all
+            // the router's items of each, in order; else a track from its start)
             let drag = route["drag"] as? [String: Any]
+            let cdrag = route["cdrag"] as? [String: Any]
+            // (several tracks dragged together: the segments and arcs it names, in order)
+            let mdrag = route["mdrag"] as? [String: Any]
             let started: Bool
-            if let drag {
+            if let mdrag {
+                let dragged = (mdrag["items"] as? [Any] ?? []).compactMap { itemAt("i", ["i": $0]) }
+                started = router.startDragging(point(mdrag["at"]!), dragged)
+            } else if let cdrag {
+                // (a keepout zone's triangles, on each of its layers, in the order they were made)
+                let dragged = (cdrag["items"] as? [Any] ?? []).flatMap { i -> [Item] in
+                    let k = int(i)
+                    return k >= 0 && k < iface.allRouterItems.count ? iface.allRouterItems[k] : []
+                }
+                started = router.startDragging(point(cdrag["at"]!), dragged)
+            } else if let drag {
                 started = router.startDragging(point(drag["at"]!), itemAt("item", drag),
                                                mode: (drag["freeAngle"] as? NSNumber)?.boolValue == true ? [.any, .freeAngle] : .any)
             } else if let tune {
@@ -97,7 +114,7 @@ enum SceneRouting {
             if !started { r["failure"] = router.failureReason }
             var moves: [[String: Any]] = []
             var lastNode = canonical(NSNull())
-            if started && drag != nil {
+            if started && (drag != nil || cdrag != nil || mdrag != nil) {
                 moves = dragSteps(router, route, &r, iface, removeItems)
             } else if started && tune != nil {
                 moves = tuneSteps(router, route, &r, iface, removeItems)
@@ -162,17 +179,36 @@ enum SceneRouting {
                 }
                 router.commitRouting()
             }
-            // (what the route added, in the order router.cpp sorts it to, for the next route)
-            let added = iface.added.compactMap(addedJSON).sorted { canonical($0) < canonical($1) }
+            // (what the route added, in the order router.cpp sorts it to, for the next route: a footprint's drag kept,
+            // its items moved as KiCad's commit moves the footprint, each by its solid's offset)
+            var addedItems = iface.added.compactMap(addedJSON)
+            if cdrag != nil {
+                let removedSolids = iface.removedItems.compactMap { $0 as? Solid }
+                let addedSolids = iface.added.compactMap { $0 as? Solid }
+                precondition(removedSolids.count == addedSolids.count, "the solids a footprint's drag took off and put on differ")
+                for (was, now) in zip(removedSolids, addedSolids) {
+                    guard let k = iface.routerItems.firstIndex(where: { $0 === was }) else { continue }
+                    addedItems.append(movedJSON(sceneItems[k], now.pos - was.pos))
+                }
+            }
+            let added = addedItems.sorted { canonical($0) < canonical($1) }
             r["moves"] = moves
             r["added"] = added
             if removeItems {
                 let removed = iface.removedItems.compactMap { item in iface.routerItems.firstIndex { $0 === item } }.sorted()
                 r["removed"] = removed
-                for i in removed.reversed() { items.remove(at: i) }
+                for i in removed.reversed() {
+                    items.remove(at: i)
+                    sceneItems.remove(at: i)
+                }
             }
             out.append(r)
-            items += added.compactMap { WorldItem(scene: $0, layers: copper) }
+            for a in added {
+                if let w = WorldItem(scene: a, layers: copper) {
+                    items.append(w)
+                    sceneItems.append(a)
+                }
+            }
         }
         return out
     }
@@ -193,12 +229,12 @@ enum SceneRouting {
                 step["fixed"] = finished
             }
             // (a drag kept is in the world, and the dragger's branches gone)
-            if !finished, let dragger = router.dragger {
+            if !finished, let dragger = router.dragAlgo {
                 step["forceMark"] = dragger.forceMarkObstaclesMode
                 step["status"] = dragger.dragStatus
                 step["dragged"] = dragger.traces.compactMap { item -> [String: Any]? in
                     if let l = item as? Line { return lineJSON(l) }
-                    return addedJSON(item)
+                    return addedJSON(item) ?? solidJSON(item)
                 }
                 step["layer"] = router.currentLayer
                 if removeItems {
@@ -311,8 +347,51 @@ enum SceneRouting {
         guard let node else { return NSNull() }
         let (removed, added) = node.updatedItems()
         let indices = removed.compactMap { item in iface.routerItems.firstIndex { $0 === item } }.sorted()
-        let items = added.compactMap(addedJSON).sorted { canonical($0) < canonical($1) }
+        let items = added.compactMap { addedJSON($0) ?? solidJSON($0) }.sorted { canonical($0) < canonical($1) }
         return ["removed": indices, "added": items]
+    }
+
+    /// A pad or a footprint's drawing as a footprint's drag moves it, as router.cpp writes it: where it is
+    static func solidJSON(_ item: Item) -> [String: Any]? {
+        guard let s = item as? Solid else { return nil }
+        return ["kind": "solid", "net": s.net ?? -1, "pos": [s.pos.x, s.pos.y], "layers": [s.layers.start, s.layers.end]]
+    }
+
+    /// A scene's shape moved by `d`, as router.cpp moves it
+    static func movedShape(_ shape: Any?, _ d: IPoint) -> Any? {
+        guard var s = shape as? [String: Any] else { return shape }
+        func move(_ p: Any?) -> [Int] {
+            let a = p as! [Any]
+            return [int(a[0]) + d.x, int(a[1]) + d.y]
+        }
+        if let c = s["circle"] {
+            s["circle"] = move(c)
+        } else if let r = s["rect"] {
+            s["rect"] = move(r)
+        } else if let g = s["segment"] as? [Any] {
+            s["segment"] = g.map(move)
+        } else if let a = s["arc"] as? [Any] {
+            s["arc"] = a.map(move)
+        } else if let q = s["simple"] as? [Any] {
+            s["simple"] = q.map(move)
+        }
+        return s
+    }
+
+    /// A scene's item moved by `d`, as a footprint moved takes its pads, drawings and zones with it (router.cpp's
+    /// movedItem)
+    static func movedJSON(_ item: [String: Any], _ d: IPoint) -> [String: Any] {
+        var j = item
+        if let p = j["pos"] { j["pos"] = movedShape(["circle": p], d).flatMap { ($0 as? [String: Any])?["circle"] } }
+        if let s = j["shape"] { j["shape"] = movedShape(s, d) }
+        if let h = j["hole"], !(h is NSNull) { j["hole"] = movedShape(h, d) }
+        if let polygons = j["polygons"] as? [[[Any]]] {
+            j["polygons"] = polygons.map { polygon in polygon.map { chain in chain.map { p -> [Int] in
+                let a = p as! [Any]
+                return [int(a[0]) + d.x, int(a[1]) + d.y]
+            } } }
+        }
+        return j
     }
 
     /// What the router put on the board, as router.cpp writes it
