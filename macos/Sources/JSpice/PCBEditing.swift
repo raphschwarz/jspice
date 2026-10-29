@@ -55,10 +55,18 @@ final class PCBEditing: ObservableObject {
         didSet { if layer != oldValue { layerChanged() } }
     }
     @Published private(set) var layers = ["F.Cu", "B.Cu"]
-    /// New tracks' width in mm, nil for their net class's
+    /// New tracks' width in mm, nil for their net class's (or the pre-defined size chosen, `sizeChoice`)
     @Published var width: Double? {
         didSet { if width != oldValue { widthChanged() } }
     }
+    /// The project's pre-defined track width and via size new tracks and vias take (KiCad's track width menu): the
+    /// net class's (0), or the project's i-th; a width of the list above (`width`) goes before it
+    @Published var sizeChoice = BoardEditing.SizeChoice() {
+        didSet { if sizeChoice != oldValue { sizeChoiceChanged() } }
+    }
+    /// A copper layer count asked for that removes layers with items on them, waiting for the user's word, as KiCad's
+    /// Board Setup waits for it: the count, and how many items it lists as on the layers removed
+    @Published var copperLayersToConfirm: (count: Int, items: Int)?
     /// Whether a track shoves other nets' tracks and vias in its way aside (KiCad's shove mode) or walks round them;
     /// the next track started takes it
     @Published var shove = UserDefaults.standard.bool(forKey: PCBEditing.shoveKey) {
@@ -173,8 +181,10 @@ final class PCBEditing: ObservableObject {
         layers = await engine.load(board, project: project)
         nets = await engine.run { Array(Set($0.router.world.netNames.values)).filter { !$0.isEmpty }.sorted() } ?? []
         let refills = !(controller?.isLive ?? false) && !(controller?.isOpenInKiCad ?? false)
+        let choice = sizeChoice
         _ = await engine.run { session -> Bool? in
             session.refillsZones = refills
+            session.sizeChoice = choice
             return true
         }
         await check()
@@ -1200,6 +1210,55 @@ final class PCBEditing: ObservableObject {
                 updateNames()
             }
         }
+    }
+}
+
+// MARK: - Board setup
+
+extension PCBEditing {
+    /// The pre-defined size chosen, taken by the session, and by the track being routed from here on (as KiCad's
+    /// width menu changes it while routing)
+    private func sizeChoiceChanged() {
+        let choice = sizeChoice, routing = isRouting && !routingPair
+        Task {
+            let shown = await engine.run { session -> BoardEditing.Preview? in
+                session.sizeChoice = choice
+                guard routing else { return nil }
+                return session.setWidth(session.chosenTrackWidth().map { Double($0) / 1e6 })
+            }
+            if routing { show(shown) }
+        }
+    }
+
+    /// The board's copper layer count set to `count` as KiCad's Board Setup sets it (its items on the layers removed
+    /// taken away, its stackup brought to the new layers), as one change; where layers with items on them would go,
+    /// asked first (copperLayersToConfirm), as KiCad asks
+    func requestCopperLayers(_ count: Int) {
+        guard !isRouting, !isDragging else { return }
+        Task {
+            await applying?.value
+            if !isReady { await prepareNow() }
+            let items = await engine.run { $0.itemsOnRemovedLayers(copperLayers: count) } ?? []
+            if items.isEmpty {
+                await setCopperLayersNow(count)
+            } else {
+                copperLayersToConfirm = (count, items.count)
+            }
+        }
+    }
+
+    /// The copper layer count waiting for the user's word set
+    func confirmCopperLayers() {
+        guard let (count, _) = copperLayersToConfirm else { return }
+        copperLayersToConfirm = nil
+        Task { await setCopperLayersNow(count) }
+    }
+
+    func setCopperLayersNow(_ count: Int) async {
+        guard await place({ $0.setCopperLayerCount(count) }) else { return }
+        await applying?.value
+        if !layers.contains(layer) { layer = layers.first ?? "F.Cu" }
+        message = "\(count) copper layers: the stackup brought to them as KiCad's Board Setup brings it"
     }
 }
 

@@ -3,6 +3,7 @@ import SwiftUI
 import CircuitKit
 import KiCadKit
 import KiCadLink
+import KiCadRouter
 import JSpiceAutomation
 
 /// The circuit's printed circuit board, kept in step with the schematic as it is drawn, as Eagle and Fusion keep theirs:
@@ -66,6 +67,9 @@ final class BoardController: ObservableObject {
     @Published private(set) var drc: KiCadFabrication.DRCReport?
     /// The board's net classes: the widths and gaps its tracks are routed with (its KiCad project's)
     @Published private(set) var netClasses: [KiCadProject.NetClass] = []
+    /// The project's pre-defined track widths and via sizes (KiCad's Board Setup > Pre-defined Sizes): the router's
+    /// width menu offers them
+    @Published private(set) var predefinedSizes = KiCadProject.PredefinedSizes()
     @Published private(set) var apiEnabled = true
 
     weak var editor: EditorState?
@@ -153,6 +157,7 @@ final class BoardController: ObservableObject {
         shownBoard = board.copy()
         shownProject = project
         netClasses = KiCadProject.netClasses(in: project)
+        predefinedSizes = KiCadProject.PredefinedSizes(project)
         let circuit = editor?.circuit ?? Circuit()
         let built = PCBNetlistBuilder.netlist(circuit, design: circuit.pcb)
         let top = BoardLink.topLevel(circuit)
@@ -615,6 +620,38 @@ final class BoardController: ObservableObject {
         guard shownBoard == nil else { return }
         Task {
             if let classes = try? await worker.run({ w in w.link?.netClasses() ?? [] }) { netClasses = classes }
+            if let sizes = try? await worker.run({ w in KiCadProject.PredefinedSizes(w.link?.projectSettings()) }) { predefinedSizes = sizes }
+        }
+    }
+
+    /// The project's pre-defined track widths and via sizes set (sorted, as KiCad's Board Setup writes them), in the
+    /// board's project; the router takes them at once. Refused while KiCad has the project open, as a net class is.
+    func setPredefinedSizes(_ sizes: KiCadProject.PredefinedSizes) {
+        if let problem = sizes.problem {
+            failure = problem
+            return
+        }
+        if shownBoard != nil {
+            var project = shownProject ?? [:]
+            KiCadProject.setPredefinedSizes(sizes, in: &project)
+            shownProject = project
+            predefinedSizes = KiCadProject.PredefinedSizes(project)
+            editing.rulesChanged(project)
+            return
+        }
+        Task {
+            do {
+                let project = try await worker.run { w -> [String: Any] in
+                    guard let link = w.link else { throw BoardLink.Failure.noBoard }
+                    return try link.setPredefinedSizes(sizes)
+                }
+                predefinedSizes = KiCadProject.PredefinedSizes(project)
+                editing.rulesChanged(project)
+                failure = nil
+                log.insert(LogEntry(date: Date(), text: "Pre-defined sizes changed"), at: 0)
+            } catch {
+                failure = "\(error)"
+            }
         }
     }
 

@@ -30,6 +30,8 @@ public final class BoardEditing {
         public var drawings: [String] = []
         /// Whether the board's outline changed
         public var outline = false
+        /// Whether the board's setup changed: its copper layers, its stackup (setCopperLayerCount)
+        public var setup = false
         /// Whether the board's zones were filled again with it (refillsZones)
         public var refilled = false
         /// What it was, for an undo menu (and KiCad's own)
@@ -113,6 +115,10 @@ public final class BoardEditing {
     /// Whether the last change filled the zones again
     private var lastRefilled = false
 
+    /// The pre-defined track width and via size tracks are routed with, and vias placed with (KiCad's track width
+    /// menu): the net class's (0), or the project's (BoardSetup.swift)
+    public var sizeChoice = SizeChoice()
+
     public private(set) var router: BoardRouter
     var project: [String: Any]?
     /// The board as the last change left it (each change is made from it)
@@ -182,7 +188,9 @@ public final class BoardEditing {
         router.mode = mode
         router.cornerMode = cornerMode
         guard let l = router.layer(layer) else { return false }
-        return router.start(at: Self.nm(p), layer: l, width: width.map { Int(($0 * 1e6).rounded()) })
+        // (a pre-defined size chosen, as ImportSizes takes the board's current one)
+        return router.start(at: Self.nm(p), layer: l, width: width.map { Int(($0 * 1e6).rounded()) } ?? chosenTrackWidth(),
+                            via: chosenViaSize())
     }
 
     /// The pointer moved to `p`: the track as it now goes
@@ -634,9 +642,9 @@ public final class BoardEditing {
     }
 
     func change(_ name: String, footprints: [String] = [], zones: [String] = [], outline: Bool = false,
-                        changed: [String] = [], drawings: [String] = []) -> Edit? {
+                        changed: [String] = [], drawings: [String] = [], setup: Bool = false) -> Edit? {
         guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty || outline
-                || !changed.isEmpty || !drawings.isEmpty else { return nil }
+                || !changed.isEmpty || !drawings.isEmpty || setup else { return nil }
         var after = router.board.copy()
         let (added, removed) = (router.lastAdded, router.lastRemoved)
         // (not while a track or pair is still being routed, which goes on in the router as it is)
@@ -651,6 +659,7 @@ public final class BoardEditing {
         edit.outline = outline
         edit.changed = changed
         edit.drawings = drawings
+        edit.setup = setup
         edit.refilled = filled != nil
         lastRefilled = edit.refilled
         base = after

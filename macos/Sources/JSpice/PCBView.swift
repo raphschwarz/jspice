@@ -33,7 +33,7 @@ struct PCBView: View {
     private var bar: some View {
         HStack(spacing: 10) {
             if board.availability == .board {
-                PCBEditBar(editing: board.editing)
+                PCBEditBar(editing: board.editing, sizes: board.predefinedSizes)
                 Divider().frame(height: 18)
                 Picker("Side", selection: $sideName) {
                     ForEach(PCBSide.allCases) { Text($0.title).tag($0.rawValue) }
@@ -755,6 +755,19 @@ struct PCBEditPainter {
 /// The tools of the PCB view, and the routing tool's layer and width; undo and redo of what was done here
 struct PCBEditBar: View {
     @ObservedObject var editing: PCBEditing
+    /// The project's pre-defined sizes, which the width menu offers as KiCad's does
+    var sizes = KiCadProject.PredefinedSizes()
+
+    static func trackTitle(_ width: Double) -> String { String(format: "Track %g mm", width) }
+    static func viaTitle(_ via: KiCadProject.PredefinedSizes.Via) -> String { String(format: "Via %g mm, hole %g mm", via.diameter, via.drill) }
+
+    /// What the width menu shows: the width chosen from its list, the pre-defined one, or the net class's
+    private var widthTitle: String {
+        if let w = editing.width { return String(format: "%.2f mm", w) }
+        let i = editing.sizeChoice.track
+        if i > 0 && i <= sizes.trackWidths.count { return Self.trackTitle(sizes.trackWidths[i - 1]) }
+        return "Net class width"
+    }
 
     static func help(_ tool: PCBEditing.Tool) -> String {
         switch tool {
@@ -818,16 +831,36 @@ struct PCBEditBar: View {
                 .fixedSize()
                 .help("The copper layer to route on (Page Up, Page Down); changed while routing, a via takes the track there")
                 Menu {
-                    Button("Net Class's Width") { editing.width = nil }
+                    Button("Net Class Values") {
+                        editing.width = nil
+                        editing.sizeChoice = .init()
+                    }
+                    // the project's pre-defined sizes (Board Setup), as KiCad's track width menu lists them
+                    if !sizes.trackWidths.isEmpty || !sizes.vias.isEmpty {
+                        Section("Pre-defined Sizes") {
+                            ForEach(Array(sizes.trackWidths.enumerated()), id: \.offset) { i, w in
+                                Toggle(Self.trackTitle(w), isOn: Binding(
+                                    get: { editing.width == nil && editing.sizeChoice.track == i + 1 },
+                                    set: { _ in
+                                        editing.width = nil
+                                        editing.sizeChoice.track = i + 1
+                                    }))
+                            }
+                            ForEach(Array(sizes.vias.enumerated()), id: \.offset) { i, v in
+                                Toggle(Self.viaTitle(v), isOn: Binding(get: { editing.sizeChoice.via == i + 1 },
+                                                                       set: { _ in editing.sizeChoice.via = i + 1 }))
+                            }
+                        }
+                    }
                     Divider()
                     ForEach(PCBEditing.widths, id: \.self) { w in
                         Button(String(format: "%.2f mm", w)) { editing.width = w }
                     }
                 } label: {
-                    Text(editing.width.map { String(format: "%.2f mm", $0) } ?? "Net class width")
+                    Text(widthTitle)
                 }
                 .fixedSize()
-                .help("The width of new tracks (W, ⇧W): their net class's, or one chosen here")
+                .help("The width of new tracks (W, ⇧W) and the size of their vias: their net class's, one of the project's pre-defined sizes (Board Setup), or a width chosen here")
                 Picker("Obstacles", selection: $editing.shove) {
                     Text("Walk Around").tag(false)
                     Text("Shove").tag(true)
@@ -847,6 +880,15 @@ struct PCBEditBar: View {
             }
             if editing.tool == .select && !editing.selection.isEmpty {
                 Menu("Width") {
+                    // (the project's pre-defined widths first, as KiCad's Edit Track & Via Properties offers them)
+                    if !sizes.trackWidths.isEmpty {
+                        Section("Pre-defined Sizes") {
+                            ForEach(Array(sizes.trackWidths.enumerated()), id: \.offset) { _, w in
+                                Button(Self.trackTitle(w)) { editing.resizeSelection(width: w) }
+                            }
+                        }
+                        Divider()
+                    }
                     ForEach(PCBEditing.widths, id: \.self) { w in
                         Button(String(format: "%.2f mm", w)) { editing.resizeSelection(width: w) }
                     }
@@ -854,6 +896,14 @@ struct PCBEditBar: View {
                 .fixedSize()
                 .help("The width of the tracks selected (KiCad's Edit Track & Via Properties)")
                 Menu("Via Size") {
+                    if !sizes.vias.isEmpty {
+                        Section("Pre-defined Sizes") {
+                            ForEach(Array(sizes.vias.enumerated()), id: \.offset) { _, v in
+                                Button(Self.viaTitle(v)) { editing.resizeSelection(via: (v.diameter, v.drill)) }
+                            }
+                        }
+                        Divider()
+                    }
                     ForEach(PCBEditing.viaSizes, id: \.self) { v in
                         Button(String(format: "%.2f / %.2f mm", v.diameter, v.drill)) { editing.resizeSelection(via: (v.diameter, v.drill)) }
                     }
@@ -1070,6 +1120,97 @@ struct PCBNetClassRow: View {
     }
 }
 
+/// The board's setup as KiCad's Board Setup has it, edited where it is shown: its copper layer count (Physical
+/// Stackup: the stackup brought to the new layers as KiCad brings it, the items on the layers removed taken away once
+/// the user says so) and the project's pre-defined track widths and via sizes (Pre-defined Sizes), which the routing
+/// tool's width menu offers
+struct PCBBoardSetupSection: View {
+    @ObservedObject var board: BoardController
+    @ObservedObject var editing: PCBEditing
+    let copperLayers: Int
+    @State private var width: Double?
+    @State private var diameter: Double?
+    @State private var drill: Double?
+
+    var body: some View {
+        Section("Board setup") {
+            Picker("Copper layers", selection: Binding(get: { copperLayers },
+                                                       set: { n in if n != copperLayers { editing.requestCopperLayers(n) } })) {
+                ForEach(BoardEditing.copperLayerCounts, id: \.self) { Text("\($0)").tag($0) }
+            }
+            .help("The board's copper layers, as KiCad's Board Setup sets them: the stackup brought to them (the board as thick as it was, 0.1 mm prepregs), the tracks, vias and drawings on layers taken away deleted")
+            .disabled(editing.isRouting || board.busy != nil)
+            .alert("Delete the items on the layers removed?", isPresented: Binding(
+                get: { editing.copperLayersToConfirm != nil },
+                set: { if !$0 { editing.copperLayersToConfirm = nil } })) {
+                Button("Delete and Change", role: .destructive) { editing.confirmCopperLayers() }
+                Button("Cancel", role: .cancel) { editing.copperLayersToConfirm = nil }
+            } message: {
+                let ask = editing.copperLayersToConfirm
+                Text("\(ask?.items ?? 0) item\(ask?.items == 1 ? " is" : "s are") on the copper layers \(ask?.count ?? 0) layers leave out. Their tracks, vias, drawings and texts are deleted, and zones taken off them, as KiCad's Board Setup does.")
+            }
+            let sizes = board.predefinedSizes
+            ForEach(Array(sizes.trackWidths.enumerated()), id: \.offset) { i, w in
+                row(PCBEditBar.trackTitle(w)) { $0.trackWidths.remove(at: i) }
+            }
+            HStack {
+                TextField("Width", value: $width, format: .number.precision(.fractionLength(0...4)))
+                    .frame(width: 60)
+                Text("mm").foregroundStyle(.secondary)
+                Spacer()
+                Button("Add Track Width") {
+                    guard let w = width else { return }
+                    change { $0.trackWidths.append(w) }
+                    width = nil
+                }
+                .disabled(width == nil)
+            }
+            .help("A track width for the routing tool's width menu (Board Setup ▸ Pre-defined Sizes)")
+            ForEach(Array(sizes.vias.enumerated()), id: \.offset) { i, v in
+                row(PCBEditBar.viaTitle(v)) { $0.vias.remove(at: i) }
+            }
+            HStack {
+                TextField("Via", value: $diameter, format: .number.precision(.fractionLength(0...4)))
+                    .frame(width: 52)
+                TextField("Hole", value: $drill, format: .number.precision(.fractionLength(0...4)))
+                    .frame(width: 52)
+                Text("mm").foregroundStyle(.secondary)
+                Spacer()
+                Button("Add Via Size") {
+                    guard let d = diameter, let h = drill else { return }
+                    change { $0.vias.append(.init(diameter: d, drill: h)) }
+                    diameter = nil
+                    drill = nil
+                }
+                .disabled(diameter == nil || drill == nil)
+            }
+            .help("A via's diameter and hole for the routing tool's width menu (Board Setup ▸ Pre-defined Sizes); the hole smaller than the via")
+        }
+    }
+
+    private func row(_ title: String, remove: @escaping (inout KiCadProject.PredefinedSizes) -> Void) -> some View {
+        HStack {
+            Text(title).font(.callout)
+            Spacer()
+            Button { change(remove) } label: { Image(systemName: "minus.circle") }
+                .buttonStyle(.borderless)
+                .help("Take it out of the project's pre-defined sizes")
+        }
+    }
+
+    /// The project's pre-defined sizes changed (sorted as KiCad's Board Setup sorts them), refused as KiCad refuses
+    /// a via's hole as large as the via
+    private func change(_ body: (inout KiCadProject.PredefinedSizes) -> Void) {
+        var sizes = board.predefinedSizes
+        body(&sizes)
+        guard sizes.problem == nil else {
+            NSSound.beep()
+            return
+        }
+        board.setPredefinedSizes(sizes)
+    }
+}
+
 /// The board's size and its corners' radius, typed in beside it when its outline is one rectangle (as a new board's
 /// is): the outline is drawn again from its top left corner
 struct PCBOutlineRow: View {
@@ -1233,6 +1374,9 @@ struct PCBSidePanel: View {
                 Section("Net classes") {
                     ForEach(board.netClasses, id: \.name) { PCBNetClassRow(board: board, netClass: $0) }
                 }
+            }
+            if board.availability == .board, let picture = board.picture {
+                PCBBoardSetupSection(board: board, editing: board.editing, copperLayers: picture.copperLayers.count)
             }
             if !board.removed.isEmpty {
                 Section("Deleted on the board") {

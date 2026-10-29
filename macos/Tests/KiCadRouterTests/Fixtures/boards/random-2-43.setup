@@ -1,0 +1,1732 @@
+{
+ "steps": [
+  {
+   "copper": 6,
+   "warned": false,
+   "board": {
+    "layers": [
+     [
+      "0",
+      "F.Cu",
+      "signal"
+     ],
+     [
+      "4",
+      "In1.Cu",
+      "signal"
+     ],
+     [
+      "6",
+      "In2.Cu",
+      "signal"
+     ],
+     [
+      "8",
+      "In3.Cu",
+      "signal"
+     ],
+     [
+      "10",
+      "In4.Cu",
+      "signal"
+     ],
+     [
+      "2",
+      "B.Cu",
+      "signal"
+     ],
+     [
+      "9",
+      "F.Adhes",
+      "user",
+      "F.Adhesive"
+     ],
+     [
+      "11",
+      "B.Adhes",
+      "user",
+      "B.Adhesive"
+     ],
+     [
+      "13",
+      "F.Paste",
+      "user"
+     ],
+     [
+      "15",
+      "B.Paste",
+      "user"
+     ],
+     [
+      "5",
+      "F.SilkS",
+      "user",
+      "F.Silkscreen"
+     ],
+     [
+      "7",
+      "B.SilkS",
+      "user",
+      "B.Silkscreen"
+     ],
+     [
+      "1",
+      "F.Mask",
+      "user"
+     ],
+     [
+      "3",
+      "B.Mask",
+      "user"
+     ],
+     [
+      "17",
+      "Dwgs.User",
+      "user",
+      "User.Drawings"
+     ],
+     [
+      "19",
+      "Cmts.User",
+      "user",
+      "User.Comments"
+     ],
+     [
+      "21",
+      "Eco1.User",
+      "user",
+      "User.Eco1"
+     ],
+     [
+      "23",
+      "Eco2.User",
+      "user",
+      "User.Eco2"
+     ],
+     [
+      "25",
+      "Edge.Cuts",
+      "user"
+     ],
+     [
+      "27",
+      "Margin",
+      "user"
+     ],
+     [
+      "31",
+      "F.CrtYd",
+      "user",
+      "F.Courtyard"
+     ],
+     [
+      "29",
+      "B.CrtYd",
+      "user",
+      "B.Courtyard"
+     ],
+     [
+      "35",
+      "F.Fab",
+      "user"
+     ],
+     [
+      "33",
+      "B.Fab",
+      "user"
+     ],
+     [
+      "39",
+      "User.1",
+      "user"
+     ],
+     [
+      "41",
+      "User.2",
+      "user"
+     ],
+     [
+      "43",
+      "User.3",
+      "user"
+     ],
+     [
+      "45",
+      "User.4",
+      "user"
+     ]
+    ],
+    "thickness": "1.6",
+    "stackup": [
+     "stackup",
+     [
+      "layer",
+      "F.SilkS",
+      [
+       "type",
+       "Top Silk Screen"
+      ]
+     ],
+     [
+      "layer",
+      "F.Paste",
+      [
+       "type",
+       "Top Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "F.Mask",
+      [
+       "type",
+       "Top Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.01"
+      ]
+     ],
+     [
+      "layer",
+      "F.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 1",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0.1"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In1.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 2",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "0.535"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In2.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 3",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0.1"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In3.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 4",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "0.535"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In4.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 5",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0.1"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "B.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "B.Mask",
+      [
+       "type",
+       "Bottom Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.01"
+      ]
+     ],
+     [
+      "layer",
+      "B.Paste",
+      [
+       "type",
+       "Bottom Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "B.SilkS",
+      [
+       "type",
+       "Bottom Silk Screen"
+      ]
+     ],
+     [
+      "copper_finish",
+      "None"
+     ],
+     [
+      "dielectric_constraints",
+      "no"
+     ]
+    ],
+    "items": {
+     "9086db63-4760-4029-9684-3d49f3aa3c67": {
+      "kind": "gr_rect",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "6b3df4e6-3327-4499-a610-87e2db1ecda7": {
+      "kind": "gr_rect",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "7deb83e7-30e2-4bd1-80cf-b61905df04df": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "fb771707-28d4-4f2d-b345-79ed121159ec": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "ad90c8d1-3271-465d-9197-b130955dfb10": {
+      "kind": "segment",
+      "layers": [
+       "In1.Cu"
+      ]
+     },
+     "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "c1bdcbee-bfec-40d8-b4a7-67fa372012b7": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "27721d45-0f8c-4c40-ba38-acd0c76f3565": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "5abef1e7-12e6-4b5b-b370-e5418aaf4381": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "baa5eda5-d108-49b1-b017-da03196db34a": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "cd3e92dc-8a43-4c56-b318-b5b7ec8d7647": {
+      "kind": "zone",
+      "layers": [
+       "B.Cu",
+       "F.Cu",
+       "In2.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     },
+     "38041000-0fb7-4a3d-ad33-f151980b7ecd": {
+      "kind": "zone",
+      "layers": [
+       "F.Cu",
+       "In1.Cu",
+       "In2.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     }
+    },
+    "pads": {
+     "1dd929d1-c8aa-4e0c-982f-73032045f673/d66e2660-e97c-4213-b265-bdd4edbde839": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "1dd929d1-c8aa-4e0c-982f-73032045f673/962a9861-2193-4e9c-9fec-de8c4e39b119": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "302c0960-6346-4b04-a1ad-ed18d5c5abca/95cf86b0-c984-4888-b60c-cc89dbac0724": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu",
+      "In3.Cu",
+      "In4.Cu"
+     ],
+     "4cebe99d-200a-4b9d-a768-d9ff8dce28bb/a161434c-f577-40d1-9519-5be95ef225fb": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "4cebe99d-200a-4b9d-a768-d9ff8dce28bb/df15e531-afef-4ce6-bc7a-484f882db1f0": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "4cebe99d-200a-4b9d-a768-d9ff8dce28bb/f94deda6-8371-4903-a7d9-86696b80d4c2": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "5361c388-2b8c-4c07-9c2c-1baad2fd8e40/888a25cd-a934-44f1-927d-6ac1c3dd7c0d": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu",
+      "In3.Cu",
+      "In4.Cu"
+     ],
+     "5361c388-2b8c-4c07-9c2c-1baad2fd8e40/262d8ee9-0f9a-4d67-97a1-b7a973f68c7e": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu",
+      "In3.Cu",
+      "In4.Cu"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/fafe8653-1460-4d55-90fd-5af32c9990d1": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/9f45fb40-0c9d-4dcb-915f-7406cf580309": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/a93f0f8e-c74c-4b71-a7f2-9c8efe6c31ca": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/d01721cc-233d-4697-bb91-f4f81ab3fd55": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "6f031a8c-8181-47c4-b525-eaa7c68b7ec7/5c4979ad-e649-4126-862a-9de0d4363d2d": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "6f031a8c-8181-47c4-b525-eaa7c68b7ec7/9c7da676-a4d3-4e03-8808-18859dda7e23": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "703447bb-8c6d-4de8-a2d3-c420639f3857/776f1db4-4083-4f24-9fa5-c3700e66b664": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "703447bb-8c6d-4de8-a2d3-c420639f3857/9188fbc6-78a0-47df-880a-bc34401580bc": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "703447bb-8c6d-4de8-a2d3-c420639f3857/18987e09-7274-4020-a5d3-56acc6996604": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "ca29cde8-6d15-48c7-baef-83b805ec7db9/05f9d28c-6a67-46ae-bf9a-47d45d17e64a": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu",
+      "In3.Cu",
+      "In4.Cu"
+     ]
+    }
+   },
+   "material": [
+    {
+     "Type": "Legend",
+     "Name": "Top Silk Screen"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Top Solder Paste"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.01,
+     "Name": "Top Solder Mask"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "F.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.1,
+     "Material": "FR4",
+     "Name": "F.Cu/In1.Cu",
+     "Notes": "Type: dielectric layer 1 (from F.Cu to In1.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In1.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.535,
+     "Material": "FR4",
+     "Name": "In1.Cu/In2.Cu",
+     "Notes": "Type: dielectric layer 2 (from In1.Cu to In2.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In2.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.1,
+     "Material": "FR4",
+     "Name": "In2.Cu/In3.Cu",
+     "Notes": "Type: dielectric layer 3 (from In2.Cu to In3.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In3.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.535,
+     "Material": "FR4",
+     "Name": "In3.Cu/In4.Cu",
+     "Notes": "Type: dielectric layer 4 (from In3.Cu to In4.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In4.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.1,
+     "Material": "FR4",
+     "Name": "In4.Cu/B.Cu",
+     "Notes": "Type: dielectric layer 5 (from In4.Cu to B.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "B.Cu"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.01,
+     "Name": "Bottom Solder Mask"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Bottom Solder Paste"
+    },
+    {
+     "Type": "Legend",
+     "Name": "Bottom Silk Screen"
+    }
+   ],
+   "upToDate": true
+  },
+  {
+   "copper": 2,
+   "warned": true,
+   "board": {
+    "layers": [
+     [
+      "0",
+      "F.Cu",
+      "signal"
+     ],
+     [
+      "2",
+      "B.Cu",
+      "signal"
+     ],
+     [
+      "9",
+      "F.Adhes",
+      "user",
+      "F.Adhesive"
+     ],
+     [
+      "11",
+      "B.Adhes",
+      "user",
+      "B.Adhesive"
+     ],
+     [
+      "13",
+      "F.Paste",
+      "user"
+     ],
+     [
+      "15",
+      "B.Paste",
+      "user"
+     ],
+     [
+      "5",
+      "F.SilkS",
+      "user",
+      "F.Silkscreen"
+     ],
+     [
+      "7",
+      "B.SilkS",
+      "user",
+      "B.Silkscreen"
+     ],
+     [
+      "1",
+      "F.Mask",
+      "user"
+     ],
+     [
+      "3",
+      "B.Mask",
+      "user"
+     ],
+     [
+      "17",
+      "Dwgs.User",
+      "user",
+      "User.Drawings"
+     ],
+     [
+      "19",
+      "Cmts.User",
+      "user",
+      "User.Comments"
+     ],
+     [
+      "21",
+      "Eco1.User",
+      "user",
+      "User.Eco1"
+     ],
+     [
+      "23",
+      "Eco2.User",
+      "user",
+      "User.Eco2"
+     ],
+     [
+      "25",
+      "Edge.Cuts",
+      "user"
+     ],
+     [
+      "27",
+      "Margin",
+      "user"
+     ],
+     [
+      "31",
+      "F.CrtYd",
+      "user",
+      "F.Courtyard"
+     ],
+     [
+      "29",
+      "B.CrtYd",
+      "user",
+      "B.Courtyard"
+     ],
+     [
+      "35",
+      "F.Fab",
+      "user"
+     ],
+     [
+      "33",
+      "B.Fab",
+      "user"
+     ],
+     [
+      "39",
+      "User.1",
+      "user"
+     ],
+     [
+      "41",
+      "User.2",
+      "user"
+     ],
+     [
+      "43",
+      "User.3",
+      "user"
+     ],
+     [
+      "45",
+      "User.4",
+      "user"
+     ]
+    ],
+    "thickness": "1.6",
+    "stackup": [
+     "stackup",
+     [
+      "layer",
+      "F.SilkS",
+      [
+       "type",
+       "Top Silk Screen"
+      ]
+     ],
+     [
+      "layer",
+      "F.Paste",
+      [
+       "type",
+       "Top Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "F.Mask",
+      [
+       "type",
+       "Top Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.01"
+      ]
+     ],
+     [
+      "layer",
+      "F.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 1",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "1.51"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "B.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "B.Mask",
+      [
+       "type",
+       "Bottom Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.01"
+      ]
+     ],
+     [
+      "layer",
+      "B.Paste",
+      [
+       "type",
+       "Bottom Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "B.SilkS",
+      [
+       "type",
+       "Bottom Silk Screen"
+      ]
+     ],
+     [
+      "copper_finish",
+      "None"
+     ],
+     [
+      "dielectric_constraints",
+      "no"
+     ]
+    ],
+    "items": {
+     "9086db63-4760-4029-9684-3d49f3aa3c67": {
+      "kind": "gr_rect",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "6b3df4e6-3327-4499-a610-87e2db1ecda7": {
+      "kind": "gr_rect",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "7deb83e7-30e2-4bd1-80cf-b61905df04df": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "fb771707-28d4-4f2d-b345-79ed121159ec": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "c1bdcbee-bfec-40d8-b4a7-67fa372012b7": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "38041000-0fb7-4a3d-ad33-f151980b7ecd": {
+      "kind": "zone",
+      "layers": [
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     },
+     "cd3e92dc-8a43-4c56-b318-b5b7ec8d7647": {
+      "kind": "zone",
+      "layers": [
+       "B.Cu",
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     }
+    },
+    "pads": {
+     "1dd929d1-c8aa-4e0c-982f-73032045f673/d66e2660-e97c-4213-b265-bdd4edbde839": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "1dd929d1-c8aa-4e0c-982f-73032045f673/962a9861-2193-4e9c-9fec-de8c4e39b119": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "302c0960-6346-4b04-a1ad-ed18d5c5abca/95cf86b0-c984-4888-b60c-cc89dbac0724": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask"
+     ],
+     "4cebe99d-200a-4b9d-a768-d9ff8dce28bb/a161434c-f577-40d1-9519-5be95ef225fb": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "4cebe99d-200a-4b9d-a768-d9ff8dce28bb/df15e531-afef-4ce6-bc7a-484f882db1f0": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "4cebe99d-200a-4b9d-a768-d9ff8dce28bb/f94deda6-8371-4903-a7d9-86696b80d4c2": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "5361c388-2b8c-4c07-9c2c-1baad2fd8e40/888a25cd-a934-44f1-927d-6ac1c3dd7c0d": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask"
+     ],
+     "5361c388-2b8c-4c07-9c2c-1baad2fd8e40/262d8ee9-0f9a-4d67-97a1-b7a973f68c7e": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/fafe8653-1460-4d55-90fd-5af32c9990d1": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/9f45fb40-0c9d-4dcb-915f-7406cf580309": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/a93f0f8e-c74c-4b71-a7f2-9c8efe6c31ca": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/d01721cc-233d-4697-bb91-f4f81ab3fd55": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "6f031a8c-8181-47c4-b525-eaa7c68b7ec7/5c4979ad-e649-4126-862a-9de0d4363d2d": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "6f031a8c-8181-47c4-b525-eaa7c68b7ec7/9c7da676-a4d3-4e03-8808-18859dda7e23": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "703447bb-8c6d-4de8-a2d3-c420639f3857/776f1db4-4083-4f24-9fa5-c3700e66b664": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "703447bb-8c6d-4de8-a2d3-c420639f3857/9188fbc6-78a0-47df-880a-bc34401580bc": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "703447bb-8c6d-4de8-a2d3-c420639f3857/18987e09-7274-4020-a5d3-56acc6996604": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "ca29cde8-6d15-48c7-baef-83b805ec7db9/05f9d28c-6a67-46ae-bf9a-47d45d17e64a": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask"
+     ]
+    }
+   },
+   "material": [
+    {
+     "Type": "Legend",
+     "Name": "Top Silk Screen"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Top Solder Paste"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.01,
+     "Name": "Top Solder Mask"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "F.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 1.51,
+     "Material": "FR4",
+     "Name": "F.Cu/B.Cu",
+     "Notes": "Type: dielectric layer 1 (from F.Cu to B.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "B.Cu"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.01,
+     "Name": "Bottom Solder Mask"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Bottom Solder Paste"
+    },
+    {
+     "Type": "Legend",
+     "Name": "Bottom Silk Screen"
+    }
+   ],
+   "upToDate": true
+  },
+  {
+   "copper": 4,
+   "warned": false,
+   "board": {
+    "layers": [
+     [
+      "0",
+      "F.Cu",
+      "signal"
+     ],
+     [
+      "4",
+      "In1.Cu",
+      "signal"
+     ],
+     [
+      "6",
+      "In2.Cu",
+      "signal"
+     ],
+     [
+      "2",
+      "B.Cu",
+      "signal"
+     ],
+     [
+      "9",
+      "F.Adhes",
+      "user",
+      "F.Adhesive"
+     ],
+     [
+      "11",
+      "B.Adhes",
+      "user",
+      "B.Adhesive"
+     ],
+     [
+      "13",
+      "F.Paste",
+      "user"
+     ],
+     [
+      "15",
+      "B.Paste",
+      "user"
+     ],
+     [
+      "5",
+      "F.SilkS",
+      "user",
+      "F.Silkscreen"
+     ],
+     [
+      "7",
+      "B.SilkS",
+      "user",
+      "B.Silkscreen"
+     ],
+     [
+      "1",
+      "F.Mask",
+      "user"
+     ],
+     [
+      "3",
+      "B.Mask",
+      "user"
+     ],
+     [
+      "17",
+      "Dwgs.User",
+      "user",
+      "User.Drawings"
+     ],
+     [
+      "19",
+      "Cmts.User",
+      "user",
+      "User.Comments"
+     ],
+     [
+      "21",
+      "Eco1.User",
+      "user",
+      "User.Eco1"
+     ],
+     [
+      "23",
+      "Eco2.User",
+      "user",
+      "User.Eco2"
+     ],
+     [
+      "25",
+      "Edge.Cuts",
+      "user"
+     ],
+     [
+      "27",
+      "Margin",
+      "user"
+     ],
+     [
+      "31",
+      "F.CrtYd",
+      "user",
+      "F.Courtyard"
+     ],
+     [
+      "29",
+      "B.CrtYd",
+      "user",
+      "B.Courtyard"
+     ],
+     [
+      "35",
+      "F.Fab",
+      "user"
+     ],
+     [
+      "33",
+      "B.Fab",
+      "user"
+     ],
+     [
+      "39",
+      "User.1",
+      "user"
+     ],
+     [
+      "41",
+      "User.2",
+      "user"
+     ],
+     [
+      "43",
+      "User.3",
+      "user"
+     ],
+     [
+      "45",
+      "User.4",
+      "user"
+     ]
+    ],
+    "thickness": "1.6",
+    "stackup": [
+     "stackup",
+     [
+      "layer",
+      "F.SilkS",
+      [
+       "type",
+       "Top Silk Screen"
+      ]
+     ],
+     [
+      "layer",
+      "F.Paste",
+      [
+       "type",
+       "Top Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "F.Mask",
+      [
+       "type",
+       "Top Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.01"
+      ]
+     ],
+     [
+      "layer",
+      "F.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 1",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0.1"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In1.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 2",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "1.24"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In2.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 3",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0.1"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "B.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "B.Mask",
+      [
+       "type",
+       "Bottom Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.01"
+      ]
+     ],
+     [
+      "layer",
+      "B.Paste",
+      [
+       "type",
+       "Bottom Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "B.SilkS",
+      [
+       "type",
+       "Bottom Silk Screen"
+      ]
+     ],
+     [
+      "copper_finish",
+      "None"
+     ],
+     [
+      "dielectric_constraints",
+      "no"
+     ]
+    ],
+    "items": {
+     "9086db63-4760-4029-9684-3d49f3aa3c67": {
+      "kind": "gr_rect",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "6b3df4e6-3327-4499-a610-87e2db1ecda7": {
+      "kind": "gr_rect",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "7deb83e7-30e2-4bd1-80cf-b61905df04df": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "fb771707-28d4-4f2d-b345-79ed121159ec": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "c1bdcbee-bfec-40d8-b4a7-67fa372012b7": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "38041000-0fb7-4a3d-ad33-f151980b7ecd": {
+      "kind": "zone",
+      "layers": [
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     },
+     "cd3e92dc-8a43-4c56-b318-b5b7ec8d7647": {
+      "kind": "zone",
+      "layers": [
+       "B.Cu",
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     }
+    },
+    "pads": {
+     "1dd929d1-c8aa-4e0c-982f-73032045f673/d66e2660-e97c-4213-b265-bdd4edbde839": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "1dd929d1-c8aa-4e0c-982f-73032045f673/962a9861-2193-4e9c-9fec-de8c4e39b119": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "302c0960-6346-4b04-a1ad-ed18d5c5abca/95cf86b0-c984-4888-b60c-cc89dbac0724": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu"
+     ],
+     "4cebe99d-200a-4b9d-a768-d9ff8dce28bb/a161434c-f577-40d1-9519-5be95ef225fb": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "4cebe99d-200a-4b9d-a768-d9ff8dce28bb/df15e531-afef-4ce6-bc7a-484f882db1f0": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "4cebe99d-200a-4b9d-a768-d9ff8dce28bb/f94deda6-8371-4903-a7d9-86696b80d4c2": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "5361c388-2b8c-4c07-9c2c-1baad2fd8e40/888a25cd-a934-44f1-927d-6ac1c3dd7c0d": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu"
+     ],
+     "5361c388-2b8c-4c07-9c2c-1baad2fd8e40/262d8ee9-0f9a-4d67-97a1-b7a973f68c7e": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/fafe8653-1460-4d55-90fd-5af32c9990d1": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/9f45fb40-0c9d-4dcb-915f-7406cf580309": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/a93f0f8e-c74c-4b71-a7f2-9c8efe6c31ca": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "d117b3a2-5c66-4e20-8b15-96e588c75bb1/d01721cc-233d-4697-bb91-f4f81ab3fd55": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ],
+     "6f031a8c-8181-47c4-b525-eaa7c68b7ec7/5c4979ad-e649-4126-862a-9de0d4363d2d": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "6f031a8c-8181-47c4-b525-eaa7c68b7ec7/9c7da676-a4d3-4e03-8808-18859dda7e23": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "703447bb-8c6d-4de8-a2d3-c420639f3857/776f1db4-4083-4f24-9fa5-c3700e66b664": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "703447bb-8c6d-4de8-a2d3-c420639f3857/9188fbc6-78a0-47df-880a-bc34401580bc": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "703447bb-8c6d-4de8-a2d3-c420639f3857/18987e09-7274-4020-a5d3-56acc6996604": [
+      "B.Cu",
+      "B.Mask",
+      "B.Paste"
+     ],
+     "ca29cde8-6d15-48c7-baef-83b805ec7db9/05f9d28c-6a67-46ae-bf9a-47d45d17e64a": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu"
+     ]
+    }
+   },
+   "material": [
+    {
+     "Type": "Legend",
+     "Name": "Top Silk Screen"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Top Solder Paste"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.01,
+     "Name": "Top Solder Mask"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "F.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.1,
+     "Material": "FR4",
+     "Name": "F.Cu/In1.Cu",
+     "Notes": "Type: dielectric layer 1 (from F.Cu to In1.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In1.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 1.24,
+     "Material": "FR4",
+     "Name": "In1.Cu/In2.Cu",
+     "Notes": "Type: dielectric layer 2 (from In1.Cu to In2.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In2.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.1,
+     "Material": "FR4",
+     "Name": "In2.Cu/B.Cu",
+     "Notes": "Type: dielectric layer 3 (from In2.Cu to B.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "B.Cu"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.01,
+     "Name": "Bottom Solder Mask"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Bottom Solder Paste"
+    },
+    {
+     "Type": "Legend",
+     "Name": "Bottom Silk Screen"
+    }
+   ],
+   "upToDate": true
+  }
+ ]
+}

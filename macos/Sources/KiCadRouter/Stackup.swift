@@ -32,45 +32,32 @@ public struct Stackup: Sendable, Equatable {
     /// its copper layers of the default thickness, and between each two a dielectric, the board's thickness less its
     /// copper and its masks' (`masks`: how many of its mask layers the board has) shared out between them
     public static func defaultStackup(boardThickness: Int, copperLayers: Int, masks: Int) -> Stackup {
-        var dielThickness = boardThickness - copperDefaultThickness * copperLayers
-        // (and the solder masks')
-        dielThickness -= maskDefaultThickness * masks
-        dielThickness /= max(1, copperLayers - 1)
-        var items: [Item] = []
-        for layer in 0..<copperLayers {
-            items.append(Item(copper: layer, thicknesses: [copperDefaultThickness]))
-            if layer == copperLayers - 1 { break }
-            items.append(Item(copper: nil, thicknesses: [dielThickness]))
-        }
-        return Stackup(items: items)
+        let names = BoardStackup.copperNames(copperLayers)
+        let settings = BoardStackup.BoardSettings(enabledLayers: Set(names + ["F.Mask", "B.Mask"].prefix(masks)),
+                                                  copperLayers: copperLayers, thickness: boardThickness)
+        let index = Dictionary(uniqueKeysWithValues: names.enumerated().map { ($1, $0) })
+        return Stackup(BoardStackup.defaultStackup(settings), layerIndex: index)
     }
 
-    /// The stackup a board's file gives (its setup's (stackup ...), as parseBoardStackup reads it: each of its layers
-    /// by the name of a layer of the board, its copper layers' thicknesses their own or the default; anything else a
-    /// dielectric, with its sublayers, each with its thickness or none), its copper layers by `layerIndex`; nil if it
-    /// gives none
-    public static func read(_ board: KiCadBoard, layerIndex: [String: Int]) -> Stackup? {
-        guard let stackup = board.root["setup"]?["stackup"] else { return nil }
-        let boardLayers = Set((board.root["layers"]?.arguments ?? []).compactMap { $0.text(at: 0) })
-        var items: [Item] = []
-        for layer in stackup.all("layer") {
-            guard let name = layer.text(at: 0) else { continue }
-            let copper = layerIndex[name]
-            // (the board's masks, pastes and silkscreens: not between copper layers)
-            if copper == nil && boardLayers.contains(name) { continue }
-            var thicknesses = [copper != nil ? copperDefaultThickness : 0]
-            var sublayer = 0
-            for entry in layer.arguments.dropFirst() {
-                if entry.kind == .symbol && entry.text == "addsublayer" {
-                    sublayer += 1
-                    thicknesses.append(0)
-                } else if entry.head == "thickness" {
-                    thicknesses[sublayer] = BoardWorld.iu(entry, 0)
-                }
+    /// The copper layers and dielectrics of a board's full stackup (BoardStackup), its copper layers by `layerIndex`
+    /// (its masks, pastes and silkscreens, not between copper layers, left out)
+    public init(_ stackup: BoardStackup, layerIndex: [String: Int]) {
+        items = stackup.items.compactMap { item in
+            switch item.kind {
+            case .copper: return Item(copper: item.layer.flatMap { layerIndex[$0] }, thicknesses: item.sublayers.map(\.thickness))
+            case .dielectric: return Item(copper: nil, thicknesses: item.sublayers.map(\.thickness))
+            default: return nil
             }
-            items.append(Item(copper: copper, thicknesses: thicknesses))
         }
-        return Stackup(items: items)
+    }
+
+    /// The stackup a board's file gives (its setup's (stackup ...), as parseBoardStackup reads it, BoardStackup.parse:
+    /// each of its layers by the name of a layer of the board, its copper layers' thicknesses their own or the default;
+    /// anything else a dielectric, with its sublayers, each with its thickness or none), its copper layers by
+    /// `layerIndex`; nil if it gives none
+    public static func read(_ board: KiCadBoard, layerIndex: [String: Int]) -> Stackup? {
+        guard let node = board.root["setup"]?["stackup"] else { return nil }
+        return Stackup(BoardStackup.parse(node, enabledLayers: BoardStackup.BoardSettings(board).enabledLayers), layerIndex: layerIndex)
     }
 
     /// The board's thickness between two copper layers (router layers), as KiCad counts it (GetLayerDistance): the
