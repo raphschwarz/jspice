@@ -80,6 +80,11 @@ public final class BoardEditing {
         public var vias: [Preview.Via] = []
         public var net: String?
         public var violates = false
+
+        public init(moved: Set<String> = [], tracks: [Preview.Track] = [], vias: [Preview.Via] = [], net: String? = nil,
+                    violates: Bool = false) {
+            (self.moved, self.tracks, self.vias, self.net, self.violates) = (moved, tracks, vias, net, violates)
+        }
     }
 
     /// The differential pair being routed, as it is drawn: its positive and negative lines from where they were last

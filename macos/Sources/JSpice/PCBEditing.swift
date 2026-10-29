@@ -1013,8 +1013,15 @@ final class PCBEditing: ObservableObject {
     /// A track or via there is dragged with the router instead (until the button is let go).
     /// From where there is nothing to drag, a box is drawn to select with (`leftward`: drawn right to left on the
     /// screen, taking what it touches).
-    func dragChanged(from start: KiCadPoint, to now: KiCadPoint, in picture: KiCadBoardPicture, selected: Set<String>, leftward: Bool) {
-        guard tool == .select, !isRouting else { return }
+    /// A footprint is dragged with the tracks on its pads, as KiCad's router drags one (its D on a footprint, the
+    /// port of COMPONENT_DRAGGER), unless `moveOnly` (⌥, KiCad's move): then the tracks stay where they are.
+    func dragChanged(from start: KiCadPoint, to now: KiCadPoint, in picture: KiCadBoardPicture, selected: Set<String>, leftward: Bool,
+                     moveOnly: Bool = false) {
+        guard tool == .select, !isRouting, !dropsUntilLetGo else { return }
+        if draggingWithTracks {
+            footprintDragMoved(to: now)
+            return
+        }
         if selectionArea != nil {
             selectionArea = (start, now, leftward)
             return
@@ -1041,16 +1048,32 @@ final class PCBEditing: ObservableObject {
                 selectionArea = (start, now, leftward)
                 return
             }
-            dragging = (selected.contains(footprint.uuid) ? Array(selected) : [footprint.uuid], .zero)
+            let uuids = selected.contains(footprint.uuid) ? Array(selected) : [footprint.uuid]
+            dragging = (uuids, .zero)
+            if !moveOnly {
+                draggingWithTracks = true
+                footprintDragStart = Task { await startFootprintDrag(uuids, at: start) }
+                footprintDragMoved(to: now)
+                return
+            }
         }
         let grid = 0.05
         dragging?.delta = KiCadPoint(((now.x - start.x) / grid).rounded() * grid, ((now.y - start.y) / grid).rounded() * grid)
     }
 
-    /// The drag let go: the footprints moved there (the track or via dragged kept there)
-    func dragEnded(at p: KiCadPoint) {
+    /// The drag let go: the footprints moved there (the track or via dragged kept there); a footprint dragged with
+    /// its tracks kept there if it collides with nothing, or `force`d (⌘, KiCad's Ctrl)
+    func dragEnded(at p: KiCadPoint, force: Bool = false) {
+        if dropsUntilLetGo {
+            dropsUntilLetGo = false
+            return
+        }
         if (isDragging || dragStart != nil) && !followsPointer {
             Task { await fixDrag(at: p) }
+            return
+        }
+        if draggingWithTracks {
+            Task { await fixFootprintDrag(at: p, force: force) }
             return
         }
         guard let (uuids, delta) = dragging else { return }
@@ -1059,6 +1082,111 @@ final class PCBEditing: ObservableObject {
         draggingTexts = false
         guard delta != .zero else { return }
         Task { await place { texts ? $0.moveDrawings(uuids, by: delta) : $0.moveFootprints(uuids, by: delta) } }
+    }
+
+    // MARK: - Dragging footprints with their tracks
+
+    /// Whether the footprints being dragged take the tracks on their pads with them (the router's footprint drag)
+    @Published private(set) var draggingWithTracks = false
+    /// The footprint drag as it now goes: the tracks it takes away, and those that go in their place
+    @Published private(set) var footprintDragPreview: BoardEditing.FootprintDragPreview?
+    private var footprintDragStart: Task<Void, Never>?
+    private var pendingFootprintDrag: KiCadPoint?
+    private var footprintDragMoving = false
+    /// A footprint drag dropped while the button is still down: the rest of that drag of the pointer does nothing
+    private var dropsUntilLetGo = false
+
+    /// The footprint drag's tracks, as a track drag's are drawn (outlined in red while what it moves collides)
+    var footprintDragTracks: BoardEditing.DragPreview? {
+        guard let f = footprintDragPreview else { return nil }
+        return BoardEditing.DragPreview(moved: f.moved, tracks: f.tracks, violates: f.collides)
+    }
+
+    /// Starts dragging footprints with their tracks with the router, the pointer at `p`; where the router has nothing
+    /// of them to drag (no pads), they are moved on their own instead
+    private func startFootprintDrag(_ uuids: [String], at p: KiCadPoint) async {
+        let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround, corners = self.corners
+        await applying?.value
+        if !isReady { await prepareNow() }
+        let shown = await engine.run { session -> BoardEditing.FootprintDragPreview? in
+            session.mode = mode
+            session.cornerMode = corners
+            return session.startFootprintDrag(uuids, at: p, layer: layer, warpsCursor: false)
+        }
+        guard draggingWithTracks else { return }
+        if let shown {
+            footprintDragPreview = shown
+            dragging?.delta = shown.offset
+        } else {
+            draggingWithTracks = false
+        }
+    }
+
+    /// The pointer moved to `p` (mm), dragging footprints: only the latest place it has got to dragged to
+    private func footprintDragMoved(to p: KiCadPoint) {
+        pendingFootprintDrag = p
+        guard !footprintDragMoving else { return }
+        footprintDragMoving = true
+        Task {
+            await footprintDragStart?.value
+            while let next = pendingFootprintDrag {
+                pendingFootprintDrag = nil
+                guard draggingWithTracks else { break }
+                let shown = await engine.run { $0.dragFootprint(to: next) }
+                if draggingWithTracks, let shown {
+                    footprintDragPreview = shown
+                    dragging?.delta = shown.offset
+                }
+            }
+            footprintDragMoving = false
+        }
+    }
+
+    /// The footprint drag kept with the pointer at `p`, as one change, if what it moved collides with nothing (or
+    /// `force`d); else dropped, the board as it was
+    private func fixFootprintDrag(at p: KiCadPoint, force: Bool) async {
+        await footprintDragStart?.value
+        pendingFootprintDrag = nil
+        guard draggingWithTracks else {
+            // (nothing the router could drag: the footprints moved on their own, as far as they got)
+            if let (uuids, delta) = dragging, delta != .zero {
+                dragging = nil
+                await place { $0.moveFootprints(uuids, by: delta) }
+            }
+            dragging = nil
+            return
+        }
+        let made = await engine.run { session -> BoardEditing.Edit? in
+            session.dragFootprint(to: p)
+            if let made = session.fixFootprintDrag(at: p, force: force) { return made }
+            session.cancelFootprintDrag()
+            return nil
+        }
+        endFootprintDrag()
+        if let made {
+            take(made)
+            message = nil
+        } else {
+            NSSound.beep()
+            message = "The part would come too near something there: hold ⌘ as you let go to put it there anyway, or ⌥ to move it without its tracks."
+        }
+    }
+
+    /// The footprint drag dropped (Esc); whether there was one
+    @discardableResult
+    func cancelFootprintDrag() -> Bool {
+        guard draggingWithTracks else { return false }
+        endFootprintDrag()
+        dropsUntilLetGo = true
+        Task { _ = await engine.run { session -> Bool? in session.cancelFootprintDrag(); return true } }
+        return true
+    }
+
+    private func endFootprintDrag() {
+        draggingWithTracks = false
+        footprintDragPreview = nil
+        footprintDragStart = nil
+        dragging = nil
     }
 
     /// How a box drawn to select with changes the selection, by the keys held as it is let go (KiCad's

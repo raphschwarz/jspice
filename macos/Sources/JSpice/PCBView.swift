@@ -395,7 +395,7 @@ struct PCBBoardCanvas: View {
             let draggedTexts = editing.draggingTexts ? Set(editing.dragging?.uuids ?? []) : []
             PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc ?? editing.quickDRC,
                        hidden: (editing.preview?.moved ?? []).union(editing.dragPreview?.moved ?? []).union(editing.pairPreview?.moved ?? [])
-                           .union(draggedTexts))
+                           .union(draggedTexts).union(editing.footprintDragPreview?.moved ?? []))
                 .draw(context)
             // the board's texts being dragged, where they go, and those selected, boxed
             for text in picture.texts where draggedTexts.contains(text.uuid) {
@@ -407,7 +407,7 @@ struct PCBBoardCanvas: View {
                 let rect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y)).insetBy(dx: -2, dy: -2)
                 context.stroke(Path(roundedRect: rect, cornerRadius: 2), with: .color(Color.accentColor), lineWidth: 1.5)
             }
-            PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview, pair: editing.pairPreview,
+            PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview ?? editing.footprintDragTracks, pair: editing.pairPreview,
                            selection: editing.selection,
                            dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil,
                            zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePointer, editing.layer, editing.zoneKind == .keepout) : nil,
@@ -439,13 +439,14 @@ struct PCBBoardCanvas: View {
         .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
             .onChanged { drag in
                 editing.dragChanged(from: view.board(drag.startLocation), to: view.board(drag.location), in: picture,
-                                    selected: footprints, leftward: drag.location.x < drag.startLocation.x)
+                                    selected: footprints, leftward: drag.location.x < drag.startLocation.x,
+                                    moveOnly: NSEvent.modifierFlags.contains(.option))
             }
             .onEnded { drag in
                 let flags = NSEvent.modifierFlags
                 let mode = PCBEditing.AreaSelection(shift: flags.contains(.shift), command: flags.contains(.command))
                 guard editing.selectionArea != nil else {
-                    editing.dragEnded(at: view.board(drag.location))
+                    editing.dragEnded(at: view.board(drag.location), force: flags.contains(.command))
                     return
                 }
                 Task {
@@ -523,6 +524,8 @@ struct PCBBoardCanvas: View {
         case .escape:
             if editing.isDragging {
                 editing.cancelDrag()
+            } else if editing.cancelFootprintDrag() {
+                // (the footprint drag dropped)
             } else if editing.isRouting {
                 editing.stop()
             } else if editing.cancelZone() {
