@@ -16,7 +16,8 @@ import KiCadKit
 /// (tuning.py check) as it reads its own: their patterns found with the port's members, written back as the port wrote
 /// them, its DRC finding what it finds on its own boards.
 final class TuningPatternTests: XCTestCase {
-    /// The boards tuned (BOARD.plan beside each), Fixtures/tuning's and KICAD_TUNING_REFERENCE's
+    /// The boards tuned (BOARD.plan beside each), Fixtures/tuning's and then KICAD_TUNING_REFERENCE's, each folder's
+    /// by name (wherever the folders are: the tests that take the first few take Fixtures/tuning's)
     static func boards() throws -> [URL] {
         var folders = [try XCTUnwrap(Bundle.module.url(forResource: "tuning", withExtension: nil, subdirectory: "Fixtures"))]
         if let more = ProcessInfo.processInfo.environment["KICAD_TUNING_REFERENCE"] { folders.append(URL(fileURLWithPath: more)) }
@@ -25,8 +26,9 @@ final class TuningPatternTests: XCTestCase {
             out += try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
                 .filter { $0.pathExtension == "plan" }
                 .map { $0.deletingPathExtension().appendingPathExtension("kicad_pcb") }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
         }
-        return out.sorted { $0.path < $1.path }
+        return out
     }
 
     static func sibling(_ board: URL, _ suffix: String, _ ext: String = "kicad_pcb") -> URL {
@@ -337,8 +339,13 @@ final class TuningPatternTests: XCTestCase {
                 else { continue }
                 let s = base.segment(-1)
                 let newEnd = s.a + (s.b - s.a).divided(by: 4) * 3
-                let a = BoardWorld.point(member["start"]), b = BoardWorld.point(member["end"])
-                let on = BoardEditing.mm(IPoint((a.x + b.x) / 2, (a.y + b.y) / 2))
+                // (on its middle; three quarters of the way to its end nearer the pattern's end where its middle is
+                // no nearer the pattern's end than its origin, the track the pattern's whole line)
+                let a0 = BoardWorld.point(member["start"]), b0 = BoardWorld.point(member["end"])
+                let (a, b) = (a0 - p.end).squaredNorm < (b0 - p.end).squaredNorm ? (b0, a0) : (a0, b0)
+                let middle = IPoint((a.x + b.x) / 2, (a.y + b.y) / 2)
+                let toEnd = (middle - p.end).squaredNorm < (middle - p.origin).squaredNorm
+                let on = BoardEditing.mm(toEnd ? middle : a + (b - a).divided(by: 4) * 3)
                 let drag = try Self.session(url, project: board)
                 XCTAssertNotNil(drag.startTuning(at: on, layer: p.layer, mode: p.mode.tuningMode))
                 XCTAssertTrue(drag.isTuning)
@@ -435,9 +442,12 @@ final class TuningPatternTests: XCTestCase {
                 XCTAssertEqual(entry["members"] as? [String], p.members.sorted(), url.lastPathComponent)
                 patterns += 1
             }
-            // (written back by KiCad as the port wrote them)
+            // (written back by KiCad as the port wrote them, as KiCad reads them: a length it reads cut to the
+            // nanometre, as TuningPatternMemory has it)
             let saved = try (o["saved"] as? [String] ?? []).map { try SExpr.parse($0).compact }
-            XCTAssertEqual(saved, board.root.all("generated").map(\.compact), url.lastPathComponent)
+            let read = board.copy()
+            TuningPatternMemory().read(read)
+            XCTAssertEqual(saved, read.root.all("generated").map(\.compact), url.lastPathComponent)
             // (KiCad's DRC: what it finds on KiCad's own board, by the items' descriptions)
             XCTAssertEqual(o["drc"] as? [String], k["drc"] as? [String], url.lastPathComponent)
         }
