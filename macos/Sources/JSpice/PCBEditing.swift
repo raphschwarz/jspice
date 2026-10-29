@@ -10,7 +10,7 @@ import KiCadRouter
 @MainActor
 final class PCBEditing: ObservableObject {
     enum Tool: String, CaseIterable, Identifiable {
-        case select, route, pair, via, zone, tune
+        case select, route, pair, via, zone, tune, text, footprint
         var id: Self { self }
         var title: String {
             switch self {
@@ -20,6 +20,8 @@ final class PCBEditing: ObservableObject {
             case .via: return "Add Via"
             case .zone: return "Draw Zone"
             case .tune: return "Tune Length"
+            case .text: return "Add Text"
+            case .footprint: return "Place Footprint"
             }
         }
         var symbol: String {
@@ -30,6 +32,8 @@ final class PCBEditing: ObservableObject {
             case .via: return "smallcircle.filled.circle"
             case .zone: return "pentagon"
             case .tune: return "waveform.path"
+            case .text: return "character.textbox"
+            case .footprint: return "cpu"
             }
         }
         /// Whether it routes (a track, or a pair)
@@ -79,6 +83,15 @@ final class PCBEditing: ObservableObject {
     @Published var footprintSelection: Set<String> = []
     /// Footprints being dragged, and how far so far
     @Published private(set) var dragging: (uuids: [String], delta: KiCadPoint)?
+    /// Whether the footprints being dragged are the board's texts instead
+    @Published private(set) var draggingTexts = false
+    /// The words the text tool places, and the layer it places them on
+    @Published var textToPlace = "Text"
+    @Published var textLayer = "F.SilkS"
+    /// The footprint the footprint tool places (Library:Name), and those of KiCad's libraries found for the words
+    /// typed in to look for one
+    @Published var footprintToPlace: String?
+    @Published private(set) var footprintMatches: [String] = []
     /// The box being drawn to select with (a drag from where there is nothing to drag, as KiCad's), and whether it
     /// takes what it touches (drawn right to left, KiCad's greedy selection) or only what is wholly in it
     @Published private(set) var selectionArea: (from: KiCadPoint, to: KiCadPoint, touching: Bool)?
@@ -960,6 +973,10 @@ final class PCBEditing: ObservableObject {
             dragMoved(to: now)
             return
         }
+        if dragging == nil, let text = PCBTextStrokes.shared.text(at: start, in: picture, layers: Set(picture.texts.map(\.layer))) {
+            dragging = (selection.contains(text) ? picture.texts.map(\.uuid).filter(selection.contains) : [text], .zero)
+            draggingTexts = true
+        }
         if dragging == nil {
             guard let footprint = picture.footprint(at: start) else {
                 selectionArea = (start, now, leftward)
@@ -979,8 +996,10 @@ final class PCBEditing: ObservableObject {
         }
         guard let (uuids, delta) = dragging else { return }
         dragging = nil
+        let texts = draggingTexts
+        draggingTexts = false
         guard delta != .zero else { return }
-        Task { await place { $0.moveFootprints(uuids, by: delta) } }
+        Task { await place { texts ? $0.moveDrawings(uuids, by: delta) : $0.moveFootprints(uuids, by: delta) } }
     }
 
     /// How a box drawn to select with changes the selection, by the keys held as it is let go (KiCad's
@@ -1018,10 +1037,59 @@ final class PCBEditing: ObservableObject {
         return apply(parts, to: footprints)
     }
 
-    /// Footprints turned 90° counterclockwise (R)
+    /// Footprints turned 90° counterclockwise (R), and the board's texts selected about their own positions
     func rotate(_ uuids: Set<String>) {
-        guard !uuids.isEmpty else { return }
-        Task { await place { $0.rotateFootprints(uuids.sorted()) } }
+        let texts = Set(controller?.picture?.texts.map(\.uuid) ?? []).intersection(selection)
+        guard !uuids.isEmpty || !texts.isEmpty else { return }
+        Task {
+            if !uuids.isEmpty { await place { $0.rotateFootprints(uuids.sorted()) } }
+            if !texts.isEmpty { await place { $0.rotateTexts(texts.sorted()) } }
+        }
+    }
+
+    // MARK: - Texts and footprints placed on their own
+
+    /// A click with the text tool at `p`: the words typed in placed there (on the grid), on the text tool's layer,
+    /// as KiCad's Add Text places them (of the layer's text style, the project's)
+    func textClick(at p: KiCadPoint) {
+        guard tool == .text, !isRouting else { return }
+        let words = textToPlace, layer = textLayer
+        Task {
+            if await place({ $0.addText(words, at: Self.onGrid(p), layer: layer) }) {
+                message = nil
+            } else {
+                NSSound.beep()
+                message = "Type the text to place beside the tool first."
+            }
+        }
+    }
+
+    /// The footprints of KiCad's libraries whose ids hold each of `query`'s words, to choose one to place from
+    func searchFootprints(_ query: String) {
+        Task {
+            let found = await controller?.searchFootprints(query) ?? []
+            footprintMatches = found
+            if footprintToPlace == nil || !found.contains(footprintToPlace ?? "") { footprintToPlace = found.first }
+        }
+    }
+
+    /// A click with the footprint tool at `p`: the footprint chosen placed there (on the grid), as KiCad's Place
+    /// Footprint places one: on the front, its pads on no net, its reference the library's; a part of the board alone
+    func footprintClick(at p: KiCadPoint) {
+        guard tool == .footprint, !isRouting else { return }
+        guard let libID = footprintToPlace else {
+            NSSound.beep()
+            message = "Look for a footprint beside the tool first, and choose one."
+            return
+        }
+        Task {
+            guard let footprint = await controller?.footprint(libID) else {
+                NSSound.beep()
+                message = "KiCad's footprint libraries have no \(libID)."
+                return
+            }
+            if await place({ $0.addFootprint(footprint, libID: libID, at: Self.onGrid(p)) }) { message = nil }
+        }
     }
 
     /// Footprints turned over to the other side (F)

@@ -128,6 +128,32 @@ public final class KiCadFootprintLibrary: @unchecked Sendable {
         return FileManager.default.fileExists(atPath: library.folder.appendingPathComponent(name + ".kicad_mod").path)
     }
 
+    private var index: [String]?
+
+    /// The footprints of every library whose ids hold each of `query`'s words (any case), as Library:Name, the
+    /// libraries' names and then the footprints' in order, at most `limit` of them (the libraries' folders listed
+    /// once, the first time)
+    public func search(_ query: String, limit: Int = 60) -> [String] {
+        lock.lock()
+        if index == nil {
+            index = libraries.keys.sorted().flatMap { name in
+                let folder = libraries[name]?.folder
+                let files = folder.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0.path) } ?? []
+                return files.filter { $0.hasSuffix(".kicad_mod") }.map { name + ":" + String($0.dropLast(10)) }.sorted()
+            }
+        }
+        let all = index ?? []
+        lock.unlock()
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return [] }
+        var out: [String] = []
+        for id in all where words.allSatisfy({ id.lowercased().contains($0) }) {
+            out.append(id)
+            if out.count == limit { break }
+        }
+        return out
+    }
+
     /// The names of a library's footprints
     public func footprints(in library: String) -> [String] {
         guard let folder = libraries[library]?.folder,

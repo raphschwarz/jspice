@@ -605,6 +605,11 @@ final class BoardController: ObservableObject {
         try? await worker.run { w in try w.library()?.footprint(libID) }
     }
 
+    /// The footprints of KiCad's libraries whose ids hold each of `query`'s words, as Library:Name
+    func searchFootprints(_ query: String) async -> [String] {
+        (try? await worker.run { w in w.library()?.search(query) ?? [] }) ?? []
+    }
+
     /// The net classes read again from the board's project
     func refreshNetClasses() {
         guard shownBoard == nil else { return }

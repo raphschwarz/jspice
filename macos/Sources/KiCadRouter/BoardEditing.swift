@@ -26,6 +26,8 @@ public final class BoardEditing {
         /// The tracks and vias changed in place (their widths, sizes), or placed on their own (a via, the halves of the
         /// track it splits), by id
         public var changed: [String] = []
+        /// The board's own texts and drawings added, changed or taken away, by id
+        public var drawings: [String] = []
         /// Whether the board's outline changed
         public var outline = false
         /// Whether the board's zones were filled again with it (refillsZones)
@@ -613,10 +615,17 @@ public final class BoardEditing {
         return change(name, changed: changed)
     }
 
-    /// Tracks and vias taken away, by id
+    /// Tracks and vias taken away, by id (and the board's own texts and drawings of those ids)
     public func remove(_ uuids: Set<String>) -> Edit? {
-        router.remove(uuids)
-        return change(uuids.count == 1 ? "Delete Track" : "Delete Tracks")
+        let drawings = router.board.boardDrawings.filter { uuids.contains($0.value("uuid") ?? "") }
+        if !drawings.isEmpty {
+            for node in drawings { router.board.root.remove(node) }
+            router.boardChanged()
+        }
+        let copper = uuids.subtracting(drawings.compactMap { $0.value("uuid") })
+        if !copper.isEmpty { router.remove(copper) }
+        let name = drawings.isEmpty ? (uuids.count == 1 ? "Delete Track" : "Delete Tracks") : uuids.count == 1 ? "Delete" : "Delete Items"
+        return change(name, drawings: drawings.compactMap { $0.value("uuid") })
     }
 
     private func commit(_ name: String) -> Edit? {
@@ -625,9 +634,9 @@ public final class BoardEditing {
     }
 
     func change(_ name: String, footprints: [String] = [], zones: [String] = [], outline: Bool = false,
-                        changed: [String] = []) -> Edit? {
+                        changed: [String] = [], drawings: [String] = []) -> Edit? {
         guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty || outline
-                || !changed.isEmpty else { return nil }
+                || !changed.isEmpty || !drawings.isEmpty else { return nil }
         var after = router.board.copy()
         let (added, removed) = (router.lastAdded, router.lastRemoved)
         // (not while a track or pair is still being routed, which goes on in the router as it is)
@@ -641,6 +650,7 @@ public final class BoardEditing {
         edit.zones = zones
         edit.outline = outline
         edit.changed = changed
+        edit.drawings = drawings
         edit.refilled = filled != nil
         lastRefilled = edit.refilled
         base = after

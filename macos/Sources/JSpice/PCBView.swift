@@ -203,6 +203,20 @@ struct PCBPainter {
 
     func color(_ layer: String) -> Color { Self.color(layer) }
 
+    /// A board's text drawn in KiCad's font, moved by `offset` (mm)
+    static func drawText(_ text: KiCadBoardPicture.Text, in context: GraphicsContext, view: PCBTransform, color: Color,
+                         offset: KiCadPoint = .zero) {
+        guard let strokes = PCBTextStrokes.shared.strokes(text) else { return }
+        func at(_ p: IPoint) -> CGPoint { view.point(KiCadPoint(Double(p.x) / 1e6 + offset.x, Double(p.y) / 1e6 + offset.y)) }
+        var path = Path()
+        for seg in strokes.segments {
+            path.move(to: at(seg.a))
+            path.addLine(to: at(seg.b))
+        }
+        context.stroke(path, with: .color(color.opacity(0.9)),
+                       style: StrokeStyle(lineWidth: max(0.5, Double(strokes.width) / 1e6 * view.scale), lineCap: .round, lineJoin: .round))
+    }
+
     static func color(_ layer: String) -> Color {
         switch layer {
         case "F.Cu": return front
@@ -296,6 +310,12 @@ struct PCBPainter {
             if line.filled { context.fill(path, with: .color(silk.opacity(0.85))) }
             context.stroke(path, with: .color(silk.opacity(0.85)), style: StrokeStyle(lineWidth: max(0.5, line.width * s), lineCap: .round, lineJoin: .round))
         }
+        // the board's own texts in KiCad's font: this side's silkscreen's, the copper's in its layer's colour, the
+        // others' dimmed (the other side's silkscreen left out); those being dragged drawn where they go
+        for text in picture.texts where !(text.layer.hasSuffix("SilkS") && text.layer != silkLayer) && !hidden.contains(text.uuid) {
+            Self.drawText(text, in: context, view: view, color: text.layer == silkLayer ? silk : text.layer.hasSuffix(".Cu")
+                          ? Self.color(text.layer) : Color.white.opacity(0.55))
+        }
         // the edge
         for line in picture.outline {
             context.stroke(view.path(line.points, closed: line.closed), with: .color(Self.edge),
@@ -372,9 +392,21 @@ struct PCBBoardCanvas: View {
 
     var body: some View {
         Canvas { context, _ in
+            let draggedTexts = editing.draggingTexts ? Set(editing.dragging?.uuids ?? []) : []
             PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc ?? editing.quickDRC,
-                       hidden: (editing.preview?.moved ?? []).union(editing.dragPreview?.moved ?? []).union(editing.pairPreview?.moved ?? []))
+                       hidden: (editing.preview?.moved ?? []).union(editing.dragPreview?.moved ?? []).union(editing.pairPreview?.moved ?? [])
+                           .union(draggedTexts))
                 .draw(context)
+            // the board's texts being dragged, where they go, and those selected, boxed
+            for text in picture.texts where draggedTexts.contains(text.uuid) {
+                PCBPainter.drawText(text, in: context, view: view, color: .white, offset: editing.dragging?.delta ?? .zero)
+            }
+            for text in picture.texts where editing.selection.contains(text.uuid) {
+                guard let box = PCBTextStrokes.shared.box(text) else { continue }
+                let a = view.point(KiCadPoint(box.minX, box.minY)), b = view.point(KiCadPoint(box.maxX, box.maxY))
+                let rect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y)).insetBy(dx: -2, dy: -2)
+                context.stroke(Path(roundedRect: rect, cornerRadius: 2), with: .color(Color.accentColor), lineWidth: 1.5)
+            }
             PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview, pair: editing.pairPreview,
                            selection: editing.selection,
                            dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil,
@@ -441,10 +473,21 @@ struct PCBBoardCanvas: View {
                 editing.tuneClick(at: p)
             case .via:
                 editing.viaClick(at: p)
+            case .text:
+                editing.textClick(at: p)
+            case .footprint:
+                editing.footprintClick(at: p)
             case .select:
                 // a track or via, else a connection still to route (routed), else a part
                 if editing.select(at: p, in: picture, slop: 3 / view.scale, extending: extending) {
                     if !extending {
+                        board.select(footprint: nil, extending: false)
+                        editing.footprintSelection = []
+                    }
+                } else if let text = PCBTextStrokes.shared.text(at: p, in: picture, layers: Set(picture.texts.map(\.layer))) {
+                    // a text of the board's own
+                    if extending { editing.selection.formSymmetricDifference([text]) } else {
+                        editing.selection = [text]
                         board.select(footprint: nil, extending: false)
                         editing.footprintSelection = []
                     }
@@ -515,6 +558,7 @@ struct PCBBoardCanvas: View {
         case "x": editing.tool = .route
         case "6": editing.tool = .pair
         case "z" where !editing.isRouting: editing.tool = .zone
+        case "a" where !editing.isRouting: editing.tool = .footprint
         case "7" where !editing.isRouting, "8" where !editing.isRouting, "9" where !editing.isRouting:
             editing.tuneMode = press.characters == "7" ? .single : press.characters == "8" ? .diffPair : .skew
             editing.tool = .tune
@@ -724,8 +768,24 @@ struct PCBEditBar: View {
             return "Add vias (⇧V): click to place one, as KiCad's Add Vias places it: onto the track, pad or zone there, of its net, refused where the design rules keep it off other copper"
         case .tune:
             return "Tune a track's length (7), a differential pair's (8) or its skew (9), as KiCad's length tuner: click the track, move along it, click to keep the meanders; 1 2 spacing, 3 4 amplitude, Esc drops it"
+        case .text:
+            return "Add text: click to place the words typed in beside the tool, on the layer chosen, as KiCad's Add Text places them (of the board's text style for the layer; mirrored underneath); drag a text with the select tool to move it, R turns it, ⌫ deletes it"
+        case .footprint:
+            return "Place a footprint (A): look for one of KiCad's libraries' beside the tool, click to place it, as KiCad's Place Footprint places one (a part of the board alone, not in the schematic: a logo, a test point, a fiducial)"
         case .zone:
             return "Draw a zone (Z): click its corners, double-click the last: a copper zone of a net, filled round everything else as KiCad fills it, or a rule area keeping tracks, vias, pads or pours out (⌫ takes a corner back, Esc drops it)"
+        }
+    }
+
+    static func textLayerTitle(_ layer: String) -> String {
+        switch layer {
+        case "F.SilkS": return "Top Silkscreen"
+        case "B.SilkS": return "Bottom Silkscreen"
+        case "F.Fab": return "Top Fabrication"
+        case "B.Fab": return "Bottom Fabrication"
+        case "Dwgs.User": return "Drawings"
+        case "Cmts.User": return "Comments"
+        default: return title(layer) + " Copper"
         }
     }
 
@@ -820,6 +880,22 @@ struct PCBEditBar: View {
                         .help("The length to reach, mm, within 0.1 mm")
                 }
                 Text("mm").foregroundStyle(.secondary)
+            }
+            if editing.tool == .text {
+                TextField("Text", text: $editing.textToPlace)
+                    .frame(width: 150)
+                    .help("The words to place")
+                Picker("Layer", selection: $editing.textLayer) {
+                    ForEach(["F.SilkS", "B.SilkS"] + editing.layers + ["F.Fab", "B.Fab", "Dwgs.User", "Cmts.User"], id: \.self) { layer in
+                        Text(Self.textLayerTitle(layer)).tag(layer)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("The layer the text goes on")
+            }
+            if editing.tool == .footprint {
+                PCBFootprintSearch(editing: editing)
             }
             if editing.tool == .zone {
                 Picker("Layer", selection: $editing.layer) {
@@ -1330,5 +1406,27 @@ struct PCBDRCSection: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+/// The footprint tool's search of KiCad's libraries: the words typed in looked for in the footprints' ids, and the one
+/// to place chosen of those found
+struct PCBFootprintSearch: View {
+    @ObservedObject var editing: PCBEditing
+    @State private var query = ""
+
+    var body: some View {
+        TextField("Search Footprints", text: $query)
+            .frame(width: 150)
+            .onSubmit { editing.searchFootprints(query) }
+            .onChange(of: query) { _, words in if words.count >= 2 { editing.searchFootprints(words) } }
+            .help("Words of the footprint's library and name to look for, as R_0805, TestPoint or Logo")
+        Picker("Footprint", selection: $editing.footprintToPlace) {
+            if editing.footprintMatches.isEmpty { Text("None found").tag(String?.none) }
+            ForEach(editing.footprintMatches, id: \.self) { id in Text(id).tag(Optional(id)) }
+        }
+        .labelsHidden()
+        .frame(maxWidth: 260)
+        .help("The footprint a click places")
     }
 }

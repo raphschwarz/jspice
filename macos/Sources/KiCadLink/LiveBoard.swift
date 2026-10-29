@@ -101,6 +101,11 @@ public final class KiCadLiveBoard {
             reloadReason = zonesRedrawn ? "zones added, taken away or redrawn" : "the board's outline changed"
             return try reload(after)
         }
+        // the board's own texts and drawings added, changed or taken away here: the board by its file too
+        if Set(before.boardDrawings.map(\.compact)) != Set(after.boardDrawings.map(\.compact)) {
+            reloadReason = "the board's texts or drawings changed"
+            return try reload(after)
+        }
         guard count > 0 else { return .nothing }
 
         // the footprints, tracks and vias to make, as KiCad's API takes them; any KiCad cannot take sends the whole

@@ -189,6 +189,11 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   board is (its zones not refilled), errors and warnings, next to it as `BOARD.drc` (JSON, its date taken out).
   `DRCTests` checks the port's DRC (`BoardDRC`) against it: the same violations of the checks it makes, between the
   same items, in the same words. The boards of `Tests/KiCadRouterTests/Fixtures/boards` have theirs.
+- `placed.py`: boards' texts and footprints as KiCad reads them (`placed.py BOARD.kicad_pcb...`, JSON on standard
+  output): each text's words, layer, place, angle, size, pen, bold, italic, kept upright, mirrored and
+  justification, beside what KiCad's Add Text gives a new text on its layer by the board's project, and each
+  footprint's reference, value, library id, place, angle, side, board-only attribute and pads' nets. `PlacingTests`
+  runs it on boards the port's `BoardEditing.addText` and `addFootprint` placed texts and footprints on.
 - `boxes.py`: what KiCad's box selection takes on boards (`boxes.py BOARD.kicad_pcb...`): rectangles drawn on each
   (a third anywhere, the others round an item's box with each side moved by up to 0.6 mm) and, through KiCad's
   `pcbnew` module, the tracks, arcs, vias and footprints whose `HitTest( BOX2I, aContained )` holds, wholly in each

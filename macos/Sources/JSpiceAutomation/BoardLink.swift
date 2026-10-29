@@ -184,6 +184,7 @@ public final class BoardLink {
             current.carryCopper(from: before, to: after)
             current.carryZones(from: before, to: after)
             current.carryOutline(from: before, to: after)
+            current.carryDrawings(from: before, to: after)
             board = current
         }
         try board.write(to: boardFile)

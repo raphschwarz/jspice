@@ -249,6 +249,51 @@ public final class KiCadBoard {
         }
     }
 
+    static let textHeads: Set<String> = ["gr_text", "gr_text_box"]
+
+    /// The board's own texts and drawings, its outline aside (as they stand in its file)
+    public var boardDrawings: [SExpr] {
+        root.items.filter { item in
+            let head = item.head ?? ""
+            return Self.textHeads.contains(head) || (KiCadDrawing.heads.contains(head) && item.value("layer") != "Edge.Cuts")
+        }
+    }
+
+    /// A text or drawing put after the board's others, where KiCad keeps them (after its footprints, before its tracks)
+    public func addDrawing(_ node: SExpr) {
+        let items = root.items
+        let drawing = { (item: SExpr) in Self.textHeads.contains(item.head ?? "") || KiCadDrawing.heads.contains(item.head ?? "") }
+        if let last = items.lastIndex(where: drawing) {
+            root.items.insert(node, at: last + 1)
+        } else if let first = items.firstIndex(where: { (Self.copperHeads.union(["zone", "group", "generated", "embedded_fonts", "embedded_files"])).contains($0.head ?? "") }) {
+            root.items.insert(node, at: first)
+        } else {
+            root.items.append(node)
+        }
+    }
+
+    /// What was done to the texts and drawings of `before` (its outline aside) to make `after`, done to this board by
+    /// their ids, as carryCopper does for tracks
+    public func carryDrawings(from before: KiCadBoard, to after: KiCadBoard) {
+        func byID(_ items: [SExpr]) -> [String: SExpr] {
+            Dictionary(items.compactMap { n in n.value("uuid").map { ($0, n) } }, uniquingKeysWith: { a, _ in a })
+        }
+        let old = byID(before.boardDrawings), new = byID(after.boardDrawings)
+        for node in boardDrawings {
+            guard let uuid = node.value("uuid"), let was = old[uuid] else { continue }
+            if let now = new[uuid] {
+                if now.compact != was.compact, let i = root.items.firstIndex(where: { $0 === node }) { root.items[i] = now.copy() }
+            } else {
+                root.remove(node)
+            }
+        }
+        let here = byID(boardDrawings)
+        for node in after.boardDrawings {
+            guard let uuid = node.value("uuid"), old[uuid] == nil, here[uuid] == nil else { continue }
+            addDrawing(node.copy())
+        }
+    }
+
     /// The board's own drawings on Edge.Cuts (its outline, as drawn on the board rather than by footprints)
     public var edgeDrawings: [SExpr] {
         root.items.filter { KiCadDrawing.heads.contains($0.head ?? "") && $0.value("layer") == "Edge.Cuts" }

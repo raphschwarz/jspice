@@ -63,8 +63,16 @@ public struct KiCadBoardPicture: Sendable {
         public var isRuleArea: Bool
     }
 
+    /// A board's own text: its s-expression as the file has it (for drawing it in KiCad's font), its layer and id
+    public struct Text: Sendable {
+        public var source: String
+        public var layer: String
+        public var uuid: String
+    }
+
     public var outline: [Line] = []
     public var silkscreen: [Line] = []
+    public var texts: [Text] = []
     public var zones: [Zone] = []
     public var tracks: [Track] = []
     public var vias: [Via] = []
@@ -99,6 +107,9 @@ public struct KiCadBoardPicture: Sendable {
         outline = board.outline.compactMap(line)
         outlineCornerRadius = board.outlineRectangle?.radius
         for d in board.drawings where d.layer.hasSuffix("SilkS") { if let l = line(d) { silkscreen.append(l) } }
+        for node in board.root.items where node.head == "gr_text" {
+            texts.append(Text(source: node.compact, layer: node.value("layer") ?? "", uuid: node.value("uuid") ?? ""))
+        }
         for footprint in board.footprints {
             for d in footprint.drawings where d.layer.hasSuffix("SilkS") { if let l = line(d) { silkscreen.append(l) } }
             let attrs = footprint.attributes
