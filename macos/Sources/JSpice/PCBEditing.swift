@@ -705,6 +705,55 @@ final class PCBEditing: ObservableObject {
     // MARK: - Pours
 
     /// A ground pour over the whole board on `layers`, filled as KiCad fills it (`net`: the board's ground net if nil)
+    /// The teardrop settings being edited in the Teardrops sheet (the board's, as its project keeps them), shown
+    /// while it is open
+    @Published var teardropSettings: TeardropSettings?
+
+    /// The Teardrops sheet opened on the board's teardrop settings
+    func editTeardrops() {
+        Task {
+            await applying?.value
+            if !isReady { await prepareNow() }
+            teardropSettings = await engine.run { $0.teardropSettings } ?? TeardropSettings()
+        }
+    }
+
+    /// Teardrops made on the board with `settings`, as KiCad's Set Teardrops dialog adds them (its zones filled
+    /// again with them), as one change; the settings kept in the board's project
+    func addTeardrops(_ settings: TeardropSettings) {
+        teardropSettings = nil
+        Task {
+            await applying?.value
+            if !isReady { await prepareNow() }
+            guard let made = await engine.run({ $0.addTeardrops(settings: settings) }) else {
+                NSSound.beep()
+                message = "No teardrops to make there: none of the pads, vias or track ends asked for take one, or the board has what JSpice does not make teardrops round yet (padstacks, curved custom pads, texts in other fonts on copper)."
+                return
+            }
+            take(made)
+            if let kept = made.teardropSettings { controller?.setTeardropSettings(kept) }
+            if !made.refilled { await fillZonesNow() }
+            message = nil
+        }
+    }
+
+    /// Every teardrop taken away, as the Set Teardrops dialog's "remove all teardrops" does, as one change
+    func removeTeardrops() {
+        Task {
+            await applying?.value
+            if !isReady { await prepareNow() }
+            guard let made = await engine.run({ $0.removeTeardrops() }) else {
+                NSSound.beep()
+                message = "The board has no teardrops."
+                return
+            }
+            take(made)
+            if let kept = made.teardropSettings { controller?.setTeardropSettings(kept) }
+            if !made.refilled { await fillZonesNow() }
+            message = nil
+        }
+    }
+
     func addPour(net: String? = nil, layers: [String]) {
         Task {
             await applying?.value

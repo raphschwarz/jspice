@@ -1004,6 +1004,9 @@ struct PCBEditBar: View {
                 }
                 Button("Stitch Ground Pours") { editing.stitchPours() }
                 Divider()
+                Button("Teardrops…") { editing.editTeardrops() }
+                Button("Remove Teardrops") { editing.removeTeardrops() }
+                Divider()
                 Button("Fill Zones") { editing.fillZones() }
                 Button("Remove Pours") { editing.removePours() }
                 Divider()
@@ -1021,6 +1024,9 @@ struct PCBEditBar: View {
             .disabled(editing.isRouting)
             .help("Pour ground copper over the board, filled as KiCad fills it round everything else (B fills the zones again after a change)")
             Button { editing.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                .sheet(isPresented: Binding(get: { editing.teardropSettings != nil }, set: { if !$0 { editing.teardropSettings = nil } })) {
+                    PCBTeardropSheet(editing: editing, settings: editing.teardropSettings ?? TeardropSettings())
+                }
                 .confirmationDialog("Select Net:", isPresented: Binding(get: { editing.viaNetChoice != nil },
                                                                       set: { if !$0 { editing.viaNetChoice = nil } })) {
                     ForEach(editing.viaNetChoice?.nets ?? [], id: \.self) { net in
@@ -1572,5 +1578,72 @@ struct PCBFootprintSearch: View {
         .labelsHidden()
         .frame(maxWidth: 260)
         .help("The footprint a click places")
+    }
+}
+
+/// KiCad's Set Teardrops dialog, as far as JSpice makes teardrops: what gets them (vias, plated and surface pads, track
+/// ends), and for round shapes, other shapes and track ends how long and wide they are, at most, and whether their
+/// sides curve; Add makes them all again with these
+struct PCBTeardropSheet: View {
+    @ObservedObject var editing: PCBEditing
+    @State var settings: TeardropSettings
+    @Environment(\.dismiss) private var dismiss
+
+    private static let targets = [(0, "Round pads and vias"), (1, "Other pads"), (2, "Track ends")]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Teardrops").font(.headline)
+            HStack(spacing: 16) {
+                Toggle("Vias", isOn: $settings.vias)
+                Toggle("Plated pads", isOn: $settings.pthPads)
+                Toggle("Surface pads", isOn: $settings.smdPads)
+                Toggle("Track ends", isOn: $settings.trackToTrack)
+            }
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                GridRow {
+                    Text("")
+                    Text("Length").foregroundStyle(.secondary)
+                    Text("Width").foregroundStyle(.secondary)
+                    Text("Longest, mm").foregroundStyle(.secondary)
+                    Text("Widest, mm").foregroundStyle(.secondary)
+                    Text("")
+                }
+                ForEach(Self.targets, id: \.0) { target in
+                    GridRow {
+                        Text(target.1)
+                        TextField("", value: ratio(target.0, \.bestLengthRatio), format: .percent.precision(.fractionLength(0...1)))
+                            .frame(width: 64)
+                        TextField("", value: ratio(target.0, \.bestWidthRatio), format: .percent.precision(.fractionLength(0...1)))
+                            .frame(width: 64)
+                        TextField("", value: millimetres(target.0, \.maxLength), format: .number.precision(.fractionLength(0...3)))
+                            .frame(width: 64)
+                        TextField("", value: millimetres(target.0, \.maxWidth), format: .number.precision(.fractionLength(0...3)))
+                            .frame(width: 64)
+                        Toggle("Curved", isOn: Binding(get: { settings[target.0].curvedEdges }, set: { settings[target.0].curvedEdges = $0 }))
+                    }
+                }
+            }
+            Text("Lengths and widths are parts of the pad's or via's size, as in KiCad's Set Teardrops dialog.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { editing.teardropSettings = nil; dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Add Teardrops") { editing.addTeardrops(settings) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 560)
+    }
+
+    private func ratio(_ target: Int, _ key: WritableKeyPath<TeardropParameters, Double>) -> Binding<Double> {
+        Binding(get: { settings[target][keyPath: key] }, set: { settings[target][keyPath: key] = $0 })
+    }
+
+    private func millimetres(_ target: Int, _ key: WritableKeyPath<TeardropParameters, Int>) -> Binding<Double> {
+        Binding(get: { Double(settings[target][keyPath: key]) / 1e6 },
+                set: { settings[target][keyPath: key] = Int(($0 * 1e6).rounded()) })
     }
 }

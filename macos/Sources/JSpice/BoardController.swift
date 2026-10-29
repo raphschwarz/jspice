@@ -655,6 +655,35 @@ final class BoardController: ObservableObject {
         }
     }
 
+    /// The teardrop settings a change made with (an edit's teardropSettings), in the board's project, as KiCad's Set
+    /// Teardrops dialog keeps them there
+    func setTeardropSettings(_ settings: TeardropSettings) {
+        let entries = settings.projectSettings
+        if shownBoard != nil {
+            var project = shownProject ?? [:]
+            var board = project["board"] as? [String: Any] ?? [:]
+            var design = board["design_settings"] as? [String: Any] ?? [:]
+            for (key, value) in entries { design[key] = value }
+            board["design_settings"] = design
+            project["board"] = board
+            shownProject = project
+            editing.rulesChanged(project)
+            return
+        }
+        Task {
+            do {
+                let project = try await worker.run { w -> [String: Any] in
+                    guard let link = w.link else { throw BoardLink.Failure.noBoard }
+                    return try link.setTeardropSettings(entries)
+                }
+                editing.rulesChanged(project)
+                failure = nil
+            } catch {
+                failure = "\(error)"
+            }
+        }
+    }
+
     /// A net class's widths and gaps changed (or a class added), in the board's project; the router takes them at once
     func setNetClass(_ netClass: KiCadProject.NetClass) {
         if shownBoard != nil {

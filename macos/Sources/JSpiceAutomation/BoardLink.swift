@@ -24,12 +24,16 @@ public final class BoardLink {
         case projectOpen
         /// The same, of the project's pre-defined sizes
         case sizesProjectOpen
+        /// The same, of the project's teardrop settings
+        case teardropsProjectOpen
 
         public var description: String {
             switch self {
             case .noKiCad(let why): return why
             case .projectOpen:
                 return "KiCad has the board open: change its net classes in KiCad's Board Setup (Net Classes), or close the board in KiCad and change them here."
+            case .teardropsProjectOpen:
+                return "KiCad has the board open: its teardrops were made, but their settings stay as KiCad's Set Teardrops dialog last left them in its project."
             case .sizesProjectOpen:
                 return "KiCad has the board open: change its pre-defined sizes in KiCad's Board Setup (Pre-defined Sizes), or close the board in KiCad and change them here."
             case .openUnreachable:
@@ -253,6 +257,22 @@ public final class BoardLink {
         if isOpenInKiCad { throw Failure.sizesProjectOpen }
         var project = projectSettings() ?? [:]
         KiCadProject.setPredefinedSizes(sizes, in: &project)
+        let data = try JSONSerialization.data(withJSONObject: project, options: [.prettyPrinted, .sortedKeys])
+        try (String(decoding: data, as: UTF8.self) + "\n").write(to: projectFile, atomically: true, encoding: .utf8)
+        return project
+    }
+
+    /// The board's teardrop settings (board.design_settings' teardrop_options and teardrop_parameters, as KiCad's Set
+    /// Teardrops dialog leaves them) written into its project; the project as it then is
+    @discardableResult
+    public func setTeardropSettings(_ entries: [String: Any]) throws -> [String: Any] {
+        if isOpenInKiCad { throw Failure.teardropsProjectOpen }
+        var project = projectSettings() ?? [:]
+        var board = project["board"] as? [String: Any] ?? [:]
+        var design = board["design_settings"] as? [String: Any] ?? [:]
+        for (key, value) in entries { design[key] = value }
+        board["design_settings"] = design
+        project["board"] = board
         let data = try JSONSerialization.data(withJSONObject: project, options: [.prettyPrinted, .sortedKeys])
         try (String(decoding: data, as: UTF8.self) + "\n").write(to: projectFile, atomically: true, encoding: .utf8)
         return project

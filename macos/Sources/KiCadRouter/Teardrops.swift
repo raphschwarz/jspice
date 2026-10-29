@@ -176,7 +176,8 @@ public struct TeardropSettings: Sendable, Equatable {
         }
     }
 
-    subscript(_ i: Int) -> TeardropParameters {
+    /// The parameters of round shapes (0), other shapes (1) and track ends (2)
+    public subscript(_ i: Int) -> TeardropParameters {
         get { i == 0 ? round : i == 1 ? rect : track }
         set {
             switch i {
