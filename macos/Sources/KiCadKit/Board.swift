@@ -294,6 +294,35 @@ public final class KiCadBoard {
         }
     }
 
+    /// What was done to the generators of `before` (its tuning patterns) to make `after`, done to this board by their
+    /// ids, as carryCopper does for tracks: a generator made put after the board's others (before its embedded files)
+    public func carryGenerators(from before: KiCadBoard, to after: KiCadBoard) {
+        func byID(_ items: [SExpr]) -> [String: SExpr] {
+            Dictionary(items.compactMap { n in n.value("uuid").map { ($0, n) } }, uniquingKeysWith: { a, _ in a })
+        }
+        let old = byID(before.root.all("generated")), new = byID(after.root.all("generated"))
+        for node in root.all("generated") {
+            guard let uuid = node.value("uuid"), let was = old[uuid] else { continue }
+            if let now = new[uuid] {
+                if now.compact != was.compact, let i = root.items.firstIndex(where: { $0 === node }) { root.items[i] = now.copy() }
+            } else {
+                root.remove(node)
+            }
+        }
+        let here = byID(root.all("generated"))
+        for node in after.root.all("generated") {
+            guard let uuid = node.value("uuid"), old[uuid] == nil, here[uuid] == nil else { continue }
+            let items = root.items
+            if let last = items.lastIndex(where: { $0.head == "generated" || $0.head == "group" }) {
+                root.items.insert(node.copy(), at: last + 1)
+            } else if let first = items.firstIndex(where: { ["embedded_fonts", "embedded_files"].contains($0.head ?? "") }) {
+                root.items.insert(node.copy(), at: first)
+            } else {
+                root.items.append(node.copy())
+            }
+        }
+    }
+
     /// The board's own drawings on Edge.Cuts (its outline, as drawn on the board rather than by footprints)
     public var edgeDrawings: [SExpr] {
         root.items.filter { KiCadDrawing.heads.contains($0.head ?? "") && $0.value("layer") == "Edge.Cuts" }
