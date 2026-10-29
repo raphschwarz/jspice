@@ -34,6 +34,9 @@ public final class BoardEditing {
         public var setup = false
         /// Whether the board's zones were filled again with it (refillsZones)
         public var refilled = false
+        /// The board's teardrop settings as the change left them, where it changed them (for its project's board
+        /// design settings: TeardropSettings.projectSettings)
+        public var teardropSettings: TeardropSettings?
         /// What it was, for an undo menu (and KiCad's own)
         public let name: String
     }
@@ -763,6 +766,87 @@ public final class BoardEditing {
         for zone in gone { router.board.root.remove(zone.node) }
         router.boardChanged()
         return change(gone.count == 1 ? "Delete Pour" : "Delete Pours", zones: gone.map(\.uuid))
+    }
+
+    // MARK: - Teardrops
+
+    /// The board's teardrop settings, as its project keeps them (KiCad's defaults where it has none)
+    public var teardropSettings: TeardropSettings { TeardropSettings(project: project) }
+
+    /// Teardrops added as one change, as KiCad's Set Teardrops dialog adds them with the default values for each
+    /// shape: `settings` (the board's for round shapes, other shapes and track ends, and what they go on) put on the
+    /// vias and pads they are asked for, and the board's teardrops all made again from them as KiCad's teardrop
+    /// manager makes them (Teardrops), its zones then filled again if refillsZones; nil when that changes nothing,
+    /// or the board has what the port does not make teardrops round yet. The project's settings change with it
+    /// (the edit's teardropSettings); the edit's zones are the teardrops made and taken away, by the keys the zone
+    /// filler keeps them by ("zone #N": KiCad writes teardrops without uuids).
+    public func addTeardrops(settings: TeardropSettings) -> Edit? {
+        guard !isRouting else { return nil }
+        let board = router.board.copy()
+        let kept = Teardrops.applySettings(settings, to: board)
+        let made = Teardrops(board: board, project: project, settings: kept)
+        guard made.unsupported.isEmpty else { return nil }
+        return replaceTeardrops(made.board(board), kept, "Add Teardrops")
+    }
+
+    /// Every teardrop taken away as one change, as the Set Teardrops dialog's "remove all teardrops": the pads' and
+    /// vias' teardrops turned off and the track ends', and the board's teardrops gone; nil when it has none and none
+    /// are on
+    public func removeTeardrops() -> Edit? {
+        guard !isRouting else { return nil }
+        let board = router.board.copy()
+        let kept = Teardrops.disableAll(on: board, settings: teardropSettings)
+        return replaceTeardrops(Teardrops.withoutTeardrops(board), kept, "Remove Teardrops")
+    }
+
+    /// The board made `board` (its teardrops changed, and its pads' and vias' settings), and the project's teardrop
+    /// settings `settings`: the vias whose settings changed among the edit's changed, the footprints whose pads' did
+    /// among its footprints
+    private func replaceTeardrops(_ board: KiCadBoard, _ settings: TeardropSettings, _ name: String) -> Edit? {
+        func keys(_ b: KiCadBoard) -> [String] {
+            b.root.all("zone").enumerated().filter { $0.element["attr"]?["teardrop"] != nil }.map { ZoneFiller.zoneKey($0.element, $0.offset) }
+        }
+        func vias(_ b: KiCadBoard) -> [String: String] {
+            Dictionary(b.root.all("via").map { ($0.value("uuid") ?? "", $0["teardrops"]?.formatted() ?? "") }, uniquingKeysWith: { a, _ in a })
+        }
+        func footprints(_ b: KiCadBoard) -> [String: String] {
+            Dictionary(b.root.all("footprint").map { fp in
+                (fp.value("uuid") ?? "", fp.all("pad").map { $0["teardrops"]?.formatted() ?? "" }.joined(separator: "|"))
+            }, uniquingKeysWith: { a, _ in a })
+        }
+        let changedSettings = settings != teardropSettings
+        guard board.text != router.board.text || changedSettings else { return nil }
+        let zones = Array(Set(keys(router.board)).union(keys(board))).sorted()
+        let (oldVias, newVias) = (vias(router.board), vias(board))
+        let (oldFootprints, newFootprints) = (footprints(router.board), footprints(board))
+        let changedVias = newVias.keys.filter { newVias[$0] != oldVias[$0] }.sorted()
+        let changedFootprints = newFootprints.keys.filter { newFootprints[$0] != oldFootprints[$0] }.sorted()
+        if changedSettings {
+            var p = project ?? [:]
+            var b = p["board"] as? [String: Any] ?? [:]
+            var ds = b["design_settings"] as? [String: Any] ?? [:]
+            for (k, v) in settings.projectSettings { ds[k] = v }
+            b["design_settings"] = ds
+            p["board"] = b
+            project = p
+        }
+        if board.text == router.board.text {
+            // (the project's settings alone changed: the board as it was)
+            var edit = Edit(before: base, after: base, added: [], removed: [], name: name)
+            edit.teardropSettings = settings
+            return edit
+        }
+        router.board.root.items = board.root.items
+        router.boardChanged()
+        guard var edit = change(name, footprints: changedFootprints, zones: zones, changed: changedVias) else {
+            // (the board's legacy teardrops no longer so, and nothing else)
+            var edit = Edit(before: base, after: router.board.copy(), added: [], removed: [], name: name)
+            edit.teardropSettings = changedSettings ? settings : nil
+            base = edit.after
+            return edit
+        }
+        if changedSettings { edit.teardropSettings = settings }
+        return edit
     }
 
     // MARK: - The outline

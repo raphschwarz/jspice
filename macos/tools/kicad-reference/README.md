@@ -268,6 +268,38 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   on no copper and on three copper layers with a hole, a footprint's own zones, a net tie, a teardrop), filled and
   written as above; with `--draw-open OUT.kicad_pcb`, a small board whose edges do not close, its outline inferred
   from their box. `Tests/KiCadRouterTests/Fixtures/fills` holds both (`drawn`, `open`).
+- `teardrops.py`: KiCad's teardrops of boards (`teardrops.py [--random SEED] BOARD.kicad_pcb...`): each board copied to
+  a folder of its own and run through kicad-cli's design rules check with its zones refilled and the board saved
+  (`kicad-cli pcb drc --refill-zones --save-board`: `ZONE_FILLER_TOOL::FillAllZones`, which has
+  `TEARDROP_MANAGER::UpdateTeardrops` make all the board's teardrops again before it fills the zones; KiCad's Python
+  module does not reach the teardrop manager, and this is how KiCad makes teardrops without its editor), the board as
+  saved read through KiCad's `pcbnew` module, and written next to the board as `BOARD.teardrops` (JSON): each
+  teardrop's layer, net, type, priority, outline and fill, and the pads, vias and tracks of its connectivity cluster
+  (KiCad writes teardrops without the uuids it orders them by), and every other zone's fill as kicad-cli filled it.
+  With `--random SEED`, random teardrop settings set first, as KiCad's Set Teardrops dialog sets them with the default
+  values for each shape (the board's settings for round shapes, other shapes and track ends, in its project, and
+  which of vias, plated pads, surface pads and track ends they go on; each of those vias and pads given its shape's,
+  teardrops on), and written with them. `TeardropTests` checks the port's (`Teardrops`) against it: the same
+  teardrops, point for point (each of KiCad's found among the port's by its outline), with the same priorities and
+  types, those narrowed to keep clear of other nets' copper and those not made for it among them; the board with the
+  port's teardrops filled by `ZoneFiller` against kicad-cli's fills of its own and of the board's zones round them; and
+  teardrops added and taken away in the PCB view as one change (`BoardEditing.addTeardrops`, `removeTeardrops`), as
+  written and read again. With `--draw OUT.kicad_pcb`, a board of the teardrops random boards seldom make, written as
+  with `--random` (the drawn board's settings): round, oval, rectangular, rounded and chamfered, trapezoid and custom
+  pads, turned, with tracks into them straight, at angles, off their centres and across them; tracks too short that go
+  on into the next, gently and round a bend too sharp; arcs; tracks on the back and inside; surface pads with settings
+  of their own (curved and straight, narrower, longer, off, a filter too fine for the track); vias with tracks across
+  them, ending inside them, of no net, and one with a mask opening of its own (its mask teardrop); other nets' pads
+  of clearances of their own, vias, drawings and a text on copper close by; pads in a zone of their net; and track
+  ends of two widths. With `--boards OUTDIR COUNT [SEED]`, random boards of teardrops, written as with `--random`:
+  on a grid, pads of every shape, size and turn (plated, or on either side, some of these with random settings of
+  their own) and vias, each with tracks into it at random angles and widths, off its centre, across it, too short and
+  going on into a second at a random bend, or arcs, on any layer, now and then another net's track or via close by;
+  track ends of two widths; now and then a zone of a net, filled. `KICAD_TEARDROP_REFERENCE` names a folder of them
+  (it has none of the other references `KICAD_BOARD_REFERENCE`'s boards have). `Tests/KiCadRouterTests/Fixtures/
+  teardrops` holds `drawn` (`--draw`), `teardrops-1-1` (`--boards ... 2 1`) and three of the CI's random boards of its
+  run 49 (`random-49-20`, `random-arcs-49-3` and `custom-49-0`, of `boards.py ... 49`, `--arcs` and `--custom-pads`),
+  with `teardrops.py --random 49`.
 - `thermals.py`: a board of thermal reliefs for `DRCTests`' starved thermals (`thermals.py OUT.kicad_pcb [SEED]`):
   pads of a zone's net in its fill (filled by KiCad's zone filler), their spokes cut off by tracks of other nets and
   the board's edge, the board asking three spokes of each; pads joined solidly or not at all by the pad or its
