@@ -112,9 +112,9 @@ public struct ShapeArc: Hashable, Sendable, CustomStringConvertible {
     /// KiCad's Reversed, which works them out again)
     public mutating func reverse() { swap(&start, &end) }
 
-    public var startAngle: EDAAngle { EDAAngle(start - center).normalized }
+    public var startAngle: EDAAngle { EDAAngle((start - center).wrapped32).normalized }
 
-    public var endAngle: EDAAngle { EDAAngle(end - center).normalized }
+    public var endAngle: EDAAngle { EDAAngle((end - center).wrapped32).normalized }
 
     /// How far round it turns, positive counter-clockwise; a full circle when its ends meet
     public var centralAngle: EDAAngle {
@@ -161,7 +161,7 @@ public struct ShapeArc: Hashable, Sendable, CustomStringConvertible {
         let sa = startAngle.normalized
         let ca = centralAngle
         let ea = sa + ca
-        var phi = EDAAngle(p - center).normalized
+        var phi = EDAAngle((p - center).wrapped32).normalized
         if ca >= .zero {
             while phi < sa { phi += .a360 }
             return phi >= sa && phi <= ea
@@ -184,10 +184,12 @@ public struct ShapeArc: Hashable, Sendable, CustomStringConvertible {
         let epsilon = 8
         let full = Circle(center, KiMath.cInt(radius))
         let n = full.nearestPoint(p)
-        if (n - start).squaredNorm <= epsilon { return start }
-        if (n - end).squaredNorm <= epsilon { return end }
+        // (the VECTOR2I differences wrapping round in 32 bits, their 64-bit squares too, as KiCad's do)
+        func sq(_ v: IPoint) -> Int { let w = v.wrapped32; return w.x * w.x &+ w.y * w.y }
+        if sq(n - start) <= epsilon { return start }
+        if sq(n - end) <= epsilon { return end }
         if sliceContainsPoint(n) { return n }
-        return (p - start).squaredNorm <= (p - end).squaredNorm ? start : end
+        return sq(p - start) <= sq(p - end) ? start : end
     }
 
     // MARK: - Collisions

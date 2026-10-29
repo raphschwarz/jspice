@@ -115,6 +115,15 @@ final class TeardropTests: XCTestCase {
             (narrowed, notFitted) = (narrowed + made.narrowed, notFitted + made.notFitted)
             let ours = made.teardrops
             let matched = Self.match(r.teardrops, ours)
+            // (KiCad orders teardrops of a layer by their areas, the largest first, and those of the same area by
+            // their uuids, new and random each time it makes them: within such a tie, any of its priorities will do)
+            func doubledArea(_ o: [IPoint]) -> Int {
+                abs(o.indices.reduce(0) { $0 + o[$1].cross(o[($1 + 1) % o.count]) })
+            }
+            var tied: [String: Set<Int>] = [:]
+            for k in r.teardrops {
+                tied["\(k["layer"] ?? "") \(doubledArea(Self.points(k["outline"])))", default: []].insert(k["priority"] as? Int ?? 0)
+            }
             for (k, m) in zip(r.teardrops, matched) {
                 teardrops += 1
                 let outline = Self.points(k["outline"])
@@ -136,7 +145,8 @@ final class TeardropTests: XCTestCase {
                     continue
                 }
                 let t = ours[m]
-                if (k["priority"] as? Int ?? 0) != t.priority { differences.append("\(what): priority \(k["priority"] ?? 0), ours \(t.priority)") }
+                if (k["priority"] as? Int ?? 0) != t.priority,
+                   !(tied["\(k["layer"] ?? "") \(doubledArea(outline))"]?.contains(t.priority) ?? false) { differences.append("\(what): priority \(k["priority"] ?? 0), ours \(t.priority)") }
                 if (k["type"] as? String) != (t.kind == .padVia ? "padvia" : "track_end") {
                     differences.append("\(what): type \(k["type"] ?? ""), ours \(t.kind)")
                 }

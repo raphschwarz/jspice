@@ -357,10 +357,11 @@ public struct Circle: Hashable, Sendable {
     /// How near a point must be to the circle to be on it (KiCad's SHAPE::MIN_PRECISION_IU)
     public static let minPrecision = 4
 
+    /// (its sums VECTOR2Is, wrapping round in 32 bits as KiCad's do, for a centre far off the board)
     public func nearestPoint(_ p: IPoint) -> IPoint {
-        var v = p - center
+        var v = (p - center).wrapped32
         if v.x == 0 && v.y == 0 { v.x = 1 }
-        return v.resized(radius) + center
+        return (v.resized(radius) + center).wrapped32
     }
 
     public func nearestPoint(_ p: DPoint) -> DPoint {
@@ -370,9 +371,9 @@ public struct Circle: Hashable, Sendable {
     }
 
     public func furthestPoint(_ p: IPoint) -> IPoint {
-        var v = center - p
+        var v = (center - p).wrapped32
         if v.x == 0 && v.y == 0 { v.x = 1 }
-        return v.resized(radius) + center
+        return (v.resized(radius) + center).wrapped32
     }
 
     /// Whether `p` is on the circle, to within its precision
