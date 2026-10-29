@@ -420,6 +420,8 @@ struct PCBBoardCanvas: View {
                 editing.zoneClick(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
             case .tune:
                 editing.tuneClick(at: p)
+            case .via:
+                editing.viaClick(at: p)
             case .select:
                 // a track or via, else a connection still to route (routed), else a part
                 if editing.select(at: p, in: picture, slop: 3 / view.scale, extending: extending) {
@@ -503,6 +505,7 @@ struct PCBBoardCanvas: View {
         case "4" where editing.tuning != nil: editing.stepTuning(amplitude: -1)
         case "d" where !editing.isRouting: editing.dragAtPointer(freeAngle: false)
         case "g" where !editing.isRouting: editing.dragAtPointer(freeAngle: true)
+        case "v" where press.modifiers.contains(.shift) && !editing.isRouting: editing.tool = .via
         case "v": editing.placeVia()
         case "/": editing.flipPosture()
         case "w": editing.stepWidth(press.modifiers.contains(.shift) ? -1 : 1)
@@ -698,6 +701,8 @@ struct PCBEditBar: View {
             return "Route tracks (X): click a pad, click to fix, double-click to finish; V via, / posture, Esc stop"
         case .pair:
             return "Route differential pairs (6): click a pad of a pair's net (USB_P and USB_N, D+ and D-), both tracks follow at the net class's pair width and gap; V vias, / posture, Esc stop"
+        case .via:
+            return "Add vias (⇧V): click to place one, as KiCad's Add Vias places it: onto the track, pad or zone there, of its net, refused where the design rules keep it off other copper"
         case .tune:
             return "Tune a track's length (7), a differential pair's (8) or its skew (9), as KiCad's length tuner: click the track, move along it, click to keep the meanders; 1 2 spacing, 3 4 amplitude, Esc drops it"
         case .zone:
@@ -760,6 +765,22 @@ struct PCBEditBar: View {
                 .labelsHidden()
                 .fixedSize()
                 .help("The corners new tracks take: at 45° or 90°, mitred, or rounded into arcs (KiCad's track corner mode)")
+            }
+            if editing.tool == .select && !editing.selection.isEmpty {
+                Menu("Width") {
+                    ForEach(PCBEditing.widths, id: \.self) { w in
+                        Button(String(format: "%.2f mm", w)) { editing.resizeSelection(width: w) }
+                    }
+                }
+                .fixedSize()
+                .help("The width of the tracks selected (KiCad's Edit Track & Via Properties)")
+                Menu("Via Size") {
+                    ForEach(PCBEditing.viaSizes, id: \.self) { v in
+                        Button(String(format: "%.2f / %.2f mm", v.diameter, v.drill)) { editing.resizeSelection(via: (v.diameter, v.drill)) }
+                    }
+                }
+                .fixedSize()
+                .help("The diameter and drill of the vias selected")
             }
             if editing.tool == .tune {
                 Picker("Tune", selection: $editing.tuneMode) {
@@ -855,6 +876,14 @@ struct PCBEditBar: View {
             .disabled(editing.isRouting)
             .help("Pour ground copper over the board, filled as KiCad fills it round everything else (B fills the zones again after a change)")
             Button { editing.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                .confirmationDialog("Select Net:", isPresented: Binding(get: { editing.viaNetChoice != nil },
+                                                                      set: { if !$0 { editing.viaNetChoice = nil } })) {
+                    ForEach(editing.viaNetChoice?.nets ?? [], id: \.self) { net in
+                        Button(net) { if let at = editing.viaNetChoice?.at { editing.viaClick(at: at, net: net) } }
+                    }
+                } message: {
+                    Text("The via is where the fills of several nets' zones meet: which net is it of?")
+                }
                 .disabled(editing.undoName == nil || editing.isRouting)
                 .help(editing.undoName.map { "Undo \($0)" } ?? "Undo")
             Button { editing.redo() } label: { Image(systemName: "arrow.uturn.forward") }

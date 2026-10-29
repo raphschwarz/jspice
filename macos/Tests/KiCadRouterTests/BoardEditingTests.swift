@@ -647,6 +647,132 @@ final class BoardEditingTests: XCTestCase {
         XCTAssertGreaterThan(drawn, 0)
     }
 
+    /// Tracks' widths and vias' sizes set (KiCad's Edit Track & Via Properties), and a via placed on its own: KiCad
+    /// reads the sizes as set, its check and the port's find the same tracks too narrow (made narrower than the
+    /// board's minimum), and the via placed is clear of everything (as KiCad's check finds it)
+    func testTrackAndViaSizesAreSetAndViasPlaced() throws {
+        let kicad = KiCadInstallation.find().flatMap { $0.major >= KiCadInstallation.minimumMajor ? $0 : nil }
+        var resized = 0
+        for file in try Self.boards().prefix(3) {
+            let session = BoardEditing(board: try KiCadBoard.read(file), project: Self.project(file))
+            let tracks = Array(session.board.tracks.prefix(3).map(\.uuid))
+            let vias = Array(session.board.vias.prefix(2).map(\.uuid))
+            guard !tracks.isEmpty else { continue }
+            XCTAssertNil(session.setSizes(Set(tracks), width: 0), "no width of nothing")
+            let narrow = try XCTUnwrap(session.setSizes(Set(tracks), width: 0.05))
+            XCTAssertEqual(Set(narrow.changed), Set(tracks))
+            XCTAssertEqual(narrow.name, tracks.count == 1 ? "Change Track Width" : "Change Track Widths")
+            XCTAssertNil(session.setSizes(Set(tracks), width: 0.05), "already so")
+            var edits = [narrow]
+            if !vias.isEmpty, let sized = session.setSizes(Set(vias), viaDiameter: 0.9, viaDrill: 0.45) {
+                XCTAssertTrue(sized.after.vias.filter { vias.contains($0.uuid) }.allSatisfy { $0.size == 0.9 })
+                edits.append(sized)
+            }
+            resized += edits.flatMap(\.changed).count
+            guard let kicad else { continue }
+            let last = try XCTUnwrap(edits.last).after
+            let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-sizes-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: work) }
+            let copy = work.appendingPathComponent(file.lastPathComponent)
+            try last.write(to: copy)
+            let pro = file.deletingPathExtension().appendingPathExtension("kicad_pro")
+            try? FileManager.default.copyItem(at: pro, to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+            let report = try KiCadFabrication(installation: kicad).drc(copy, refillZones: false)
+            let theirs = Set(report.violations.filter { $0.type == "track_width" }.flatMap { $0.items.map(\.uuid) })
+            let drc = BoardDRC(board: last, projectURL: FileManager.default.fileExists(atPath: pro.path) ? pro : nil)
+            let ours = Set(drc.run().filter { $0.type == "track_width" }.flatMap(\.items))
+            XCTAssertTrue(Set(tracks).isSubset(of: theirs), "\(file.lastPathComponent): KiCad finds the narrowed tracks too narrow")
+            XCTAssertEqual(ours, theirs, "\(file.lastPathComponent): the port's check finds the tracks KiCad's does")
+            try KiCadFabrication(installation: kicad).fillZones(copy)
+            let saved = try KiCadBoard.read(copy)
+            for t in saved.tracks where tracks.contains(t.uuid) { XCTAssertEqual(t.width, 0.05, accuracy: 1e-9) }
+        }
+        print("BoardEditingTests: \(resized) tracks and vias resized")
+        XCTAssertGreaterThan(resized, 0)
+    }
+
+    /// Vias placed on their own as KiCad's Add Vias places them (VIA_PLACER), at points all over the boards: each one
+    /// placed (where the design rules would refuse it too, saying so), and kicad-cli's check of the board with it
+    /// finds it too near other nets' copper or holes, or in a rule area keeping vias out, exactly where the placer
+    /// says it violates the rules (other than too near copper of no net, which the placer tries by its hole only, as
+    /// such copper may take the via's net, and KiCad's check reporting the first thing a via is too near on a layer);
+    /// a via put on a track takes its net and splits it there
+    func testViasArePlacedAsKiCadPlacesThem() throws {
+        guard let kicad = KiCadInstallation.find(), kicad.major >= KiCadInstallation.minimumMajor else { throw XCTSkip("KiCad is not installed") }
+        let near: Set<String> = ["clearance", "hole_clearance", "items_not_allowed", "shorting_items"]
+        var tried = 0, refused = 0, onTracks = 0, renetted = 0
+        var differences: [String] = []
+        var seed: UInt64 = 7
+        func random() -> Double {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Double(seed >> 11) / Double(1 << 53)
+        }
+        for file in try Self.boards().prefix(5) {
+            let board = try KiCadBoard.read(file)
+            guard let box = board.edgeBounds else { continue }
+            var points = (0..<8).map { _ in KiCadPoint(box.minX + 2 + random() * (box.maxX - box.minX - 4), box.minY + 2 + random() * (box.maxY - box.minY - 4)) }
+            // and on tracks, halfway along them, and just off pads' corners, where a via is often too near
+            points += board.tracks.prefix(3).map { t in KiCadPoint((t.start.x + t.end.x) / 2, (t.start.y + t.end.y) / 2) }
+            points += KiCadBoardPicture(board).pads.prefix(12).enumerated().compactMap { i, pad in
+                guard i % 3 == 0, let corner = pad.outline.first else { return nil }
+                return KiCadPoint(corner.x + 0.35, corner.y - 0.35)
+            }
+            for p in points {
+                let session = BoardEditing(board: board.copy(), project: Self.project(file))
+                guard case .placed(let edit, let violates) = session.placeVia(at: p, allowViolations: true) else { continue }
+                tried += 1
+                if violates { refused += 1 }
+                let viaID = try XCTUnwrap(edit.changed.first)
+                let via = try XCTUnwrap(edit.after.vias.first { $0.uuid == viaID })
+                if edit.changed.count == 3 {
+                    onTracks += 1
+                    let halves = edit.after.tracks.filter { edit.changed.contains($0.uuid) }
+                    XCTAssertEqual(halves.count, 2)
+                    XCTAssertTrue(halves.allSatisfy { $0.net == via.net }, "the via takes the track's net")
+                }
+                let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-via-\(UUID().uuidString)")
+                try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: work) }
+                let copy = work.appendingPathComponent(file.lastPathComponent)
+                try edit.after.write(to: copy)
+                try? FileManager.default.copyItem(at: file.deletingPathExtension().appendingPathExtension("kicad_pro"),
+                                                  to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
+                let report = try KiCadFabrication(installation: kicad).drc(copy, refillZones: true)
+                // (a via of no net touching copper of a net takes that net as KiCad reads the board (its connectivity
+                // propagating it, as the port's does), and is then too near nothing: KiCad's placer refused it before,
+                // as the port's does)
+                if via.net == nil {
+                    let drc = BoardDRC(board: edit.after, project: Self.project(file))
+                    let c = drc.makeCopper()
+                    _ = drc.buildConnectivity(c)
+                    if let item = c.tracks.first(where: { $0.uuid == viaID }), item.net != 0 {
+                        renetted += 1
+                        continue
+                    }
+                }
+                // (KiCad's check reports the first thing a via is too near on a layer: refused, the via has one; placed,
+                // none of copper of a net)
+                let all = report.violations.filter { v in near.contains(v.type) && v.items.contains { $0.uuid == viaID } }
+                // (and of copper of no net, KiCad's placer tries only the hole, not the via's own hole in the copper:
+                // the hole the check names second)
+                let netted = all.filter { v in
+                    let noNet = v.items.contains { $0.uuid != viaID && $0.description.contains("<no net>") }
+                    if noNet && (v.type == "clearance" || v.type == "shorting_items") { return false }
+                    if noNet && v.type == "hole_clearance" && v.items.last?.uuid == viaID { return false }
+                    return true
+                }
+                if violates ? all.isEmpty : !netted.isEmpty {
+                    differences.append("\(file.lastPathComponent) at \(p): the placer says it \(violates ? "violates" : "does not violate") the rules, KiCad finds "
+                                       + (all.isEmpty ? "nothing" : all.map { "\($0.type): \($0.description)" }.joined(separator: "; ")))
+                }
+            }
+        }
+        print("BoardEditingTests: \(tried) vias placed, \(refused) of them where the rules refuse them, \(onTracks) on tracks, \(renetted) of no net taking a net as KiCad reads the board")
+        XCTAssertGreaterThan(tried, 0)
+        XCTAssertTrue(differences.isEmpty, differences.joined(separator: "\n"))
+    }
+
     /// A ground pour added, filled by KiCad, and taken away again
     func testAPourIsAddedAndFilledByKiCad() throws {
         let file = try XCTUnwrap(Self.boards().first)

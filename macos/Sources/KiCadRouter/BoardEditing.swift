@@ -23,6 +23,9 @@ public final class BoardEditing {
         public var footprints: [String] = []
         /// The zones added or taken away, by id
         public var zones: [String] = []
+        /// The tracks and vias changed in place (their widths, sizes), or placed on their own (a via, the halves of the
+        /// track it splits), by id
+        public var changed: [String] = []
         /// Whether the board's outline changed
         public var outline = false
         /// Whether the board's zones were filled again with it (refillsZones)
@@ -109,7 +112,7 @@ public final class BoardEditing {
     private var lastRefilled = false
 
     public private(set) var router: BoardRouter
-    private var project: [String: Any]?
+    var project: [String: Any]?
     /// The board as the last change left it (each change is made from it)
     private var base: KiCadBoard
 
@@ -578,6 +581,38 @@ public final class BoardEditing {
 
     // MARK: - Changes
 
+    /// The tracks' and arcs' width, and the vias' diameter and drill, of those given set (mm; nil leaves it as it
+    /// is), as KiCad's Edit Track & Via Properties sets them: one change, nil if none of them changes. A via with a
+    /// padstack of its own (its sizes by layer) is left as it is.
+    public func setSizes(_ uuids: Set<String>, width: Double? = nil, viaDiameter: Double? = nil, viaDrill: Double? = nil) -> Edit? {
+        guard !isRouting else { return nil }
+        if let width, width <= 0 { return nil }
+        if let d = viaDiameter, d <= 0 { return nil }
+        if let d = viaDrill, d <= 0 { return nil }
+        var changed: [String] = []
+        for node in router.board.copperItems {
+            guard let uuid = node.value("uuid"), uuids.contains(uuid) else { continue }
+            let was = node.compact
+            switch node.head {
+            case "segment", "arc":
+                if let width { node.set(SExpr("width", width), after: ["end", "mid"]) }
+            case "via":
+                guard node["padstack"] == nil else { continue }
+                if let d = viaDiameter { node.set(SExpr("size", d), after: ["at"]) }
+                if let d = viaDrill { node.set(SExpr("drill", d), after: ["size", "at"]) }
+            default:
+                continue
+            }
+            if node.compact != was { changed.append(uuid) }
+        }
+        guard !changed.isEmpty else { return nil }
+        router.boardChanged()
+        let vias = router.board.copperItems.filter { $0.head == "via" && changed.contains($0.value("uuid") ?? "") }.count
+        let name = vias == 0 ? (changed.count == 1 ? "Change Track Width" : "Change Track Widths")
+            : vias == changed.count ? (vias == 1 ? "Change Via Size" : "Change Via Sizes") : "Change Track and Via Sizes"
+        return change(name, changed: changed)
+    }
+
     /// Tracks and vias taken away, by id
     public func remove(_ uuids: Set<String>) -> Edit? {
         router.remove(uuids)
@@ -589,8 +624,10 @@ public final class BoardEditing {
         return change(name)
     }
 
-    private func change(_ name: String, footprints: [String] = [], zones: [String] = [], outline: Bool = false) -> Edit? {
-        guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty || outline else { return nil }
+    func change(_ name: String, footprints: [String] = [], zones: [String] = [], outline: Bool = false,
+                        changed: [String] = []) -> Edit? {
+        guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty || outline
+                || !changed.isEmpty else { return nil }
         var after = router.board.copy()
         let (added, removed) = (router.lastAdded, router.lastRemoved)
         // (not while a track or pair is still being routed, which goes on in the router as it is)
@@ -603,6 +640,7 @@ public final class BoardEditing {
         edit.footprints = footprints
         edit.zones = zones
         edit.outline = outline
+        edit.changed = changed
         edit.refilled = filled != nil
         lastRefilled = edit.refilled
         base = after

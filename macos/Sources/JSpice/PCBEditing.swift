@@ -10,13 +10,14 @@ import KiCadRouter
 @MainActor
 final class PCBEditing: ObservableObject {
     enum Tool: String, CaseIterable, Identifiable {
-        case select, route, pair, zone, tune
+        case select, route, pair, via, zone, tune
         var id: Self { self }
         var title: String {
             switch self {
             case .select: return "Select"
             case .route: return "Route"
             case .pair: return "Route Differential Pair"
+            case .via: return "Add Via"
             case .zone: return "Draw Zone"
             case .tune: return "Tune Length"
             }
@@ -26,6 +27,7 @@ final class PCBEditing: ObservableObject {
             case .select: return "cursorarrow"
             case .route: return "point.topleft.down.to.point.bottomright.curvepath"
             case .pair: return "equal"
+            case .via: return "smallcircle.filled.circle"
             case .zone: return "pentagon"
             case .tune: return "waveform.path"
             }
@@ -99,6 +101,9 @@ final class PCBEditing: ObservableObject {
     @Published var zoneKeepout = KiCadBoard.Keepout()
     /// The board's nets, for a zone's
     @Published private(set) var nets: [String] = []
+    /// A via clicked where the fills of several nets' zones meet, waiting for one of them to be chosen (KiCad's
+    /// "Select Net:")
+    @Published var viaNetChoice: (at: KiCadPoint, nets: [String])?
     /// What the tune tool tunes (KiCad's Tune Length of a Single Track, of a Differential Pair, Tune Skew), and the
     /// length (mm) or skew (mm) to reach
     @Published var tuneMode = BoardRouter.TuningMode.single {
@@ -115,6 +120,11 @@ final class PCBEditing: ObservableObject {
     @Published private(set) var tuning: BoardEditing.TuningPreview?
 
     static let widths: [Double] = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0]
+    /// Vias' diameters and drills to choose from (mm)
+    struct ViaSize: Hashable {
+        let diameter: Double, drill: Double
+    }
+    static let viaSizes = [(0.4, 0.2), (0.45, 0.25), (0.5, 0.3), (0.6, 0.3), (0.7, 0.35), (0.8, 0.4), (1.0, 0.5), (1.2, 0.6)].map { ViaSize(diameter: $0.0, drill: $0.1) }
 
     weak var controller: BoardController?
     private let engine = PCBRouteEngine()
@@ -208,6 +218,11 @@ final class PCBEditing: ObservableObject {
             selection = []
             if !isReady { prepare() }
             message = "Click a track to tune its length, move along it, click to keep the meanders; 1 2 spacing, 3 4 amplitude, Esc drops it"
+        }
+        if tool == .via {
+            selection = []
+            if !isReady { prepare() }
+            message = "Click to place a via: it takes the net of the track, pad or zone it is put on"
         }
         if tool == .zone {
             selection = []
@@ -722,6 +737,47 @@ final class PCBEditing: ObservableObject {
         await applying?.value
         if let (board, project) = await controller.fillZones() {
             await take(board, project: project)
+        }
+    }
+
+    // MARK: - Vias and sizes
+
+    /// A click with the via tool at `p`: a via placed there as KiCad's Add Vias places one (snapped onto the track,
+    /// pad or drawing there, of its net or the zone's, refused where the design rules keep it off), as one change;
+    /// `net` the one chosen where several zones' fills meet
+    func viaClick(at p: KiCadPoint, net: String? = nil) {
+        guard tool == .via, !isRouting else { return }
+        viaNetChoice = nil
+        Task {
+            await applying?.value
+            if !isReady { await prepareNow() }
+            guard let placed = await engine.run({ $0.placeVia(at: p, net: net) }) else { return }
+            switch placed {
+            case .placed(let edit, _):
+                message = nil
+                take(edit)
+                if !edit.refilled { await fillZonesNow() }
+            case .violatesDRC:
+                NSSound.beep()
+                message = "Via location violates DRC."
+            case .ambiguous(let nets):
+                viaNetChoice = (p, nets)
+            }
+        }
+    }
+
+    /// The tracks' width (mm) of those selected set, or the vias' diameter and drill (mm), as one change
+    func resizeSelection(width: Double? = nil, via: (diameter: Double, drill: Double)? = nil) {
+        let chosen = selection
+        guard !chosen.isEmpty, !isRouting else { return }
+        Task {
+            let changed = await place { $0.setSizes(chosen, width: width, viaDiameter: via?.diameter, viaDrill: via?.drill) }
+            if !changed {
+                NSSound.beep()
+                message = "The tracks and vias selected are that size already."
+            } else if lastTaken?.refilled != true {
+                await fillZonesNow()
+            }
         }
     }
 
