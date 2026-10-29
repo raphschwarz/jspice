@@ -123,6 +123,9 @@ jobs:
       - name: KiCad's courtyards of the 100 boards' footprints
         # (each footprint's BuildCourtyardCaches, next to its board, for the port's)
         run: python3 macos/tools/kicad-reference/courtyards.py "$RUNNER_TEMP"/boards/*.kicad_pcb
+      - name: What KiCad's box selection takes on the 100 boards
+        # (the tracks, vias and footprints wholly in, and touched by, rectangles drawn on each, next to its board)
+        run: python3 macos/tools/kicad-reference/boxes.py "$RUNNER_TEMP"/boards/*.kicad_pcb
       - name: KiCad's texts of the 100 boards, each copper layer's copper and their zones' fills
         # (each text's strokes and boxes, the copper the sliver check unites, and each zone's fill by KiCad's zone
         # filler, next to its board, for the port's)

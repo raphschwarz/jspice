@@ -189,6 +189,12 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   board is (its zones not refilled), errors and warnings, next to it as `BOARD.drc` (JSON, its date taken out).
   `DRCTests` checks the port's DRC (`BoardDRC`) against it: the same violations of the checks it makes, between the
   same items, in the same words. The boards of `Tests/KiCadRouterTests/Fixtures/boards` have theirs.
+- `boxes.py`: what KiCad's box selection takes on boards (`boxes.py BOARD.kicad_pcb...`): rectangles drawn on each
+  (a third anywhere, the others round an item's box with each side moved by up to 0.6 mm) and, through KiCad's
+  `pcbnew` module, the tracks, arcs, vias and footprints whose `HitTest( BOX2I, aContained )` holds, wholly in each
+  and touched by it, next to the board as `BOARD.boxes` (JSON). `BoxSelectionTests` checks the port's
+  (`BoxSelection`, which the PCB view's box selection goes by) against them; the boards of
+  `Tests/KiCadRouterTests/Fixtures/boards`, `arcboards`, `courtyards` and `silk` have theirs.
 - `courtyards.py`: KiCad's courtyards of boards' footprints (`courtyards.py BOARD.kicad_pcb...`): each footprint's
   `FOOTPRINT::BuildCourtyardCaches`, through KiCad's `pcbnew` module, its front and back courtyards (each polygon's
   outline and holes, their points), the width it gives the first outline and whether it found either side

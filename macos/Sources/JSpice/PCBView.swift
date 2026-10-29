@@ -381,6 +381,13 @@ struct PCBBoardCanvas: View {
                            zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePointer, editing.layer, editing.zoneKind == .keepout) : nil,
                            tuning: editing.tuning)
                 .draw(context)
+            // the box being drawn to select with: solid taking what is wholly in it, dashed what it touches
+            if let area = editing.selectionArea {
+                let a = view.point(area.from), b = view.point(area.to)
+                let rect = Path(CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y)))
+                context.fill(rect, with: .color(Color.accentColor.opacity(0.12)))
+                context.stroke(rect, with: .color(Color.accentColor), style: StrokeStyle(lineWidth: 1, dash: area.touching ? [5, 3] : []))
+            }
         }
         .frame(width: view.size.width, height: view.size.height)
         .overlay {
@@ -400,9 +407,21 @@ struct PCBBoardCanvas: View {
         .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
             .onChanged { drag in
                 editing.dragChanged(from: view.board(drag.startLocation), to: view.board(drag.location), in: picture,
-                                    selected: footprints)
+                                    selected: footprints, leftward: drag.location.x < drag.startLocation.x)
             }
-            .onEnded { drag in editing.dragEnded(at: view.board(drag.location)) })
+            .onEnded { drag in
+                let flags = NSEvent.modifierFlags
+                let mode = PCBEditing.AreaSelection(shift: flags.contains(.shift), command: flags.contains(.command))
+                guard editing.selectionArea != nil else {
+                    editing.dragEnded(at: view.board(drag.location))
+                    return
+                }
+                Task {
+                    guard let chosen = await editing.endSelectionArea(footprints: footprints, mode: mode) else { return }
+                    editing.footprintSelection = chosen
+                    board.select(footprints: chosen)
+                }
+            })
         .onTapGesture(coordinateSpace: .local) { location in
             focused = true
             let p = view.board(location)

@@ -551,6 +551,12 @@ final class BoardController: ObservableObject {
         }
     }
 
+    /// The parts of these footprints selected, and those alone (a box drawn on the board to select with)
+    func select(footprints uuids: Set<String>) {
+        guard let editor else { return }
+        editor.selection = Set(uuids.flatMap { partsOfFootprint[$0] ?? [] })
+    }
+
     // MARK: - Editing here
 
     /// The board as it stands, for editing here, and its project's settings (design rules, net classes)

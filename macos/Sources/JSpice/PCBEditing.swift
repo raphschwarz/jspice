@@ -79,6 +79,9 @@ final class PCBEditing: ObservableObject {
     @Published var footprintSelection: Set<String> = []
     /// Footprints being dragged, and how far so far
     @Published private(set) var dragging: (uuids: [String], delta: KiCadPoint)?
+    /// The box being drawn to select with (a drag from where there is nothing to drag, as KiCad's), and whether it
+    /// takes what it touches (drawn right to left, KiCad's greedy selection) or only what is wholly in it
+    @Published private(set) var selectionArea: (from: KiCadPoint, to: KiCadPoint, touching: Bool)?
     /// A track or via being dragged with the router (KiCad's drag), as it now goes
     @Published private(set) var dragPreview: BoardEditing.DragPreview?
     @Published private(set) var isDragging = false
@@ -936,8 +939,14 @@ final class PCBEditing: ObservableObject {
     /// A drag from `start` to `now` (mm) with the select tool: the footprint there (with the others selected, if it is
     /// one of them) following it, on a 0.05 mm grid
     /// A track or via there is dragged with the router instead (until the button is let go).
-    func dragChanged(from start: KiCadPoint, to now: KiCadPoint, in picture: KiCadBoardPicture, selected: Set<String>) {
+    /// From where there is nothing to drag, a box is drawn to select with (`leftward`: drawn right to left on the
+    /// screen, taking what it touches).
+    func dragChanged(from start: KiCadPoint, to now: KiCadPoint, in picture: KiCadBoardPicture, selected: Set<String>, leftward: Bool) {
         guard tool == .select, !isRouting else { return }
+        if selectionArea != nil {
+            selectionArea = (start, now, leftward)
+            return
+        }
         if isDragging || dragStart != nil {
             if !followsPointer { dragMoved(to: now) }
             return
@@ -952,7 +961,10 @@ final class PCBEditing: ObservableObject {
             return
         }
         if dragging == nil {
-            guard let footprint = picture.footprint(at: start) else { return }
+            guard let footprint = picture.footprint(at: start) else {
+                selectionArea = (start, now, leftward)
+                return
+            }
             dragging = (selected.contains(footprint.uuid) ? Array(selected) : [footprint.uuid], .zero)
         }
         let grid = 0.05
@@ -969,6 +981,41 @@ final class PCBEditing: ObservableObject {
         dragging = nil
         guard delta != .zero else { return }
         Task { await place { $0.moveFootprints(uuids, by: delta) } }
+    }
+
+    /// How a box drawn to select with changes the selection, by the keys held as it is let go (KiCad's
+    /// setModifiersState, ⌘ for Ctrl): none, it is what the box takes; ⇧ adds to it; ⌘ adds what is not selected and
+    /// takes away what is; ⌘⇧ takes away
+    enum AreaSelection {
+        case replace, add, toggle, remove
+
+        init(shift: Bool, command: Bool) {
+            self = shift && command ? .remove : command ? .toggle : shift ? .add : .replace
+        }
+    }
+
+    /// The box drawn to select with let go: the tracks and vias it takes (KiCad's SelectMultiple, the board as it
+    /// now is) selected as `mode` says; the footprints selected then, from those selected before (`footprints`), or
+    /// nil if no box was being drawn
+    func endSelectionArea(footprints: Set<String>, mode: AreaSelection) async -> Set<String>? {
+        guard let area = selectionArea else { return nil }
+        selectionArea = nil
+        await applying?.value
+        if !isReady { await prepareNow() }
+        guard let taken = await engine.run({ $0.itemsInBox(from: area.from, to: area.to, touching: area.touching) }) else {
+            return footprints
+        }
+        let (copper, parts) = taken
+        func apply(_ taken: [String], to selected: Set<String>) -> Set<String> {
+            switch mode {
+            case .replace: return Set(taken)
+            case .add: return selected.union(taken)
+            case .toggle: return selected.symmetricDifference(taken)
+            case .remove: return selected.subtracting(taken)
+            }
+        }
+        selection = apply(copper, to: selection)
+        return apply(parts, to: footprints)
     }
 
     /// Footprints turned 90° counterclockwise (R)
