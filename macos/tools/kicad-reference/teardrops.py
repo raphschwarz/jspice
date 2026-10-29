@@ -14,7 +14,9 @@ made them with, which are lost) with its layer, net, type (padvia or track_end),
 (as fills.py writes a fill) and the pads, vias and tracks the connectivity finds it connected with (its cluster:
 CONNECTIVITY_DATA::GetConnectedItems), every other zone's
 fill as kicad-cli made it (by uuid, as fills.py writes them), with the teardrops among them, and the order kicad-cli
-wrote the board's zones in (each by its uuid, a teardrop as "teardrop #N", N its place among the teardrops).
+wrote the board's zones in (each by its uuid, a teardrop as "teardrop #N", N its place among the teardrops); with
+--random, the board as pcbnew saved it with the settings set, the one kicad-cli made the teardrops on (its items in the
+order KiCad saves them, not the file's).
 
     teardrops.py [--random SEED] BOARD.kicad_pcb...
 
@@ -213,17 +215,24 @@ def write(path, settings=None):
         for ext in (".kicad_pro", ".kicad_dru"):
             if os.path.exists(base + ext):
                 shutil.copy(base + ext, os.path.join(tmp, name + ext))
+        saved = None
         if settings:
             board = pcbnew.LoadBoard(copy)
             apply_settings(board, settings)
             pcbnew.SaveBoard(copy, board)
             write_project_settings(os.path.join(tmp, name + ".kicad_pro"), settings)
+            # (the board as pcbnew saved it, which kicad-cli then made the teardrops on and filled: its items in the
+            # order KiCad saves them, which the fills' last nanometres can turn on)
+            with open(copy) as f:
+                saved = f.read()
         subprocess.run(["kicad-cli", "pcb", "drc", "--refill-zones", "--save-board", "-o", os.path.join(tmp, "drc.rpt"),
                         copy], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         teardrops, fills, order = made(copy)
     out = {"teardrops": teardrops, "fills": fills, "order": order}
     if settings:
         out["settings"] = settings
+    if saved is not None:
+        out["board"] = saved
     with open(base + ".teardrops", "w") as f:
         json.dump(out, f, separators=(",", ":"))
         f.write("\n")

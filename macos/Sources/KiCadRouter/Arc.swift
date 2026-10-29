@@ -112,9 +112,9 @@ public struct ShapeArc: Hashable, Sendable, CustomStringConvertible {
     /// KiCad's Reversed, which works them out again)
     public mutating func reverse() { swap(&start, &end) }
 
-    public var startAngle: EDAAngle { EDAAngle((start - center).wrapped32).normalized }
+    public var startAngle: EDAAngle { EDAAngle(start - center).normalized }
 
-    public var endAngle: EDAAngle { EDAAngle((end - center).wrapped32).normalized }
+    public var endAngle: EDAAngle { EDAAngle(end - center).normalized }
 
     /// How far round it turns, positive counter-clockwise; a full circle when its ends meet
     public var centralAngle: EDAAngle {

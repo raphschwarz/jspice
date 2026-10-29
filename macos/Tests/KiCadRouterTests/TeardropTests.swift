@@ -30,6 +30,8 @@ final class TeardropTests: XCTestCase {
         var project: [String: Any]?
         /// The board's own design rules (its .kicad_dru), which kicad-cli made the teardrops by
         var designRules: String?
+        /// The board as pcbnew saved it with the settings set (its items in KiCad's order), where they were set
+        var savedBoard: String?
         var settings: TeardropSettings
         var teardrops: [[String: Any]]
         var fills: [String: [String: [[String: Any]]]]
@@ -60,7 +62,8 @@ final class TeardropTests: XCTestCase {
             guard let data = try? Data(contentsOf: ref), let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             let pro = file.deletingPathExtension().appendingPathExtension("kicad_pro")
             let project = (try? Data(contentsOf: pro)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-            let board = try KiCadBoard.read(file)
+            // (with settings set, the board as pcbnew saved it with them, which kicad-cli made its teardrops on)
+            let board = try (json["board"] as? String).map { try KiCadBoard(text: $0) } ?? KiCadBoard.read(file)
             var settings = TeardropSettings(project: project)
             if let s = json["settings"] as? [String: Any] {
                 settings = TeardropSettings(round: Self.parameters(s["round"] as? [String: Any]), rect: Self.parameters(s["rect"] as? [String: Any]),
@@ -70,7 +73,7 @@ final class TeardropTests: XCTestCase {
                 settings = Teardrops.applySettings(settings, to: board)
             }
             out.append(Reference(name: file.deletingPathExtension().lastPathComponent, board: board, project: project,
-                                 designRules: BoardDRC.designRules(pro), settings: settings,
+                                 designRules: BoardDRC.designRules(pro), savedBoard: json["board"] as? String, settings: settings,
                                  teardrops: json["teardrops"] as? [[String: Any]] ?? [],
                                  fills: json["fills"] as? [String: [String: [[String: Any]]]] ?? [:], order: json["order"] as? [String]))
         }
@@ -177,8 +180,9 @@ final class TeardropTests: XCTestCase {
     func testTeardropsAreAddedAndRemovedAsOneChange() throws {
         var boards = 0, added = 0
         for r in try references() where !r.teardrops.isEmpty {
-            let original = try KiCadBoard.read(Self.folders.map { $0.appendingPathComponent(r.name + ".kicad_pcb") }
-                .first { FileManager.default.fileExists(atPath: $0.path) }!)
+            let original = try r.savedBoard.map { try KiCadBoard(text: $0) }
+                ?? KiCadBoard.read(Self.folders.map { $0.appendingPathComponent(r.name + ".kicad_pcb") }
+                    .first { FileManager.default.fileExists(atPath: $0.path) }!)
             let session = BoardEditing(board: original, project: r.project, designRules: r.designRules)
             session.refillsZones = true
             guard Teardrops(board: r.board, project: r.project, settings: r.settings, designRules: r.designRules).unsupported.isEmpty,
@@ -256,6 +260,10 @@ final class TeardropTests: XCTestCase {
                 if k != o {
                     differences.append("\(r.name) \(what) \(layer): KiCad's \(k.count) polygons (\(k.joined().map(\.count).reduce(0, +)) points), "
                                        + "ours \(o.count) (\(o.joined().map(\.count).reduce(0, +)))")
+                    if ProcessInfo.processInfo.environment["TEARDROP_BOARD"] != nil {
+                        let a = k.joined().joined().map { $0 }, b = o.joined().joined().map { $0 }
+                        for (i, (p, q)) in zip(a, b).enumerated() where p != q { print("  point \(i): KiCad's \(p), ours \(q)") }
+                    }
                 }
             }
             for k in r.teardrops {
