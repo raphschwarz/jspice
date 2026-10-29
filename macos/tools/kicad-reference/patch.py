@@ -2,8 +2,9 @@
 """The changes build.sh makes to KiCad's sources before building them, so that KiCad's router answers the same way
 each time it is run on the same board, and runs on items with no BOARD_ITEM behind them:
 
-- Each router item gets a serial number when it is made (copies get their own), and obstacles are ordered by their
-  items' serial numbers. KiCad orders them by address (OBSTACLE::operator< compares pointers), so where two obstacles
+- Each router item gets a serial number when it is made (copies get their own, and keep their original's, which
+  router.cpp's rules take a footprint's moved pad's from, as KiCad's take them from the BOARD_ITEM a copy keeps), and
+  obstacles are ordered by their items' serial numbers. KiCad orders them by address (OBSTACLE::operator< compares pointers), so where two obstacles
   are met at the same place, which goes first depends on where the memory allocator put them: one run to the next,
   one machine to the next. The Swift port orders them by the order they were made in, as these serial numbers do.
 - The line placer asks a start pad's BOARD_ITEM its type, for a posture it then leaves unused; it is asked only if
@@ -46,6 +47,15 @@ each time it is run on the same board, and runs on items with no BOARD_ITEM behi
 - A length tuning's placers (MEANDER_PLACER, DP_MEANDER_PLACER, MEANDER_SKEW_PLACER) take the net class of the
   track they start on from its BOARD_ITEM, for the time domain tuning, which these programs do not do; with none
   behind the track, they take none.
+- A footprint's drag (COMPONENT_DRAGGER) keeps the pads it drags in a set of pointers, and the tracks it moves whole
+  with them (those from one of its pads to another) in another, and makes each move's copies of them, and puts them
+  in its branch, in the order of those sets, which comes from where the allocator put them: here in the order they
+  were made. The tracks that end inside a pad's hull, off its centre, it finds among the world's joints
+  (QueryJoints), in the order of KiCad's hash map of them, which comes from the hashes of their places and of nets'
+  addresses: here in the order of their places (then nets and layers), as the virtual vias' joints above; of a line
+  with an end in two pads' hulls, the first pad to find it drags it. (The order of the footprint's zones' triangles
+  among what the router tool hands the dragger, which FindItemsByParent takes from a hash set, changes nothing the
+  dragger does: they are not routable, and it only moves them.) The Swift port takes them all in the same orders.
 
 patch.py changes only what it has not changed already, so it can be run on sources it has changed before.
 
@@ -82,6 +92,32 @@ def main():
           "    static inline uint64_t s_nextSerial = 0;\n"
           "    uint64_t        m_serial = s_nextSerial++;\n"
           "};")
+
+    # (a copy's original, by its serial number)
+    patch(f"{router}/pns_item.h",
+          "    bool            m_isFreePad;\n"
+          "    bool            m_isCompoundShapePrimitive;\n",
+          "    // (kicad-reference: the serial number of the item this is a copy of, plus one; 0 for none)\n"
+          "    uint64_t        m_originPlusOne = 0;\n"
+          "\n"
+          "public:\n"
+          "    /// The serial number of the item this is a copy of (a copy's original's), its own if none (kicad-reference)\n"
+          "    uint64_t Origin() const { return m_originPlusOne ? m_originPlusOne - 1 : Serial(); }\n"
+          "\n"
+          "protected:\n"
+          "    bool            m_isFreePad;\n"
+          "    bool            m_isCompoundShapePrimitive;\n")
+
+    patch(f"{router}/pns_item.h",
+          "        m_isCompoundShapePrimitive = aOther.m_isCompoundShapePrimitive;\n"
+          "    }\n"
+          "\n"
+          "    virtual ~ITEM();",
+          "        m_isCompoundShapePrimitive = aOther.m_isCompoundShapePrimitive;\n"
+          "        m_originPlusOne = aOther.Origin() + 1; // (kicad-reference)\n"
+          "    }\n"
+          "\n"
+          "    virtual ~ITEM();")
 
     patch(f"{router}/pns_node.h",
           "        if( (uintptr_t)m_head < (uintptr_t)other.m_head )\n"
@@ -290,6 +326,52 @@ def main():
           "    std::optional<SEGMENT>    s; // (kicad-reference) each segment in the memory of the last, kept\n"
           "\n"
           "    for( int i = 0; i < aLine->CLine().SegmentCount(); i++ )\n")
+
+    # a footprint's drag: its pads and the tracks it moves whole in the order they were made, the joints of the tracks
+    # ending in a pad's hull in the order of their places (then nets and layers)
+    patch(f"{router}/pns_component_dragger.cpp",
+          "namespace PNS\n{",
+          "namespace PNS\n{\n"
+          "\n"
+          "/// The items of a set in the order they were made (kicad-reference)\n"
+          "template <class SET>\n"
+          "static std::vector<typename SET::value_type> bySerial( const SET& aSet )\n"
+          "{\n"
+          "    std::vector<typename SET::value_type> items( aSet.begin(), aSet.end() );\n"
+          "    std::sort( items.begin(), items.end(),\n"
+          "               []( const ITEM* a, const ITEM* b ) { return a->Serial() < b->Serial(); } );\n"
+          "    return items;\n"
+          "}\n")
+
+    patch(f"{router}/pns_component_dragger.cpp",
+          "        m_world->QueryJoints( solid->Hull().BBox(), extraJoints, solid->Layers(),\n"
+          "                              ITEM::SEGMENT_T | ITEM::ARC_T );\n",
+          "        m_world->QueryJoints( solid->Hull().BBox(), extraJoints, solid->Layers(),\n"
+          "                              ITEM::SEGMENT_T | ITEM::ARC_T );\n"
+          "\n"
+          "        // (kicad-reference: by place, net and layer, not in the order of the hash map of joints)\n"
+          "        std::sort( extraJoints.begin(), extraJoints.end(),\n"
+          "                   []( const JOINT* a, const JOINT* b )\n"
+          "                   {\n"
+          "                       if( a->Pos().x != b->Pos().x )\n"
+          "                           return a->Pos().x < b->Pos().x;\n"
+          "\n"
+          "                       if( a->Pos().y != b->Pos().y )\n"
+          "                           return a->Pos().y < b->Pos().y;\n"
+          "\n"
+          "                       if( a->Net() != b->Net() )\n"
+          "                           return std::less<NET_HANDLE>()( a->Net(), b->Net() );\n"
+          "\n"
+          "                       return a->Layers().Start() < b->Layers().Start();\n"
+          "                   } );\n")
+
+    patch(f"{router}/pns_component_dragger.cpp",
+          "    for( SOLID* s : m_solids )\n",
+          "    for( SOLID* s : bySerial( m_solids ) ) // (kicad-reference)\n")
+
+    patch(f"{router}/pns_component_dragger.cpp",
+          "    for( ITEM* item : m_fixedItems )\n",
+          "    for( ITEM* item : bySerial( m_fixedItems ) ) // (kicad-reference)\n")
 
 
 if __name__ == "__main__":

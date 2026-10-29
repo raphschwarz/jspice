@@ -98,13 +98,19 @@ public struct WorldRules: Sendable {
 public final class WorldResolver: RuleResolver {
     public var rules: WorldRules
     var info: [ObjectIdentifier: WorldItem] = [:]
+    /// The world's solids by their serial numbers, whose copies (a footprint's drag's) take their rules
+    var originals: [Int: Solid] = [:]
 
     public init(rules: WorldRules) { self.rules = rules }
 
     func infoOf(_ item: Item?) -> WorldItem? {
         guard let item else { return nil }
         let key = item.kind == .hole ? (item.parentPadVia ?? item) : item
-        return info[ObjectIdentifier(key)]
+        if let i = info[ObjectIdentifier(key)] { return i }
+        // (a copy a footprint's drag made of a pad, or of a zone's or drawing's solid: its original's, as KiCad reads
+        // a copy's rules from the board item it keeps)
+        if let s = key as? Solid, s.originSerial != s.serial, let o = originals[s.originSerial] { return info[ObjectIdentifier(o)] }
+        return nil
     }
 
     private func isHole(_ item: Item?) -> Bool { item?.kind == .hole }
@@ -296,6 +302,9 @@ public final class WorldInterface: RouterInterface {
     public let resolver: WorldResolver
     /// The router's item for each world item (nil: none, a keepout zone that could not be cut into triangles)
     public private(set) var routerItems: [Item?] = []
+    /// All the router's items made of each world item (a keepout zone's triangles, on each of its layers), in the
+    /// order they were made
+    public private(set) var allRouterItems: [[Item]] = []
     /// What the router has put on the board, in the order it did
     public var added: [Item] = []
     /// What the world holds that the port cannot make as KiCad makes it yet
@@ -329,11 +338,14 @@ public final class WorldInterface: RouterInterface {
 
     public func syncWorld(_ world: Node) {
         routerItems.removeAll()
+        allRouterItems.removeAll()
         resolver.info.removeAll()
+        resolver.originals.removeAll()
         unsupported.removeAll()
         malformedZones.removeAll()
         for w in items {
             var item: Item?
+            var made: [Item] = []
             switch w.kind {
             case .pad, .edge, .graphic, .text:
                 // syncPad, syncGraphicalItem, syncTextItem
@@ -352,6 +364,7 @@ public final class WorldInterface: RouterInterface {
                 if w.compound { solid.isCompoundShapePrimitive = true }
                 item = solid
                 resolver.info[ObjectIdentifier(solid)] = w
+                resolver.originals[solid.serial] = solid
                 world.add(solid)
             case .keepout:
                 // syncZone: the zone's outline cut into triangles as KiCad cuts it, each triangle a solid on each of the
@@ -379,7 +392,9 @@ public final class WorldInterface: RouterInterface {
                             solid.isCompoundShapePrimitive = true
                             solid.isRoutable = false
                             resolver.info[ObjectIdentifier(solid)] = w
+                            resolver.originals[solid.serial] = solid
                             world.add(solid)
+                            made.append(solid)
                             if item == nil { item = solid }
                         }
                     }
@@ -412,6 +427,8 @@ public final class WorldInterface: RouterInterface {
                 world.add(arc, allowRedundant: true)
             }
             routerItems.append(item)
+            if made.isEmpty, let item { made.append(item) }
+            allRouterItems.append(made)
         }
         world.ruleResolver = resolver
         let r = resolver.rules
@@ -439,7 +456,7 @@ public final class WorldInterface: RouterInterface {
 
     /// Which layers a pad or via of the board is flashed on, as KiCad's PAD::FlashLayer and PCB_VIA::FlashLayer say
     private func flashed(_ item: Item) -> [Bool]? {
-        guard item.kind != .hole, let f = resolver.info[ObjectIdentifier(item)]?.flashed, !f.isEmpty else { return nil }
+        guard item.kind != .hole, let f = resolver.infoOf(item)?.flashed, !f.isEmpty else { return nil }
         return f
     }
 

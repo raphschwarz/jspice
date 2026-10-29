@@ -285,7 +285,7 @@ public final class BoardEditing {
 
     /// A segment or arc of what the router has moved, as it is drawn: a segment's two ends, an arc's points as a
     /// track's chain keeps them (a polyline a micrometre off it)
-    private func track(_ item: Item) -> Preview.Track? {
+    func track(_ item: Item) -> Preview.Track? {
         let points: [IPoint]
         guard let li = item as? LinkedItem else { return nil }
         if let s = item as? Segment {

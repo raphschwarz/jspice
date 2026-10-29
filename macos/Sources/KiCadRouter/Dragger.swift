@@ -1,5 +1,6 @@
 // Ported from KiCad 10.0.7: pcbnew/router/pns_drag_algo.h, pns_dragger.h and pns_dragger.cpp (segments, corners,
-// arcs and vias dragged; not footprints or several segments at once, KiCad's COMPONENT_DRAGGER and MULTI_DRAGGER).
+// arcs and vias dragged; footprints, KiCad's COMPONENT_DRAGGER, are in ComponentDragger.swift, and several tracks
+// at once, its MULTI_DRAGGER, in MultiDragger.swift).
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 

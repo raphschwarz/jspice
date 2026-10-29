@@ -78,6 +78,17 @@ jobs:
         run: |
           python3 macos/tools/kicad-reference/scenes.py --arcs --mode drag "$RUNNER_TEMP/kicad-reference/kicad-router" \
             "$RUNNER_TEMP/kicad-reference/routes-arcs-drag-150.json" 150 "$GITHUB_RUN_NUMBER"
+      - name: 300 random boards with footprints dragged with the tracks on their pads by KiCad's router
+        # (also a new seed each run; what the dragger dragged, and the board as it has it, after each step, and the
+        # footprints' items moved as its commit moves them)
+        run: |
+          python3 macos/tools/kicad-reference/scenes.py --mode cdrag "$RUNNER_TEMP/kicad-reference/kicad-router" \
+            "$RUNNER_TEMP/kicad-reference/routes-cdrag-300.json" 300 "$GITHUB_RUN_NUMBER"
+      - name: 300 random boards with several tracks dragged together by KiCad's router
+        # (also a new seed each run; the board as the dragger has it after each step)
+        run: |
+          python3 macos/tools/kicad-reference/scenes.py --mode mdrag "$RUNNER_TEMP/kicad-reference/kicad-router" \
+            "$RUNNER_TEMP/kicad-reference/routes-mdrag-300.json" 300 "$GITHUB_RUN_NUMBER"
       - name: 300 random boards with tracks tuned by KiCad's meander placer, and 200 with differential pairs' lengths and skews tuned
         # (also a new seed each run; arc tracks and rounded meanders among them; the tuned lines, the tuning's status and
         # length, and the board as the placer has it, after each step)
@@ -92,7 +103,7 @@ jobs:
           python3 macos/tools/kicad-reference/boards.py --pairs "$RUNNER_TEMP/pairboards" 10 "$GITHUB_RUN_NUMBER"
           python3 macos/tools/kicad-reference/scenes.py --mode diffpair --boards "$RUNNER_TEMP/kicad-reference/kicad-router" \
             "$RUNNER_TEMP/board-diffpair-routes.json" 1 "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP"/pairboards/*.json
-      - name: 60 random boards made by KiCad and 20 of its footprints with custom pads, what its router sees of each, and routes, drags and length tunings on them by its router
+      - name: 60 random boards made by KiCad and 20 of its footprints with custom pads, what its router sees of each, and routes, drags, footprints and tracks dragged together, and length tunings on them by its router
         # (also a new seed each run)
         run: |
           python3 macos/tools/kicad-reference/boards.py "$RUNNER_TEMP/boards" 60 "$GITHUB_RUN_NUMBER"
@@ -103,6 +114,10 @@ jobs:
             "$RUNNER_TEMP/board-shove-routes.json" 2 "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP"/boards/*.json
           python3 macos/tools/kicad-reference/scenes.py --mode drag --boards "$RUNNER_TEMP/kicad-reference/kicad-router" \
             "$RUNNER_TEMP/board-drag-routes.json" 2 "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP"/boards/*.json
+          python3 macos/tools/kicad-reference/scenes.py --mode cdrag --boards "$RUNNER_TEMP/kicad-reference/kicad-router" \
+            "$RUNNER_TEMP/board-cdrag-routes.json" 2 "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP"/boards/*.json
+          python3 macos/tools/kicad-reference/scenes.py --mode mdrag --boards "$RUNNER_TEMP/kicad-reference/kicad-router" \
+            "$RUNNER_TEMP/board-mdrag-routes.json" 2 "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP"/boards/*.json
           python3 macos/tools/kicad-reference/scenes.py --mode meander --boards "$RUNNER_TEMP/kicad-reference/kicad-router" \
             "$RUNNER_TEMP/board-meander-routes.json" 1 "$GITHUB_RUN_NUMBER" "$RUNNER_TEMP"/boards/*.json
       - name: 20 random boards with arc tracks made by KiCad, and routes in every corner mode and drags on them by its router
@@ -130,7 +145,7 @@ jobs:
           python3 macos/tools/kicad-reference/texts.py "$RUNNER_TEMP"/boards/*.kicad_pcb
           python3 macos/tools/kicad-reference/copper.py "$RUNNER_TEMP"/boards/*.kicad_pcb
           python3 macos/tools/kicad-reference/fills.py "$RUNNER_TEMP"/boards/*.kicad_pcb
-      - name: KiCadRouter against KiCad's code, on 2000 cases of each kind, the 1000, two 400, 100, 200, 150, 300 and 200 boards and the 90 real ones
+      - name: KiCadRouter against KiCad's code, on 2000 cases of each kind, the 1000, two 400, 100, 200, 150, four 300 and 200 boards and the 90 real ones
         # (the real boards' worlds as KiCad's router sees them, their routes as it routes them, their DRC as KiCad's
         # finds it, and routes the port makes on them through kicad-cli's DRC)
         env:
@@ -138,7 +153,7 @@ jobs:
           KICAD_GEOMETRY_REFERENCE: ${{ runner.temp }}/kicad-reference/kicad-geometry-2000.json
           KICAD_CLIPPER_REFERENCE: ${{ runner.temp }}/kicad-reference/kicad-clipper-2000.json
           KICAD_ARC_GEOMETRY_REFERENCE: ${{ runner.temp }}/kicad-reference/kicad-arc-geometry-2000.json
-          KICAD_ROUTER_REFERENCE: ${{ runner.temp }}/kicad-reference/routes-1000.json:${{ runner.temp }}/kicad-reference/routes-shove-400.json:${{ runner.temp }}/kicad-reference/routes-drag-400.json:${{ runner.temp }}/kicad-reference/routes-diffpair-100.json:${{ runner.temp }}/board-routes.json:${{ runner.temp }}/board-shove-routes.json:${{ runner.temp }}/board-drag-routes.json:${{ runner.temp }}/board-diffpair-routes.json:${{ runner.temp }}/kicad-reference/routes-arcs-200.json:${{ runner.temp }}/kicad-reference/routes-arcs-drag-150.json:${{ runner.temp }}/board-arc-routes.json:${{ runner.temp }}/board-arc-drag-routes.json:${{ runner.temp }}/kicad-reference/routes-meander-300.json:${{ runner.temp }}/kicad-reference/routes-dpmeander-200.json:${{ runner.temp }}/board-meander-routes.json
+          KICAD_ROUTER_REFERENCE: ${{ runner.temp }}/kicad-reference/routes-1000.json:${{ runner.temp }}/kicad-reference/routes-shove-400.json:${{ runner.temp }}/kicad-reference/routes-drag-400.json:${{ runner.temp }}/kicad-reference/routes-diffpair-100.json:${{ runner.temp }}/board-routes.json:${{ runner.temp }}/board-shove-routes.json:${{ runner.temp }}/board-drag-routes.json:${{ runner.temp }}/board-diffpair-routes.json:${{ runner.temp }}/kicad-reference/routes-arcs-200.json:${{ runner.temp }}/kicad-reference/routes-arcs-drag-150.json:${{ runner.temp }}/board-arc-routes.json:${{ runner.temp }}/board-arc-drag-routes.json:${{ runner.temp }}/kicad-reference/routes-meander-300.json:${{ runner.temp }}/kicad-reference/routes-dpmeander-200.json:${{ runner.temp }}/board-meander-routes.json:${{ runner.temp }}/kicad-reference/routes-cdrag-300.json:${{ runner.temp }}/board-cdrag-routes.json:${{ runner.temp }}/kicad-reference/routes-mdrag-300.json:${{ runner.temp }}/board-mdrag-routes.json
           KICAD_BOARD_REFERENCE: ${{ runner.temp }}/boards
           KICAD_STACKUP_REFERENCE: ${{ runner.temp }}/stackups
           KICAD_DRC_KEEP: ${{ runner.temp }}/drc-failures
