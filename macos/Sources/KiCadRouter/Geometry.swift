@@ -110,6 +110,10 @@ public struct IPoint: Hashable, Sendable, CustomStringConvertible {
 
     @inline(__always) public var squaredNorm: Int { x * x + y * y }
 
+    /// As KiCad's VECTOR2I keeps it: each coordinate cut to 32 bits, wrapping round where it is out of their range
+    /// (what an int64 result made a VECTOR2I comes to)
+    @inline(__always) public var wrapped32: IPoint { IPoint(Int(Int32(truncatingIfNeeded: x)), Int(Int32(truncatingIfNeeded: y))) }
+
     /// KiCad's EuclideanNorm: exact on the axes and diagonals, else the rounded hypotenuse
     public var norm: Int {
         if abs(x) == abs(y) { return KiMath.round(Double(abs(x)) * 2.0.squareRoot()) }
@@ -289,7 +293,8 @@ public struct Seg: Hashable, Sendable, CustomStringConvertible {
         let lsq = d.dot(d)
         if lsq == 0 { return a }
         let t = d.dot(p - a)
-        return IPoint(a.x + KiMath.rescale(t, d.x, lsq), a.y + KiMath.rescale(t, d.y, lsq))
+        // (the 64-bit point made a VECTOR2I, a point far off the board wrapping round)
+        return IPoint(a.x + KiMath.rescale(t, d.x, lsq), a.y + KiMath.rescale(t, d.y, lsq)).wrapped32
     }
 
     /// The segment from `p` square to this one, as long (KiCad's PerpendicularSeg)
@@ -300,14 +305,16 @@ public struct Seg: Hashable, Sendable, CustomStringConvertible {
 
     public func squaredDistance(_ p: IPoint) -> Int {
         let ab = IPoint(b.x - a.x, b.y - a.y), ap = IPoint(p.x - a.x, p.y - a.y)
-        let e = ap.dot(ab)
-        if e <= 0 { return ap.squaredNorm }
-        let f = ab.squaredNorm
+        // (KiCad's 64-bit products, which wrap round for a point far off the board)
+        func dot(_ u: IPoint, _ v: IPoint) -> Int { (u.x &* v.x) &+ (u.y &* v.y) }
+        let e = dot(ap, ab)
+        if e <= 0 { return dot(ap, ap) }
+        let f = dot(ab, ab)
         if e >= f {
             let bp = IPoint(p.x - b.x, p.y - b.y)
-            return bp.dot(bp)
+            return dot(bp, bp)
         }
-        let g = Double(ap.squaredNorm) - (Double(e) * Double(e)) / Double(f)
+        let g = Double(dot(ap, ap)) - (Double(e) * Double(e)) / Double(f)
         if g < 0 || g > Double(Int.max) { return 0 }
         return KiMath.round64(g)
     }

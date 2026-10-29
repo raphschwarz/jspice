@@ -468,6 +468,7 @@ public struct Circle: Hashable, Sendable {
         if om >= radius - Circle.minPrecision { return [m] }
         let mTo1 = KiMath.cInt((Double(radius * radius - om * om)).squareRoot())
         let v = (line.b - line.a).resized(mTo1)
-        return [v + m, -v + m]
+        // (VECTOR2I sums, wrapping round as KiCad's do where they leave 32 bits)
+        return [(v + m).wrapped32, (-v + m).wrapped32]
     }
 }
