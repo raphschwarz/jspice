@@ -106,9 +106,10 @@ public struct BoxSelection: Sendable {
                 f.pads.append(Pad(box: box, vertices: poly.polygons.flatMap { $0.flatMap(\.points) }, hole: hole))
             }
             for zone in fp.all("zone") {
-                let polygons = zone.all("polygon").map { ($0["pts"]?.arguments ?? []).filter { $0.head == "xy" }.map(BoardWorld.point) }
-                guard let outline = polygons.first, let box = IBox(points: outline) else { continue }
-                f.zones.append((box, polygons.flatMap { $0 }))
+                // (its outline as KiCad reads it, an arc of it made a line of points)
+                let polygons = BoardWorld.zoneOutline(zone).polygons
+                guard let outline = polygons.first?.first?.points, let box = IBox(points: outline) else { continue }
+                f.zones.append((box, polygons.flatMap { $0.flatMap(\.points) }))
             }
             for node in fp.items {
                 guard ["fp_line", "fp_rect", "fp_arc", "fp_circle", "fp_poly", "fp_curve"].contains(node.head ?? ""),
