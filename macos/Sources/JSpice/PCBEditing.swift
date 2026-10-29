@@ -541,23 +541,30 @@ final class PCBEditing: ObservableObject {
     private var dragStart: Task<Bool, Never>?
     private var pendingDrag: KiCadPoint?
     private var dragMoving = false
+    /// Whether the drag is of several tracks together (the selection's), with the port of KiCad's MULTI_DRAGGER
+    private var draggingSeveral = false
 
     /// Starts dragging the track or via at `p` (mm) with the router, as KiCad's drag (D) drags it (its free angle
     /// drag, G, with `freeAngle`): walking round what is in its way, or shoving it aside, as tracks are routed;
     /// `follow`, the drag goes with the pointer until a click (a key started it), else until the button is let go.
     /// Whether there was a track or via there to drag.
     @discardableResult
-    func startDrag(at p: KiCadPoint, freeAngle: Bool = false, follow: Bool = false) async -> Bool {
+    func startDrag(at p: KiCadPoint, freeAngle: Bool = false, follow: Bool = false, several: [String] = []) async -> Bool {
         guard !isRouting, !isDragging else { return false }
         let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround, corners = self.corners
         await applying?.value
         if !isReady { await prepareNow() }
-        let shown = await engine.run { session -> BoardEditing.DragPreview? in
+        let started = await engine.run { session -> (preview: BoardEditing.DragPreview, several: Bool)? in
             session.mode = mode
             session.cornerMode = corners
-            return session.startDrag(at: p, layer: layer, freeAngle: freeAngle)
+            // (several tracks selected, one of them under the pointer: all of them dragged together, KiCad's
+            // MULTI_DRAGGER; else the one there)
+            if !several.isEmpty, let together = session.startMultiDrag(several, at: p, layer: layer) { return (together, true) }
+            return session.startDrag(at: p, layer: layer, freeAngle: freeAngle).map { ($0, false) }
         }
-        guard let shown else { return false }
+        guard let started else { return false }
+        let shown = started.preview
+        draggingSeveral = started.several
         selection = []
         isDragging = true
         followsPointer = follow
@@ -587,7 +594,8 @@ final class PCBEditing: ObservableObject {
             if let start = dragStart { _ = await start.value }
             while let next = pendingDrag {
                 pendingDrag = nil
-                let shown = await engine.run { $0.drag(to: next) }
+                let several = draggingSeveral
+                let shown = await engine.run { several ? $0.multiDrag(to: next) : $0.drag(to: next) }
                 if isDragging, let shown { dragPreview = shown }
             }
             dragMoving = false
@@ -600,7 +608,14 @@ final class PCBEditing: ObservableObject {
         if let start = dragStart { _ = await start.value }
         guard isDragging else { return }
         pendingDrag = nil
+        let several = draggingSeveral
         let made = await engine.run { session -> BoardEditing.Edit? in
+            if several {
+                session.multiDrag(to: p)
+                if let made = session.fixMultiDrag(at: p) { return made }
+                session.cancelMultiDrag()
+                return nil
+            }
             session.drag(to: p)
             if let made = session.fixDrag(at: p) { return made }
             session.cancelDrag()
@@ -614,9 +629,10 @@ final class PCBEditing: ObservableObject {
     func cancelDrag() {
         guard isDragging else { return }
         pendingDrag = nil
+        let several = draggingSeveral
         Task {
             _ = await engine.run { session -> Bool? in
-                session.cancelDrag()
+                if several { session.cancelMultiDrag() } else { session.cancelDrag() }
                 return true
             }
             dragEnded(kept: true)
@@ -625,6 +641,7 @@ final class PCBEditing: ObservableObject {
 
     private func dragEnded(kept: Bool) {
         isDragging = false
+        draggingSeveral = false
         followsPointer = false
         dragPreview = nil
         if kept {
@@ -1030,9 +1047,13 @@ final class PCBEditing: ObservableObject {
             if !followsPointer { dragMoved(to: now) }
             return
         }
-        if dragging == nil, picture.copper(at: start, layers: [layer] + layers.filter { $0 != layer }, slop: 0) != nil {
+        if dragging == nil, let hit = picture.copper(at: start, layers: [layer] + layers.filter { $0 != layer }, slop: 0) {
+            // (a track of several selected: the selected tracks all dragged together)
+            let tracks = Set(picture.tracks.map(\.uuid))
+            let several = selection.contains(hit) && selection.filter(tracks.contains).count > 1
+                ? [hit] + selection.filter { tracks.contains($0) && $0 != hit }.sorted() : []
             dragStart = Task {
-                let started = await startDrag(at: start)
+                let started = await startDrag(at: start, several: several)
                 dragStart = nil
                 return started
             }
