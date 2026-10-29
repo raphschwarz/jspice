@@ -325,10 +325,14 @@ public final class BoardRouter {
     /// starts one (on the item's layer if it is not on that one); whether the router could start it (a start on
     /// another net's copper, or too close to it, cannot)
     @discardableResult
-    public func start(at p: IPoint, layer: Int, width: Int? = nil) -> Bool {
+    public func start(at p: IPoint, layer: Int, width: Int? = nil, via: (diameter: Int, drill: Int)? = nil) -> Bool {
         let (q, item) = startPoint(at: p, layer: layer)
         var s = sizes(for: item)
         if let width { s.trackWidth = width }
+        if let via {
+            s.viaDiameter = via.diameter
+            s.viaDrill = via.drill
+        }
         router.updateSizes(s)
         iface.added.removeAll()
         iface.removedItems.removeAll()

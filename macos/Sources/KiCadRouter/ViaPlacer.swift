@@ -114,7 +114,8 @@ extension BoardEditing {
     }
 
     /// A via placed on its own with the pointer at `p` (mm), as KiCad's Add Vias places one (VIA_PLACER): through
-    /// every copper layer, at the Default net class's via size and drill (BOARD_DESIGN_SETTINGS::GetCurrentViaSize);
+    /// every copper layer, at the pre-defined via size chosen (sizeChoice), else the Default net class's via size and
+    /// drill (BOARD_DESIGN_SETTINGS::GetCurrentViaSize);
     /// on the grid, or (`snap`) onto the track under the pointer (by the grid's lines across it), the pad's centre,
     /// or onto the drawing on copper there; of the net of the track, pad or drawing (of a net) it is then on, else of
     /// the zone whose fill it is in (`net` choosing between several), else of none; refused where it would be nearer
@@ -127,7 +128,7 @@ extension BoardEditing {
         let drc = BoardDRC(board: board.copy(), project: project)
         let c = drc.makeCopper()
         let size = drc.netClasses.defaultClass
-        let viaWidth = size.viaDiameter ?? 600_000, viaDrill = size.viaDrill ?? 300_000
+        let (viaWidth, viaDrill) = currentViaSize(default: size.viaDiameter ?? 600_000, size.viaDrill ?? 300_000)
         let mouse = Self.nm(p)
         // SnapItem: the via (at the grid point) moved onto what is under the pointer
         var pos = snap ? router.align(mouse) : mouse

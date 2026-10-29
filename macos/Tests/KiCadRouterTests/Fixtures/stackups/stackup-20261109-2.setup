@@ -1,0 +1,1654 @@
+{
+ "steps": [
+  {
+   "copper": 4,
+   "warned": true,
+   "board": {
+    "layers": [
+     [
+      "0",
+      "F.Cu",
+      "signal"
+     ],
+     [
+      "4",
+      "In1.Cu",
+      "signal"
+     ],
+     [
+      "6",
+      "In2.Cu",
+      "signal"
+     ],
+     [
+      "2",
+      "B.Cu",
+      "signal"
+     ],
+     [
+      "9",
+      "F.Adhes",
+      "user",
+      "F.Adhesive"
+     ],
+     [
+      "11",
+      "B.Adhes",
+      "user",
+      "B.Adhesive"
+     ],
+     [
+      "13",
+      "F.Paste",
+      "user"
+     ],
+     [
+      "15",
+      "B.Paste",
+      "user"
+     ],
+     [
+      "5",
+      "F.SilkS",
+      "user",
+      "F.Silkscreen"
+     ],
+     [
+      "7",
+      "B.SilkS",
+      "user",
+      "B.Silkscreen"
+     ],
+     [
+      "1",
+      "F.Mask",
+      "user"
+     ],
+     [
+      "3",
+      "B.Mask",
+      "user"
+     ],
+     [
+      "17",
+      "Dwgs.User",
+      "user",
+      "User.Drawings"
+     ],
+     [
+      "19",
+      "Cmts.User",
+      "user",
+      "User.Comments"
+     ],
+     [
+      "25",
+      "Edge.Cuts",
+      "user"
+     ],
+     [
+      "27",
+      "Margin",
+      "user"
+     ],
+     [
+      "31",
+      "F.CrtYd",
+      "user",
+      "F.Courtyard"
+     ],
+     [
+      "29",
+      "B.CrtYd",
+      "user",
+      "B.Courtyard"
+     ],
+     [
+      "35",
+      "F.Fab",
+      "user"
+     ],
+     [
+      "33",
+      "B.Fab",
+      "user"
+     ]
+    ],
+    "thickness": "10.755",
+    "stackup": [
+     "stackup",
+     [
+      "layer",
+      "F.SilkS",
+      [
+       "type",
+       "Top Silk Screen"
+      ]
+     ],
+     [
+      "layer",
+      "F.Paste",
+      [
+       "type",
+       "Top Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "F.Mask",
+      [
+       "type",
+       "Top Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.011"
+      ]
+     ],
+     [
+      "layer",
+      "F.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 1",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0.1"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ],
+      "addsublayer",
+      [
+       "thickness",
+       "0.732",
+       "locked"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ],
+      "addsublayer",
+      [
+       "thickness",
+       "1.416"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In1.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 2",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "8.2585"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In2.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 3",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0.1"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "B.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.0175"
+      ]
+     ],
+     [
+      "layer",
+      "B.Mask",
+      [
+       "type",
+       "Bottom Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.015"
+      ]
+     ],
+     [
+      "layer",
+      "B.Paste",
+      [
+       "type",
+       "Bottom Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "B.SilkS",
+      [
+       "type",
+       "Bottom Silk Screen"
+      ]
+     ],
+     [
+      "copper_finish",
+      "None"
+     ],
+     [
+      "dielectric_constraints",
+      "no"
+     ]
+    ],
+    "items": {
+     "a56bf700-edf4-6b64-8a83-fe2cf8a23343": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "4b6667ac-fa15-1727-33ef-cae5c56c1e71": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "0071a411-49b3-157c-64d8-e0281c930881": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "a1f98b1b-0963-e44c-4e83-9deb8e4b2c3e": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "c6977148-bd92-f11a-5e10-715d272469fb": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "0629c878-8820-61d9-1513-0ee47d17659e": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "bd7f0e78-58b5-98d1-49ad-6339ffc8ba41": {
+      "kind": "segment",
+      "layers": [
+       "In1.Cu"
+      ]
+     },
+     "ca44c5c6-ba5d-34d1-0810-8771fbaf37e3": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "e9da1ec0-85ec-7c5c-fe97-4fd171b99249": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "9f45addd-03b2-d179-e8d8-bca32783e262": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "e55ae618-cb6d-a8c8-2524-40cce757ed7e": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "07ff15a5-37aa-7110-6ab2-64771c703d43": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "0164807e-7db4-1f54-9e14-9ef885f2e6eb": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "7348cb12-25c0-bcde-8298-28bacba9c888": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "fac8bc7a-37d8-dd7c-ee34-974d7b49b1fe": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "41263c99-077e-cd3a-e98f-28cef7a2f9d2": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "1afd3afc-b98e-f7e2-3784-08815b41a543": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "7d006280-df3a-e156-2b91-48279c1d39da": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "3bdf45f6-38ef-a84d-e696-030790534b1d": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "92ff6eff-f906-9ec0-c11a-e11cd1e4fb0f": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "626cafa5-f317-2c2b-63ae-daa9e6592d3a": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "a29a45f1-889b-a244-fe9b-81bd9e27d267": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "936dd3b6-6b89-72d9-97aa-ee8e61c47cc6": {
+      "kind": "segment",
+      "layers": [
+       "In1.Cu"
+      ]
+     },
+     "3f8d8354-016e-4d11-074f-e0456aa5c89c": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "7e1acb53-e144-713f-2004-e5eea5ad4607": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "26f98a58-bd5d-e80d-4462-8aa6516c7f30": {
+      "kind": "segment",
+      "layers": [
+       "In1.Cu"
+      ]
+     },
+     "31c64875-39c8-45b1-e145-0c17908d9d11": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "39619334-07f7-b02e-ad11-cd3890db4a47": {
+      "kind": "segment",
+      "layers": [
+       "In1.Cu"
+      ]
+     },
+     "b99c9bda-bb24-c5ee-3f18-5e42b1419487": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "1846cc11-00ba-559d-9af3-214cb6398d6a": {
+      "kind": "segment",
+      "layers": [
+       "In1.Cu"
+      ]
+     },
+     "d5528aa8-26f8-15b9-f653-e3ff08a63202": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "5ff7429f-097a-d9ce-d7a7-ff7abce3de2d": {
+      "kind": "segment",
+      "layers": [
+       "In1.Cu"
+      ]
+     },
+     "587e24b7-0c39-ba5b-218a-a69aa6018285": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "5233b1b3-3586-b50c-0416-894c13ad8a46": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "5e0957b7-4118-665f-5c2a-de10bf3fbe65": {
+      "kind": "segment",
+      "layers": [
+       "In1.Cu"
+      ]
+     },
+     "5b3ea741-cb0a-8871-0eea-7427aff4cff5": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "3b6a25b8-999b-bf48-dd76-a1d2492e9a32": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "6299b2af-5386-b768-08fb-11c097179aa1": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "3a9af6b4-8e7a-b6ae-2180-706e002c8090": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "b55740a8-5788-8655-ecff-44dfdac68bad": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "7a396e09-4fa9-04e7-92f0-e4636ff16f03": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "7dd788d5-c96e-ef74-9437-46365430c9e0": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "b4aebba9-89d3-342b-cd29-812920dfd655": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "86461d6c-b0b9-9a32-25ff-0a0c9619e056": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "d2472f33-c03d-ab1c-885c-2fcb334eec3c": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "db4fd9c1-8c9a-772b-ee1e-b46d6538120f": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "c38ff641-f3db-72f6-8a83-3370da672ec5": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "9ce7441d-e6e7-d32d-58e8-57bb67f00179": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "0e042950-ca26-dc6b-50b0-5e6a799a5d85": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "62ff69a3-7fa1-d13f-b6a8-58d8b8e65278": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "5f8e419e-25e3-7404-bce2-4e03994c1748": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "ecb8006e-7f0f-dba6-9a2a-5a64fab6d9bf": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "b20d2572-9fa3-10a0-a980-0d51112e579f": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "0f6d75bf-71c0-a990-565d-8c7f73c7d224": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "c709d70e-f1a5-67fe-e7b4-3ab5c5dc1f72": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "892a5371-65ec-b4e3-2a98-8ca7653de395": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "855960e5-9844-9ef2-7983-d7e0e80a9dc0": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "fde677c9-93e9-0d46-631f-e025be2c7c60": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "01bdcfa1-f737-5111-eecf-4b96de5eb976": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "88941cb8-f3e8-769c-e630-035179653f9e": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "b7fbe5a3-1a27-fa7b-63b2-275073d2b7b2": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "726bb44c-1dde-e380-2b7e-42ec940eb045": {
+      "kind": "segment",
+      "layers": [
+       "In2.Cu"
+      ]
+     },
+     "3c4a46a7-ed07-d56c-72f6-8f93288fd455": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "5e53d272-b5cc-750b-b9b6-ff12af6eb9b6": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "f4815517-c843-b1d3-c3ee-3c264407a9e7": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "b7dd3524-c75d-f086-b7a4-3576d690da91": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "2f672218-892b-86d1-679c-a184a9bfe596": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "4221bd76-7e20-4d6b-27ac-1b1ef5196a98": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "33b8bdbb-ae76-cd0c-64d7-bb061de99255": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "24e14552-5632-d986-d405-fe9f4cf270fb": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "55ee426f-3010-1673-86ed-038f4e4faaca": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "e865b425-c662-395a-f9d3-c396513900e4": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     }
+    },
+    "pads": {}
+   },
+   "material": [
+    {
+     "Type": "Legend",
+     "Name": "Top Silk Screen"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Top Solder Paste"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.011,
+     "Name": "Top Solder Mask"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "F.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.1,
+     "Material": "FR4",
+     "Name": "F.Cu/In1.Cu (1/3)",
+     "Notes": "Type: dielectric layer 1 - 1/3 (from F.Cu to In1.Cu)"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.732,
+     "Material": "FR4",
+     "Name": "F.Cu/In1.Cu (2/3)",
+     "Notes": "Type: dielectric layer 1 - 2/3 (from F.Cu to In1.Cu)"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 1.416,
+     "Material": "FR4",
+     "Name": "F.Cu/In1.Cu (3/3)",
+     "Notes": "Type: dielectric layer 1 - 3/3 (from F.Cu to In1.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In1.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 8.2585,
+     "Material": "FR4",
+     "Name": "In1.Cu/In2.Cu",
+     "Notes": "Type: dielectric layer 2 (from In1.Cu to In2.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In2.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.1,
+     "Material": "FR4",
+     "Name": "In2.Cu/B.Cu",
+     "Notes": "Type: dielectric layer 3 (from In2.Cu to B.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.0175,
+     "Name": "B.Cu"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.015,
+     "Name": "Bottom Solder Mask"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Bottom Solder Paste"
+    },
+    {
+     "Type": "Legend",
+     "Name": "Bottom Silk Screen"
+    }
+   ],
+   "upToDate": true
+  },
+  {
+   "copper": 2,
+   "warned": true,
+   "board": {
+    "layers": [
+     [
+      "0",
+      "F.Cu",
+      "signal"
+     ],
+     [
+      "2",
+      "B.Cu",
+      "signal"
+     ],
+     [
+      "9",
+      "F.Adhes",
+      "user",
+      "F.Adhesive"
+     ],
+     [
+      "11",
+      "B.Adhes",
+      "user",
+      "B.Adhesive"
+     ],
+     [
+      "13",
+      "F.Paste",
+      "user"
+     ],
+     [
+      "15",
+      "B.Paste",
+      "user"
+     ],
+     [
+      "5",
+      "F.SilkS",
+      "user",
+      "F.Silkscreen"
+     ],
+     [
+      "7",
+      "B.SilkS",
+      "user",
+      "B.Silkscreen"
+     ],
+     [
+      "1",
+      "F.Mask",
+      "user"
+     ],
+     [
+      "3",
+      "B.Mask",
+      "user"
+     ],
+     [
+      "17",
+      "Dwgs.User",
+      "user",
+      "User.Drawings"
+     ],
+     [
+      "19",
+      "Cmts.User",
+      "user",
+      "User.Comments"
+     ],
+     [
+      "25",
+      "Edge.Cuts",
+      "user"
+     ],
+     [
+      "27",
+      "Margin",
+      "user"
+     ],
+     [
+      "31",
+      "F.CrtYd",
+      "user",
+      "F.Courtyard"
+     ],
+     [
+      "29",
+      "B.CrtYd",
+      "user",
+      "B.Courtyard"
+     ],
+     [
+      "35",
+      "F.Fab",
+      "user"
+     ],
+     [
+      "33",
+      "B.Fab",
+      "user"
+     ]
+    ],
+    "thickness": "10.755",
+    "stackup": [
+     "stackup",
+     [
+      "layer",
+      "F.SilkS",
+      [
+       "type",
+       "Top Silk Screen"
+      ]
+     ],
+     [
+      "layer",
+      "F.Paste",
+      [
+       "type",
+       "Top Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "F.Mask",
+      [
+       "type",
+       "Top Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.011"
+      ]
+     ],
+     [
+      "layer",
+      "F.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 1",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "8.5285"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ],
+      "addsublayer",
+      [
+       "thickness",
+       "0.732",
+       "locked"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ],
+      "addsublayer",
+      [
+       "thickness",
+       "1.416"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "B.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.0175"
+      ]
+     ],
+     [
+      "layer",
+      "B.Mask",
+      [
+       "type",
+       "Bottom Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.015"
+      ]
+     ],
+     [
+      "layer",
+      "B.Paste",
+      [
+       "type",
+       "Bottom Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "B.SilkS",
+      [
+       "type",
+       "Bottom Silk Screen"
+      ]
+     ],
+     [
+      "copper_finish",
+      "None"
+     ],
+     [
+      "dielectric_constraints",
+      "no"
+     ]
+    ],
+    "items": {
+     "a56bf700-edf4-6b64-8a83-fe2cf8a23343": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "4b6667ac-fa15-1727-33ef-cae5c56c1e71": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "0071a411-49b3-157c-64d8-e0281c930881": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "a1f98b1b-0963-e44c-4e83-9deb8e4b2c3e": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "c6977148-bd92-f11a-5e10-715d272469fb": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "0629c878-8820-61d9-1513-0ee47d17659e": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "ca44c5c6-ba5d-34d1-0810-8771fbaf37e3": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "e9da1ec0-85ec-7c5c-fe97-4fd171b99249": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "e55ae618-cb6d-a8c8-2524-40cce757ed7e": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "07ff15a5-37aa-7110-6ab2-64771c703d43": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "0164807e-7db4-1f54-9e14-9ef885f2e6eb": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "7348cb12-25c0-bcde-8298-28bacba9c888": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "fac8bc7a-37d8-dd7c-ee34-974d7b49b1fe": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "41263c99-077e-cd3a-e98f-28cef7a2f9d2": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "1afd3afc-b98e-f7e2-3784-08815b41a543": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "7d006280-df3a-e156-2b91-48279c1d39da": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "3bdf45f6-38ef-a84d-e696-030790534b1d": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "92ff6eff-f906-9ec0-c11a-e11cd1e4fb0f": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "626cafa5-f317-2c2b-63ae-daa9e6592d3a": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "a29a45f1-889b-a244-fe9b-81bd9e27d267": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "7e1acb53-e144-713f-2004-e5eea5ad4607": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "31c64875-39c8-45b1-e145-0c17908d9d11": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "b99c9bda-bb24-c5ee-3f18-5e42b1419487": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "d5528aa8-26f8-15b9-f653-e3ff08a63202": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "587e24b7-0c39-ba5b-218a-a69aa6018285": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "5233b1b3-3586-b50c-0416-894c13ad8a46": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "5b3ea741-cb0a-8871-0eea-7427aff4cff5": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "6299b2af-5386-b768-08fb-11c097179aa1": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "b55740a8-5788-8655-ecff-44dfdac68bad": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "7dd788d5-c96e-ef74-9437-46365430c9e0": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "86461d6c-b0b9-9a32-25ff-0a0c9619e056": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "d2472f33-c03d-ab1c-885c-2fcb334eec3c": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "c38ff641-f3db-72f6-8a83-3370da672ec5": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "9ce7441d-e6e7-d32d-58e8-57bb67f00179": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "0e042950-ca26-dc6b-50b0-5e6a799a5d85": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "62ff69a3-7fa1-d13f-b6a8-58d8b8e65278": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "5f8e419e-25e3-7404-bce2-4e03994c1748": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "ecb8006e-7f0f-dba6-9a2a-5a64fab6d9bf": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "b20d2572-9fa3-10a0-a980-0d51112e579f": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "0f6d75bf-71c0-a990-565d-8c7f73c7d224": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "c709d70e-f1a5-67fe-e7b4-3ab5c5dc1f72": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "892a5371-65ec-b4e3-2a98-8ca7653de395": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "fde677c9-93e9-0d46-631f-e025be2c7c60": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "01bdcfa1-f737-5111-eecf-4b96de5eb976": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "88941cb8-f3e8-769c-e630-035179653f9e": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "b7fbe5a3-1a27-fa7b-63b2-275073d2b7b2": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "3c4a46a7-ed07-d56c-72f6-8f93288fd455": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "5e53d272-b5cc-750b-b9b6-ff12af6eb9b6": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "f4815517-c843-b1d3-c3ee-3c264407a9e7": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "b7dd3524-c75d-f086-b7a4-3576d690da91": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "2f672218-892b-86d1-679c-a184a9bfe596": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "4221bd76-7e20-4d6b-27ac-1b1ef5196a98": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "33b8bdbb-ae76-cd0c-64d7-bb061de99255": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "24e14552-5632-d986-d405-fe9f4cf270fb": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "55ee426f-3010-1673-86ed-038f4e4faaca": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "e865b425-c662-395a-f9d3-c396513900e4": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     }
+    },
+    "pads": {}
+   },
+   "material": [
+    {
+     "Type": "Legend",
+     "Name": "Top Silk Screen"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Top Solder Paste"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.011,
+     "Name": "Top Solder Mask"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "F.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 8.5285,
+     "Material": "FR4",
+     "Name": "F.Cu/B.Cu (1/3)",
+     "Notes": "Type: dielectric layer 1 - 1/3 (from F.Cu to B.Cu)"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.732,
+     "Material": "FR4",
+     "Name": "F.Cu/B.Cu (2/3)",
+     "Notes": "Type: dielectric layer 1 - 2/3 (from F.Cu to B.Cu)"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 1.416,
+     "Material": "FR4",
+     "Name": "F.Cu/B.Cu (3/3)",
+     "Notes": "Type: dielectric layer 1 - 3/3 (from F.Cu to B.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.0175,
+     "Name": "B.Cu"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.015,
+     "Name": "Bottom Solder Mask"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Bottom Solder Paste"
+    },
+    {
+     "Type": "Legend",
+     "Name": "Bottom Silk Screen"
+    }
+   ],
+   "upToDate": true
+  }
+ ]
+}

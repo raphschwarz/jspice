@@ -1,0 +1,1683 @@
+{
+ "steps": [
+  {
+   "copper": 2,
+   "warned": true,
+   "board": {
+    "layers": [
+     [
+      "0",
+      "F.Cu",
+      "signal"
+     ],
+     [
+      "2",
+      "B.Cu",
+      "signal"
+     ],
+     [
+      "9",
+      "F.Adhes",
+      "user",
+      "F.Adhesive"
+     ],
+     [
+      "11",
+      "B.Adhes",
+      "user",
+      "B.Adhesive"
+     ],
+     [
+      "13",
+      "F.Paste",
+      "user"
+     ],
+     [
+      "15",
+      "B.Paste",
+      "user"
+     ],
+     [
+      "5",
+      "F.SilkS",
+      "user",
+      "F.Silkscreen"
+     ],
+     [
+      "7",
+      "B.SilkS",
+      "user",
+      "B.Silkscreen"
+     ],
+     [
+      "1",
+      "F.Mask",
+      "user"
+     ],
+     [
+      "3",
+      "B.Mask",
+      "user"
+     ],
+     [
+      "17",
+      "Dwgs.User",
+      "user",
+      "User.Drawings"
+     ],
+     [
+      "19",
+      "Cmts.User",
+      "user",
+      "User.Comments"
+     ],
+     [
+      "25",
+      "Edge.Cuts",
+      "user"
+     ],
+     [
+      "27",
+      "Margin",
+      "user"
+     ],
+     [
+      "31",
+      "F.CrtYd",
+      "user",
+      "F.Courtyard"
+     ],
+     [
+      "29",
+      "B.CrtYd",
+      "user",
+      "B.Courtyard"
+     ],
+     [
+      "35",
+      "F.Fab",
+      "user"
+     ],
+     [
+      "33",
+      "B.Fab",
+      "user"
+     ]
+    ],
+    "thickness": "0.327",
+    "stackup": [
+     "stackup",
+     [
+      "layer",
+      "F.SilkS",
+      [
+       "type",
+       "Top Silk Screen"
+      ],
+      [
+       "color",
+       "White"
+      ]
+     ],
+     [
+      "layer",
+      "F.Paste",
+      [
+       "type",
+       "Top Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "F.Mask",
+      [
+       "type",
+       "Top Solder Mask"
+      ],
+      [
+       "color",
+       "#1A2B3CFF"
+      ],
+      [
+       "thickness",
+       "0.012"
+      ]
+     ],
+     [
+      "layer",
+      "F.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 1",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "color",
+       "FR4 natural"
+      ],
+      [
+       "thickness",
+       "0.2",
+       "locked"
+      ],
+      [
+       "material",
+       "FR408"
+      ],
+      [
+       "epsilon_r",
+       "3.66"
+      ],
+      [
+       "loss_tangent",
+       "0.0117"
+      ]
+     ],
+     [
+      "layer",
+      "B.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.07"
+      ]
+     ],
+     [
+      "layer",
+      "B.Mask",
+      [
+       "type",
+       "Bottom Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.01"
+      ]
+     ],
+     [
+      "layer",
+      "B.Paste",
+      [
+       "type",
+       "Bottom Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "B.SilkS",
+      [
+       "type",
+       "Bottom Silk Screen"
+      ]
+     ],
+     [
+      "copper_finish",
+      "ENIG"
+     ],
+     [
+      "dielectric_constraints",
+      "yes"
+     ],
+     [
+      "edge_connector",
+      "bevelled"
+     ],
+     [
+      "edge_plating",
+      "yes"
+     ]
+    ],
+    "items": {
+     "00000000-0000-4000-8000-000000000018": {
+      "kind": "gr_line",
+      "layers": [
+       "Dwgs.User"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000032": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000035": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000033": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000034": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000001": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000008": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "00000000-0000-4000-8000-000000000006": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000019": {
+      "kind": "zone",
+      "layers": [
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     },
+     "00000000-0000-4000-8000-000000000022": {
+      "kind": "zone",
+      "layers": [
+       "B.Cu",
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     },
+     "00000000-0000-4000-8000-000000000031": {
+      "kind": "group",
+      "members": [
+       "00000000-0000-4000-8000-000000000001"
+      ]
+     }
+    },
+    "pads": {
+     "00000000-0000-4000-8000-000000000023/00000000-0000-4000-8000-000000000027": [
+      "B.Cu",
+      "F.Cu",
+      "F.Mask"
+     ],
+     "00000000-0000-4000-8000-000000000023/00000000-0000-4000-8000-000000000028": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask"
+     ],
+     "00000000-0000-4000-8000-000000000023/00000000-0000-4000-8000-000000000029": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ]
+    }
+   },
+   "material": [
+    {
+     "Type": "Legend",
+     "Color": "White",
+     "Name": "Top Silk Screen"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Top Solder Paste"
+    },
+    {
+     "Type": "SolderMask",
+     "Color": "R26G43B60",
+     "Thickness": 0.012,
+     "Name": "Top Solder Mask"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "F.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Color": "R109G116B75",
+     "Thickness": 0.2,
+     "Material": "FR408",
+     "DielectricConstant": "3.66",
+     "LossTangent": "0.0117",
+     "Name": "F.Cu/B.Cu",
+     "Notes": "Type: dielectric layer 1 (from F.Cu to B.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.07,
+     "Name": "B.Cu"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.01,
+     "Name": "Bottom Solder Mask"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Bottom Solder Paste"
+    },
+    {
+     "Type": "Legend",
+     "Name": "Bottom Silk Screen"
+    }
+   ],
+   "upToDate": true
+  },
+  {
+   "copper": 8,
+   "warned": false,
+   "board": {
+    "layers": [
+     [
+      "0",
+      "F.Cu",
+      "signal"
+     ],
+     [
+      "4",
+      "In1.Cu",
+      "signal"
+     ],
+     [
+      "6",
+      "In2.Cu",
+      "signal"
+     ],
+     [
+      "8",
+      "In3.Cu",
+      "signal"
+     ],
+     [
+      "10",
+      "In4.Cu",
+      "signal"
+     ],
+     [
+      "12",
+      "In5.Cu",
+      "signal"
+     ],
+     [
+      "14",
+      "In6.Cu",
+      "signal"
+     ],
+     [
+      "2",
+      "B.Cu",
+      "signal"
+     ],
+     [
+      "9",
+      "F.Adhes",
+      "user",
+      "F.Adhesive"
+     ],
+     [
+      "11",
+      "B.Adhes",
+      "user",
+      "B.Adhesive"
+     ],
+     [
+      "13",
+      "F.Paste",
+      "user"
+     ],
+     [
+      "15",
+      "B.Paste",
+      "user"
+     ],
+     [
+      "5",
+      "F.SilkS",
+      "user",
+      "F.Silkscreen"
+     ],
+     [
+      "7",
+      "B.SilkS",
+      "user",
+      "B.Silkscreen"
+     ],
+     [
+      "1",
+      "F.Mask",
+      "user"
+     ],
+     [
+      "3",
+      "B.Mask",
+      "user"
+     ],
+     [
+      "17",
+      "Dwgs.User",
+      "user",
+      "User.Drawings"
+     ],
+     [
+      "19",
+      "Cmts.User",
+      "user",
+      "User.Comments"
+     ],
+     [
+      "25",
+      "Edge.Cuts",
+      "user"
+     ],
+     [
+      "27",
+      "Margin",
+      "user"
+     ],
+     [
+      "31",
+      "F.CrtYd",
+      "user",
+      "F.Courtyard"
+     ],
+     [
+      "29",
+      "B.CrtYd",
+      "user",
+      "B.Courtyard"
+     ],
+     [
+      "35",
+      "F.Fab",
+      "user"
+     ],
+     [
+      "33",
+      "B.Fab",
+      "user"
+     ]
+    ],
+    "thickness": "0.537",
+    "stackup": [
+     "stackup",
+     [
+      "layer",
+      "F.SilkS",
+      [
+       "type",
+       "Top Silk Screen"
+      ],
+      [
+       "color",
+       "White"
+      ]
+     ],
+     [
+      "layer",
+      "F.Paste",
+      [
+       "type",
+       "Top Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "F.Mask",
+      [
+       "type",
+       "Top Solder Mask"
+      ],
+      [
+       "color",
+       "#1A2B3CFF"
+      ],
+      [
+       "thickness",
+       "0.012"
+      ]
+     ],
+     [
+      "layer",
+      "F.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 1",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "color",
+       "FR4 natural"
+      ],
+      [
+       "thickness",
+       "0.2",
+       "locked"
+      ],
+      [
+       "material",
+       "FR408"
+      ],
+      [
+       "epsilon_r",
+       "3.66"
+      ],
+      [
+       "loss_tangent",
+       "0.0117"
+      ]
+     ],
+     [
+      "layer",
+      "In1.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 2",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "0"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In2.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 3",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In3.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 4",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "0"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In4.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 5",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In5.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 6",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "0"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In6.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 7",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "B.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.07"
+      ]
+     ],
+     [
+      "layer",
+      "B.Mask",
+      [
+       "type",
+       "Bottom Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.01"
+      ]
+     ],
+     [
+      "layer",
+      "B.Paste",
+      [
+       "type",
+       "Bottom Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "B.SilkS",
+      [
+       "type",
+       "Bottom Silk Screen"
+      ]
+     ],
+     [
+      "copper_finish",
+      "ENIG"
+     ],
+     [
+      "dielectric_constraints",
+      "yes"
+     ],
+     [
+      "edge_connector",
+      "bevelled"
+     ],
+     [
+      "edge_plating",
+      "yes"
+     ]
+    ],
+    "items": {
+     "00000000-0000-4000-8000-000000000018": {
+      "kind": "gr_line",
+      "layers": [
+       "Dwgs.User"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000032": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000035": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000033": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000034": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000001": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000008": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "00000000-0000-4000-8000-000000000006": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000019": {
+      "kind": "zone",
+      "layers": [
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     },
+     "00000000-0000-4000-8000-000000000022": {
+      "kind": "zone",
+      "layers": [
+       "B.Cu",
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     },
+     "00000000-0000-4000-8000-000000000031": {
+      "kind": "group",
+      "members": [
+       "00000000-0000-4000-8000-000000000001"
+      ]
+     }
+    },
+    "pads": {
+     "00000000-0000-4000-8000-000000000023/00000000-0000-4000-8000-000000000027": [
+      "B.Cu",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu",
+      "In3.Cu",
+      "In4.Cu",
+      "In5.Cu",
+      "In6.Cu"
+     ],
+     "00000000-0000-4000-8000-000000000023/00000000-0000-4000-8000-000000000028": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu",
+      "In3.Cu",
+      "In4.Cu",
+      "In5.Cu",
+      "In6.Cu"
+     ],
+     "00000000-0000-4000-8000-000000000023/00000000-0000-4000-8000-000000000029": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ]
+    }
+   },
+   "material": [
+    {
+     "Type": "Legend",
+     "Color": "White",
+     "Name": "Top Silk Screen"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Top Solder Paste"
+    },
+    {
+     "Type": "SolderMask",
+     "Color": "R26G43B60",
+     "Thickness": 0.012,
+     "Name": "Top Solder Mask"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "F.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Color": "R109G116B75",
+     "Thickness": 0.2,
+     "Material": "FR408",
+     "DielectricConstant": "3.66",
+     "LossTangent": "0.0117",
+     "Name": "F.Cu/In1.Cu",
+     "Notes": "Type: dielectric layer 1 (from F.Cu to In1.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In1.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.0,
+     "Material": "FR4",
+     "DielectricConstant": "4.5",
+     "LossTangent": "0.02",
+     "Name": "In1.Cu/In2.Cu",
+     "Notes": "Type: dielectric layer 2 (from In1.Cu to In2.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In2.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.0,
+     "Material": "FR4",
+     "DielectricConstant": "4.5",
+     "LossTangent": "0.02",
+     "Name": "In2.Cu/In3.Cu",
+     "Notes": "Type: dielectric layer 3 (from In2.Cu to In3.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In3.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.0,
+     "Material": "FR4",
+     "DielectricConstant": "4.5",
+     "LossTangent": "0.02",
+     "Name": "In3.Cu/In4.Cu",
+     "Notes": "Type: dielectric layer 4 (from In3.Cu to In4.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In4.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.0,
+     "Material": "FR4",
+     "DielectricConstant": "4.5",
+     "LossTangent": "0.02",
+     "Name": "In4.Cu/In5.Cu",
+     "Notes": "Type: dielectric layer 5 (from In4.Cu to In5.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In5.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.0,
+     "Material": "FR4",
+     "DielectricConstant": "4.5",
+     "LossTangent": "0.02",
+     "Name": "In5.Cu/In6.Cu",
+     "Notes": "Type: dielectric layer 6 (from In5.Cu to In6.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In6.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.0,
+     "Material": "FR4",
+     "DielectricConstant": "4.5",
+     "LossTangent": "0.02",
+     "Name": "In6.Cu/B.Cu",
+     "Notes": "Type: dielectric layer 7 (from In6.Cu to B.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.07,
+     "Name": "B.Cu"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.01,
+     "Name": "Bottom Solder Mask"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Bottom Solder Paste"
+    },
+    {
+     "Type": "Legend",
+     "Name": "Bottom Silk Screen"
+    }
+   ],
+   "upToDate": true
+  },
+  {
+   "copper": 4,
+   "warned": false,
+   "board": {
+    "layers": [
+     [
+      "0",
+      "F.Cu",
+      "signal"
+     ],
+     [
+      "4",
+      "In1.Cu",
+      "signal"
+     ],
+     [
+      "6",
+      "In2.Cu",
+      "signal"
+     ],
+     [
+      "2",
+      "B.Cu",
+      "signal"
+     ],
+     [
+      "9",
+      "F.Adhes",
+      "user",
+      "F.Adhesive"
+     ],
+     [
+      "11",
+      "B.Adhes",
+      "user",
+      "B.Adhesive"
+     ],
+     [
+      "13",
+      "F.Paste",
+      "user"
+     ],
+     [
+      "15",
+      "B.Paste",
+      "user"
+     ],
+     [
+      "5",
+      "F.SilkS",
+      "user",
+      "F.Silkscreen"
+     ],
+     [
+      "7",
+      "B.SilkS",
+      "user",
+      "B.Silkscreen"
+     ],
+     [
+      "1",
+      "F.Mask",
+      "user"
+     ],
+     [
+      "3",
+      "B.Mask",
+      "user"
+     ],
+     [
+      "17",
+      "Dwgs.User",
+      "user",
+      "User.Drawings"
+     ],
+     [
+      "19",
+      "Cmts.User",
+      "user",
+      "User.Comments"
+     ],
+     [
+      "25",
+      "Edge.Cuts",
+      "user"
+     ],
+     [
+      "27",
+      "Margin",
+      "user"
+     ],
+     [
+      "31",
+      "F.CrtYd",
+      "user",
+      "F.Courtyard"
+     ],
+     [
+      "29",
+      "B.CrtYd",
+      "user",
+      "B.Courtyard"
+     ],
+     [
+      "35",
+      "F.Fab",
+      "user"
+     ],
+     [
+      "33",
+      "B.Fab",
+      "user"
+     ]
+    ],
+    "thickness": "0.490332",
+    "stackup": [
+     "stackup",
+     [
+      "layer",
+      "F.SilkS",
+      [
+       "type",
+       "Top Silk Screen"
+      ],
+      [
+       "color",
+       "White"
+      ]
+     ],
+     [
+      "layer",
+      "F.Paste",
+      [
+       "type",
+       "Top Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "F.Mask",
+      [
+       "type",
+       "Top Solder Mask"
+      ],
+      [
+       "color",
+       "#1A2B3CFF"
+      ],
+      [
+       "thickness",
+       "0.012"
+      ]
+     ],
+     [
+      "layer",
+      "F.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 1",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "color",
+       "FR4 natural"
+      ],
+      [
+       "thickness",
+       "0.2",
+       "locked"
+      ],
+      [
+       "material",
+       "FR408"
+      ],
+      [
+       "epsilon_r",
+       "3.66"
+      ],
+      [
+       "loss_tangent",
+       "0.0117"
+      ]
+     ],
+     [
+      "layer",
+      "In1.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 2",
+      [
+       "type",
+       "core"
+      ],
+      [
+       "thickness",
+       "0.046666"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "In2.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.035"
+      ]
+     ],
+     [
+      "layer",
+      "dielectric 3",
+      [
+       "type",
+       "prepreg"
+      ],
+      [
+       "thickness",
+       "0.046666"
+      ],
+      [
+       "material",
+       "FR4"
+      ],
+      [
+       "epsilon_r",
+       "4.5"
+      ],
+      [
+       "loss_tangent",
+       "0.02"
+      ]
+     ],
+     [
+      "layer",
+      "B.Cu",
+      [
+       "type",
+       "copper"
+      ],
+      [
+       "thickness",
+       "0.07"
+      ]
+     ],
+     [
+      "layer",
+      "B.Mask",
+      [
+       "type",
+       "Bottom Solder Mask"
+      ],
+      [
+       "thickness",
+       "0.01"
+      ]
+     ],
+     [
+      "layer",
+      "B.Paste",
+      [
+       "type",
+       "Bottom Solder Paste"
+      ]
+     ],
+     [
+      "layer",
+      "B.SilkS",
+      [
+       "type",
+       "Bottom Silk Screen"
+      ]
+     ],
+     [
+      "copper_finish",
+      "ENIG"
+     ],
+     [
+      "dielectric_constraints",
+      "yes"
+     ],
+     [
+      "edge_connector",
+      "bevelled"
+     ],
+     [
+      "edge_plating",
+      "yes"
+     ]
+    ],
+    "items": {
+     "00000000-0000-4000-8000-000000000018": {
+      "kind": "gr_line",
+      "layers": [
+       "Dwgs.User"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000032": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000035": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000033": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000034": {
+      "kind": "gr_line",
+      "layers": [
+       "Edge.Cuts"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000001": {
+      "kind": "segment",
+      "layers": [
+       "F.Cu"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000008": {
+      "kind": "via",
+      "layers": [
+       "F.Cu",
+       "B.Cu"
+      ],
+      "type": "through"
+     },
+     "00000000-0000-4000-8000-000000000006": {
+      "kind": "segment",
+      "layers": [
+       "B.Cu"
+      ]
+     },
+     "00000000-0000-4000-8000-000000000019": {
+      "kind": "zone",
+      "layers": [
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     },
+     "00000000-0000-4000-8000-000000000022": {
+      "kind": "zone",
+      "layers": [
+       "B.Cu",
+       "F.Cu"
+      ],
+      "fills": [],
+      "filled": false,
+      "properties": []
+     },
+     "00000000-0000-4000-8000-000000000031": {
+      "kind": "group",
+      "members": [
+       "00000000-0000-4000-8000-000000000001"
+      ]
+     }
+    },
+    "pads": {
+     "00000000-0000-4000-8000-000000000023/00000000-0000-4000-8000-000000000027": [
+      "B.Cu",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu"
+     ],
+     "00000000-0000-4000-8000-000000000023/00000000-0000-4000-8000-000000000028": [
+      "B.Cu",
+      "B.Mask",
+      "F.Cu",
+      "F.Mask",
+      "In1.Cu",
+      "In2.Cu"
+     ],
+     "00000000-0000-4000-8000-000000000023/00000000-0000-4000-8000-000000000029": [
+      "F.Cu",
+      "F.Mask",
+      "F.Paste"
+     ]
+    }
+   },
+   "material": [
+    {
+     "Type": "Legend",
+     "Color": "White",
+     "Name": "Top Silk Screen"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Top Solder Paste"
+    },
+    {
+     "Type": "SolderMask",
+     "Color": "R26G43B60",
+     "Thickness": 0.012,
+     "Name": "Top Solder Mask"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "F.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Color": "R109G116B75",
+     "Thickness": 0.2,
+     "Material": "FR408",
+     "DielectricConstant": "3.66",
+     "LossTangent": "0.0117",
+     "Name": "F.Cu/In1.Cu",
+     "Notes": "Type: dielectric layer 1 (from F.Cu to In1.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In1.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.0467,
+     "Material": "FR4",
+     "DielectricConstant": "4.5",
+     "LossTangent": "0.02",
+     "Name": "In1.Cu/In2.Cu",
+     "Notes": "Type: dielectric layer 2 (from In1.Cu to In2.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.035,
+     "Name": "In2.Cu"
+    },
+    {
+     "Type": "Dielectric",
+     "Thickness": 0.0467,
+     "Material": "FR4",
+     "DielectricConstant": "4.5",
+     "LossTangent": "0.02",
+     "Name": "In2.Cu/B.Cu",
+     "Notes": "Type: dielectric layer 3 (from In2.Cu to B.Cu)"
+    },
+    {
+     "Type": "Copper",
+     "Thickness": 0.07,
+     "Name": "B.Cu"
+    },
+    {
+     "Type": "SolderMask",
+     "Thickness": 0.01,
+     "Name": "Bottom Solder Mask"
+    },
+    {
+     "Type": "SolderPaste",
+     "Name": "Bottom Solder Paste"
+    },
+    {
+     "Type": "Legend",
+     "Name": "Bottom Silk Screen"
+    }
+   ],
+   "upToDate": true
+  }
+ ],
+ "presets": {
+  "before": {
+   "track_widths": [
+    0.0,
+    0.5,
+    0.2,
+    0.15,
+    0.3
+   ],
+   "via_dimensions": [
+    {
+     "diameter": 0.0,
+     "drill": 0.0
+    },
+    {
+     "diameter": 0.8,
+     "drill": 0.4
+    },
+    {
+     "diameter": 0.6,
+     "drill": 0.3
+    },
+    {
+     "diameter": 0.6,
+     "drill": 0.25
+    }
+   ]
+  },
+  "after": {
+   "track_widths": [
+    0.0,
+    0.15,
+    0.2,
+    0.3,
+    0.5
+   ],
+   "via_dimensions": [
+    {
+     "diameter": 0.0,
+     "drill": 0.0
+    },
+    {
+     "diameter": 0.6,
+     "drill": 0.25
+    },
+    {
+     "diameter": 0.6,
+     "drill": 0.3
+    },
+    {
+     "diameter": 0.8,
+     "drill": 0.4
+    }
+   ]
+  }
+ }
+}

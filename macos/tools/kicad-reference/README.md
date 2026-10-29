@@ -185,6 +185,29 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   (JSON: each pair of layers and the height between them). `StackupTests` checks the port's (`Stackup`, which
   `BoardWorld` gives the router's interface) against them; `Tests/KiCadRouterTests/Fixtures/stackups` holds
   `stackups.py ... 12 20261109`, and `KICAD_STACKUP_REFERENCE` names another folder of them.
+- `boardsetup.py`: KiCad's Board Setup dialog, driven as a user drives it, for checking the port's
+  `BoardEditing.setCopperLayerCount` (`BoardSetup.swift`, with `BoardStackup.swift`) and its pre-defined sizes against.
+  Neither the dialog nor the board's stackup is reached by KiCad's Python module, so it runs KiCad's PCB editor itself
+  under Xvfb (`xvfb-run pcbnew`, with an action plugin of its own in a folder of its own and a copy of the user's KiCad
+  configuration): once the board is open, the plugin opens File ▸ Board Setup..., goes to its Physical Stackup page,
+  picks a copper layer count there as a click on its choice does, presses OK (and OK on the warning of items on removed
+  layers) and saves the board with File ▸ Save; each step a run of its own on the board the step before saved.
+  `boardsetup.py dialog BOARD.kicad_pcb...` changes each board's count step by step (from two layers to 4, 6 and 2; from
+  four to 6, 2 and 4; from six to 2, 8 and 4; from eight to 4 and 2) and writes `BOARD.setup` (JSON) beside it: for
+  each step the board KiCad saved, summarized (its layer table, thickness and stackup, every item's layers, a via's
+  type, a zone's fills and properties, a group's members, every pad's layers), whether KiCad warned of items on removed
+  layers, and the stackup of kicad-cli's Gerber job file of it (whose writer brings the stackup to the board's layers
+  first, and leaves the thicknesses out where it had to: so the job file says whether the stackup was up to date); and,
+  where its project has pre-defined sizes, the project's lists before and after the dialog's Pre-defined Sizes page
+  (opened, OK, saved). `boardsetup.py edge OUTDIR` writes a board of six layers with what removing layers reaches
+  (blind, buried and micro vias, tracks and arcs on every layer, drawings, texts on inner layers, zones on several layers
+  with fills and hatch positions, a rule area on every copper layer, groups, a footprint with a drawing on an inner
+  layer), a stackup of its own (colours, a locked dielectric, sublayers, materials not given, a type neither core nor
+  prepreg) and pre-defined sizes out of order, as KiCad saves it. `boardsetup.py check BOARD.kicad_pcb...` summarizes
+  boards the same way, with their job files' stackup and the sizes KiCad's router takes for each pre-defined size as
+  its track width menu picks them (JSON on standard output). `BoardSetupTests` makes KiCad's steps with the port on the
+  boards of `Tests/KiCadRouterTests/Fixtures/boards`, `stackups` and `setup` (which holds `boardsetup.py edge`'s board),
+  checks its boards against KiCad's, and, where KiCad is installed, has KiCad read the port's boards (`check`).
 - `drc.py`: kicad-cli's design rules check of boards (`drc.py BOARD.kicad_pcb...`): its report of each, as the
   board is (its zones not refilled), errors and warnings, next to it as `BOARD.drc` (JSON, its date taken out).
   `DRCTests` checks the port's DRC (`BoardDRC`) against it: the same violations of the checks it makes, between the
