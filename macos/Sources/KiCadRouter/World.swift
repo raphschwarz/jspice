@@ -472,7 +472,12 @@ public final class WorldInterface: RouterInterface {
                 item = seg
                 resolver.info[ObjectIdentifier(seg)] = w
                 seg.boardItem = ref
-                world.add(seg, allowRedundant: true)
+                // (a track with both ends in one place the world refuses (NODE::Add), and frees: nothing of it kept,
+                // no router item for it, as router.cpp has it)
+                if !world.add(seg, allowRedundant: true) {
+                    resolver.info[ObjectIdentifier(seg)] = nil
+                    item = nil
+                }
             case .via:
                 let via = Via(pos: w.a, layers: w.layers, diameter: 0, drill: w.drill, net: w.net, type: w.viaType)
                 via.setDiameter(w.diameter)
