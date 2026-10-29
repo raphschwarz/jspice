@@ -85,6 +85,17 @@ final class DRCTests: XCTestCase {
                     && drc.runReport(exhausted: ["clearance"]).violations.filter({ $0.type == type }).count == limit {
                     continue
                 }
+                // (solder mask bridges once KiCad's are at their limit: which of those it may find or not its threads
+                // found decides how many it took to reach it, as many as its runs of the same board differ by; so each
+                // KiCad found that the port is sure of, the port finds too)
+                if m < limit && type == "solder_mask_bridge" && !(ourReport.unsure[type]?.isEmpty ?? true) {
+                    let ours = Set(ourViolations.filter { $0.type == type }.map { key($0.type, $0.severity, $0.description, $0.items) })
+                    let missing = report.violations.filter { v in
+                        v.type == type && !ourReport.isUnsure(type, v.items.map(\.uuid))
+                            && !ours.contains(key(v.type, v.severity, v.description, v.items.map(\.uuid)))
+                    }
+                    if missing.isEmpty { continue }
+                }
                 if m != limit { differences.append("\(name): KiCad finds \(limit) \(type), its limit, ours \(m)") }
             }
             // (and once the shorts are, the copper's checks: KiCad reports what it would have as a short as a
