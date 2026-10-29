@@ -68,23 +68,25 @@ extension BoardDRC {
     /// VIA_PLACER::checkDRCViolation: whether the via (its copper item, on the board as it would be with it) is
     /// nearer another net's copper or another item's hole than the design rules allow, or in a rule area keeping
     /// vias out (hasDRCViolation for each item: copper zones left out, which the via is to stitch; items of no net
-    /// tried by their holes only, as such an item may take the via's net)
+    /// tried by their holes only, as such an item may take the via's net), or where the rules disallow it
+    /// (EvalRules(DISALLOW_CONSTRAINT, via, nullptr, UNDEFINED_LAYER), its severity not ignore)
     func viaPlacerViolates(_ via: CopperItem, _ c: Copper) -> Bool {
-        let rules = clearanceRules(c.items + c.zones)
+        ruleState.copper = c
         func subE(_ v: Int) -> Int { max(0, v - settings.epsilon) }
         let viaWidth = (via.via?.diameter ?? 0)
         for other in c.items where other !== via {
             if other.net != 0 && other.net == via.net { continue }
             if other.net != 0 {
-                let (clearance, _) = clearanceConstraint(via, other, rules, c)
-                if clearance >= 0 {
-                    for l in other.layers where via.layers.contains(l) {
-                        if Self.collide(via.shapes[l] ?? [], other.shapes[l] ?? [], subE(clearance)) != nil { return true }
-                    }
+                // (each copper layer of the other item's: EvalRules(CLEARANCE_CONSTRAINT, via, other, layer))
+                for l in other.layers where via.layers.contains(l) {
+                    let clearance = clearanceConstraint(via, other, l, c).value.min
+                    if clearance >= 0, Self.collide(via.shapes[l] ?? [], other.shapes[l] ?? [], subE(clearance)) != nil { return true }
                 }
             }
             if let hole = other.hole {
-                let (clearance, _) = holeClearanceConstraint(via, other)
+                // (EvalRules(HOLE_CLEARANCE_CONSTRAINT, via, other, UNDEFINED_LAYER))
+                let clearance = ruleState.engine.evalRules(.holeClearance, ruleItem(via, c), ruleItem(other, c),
+                                                           layer: KiLayer.undefined).value.min
                 if clearance >= 0, Self.collide([.circle(center: via.via?.start ?? .zero, radius: viaWidth / 2)], [hole], subE(clearance)) != nil {
                     return true
                 }
@@ -96,7 +98,8 @@ extension BoardDRC {
             let d = Self.squaredDistance(area.outline, via.via?.start ?? .zero)
             if d == 0 || d < r * r { return true }
         }
-        return false
+        let k = ruleState.engine.evalRules(.disallow, ruleItem(via, c), nil, layer: KiLayer.undefined)
+        return !k.disallowFlags.isEmpty && k.severity != .ignore
     }
 }
 
@@ -125,7 +128,7 @@ extension BoardEditing {
     public func placeVia(at p: KiCadPoint, net chosen: String? = nil, snap: Bool = true, allowViolations: Bool = false) -> ViaPlacement {
         guard !isRouting else { return .violatesDRC }
         let board = router.board
-        let drc = BoardDRC(board: board.copy(), project: project)
+        let drc = BoardDRC(board: board.copy(), project: project, designRules: designRules)
         let c = drc.makeCopper()
         let size = drc.netClasses.defaultClass
         let (viaWidth, viaDrill) = currentViaSize(default: size.viaDiameter ?? 600_000, size.viaDrill ?? 300_000)
@@ -187,7 +190,7 @@ extension BoardEditing {
         let node = SExpr("via", items)
         let trial = board.copy()
         trial.addCopper(node.copy())
-        let checking = BoardDRC(board: trial, project: project)
+        let checking = BoardDRC(board: trial, project: project, designRules: designRules)
         let tc = checking.makeCopper()
         guard let item = tc.tracks.first(where: { $0.uuid == uuid }) else { return .violatesDRC }
         let violates = checking.viaPlacerViolates(item, tc)

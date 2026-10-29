@@ -7,6 +7,7 @@ import KiCadKit
 /// one, the pointer to the other, fixed there), the board written, and kicad-cli's DRC run on it; no clearance,
 /// crossing, short or size violation may involve a track or via the router put there. The boards are those of
 /// KICAD_BOARD_REFERENCE (boards.py's), or Fixtures/boards; it needs kicad-cli (JSPICE_REQUIRE_KICAD: fail without).
+/// A board with a rules file beside it (NAME.kicad_dru, rules.py's) is routed by its rules, and checked by them.
 /// And the same on Fixtures/arcboards (boards.py --arcs), with arc tracks on them, routed with rounded corners: the
 /// arcs the router puts on written into the board as KiCad writes arc tracks, which its DRC reads.
 final class BoardRoutingTests: XCTestCase {
@@ -14,11 +15,23 @@ final class BoardRoutingTests: XCTestCase {
     static let routerViolations: Set<String> = ["clearance", "hole_clearance", "copper_edge_clearance", "hole_to_hole",
                                                 "tracks_crossing", "shorting_items", "track_width", "via_diameter",
                                                 "annular_width", "drill_out_of_range", "holes_co_located"]
+    /// Those on a board with rules of the user's own: its clearances (KiCad's router takes a track's and a via's sizes
+    /// from the rules' minimums and optimums, and leaves their maximums to the DRC)
+    static let routerClearanceViolations: Set<String> = routerViolations.subtracting(["track_width", "via_diameter", "annular_width",
+                                                                                      "drill_out_of_range"])
 
     func testRoutesPassKiCadsDRC() throws {
         let env = ProcessInfo.processInfo.environment
         guard let folder = env["KICAD_BOARD_REFERENCE"].map(URL.init(fileURLWithPath:))
                 ?? Bundle.module.url(forResource: "boards", withExtension: nil, subdirectory: "Fixtures") else { throw XCTSkip("no boards") }
+        try check(folder, cornerModes: [.mitered45])
+    }
+
+    /// On boards with rules files of their own (Fixtures/rules), routed by their rules and checked by them
+    func testRoutesByTheBoardsRulesPassKiCadsDRC() throws {
+        guard let folder = Bundle.module.url(forResource: "rules", withExtension: nil, subdirectory: "Fixtures") else {
+            throw XCTSkip("no boards")
+        }
         try check(folder, cornerModes: [.mitered45])
     }
 
@@ -46,7 +59,7 @@ final class BoardRoutingTests: XCTestCase {
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("jspice-routing-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: work) }
-        var routes = 0, finished = 0, placed = 0, touching = 0, arcs = 0, acrossZones = 0
+        var routes = 0, finished = 0, placed = 0, touching = 0, arcs = 0, acrossZones = 0, ruleBoards = 0
         var bad: [String] = []
         for file in files {
             let name = file.deletingPathExtension().lastPathComponent
@@ -58,8 +71,16 @@ final class BoardRoutingTests: XCTestCase {
                 try FileManager.default.copyItem(at: pro, to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
                 project = try JSONSerialization.jsonObject(with: Data(contentsOf: pro)) as? [String: Any]
             }
+            // (its rules file, which kicad-cli's DRC takes from beside it, and which the router follows)
+            let rules = file.deletingPathExtension().appendingPathExtension("kicad_dru")
+            var designRules: String?
+            if FileManager.default.fileExists(atPath: rules.path) {
+                try FileManager.default.copyItem(at: rules, to: copy.deletingPathExtension().appendingPathExtension("kicad_dru"))
+                designRules = BoardDRC.designRules(pro)
+                ruleBoards += 1
+            }
             let board = try KiCadBoard.read(copy)
-            let router = BoardRouter(board: board, project: project)
+            let router = BoardRouter(board: board, project: project, designRules: designRules)
             var added = Set<String>()
             for (a, b, layer) in Self.pairs(router.world, seed: name) {
                 router.cornerMode = cornerModes[routes % cornerModes.count]
@@ -100,8 +121,9 @@ final class BoardRoutingTests: XCTestCase {
                           "the check did not find the control track")
             }
             // (a violation the control is in is the control's, though it crosses a routed track)
+            let checked = designRules != nil ? Self.routerClearanceViolations : Self.routerViolations
             var wrong = report.violations.filter { v in
-                Self.routerViolations.contains(v.type) && v.items.contains { added.contains($0.uuid) } && !v.items.contains { $0.uuid == control }
+                checked.contains(v.type) && v.items.contains { added.contains($0.uuid) } && !v.items.contains { $0.uuid == control }
             }
             // (a zone's fill, which KiCad's router takes no notice of, as the port's does not: it is filled again
             // round new tracks, as the PCB editor fills it again before its check; this check's is the fill as it was)
@@ -132,7 +154,7 @@ final class BoardRoutingTests: XCTestCase {
                 }
             }
         }
-        print("BoardRoutingTests: \(files.count) boards, \(routes) routes tried, \(finished) finished, \(placed) tracks and vias placed"
+        print("BoardRoutingTests: \(files.count) boards (\(ruleBoards) with rules of their own), \(routes) routes tried, \(finished) finished, \(placed) tracks and vias placed"
               + (arcs > 0 ? " (\(arcs) arcs)" : "")
               + (touching > 0 ? ", \(touching) along a hole's edge at a hole clearance of 0" : "")
               + (acrossZones > 0 ? ", \(acrossZones) across zones' fills" : ""))

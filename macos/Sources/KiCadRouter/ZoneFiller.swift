@@ -13,9 +13,11 @@ import Foundation
 import KiCadKit
 
 /// KiCad's zone filler of a board (ZONE_FILLER::Fill of its zones, as `pcbnew.ZONE_FILLER(board).Fill(board.Zones())`
-/// fills them): each of the board's zones' fill on each of its layers, its islands. What the port does not make yet
-/// (a rule file of the user's own, padstacks, pads and vias kept only on layers where something joins them, a barcode
-/// or dimension on copper...) is named in `unsupported`, and a fill made where it matters may not be KiCad's.
+/// fills them): each of the board's zones' fill on each of its layers, its islands, by the board's design rules (its
+/// implicit ones and those of its .kicad_dru: the clearances, physical clearances, thermal relief gaps, spoke widths
+/// and zone connections they set). What the port does not make yet (padstacks, pads and vias kept only on layers where
+/// something joins them, a barcode or dimension on copper, a rule's condition the port cannot evaluate...) is named in
+/// `unsupported`, and a fill made where it matters may not be KiCad's.
 public final class ZoneFiller {
     /// The fills: by zone (its uuid; a teardrop, which KiCad writes with none, by "zone #N", N its place among the
     /// board's zones), by layer (its name), the polygons as KiCad holds them once filled (each an outline with its
@@ -30,7 +32,6 @@ public final class ZoneFiller {
     let drc: BoardDRC
     var world: BoardWorld { drc.world }
     let copper: BoardDRC.Copper
-    let rules: [BoardDRC.ClearanceRule]
     /// The board's zones then its footprints' (forEachBoardAndFootprintZone's order)
     var zones: [FillZone] = []
     /// The board's own zones (BOARD::Zones), the ones filled
@@ -64,20 +65,21 @@ public final class ZoneFiller {
         init(_ z: FillZone, _ l: Int) { (zone, layer) = (ObjectIdentifier(z), l) }
     }
 
-    /// The fills of `board`'s zones as KiCad's filler makes them, the board's project file's JSON in `project`
-    public convenience init(board: KiCadBoard, project: [String: Any]? = nil) {
-        self.init(board: board, project: project, debug: nil)
+    /// The fills of `board`'s zones as KiCad's filler makes them, the board's project file's JSON in `project` and the
+    /// rules of its .kicad_dru in `designRules`
+    public convenience init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
+        self.init(board: board, project: project, designRules: designRules, debug: nil)
     }
 
     /// The same, each stage of each copper fill told `debug` (its name, the zone, the polygons then)
-    init(board: KiCadBoard, project: [String: Any]?, debug: ((String, FillZone, PolySet) -> Void)?) {
+    init(board: KiCadBoard, project: [String: Any]?, designRules: String? = nil, debug: ((String, FillZone, PolySet) -> Void)?) {
         debugStage = debug
-        drc = BoardDRC(board: board, project: project)
+        drc = BoardDRC(board: board, project: project, designRules: designRules)
         maxError = drc.settings.maxError
         // (the connectivity built, as KiCad builds it reading the board: the nets it propagates are the items' nets)
         copper = drc.makeCopper()
+        drc.ruleState.copper = copper
         connectivity = drc.buildConnectivity(copper)
-        rules = drc.clearanceRules(copper.items + copper.zones)
         worstClearance = drc.world.rules.maxClearance ?? 0
         zoneKnockoutSlack = extraMargin + drc.settings.maxError
         readLayers()
@@ -86,16 +88,14 @@ public final class ZoneFiller {
         let ds = (project?["board"] as? [String: Any])?["design_settings"] as? [String: Any]
         if (ds?["zones_allow_external_fillets"] as? Bool) == true { unsupported.insert("zones keeping their external fillets") }
         fill()
+        // (what of the rules' conditions the port could not evaluate as the fills asked)
+        unsupported.formUnion(drc.ruleState.board.unsupported)
     }
 
-    /// The same, the project read from its file; a rule file of the user's own beside it is one of what the port
-    /// does not take
+    /// The same, the project read from its file, and the design rules from the .kicad_dru beside it
     public convenience init(board: KiCadBoard, projectURL: URL?) {
         let json = projectURL.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-        self.init(board: board, project: json)
-        if let p = projectURL, FileManager.default.fileExists(atPath: p.deletingPathExtension().appendingPathExtension("kicad_dru").path) {
-            unsupported.insert("design rules file")
-        }
+        self.init(board: board, project: json, designRules: projectURL.flatMap(BoardDRC.designRules))
     }
 
     let connectivity: BoardDRC.Connectivity
@@ -143,8 +143,10 @@ public final class ZoneFiller {
         let outline: PolySet
         let bbox: IBox
         let numCorners: Int
-        /// The copper item the rules see it as (nil off copper and for a rule area)
+        /// The copper item the clearance checks see it as (nil off copper and for a rule area)
         let item: BoardDRC.CopperItem?
+        /// The zone as the rules see it, once asked
+        var rule: RuleItem?
         var fills: [Int: PolySet] = [:]
         var islands: [Int: Set<Int>] = [:]
         var filled = false

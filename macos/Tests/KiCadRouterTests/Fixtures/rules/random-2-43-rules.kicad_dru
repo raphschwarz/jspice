@@ -1,0 +1,71 @@
+(version 1)
+
+# Every kind of check the port follows: clearances between classes and nets, by layer, holes, the edge, widths,
+# vias, holes, annular rings, hole to hole, disallows, assertions; units of all kinds, severities
+
+(rule "power to signal"
+  (condition "A.NetClass == 'Power' && B.NetClass == 'Signal'")
+  (constraint clearance (min 0.45mm)))
+
+(rule digital_any
+  (condition "A.hasNetclass('Digital') || B.NetName == 'D*'")
+  (constraint clearance (min 12mil)))
+
+(rule inner_layers
+  (layer inner)
+  (constraint clearance (min 0.4mm)))
+
+(rule "back pads"
+  (layer B.Cu)
+  (condition "A.Type == 'Pad' && B.Type == 'Track'")
+  (constraint clearance (min 0.35mm))
+  (severity warning))
+
+(rule holes
+  (condition "A.isPlated() && B.NetName != 'GND'")
+  (constraint hole_clearance (min 0.3mm)))
+
+(rule edge
+  (condition "A.Type == 'Graphic' || B.Layer == 'B.Cu'")
+  (constraint edge_clearance (min 0.75mm)))
+
+(rule widths
+  (condition "A.NetClass == 'Power'")
+  (constraint track_width (min 0.3mm) (opt 0.4mm) (max 0.6mm)))
+
+(rule narrow
+  (condition "A.Width < 0.2mm")
+  (constraint track_width (min 0.0060in)))
+
+(rule vias
+  (condition "A.Via_Type == 'Through'")
+  (constraint via_diameter (min 0.65mm) (max 0.85mm))
+  (constraint hole_size (min 0.35mm) (max 0.5mm)))
+
+(rule rings
+  (condition "A.Pad_Type == 'Through-hole' || A.Type == 'Via'")
+  (constraint annular_width (min 0.2mm)))
+
+(rule h2h
+  (constraint hole_to_hole (min 0.6mm)))
+
+(rule "no vias in the keepout"
+  (condition "A.intersectsArea('Keepout 97')")
+  (constraint disallow via track))
+
+(rule "no text"
+  (layer F.SilkS)
+  (constraint disallow text)
+  (severity ignore))
+
+(rule "smd only on U*"
+  (condition "A.Type == 'Pad' && A.memberOfFootprint('U*')")
+  (constraint assertion "A.Pad_Type == 'SMD' || A.Hole_Size_X >= 0.8mm"))
+
+(rule "front courtyards"
+  (condition "A.Type == 'Track'")
+  (constraint assertion "!A.intersectsFrontCourtyard('U1') && A.Width + 0.05mm <= 0.4mm"))
+
+(rule "layer of each"
+  (condition "A.Type == 'Footprint'")
+  (constraint assertion "A.Layer == 'F.Cu' && A.Reference != 'U3'"))

@@ -554,10 +554,17 @@ extension BoardDRC {
         let webWidth = board.root["setup"]?["solder_mask_min_width"].map { BoardWorld.iu($0, 0) } ?? 0
         guard webWidth > 0, !silkLimitReached(out, type) else { return }
         let mask = wholeMask(items, webWidth: webWidth)
-        for item in items where !item.layers.isDisjoint(with: ["F.SilkS", "B.SilkS"]) {
+        let engine = ruleState.engine, copper = ruleState.copper(self)
+        items: for item in items where !item.layers.isDisjoint(with: ["F.SilkS", "B.SilkS"]) {
             guard !silkLimitReached(out, type) else { break }
             if item.invisibleText || item.ruleArea { continue }
             for layer in ["F.SilkS", "B.SilkS"] where item.isOnLayer(layer) {
+                // (EvalRules of the silk clearance on the mask layer: the implicit rule is of the silk layers, so none,
+                // no clearance; one ignored, or less than none, leaves the item untested on either side)
+                let constraint = engine.evalRules(.silkClearance, ruleItem(item, copper), nil,
+                                                  layer: layer == "F.SilkS" ? KiLayer.id("F.Mask")! : KiLayer.id("B.Mask")!)
+                if constraint.severity == .ignore || constraint.value.min < 0 { continue items }
+                if constraint.value.min > 0 { ruleState.board.unsupported.insert("a silkscreen clearance to the whole solder mask") }
                 // (QueryColliding: the triangles whose boxes meet the item's box, its shape against each)
                 let shapes = item.shapes(on: layer)
                 guard let m = mask[layer == "F.SilkS" ? "F.Mask" : "B.Mask"] else { continue }
@@ -567,7 +574,7 @@ extension BoardDRC {
                 if let set = m.set, let box = Self.cachedBox(set, width: 0), box.intersects(KBox(item.bbox)) {
                     hit = shapes.contains { Self.polySetCollide(set, [$0], compound: false, wantActual: false) }
                 }
-                if hit { out.add(type, nil, [item.uuid]) }
+                if hit { out.add(type, nil, [item.uuid], rule: constraint.parentRule) }
             }
         }
     }

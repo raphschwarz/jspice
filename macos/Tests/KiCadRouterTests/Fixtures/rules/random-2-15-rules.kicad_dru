@@ -1,0 +1,10 @@
+(version 1)
+
+# A file KiCad cannot read (a rule not closed): none of its rules, the implicit rules alone
+
+(rule big
+  (constraint clearance (min 2mm)))
+
+(rule open
+  (condition "A.NetClass == 'Default'")
+  (constraint track_width (min 1mm))

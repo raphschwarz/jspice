@@ -616,6 +616,7 @@ public final class DiffPair: Item {
         l.net = net
         l.setLayer(layers.start)
         l.parent = parent
+        l.boardItem = boardItem
         l.sourceItem = sourceItem
         if endsWithVias, let via { l.appendVia(via) }
     }

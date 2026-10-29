@@ -1,7 +1,7 @@
 // Ported from KiCad 10.0.7: pcbnew/router/pns_kicad_iface.cpp (PNS_KICAD_IFACE_BASE::SyncWorld and its sync
 // functions, PNS_PCBNEW_RULE_RESOLVER::Clearance, IsKeepout, DpCoupledNet, DpNetPolarity and DpNetPair), the parts of
-// pcbnew/drc/drc_engine.cpp (DRC_ENGINE::EvalRules) that a board without rules of the user's own takes, and
-// pcbnew/board.cpp's BOARD::MatchDpSuffix and DpCoupledNet.
+// pcbnew/drc/drc_engine.cpp (DRC_ENGINE::EvalRules) that a board without rules of the user's own takes (a board's
+// own rules go by its rules engine, RouterRules), and pcbnew/board.cpp's BOARD::MatchDpSuffix and DpCoupledNet.
 // Copyright (C) 2013-2016 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -94,10 +94,13 @@ public struct WorldRules: Sendable {
     public init() {}
 }
 
-/// The rule resolver of a world (KiCad's PNS_PCBNEW_RULE_RESOLVER, on the board's implicit rules)
+/// The rule resolver of a world (KiCad's PNS_PCBNEW_RULE_RESOLVER, on the board's implicit rules, or on its rules
+/// engine where the board has rules of the user's own)
 public final class WorldResolver: RuleResolver {
     public var rules: WorldRules
     var info: [ObjectIdentifier: WorldItem] = [:]
+    /// The board's design rules, where it has rules of the user's own: the constraints are then the rules engine's
+    var designRules: RouterRules?
 
     public init(rules: WorldRules) { self.rules = rules }
 
@@ -155,6 +158,7 @@ public final class WorldResolver: RuleResolver {
     }
 
     public func clearance(_ a: Item, _ b: Item?, useEpsilon: Bool) -> Int {
+        if let r = designRules { return rulesClearance(r, a, b, useEpsilon: useEpsilon) }
         var rv = 0
         let sameNet = b != nil && a.net != nil && a.net == b!.net
         let freePad = b != nil && (a.isFreePad || b!.isFreePad)
@@ -174,7 +178,60 @@ public final class WorldResolver: RuleResolver {
         return rv
     }
 
-    public var hasUserDefinedPhysicalConstraint: Bool { false }
+    public var hasUserDefinedPhysicalConstraint: Bool { designRules?.engine.hasUserDefinedPhysicalConstraint ?? false }
+
+    /// PNS_PCBNEW_RULE_RESOLVER::Clearance by the rules engine: on each layer the two share (the other's, by an edge),
+    /// the greatest of the hole to hole, hole, copper, edge and physical clearances that apply; cached for the
+    /// world's items (owned by a node) and for the router's temporary ones apart
+    private func rulesClearance(_ r: RouterRules, _ a: Item, _ b: Item?, useEpsilon: Bool) -> Int {
+        let bothOwned = b != nil && a.owner != nil && b!.owner != nil
+        let key = RouterRules.ClearanceKey(a: a.serial, b: b?.serial ?? -1, epsilon: useEpsilon)
+        if b != nil {
+            if bothOwned, let v = r.clearanceCache[key] { return v }
+            if !bothOwned, let v = r.tempClearanceCache[key] { return v }
+        }
+        var rv = 0
+        var layers: LayerRange
+        if let b {
+            layers = isEdge(a) ? b.layers : isEdge(b) ? a.layers : a.layers.intersection(b.layers)
+        } else {
+            layers = a.layers
+        }
+        layers = layers.intersection(LayerRange(0, KiLayer.count - 1))
+        let sameNet = b != nil && a.net != nil && a.net == b!.net
+        let freePad = b != nil && (a.isFreePad || b!.isFreePad)
+        func query(_ type: ConstraintType, _ layer: Int) {
+            if let c = r.queryConstraint(type, a, b, layer: layer), c.min > rv { rv = c.min }
+        }
+        if layers.start >= 0 && layers.start <= layers.end {
+            for layer in layers.start...layers.end {
+                if isDrilledHole(a) && b.map(isDrilledHole) == true {
+                    query(.holeToHole, layer)
+                } else if isHole(a) || isHole(b) {
+                    if !sameNet { query(.holeClearance, layer) }
+                }
+                // (no else: a plated hole gets both its hole clearance and its copper clearance)
+                if isCopper(a) && (b == nil || isCopper(b)) && !sameNet && !freePad { query(.clearance, layer) }
+                if isEdge(a) || isNonPlatedSlot(a) || isEdge(b) || (b.map(isNonPlatedSlot) ?? false) { query(.edgeClearance, layer) }
+                // (physical clearances are blind to nets)
+                if isHole(a) || isHole(b) { query(.physicalHoleClearance, layer) }
+                query(.physicalClearance, layer)
+            }
+        }
+        if (sameNet || freePad) && rv == 0 { rv = -1 }
+        if useEpsilon && rv > 0 { rv = max(0, rv - rules.epsilon) }
+        if b != nil {
+            if bothOwned { r.clearanceCache[key] = rv } else { r.tempClearanceCache[key] = rv }
+        }
+        return rv
+    }
+
+    public func clearCaches() {
+        designRules?.clearanceCache.removeAll()
+        designRules?.tempClearanceCache.removeAll()
+    }
+
+    public func clearTemporaryCaches() { designRules?.tempClearanceCache.removeAll() }
     public func isInNetTie(_ a: Item) -> Bool { false }
     public func isNetTieExclusion(_ item: Item, _ pos: IPoint, _ colliding: Item) -> Bool { false }
 
@@ -207,6 +264,7 @@ public final class WorldResolver: RuleResolver {
     }
 
     public func queryConstraint(_ type: ConstraintType, _ a: Item?, _ b: Item?, layer: Int) -> Constraint? {
+        if let r = designRules { return r.queryConstraint(type, a, b, layer: layer) }
         if rules.board {
             guard let a else { return nil }
             switch type {
@@ -334,6 +392,8 @@ public final class WorldInterface: RouterInterface {
         malformedZones.removeAll()
         for w in items {
             var item: Item?
+            // (the board item each of its router items stands for, to the rules)
+            let ref = WorldItemRef(w)
             switch w.kind {
             case .pad, .edge, .graphic, .text:
                 // syncPad, syncGraphicalItem, syncTextItem
@@ -352,6 +412,7 @@ public final class WorldInterface: RouterInterface {
                 if w.compound { solid.isCompoundShapePrimitive = true }
                 item = solid
                 resolver.info[ObjectIdentifier(solid)] = w
+                solid.boardItem = ref
                 world.add(solid)
             case .keepout:
                 // syncZone: the zone's outline cut into triangles as KiCad cuts it, each triangle a solid on each of the
@@ -379,6 +440,7 @@ public final class WorldInterface: RouterInterface {
                             solid.isCompoundShapePrimitive = true
                             solid.isRoutable = false
                             resolver.info[ObjectIdentifier(solid)] = w
+                            solid.boardItem = ref
                             world.add(solid)
                             if item == nil { item = solid }
                         }
@@ -391,6 +453,7 @@ public final class WorldInterface: RouterInterface {
                 if w.locked { seg.mark(.locked) }
                 item = seg
                 resolver.info[ObjectIdentifier(seg)] = w
+                seg.boardItem = ref
                 world.add(seg, allowRedundant: true)
             case .via:
                 let via = Via(pos: w.a, layers: w.layers, diameter: 0, drill: w.drill, net: w.net, type: w.viaType)
@@ -401,6 +464,7 @@ public final class WorldInterface: RouterInterface {
                 via.setHoleLayers(w.layers)
                 item = via
                 resolver.info[ObjectIdentifier(via)] = w
+                via.boardItem = ref
                 world.add(via)
             case .arc:
                 // syncArc
@@ -409,6 +473,7 @@ public final class WorldInterface: RouterInterface {
                 if w.locked { arc.mark(.locked) }
                 item = arc
                 resolver.info[ObjectIdentifier(arc)] = w
+                arc.boardItem = ref
                 world.add(arc, allowRedundant: true)
             }
             routerItems.append(item)

@@ -91,6 +91,9 @@ public class Item: CustomStringConvertible {
     }
     /// What on the board it came from, where it stands for none one to one (a dragged track's pieces)
     public var sourceItem: AnyObject?
+    /// The board item the design rules see it as (KiCad's m_parent, as BoardItem gives it to the rule resolver): kept
+    /// apart from `parent`, which the board's side of a commit goes by, and copied as KiCad copies m_parent
+    public var boardItem: AnyObject?
     public var layers = LayerRange()
     public var movable = true
     private var _net: NetHandle?
@@ -121,6 +124,7 @@ public class Item: CustomStringConvertible {
         movable = o.movable
         parent = o.parent
         sourceItem = o.sourceItem
+        boardItem = o.boardItem
         marker = o.marker
         rank = o.rank
         isRoutable = o.isRoutable
@@ -346,6 +350,7 @@ public final class Hole: Item {
         h.rank = rank
         h.marker = marker
         h.parent = parent
+        h.boardItem = boardItem
         h.isVirtual = isVirtual
         return h
     }
@@ -536,6 +541,7 @@ public final class Arc: LinkedItem {
     public override func clone() -> Item {
         let a = Arc(arc, net: net)
         a.parent = parent
+        a.boardItem = boardItem
         a.sourceItem = sourceItem
         a.movable = movable
         a.layers = layers

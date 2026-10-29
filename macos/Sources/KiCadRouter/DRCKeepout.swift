@@ -388,3 +388,71 @@ extension BoardDRC {
         }
     }
 }
+
+extension BoardDRC {
+    /// Whether the keepout check goes by the rules engine (the user's disallow rules among the implicit keepout ones)
+    /// even where the user has no disallow rules: for checking it against the check of the implicit ones alone
+    nonisolated(unsafe) static var disallowByEngine = false
+
+    /// DRC_TEST_PROVIDER_DISALLOW by the rules engine, as KiCad runs it with the user's disallow rules: each item
+    /// forEachGeometryItem visits (a rule area with keepout settings left out), a track or an arc against each area
+    /// keeping tracks out that it crosses, then EvalRules( DISALLOW_CONSTRAINT ) of the item (its implicit keepout
+    /// rules not asked again of a track or an arc), and of its hole as a hole (HOLE_PROXY)
+    func checkDisallowRules(_ out: inout Report, _ c: Copper, _ items: [BoardItem]) {
+        let engine = ruleState.engine
+        let areas = keepouts()
+        let names = Dictionary(uniqueKeysWithValues: world.layerIndex.map { ($0.value, $0.key) })
+        var outlines: [Int: PolySet] = [:]
+        func triangulated(_ i: Int) -> PolySet {
+            if let o = outlines[i] { return o }
+            var o = areas[i].outline
+            o.cacheTriangulation()
+            outlines[i] = o
+            return o
+        }
+        func test(_ item: RuleItem, _ b: BoardItem?) {
+            guard !out.exceeded("items_not_allowed") else { return }
+            if item.kind == .zone && item.isRuleArea && item.hasKeepoutParameters { return }
+            item.holeProxy = false
+            let isTrackOrArc = item.kind == .track || item.kind == .arc
+            if isTrackOrArc, let cu = b?.copper ?? copperItem(item.uuid, c), let l = cu.layers.first, let layer = names[l] {
+                let shapes = cu.shapes[l] ?? []
+                for i in areas.indices where areas[i].tracks && areas[i].layers.contains(layer) {
+                    guard !out.exceeded("items_not_allowed") else { break }
+                    if Self.polySetCollide(triangulated(i), shapes, compound: false, wantActual: true) {
+                        out.add("items_not_allowed", nil, [item.uuid])
+                    }
+                }
+            }
+            func report(_ k: DRCConstraint) {
+                guard let rule = k.parentRule, !(isTrackOrArc && rule.isImplicit), !out.exceeded("items_not_allowed") else { return }
+                out.add("items_not_allowed", "(\(k.ruleName))", [item.uuid], rule: rule)
+            }
+            let k = engine.evalRules(.disallow, item, nil, layer: KiLayer.undefined)
+            if !k.disallowFlags.isEmpty && k.severity != .ignore { report(k) }
+            if item.hasHole {
+                item.holeProxy = true
+                let h = engine.evalRules(.disallow, item, nil, layer: KiLayer.undefined)
+                item.holeProxy = false
+                if !h.disallowFlags.isEmpty && h.severity != .ignore { report(h) }
+            }
+        }
+        // the items in forEachGeometryItem's order: the board's, then each footprint's and the footprint itself
+        var byFootprint: [Int: [BoardItem]] = [:]
+        for b in items {
+            if let f = b.footprint { byFootprint[f, default: []].append(b) } else { test(ruleItem(b, c), b) }
+        }
+        for (f, fp) in ruleState.footprints.enumerated() {
+            for b in byFootprint[f] ?? [] { test(ruleItem(b, c), b) }
+            test(fp, nil)
+        }
+    }
+
+    /// The copper item of a uuid (a track's, as the rules see it)
+    func copperItem(_ uuid: String, _ c: Copper) -> CopperItem? {
+        if ruleState.copperByUUID == nil {
+            ruleState.copperByUUID = Dictionary(c.items.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
+        }
+        return ruleState.copperByUUID?[uuid]
+    }
+}

@@ -8,14 +8,15 @@ import KiCadKit
 /// zone's polygons on each of its layers, outline and holes, their points, and whether KiCad keeps it as an island),
 /// and ZoneFiller must make the same, polygon for polygon, point for point. KICAD_BOARD_REFERENCE names a folder of
 /// such boards (or several, separated by colons); with none, Fixtures/fills (a board drawn by fills.py --draw to take
-/// the filler down the ways random boards do not, and one by --draw-open whose edges do not close). FILL_BOARD keeps
+/// the filler down the ways random boards do not, and one by --draw-open whose edges do not close) and Fixtures/rules
+/// (boards with rules files, the drawn one's of the filler's constraints among them). FILL_BOARD keeps
 /// to the boards whose names contain it; FILL_DUMP names a folder to write the port's fills and their stages to.
 final class FillTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] {
             return f.split(separator: ":").map { URL(fileURLWithPath: String($0)) }
         }
-        return ["fills"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
+        return ["fills", "rules"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
     }
 
     func testZonesFilledAsKiCadFillsThem() throws {
@@ -35,7 +36,7 @@ final class FillTests: XCTestCase {
             var stages: [[String: Any]] = []
             let dumping = ProcessInfo.processInfo.environment["FILL_DUMP"] != nil
             let board = try KiCadBoard.read(file)
-            let filler = ZoneFiller(board: board, project: project, debug: dumping ? { stage, zone, set in
+            let filler = ZoneFiller(board: board, project: project, designRules: BoardDRC.designRules(pro), debug: dumping ? { stage, zone, set in
                 stages.append(["stage": stage, "zone": zone.uuid, "polygons": set.polygons.map { $0.map { $0.points.map { [$0.x, $0.y] } } }])
             } : nil)
             boards += 1
@@ -57,10 +58,7 @@ final class FillTests: XCTestCase {
                 try json.write(to: URL(fileURLWithPath: dump).appendingPathComponent(name + ".ours"))
                 try JSONSerialization.data(withJSONObject: stages).write(to: URL(fileURLWithPath: dump).appendingPathComponent(name + ".stages"))
             }
-            var notMade = filler.unsupported
-            if FileManager.default.fileExists(atPath: file.deletingPathExtension().appendingPathExtension("kicad_dru").path) {
-                notMade.insert("design rules file")
-            }
+            let notMade = filler.unsupported
             if !notMade.isEmpty {
                 unsupportedBoards += 1
                 for u in notMade { unsupported[u, default: 0] += 1 }

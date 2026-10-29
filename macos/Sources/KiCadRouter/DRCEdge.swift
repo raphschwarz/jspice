@@ -1,7 +1,7 @@
 // Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_edge_clearance.cpp (copper and silkscreen against the board's
 // edges: the R-tree of its Edge.Cuts and Margin drawings, rectangles and outlines cut into their sides, and of unplated
 // slots, each item's search of it, and resolveSilkDisposition: silkscreen the board's outline cuts across),
-// pcbnew/drc/drc_engine.cpp (the implicit edge clearance and silk clearance rules), pcbnew/drc/drc_rtree.h
+// pcbnew/drc/drc_engine.cpp (EvalRules of the edge and silk clearances between an edge and an item), pcbnew/drc/drc_rtree.h
 // (GetObjectsAt), common/eda_shape.cpp (hitTest), libs/kimath/src/geometry/shape_poly_set.cpp (Contains),
 // pcbnew/pad.cpp and pcbnew/pcb_track.cpp (a pad's and a via's shape as asked of no particular copper layer).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
@@ -23,6 +23,10 @@ extension BoardDRC {
         let drawing: BoardWorld.Drawing?
         /// A slot's pad
         let pad: CopperItem?
+        /// A drawing's layer (Edge.Cuts or Margin) and footprint, and the edge as the rules see it, once asked
+        var layer = "Edge.Cuts"
+        var footprint: Int?
+        var rule: RuleItem?
 
         init(uuid: String, shapes: [Shape], indexed: [Shape]? = nil, drawing: BoardWorld.Drawing? = nil, pad: CopperItem? = nil) {
             self.uuid = uuid
@@ -136,12 +140,16 @@ extension BoardDRC {
         for node in board.root.items where isEdgeDrawing(node, "gr_") {
             edges += edgePieces(node, placement: nil).map { ($0, node.value("layer") == "Margin") }
         }
-        for fp in board.root.all("footprint") {
+        for (i, fp) in board.root.all("footprint").enumerated() {
             let placement = BoardWorld.FootprintPlacement(fp)
             for node in fp.items where isEdgeDrawing(node, "fp_") {
-                edges += edgePieces(node, placement: placement).map { ($0, node.value("layer") == "Margin") }
+                edges += edgePieces(node, placement: placement).map { e in
+                    e.footprint = i
+                    return (e, node.value("layer") == "Margin")
+                }
             }
         }
+        for (e, margin) in edges where margin { e.layer = "Margin" }
         for (e, margin) in edges { insert(e, margin ? marginTree : edgeTree) }
         for pad in c.footprintPads.joined() {
             guard let p = pad.pad, p.pad.attribute == .npth, let hole = pad.hole, p.pad.drill.x != p.pad.drill.y else { continue }
@@ -168,7 +176,7 @@ extension BoardDRC {
     /// DRC_TEST_PROVIDER_EDGE_CLEARANCE: copper too near the board's edges, and silkscreen on them
     func checkEdgeClearances(_ out: inout Report, _ c: Copper, _ boardItems: [BoardItem], _ outline: SilkOutline?) {
         guard !out.exceeded("copper_edge_clearance") || !silkLimitReached(out, "silk_edge_clearance") else { return }
-        let largest = settings.edgeClearance
+        let largest = largestEdgeClearance
         let epsilon = settings.epsilon
         let (edgeTree, marginTree) = edgeTrees(c)
         let castellated = c.footprintPads.flatMap { $0.filter(\.castellated) }
@@ -178,9 +186,10 @@ extension BoardDRC {
         var emitted = Set<String>()
         /// testAgainstEdge: false where a violation is found (or one already reported there)
         func testAgainstEdge(_ item: CopperItem, _ itemShapes: [Shape], _ fill: PolySet?, _ edge: EdgeItem) -> Bool {
-            let minClearance = settings.edgeClearance
+            let constraint = ruleState.engine.evalRules(.edgeClearance, edgeRule(edge, c), ruleItem(item, c), layer: KiLayer.undefined)
+            let minClearance = constraint.value.min
             let clearance = max(0, minClearance - epsilon)
-            guard severity != "ignore", minClearance >= 0,
+            guard severity != "ignore", constraint.severity != .ignore, minClearance >= 0,
                   let (actual, pos) = fill.map({ Self.fillCollideAt($0, edge.shapes, clearance) })
                       ?? Self.collideAt(itemShapes, edge.shapes, clearance) else { return true }
             if item.kind == .track || item.kind == .arc {
@@ -192,8 +201,8 @@ extension BoardDRC {
             // (the same item, edge and place reported once)
             guard emitted.insert("\(item.uuid) \(edge.uuid) \(pos.x) \(pos.y)").inserted else { return false }
             let detail = minClearance > 0
-                ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, "board setup constraints edge", minClearance, actual) : nil
-            out.add("copper_edge_clearance", detail, [edge.uuid, item.uuid])
+                ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, constraint.ruleName, minClearance, actual) : nil
+            out.add("copper_edge_clearance", detail, [edge.uuid, item.uuid], rule: constraint.parentRule)
             // (one edge is enough)
             return false
         }
@@ -249,28 +258,62 @@ extension BoardDRC {
                 query(marginTree, item, shapes, fill)
             }
         }
-        checkSilkEdges(&out, boardItems, outline, edgeTree, marginTree, &emitted)
+        checkSilkEdges(&out, c, boardItems, outline, edgeTree, marginTree, &emitted)
+    }
+
+    /// m_largestEdgeClearance: the worst edge clearance of the rules (QueryWorstConstraint), 0 if none is above 0
+    var largestEdgeClearance: Int { ruleState.engine.worstConstraint(.edgeClearance)?.value.min ?? 0 }
+
+    /// An edge as the rules see it: a drawing on Edge.Cuts or Margin (each piece KiCad cuts one into a copy of it,
+    /// its line no wider on Edge.Cuts), or a slot's pad
+    func edgeRule(_ edge: EdgeItem, _ c: Copper) -> RuleItem {
+        if let r = edge.rule { return r }
+        let r: RuleItem
+        if let pad = edge.pad {
+            r = ruleItem(pad, c)
+        } else {
+            r = RuleItem(.shape, uuid: edge.uuid)
+            r.parentFootprint = edge.footprint.map { ruleState.footprints[$0] }
+            r.layer = KiLayer.id(edge.layer) ?? KiLayer.edgeCuts
+            r.layerSet = KiLayerSet([r.layer])
+            let shapes = edge.shapes
+            r.effectiveShape = { _ in shapes }
+            r.compoundShape = shapes.count > 1
+            if var box = shapes.first?.bbox {
+                for s in shapes.dropFirst() { box.merge(s.bbox) }
+                r.bbox = box
+            }
+            r.netClass = ruleNetClass("")
+            r.netCode = 0
+            // (a piece KiCad cut out of a rectangle or an outline is a segment or an arc: no rectangle's width)
+            if let d = edge.drawing { r.properties["Width"] = .int(d.kind == .rect ? d.end.x - d.start.x : 0) }
+        }
+        edge.rule = r
+        return r
     }
 
     /// The edge check's silkscreen: each item on a silk layer against the edges, and one no edge reaches that the
     /// board's outline cuts across (resolveSilkDisposition)
-    func checkSilkEdges(_ out: inout Report, _ items: [BoardItem], _ outline: SilkOutline?, _ edgeTree: RTree<EdgeEntry, Double>,
-                        _ marginTree: RTree<EdgeEntry, Double>, _ emitted: inout Set<String>) {
+    func checkSilkEdges(_ out: inout Report, _ c: Copper, _ items: [BoardItem], _ outline: SilkOutline?,
+                        _ edgeTree: RTree<EdgeEntry, Double>, _ marginTree: RTree<EdgeEntry, Double>, _ emitted: inout Set<String>) {
         let type = "silk_edge_clearance"
-        let largest = settings.edgeClearance, epsilon = settings.epsilon
-        let minClearance = settings.silkClearance
+        let largest = largestEdgeClearance, epsilon = settings.epsilon
+        let engine = ruleState.engine
         enum Disposition { case unknown, onBoard, offBoard, crossesEdge }
         var disposition: [ObjectIdentifier: Disposition] = [:]
 
         /// testAgainstEdge of the silk rule: false where a violation is found (or one already reported there)
         func testAgainstEdge(_ item: BoardItem, _ itemShapes: [Shape], _ edge: EdgeItem) -> Bool {
-            guard minClearance >= 0, let (actual, pos) = Self.collideAt(itemShapes, edge.shapes, max(0, minClearance - epsilon)) else {
+            let constraint = engine.evalRules(.silkClearance, edgeRule(edge, c), ruleItem(item, c), layer: KiLayer.undefined)
+            let minClearance = constraint.value.min
+            guard constraint.severity != .ignore, minClearance >= 0,
+                  let (actual, pos) = Self.collideAt(itemShapes, edge.shapes, max(0, minClearance - epsilon)) else {
                 return true
             }
             guard emitted.insert("\(item.uuid) \(edge.uuid) \(pos.x) \(pos.y)").inserted else { return false }
             let detail = minClearance > 0
-                ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, "board setup constraints silk", minClearance, actual) : nil
-            out.add(type, detail, [edge.uuid, item.uuid])
+                ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, constraint.ruleName, minClearance, actual) : nil
+            out.add(type, detail, [edge.uuid, item.uuid], rule: constraint.parentRule)
             disposition[ObjectIdentifier(item)] = .crossesEdge
             return false
         }
@@ -337,9 +380,12 @@ extension BoardDRC {
             }
             guard let edge = hits.first else { return }
             if Set(hits.map(\.uuid)).count > 1 { for e in hits { out.addUnsure(type, [e.uuid, item.uuid]) } }
+            let constraint = engine.evalRules(.silkClearance, edgeRule(edge, c), ruleItem(item, c), layer: KiLayer.undefined)
+            let minClearance = constraint.value.min
+            guard constraint.severity != .ignore && minClearance >= 0 else { return }
             let detail = minClearance > 0
-                ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, "board setup constraints silk", minClearance, 0) : nil
-            out.add(type, detail, [edge.uuid, item.uuid])
+                ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, constraint.ruleName, minClearance, 0) : nil
+            out.add(type, detail, [edge.uuid, item.uuid], rule: constraint.parentRule)
         }
 
         guard !silkLimitReached(out, type) else { return }

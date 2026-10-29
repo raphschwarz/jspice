@@ -11,13 +11,17 @@ import KiCadKit
 /// limits), Fixtures/outlines (boards' outlines drawn malformed in theirs), Fixtures/thermals (thermal reliefs),
 /// Fixtures/copper (copper of the kinds random boards do not have, and slivers), Fixtures/texts (texts on the
 /// silkscreen over each other), Fixtures/silk (silkscreen of every kind over pads, vias, tracks, mask and itself,
-/// across the board's edges; with a silk clearance, and with a minimum mask web) and Fixtures/regressions (boards of
-/// CI runs the port once got wrong: a net tie's pad of arcs against items of no net, a footprint reaching a keepout's
-/// box by its texts only).
+/// across the board's edges; with a silk clearance, and with a minimum mask web), Fixtures/regressions (boards of CI
+/// runs the port once got wrong: a net tie's pad of arcs against items of no net, a footprint reaching a keepout's box
+/// by its texts only) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
+/// KiCad cannot compile, whose rules before the one it cannot it keeps, one it cannot read, one of the filler's
+/// constraints, and three of rules.py's). A board with a rules file beside it (NAME.kicad_dru, rules.py's) is checked
+/// by its rules, as kicad-cli checks it; one whose rules the port does not follow as KiCad's do (BoardDRC.unsupported)
+/// is left out, and counted.
 final class DRCTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards", "courtyards", "outlines", "thermals", "copper", "texts", "silk", "regressions"].compactMap {
+        return ["boards", "courtyards", "outlines", "thermals", "copper", "texts", "silk", "regressions", "rules"].compactMap {
             Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures")
         }
     }
@@ -30,12 +34,18 @@ final class DRCTests: XCTestCase {
                                        "courtyards_overlap", "missing_courtyard", "malformed_courtyard", "pth_inside_courtyard",
                                        "npth_inside_courtyard", "solder_mask_bridge", "isolated_copper", "starved_thermal",
                                        "invalid_outline", "zones_intersect", "copper_sliver", "silk_overlap",
-                                       "silk_over_copper", "silk_edge_clearance"]
+                                       "silk_over_copper", "silk_edge_clearance", "assertion_failure"]
 
     func testViolationsAsKiCadFindsThem() throws {
+        // (DRC_DISALLOW_BY_ENGINE: the keepout check by the rules engine, as it goes with the user's disallow rules, on
+        // every board)
+        BoardDRC.disallowByEngine = ProcessInfo.processInfo.environment["DRC_DISALLOW_BY_ENGINE"] != nil
+        defer { BoardDRC.disallowByEngine = false }
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }
         var boards = 0, found = 0, exactUnconnected = 0, descriptions = 0, ambiguousBoards = 0, unsureFound = 0
+        var ruleBoards = 0, unsupportedBoards = 0
+        var unsupported: [String: Int] = [:]
         var differences: [String] = []
         var byType: [String: Int] = [:]
         var all: [String] = []
@@ -58,6 +68,14 @@ final class DRCTests: XCTestCase {
                 "\(type) [\(severity)] \(description) \((type == "solder_mask_bridge" ? items.sorted() : items).joined(separator: " "))"
             }
             let ourReport = drc.runReport()
+            if FileManager.default.fileExists(atPath: file.deletingPathExtension().appendingPathExtension("kicad_dru").path) {
+                ruleBoards += 1
+            }
+            if !drc.unsupported.isEmpty {
+                unsupportedBoards += 1
+                for u in drc.unsupported { unsupported[u, default: 0] += 1 }
+                continue
+            }
             var ourViolations = ourReport.violations
             // (a check KiCad stopped at its limit of: which it found first goes by its threads, so only that the port
             // stops at the limit too)
@@ -222,7 +240,9 @@ final class DRCTests: XCTestCase {
         if let path = ProcessInfo.processInfo.environment["DRC_DIFFERENCES"] {
             try? all.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
         }
-        print("DRCTests: \(boards) boards, \(found) violations of the checks made: "
+        print("DRCTests: \(boards) boards (\(ruleBoards) with rules of their own"
+              + (unsupportedBoards > 0 ? ", \(unsupportedBoards) with what the port does not follow: \(unsupported.sorted { $0.key < $1.key })" : "")
+              + "), \(found) violations of the checks made: "
               + byType.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
               + " (\(exactUnconnected) of the missing connections between the same items as KiCad's)"
               + (ambiguousBoards > 0 ? "; \(ambiguousBoards) boards with arcs KiCad may join or not, their connections not compared" : "")

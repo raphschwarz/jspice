@@ -1,5 +1,5 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_engine.cpp (loadImplicitRules, EvalRules, as a board with no rules of the
-// user's own has them), pcbnew/drc/drc_test_provider_track_width.cpp, drc_test_provider_via_diameter.cpp,
+// Ported from KiCad 10.0.7: pcbnew/drc/drc_engine.cpp (InitEngine: the rules file beside the board's project; the
+// checks' constraints by EvalRules), pcbnew/drc/drc_test_provider_track_width.cpp, drc_test_provider_via_diameter.cpp,
 // drc_test_provider_hole_size.cpp, drc_test_provider_annular_width.cpp, drc_test_provider_hole_to_hole.cpp,
 // pcbnew/drc/drc_test_provider.cpp (formatMsg), pcbnew/drc/drc_item.cpp (the checks' keys and titles),
 // pcbnew/board_design_settings.cpp (the rules' defaults and severities) and common/eda_units.cpp
@@ -27,8 +27,9 @@ public struct DRCViolation: Hashable, Sendable {
 }
 
 /// KiCad's design rules check of a board (its DRC_ENGINE), on the rules KiCad makes of the board's design settings
-/// and net classes (no rules of the user's own, a .kicad_dru, yet): the checks of its copper, outline, courtyards,
-/// solder mask and silkscreen (checksMade)
+/// and net classes and those of its rules file (a .kicad_dru: DesignRuleEngine): the checks of its copper, outline,
+/// courtyards, solder mask and silkscreen (checksMade). What of the user's rules its checks do not follow as KiCad's
+/// do (a constraint of a check it does not make, a condition it cannot evaluate) is named in `unsupported`.
 public struct BoardDRC {
     /// The board's design settings the checks go by (BOARD_DESIGN_SETTINGS), KiCad's defaults where its project
     /// has none
@@ -112,7 +113,7 @@ public struct BoardDRC {
         "solder_mask_bridge": "Front solder mask aperture bridges items with different nets",
         "isolated_copper": "Isolated copper fill", "starved_thermal": "Thermal relief connection to zone incomplete",
         "silk_overlap": "Silkscreen clearance", "silk_over_copper": "Silkscreen clipped by solder mask",
-        "silk_edge_clearance": "Silkscreen clipped by board edge",
+        "silk_edge_clearance": "Silkscreen clipped by board edge", "assertion_failure": "Assertion failure",
     ]
 
     /// How many of each check KiCad reports at most (DRC_ENGINE's ERROR_LIMIT; its EXTENDED_ERROR_LIMIT for
@@ -121,22 +122,54 @@ public struct BoardDRC {
 
     public let settings: Settings
     let board: KiCadBoard
-    let world: BoardWorld
+    private(set) var world: BoardWorld
     let netClasses: NetClasses
     var tracks: [Track] = []
     var footprints: [Footprint] = []
+    /// The board's design rules engine (its implicit rules, and the user's of `designRules`)
+    private(set) var ruleState: RuleState!
 
-    public init(board: KiCadBoard, project: [String: Any]? = nil) {
+    /// What of the user's design rules the port's checks do not follow as KiCad's do, by name (the checks then may
+    /// not find what KiCad's find)
+    public var unsupported: Set<String> { ruleState.board.unsupported.union(unsupportedRules) }
+    private var unsupportedRules: Set<String> = []
+
+    /// The design rules check of `board`, its project's JSON in `project` (nil for KiCad's defaults) and the rules of
+    /// its .kicad_dru in `designRules`
+    public init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
         self.board = board
         settings = Settings(project: project)
         world = BoardWorld(board: board, project: project)
         netClasses = NetClasses(project: project)
         read()
+        ruleState = makeRuleState(project: project, rulesText: designRules)
+        // (the board's worst clearance with the rules' clearances in it)
+        world.raiseMaxClearance(ruleState.engine.biggestClearanceValue(settings))
+        unsupportedRules = Self.unsupportedConstraints(ruleState.engine.userConstraintTypes)
     }
 
+    /// The same, the project read from its file, and the design rules from the .kicad_dru beside it (where KiCad's
+    /// DRC engine finds them)
     public init(board: KiCadBoard, projectURL: URL?) {
         let json = projectURL.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-        self.init(board: board, project: json)
+        self.init(board: board, project: json, designRules: projectURL.flatMap(Self.designRules))
+    }
+
+    /// The rules file beside a project (NAME.kicad_dru), its text
+    public static func designRules(_ projectURL: URL) -> String? {
+        let url = projectURL.deletingPathExtension().appendingPathExtension("kicad_dru")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The constraint types the port's checks do not follow as KiCad's do
+    static func unsupportedConstraints(_ types: Set<DRCConstraintType>) -> Set<String> {
+        // (a thermal spoke width is the filler's, which the checks take the fills of as they are)
+        let followed: Set<DRCConstraintType> = [.clearance, .holeClearance, .edgeClearance, .trackWidth, .viaDiameter, .holeSize,
+                                                .annularWidth, .holeToHole, .disallow, .assertion, .courtyardClearance,
+                                                .silkClearance, .zoneConnection, .thermalReliefGap, .thermalSpokeWidth,
+                                                .minResolvedSpokes]
+        return Set(types.subtracting(followed).map { "the \($0.keyword) constraint" })
     }
 
     // MARK: - The board's items
@@ -275,24 +308,32 @@ public struct BoardDRC {
     /// violations all, past KiCad's limit; the checks of `exhausted` as if at their limit from the start
     func runReport(limited: Bool = true, exhausted: Set<String> = []) -> Report {
         var out = Report(settings: settings, limited: limited, exhausted: exhausted)
-        checkTrackWidths(&out)
-        checkViaDiameters(&out)
-        checkHoleSizes(&out)
-        checkAnnularWidths(&out)
-        checkHolesToHoles(&out)
-        // (the miscellaneous checks': the board's outline)
-        checkOutline(&out)
-        // (the connectivity built first, as KiCad builds it as it reads the board: the nets it propagates are the
-        // items' nets for the checks)
+        // (the board's copper items, which the rules evaluate, and the connectivity, built first, as KiCad builds it as
+        // it reads the board: the nets it propagates are the items' nets for the checks)
         let copper = makeCopper()
+        ruleState.copper = copper
         let connectivity = buildConnectivity(copper)
-        // (the board's items of every kind, for the silkscreen's checks, and its outline as KiCad's cache generator
-        // makes it)
+        // (the board's items of every kind, for the silkscreen's checks and the rules', and its outline as KiCad's cache
+        // generator makes it)
         let items = boardItems(copper)
         let outline = SilkOutline(boardOutline())
+        checkTrackWidths(&out, copper)
+        checkViaDiameters(&out, copper)
+        checkHoleSizes(&out, copper)
+        checkAnnularWidths(&out, copper)
+        checkHolesToHoles(&out, copper)
+        // (the miscellaneous checks': the board's outline, the rules' assertions)
+        checkOutline(&out)
+        checkAssertions(&out, copper, items)
         checkCopperClearances(&out, copper)
         checkEdgeClearances(&out, copper, items, outline)
-        checkKeepouts(&out, copper)
+        // (by the rules engine where the board has rules of the user's own: their disallows among the keepouts', and the
+        // collisions with areas its functions keep shared with theirs)
+        if ruleState.hasUserRules || Self.disallowByEngine {
+            checkDisallowRules(&out, copper, items)
+        } else {
+            checkKeepouts(&out, copper)
+        }
         checkCourtyards(&out, copper)
         checkSilkToMask(&out, items)
         checkSolderMask(&out, copper)
@@ -334,20 +375,29 @@ public struct BoardDRC {
             exhausted.contains(type) || (limited && counts[type, default: 0] >= BoardDRC.errorLimit(type))
         }
 
-        /// A violation reported in words of its own (DRC_ITEM::SetErrorMessage)
-        mutating func addMessage(_ type: String, _ message: String, _ items: [String]) {
-            let severity = settings.severity(type)
-            guard severity != "ignore", !exceeded(type) else { return }
-            counts[type, default: 0] += 1
-            violations.append(DRCViolation(type: type, severity: severity, description: message, items: items))
+        /// The severity of a violation (PCB_MARKER::GetSeverity: the violated rule's, if it sets one, else the check's)
+        func severity(_ type: String, _ rule: DesignRule?) -> String {
+            if let r = rule, r.severity != .undefined { return r.severity.rawValue }
+            return settings.severity(type)
         }
 
-        mutating func add(_ type: String, _ detail: String?, _ items: [String]) {
-            let severity = settings.severity(type)
-            guard severity != "ignore", !exceeded(type) else { return }
+        /// A violation reported in words of its own (DRC_ITEM::SetErrorMessage)
+        mutating func addMessage(_ type: String, _ message: String, _ items: [String], rule: DesignRule? = nil) {
+            guard settings.severity(type) != "ignore", !exceeded(type) else { return }
             counts[type, default: 0] += 1
+            // (one a rule makes ignored or excluded counts, but is not in the report)
+            let s = severity(type, rule)
+            guard s == "error" || s == "warning" else { return }
+            violations.append(DRCViolation(type: type, severity: s, description: message, items: items))
+        }
+
+        mutating func add(_ type: String, _ detail: String?, _ items: [String], rule: DesignRule? = nil) {
+            guard settings.severity(type) != "ignore", !exceeded(type) else { return }
+            counts[type, default: 0] += 1
+            let s = severity(type, rule)
+            guard s == "error" || s == "warning" else { return }
             let title = BoardDRC.titles[type] ?? type
-            violations.append(DRCViolation(type: type, severity: severity,
+            violations.append(DRCViolation(type: type, severity: s,
                                            description: detail.map { "\(title) \($0)" } ?? title, items: items))
         }
     }
@@ -399,71 +449,138 @@ public struct BoardDRC {
 
     // MARK: - Track widths (DRC_TEST_PROVIDER_TRACK_WIDTH)
 
-    func checkTrackWidths(_ out: inout Report) {
-        for t in tracks where t.kind != .via {
-            // (the board setup's minimum; its net class's rule has the same minimum)
-            let min = settings.minTrackWidth
-            guard t.width < min else { continue }
-            out.add("track_width", Self.formatMsg({ "(\($0) min width \($1); actual \($2))" }, Self.boardSetup, min, t.width),
-                    [t.uuid])
+    func checkTrackWidths(_ out: inout Report, _ c: Copper) {
+        let engine = ruleState.engine
+        guard !out.exceeded("track_width"), engine.hasRules(.trackWidth) else { return }
+        for t in c.tracks where t.kind != .via {
+            guard !out.exceeded("track_width") else { break }
+            let item = ruleItem(t, c)
+            let constraint = engine.evalRules(.trackWidth, item, nil, layer: item.layer)
+            let actual = t.trackWidth
+            var failMin = false, failMax = false, width = 0
+            if constraint.severity != .ignore {
+                if constraint.value.hasMin && actual < constraint.value.min { (failMin, width) = (true, constraint.value.min) }
+                if constraint.value.hasMax && actual > constraint.value.max { (failMax, width) = (true, constraint.value.max) }
+            }
+            guard failMin || failMax else { continue }
+            let name = failMin && constraint.implicitMin ? Self.boardSetup : constraint.ruleName
+            // (both failing: the min message, with the max)
+            let detail = failMin ? Self.formatMsg({ "(\($0) min width \($1); actual \($2))" }, name, width, actual)
+                                 : Self.formatMsg({ "(\($0) max width \($1); actual \($2))" }, name, width, actual)
+            out.add("track_width", detail, [t.uuid], rule: constraint.parentRule)
         }
     }
 
     // MARK: - Via diameters (DRC_TEST_PROVIDER_VIA_DIAMETER)
 
-    func checkViaDiameters(_ out: inout Report) {
-        for t in tracks where t.kind == .via {
-            // a micro via's minimum is its net class's micro via diameter (the net class rule, applied last, sets
-            // its minimum to it); another's the board setup's
-            let min = t.viaType == .microVia ? (netClasses.effective(t.net).microViaDiameter ?? settings.minMicroViaDiameter)
-                                             : settings.minViaDiameter
-            guard t.diameter < min else { continue }
-            out.add("via_diameter", Self.formatMsg({ "(\($0) min diameter \($1); actual \($2))" }, Self.boardSetup, min, t.diameter),
-                    [t.uuid])
+    func checkViaDiameters(_ out: inout Report, _ c: Copper) {
+        let engine = ruleState.engine
+        guard !out.exceeded("via_diameter"), engine.hasRules(.viaDiameter) else { return }
+        for t in c.tracks where t.kind == .via {
+            guard !out.exceeded("via_diameter"), let v = t.via else { break }
+            // (a via of one padstack: its one layer, F.Cu)
+            let constraint = engine.evalRules(.viaDiameter, ruleItem(t, c), nil, layer: KiLayer.fCu)
+            let actual = v.diameter
+            var failMin = false, failMax = false, diameter = 0
+            if constraint.severity != .ignore {
+                if constraint.value.hasMin && actual < constraint.value.min { (failMin, diameter) = (true, constraint.value.min) }
+                if constraint.value.hasMax && actual > constraint.value.max { (failMax, diameter) = (true, constraint.value.max) }
+            }
+            guard failMin || failMax else { continue }
+            let detail: String
+            if failMin {
+                let name = constraint.implicitMin ? Self.boardSetup : constraint.ruleName
+                detail = Self.formatMsg({ "(\($0) min diameter \($1); actual \($2))" }, name, diameter, actual)
+            } else {
+                detail = Self.formatMsg({ "(\($0) max diameter \($1); actual \($2))" }, constraint.ruleName, diameter, actual)
+            }
+            out.add("via_diameter", detail, [t.uuid], rule: constraint.parentRule)
         }
     }
 
     // MARK: - Hole sizes (DRC_TEST_PROVIDER_HOLE_SIZE)
 
-    func checkHoleSizes(_ out: inout Report) {
-        for fp in footprints {
-            for p in fp.pads {
-                let minor = min(p.pad.drill.x, p.pad.drill.y)
-                if minor == 0 { continue }
-                let limit = settings.minThroughDrill
-                guard minor < limit else { continue }
-                out.add("drill_out_of_range", Self.formatMsg({ "(\($0) min hole \($1); actual \($2))" }, Self.boardSetup, limit, minor),
-                        [p.uuid])
+    func checkHoleSizes(_ out: inout Report, _ c: Copper) {
+        let engine = ruleState.engine
+        if !out.exceeded("drill_out_of_range") {
+            for pads in c.footprintPads {
+                for pad in pads {
+                    guard !out.exceeded("drill_out_of_range"), let p = pad.pad else { continue }
+                    let holeMinor = min(p.pad.drill.x, p.pad.drill.y), holeMajor = max(p.pad.drill.x, p.pad.drill.y)
+                    if holeMinor == 0 { continue }
+                    // (holes are not layer-specific)
+                    let constraint = engine.evalRules(.holeSize, ruleItem(pad, c), nil, layer: KiLayer.undefined)
+                    if constraint.severity == .ignore { continue }
+                    var failMin = false, failMax = false, value = 0
+                    if constraint.value.hasMax && holeMajor > constraint.value.max { (failMax, value) = (true, constraint.value.max) }
+                    if constraint.value.hasMin && holeMinor < constraint.value.min { (failMin, value) = (true, constraint.value.min) }
+                    guard failMin || failMax else { continue }
+                    let detail: String
+                    if failMin {
+                        let name = constraint.parentRule?.isImplicit == true ? Self.boardSetup : constraint.ruleName
+                        detail = Self.formatMsg({ "(\($0) min hole \($1); actual \($2))" }, name, value, holeMinor)
+                    } else {
+                        detail = Self.formatMsg({ "(\($0) max hole \($1); actual \($2))" }, constraint.ruleName, value, holeMajor)
+                    }
+                    out.add("drill_out_of_range", detail, [pad.uuid], rule: constraint.parentRule)
+                }
             }
         }
-        for t in tracks where t.kind == .via {
-            let micro = t.viaType == .microVia
-            let limit = micro ? settings.minMicroViaDrill : settings.minThroughDrill
-            guard t.drill < limit else { continue }
-            out.add(micro ? "microvia_drill_out_of_range" : "drill_out_of_range",
-                    Self.formatMsg({ "(\($0) min hole \($1); actual \($2))" }, Self.boardSetup, limit, t.drill), [t.uuid])
+        guard !out.exceeded("microvia_drill_out_of_range") || !out.exceeded("drill_out_of_range") else { return }
+        for t in c.tracks where t.kind == .via {
+            guard let v = t.via else { continue }
+            let exceedMicro = out.exceeded("microvia_drill_out_of_range"), exceedStd = out.exceeded("drill_out_of_range")
+            if exceedMicro && exceedStd { break }
+            let micro = v.viaType == .microVia
+            if micro ? exceedMicro : exceedStd { continue }
+            let constraint = engine.evalRules(.holeSize, ruleItem(t, c), nil, layer: KiLayer.undefined)
+            if constraint.severity == .ignore { continue }
+            var failMin = false, failMax = false, value = 0
+            if constraint.value.hasMin && v.drill < constraint.value.min { (failMin, value) = (true, constraint.value.min) }
+            if constraint.value.hasMax && v.drill > constraint.value.max { (failMax, value) = (true, constraint.value.max) }
+            guard failMin || failMax else { continue }
+            let detail: String
+            if failMin {
+                let name = constraint.implicitMin ? Self.boardSetup : constraint.ruleName
+                detail = Self.formatMsg({ "(\($0) min hole \($1); actual \($2))" }, name, value, v.drill)
+            } else {
+                detail = Self.formatMsg({ "(\($0) max hole \($1); actual \($2))" }, constraint.ruleName, value, v.drill)
+            }
+            out.add(micro ? "microvia_drill_out_of_range" : "drill_out_of_range", detail, [t.uuid], rule: constraint.parentRule)
         }
     }
 
     // MARK: - Annular widths (DRC_TEST_PROVIDER_ANNULAR_WIDTH)
 
-    func checkAnnularWidths(_ out: inout Report) {
-        let limit = settings.minViaAnnularWidth
-        func check(_ width: Int, _ uuid: String) {
-            guard width < limit else { return }
-            out.add("annular_width", Self.formatMsg({ "(\($0) min annular width \($1); actual \($2))" }, Self.boardSetup, limit, width),
-                    [uuid])
+    func checkAnnularWidths(_ out: inout Report, _ c: Copper) {
+        let engine = ruleState.engine
+        guard !out.exceeded("annular_width"), engine.hasRules(.annularWidth) else { return }
+        func check(_ constraint: DRCConstraint, _ width: Int, _ uuid: String) {
+            guard constraint.severity != .ignore else { return }
+            var failMin = false, failMax = false
+            if constraint.value.hasMin { failMin = width < constraint.value.min }
+            if constraint.value.hasMax { failMax = width > constraint.value.max }
+            guard failMin || failMax else { return }
+            // (both failing: the max message)
+            let detail = failMax
+                ? Self.formatMsg({ "(\($0) max annular width \($1); actual \($2))" }, constraint.ruleName, constraint.value.max, width)
+                : Self.formatMsg({ "(\($0) min annular width \($1); actual \($2))" }, constraint.ruleName, constraint.value.min, width)
+            out.add("annular_width", detail, [uuid], rule: constraint.parentRule)
         }
-        for t in tracks where t.kind == .via {
-            let a = t.start - IPoint(t.drill / 2, 0), b = t.start - IPoint(t.diameter / 2, 0)
-            check((a - b).norm, t.uuid)
+        for t in c.tracks where t.kind == .via {
+            guard !out.exceeded("annular_width"), let v = t.via else { break }
+            let constraint = engine.evalRules(.annularWidth, ruleItem(t, c), nil, layer: KiLayer.fCu)
+            let a = v.start - IPoint(v.drill / 2, 0), b = v.start - IPoint(v.diameter / 2, 0)
+            check(constraint, (a - b).norm, t.uuid)
         }
-        for fp in footprints {
-            for p in fp.pads where p.hasHole && p.pad.attribute == .pth {
+        for (i, fp) in footprints.enumerated() {
+            for (j, p) in fp.pads.enumerated() where p.hasHole && p.pad.attribute == .pth {
+                guard !out.exceeded("annular_width") else { return }
+                let constraint = engine.evalRules(.annularWidth, ruleItem(c.footprintPads[i][j], c), nil, layer: KiLayer.fCu)
                 // (FOOTPRINT::GetPads: the footprint's other pads of the number, none for a pad with no number)
                 let sameNumber = p.number.isEmpty ? [] : fp.pads.filter { $0.number == p.number && $0.uuid != p.uuid }
-                guard let (a, b) = padAnnulusPoints(p, sameNumber, limit) else { continue }
-                check((a - b).norm, p.uuid)
+                guard let (a, b) = padAnnulusPoints(p, sameNumber, constraint.value) else { continue }
+                check(constraint, (a - b).norm, p.uuid)
             }
         }
     }
@@ -485,7 +602,7 @@ public struct BoardDRC {
 
     /// Where a through-hole pad's annular ring is narrowest (getPadAnnulusPts), nil where KiCad takes it as wide enough
     /// without measuring
-    func padAnnulusPoints(_ p: Pad, _ sameNumber: [Pad], _ limit: Int) -> (IPoint, IPoint)? {
+    func padAnnulusPoints(_ p: Pad, _ sameNumber: [Pad], _ value: MinOptMax) -> (IPoint, IPoint)? {
         let pad = p.pad
         var a = IPoint.zero, b = IPoint.zero
         var handled = false
@@ -517,16 +634,18 @@ public struct BoardDRC {
             if o.hasHole && box.intersects(world.holeShape(o.pad).bbox) { constrainingHole = true }
             if covers && constrainingHole { break }
         }
-        if handled && !overlapping.isEmpty && !constrainingHole && !covers {
+        if handled && !overlapping.isEmpty && !constrainingHole && !covers && value.hasMin && !value.hasMax {
             // a circle's ring is as wide all round, so its quick width holds where any side is uncovered; another's
             // narrow side a pad of the number can make up for, so its quick width is taken only if it passes
-            if pad.kind == .circle || (a - b).norm >= limit { return (a, b) }
+            if pad.kind == .circle || (a - b).norm >= value.min { return (a, b) }
         }
         if !handled || !overlapping.isEmpty {
             // the general way: the pad's outline (with its same-numbered pads', less their holes) against its hole
             let maxError = world.rules.maxError
             guard var outline = world.padPolygon(pad, primitives: p.primitives, errorLocation: .inside) else { return nil }
             guard case .segment(let slot, let slotWidth) = world.holeShape(pad) else { return nil }
+            // (with pads of the number and no minimum, the points as they were)
+            if !sameNumber.isEmpty && !value.hasMin { return (a, b) }
             if !sameNumber.isEmpty {
                 var otherHoles = PolySet()
                 for o in sameNumber {
@@ -585,51 +704,63 @@ public struct BoardDRC {
 
     // MARK: - Holes too close (DRC_TEST_PROVIDER_HOLE_TO_HOLE)
 
-    func checkHolesToHoles(_ out: inout Report) {
-        let clearance = settings.holeToHole
+    func checkHolesToHoles(_ out: inout Report, _ c: Copper) {
+        guard !out.exceeded("hole_to_hole") || !out.exceeded("holes_co_located") else { return }
+        let engine = ruleState.engine
+        // (the worst hole to hole clearance the tree's search goes out to; none above 0, no check at all)
+        guard let worst = engine.worstConstraint(.holeToHole) else { return }
+        let largest = worst.value.min
         // the holes drilled: round pad holes and vias' (slots are milled after)
         struct Hole {
-            var uuid: String
+            var item: CopperItem
             var center: IPoint
             var radius: Int
             var via: Track?
         }
         var holes: [Hole] = []
-        for fp in footprints {
-            for p in fp.pads where p.hasDrilledHole {
-                holes.append(Hole(uuid: p.uuid, center: p.pad.pos, radius: p.pad.drill.x / 2, via: nil))
+        for pads in c.footprintPads {
+            for pad in pads {
+                guard let p = pad.pad, p.hasDrilledHole else { continue }
+                holes.append(Hole(item: pad, center: p.pad.pos, radius: p.pad.drill.x / 2, via: nil))
             }
         }
-        for t in tracks where t.kind == .via { holes.append(Hole(uuid: t.uuid, center: t.start, radius: t.drill / 2, via: t)) }
+        for t in c.tracks where t.kind == .via {
+            guard let v = t.via else { continue }
+            holes.append(Hole(item: t, center: v.start, radius: v.drill / 2, via: v))
+        }
         let epsilon = settings.epsilon
         func test(_ h: Hole, _ o: Hole) {
             // blind and buried vias are drilled before the board is laminated: only those that share layers
             if let a = h.via, let b = o.via, !a.layers.overlaps(b.layers) { return }
-            var first = h, second = o
-            if first.uuid > second.uuid { swap(&first, &second) }
+            var first = h.item.uuid, second = o.item.uuid
+            if first > second { swap(&first, &second) }
             let d = h.center - o.center
             if d.squaredNorm < epsilon * epsilon {
-                out.add("holes_co_located", nil, [first.uuid, second.uuid])
+                out.add("holes_co_located", nil, [first, second])
                 return
             }
+            guard !out.exceeded("hole_to_hole") else { return }
             let actual = max(0, d.norm - h.radius - o.radius)
-            guard clearance >= 0 && actual < max(0, clearance - epsilon) else { return }
-            out.add("hole_to_hole", Self.formatMsg({ "(\($0) min \($1); actual \($2))" }, Self.boardSetup, clearance, actual),
-                    [first.uuid, second.uuid])
+            // (holes pierce all layers)
+            let constraint = engine.evalRules(.holeToHole, ruleItem(h.item, c), ruleItem(o.item, c), layer: KiLayer.undefined)
+            let minClearance = constraint.value.min
+            guard constraint.severity != .ignore && minClearance >= 0 && actual < max(0, minClearance - epsilon) else { return }
+            out.add("hole_to_hole", Self.formatMsg({ "(\($0) min \($1); actual \($2))" }, constraint.ruleName, minClearance, actual),
+                    [first, second], rule: constraint.parentRule)
         }
         // (the holes within the worst hole to hole clearance of each other, as the R-tree finds them)
         func near(_ h: Hole, _ o: Hole) -> Bool {
-            let r = h.radius + o.radius + clearance
+            let r = h.radius + o.radius + largest
             return (h.center - o.center).squaredNorm < r * r
         }
         // each via's hole against the others (not a micro via's, burned, not drilled), each pair once; then each pad's
         var checked = Set<[String]>()
         for h in holes where h.via != nil && h.via!.viaType != .microVia {
-            for o in holes where o.uuid != h.uuid && near(h, o) && checked.insert([h.uuid, o.uuid].sorted()).inserted { test(h, o) }
+            for o in holes where o.item !== h.item && near(h, o) && checked.insert([h.item.uuid, o.item.uuid].sorted()).inserted { test(h, o) }
         }
         checked.removeAll()
         for h in holes where h.via == nil {
-            for o in holes where o.uuid != h.uuid && near(h, o) && checked.insert([h.uuid, o.uuid].sorted()).inserted { test(h, o) }
+            for o in holes where o.item !== h.item && near(h, o) && checked.insert([h.item.uuid, o.item.uuid].sorted()).inserted { test(h, o) }
         }
     }
 }

@@ -1,7 +1,8 @@
 // Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_courtyard_clearance.cpp (footprints' courtyards: malformed
-// and missing ones, courtyards overlapping, and plated and unplated holes in another footprint's courtyard), with
-// libs/kimath/src/geometry/shape_poly_set.cpp (SHAPE_POLY_SET::Collide: two sets triangle by triangle, a hole by its
-// distance to the polygons).
+// and missing ones, courtyards overlapping or nearer than a rule's clearance, and plated and unplated holes in
+// another footprint's courtyard, each by EvalRules of the courtyard clearance between the two), with
+// libs/kimath/src/geometry/shape_poly_set.cpp (SHAPE_POLY_SET::Collide: two sets triangle by triangle, the nearest
+// pair's distance, a hole by its distance to the polygons).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -10,7 +11,11 @@ import KiCadKit
 
 extension BoardDRC {
     /// SHAPE_POLY_SET::Collide of two sets at no clearance: whether a triangle of one touches a triangle of the other
-    static func polySetsCollide(_ a: PolySet, _ b: PolySet) -> Bool {
+    static func polySetsCollide(_ a: PolySet, _ b: PolySet) -> Bool { polySetsCollide(a, b, clearance: 0) != nil }
+
+    /// The same at a clearance, with how near (the least of the colliding triangles' distances, every pair of them
+    /// tried, as KiCad tries them when it asks how near)
+    static func polySetsCollide(_ a: PolySet, _ b: PolySet, clearance: Int) -> Int? {
         var a = a, b = b
         a.cacheTriangulation()
         b.cacheTriangulation()
@@ -22,18 +27,23 @@ extension BoardDRC {
             }
         }
         let boxesB = trisB.map(\.bbox)
+        var best: Int?
         for tpoly in a.triangulatedPolygons {
             for i in tpoly.triangles.indices {
                 let (p, q, r) = tpoly.triangle(i)
                 let triA = Shape.simple(LineChain([p, q, r], closed: true))
-                let boxA = triA.bbox
+                let boxA = triA.bbox.inflated(clearance)
                 for (j, triB) in trisB.enumerated() where boxA.intersects(boxesB[j]) {
                     var actual: Int?
-                    if triB.collide(triA, clearance: 0, wantActual: true, actual: &actual) { return true }
+                    if triB.collide(triA, clearance: clearance, wantActual: true, actual: &actual) {
+                        let v = max(0, actual ?? 0)
+                        if clearance == 0 { return v }
+                        if best == nil || v < best! { best = v }
+                    }
                 }
             }
         }
-        return false
+        return best
     }
 
     /// A BOX2I as KiCad holds one: its position a 32-bit VECTOR2I, which an inflate wraps round where it
@@ -139,9 +149,9 @@ extension BoardDRC {
         let backBoxes = yards.map { Self.cachedBox($0.back, width: $0.backWidth) }
         let fpBoxes = fps.indices.map { KBox(footprintBox($0, fps[$0], c)) }
 
-        /// A plated or unplated pad's hole in another footprint's courtyard, the front's tried first (not a heatsink
-        /// pad's)
-        func testPad(_ pad: CopperItem, _ node: SExpr, against f: Int) {
+        /// A plated or unplated pad's hole in another footprint's courtyard, the front's tried first where its rule
+        /// leaves it to be tested, then the back's (not a heatsink pad's)
+        func testPad(_ pad: CopperItem, _ node: SExpr, against f: Int, front checkFront: Bool, back checkBack: Bool) {
             guard let p = pad.pad, let hole = pad.hole,
                   node["property"]?.arguments.contains(where: { $0.text == "pad_prop_heatsink" }) != true else { return }
             let type: String
@@ -152,31 +162,56 @@ extension BoardDRC {
             }
             guard !out.exceeded(type) else { return }
             let target = fps[f].value("uuid") ?? ""
-            if !yards[f].front.polygons.isEmpty, Self.polySetCollide(yards[f].front, [hole], compound: false, wantActual: false) {
+            if checkFront, !yards[f].front.polygons.isEmpty, Self.polySetCollide(yards[f].front, [hole], compound: false, wantActual: false) {
                 out.add(type, nil, [pad.uuid, target])
-            } else if !yards[f].back.polygons.isEmpty, Self.polySetCollide(yards[f].back, [hole], compound: false, wantActual: false) {
+            } else if checkBack, !yards[f].back.polygons.isEmpty,
+                      Self.polySetCollide(yards[f].back, [hole], compound: false, wantActual: false) {
                 out.add(type, nil, [pad.uuid, target])
             }
         }
 
+        // (the worst courtyard clearance the rules have, which a footprint's courtyards' boxes are grown by)
+        let engine = ruleState.engine
+        let largest = engine.worstConstraint(.courtyardClearance)?.value.min ?? 0
+        func grown(_ box: KBox?) -> KBox? { box.map { var b = $0; b.inflate(largest); return b } }
         for (k, (a, uuidA)) in order.enumerated() {
+            let frontA = grown(frontBoxes[a]), backA = grown(backBoxes[a])
+            let fpA = ruleState.footprints[a]
             for (b, uuidB) in order[(k + 1)...] {
-                for (setA, setB, boxA, boxB) in [(yards[a].front, yards[b].front, frontBoxes[a], frontBoxes[b]),
-                                                 (yards[a].back, yards[b].back, backBoxes[a], backBoxes[b])] {
+                let fpB = ruleState.footprints[b]
+                for (setA, setB, boxA, boxB, layer) in [(yards[a].front, yards[b].front, frontA, frontBoxes[b], KiLayer.fCu),
+                                                        (yards[a].back, yards[b].back, backA, backBoxes[b], KiLayer.bCu)] {
                     guard !out.exceeded("courtyards_overlap"), !setA.polygons.isEmpty, !setB.polygons.isEmpty,
                           let ba = boxA, let bb = boxB, ba.intersects(bb) else { continue }
-                    if Self.polySetsCollide(setA, setB) { out.add("courtyards_overlap", nil, [uuidA, uuidB]) }
+                    let constraint = engine.evalRules(.courtyardClearance, fpA, fpB, layer: layer)
+                    let clearance = constraint.value.min
+                    guard constraint.severity != .ignore && clearance >= 0,
+                          let actual = Self.polySetsCollide(setA, setB, clearance: clearance) else { continue }
+                    let detail = clearance > 0
+                        ? Self.formatMsg({ "(\($0) clearance \($1); actual \($2))" }, constraint.ruleName, clearance, actual) : nil
+                    out.add("courtyards_overlap", detail, [uuidA, uuidB], rule: constraint.parentRule)
                 }
-                func near(_ f: Int, _ box: KBox) -> Bool {
-                    (frontBoxes[f].map { $0.intersects(box) } ?? false) || (backBoxes[f].map { $0.intersects(box) } ?? false)
+                // (whether the holes are tested against the courtyards: by the rule between the two, each way round, on
+                // each side, asked only where a hole could be in one)
+                let padsOfBNearA = (frontA.map { $0.intersects(fpBoxes[b]) } ?? false) || (backA.map { $0.intersects(fpBoxes[b]) } ?? false)
+                let padsOfANearB = (frontBoxes[b].map { $0.intersects(fpBoxes[a]) } ?? false)
+                    || (backBoxes[b].map { $0.intersects(fpBoxes[a]) } ?? false)
+                var checkFront = false, checkBack = false
+                if padsOfBNearA || padsOfANearB {
+                    for (x, y, layer) in [(fpA, fpB, KiLayer.fCu), (fpB, fpA, KiLayer.fCu), (fpA, fpB, KiLayer.bCu), (fpB, fpA, KiLayer.bCu)] {
+                        let constraint = engine.evalRules(.courtyardClearance, x, y, layer: layer)
+                        if constraint.severity != .ignore && constraint.value.min >= 0 {
+                            if layer == KiLayer.fCu { checkFront = true } else { checkBack = true }
+                        }
+                    }
                 }
-                if near(a, fpBoxes[b]) {
+                if padsOfBNearA {
                     let nodes = fps[b].all("pad")
-                    for (j, pad) in c.footprintPads[b].enumerated() { testPad(pad, nodes[j], against: a) }
+                    for (j, pad) in c.footprintPads[b].enumerated() { testPad(pad, nodes[j], against: a, front: checkFront, back: checkBack) }
                 }
-                if near(b, fpBoxes[a]) {
+                if padsOfANearB {
                     let nodes = fps[a].all("pad")
-                    for (j, pad) in c.footprintPads[a].enumerated() { testPad(pad, nodes[j], against: b) }
+                    for (j, pad) in c.footprintPads[a].enumerated() { testPad(pad, nodes[j], against: b, front: checkFront, back: checkBack) }
                 }
             }
         }

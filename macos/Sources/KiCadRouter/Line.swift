@@ -75,6 +75,7 @@ public final class Line: Item {
     /// KiCad's assignment operator: this line made a copy of `o`
     public func assign(_ o: Line) {
         parent = o.parent
+        boardItem = o.boardItem
         sourceItem = o.sourceItem
         line = o.line
         width = o.width
