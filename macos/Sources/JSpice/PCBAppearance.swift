@@ -1,6 +1,7 @@
-// After KiCad 10.0.7: pcbnew/tools/pcb_selection_tool.cpp (Selectable: what the display's visibility leaves the
-// pointer), pcbnew/pcb_painter.cpp (PCB_RENDER_SETTINGS::GetColor: highlighted nets, the high contrast mode's dimming)
-// and pcbnew/widgets/appearance_controls.cpp (the Appearance panel's rows, objects and presets).
+// After KiCad 10.0.8: pcbnew/tools/pcb_selection_tool.cpp (Selectable and isOnVisibleFootprintSide: what the
+// display's visibility leaves the pointer), pcbnew/pcb_painter.cpp (PCB_RENDER_SETTINGS::GetColor: highlighted
+// nets, the high contrast mode's dimming) and pcbnew/widgets/appearance_controls.cpp (the Appearance panel's rows,
+// objects and presets).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -265,7 +266,12 @@ struct PCBDisplay {
             ? picture.vias.filter { v in (v.layers.isEmpty ? picture.copperLayers : v.layers).contains(where: shown) } : []
         let bottom = picture.copperLayers.last ?? "B.Cu"
         p.pads = isVisible(.pads) && appearance.padOpacity > 0 ? picture.pads.filter { pad in
-            guard footprintShown(pad.footprint) else { return false }
+            // (the Render tab's footprint switches by the pad's own side, through the board on either, as KiCad
+            // 10.0.8's Selectable has them for box selection too: isOnVisibleFootprintSide, after PAD::ViewGetLOD)
+            let front = pad.sides.contains("F"), back = pad.sides.contains("B")
+            guard (!front && !back) || (front && isVisible(.footprintsFront)) || (back && isVisible(.footprintsBack)) else {
+                return false
+            }
             if pad.sides == "FB" { return picture.copperLayers.contains(where: shown) }
             return (pad.sides.contains("F") && shown("F.Cu")) || (pad.sides.contains("B") && shown(bottom))
         } : []
