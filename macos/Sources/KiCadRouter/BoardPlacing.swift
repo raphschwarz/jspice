@@ -9,6 +9,26 @@
 import Foundation
 import KiCadKit
 
+/// The styles new texts take on each class of layer (BOARD_DESIGN_SETTINGS' text defaults), worked out once from a
+/// project
+public struct TextDefaults: Sendable {
+    var byClass: [String: BoardEditing.TextStyle] = [:]
+
+    public init(project: [String: Any]?) {
+        for (kind, layer) in [("silk", "F.SilkS"), ("copper", "F.Cu"), ("edges", "Edge.Cuts"), ("courtyard", "F.CrtYd"),
+                              ("fab", "F.Fab"), ("other", "Dwgs.User")] {
+            byClass[kind] = BoardEditing.textStyle(layer: layer, project: project)
+        }
+    }
+
+    /// The style of a new text on `layer`: its class's, mirrored on the back
+    public func style(_ layer: String) -> BoardEditing.TextStyle {
+        var s = byClass[BoardEditing.textClass(layer)]!
+        s.mirrored = layer.hasPrefix("B.")
+        return s
+    }
+}
+
 extension BoardEditing {
     /// What a new text on a layer is like (BOARD_DESIGN_SETTINGS' text defaults for the layer's class, from the
     /// project's board.design_settings.defaults, KiCad's own where it has none): its height and width, its pen's
@@ -36,7 +56,10 @@ extension BoardEditing {
     }
 
     /// The style KiCad's Add Text gives a new text on `layer`
-    public func textStyle(layer: String) -> TextStyle {
+    public func textStyle(layer: String) -> TextStyle { Self.textStyle(layer: layer, project: project) }
+
+    /// The style a new text on `layer` takes from `project`'s text defaults (KiCad's own where it has none)
+    static func textStyle(layer: String, project: [String: Any]?) -> TextStyle {
         let defaults = ((project?["board"] as? [String: Any])?["design_settings"] as? [String: Any])?["defaults"] as? [String: Any] ?? [:]
         let kind = Self.textClass(layer)
         // (the constructor's values, which a project without them leaves; edges and courtyards take no others)
@@ -55,6 +78,9 @@ extension BoardEditing {
         return TextStyle(height: height, width: width, thickness: thickness, bold: bold, italic: flag("text_italic"),
                          upright: flag("text_upright"), mirrored: layer.hasPrefix("B."))
     }
+
+    /// The text styles of each class of layer, for the dimension tool
+    public var textDefaults: TextDefaults { TextDefaults(project: project) }
 
     /// A text on the board, as KiCad's Add Text places one with the pointer at `p` (mm): of the layer's style, its
     /// left end on the baseline there, turned by `angle` (degrees), as one change (Edit.drawings has it). nil for a
@@ -104,50 +130,74 @@ extension BoardEditing {
         return change("Edit Text", drawings: [uuid])
     }
 
-    /// The board's texts and drawings (its outline aside) moved by `delta` (mm), as one change; the locked left where
-    /// they are, as KiCad's move leaves them (unless overridesLocks)
+    /// The board's texts, graphics (its outline's too) and dimensions moved by `delta` (mm), each as KiCad moves it
+    /// (EDA_SHAPE::move, PCB_DIMENSION_BASE::Move: its text placed again), as one change (Edit.outline set where an
+    /// outline's graphic moved); the locked left where they are, as KiCad's move leaves them (unless overridesLocks)
     public func moveDrawings(_ uuids: [String], by delta: KiCadPoint) -> Edit? {
         guard !isRouting, delta != .zero else { return nil }
-        let wanted = Set(unlocked(uuids))
-        var moved: [String] = []
-        func shifted(_ list: SExpr) {
-            guard let x = list.number(at: 0), let y = list.number(at: 1) else { return }
-            list.items[1] = (Double(BoardWorld.iu(x + delta.x)) / 1e6).sexpr
-            list.items[2] = (Double(BoardWorld.iu(y + delta.y)) / 1e6).sexpr
-        }
-        for node in router.board.boardDrawings where wanted.contains(node.value("uuid") ?? "") {
-            for head in ["at", "start", "end", "center", "mid"] { if let list = node[head] { shifted(list) } }
-            for list in node["pts"]?.all("xy") ?? [] { shifted(list) }
-            moved.append(node.value("uuid") ?? "")
-        }
-        guard !moved.isEmpty else { return nil }
-        router.boardChanged()
-        return change(moved.count == 1 ? "Move" : "Move Items", drawings: moved)
-    }
-
-    /// The board's texts turned by `degrees` counterclockwise about their own positions, as KiCad's Rotate turns a
-    /// text selected alone, as one change (the locked left as they are)
-    public func rotateTexts(_ uuids: [String], by degrees: Double = 90) -> Edit? {
-        guard !isRouting else { return nil }
-        let nodes = texts(unlocked(uuids))
+        let d = Self.nm(delta)
+        let nodes = drawingNodes(Set(unlocked(uuids)))
         guard !nodes.isEmpty else { return nil }
-        for node in nodes {
-            guard let at = node["at"], let x = at.number(at: 0), let y = at.number(at: 1) else { continue }
-            node.set(SExpr("at", x, y, Self.normalizedAngle((at.number(at: 2) ?? 0) + degrees)))
-        }
+        for node in nodes { Self.move(node, by: d) }
         router.boardChanged()
-        return change("Rotate", drawings: nodes.compactMap { $0.value("uuid") })
+        return change(nodes.count == 1 ? "Move" : "Move Items", outline: nodes.contains { $0.value("layer") == "Edge.Cuts" },
+                      drawings: nodes.compactMap { $0.value("uuid") })
     }
 
-    /// The board's texts and drawings (its outline aside) taken away, by id, as one change (the locked left alone)
+    /// The board's texts, graphics and dimensions turned by `degrees` counterclockwise, each as KiCad's Rotate turns
+    /// it selected alone (a text about its position, a rectangle or polygon about its centre, a line about its start,
+    /// a circle or arc about its centre, a dimension about its start), as one change; nil where one cannot be turned
+    /// so (a rectangle turned off square, which KiCad makes a polygon; a polygon with arcs); the locked left as they are
+    public func rotateTexts(_ uuids: [String], by degrees: Double = 90) -> Edit? {
+        rotate(drawingNodes(Set(unlocked(uuids))), by: degrees, about: nil)
+    }
+
+    /// The board's texts, graphics and dimensions turned together by `degrees` counterclockwise about `center` (mm;
+    /// KiCad's is the middle of the box round them all, on its grid), as KiCad's Rotate turns a selection of several,
+    /// as one change; one alone is turned as rotateTexts turns it (the locked left as they are)
+    public func rotateDrawings(_ uuids: [String], by degrees: Double = 90, about center: KiCadPoint) -> Edit? {
+        let nodes = drawingNodes(Set(unlocked(uuids)))
+        return rotate(nodes, by: degrees, about: nodes.count == 1 ? nil : Self.nm(center))
+    }
+
+    private func rotate(_ nodes: [SExpr], by degrees: Double, about center: IPoint?) -> Edit? {
+        guard !isRouting, !nodes.isEmpty else { return nil }
+        let angle = EDAAngle(degrees: degrees)
+        // (each worked out first, so that nothing changes where one cannot be turned)
+        var changes: [() -> Void] = []
+        for node in nodes {
+            if node.head == "dimension" {
+                guard var dim = BoardDimension(node) else { return nil }
+                dim.rotate(around: center ?? dim.start, by: angle)
+                changes.append { Self.replace(node, with: dim) }
+            } else if node.head == "gr_text" || node.head == "gr_text_box" {
+                guard node.head == "gr_text", let at = node["at"], let x = at.number(at: 0), let y = at.number(at: 1) else { return nil }
+                var p = IPoint(BoardWorld.iu(x), BoardWorld.iu(y))
+                if let center { p = KiMath.rotate(p, around: center, angle) }
+                let turned = Self.normalizedAngle((at.number(at: 2) ?? 0) + degrees)
+                changes.append { node.set(SExpr("at", BoardShape.mm(p.x), BoardShape.mm(p.y), turned)) }
+            } else {
+                guard var shape = BoardShape(node, normalized: false) else { return nil }
+                let c = center ?? (shape.kind == .rectangle || shape.kind == .polygon ? shape.shapeCenter : shape.position)
+                guard shape.rotate(around: c, by: angle) else { return nil }
+                changes.append { shape.write(into: node) }
+            }
+        }
+        for c in changes { c() }
+        router.boardChanged()
+        return change("Rotate", outline: nodes.contains { $0.value("layer") == "Edge.Cuts" }, drawings: nodes.compactMap { $0.value("uuid") })
+    }
+
+    /// The board's texts, graphics (its outline's too) and dimensions taken away, by id, as one change (the locked
+    /// left alone)
     public func removeDrawings(_ uuids: Set<String>) -> Edit? {
         guard !isRouting else { return nil }
-        let kept = Set(unlocked(Array(uuids)))
-        let gone = router.board.boardDrawings.filter { kept.contains($0.value("uuid") ?? "") }
+        let gone = drawingNodes(Set(unlocked(Array(uuids))))
         guard !gone.isEmpty else { return nil }
         for node in gone { router.board.root.remove(node) }
         router.boardChanged()
-        return change(gone.count == 1 ? "Delete" : "Delete Items", drawings: gone.compactMap { $0.value("uuid") })
+        return change(gone.count == 1 ? "Delete" : "Delete Items", outline: gone.contains { $0.value("layer") == "Edge.Cuts" },
+                      drawings: gone.compactMap { $0.value("uuid") })
     }
 
     /// A footprint of a library placed on its own with the pointer at `p` (mm), as KiCad's Add Footprint places one:

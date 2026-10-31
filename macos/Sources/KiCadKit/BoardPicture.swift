@@ -89,6 +89,17 @@ public struct KiCadBoardPicture: Sendable {
     public var boardSize: (width: Double, height: Double)?
     /// Its outline's corners' radius (mm), when the outline is one rectangle (as a new board's is)
     public var outlineCornerRadius: Double?
+    /// The board's own graphics on every layer (its outline's and silkscreen's among them), each by its id, for
+    /// selecting and editing them
+    public var graphics: [Graphic] = []
+    /// The board's dimensions, as their texts are kept (their s-expressions)
+    public var dimensions: [Text] = []
+
+    /// A graphic of the board's own: its id, and its line as drawn
+    public struct Graphic: Sendable {
+        public var uuid: String
+        public var line: Line
+    }
 
     public init() {}
 
@@ -111,6 +122,10 @@ public struct KiCadBoardPicture: Sendable {
         for d in board.drawings where d.layer.hasSuffix("SilkS") { if let l = line(d) { silkscreen.append(l) } }
         for node in board.root.items where node.head == "gr_text" {
             texts.append(Text(source: node.compact, layer: node.value("layer") ?? "", uuid: node.value("uuid") ?? ""))
+        }
+        for d in board.drawings { if let l = line(d) { graphics.append(Graphic(uuid: d.node.value("uuid") ?? "", line: l)) } }
+        for node in board.root.items where node.head == "dimension" {
+            dimensions.append(Text(source: node.compact, layer: node.value("layer") ?? "", uuid: node.value("uuid") ?? ""))
         }
         for footprint in board.footprints {
             for d in footprint.drawings where d.layer.hasSuffix("SilkS") { if let l = line(d) { silkscreen.append(l) } }

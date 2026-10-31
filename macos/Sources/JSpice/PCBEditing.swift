@@ -10,7 +10,7 @@ import KiCadRouter
 @MainActor
 final class PCBEditing: ObservableObject {
     enum Tool: String, CaseIterable, Identifiable {
-        case select, route, pair, via, zone, tune, text, footprint
+        case select, route, pair, via, zone, tune, text, footprint, draw, dimension, measure
         var id: Self { self }
         var title: String {
             switch self {
@@ -22,6 +22,9 @@ final class PCBEditing: ObservableObject {
             case .tune: return "Tune Length"
             case .text: return "Add Text"
             case .footprint: return "Place Footprint"
+            case .draw: return "Draw Graphics"
+            case .dimension: return "Draw Dimensions"
+            case .measure: return "Measure"
             }
         }
         var symbol: String {
@@ -34,6 +37,9 @@ final class PCBEditing: ObservableObject {
             case .tune: return "waveform.path"
             case .text: return "character.textbox"
             case .footprint: return "cpu"
+            case .draw: return "pencil.and.outline"
+            case .dimension: return "arrow.left.and.right"
+            case .measure: return "ruler"
             }
         }
         /// Whether it routes (a track, or a pair)
@@ -90,7 +96,17 @@ final class PCBEditing: ObservableObject {
     @Published private(set) var preview: BoardEditing.Preview?
     @Published private(set) var isRouting = false
     /// The tracks and vias selected, by id
-    @Published var selection: Set<String> = []
+    @Published var selection: Set<String> = [] {
+        didSet { if selection != oldValue { graphics.selectionChanged(selection) } }
+    }
+    /// The draw, dimension and measure tools, and the point editor of a graphic selected (PCBGraphics.swift)
+    lazy var graphics: PCBGraphicsEditing = {
+        let g = PCBGraphicsEditing()
+        g.editing = self
+        // (its changes redraw the view, as the session's own do)
+        g.forwarding = g.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        return g
+    }()
     /// Footprints selected here, by id (besides those of the parts selected in the schematic: these include parts the
     /// schematic does not have, mounting holes and logos)
     @Published var footprintSelection: Set<String> = []
@@ -208,7 +224,11 @@ final class PCBEditing: ObservableObject {
             return true
         }
         await check()
+        graphics.boardTaken()
     }
+
+    /// `body` run on the session, off the main actor (the graphics tools' settings, a graphic as the board has it)
+    func withSession<T>(_ body: @escaping (BoardEditing) -> T?) async -> T? { await engine.run(body) }
 
     /// The board checked as it now is, off the router's queue; a check overtaken by the next one is dropped
     private func check() async {
@@ -281,6 +301,17 @@ final class PCBEditing: ObservableObject {
             if !isReady { prepare() }
             message = startMessage
         }
+        graphics.toolChanged(tool)
+        if tool == .draw || tool == .dimension {
+            selection = []
+            if !isReady { prepare() }
+            message = tool == .draw
+                ? "Click to draw (a line goes on from where the last ended: double-click to finish); ⌫ takes a point back, Esc drops it"
+                : "Click the dimension's start and end (an aligned or orthogonal one's height then); Esc drops it"
+        }
+        if tool == .measure {
+            message = "Click to start measuring, click again to stop (⇧ holds the ruler to 45°); Esc takes it away"
+        }
         if isDragging { cancelDrag() }
     }
 
@@ -319,6 +350,7 @@ final class PCBEditing: ObservableObject {
     /// The pointer over the board, at `p` (mm)
     func pointerMoved(_ p: KiCadPoint) {
         pointer = p
+        if graphics.pointerMoved(p) { return }
         if tool == .zone && !zoneCorners.isEmpty { zonePointer = Self.onGrid(p) }
         if tool == .tune && tuning != nil { return tuneMoved(to: p) }
         if isDragging && followsPointer { return dragMoved(to: p) }
@@ -1154,6 +1186,12 @@ final class PCBEditing: ObservableObject {
             dragging = (selection.contains(text) ? picture.texts.map(\.uuid).filter(selection.contains) : [text], .zero)
             draggingTexts = true
         }
+        if dragging == nil, let item = graphics.item(at: start) {
+            // a graphic or dimension of the board's own (those selected with it, if it is one of them): moved as texts are
+            let drawn = Set(picture.texts.map(\.uuid) + picture.graphics.map(\.uuid) + picture.dimensions.map(\.uuid))
+            dragging = (selection.contains(item) ? selection.filter(drawn.contains).sorted() : [item], .zero)
+            draggingTexts = true
+        }
         if dragging == nil {
             guard let footprint = picture.footprint(at: start) else {
                 selectionArea = (start, now, leftward)
@@ -1337,7 +1375,10 @@ final class PCBEditing: ObservableObject {
 
     /// Footprints turned 90° counterclockwise (R), and the board's texts selected about their own positions
     func rotate(_ uuids: Set<String>) {
-        let texts = Set(controller?.picture?.texts.map(\.uuid) ?? []).intersection(selection)
+        // (the board's texts, graphics and dimensions selected: each turned as KiCad turns one selected alone)
+        let picture = controller?.picture
+        let texts = Set((picture?.texts.map(\.uuid) ?? []) + (picture?.graphics.map(\.uuid) ?? []) + (picture?.dimensions.map(\.uuid) ?? []))
+            .intersection(selection)
         guard !uuids.isEmpty || !texts.isEmpty else { return }
         Task {
             if !uuids.isEmpty { await place { $0.rotateFootprints(uuids.sorted()) } }

@@ -11,7 +11,7 @@ extension BoardEditing {
     /// The board's items Lock and Unlock reach, by id: its footprints, tracks, arcs, vias, zones, own drawings and
     /// texts, and tuning patterns
     func lockableNodes(_ uuids: Set<String>) -> [SExpr] {
-        let heads = Set(["footprint", "segment", "arc", "via", "zone", "gr_text", "gr_text_box", "generated"]).union(KiCadDrawing.heads)
+        let heads = Set(["footprint", "segment", "arc", "via", "zone", "gr_text", "gr_text_box", "dimension", "generated"]).union(KiCadDrawing.heads)
         return router.board.root.items.filter { heads.contains($0.head ?? "") && uuids.contains($0.value("uuid") ?? "") }
     }
 
@@ -85,6 +85,9 @@ extension BoardEditing {
             node.items.insert(flag, at: min(at, node.items.count))
         case "generated":
             node.insert(flag, after: ["uuid", "type", "name", "layer"])
+        case "dimension":
+            // (after its type)
+            node.insert(flag, after: ["type"])
         default:
             // (a drawing's, after its stroke and fill)
             node.insert(flag, after: ["start", "mid", "end", "center", "pts", "radius", "width", "stroke", "fill"])
