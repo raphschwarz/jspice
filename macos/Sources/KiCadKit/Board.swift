@@ -407,7 +407,8 @@ public struct KiCadFootprint {
     public let node: SExpr
     unowned let board: KiCadBoard
 
-    init(_ node: SExpr, board: KiCadBoard) { self.node = node; self.board = board }
+    /// A footprint of `board`'s file (or one for it: its nets are named by the board's table)
+    public init(_ node: SExpr, board: KiCadBoard) { self.node = node; self.board = board }
 
     /// The library and name it was placed from, "Resistor_SMD:R_0805_2012Metric"
     public var libID: String {

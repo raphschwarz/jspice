@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import CircuitKit
 import KiCadKit
+import KiCadRouter
 
 @main
 enum Launcher {
@@ -141,6 +142,20 @@ struct CircuitCommands: Commands {
                 .disabled(editor == nil)
             Button("Check Design Rules") { editor?.pcbCommand { $0.checkDesignRules() } }
                 .disabled(editor == nil)
+            Divider()
+            // (KiCad's Paste Special, Create Array and Align and Distribute: PCBClipboard.swift, PCBArray.swift)
+            Button("Paste Special…") { editor?.pcbCommand { $0.editing.pasteSpecial() } }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
+                .disabled(editor?.board != .pcb)
+            Button("Create Array…") { editor?.pcbCommand { $0.editing.openArray(footprints: $0.selectedFootprints) } }
+                .disabled(editor?.board != .pcb)
+            Menu("Align and Distribute") {
+                ForEach(BoardEditing.Alignment.allCases, id: \.self) { how in
+                    if how == .distributeHorizontallyCenters { Divider() }
+                    Button(how.title) { editor?.pcbCommand { $0.editing.align(how, footprints: $0.selectedFootprints) } }
+                }
+            }
+            .disabled(editor?.board != .pcb)
             Menu("Fabrication Files") {
                 ForEach(KiCadFabrication.Maker.allCases.filter { $0 != .generic }) { maker in
                     Button(maker.title + "…") { editor?.pcbCommand { $0.fabricate(maker) } }
@@ -154,9 +169,16 @@ struct CircuitCommands: Commands {
                 .disabled(editor == nil)
         }
         CommandGroup(after: .pasteboard) {
-            Button("Duplicate") { editor?.duplicateSelection() }
-                .keyboardShortcut("d", modifiers: .command)
-                .disabled(editor?.selection.isEmpty ?? true)
+            // (on the board, KiCad's Duplicate: PCBClipboard.swift)
+            Button("Duplicate") {
+                if editor?.board == .pcb {
+                    editor?.pcbCommand { $0.editing.duplicateSelection(footprints: $0.selectedFootprints) }
+                } else {
+                    editor?.duplicateSelection()
+                }
+            }
+            .keyboardShortcut("d", modifiers: .command)
+            .disabled(editor == nil || (editor?.board != .pcb && editor?.selection.isEmpty ?? true))
         }
         CommandGroup(replacing: .help) {
             Button("Keyboard Shortcuts") { editor?.showShortcuts = true }

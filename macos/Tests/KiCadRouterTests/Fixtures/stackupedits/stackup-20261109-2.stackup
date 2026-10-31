@@ -1,0 +1,242 @@
+{
+ "heights": [
+  {
+   "layers": [
+    "B.Cu",
+    "In1.Cu"
+   ],
+   "height": 4766000
+  },
+  {
+   "layers": [
+    "B.Cu",
+    "In2.Cu"
+   ],
+   "height": 4656200
+  },
+  {
+   "layers": [
+    "B.Cu",
+    "In3.Cu"
+   ],
+   "height": 3940500
+  },
+  {
+   "layers": [
+    "B.Cu",
+    "In4.Cu"
+   ],
+   "height": 3345000
+  },
+  {
+   "layers": [
+    "B.Cu",
+    "In4.Cu"
+   ],
+   "height": 3345000
+  },
+  {
+   "layers": [
+    "B.Cu",
+    "In5.Cu"
+   ],
+   "height": 3022500
+  },
+  {
+   "layers": [
+    "B.Cu",
+    "In6.Cu"
+   ],
+   "height": 1886000
+  },
+  {
+   "layers": [
+    "B.Cu",
+    "In6.Cu"
+   ],
+   "height": 1886000
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "height": 5818000
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "B.Cu"
+   ],
+   "height": 5818000
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "In1.Cu"
+   ],
+   "height": 1052000
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "In2.Cu"
+   ],
+   "height": 1161700
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "In3.Cu"
+   ],
+   "height": 1877500
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "In4.Cu"
+   ],
+   "height": 2473000
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "In5.Cu"
+   ],
+   "height": 2795500
+  },
+  {
+   "layers": [
+    "F.Cu",
+    "In6.Cu"
+   ],
+   "height": 3932000
+  },
+  {
+   "layers": [
+    "In1.Cu",
+    "In2.Cu"
+   ],
+   "height": 109800
+  },
+  {
+   "layers": [
+    "In1.Cu",
+    "In3.Cu"
+   ],
+   "height": 825500
+  },
+  {
+   "layers": [
+    "In1.Cu",
+    "In4.Cu"
+   ],
+   "height": 1421000
+  },
+  {
+   "layers": [
+    "In1.Cu",
+    "In5.Cu"
+   ],
+   "height": 1743500
+  },
+  {
+   "layers": [
+    "In1.Cu",
+    "In6.Cu"
+   ],
+   "height": 2880000
+  },
+  {
+   "layers": [
+    "In2.Cu",
+    "In3.Cu"
+   ],
+   "height": 715700
+  },
+  {
+   "layers": [
+    "In2.Cu",
+    "In4.Cu"
+   ],
+   "height": 1311300
+  },
+  {
+   "layers": [
+    "In2.Cu",
+    "In5.Cu"
+   ],
+   "height": 1633700
+  },
+  {
+   "layers": [
+    "In2.Cu",
+    "In5.Cu"
+   ],
+   "height": 1633700
+  },
+  {
+   "layers": [
+    "In2.Cu",
+    "In6.Cu"
+   ],
+   "height": 2770200
+  },
+  {
+   "layers": [
+    "In2.Cu",
+    "In6.Cu"
+   ],
+   "height": 2770300
+  },
+  {
+   "layers": [
+    "In3.Cu",
+    "In4.Cu"
+   ],
+   "height": 595500
+  },
+  {
+   "layers": [
+    "In3.Cu",
+    "In5.Cu"
+   ],
+   "height": 918000
+  },
+  {
+   "layers": [
+    "In3.Cu",
+    "In6.Cu"
+   ],
+   "height": 2054500
+  },
+  {
+   "layers": [
+    "In4.Cu",
+    "In5.Cu"
+   ],
+   "height": 322500
+  },
+  {
+   "layers": [
+    "In4.Cu",
+    "In6.Cu"
+   ],
+   "height": 1459000
+  },
+  {
+   "layers": [
+    "In5.Cu",
+    "In6.Cu"
+   ],
+   "height": 1136500
+  },
+  {
+   "layers": [
+    "In5.Cu",
+    "In6.Cu"
+   ],
+   "height": 1136500
+  }
+ ]
+}

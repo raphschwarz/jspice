@@ -26,6 +26,12 @@ page writes them.
         each board summarized, its Gerber job file's stackup, and the sizes KiCad's router takes for each of its
         project's pre-defined track widths and via sizes as its track width menu picks them (JSON on standard output,
         the boards by their paths).
+    boardsetup.py rules BOARD.kicad_pcb
+        each of RULE_CASES (rules files broken in each of the ways KiCad's rules parser, its expression compiler and
+        its plausibility check report, and some whole) put in the dialog's Custom Rules page's editor and checked with
+        its Check rule syntax button, one after another in one run; writes BOARD.rules beside the board (JSON): for
+        each case its text, the report as the page shows it (its HTML window's text) and the targets of its links (each
+        "line:column", which takes the editor there).
 
 A board's summary: its (layers ...) and (general (thickness ...)); its (setup (stackup ...)) as a tree of words;
 every board item with an id (tracks, vias, zones, drawings, texts, groups...), by id: its kind, the layers it is on
@@ -274,6 +280,204 @@ timer.Start(250)
 '''
 
 
+# MARK: - The Custom Rules page's syntax check
+
+# Rules files to check, broken in each of the ways DRC_RULES_PARSER, the expression compiler and checkPlausibility
+# report, and some whole
+RULE_CASES = [
+    '(version 1)\n(rule a\n  (constraint clearance (min 0.2mm))\n  (condition "A.NetClass == \'Power\'"))\n',
+    '(rule a (constraint clearance (min 0.2mm)))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.2mm))\n',
+    '(version 1)\n(rule a\n  (constraint clearence (min 0.2mm)))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.2mm))\n  (condition "A.NetClass == "))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.2mm))\n  (condition "A.NetClas == \'x\'"))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.2mm))\n  (condition "A.isFoo(\'x\')"))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.2mm))\n  (condition "C.NetClass == \'Power\'"))\n',
+    '(version 1)\n(rule a (constraint clearance (min 2)))\n',
+    '(version 1)\n(rule a (constraint length (min 1mm) (max 2ps)))\n',
+    '(version 1)\n(rule a (constraint clearance (min 1ps)))\n',
+    '(version 1)\n(rule a (constraint clearance (within_diff_pairs)))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (layer Foo.Cu))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (layer outer) (layer inner))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (severity fatal))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (severity))\n',
+    '(version 1)\n(rule a (constraint disallow track trak))\n',
+    '(version 1)\n(rule a (constraint zone_connection full))\n',
+    '(version 1)\n(rule a (constraint min_resolved_spokes two))\n',
+    '(version 1)\n(rule a (constraint assertion))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (constraint clearance (min 0.2mm)))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm))\n  (condition "A.NetClass == \'x\')\n)\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm))\n  (condition "A.NetClass == \'${FOO}\'"))\n',
+    '(version 1)\n(rule a (constraint hole (min 0.3mm)))\n(rule b (constraint mechanical_clearance (min 0.3mm)))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition "A.Type == \'Via\'"))\n'
+    '(rule b (constraint clearance (min 0.2mm)) (condition " A.Type == \'Via\'"))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition "A.NetClass == \'Nope\' || B.NetClass != \'Clock\'"))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (layer In5.Cu))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm))\n  (condition "A.NetClass == \'x\' @ 1"))\n',
+    '(version 1)\n(rule (constraint clearance (min 0.1mm)))\n',
+    '(version)\n(rule a (constraint clearance (min 0.1mm)))\n',
+    '(version 1)\n(rule a (constraint clearence (min 0.1mm)) (severity fatal)\n  (layer Foo.Cu) (condition "A.Foo"))\n'
+    '(rule b (constraint track_width (min 1)) (constraint track_width (max 2mm)))\n',
+    '(version 1)\n(foo bar)\n(rule a (constraint clearance (min 0.1mm)))\n',
+    '(version 1)\n(rule a (constraint clearance (min 1mm +)))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition))\n',
+    '(version 1)\n(rule a constraint clearance)\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition "A.intersectsArea()"))\n',
+    '(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition "A.Type == \'Pad\' && (B.Type == \'Via\'"))\n',
+    '(version 1)\n(rule a (constraint via_count (max 2mm)))\n',
+    '(version 1)\n(rule "a b"\n\t(constraint track_width (min 0.2mm) (opt 0.25mm) (max 0.3mm))\n\t(condition "A.NetClass == \'Clock\'")\n\t(layer F.Cu))\n',
+]
+
+RULES_PLUGIN = r'''
+import json, os, traceback
+import wx
+import wx.html
+import wx.stc
+import pcbnew
+
+JOB = json.load(open(os.environ["JSPICE_RULES_JOB"]))
+state = {"phase": "wait", "ticks": 0, "case": 0}
+out = {"cases": []}
+
+
+def log(*a):
+    with open(JOB["log"], "a") as f:
+        f.write(" ".join(str(x) for x in a) + "\n")
+
+
+def walk(w):
+    yield w
+    for c in w.GetChildren():
+        yield from walk(c)
+
+
+def shown(title):
+    return next((w for w in wx.GetTopLevelWindows() if w.IsShown() and w.GetTitle() == title), None)
+
+
+def frame():
+    return next((w for w in wx.GetTopLevelWindows() if w.GetName() == "PcbFrame" and w.IsShown()), None)
+
+
+def menu(command):
+    f = frame()
+    m = f.GetMenuBar().GetMenu(0)
+    item = next(i for i in m.GetMenuItems() if i.GetItemLabelText() == command)
+    evt = wx.CommandEvent(wx.wxEVT_MENU, item.GetId())
+    evt.SetEventObject(m)
+    wx.CallAfter(m.ProcessEvent, evt)
+
+
+def links(cell, found):
+    # (the report's cells, in order: each link's target, as the report's links take the editor there)
+    while cell is not None:
+        link = cell.GetLink()
+        if link is not None and (not found or found[-1][1] is not cell):
+            found.append((link.GetHref(), cell))
+        if isinstance(cell, wx.html.HtmlContainerCell):
+            links(cell.GetFirstChild(), found)
+        cell = cell.GetNext()
+    return found
+
+
+def finish(code):
+    with open(JOB["out"], "w") as f:
+        json.dump(out, f)
+    os._exit(code)
+
+
+def tick():
+    try:
+        state["ticks"] += 1
+        if state["ticks"] > 1200:
+            log("timeout", state["phase"], state["case"])
+            finish(3)
+        phase = state["phase"]
+        if phase == "wait":
+            warning = shown("Warning")
+            if warning is not None:
+                warning.EndModal(wx.ID_OK)
+                state["quiet"] = 0
+                return
+            state["quiet"] = state.get("quiet", 0) + 1
+            if frame() is not None and pcbnew.GetBoard() is not None and state["quiet"] > 8:
+                menu("Board Setup...")
+                state["phase"] = "dialog"
+        elif phase == "dialog":
+            dialog = shown("Board Setup")
+            if dialog is None:
+                return
+            book = next(w for w in walk(dialog) if isinstance(w, wx.Treebook))
+            book.SetSelection(next(i for i in range(book.GetPageCount()) if book.GetPageText(i) == "Custom Rules"))
+            state["phase"] = "case"
+        elif phase == "case":
+            dialog = shown("Board Setup")
+            if state["case"] >= len(JOB["cases"]):
+                finish(0)
+            editor = next(w for w in walk(dialog) if isinstance(w, wx.stc.StyledTextCtrl) and w.IsShownOnScreen())
+            editor.SetText(JOB["cases"][state["case"]])
+            button = next(w for w in walk(dialog) if w.IsShownOnScreen()
+                          and w.GetToolTipText() == "Check rule syntax")
+            evt = wx.CommandEvent(wx.wxEVT_BUTTON, button.GetId())
+            evt.SetEventObject(button)
+            button.GetEventHandler().ProcessEvent(evt)
+            state["phase"] = "read"
+            state["wait"] = 3
+        elif phase == "read":
+            state["wait"] -= 1
+            if state["wait"] > 0:
+                return
+            dialog = shown("Board Setup")
+            report = next(w for w in walk(dialog) if isinstance(w, wx.html.HtmlWindow) and w.IsShownOnScreen())
+            hrefs = [h for h, _ in links(report.GetInternalRepresentation(), [])]
+            out["cases"].append({"text": JOB["cases"][state["case"]], "report": report.ToText(), "links": hrefs})
+            state["case"] += 1
+            state["phase"] = "case"
+    except Exception:
+        log(traceback.format_exc())
+        finish(2)
+
+
+timer = wx.Timer()
+timer.Bind(wx.EVT_TIMER, lambda e: tick())
+timer.Start(200)
+'''
+
+
+def rules(board):
+    """KiCad's syntax check of each of RULE_CASES on `board`'s Custom Rules page; BOARD.rules (JSON) beside it"""
+    with tempfile.TemporaryDirectory() as tmp:
+        share = os.path.join(tmp, "share")
+        plugins = os.path.join(share, "kicad", "10.0", "scripting", "plugins")
+        os.makedirs(plugins)
+        with open(os.path.join(plugins, "jspice_rules.py"), "w") as f:
+            f.write(RULES_PLUGIN)
+        config = os.path.join(tmp, "config")
+        shutil.copytree(kicad_config(), config, ignore=shutil.ignore_patterns("*.lck"))
+        work = os.path.join(tmp, "b.kicad_pcb")
+        shutil.copy(board, work)
+        project = os.path.splitext(board)[0] + ".kicad_pro"
+        if os.path.exists(project):
+            shutil.copy(project, os.path.join(tmp, "b.kicad_pro"))
+        job = {"cases": RULE_CASES, "log": os.path.join(tmp, "log.txt"), "out": os.path.join(tmp, "out.json")}
+        with open(os.path.join(tmp, "job.json"), "w") as f:
+            json.dump(job, f)
+        env = dict(os.environ, XDG_DATA_HOME=share, KICAD_CONFIG_HOME=config, JSPICE_RULES_JOB=os.path.join(tmp, "job.json"))
+        for attempt in range(4):
+            for p in (job["log"], job["out"]):
+                if os.path.exists(p):
+                    os.remove(p)
+            run = subprocess.run(["xvfb-run", "-a", "pcbnew", "b.kicad_pcb"], cwd=tmp, env=env, capture_output=True, text=True,
+                                 timeout=600)
+            text = open(job["log"]).read() if os.path.exists(job["log"]) else ""
+            if run.returncode == 0 and os.path.exists(job["out"]):
+                with open(os.path.splitext(board)[0] + ".rules", "w") as f:
+                    json.dump(json.load(open(job["out"])), f, indent=1)
+                    f.write("\n")
+                return
+        sys.exit(f"{board}: KiCad's syntax check did not finish ({run.returncode}): {text}")
+
+
 def kicad_config():
     home = os.environ.get("KICAD_CONFIG_HOME") or os.path.expanduser("~/.config/kicad")
     return home
@@ -501,5 +705,8 @@ if __name__ == "__main__":
         dialog(sys.argv[2:])
     elif len(sys.argv) >= 2 and sys.argv[1] == "check":
         check(sys.argv[2:])
+    elif len(sys.argv) >= 3 and sys.argv[1] == "rules":
+        for b in sys.argv[2:]:
+            rules(b)
     else:
         sys.exit(__doc__)

@@ -1,0 +1,175 @@
+{
+ "aligns": [
+  {
+   "action": "alignTop",
+   "board": "random-2-15-align-0.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "900652df-021c-48ce-a4e1-fcd39bf1bc88",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "6f91d995-6320-483b-ad42-8fc88bbb2b4f",
+    "ae3320da-3061-48a4-8782-f2b425f65d16",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8"
+   ],
+   "cursor": [
+    124.772,
+    68.591
+   ]
+  },
+  {
+   "action": "alignBottom",
+   "board": "random-2-15-align-1.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "900652df-021c-48ce-a4e1-fcd39bf1bc88",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "6f91d995-6320-483b-ad42-8fc88bbb2b4f",
+    "c712a109-e8b3-41d3-8878-9ba4f0827950",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8"
+   ],
+   "cursor": [
+    99.937,
+    49.944
+   ]
+  },
+  {
+   "action": "alignLeft",
+   "board": "random-2-15-align-2.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "900652df-021c-48ce-a4e1-fcd39bf1bc88",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "6f91d995-6320-483b-ad42-8fc88bbb2b4f",
+    "c712a109-e8b3-41d3-8878-9ba4f0827950",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8"
+   ],
+   "cursor": [
+    128.076,
+    68.731
+   ]
+  },
+  {
+   "action": "alignRight",
+   "board": "random-2-15-align-3.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "900652df-021c-48ce-a4e1-fcd39bf1bc88",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "6f91d995-6320-483b-ad42-8fc88bbb2b4f",
+    "c712a109-e8b3-41d3-8878-9ba4f0827950",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8"
+   ],
+   "cursor": [
+    115.896,
+    62.236
+   ]
+  },
+  {
+   "action": "alignCenterX",
+   "board": "random-2-15-align-4.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "900652df-021c-48ce-a4e1-fcd39bf1bc88",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "6f91d995-6320-483b-ad42-8fc88bbb2b4f",
+    "c712a109-e8b3-41d3-8878-9ba4f0827950",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8"
+   ],
+   "cursor": [
+    128.076,
+    68.731
+   ]
+  },
+  {
+   "action": "alignCenterY",
+   "board": "random-2-15-align-5.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "900652df-021c-48ce-a4e1-fcd39bf1bc88",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "6f91d995-6320-483b-ad42-8fc88bbb2b4f",
+    "c712a109-e8b3-41d3-8878-9ba4f0827950",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8"
+   ],
+   "cursor": [
+    99.937,
+    49.944
+   ]
+  },
+  {
+   "action": "distributeHorizontallyCenters",
+   "board": "random-2-15-align-6.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "900652df-021c-48ce-a4e1-fcd39bf1bc88",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "6f91d995-6320-483b-ad42-8fc88bbb2b4f",
+    "c712a109-e8b3-41d3-8878-9ba4f0827950",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8"
+   ],
+   "cursor": [
+    124.772,
+    68.591
+   ]
+  },
+  {
+   "action": "distributeHorizontallyGaps",
+   "board": "random-2-15-align-7.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "900652df-021c-48ce-a4e1-fcd39bf1bc88",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "6f91d995-6320-483b-ad42-8fc88bbb2b4f",
+    "c712a109-e8b3-41d3-8878-9ba4f0827950",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8"
+   ],
+   "cursor": [
+    115.896,
+    62.236
+   ]
+  },
+  {
+   "action": "distributeVerticallyCenters",
+   "board": "random-2-15-align-8.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "f6ce5231-9741-4464-a7a2-fe5f46c07933",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "c712a109-e8b3-41d3-8878-9ba4f0827950",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8",
+    "187bb51a-5533-454b-a840-700ebd9ee51a"
+   ],
+   "cursor": [
+    124.772,
+    68.591
+   ]
+  },
+  {
+   "action": "distributeVerticallyGaps",
+   "board": "random-2-15-align-9.kicad_pcb",
+   "selection": [
+    "1dd1e2fb-4efa-41a8-b3be-4fef858f9c65",
+    "5f7b8ef8-c88b-41dc-a653-4031c44d75c9",
+    "f6ce5231-9741-4464-a7a2-fe5f46c07933",
+    "eaea58f8-3869-4594-bb3e-aac8fb838a71",
+    "c712a109-e8b3-41d3-8878-9ba4f0827950",
+    "1296b519-076f-44a9-90a0-d8260b89b9b8",
+    "187bb51a-5533-454b-a840-700ebd9ee51a"
+   ],
+   "cursor": [
+    124.772,
+    68.591
+   ]
+  }
+ ],
+ "dialogs": []
+}

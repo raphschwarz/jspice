@@ -656,13 +656,19 @@ struct LibEvalCompiler {
     }
 
     let units: Units
-    /// The errors it reported (its error callback's messages)
+    /// The errors it reported (its error callback's messages), and where in the expression each is (its callback's
+    /// offset: the scanner's place before the token it was at, m_sourcePos, or a node's srcPos and the like)
     private(set) var errors: [String] = []
+    private(set) var errorPositions: [Int] = []
+    /// The first token the parser could not take, for its syntax error
+    private var failAt: Int?
     private var chars: [Unicode.Scalar] = []
     private var pos = 0
     private var tokens: [(Token, Int)] = []
     private var tokenIndex = 0
     private var parseFailed = false
+    /// Where the scanner was as it began the token it is reading
+    private var lexStart = 0
 
     init(units: Units) { self.units = units }
 
@@ -670,7 +676,20 @@ struct LibEvalCompiler {
     private var supportedUnitTypes: [RuleUnits.Unit] { units == .pcb ? RuleUnits.pcbUnitTypes : [] }
     private var supportedUnitsMessage: String { units == .pcb ? "must be mm, in, mil, deg, fs, or ps" : "" }
 
-    private mutating func reportError(_ message: String) { errors.append(message) }
+    private mutating func reportError(_ message: String, at position: Int) {
+        errors.append(message)
+        errorPositions.append(position)
+    }
+
+    /// The parse failed at token `index` (the first failure kept)
+    private mutating func fail(_ index: Int) {
+        parseFailed = true
+        if failAt == nil { failAt = index }
+    }
+
+    /// Where the scanner was before the next token: the end of the last one taken, and a node's srcPos (newNode
+    /// takes the compiler's source position as the grammar reduces it, the lookahead read)
+    private var sourcePos: Int { peekPos }
 
     // MARK: Tokens
 
@@ -689,6 +708,7 @@ struct LibEvalCompiler {
 
     /// The next token (getToken), nil where the lexer reported an error
     private mutating func nextToken() -> Token? {
+        lexStart = pos
         // (a string literal: everything to the next quote, a backslash before a quote taking it)
         func string() -> String {
             var rv = ""
@@ -750,12 +770,13 @@ struct LibEvalCompiler {
         let single: [Unicode.Scalar: Token] = ["+": .plus, "!": .boolNot, "-": .minus, "*": .mult, "/": .divide, "<": .less,
                                                ">": .greater, "(": .parenL, ")": .parenR, ";": .semicolon, ".": .structRef,
                                                ",": .comma]
+        let before = lexStart
         pos += 1
         if let t = single[ch] { return t }
         if ch == "$" && char(pos) == "{" {
-            reportError("Unresolved text variable reference")
+            reportError("Unresolved text variable reference", at: before + 2)
         } else {
-            reportError("Unrecognized character '\(Character(ch))'")
+            reportError("Unrecognized character '\(Character(ch))'", at: before)
         }
         return nil
     }
@@ -790,7 +811,6 @@ struct LibEvalCompiler {
         guard var left = parsePrefix() else { return nil }
         while let (prec, nonassoc) = Self.precedence(peek), prec >= minPrecedence {
             let opToken = advance()
-            let pos = peekPos
             guard let right = parseExpression(prec + 1) else { return nil }
             let op: NodeOp
             switch opToken {
@@ -809,12 +829,12 @@ struct LibEvalCompiler {
             case .divide: op = .div
             default: op = .structRef
             }
-            let n = Node(op, srcPos: pos)
+            let n = Node(op, srcPos: sourcePos)
             n.leaf = [left, right]
             left = n
             // (a non-associative operator twice in a row is the grammar's syntax error)
             if nonassoc, let (p2, _) = Self.precedence(peek), p2 == prec {
-                parseFailed = true
+                fail(tokenIndex)
                 return nil
             }
         }
@@ -822,61 +842,65 @@ struct LibEvalCompiler {
     }
 
     private mutating func parsePrefix() -> Node? {
-        let pos = peekPos
         switch advance() {
         case .value(let s):
-            let n = Node(.number, str: s, srcPos: pos)
             if case .unit(let u) = peek {
                 _ = advance()
-                n.leaf[0] = Node(.unit, idx: u, srcPos: peekPos)
+                let n = Node(.number, str: s, srcPos: sourcePos)
+                n.leaf[0] = Node(.unit, idx: u, srcPos: sourcePos)
+                return n
             }
-            return n
+            return Node(.number, str: s, srcPos: sourcePos)
         case .string(let s):
-            return Node(.string, str: s, srcPos: pos)
+            return Node(.string, str: s, srcPos: sourcePos)
         case .identifier(let s):
             if peek == .parenL {
                 _ = advance()
-                let call = Node(.funcCall, srcPos: pos)
-                call.leaf[0] = Node(.identifier, str: s, srcPos: pos)
                 if peek == .parenR {
                     _ = advance()
-                    call.leaf[1] = Node(.null, srcPos: peekPos)
+                    let call = Node(.funcCall, srcPos: sourcePos)
+                    call.leaf[0] = Node(.identifier, str: s, srcPos: sourcePos)
+                    call.leaf[1] = Node(.null, srcPos: sourcePos)
                     return call
                 }
-                guard let args = parseExpression(1), advance() == .parenR else {
-                    parseFailed = true
+                guard let args = parseExpression(1) else { return nil }
+                guard advance() == .parenR else {
+                    fail(tokenIndex - 1)
                     return nil
                 }
+                let call = Node(.funcCall, srcPos: sourcePos)
+                call.leaf[0] = Node(.identifier, str: s, srcPos: sourcePos)
                 call.leaf[1] = args
                 return call
             }
-            return Node(.identifier, str: s, srcPos: pos)
+            return Node(.identifier, str: s, srcPos: sourcePos)
         case .parenL:
-            guard let inner = parseExpression(1), advance() == .parenR else {
-                parseFailed = true
+            guard let inner = parseExpression(1) else { return nil }
+            guard advance() == .parenR else {
+                fail(tokenIndex - 1)
                 return nil
             }
             // (a copy of the node within)
-            let n = Node(inner.op, str: inner.str, idx: inner.idx, srcPos: peekPos)
+            let n = Node(inner.op, str: inner.str, idx: inner.idx, srcPos: sourcePos)
             n.leaf = inner.leaf
             return n
         case .boolNot:
             guard let operand = parseExpression(7) else { return nil }
-            let n = Node(.boolNot, srcPos: pos)
+            let n = Node(.boolNot, srcPos: sourcePos)
             n.leaf[0] = operand
             return n
         case .minus:
             guard let operand = parseExpression(8) else { return nil }
-            let n = Node(.sub, srcPos: pos)
-            n.leaf = [Node(.number, srcPos: pos), operand]
+            let n = Node(.sub, srcPos: sourcePos)
+            n.leaf = [Node(.number, srcPos: sourcePos), operand]
             return n
         case .plus:
             guard let operand = parseExpression(8) else { return nil }
-            let n = Node(operand.op, str: operand.str, idx: operand.idx, srcPos: pos)
+            let n = Node(operand.op, str: operand.str, idx: operand.idx, srcPos: sourcePos)
             n.leaf = operand.leaf
             return n
         default:
-            parseFailed = true
+            fail(tokenIndex - 1)
             return nil
         }
     }
@@ -889,6 +913,8 @@ struct LibEvalCompiler {
         chars = Array(text.unicodeScalars)
         pos = 0
         errors = []
+        errorPositions = []
+        failAt = nil
         tokens = []
         tokenIndex = 0
         parseFailed = false
@@ -907,8 +933,11 @@ struct LibEvalCompiler {
         var tree: Node?
         if peek != .ends {
             tree = parseExpression(1)
-            if parseFailed || tree == nil || peek != .ends {
-                reportError("Syntax error")
+            if !parseFailed && tree != nil && peek != .ends { fail(tokenIndex) }
+            if parseFailed || tree == nil {
+                // (where the scanner was before the token the grammar could not take)
+                let at = failAt.map { $0 < tokens.count ? tokens[$0].1 : chars.count } ?? chars.count
+                reportError("Syntax error", at: at)
                 return nil
             }
         }
@@ -950,19 +979,20 @@ struct LibEvalCompiler {
         var stack: [Node] = [tree]
         var numericValueCount = 0
         var missingUnitsMsg = ""
+        var missingUnitsPos = 0
         var jumps: [ObjectIdentifier: Int] = [:]
         while let node = stack.last {
             switch node.op {
             case .funcCall:
                 if node.uop == nil {
-                    reportError("Unknown parent of function parameters")
+                    reportError("Unknown parent of function parameters", at: node.srcPos)
                     node.uop = .pushValue(RuleValue(0))
                 }
                 node.isTerminal = true
             case .structRef:
                 guard let l0 = node.leaf[0], let l1 = node.leaf[1] else { break }
                 if l0.op != .identifier {
-                    reportError("Unknown parent of property")
+                    reportError("Unknown parent of property", at: l0.srcPos)
                     l0.isVisited = true
                     l1.isVisited = true
                     node.uop = .pushValue(RuleValue(0))
@@ -975,9 +1005,9 @@ struct LibEvalCompiler {
                     let propName = l1.str ?? ""
                     let vref = RuleProperties.makeVarRef(itemName, propName)
                     if vref == nil {
-                        reportError("Unrecognized item '\(itemName)'")
+                        reportError("Unrecognized item '\(itemName)'", at: l0.srcPos - itemName.unicodeScalars.count)
                     } else if vref!.type == .parseError {
-                        reportError("Unrecognized property '\(propName)'")
+                        reportError("Unrecognized property '\(propName)'", at: l1.srcPos - propName.unicodeScalars.count)
                     }
                     l0.isVisited = true
                     l1.isVisited = true
@@ -985,13 +1015,13 @@ struct LibEvalCompiler {
                     node.isTerminal = true
                 case .funcCall:
                     let vref = RuleProperties.makeVarRef(itemName, "")
-                    if vref == nil { reportError("Unrecognized item '\(itemName)'") }
+                    if vref == nil { reportError("Unrecognized item '\(itemName)'", at: l0.srcPos - itemName.unicodeScalars.count) }
                     let functionName = l1.leaf[0]?.str ?? ""
                     let lower = functionName.lowercased()
                     let fn = RuleFunctions.lookup(lower)
                     if RuleFunctions.geometryDependent.contains(lower) { code.hasGeometryDependentFunctions = true }
                     let params = Self.squash(l1.leaf[1])
-                    if fn == nil { reportError("Unrecognized function '\(functionName)'") }
+                    if fn == nil { reportError("Unrecognized function '\(functionName)'", at: l0.srcPos + 1) }
                     if let fn {
                         // preflight the call: its arguments as strings, its errors the compiler's
                         let preflight = RuleContext(constraint: .null, layer: KiLayer.fCu, items: (nil, nil), board: nil)
@@ -1000,7 +1030,8 @@ struct LibEvalCompiler {
                         preflight.errorHandler = { preflightErrors.append($0) }
                         fn(preflight, vref)
                         _ = preflight.pop()
-                        errors += preflightErrors
+                        // (each at the end of the arguments, less one)
+                        for e in preflightErrors { reportError(e, at: (l1.leaf[1]?.srcPos ?? 0) - 1) }
                     }
                     l0.isVisited = true
                     l1.isVisited = true
@@ -1013,8 +1044,10 @@ struct LibEvalCompiler {
                     l1.uop = .methodCall(fn, vref)
                     node.isTerminal = false
                 default:
-                    if RuleProperties.makeVarRef(itemName, l1.str ?? "") == nil { reportError("Unrecognized item '\(itemName)'") }
-                    reportError("Unrecognized property '\(l1.str ?? "")'")
+                    if RuleProperties.makeVarRef(itemName, l1.str ?? "") == nil {
+                        reportError("Unrecognized item '\(itemName)'", at: l0.srcPos - itemName.unicodeScalars.count)
+                    }
+                    reportError("Unrecognized property '\(l1.str ?? "")'", at: l0.srcPos + 1)
                     l0.isVisited = true
                     l1.isVisited = true
                     node.uop = .pushValue(RuleValue(0))
@@ -1026,7 +1059,7 @@ struct LibEvalCompiler {
                 if node.str == nil {
                     value = 0
                 } else if let son = node.leaf[0], son.op == .unit {
-                    if supportedUnits.isEmpty { reportError("Unexpected units for '\(node.str!)'") }
+                    if supportedUnits.isEmpty { reportError("Unexpected units for '\(node.str!)'", at: node.srcPos) }
                     let u = son.idx
                     unitsType = u < supportedUnitTypes.count ? supportedUnitTypes[u] : .unscaled
                     value = RuleUnits.convert(node.str!, u)
@@ -1034,6 +1067,7 @@ struct LibEvalCompiler {
                 } else {
                     if !supportedUnitsMessage.isEmpty {
                         missingUnitsMsg = "Missing units for '\(node.str!)' (\(supportedUnitsMessage))"
+                        missingUnitsPos = node.srcPos
                     }
                     value = RuleUnits.doubleValue(node.str!)
                 }
@@ -1048,7 +1082,7 @@ struct LibEvalCompiler {
                 node.isTerminal = true
             case .identifier:
                 let vref = RuleProperties.makeVarRef(node.str ?? "", "")
-                if vref == nil { reportError("Unrecognized item '\(node.str ?? "")'") }
+                if vref == nil { reportError("Unrecognized item '\(node.str ?? "")'", at: node.srcPos - (node.str ?? "").unicodeScalars.count) }
                 node.uop = .pushVar(vref)
                 node.isTerminal = true
             default:
@@ -1091,7 +1125,7 @@ struct LibEvalCompiler {
             stack.removeLast()
         }
         // (a single number with no units is reported: it would be nanometres)
-        if !missingUnitsMsg.isEmpty && numericValueCount == 1 { reportError(missingUnitsMsg) }
+        if !missingUnitsMsg.isEmpty && numericValueCount == 1 { reportError(missingUnitsMsg, at: missingUnitsPos) }
     }
 }
 
@@ -1103,6 +1137,8 @@ final class RuleCondition {
     private(set) var code: RuleCode?
     /// What its compilation reported (the code generation's errors, a syntax error)
     private(set) var errors: [String] = []
+    /// Where in the expression each is
+    private(set) var errorPositions: [Int] = []
 
     init(_ expression: String) { self.expression = expression }
 
@@ -1112,6 +1148,7 @@ final class RuleCondition {
         var compiler = LibEvalCompiler(units: .pcb)
         code = compiler.compile(expression)
         errors = compiler.errors
+        errorPositions = compiler.errorPositions
         if code == nil {
             // (KiCad's code is the empty one it started with, which leaves nothing on the stack: false)
             code = RuleCode()

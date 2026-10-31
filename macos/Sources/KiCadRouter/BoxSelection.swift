@@ -37,6 +37,8 @@ public struct BoxSelection: Sendable {
         var vertices: [IPoint]
         /// Its hole (GetEffectiveHoleShape: a point where it has none)
         var hole: Shape
+        /// Its centre on the board (PAD::GetPosition)
+        var position = IPoint.zero
     }
 
     struct Drawing {
@@ -103,7 +105,7 @@ public struct BoxSelection: Sendable {
                 } else {
                     for s in world.effectiveShapes(p) { box.merge(s.bbox) }
                 }
-                f.pads.append(Pad(box: box, vertices: poly.polygons.flatMap { $0.flatMap(\.points) }, hole: hole))
+                f.pads.append(Pad(box: box, vertices: poly.polygons.flatMap { $0.flatMap(\.points) }, hole: hole, position: p.pos))
             }
             for zone in fp.all("zone") {
                 // (its outline as KiCad reads it, an arc of it made a line of points)
@@ -139,8 +141,9 @@ public struct BoxSelection: Sendable {
         }
     }
 
-    /// A footprint's drawing on the board and its box (BoardWorld.readDrawing, EDA_SHAPE::getBoundingBox)
-    static func drawing(_ node: SExpr, _ placement: BoardWorld.FootprintPlacement, _ world: BoardWorld, maxError: Int) -> Drawing? {
+    /// A footprint's drawing on the board and its box (BoardWorld.readDrawing, EDA_SHAPE::getBoundingBox); the board's
+    /// own, with no placement
+    static func drawing(_ node: SExpr, _ placement: BoardWorld.FootprintPlacement?, _ world: BoardWorld, maxError: Int) -> Drawing? {
         guard var d = world.readDrawing(node, placement: placement) else { return nil }
         let layer = node.value("layer") ?? ""
         var box: IBox
@@ -162,7 +165,9 @@ public struct BoxSelection: Sendable {
             guard let b = IBox(points: d.poly) else { return nil }
             box = b
         case .bezier:
-            let pts = (node["pts"]?.arguments ?? []).filter { $0.head == "xy" }.map { placement.apply(BoardWorld.point($0)) }
+            let pts = (node["pts"]?.arguments ?? []).filter { $0.head == "xy" }.map { p in
+                placement.map { $0.apply(BoardWorld.point(p)) } ?? BoardWorld.point(p)
+            }
             guard pts.count == 4 else { return nil }
             (d.start, d.end) = (pts[0], pts[3])
             points = Outlines.bezierPoints(pts[0], pts[1], pts[2], pts[3], maxError: maxError)

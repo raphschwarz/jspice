@@ -175,6 +175,11 @@ final class PCBEditing: ObservableObject {
     var zoneDrag: PCBZoneDrag?
     /// The properties sheet open: a zone's, a footprint's or a pad's (PCBProperties.swift)
     @Published var propertiesSheet: PCBPropertiesSheet?
+    /// The editor's sheet open: Paste Special, Create Array, the rules editor or the stackup's (PCBClipboard.swift,
+    /// PCBArray.swift, PCBRulesEditor.swift, PCBStackup.swift)
+    @Published var editorSheet: PCBEditorSheet?
+    /// The view's points to a millimetre as last drawn, for KiCad's distances in pixels (a copy's reference point)
+    var viewScale = 10.0
 
     static let widths: [Double] = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0]
     /// Vias' diameters and drills to choose from (mm)

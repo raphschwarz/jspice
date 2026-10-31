@@ -409,7 +409,11 @@ struct RulesLexer {
 
     private mutating func readLine() -> Bool {
         lineIndex += 1
-        guard lineIndex < lines.count else { return false }
+        guard lineIndex < lines.count else {
+            // (LINE_READER counts the line it could not read: an error at the end is on the line after the last)
+            lineNumber = lineIndex + 1
+            return false
+        }
         line = lines[lineIndex]
         lineNumber = lineIndex + 1
         pos = 0
@@ -497,13 +501,15 @@ struct RulesLexer {
                 } else if line[head] == 0x22 {
                     curText = String(decoding: text, as: UTF8.self)
                     pos = head + 1
-                    return finish(.string, start)
+                    // (a quoted string's place is its text's, after its opening quote)
+                    return finish(.string, start + 1)
                 } else {
                     text.append(line[head])
                     head += 1
                 }
             }
-            throw RulesError(message: "Unterminated delimited string", line: lineNumber, offset: start)
+            // (where KiCad stops: past the opening quote and what it read after it, to the line's end)
+            throw RulesError(message: "Unterminated delimited string", line: lineNumber, offset: start + 1 + text.count)
         }
         var text: [UInt8] = []
         while pos < line.count && !Self.isSep(line[pos]) {
@@ -534,10 +540,44 @@ struct RulesError: Error {
     var offset = 0
 }
 
+/// What KiCad's check of a rules file says of it (Board Setup's Custom Rules page, its "Check rule syntax": the
+/// DRC_RULES_PARSER with a reporter, then PANEL_SETUP_RULES::checkPlausibility): an error, with the line and column
+/// its link takes the editor to (KiCad's href, `line:offset`, the column counted from 1), a warning, or that it found
+/// no errors
+public struct RulesMessage: Sendable, Equatable, CustomStringConvertible {
+    public enum Severity: String, Sendable { case error, warning, info }
+
+    public var severity: Severity
+    /// The message as KiCad's report shows it: its linked part, and what follows the link ("ERROR: " aside)
+    public var text: String
+    public var rest = ""
+    /// Where it links to, for an error
+    public var line: Int?
+    public var column: Int?
+
+    public init(_ severity: Severity, _ text: String, rest: String = "", line: Int? = nil, column: Int? = nil) {
+        (self.severity, self.text, self.rest, self.line, self.column) = (severity, text, rest, line, column)
+    }
+
+    /// The whole message, as KiCad's report reads
+    public var message: String { text + rest }
+
+    /// As KiCad's report writes it (its HTML: an error's link to where it is)
+    public var html: String {
+        switch severity {
+        case .error: return line.map { "ERROR: <a href='\($0):\(column ?? 0)'>\(text)</a>\(rest)" } ?? "ERROR: \(text)\(rest)"
+        case .warning, .info: return text + rest
+        }
+    }
+
+    public var description: String { html }
+}
+
 // MARK: - The rules file (DRC_RULES_PARSER)
 
-/// A .kicad_dru's rules as KiCad's DRC_RULES_PARSER reads them. Any error in it is KiCad's PARSE_ERROR (it reads the
-/// file with no reporter, so each error throws), and KiCad then takes none of the file's rules.
+/// A .kicad_dru's rules as KiCad's DRC_RULES_PARSER reads them. With no reporter (as KiCad's DRC reads the file) any
+/// error in it is KiCad's PARSE_ERROR, thrown, and KiCad then takes none of the file's rules; with one (`messages`,
+/// as Board Setup checks the file) each error is said and the parser goes on as KiCad's does.
 struct DesignRulesParser {
     /// DRC_RULE_FILE_VERSION
     static let fileVersion = 1
@@ -545,31 +585,78 @@ struct DesignRulesParser {
     private var lex: RulesLexer
     private(set) var requiredVersion = 0
     private(set) var tooRecent = false
+    /// What the parser has said, when it reports (nil: it throws instead)
+    private(set) var messages: [RulesMessage]?
 
-    init(_ text: String) { lex = RulesLexer(text) }
-
-    private func error(_ message: String) -> RulesError {
-        RulesError(message: message, line: lex.lineNumber, offset: lex.offset)
+    init(_ text: String, reporting: Bool = false) {
+        lex = RulesLexer(text)
+        messages = reporting ? [] : nil
     }
 
-    /// checkUnresolvedTextVariable: a "${" in the token (a component class selector, ${CLASS:...}, aside)
-    private func checkUnresolvedTextVariable() throws {
-        let t = lex.curText
-        var search = t.startIndex
-        while let r = t.range(of: "${", range: search..<t.endIndex) {
-            if let end = t.range(of: "}", range: r.upperBound..<t.endIndex),
-               t[r.upperBound..<end.lowerBound].uppercased().hasPrefix("CLASS:") {
-                search = r.upperBound
-                continue
+    /// reportError: said, at the token (`delta` on in it), or thrown; a message's part after a '|' outside its link
+    private mutating func report(_ message: String, delta: Int = 0) throws {
+        let parts = message.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+        let first = String(parts[0]), rest = parts.count > 1 ? String(parts[1]) : ""
+        guard messages != nil else {
+            throw RulesError(message: "ERROR: " + first + rest, line: lex.lineNumber, offset: lex.offset + 1 + delta)
+        }
+        messages?.append(RulesMessage(.error, first, rest: rest, line: lex.lineNumber, column: lex.offset + 1 + delta))
+    }
+
+    /// An error of an expression's compiler (its message and where in the expression), at `column` of `line` on
+    private mutating func reportExpression(_ message: String, line: Int, column: Int) throws {
+        let parts = message.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+        let first = String(parts[0]), rest = parts.count > 1 ? String(parts[1]) : ""
+        guard messages != nil else { throw RulesError(message: "ERROR: " + first + rest, line: line, offset: column) }
+        messages?.append(RulesMessage(.error, first, rest: rest, line: line, column: column))
+    }
+
+    /// reportDeprecation: a warning, when reporting
+    private mutating func deprecated(_ old: String, _ new: String) {
+        messages?.append(RulesMessage(.warning, "The '\(old)' keyword has been deprecated.  Please use '\(new)' instead."))
+    }
+
+    /// checkUnresolvedTextVariable: a "${" in the token (a component class selector, ${CLASS:...}, aside), said
+    private mutating func checkUnresolvedTextVariable() throws -> Bool {
+        let t = Array(lex.curText.utf8)
+        var i = 0
+        while i + 1 < t.count {
+            if t[i] == 0x24 && t[i + 1] == 0x7B {
+                if let end = t[(i + 2)...].firstIndex(of: 0x7D),
+                   String(decoding: t[(i + 2)..<end], as: UTF8.self).uppercased().hasPrefix("CLASS:") {
+                    i += 2
+                    continue
+                }
+                try report("Unresolved text variable", delta: i)
+                return true
             }
-            throw error("Unresolved text variable")
+            i += 1
+        }
+        return false
+    }
+
+    /// parseUnknown: the rest of the clause skipped, to its closing parenthesis
+    private mutating func parseUnknown() throws {
+        var depth = 1
+        var token = try lex.next()
+        while token != .eof {
+            if token == .left { depth += 1 }
+            if token == .right {
+                depth -= 1
+                if depth == 0 { break }
+            }
+            token = try lex.next()
         }
     }
 
-    /// expected: the token is not one the parser can take here
-    private func expected(_ what: String) -> RulesError {
-        if lex.curText.hasPrefix("${") { return error("Unresolved text variable.") }
-        return error("Unrecognized item '\(lex.curText)'. Expected \(what).")
+    /// expected: the token is not one the parser can take here (said), the rest of its clause skipped
+    private mutating func expected(_ what: String) throws {
+        if lex.curText.hasPrefix("${") {
+            try report("Unresolved text variable.")
+        } else {
+            try report("Unrecognized item '\(lex.curText)'.| Expected \(what).")
+        }
+        try parseUnknown()
     }
 
     /// Parse
@@ -578,32 +665,39 @@ struct DesignRulesParser {
         var haveVersion = false
         var token = try lex.next()
         while token != .eof {
-            try checkUnresolvedTextVariable()
-            if token != .left { throw error("Missing '('.") }
+            if try checkUnresolvedTextVariable() {
+                token = try lex.next()
+                continue
+            }
+            if token != .left { try report("Missing '('.") }
             token = try lex.next()
-            if !haveVersion && token != .keyword("version") { throw error("Missing version statement.") }
+            if !haveVersion && token != .keyword("version") {
+                try report("Missing version statement.")
+                haveVersion = true
+            }
             switch token {
             case .keyword("version"):
                 haveVersion = true
                 token = try lex.next()
                 if token == .right {
-                    throw error("Missing version number.")
+                    try report("Missing version number.")
                 } else if token == .number {
                     requiredVersion = Self.strtol(lex.curText)
                     tooRecent = requiredVersion > Self.fileVersion
-                    if try lex.next() != .right { throw error("Missing ')'.") }
+                    if try lex.next() != .right { try report("Missing ')'.") }
                 } else {
-                    throw expected("version number")
+                    try expected("version number")
                 }
             case .keyword("rule"):
                 rules.append(try parseRule())
             case .eof:
-                throw error("Incomplete statement.")
+                try report("Incomplete statement.")
             default:
-                throw expected("rule or version")
+                try expected("rule or version")
             }
             token = try lex.next()
         }
+        if messages?.isEmpty == true { messages?.append(RulesMessage(.info, "No errors found.")) }
         return rules
     }
 
@@ -620,13 +714,16 @@ struct DesignRulesParser {
     private mutating func parseRule() throws -> DesignRule {
         let rule = DesignRule()
         var token = try lex.next()
-        if !RulesLexer.isSymbol(token) { throw error("Missing rule name.") }
-        try checkUnresolvedTextVariable()
+        if !RulesLexer.isSymbol(token) { try report("Missing rule name.") }
+        _ = try checkUnresolvedTextVariable()
         rule.name = lex.curText
         token = try lex.next()
         while token != .right && token != .eof {
-            try checkUnresolvedTextVariable()
-            if token != .left { throw error("Missing '('.") }
+            if try checkUnresolvedTextVariable() {
+                token = try lex.next()
+                continue
+            }
+            if token != .left { try report("Missing '('.") }
             token = try lex.next()
             switch token {
             case .keyword("constraint"):
@@ -634,31 +731,38 @@ struct DesignRulesParser {
             case .keyword("condition"):
                 token = try lex.next()
                 if token == .right {
-                    throw error("Missing condition expression.")
+                    try report("Missing condition expression.")
                 } else if RulesLexer.isSymbol(token) {
-                    try checkUnresolvedTextVariable()
+                    _ = try checkUnresolvedTextVariable()
                     let condition = RuleCondition(lex.curText)
-                    // (the parser compiles it with no reporter: only a syntax error tells; what the code generation
-                    // finds wrong is found when the engine compiles its rules, which throws then)
-                    if !condition.compile() { throw error("Could not parse expression '\(lex.curText)'.") }
+                    // (DRC_RULE_CONDITION::Compile: each of its compiler's errors said at its place in the
+                    // expression, from the token's line and column, when reporting; a syntax error fails it)
+                    let ok = condition.compile()
+                    if messages != nil {
+                        for (e, at) in zip(condition.errors, condition.errorPositions) {
+                            try reportExpression(e, line: lex.lineNumber, column: lex.offset + 1 + at)
+                        }
+                    }
+                    if !ok { try report("Could not parse expression '\(lex.curText)'.") }
                     rule.condition = condition
-                    if try lex.next() != .right { throw error("Missing ')'.") }
+                    if try lex.next() != .right { try report("Missing ')'.") }
                 } else {
-                    throw expected("quoted expression")
+                    try expected("quoted expression")
                 }
             case .keyword("layer"):
-                if rule.layerCondition != .all { throw error("'layer' keyword already present.") }
+                if rule.layerCondition != .all { try report("'layer' keyword already present.") }
                 (rule.layerCondition, rule.layerSource) = try parseLayer()
             case .keyword("severity"):
                 rule.severity = try parseSeverity()
             case .eof:
-                throw error("Incomplete statement.")
+                try report("Incomplete statement.")
+                return rule
             default:
-                throw expected("constraint, condition, or disallow")
+                try expected("constraint, condition, or disallow")
             }
             token = try lex.next()
         }
-        if lex.curTok != .right { throw error("Missing ')'.") }
+        if lex.curTok != .right { try report("Missing ')'.") }
         return rule
     }
 
@@ -674,28 +778,45 @@ struct DesignRulesParser {
                 if depth == 0 { break }
             }
             if !expr.isEmpty { expr += lex.curSeparator }
-            try checkUnresolvedTextVariable()
+            _ = try checkUnresolvedTextVariable()
             expr += lex.curText
             token = try lex.next()
         }
         return expr
     }
 
+    static let constraintTypes = "assertion, clearance, hole_clearance, edge_clearance, physical_clearance, "
+        + "physical_hole_clearance, courtyard_clearance, silk_clearance, hole_size, "
+        + "hole_to_hole, track_width, track_angle, track_segment_length, annular_width, "
+        + "disallow, zone_connection, thermal_relief_gap, thermal_spoke_width, "
+        + "min_resolved_spokes, solder_mask_expansion, solder_mask_sliver, "
+        + "solder_paste_abs_margin, solder_paste_rel_margin, length, skew, via_count, "
+        + "via_dangling, via_diameter, diff_pair_gap, diff_pair_uncoupled or bridged_mask"
+
     /// parseConstraint
     private mutating func parseConstraint(_ rule: DesignRule) throws {
         var c = DRCConstraint(.null)
         var unitsType = RuleUnits.DataType.unitless
         var token = try lex.next()
-        try checkUnresolvedTextVariable()
+        if try checkUnresolvedTextVariable() { return }
         // (deprecated names of three)
         if token == .keyword("mechanical_clearance") {
+            deprecated("mechanical_clearance", "physical_clearance")
             token = .keyword("physical_clearance")
         } else if token == .keyword("mechanical_hole_clearance") {
+            deprecated("mechanical_hole_clearance", "physical_hole_clearance")
             token = .keyword("physical_hole_clearance")
         } else if token == .keyword("hole") {
+            deprecated("hole", "hole_size")
             token = .keyword("hole_size")
         } else if token == .right || token == .eof {
-            throw error("Missing constraint type.")
+            try report("Missing constraint type.|  Expected assertion, clearance, hole_clearance, edge_clearance, "
+                       + "physical_clearance, physical_hole_clearance, courtyard_clearance, silk_clearance, hole_size, "
+                       + "hole_to_hole, track_width, track_angle, track_segment_length, annular_width, disallow, "
+                       + "zone_connection, thermal_relief_gap, thermal_spoke_width, min_resolved_spokes, "
+                       + "solder_mask_expansion, solder_paste_abs_margin, solder_paste_rel_margin, length, skew, "
+                       + "via_count, via_dangling, via_diameter, diff_pair_gap or diff_pair_uncoupled.")
+            return
         }
         let types: [String: DRCConstraintType] = [
             "assertion": .assertion, "clearance": .clearance, "creepage": .creepage, "hole_clearance": .holeClearance,
@@ -714,16 +835,11 @@ struct DesignRulesParser {
             "bridged_mask": .bridgedMask,
         ]
         guard case .keyword(let kw) = token, let type = types[kw] else {
-            throw expected("assertion, clearance, hole_clearance, edge_clearance, physical_clearance, "
-                           + "physical_hole_clearance, courtyard_clearance, silk_clearance, hole_size, "
-                           + "hole_to_hole, track_width, track_angle, track_segment_length, annular_width, "
-                           + "disallow, zone_connection, thermal_relief_gap, thermal_spoke_width, "
-                           + "min_resolved_spokes, solder_mask_expansion, solder_mask_sliver, "
-                           + "solder_paste_abs_margin, solder_paste_rel_margin, length, skew, via_count, "
-                           + "via_dangling, via_diameter, diff_pair_gap, diff_pair_uncoupled or bridged_mask")
+            try expected(Self.constraintTypes)
+            return
         }
         c.type = type
-        if rule.find(c.type) != nil { throw error("Rule already has a '\(lex.curText)' constraint.") }
+        if rule.find(c.type) != nil { try report("Rule already has a '\(lex.curText)' constraint.") }
         let unitless = [.viaCount, .minResolvedSpokes, .trackAngle, .viaDangling, .bridgedMask].contains(c.type)
         let allowsTimeDomain = c.type == .length || c.type == .skew
         switch c.type {
@@ -744,12 +860,16 @@ struct DesignRulesParser {
                 case .keyword("graphic"): c.disallowFlags.insert(.graphics)
                 case .keyword("hole"): c.disallowFlags.insert(.holes)
                 case .keyword("footprint"): c.disallowFlags.insert(.footprints)
-                case .eof: throw error("Missing ')'.")
+                case .eof:
+                    try report("Missing ')'.")
+                    return
                 default:
-                    throw expected("track, via, through_via, blind_via, micro_via, buried_via, pad, zone, text, graphic, hole, or footprint.")
+                    try expected("track, via, through_via, blind_via, micro_via, buried_via, pad, zone, text, graphic, hole, or footprint.")
+                    return
                 }
                 token = try lex.next()
             }
+            if lex.curTok != .right { try report("Missing ')'.") }
             rule.add(c)
             return
         case .zoneConnection:
@@ -759,33 +879,41 @@ struct DesignRulesParser {
             case .keyword("solid"): c.zoneConnection = .full
             case .keyword("thermal_reliefs"): c.zoneConnection = .thermal
             case .keyword("none"): c.zoneConnection = .none
-            case .eof: throw error("Missing ')'.")
-            default: throw expected("solid, thermal_reliefs or none.")
+            case .eof:
+                try report("Missing ')'.")
+                return
+            default:
+                try expected("solid, thermal_reliefs or none.")
+                return
             }
-            if try lex.next() != .right { throw error("Missing ')'.") }
+            if try lex.next() != .right { try report("Missing ')'.") }
             rule.add(c)
             return
         case .minResolvedSpokes:
             token = try lex.next()
             if token == .number {
                 c.value.setMin(Self.strtol(lex.curText))
-                if try lex.next() != .right { throw error("Missing ')'.") }
+                if try lex.next() != .right { try report("Missing ')'.") }
             } else {
-                throw expected("number")
+                try expected("number")
             }
             rule.add(c)
             return
         case .assertion:
             token = try lex.next()
-            if token == .right { throw error("Missing assertion expression.") }
+            if token == .right { try report("Missing assertion expression.") }
             if RulesLexer.isSymbol(token) {
-                // (compiled with no reporter, what it finds wrong told to no one)
                 let test = RuleCondition(lex.curText)
                 _ = test.compile()
+                if messages != nil {
+                    for (e, at) in zip(test.errors, test.errorPositions) {
+                        try reportExpression(e, line: lex.lineNumber, column: lex.offset + 1 + at)
+                    }
+                }
                 c.test = test
-                if try lex.next() != .right { throw error("Missing ')'.") }
+                if try lex.next() != .right { try report("Missing ')'.") }
             } else {
-                throw expected("quoted expression")
+                try expected("quoted expression")
             }
             rule.add(c)
             return
@@ -794,22 +922,32 @@ struct DesignRulesParser {
         }
         token = try lex.next()
         while token != .right && token != .eof {
-            if token != .left { throw error("Missing '('.") }
+            if token != .left { try report("Missing '('.") }
             token = try lex.next()
             switch token {
             case .keyword("within_diff_pairs"):
-                if c.type == .skew { c.skewWithinDiffPairs = true } else { throw error("within_diff_pairs option invalid for constraint type.") }
-                if try lex.next() != .right { throw error("Missing ')'.") }
+                if c.type == .skew {
+                    c.skewWithinDiffPairs = true
+                } else {
+                    try report("within_diff_pairs option invalid for constraint type.")
+                }
+                if try lex.next() != .right { try report("Missing ')'.") }
             case .keyword("min"), .keyword("max"), .keyword("opt"):
                 let which = lex.curText
+                // (where its value starts: the keyword's column, past it)
+                // (GetTokenString( token ): the keyword in quotes)
+                let at = lex.offset + 1 + which.utf8.count + 2
                 let expr = try parseExpression()
-                if expr.isEmpty { throw error("Missing \(which) value.") }
-                let (value, units) = try parseValueWithUnits(expr, unitless: unitless)
+                if expr.isEmpty {
+                    try report("Missing \(which) value.")
+                    break
+                }
+                let (value, units) = try parseValueWithUnits(expr, unitless: unitless, at: at)
                 // validateAndSetValueWithUnits
                 let typeTmp = RuleUnits.dataType(units)
-                if !allowsTimeDomain && typeTmp == .time { throw error("Time based units not allowed for constraint type.") }
+                if !allowsTimeDomain && typeTmp == .time { try report("Time based units not allowed for constraint type.") }
                 if (c.value.hasMin || c.value.hasMax || c.value.hasOpt) && unitsType != typeTmp {
-                    throw error("Mixed units for constraint values.")
+                    try report("Mixed units for constraint values.")
                 }
                 unitsType = typeTmp
                 switch which {
@@ -822,9 +960,10 @@ struct DesignRulesParser {
                     c.spaceDomain = unitsType != .time
                 }
             case .eof:
-                throw error("Incomplete statement.")
+                try report("Incomplete statement.")
+                return
             default:
-                throw expected("min, max, opt, or within_diff_pairs")
+                try expected("min, max, opt, or within_diff_pairs")
             }
             token = try lex.next()
         }
@@ -832,15 +971,15 @@ struct DesignRulesParser {
     }
 
     /// parseValueWithUnits: the value of a constraint's expression (the unit resolver's, or the unitless one's),
-    /// rounded to an int, and its units; an error in it is the parser's
-    private func parseValueWithUnits(_ expr: String, unitless: Bool) throws -> (Int, RuleUnits.Unit) {
+    /// rounded to an int, and its units; each error in it said at its place from `at` on the line the expression
+    /// ended on (or thrown), its value then 0
+    private mutating func parseValueWithUnits(_ expr: String, unitless: Bool, at: Int) throws -> (Int, RuleUnits.Unit) {
         var compiler = LibEvalCompiler(units: unitless ? .unitless : .pcb)
         let code = compiler.compile(expr)
-        if let e = compiler.errors.first { throw error(e) }
+        for (e, p) in zip(compiler.errors, compiler.errorPositions) { try reportExpression(e, line: lex.lineNumber, column: at + p) }
         guard let code else { return (0, .unscaled) }
         let ctx = RuleContext(constraint: .null, layer: KiLayer.fCu, items: (nil, nil), board: nil)
         let result = code.run(ctx)
-        if let e = compiler.errors.first { throw error(e) }
         guard result.type == .numeric else { return (0, .mm) }
         return (KiMath.round(result.asDouble()), result.units)
     }
@@ -852,7 +991,8 @@ struct DesignRulesParser {
         var source = ""
         let token = try lex.next()
         if token == .right {
-            throw error("Missing layer name or type.")
+            try report("Missing layer name or type.")
+            return (KiLayerSet.allCu, "")
         } else if token == .keyword("outer") {
             source = "'outer'"
             set = .externalCu
@@ -866,11 +1006,11 @@ struct DesignRulesParser {
                 set.insert(l)
             }
             if set.isEmpty {
-                try checkUnresolvedTextVariable()
-                throw error("Unrecognized layer '\(name)'.")
+                if try !checkUnresolvedTextVariable() { try report("Unrecognized layer '\(name)'.") }
+                set.insert(KiLayer.rescue)
             }
         }
-        if try lex.next() != .right { throw error("Missing ')'.") }
+        if try lex.next() != .right { try report("Missing ')'.") }
         return (set, source)
     }
 
@@ -887,16 +1027,19 @@ struct DesignRulesParser {
     /// parseSeverity
     private mutating func parseSeverity() throws -> RuleSeverity {
         let token = try lex.next()
-        if token == .right || token == .eof { throw error("Missing severity name.") }
-        let s: RuleSeverity
+        if token == .right || token == .eof {
+            try report("Missing severity name.")
+            return .undefined
+        }
+        var s = RuleSeverity.undefined
         switch token {
         case .keyword("ignore"): s = .ignore
         case .keyword("warning"): s = .warning
         case .keyword("error"): s = .error
         case .keyword("exclusion"): s = .exclusion
-        default: throw expected("ignore, warning, error, or exclusion")
+        default: try expected("ignore, warning, error, or exclusion")
         }
-        if try lex.next() != .right { throw error("Missing ')'.") }
+        if try lex.next() != .right { try report("Missing ')'.") }
         return s
     }
 }

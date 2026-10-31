@@ -419,41 +419,43 @@ public struct BoardStackup: Sendable, Equatable {
         // the controls, as synchronizeWithBoard and lazyBuildRowUI fill them: the dielectrics' type choices
         var isCore = full.items.map { $0.typeName == "core" }
         for i in full.items.indices { full.items[i].enabled = shown(full.items[i], copper: copperLayers) }
-        // setDefaultLayerWidths( oldBoardWidth )
-        let prepregDefault = 100_000
-        let dielectrics = copperLayers - 1
-        var cores = copperLayers / 2 - 1
-        var current = false
-        if copperLayers == 2 {
-            cores = 1
-            current = true
-        }
-        let prepregs = dielectrics - cores
-        var fixed = 0
-        for item in full.items where item.isThicknessEditable && item.enabled {
-            for (j, s) in item.sublayers.enumerated() {
-                // (a dielectric's further sublayers, masks, copper and locked thicknesses)
-                if (item.kind == .dielectric && j > 0) || item.kind == .solderMask || item.kind == .copper || s.thicknessLocked {
-                    fixed += s.thickness
+        // setDefaultLayerWidths( oldBoardWidth ), as the count's choice changes (onCopperLayersSelCount)
+        if copperLayers != settings.copperLayers {
+            let prepregDefault = 100_000
+            let dielectrics = copperLayers - 1
+            var cores = copperLayers / 2 - 1
+            var current = false
+            if copperLayers == 2 {
+                cores = 1
+                current = true
+            }
+            let prepregs = dielectrics - cores
+            var fixed = 0
+            for item in full.items where item.isThicknessEditable && item.enabled {
+                for (j, s) in item.sublayers.enumerated() {
+                    // (a dielectric's further sublayers, masks, copper and locked thicknesses)
+                    if (item.kind == .dielectric && j > 0) || item.kind == .solderMask || item.kind == .copper || s.thicknessLocked {
+                        fixed += s.thickness
+                    }
                 }
             }
-        }
-        var remaining = oldThickness - fixed - prepregDefault * prepregs
-        var prepreg = prepregDefault
-        var core = cores > 0 ? remaining / cores : 0
-        if core < prepreg {
-            remaining = oldThickness - fixed
-            prepreg = max(0, remaining / max(1, dielectrics))
-            core = prepreg
-        }
-        for i in full.items.indices where full.items[i].kind == .dielectric && full.items[i].enabled {
-            if full.items[i].sublayers[0].thicknessLocked {
-                current.toggle()
-                continue
+            var remaining = oldThickness - fixed - prepregDefault * prepregs
+            var prepreg = prepregDefault
+            var core = cores > 0 ? remaining / cores : 0
+            if core < prepreg {
+                remaining = oldThickness - fixed
+                prepreg = max(0, remaining / max(1, dielectrics))
+                core = prepreg
             }
-            full.items[i].sublayers[0].thickness = current ? core : prepreg
-            isCore[i] = current
-            current.toggle()
+            for i in full.items.indices where full.items[i].kind == .dielectric && full.items[i].enabled {
+                if full.items[i].sublayers[0].thicknessLocked {
+                    current.toggle()
+                    continue
+                }
+                full.items[i].sublayers[0].thickness = current ? core : prepreg
+                isCore[i] = current
+                current.toggle()
+            }
         }
         // transferDataFromUIToStackup, of the rows shown; then the board's stackup is the layers shown
         var out = BoardStackup()

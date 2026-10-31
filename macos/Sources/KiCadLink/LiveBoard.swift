@@ -118,6 +118,12 @@ public final class KiCadLiveBoard {
             reloadReason = "the board's tuning patterns changed"
             return try reload(after)
         }
+        // the board's groups made, changed or taken away here (a paste's, a duplicate's, an array's, or an item gone
+        // from one): the board by its file too (what is sent to KiCad's API here has no groups)
+        if before.root.all("group").map(\.compact) != after.root.all("group").map(\.compact) {
+            reloadReason = "the board's groups changed"
+            return try reload(after)
+        }
         guard count > 0 else { return .nothing }
 
         // the footprints, tracks and vias to make, as KiCad's API takes them; any KiCad cannot take sends the whole
