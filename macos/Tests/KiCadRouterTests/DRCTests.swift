@@ -92,6 +92,19 @@ final class DRCTests: XCTestCase {
                     ourViolations.removeAll { $0.type == type }
                     ourViolations += unlimited!.violations.filter { $0.type == type }
                 }
+                // (a check at its limit with fewer in the report: the violations a rule makes ignored count towards
+                // it too (DRC_ENGINE::ReportViolation), and which KiCad's threads met first decides which of the rest
+                // it reports before then, and how many; so each it reports is one the port finds, past the limit)
+                if n < limit && ourReport.counts[type, default: 0] == limit && ourViolations.filter({ $0.type == type }).count < limit {
+                    capped.insert(type)
+                    if unlimited == nil { unlimited = drc.runReport(limited: false) }
+                    let all = unlimited!.violations.filter { $0.type == type }.map { key($0.type, $0.severity, $0.description, $0.items) }
+                    let theirs = report.violations.filter { $0.type == type }.map { key($0.type, $0.severity, $0.description, $0.items.map(\.uuid)) }
+                    for m in Self.minus(theirs, all).prefix(5) {
+                        differences.append("\(name): KiCad finds, ours does not even past the limit: \(m)")
+                    }
+                    continue
+                }
                 guard n == limit else { continue }
                 capped.insert(type)
                 let m = ourViolations.filter { $0.type == type }.count
