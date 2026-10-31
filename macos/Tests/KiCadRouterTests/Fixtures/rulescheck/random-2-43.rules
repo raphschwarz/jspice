@@ -1,0 +1,416 @@
+{
+ "cases": [
+  {
+   "text": "(version 1)\n(rule a\n  (constraint clearance (min 0.2mm))\n  (condition \"A.NetClass == 'Power'\"))\n",
+   "report": "No errors found.",
+   "links": []
+  },
+  {
+   "text": "(rule a (constraint clearance (min 0.2mm)))\n",
+   "report": "ERROR: Missing version statement.",
+   "links": [
+    "1:2",
+    "1:2",
+    "1:2"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.2mm))\n",
+   "report": "ERROR: Missing ')'.",
+   "links": [
+    "3:1",
+    "3:1"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a\n  (constraint clearence (min 0.2mm)))\n",
+   "report": "ERROR: Unrecognized item 'clearence'. Expected assertion, clearance, hole_clearance, edge_clearance, physical_clearance, physical_hole_clearance, courtyard_clearance, silk_clearance, hole_size, hole_to_hole, track_width, track_angle, track_segment_length, annular_width, disallow, zone_connection, thermal_relief_gap, thermal_spoke_width, min_resolved_spokes, solder_mask_expansion, solder_mask_sliver, solder_paste_abs_margin, solder_paste_rel_margin, length, skew, via_count, via_dangling, via_diameter, diff_pair_gap, diff_pair_uncoupled or bridged_mask.",
+   "links": [
+    "3:15",
+    "3:15",
+    "3:15"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.2mm))\n  (condition \"A.NetClass == \"))\n",
+   "report": "ERROR: Syntax error\nERROR: Could not parse expression 'A.NetClass == '.",
+   "links": [
+    "3:28",
+    "3:28",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.2mm))\n  (condition \"A.NetClas == 'x'\"))\n",
+   "report": "ERROR: Unrecognized property 'NetClas'",
+   "links": [
+    "3:17",
+    "3:17",
+    "3:17"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.2mm))\n  (condition \"A.isFoo('x')\"))\n",
+   "report": "ERROR: Unrecognized function 'isFoo'",
+   "links": [
+    "3:17",
+    "3:17",
+    "3:17"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.2mm))\n  (condition \"C.NetClass == 'Power'\"))\n",
+   "report": "ERROR: Unrecognized item 'C'",
+   "links": [
+    "3:15",
+    "3:15",
+    "3:15"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 2)))\n",
+   "report": "ERROR: Missing units for '2' (must be mm, in, mil, deg, fs, or ps)",
+   "links": [
+    "2:38",
+    "2:38",
+    "2:38",
+    "2:38"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint length (min 1mm) (max 2ps)))\n",
+   "report": "ERROR: Mixed units for constraint values.",
+   "links": [
+    "2:46",
+    "2:46",
+    "2:46",
+    "2:46",
+    "2:46"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 1ps)))\n",
+   "report": "ERROR: Time based units not allowed for constraint type.",
+   "links": [
+    "2:39",
+    "2:39",
+    "2:39",
+    "2:39",
+    "2:39",
+    "2:39",
+    "2:39",
+    "2:39"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (within_diff_pairs)))\n",
+   "report": "ERROR: within_diff_pairs option invalid for constraint type.",
+   "links": [
+    "2:32",
+    "2:32",
+    "2:32",
+    "2:32",
+    "2:32",
+    "2:32"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (layer Foo.Cu))\n",
+   "report": "ERROR: Unrecognized layer 'Foo.Cu'.",
+   "links": [
+    "2:51",
+    "2:51",
+    "2:51"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (layer outer) (layer inner))\n",
+   "report": "ERROR: 'layer' keyword already present.",
+   "links": [
+    "2:59",
+    "2:59",
+    "2:59",
+    "2:59"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (severity fatal))\n",
+   "report": "ERROR: Unrecognized item 'fatal'. Expected ignore, warning, error, or exclusion.\nERROR: Missing ')'.",
+   "links": [
+    "2:54",
+    "2:54",
+    "2:54",
+    "3:1",
+    "3:1"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (severity))\n",
+   "report": "ERROR: Missing severity name.",
+   "links": [
+    "2:53",
+    "2:53",
+    "2:53"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint disallow track trak))\n",
+   "report": "ERROR: Unrecognized item 'trak'. Expected track, via, through_via, blind_via, micro_via, buried_via, pad, zone, text, graphic, hole, or footprint..",
+   "links": [
+    "2:36",
+    "2:36",
+    "2:36"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint zone_connection full))\n",
+   "report": "ERROR: Unrecognized item 'full'. Expected solid, thermal_reliefs or none..",
+   "links": [
+    "2:37",
+    "2:37",
+    "2:37"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint min_resolved_spokes two))\n",
+   "report": "ERROR: Unrecognized item 'two'. Expected number.",
+   "links": [
+    "2:41",
+    "2:41",
+    "2:41"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint assertion))\n",
+   "report": "ERROR: Missing assertion expression.\nERROR: Unrecognized item ')'. Expected quoted expression.\nERROR: Missing ')'.",
+   "links": [
+    "2:30",
+    "2:30",
+    "2:30",
+    "2:30",
+    "2:30",
+    "2:30",
+    "3:1",
+    "3:1"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (constraint clearance (min 0.2mm)))\n",
+   "report": "ERROR: Rule already has a 'clearance' constraint.",
+   "links": [
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm))\n  (condition \"A.NetClass == 'x')\n)\n",
+   "report": "ERROR: Unterminated delimited string",
+   "links": [
+    "3:33",
+    "3:33",
+    "3:33"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm))\n  (condition \"A.NetClass == '${FOO}'\"))\n",
+   "report": "ERROR: Unresolved text variable\nRule 'a' references undefined netclass '${FOO}'.",
+   "links": [
+    "3:30",
+    "3:30",
+    "3:30"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint hole (min 0.3mm)))\n(rule b (constraint mechanical_clearance (min 0.3mm)))\n",
+   "report": "The 'hole' keyword has been deprecated. Please use 'hole_size' instead.\nThe 'mechanical_clearance' keyword has been deprecated. Please use 'physical_clearance' instead.\nRules 'b' and 'a' share the same condition.",
+   "links": []
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition \"A.Type == 'Via'\"))\n(rule b (constraint clearance (min 0.2mm)) (condition \" A.Type == 'Via'\"))\n",
+   "report": "No errors found.\nRules 'b' and 'a' share the same condition.",
+   "links": []
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition \"A.NetClass == 'Nope' || B.NetClass != 'Clock'\"))\n",
+   "report": "No errors found.\nRule 'a' references undefined netclass 'Nope'.",
+   "links": []
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (layer In5.Cu))\n",
+   "report": "No errors found.\nRule 'a' references undefined layer(s): In5.Cu.",
+   "links": []
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm))\n  (condition \"A.NetClass == 'x' @ 1\"))\n",
+   "report": "ERROR: Unrecognized character '@'\nERROR: Could not parse expression 'A.NetClass == 'x' @ 1'.\nRule 'a' references undefined netclass 'x'.",
+   "links": [
+    "3:32",
+    "3:32",
+    "3:32",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15",
+    "3:15"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule (constraint clearance (min 0.1mm)))\n",
+   "report": "ERROR: Missing rule name.\nERROR: Missing '('.\nERROR: Unrecognized item 'clearance'. Expected constraint, condition, or disallow.",
+   "links": [
+    "2:7",
+    "2:7",
+    "2:7",
+    "2:8",
+    "2:8",
+    "2:19",
+    "2:19",
+    "2:19"
+   ]
+  },
+  {
+   "text": "(version)\n(rule a (constraint clearance (min 0.1mm)))\n",
+   "report": "ERROR: Missing version number.",
+   "links": [
+    "1:9",
+    "1:9",
+    "1:9"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearence (min 0.1mm)) (severity fatal)\n  (layer Foo.Cu) (condition \"A.Foo\"))\n(rule b (constraint track_width (min 1)) (constraint track_width (max 2mm)))\n",
+   "report": "ERROR: Unrecognized item 'clearence'. Expected assertion, clearance, hole_clearance, edge_clearance, physical_clearance, physical_hole_clearance, courtyard_clearance, silk_clearance, hole_size, hole_to_hole, track_width, track_angle, track_segment_length, annular_width, disallow, zone_connection, thermal_relief_gap, thermal_spoke_width, min_resolved_spokes, solder_mask_expansion, solder_mask_sliver, solder_paste_abs_margin, solder_paste_rel_margin, length, skew, via_count, via_dangling, via_diameter, diff_pair_gap, diff_pair_uncoupled or bridged_mask.\nERROR: Unrecognized item 'fatal'. Expected ignore, warning, error, or exclusion.\nERROR: Missing ')'.\nERROR: Missing '('.\nERROR: Unrecognized item 'Foo.Cu'. Expected constraint, condition, or disallow.\nERROR: Unrecognized property 'Foo'\nERROR: Missing units for '1' (must be mm, in, mil, deg, fs, or ps)\nERROR: Rule already has a 'track_width' constraint.",
+   "links": [
+    "2:21",
+    "2:21",
+    "2:21",
+    "2:54",
+    "2:54",
+    "2:54",
+    "3:3",
+    "3:3",
+    "3:4",
+    "3:4",
+    "3:10",
+    "3:10",
+    "3:10",
+    "3:32",
+    "3:32",
+    "3:32",
+    "4:40",
+    "4:40",
+    "4:40",
+    "4:40",
+    "4:54",
+    "4:54",
+    "4:54",
+    "4:54",
+    "4:54",
+    "4:54"
+   ]
+  },
+  {
+   "text": "(version 1)\n(foo bar)\n(rule a (constraint clearance (min 0.1mm)))\n",
+   "report": "ERROR: Unrecognized item 'foo'. Expected rule or version.",
+   "links": [
+    "2:2",
+    "2:2",
+    "2:2"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 1mm +)))\n",
+   "report": "ERROR: Syntax error",
+   "links": [
+    "2:42",
+    "2:42"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition))\n",
+   "report": "ERROR: Missing condition expression.",
+   "links": [
+    "2:54",
+    "2:54",
+    "2:54"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a constraint clearance)\n",
+   "report": "ERROR: Missing '('.\nERROR: Unrecognized item 'clearance'. Expected constraint, condition, or disallow.\nERROR: Missing ')'.",
+   "links": [
+    "2:9",
+    "2:9",
+    "2:20",
+    "2:20",
+    "2:20",
+    "3:1",
+    "3:1"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition \"A.intersectsArea()\"))\n",
+   "report": "ERROR: Malformed expression\nERROR: Missing rule-area argument (A, B, or rule-area name) to intersectsArea().",
+   "links": [
+    "2:73",
+    "2:73",
+    "2:73",
+    "2:73",
+    "2:73",
+    "2:73",
+    "2:73",
+    "2:73",
+    "2:73",
+    "2:73",
+    "2:73",
+    "2:73"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint clearance (min 0.1mm)) (condition \"A.Type == 'Pad' && (B.Type == 'Via'\"))\n",
+   "report": "ERROR: Syntax error\nERROR: Could not parse expression 'A.Type == 'Pad' && (B.Type == 'Via''.",
+   "links": [
+    "2:91",
+    "2:91",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56",
+    "2:56"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule a (constraint via_count (max 2mm)))\n",
+   "report": "ERROR: Syntax error",
+   "links": [
+    "2:38",
+    "2:38"
+   ]
+  },
+  {
+   "text": "(version 1)\n(rule \"a b\"\n\t(constraint track_width (min 0.2mm) (opt 0.25mm) (max 0.3mm))\n\t(condition \"A.NetClass == 'Clock'\")\n\t(layer F.Cu))\n",
+   "report": "No errors found.",
+   "links": []
+  }
+ ]
+}
