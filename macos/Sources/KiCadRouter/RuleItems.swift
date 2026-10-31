@@ -1,8 +1,8 @@
-// Ported from KiCad 10.0.7: what KiCad's rule conditions read of a board's items: pcbnew/pcbexpr_evaluator.cpp
+// Ported from KiCad 10.0.8: what KiCad's rule conditions read of a board's items: pcbnew/pcbexpr_evaluator.cpp
 // (PCBEXPR_UCODE::CreateVarRef: A, B, AB, L and null, the property a field names), the properties KiCad's classes
 // register for its property manager (common/eda_item.cpp's Type and the KICAD_T names, pcbnew/board_item.cpp,
 // board_connected_item.cpp, pcb_track.cpp, pad.cpp, footprint.cpp, zone.cpp, pcb_shape.cpp, pcb_field.cpp,
-// common/eda_shape.cpp, common/eda_text.cpp and the rest: their names, types, the enums' names, the properties a
+// pcb_dimension.cpp, common/eda_shape.cpp, common/eda_text.cpp and the rest: their names, types, the enums' names, the properties a
 // class masks), common/properties/property_mgr.cpp (GetProperty: names compared without case),
 // pcbnew/board_connected_item.cpp (GetEffectiveNetClass, IsConnected), pcbnew/pcb_track.cpp (GetBoundingBox).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
@@ -224,7 +224,7 @@ final class RuleBoard {
 enum RuleProperties {
     /// Every property name KiCad's board item classes register (lower case)
     static let known: Set<String> = Set([
-        "Allow Teardrops To Span Two Tracks", "Angle", "Arrow Direction", "Associated Layer", "Auto Thickness",
+        "Allow Teardrops To Span Two Tracks", "Angle", "Arrow Direction", "Arrow Length", "Associated Layer", "Auto Thickness",
         "Automatically Update Net", "Back covering", "Back plugging", "Back Post-machining", "Back Post-machining Angle",
         "Back Post-machining Depth", "Back Post-machining Size", "Back tenting", "Backdrill Mode", "Barcode Type",
         "Best Length Ratio", "Best Width Ratio", "Bold", "Border", "Border Color", "Border Style", "Border Width",
@@ -234,14 +234,14 @@ enum RuleProperties {
         "Corner Radius %", "Corner Radius Ratio", "Corner Radius Size", "Crossbar Height", "Curved Teardrops",
         "Diameter", "Do not Populate", "Enable", "Enable Teardrops", "End X", "End Y", "Error Correction",
         "Exclude From Bill of Materials", "Exclude From Position Files", "Exempt From Courtyard Requirement",
-        "Extension Line Overshoot", "External Border", "Fabrication Property", "Fill", "Fill Color", "Fill Mode",
+        "Extension Line Offset", "Extension Line Overshoot", "External Border", "Fabrication Property", "Fill", "Fill Color", "Fill Mode",
         "Filling", "Font", "Front covering", "Front plugging", "Front Post-machining", "Front Post-machining Angle",
         "Front Post-machining Depth", "Front Post-machining Size", "Front tenting", "Hatch Gap",
         "Hatch Minimum Hole Ratio", "Hatch Orientation", "Hatch Width", "Header Border", "Height", "Hole",
         "Hole Shape", "Hole Size X", "Hole Size Y", "Horizontal Justification", "Hyperlink", "Initial Side", "Italic",
         "Keep Aligned with Dimension", "Keep Out Footprints", "Keep Out Pads", "Keep Out Tracks", "Keep Out Vias",
         "Keep Out Zone Fills", "Keep Upright", "Keywords", "Knockout", "Layer", "Layer Bottom", "Layer Top",
-        "Leader Length", "Library Description", "Library Link", "Line Color", "Line Style", "Line Width", "Locked",
+        "Leader Length", "Library Description", "Library Link", "Line Color", "Line Style", "Line Thickness", "Line Width", "Locked",
         "Margin Bottom", "Margin Left", "Margin Right", "Margin Top", "Margin X", "Margin Y", "Max Amplitude",
         "Max Length", "Max Width", "Max Width Ratio", "Min Amplitude", "Min Spacing", "Minimum Island Area",
         "Minimum Width", "Mirrored", "Name", "Net", "Net Class", "NetClass", "NetName", "Not in Schematic",
@@ -253,7 +253,7 @@ enum RuleProperties {
         "Smoothing Amount", "Smoothing Effort", "Soldermask", "Soldermask Margin Override",
         "Solderpaste Margin Override", "Solderpaste Margin Ratio Override", "Source Name", "Source Type", "Start X",
         "Start Y", "Suffix", "Suppress Trailing Zeroes", "Target Delay", "Target Length", "Target Skew",
-        "Target Skew Delay", "Text", "Text Frame", "Text Size", "Thermal Relief Gap", "Thermal Relief Spoke Angle",
+        "Target Skew Delay", "Text", "Text Frame", "Text Position", "Text Size", "Thermal Relief Gap", "Thermal Relief Spoke Angle",
         "Thermal Relief Spoke Width", "Thermal Spoke Template", "Thickness", "Top Backdrill Must-Cut",
         "Top Backdrill Size", "Top Counterbore Depth", "Top Countersink Angle", "Top Post-machining",
         "Top Post-machining Size", "Transform Offset X", "Transform Offset Y", "Tuning Mode", "Type", "Units",

@@ -41,6 +41,20 @@ final class RulesTests: XCTestCase {
         XCTAssertEqual(Set(try holds("A.Type == ", compiles: false)), [false])
     }
 
+    /// The properties KiCad 10.0.8 registers for dimensions (Line Thickness, Arrow Length, Extension Line Offset,
+    /// Text Position: PCB_DIMENSION_BASE's property descriptor; 10.0.7 had none of them, and a condition naming one
+    /// did not compile, "Unrecognized property")
+    func testDimensionPropertiesAreKnown() {
+        for property in ["Line_Thickness", "Arrow_Length", "Extension_Line_Offset", "Text_Position"] {
+            let condition = RuleCondition("A.\(property) == '1'")
+            XCTAssertTrue(condition.compile(), property)
+            XCTAssertEqual(condition.errors, [], property)
+        }
+        let unknown = RuleCondition("A.No_Such_Property == '1'")
+        _ = unknown.compile()
+        XCTAssertEqual(unknown.errors, ["Unrecognized property 'No_Such_Property'"])
+    }
+
     /// A file KiCad cannot read: none of its rules, the implicit rules alone
     func testAFileThatDoesNotParseHasNoRules() throws {
         let drc = try engine("(version 1)\n(rule big (constraint clearance (min 2mm)))\n(rule open (constraint track_width (min 1mm))\n")
