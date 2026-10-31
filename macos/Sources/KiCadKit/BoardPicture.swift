@@ -53,6 +53,8 @@ public struct KiCadBoardPicture: Sendable {
         public var drill: Double
         public var net: String?
         public var uuid: String = ""
+        /// The copper layers it joins, top to bottom (all of them for a through via)
+        public var layers: [String] = []
     }
 
     public struct Zone: Sendable {
@@ -144,7 +146,12 @@ public struct KiCadBoardPicture: Sendable {
             tracks.append(Track(points: track.points, width: track.width, layer: track.layer, net: track.net, uuid: track.uuid))
             include(track.points)
         }
-        for via in board.vias { vias.append(Via(center: via.position, size: via.size, drill: via.drill, net: via.net, uuid: via.uuid)) }
+        for via in board.vias {
+            // (its two layers, and those of the board's between them)
+            let ends = via.layers.compactMap { copperLayers.firstIndex(of: $0) }
+            let span = ends.count == 2 ? Array(copperLayers[ends.min()!...ends.max()!]) : copperLayers
+            vias.append(Via(center: via.position, size: via.size, drill: via.drill, net: via.net, uuid: via.uuid, layers: span))
+        }
         for zone in board.zones {
             for layer in zone.layers.isEmpty ? [""] : zone.layers {
                 zones.append(Zone(layer: layer, fills: zone.fills.filter { $0.layer == layer }.map(\.points), outline: zone.outline,

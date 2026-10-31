@@ -164,7 +164,9 @@ jobs:
       - name: KiCadRouter against KiCad's code, on 2000 cases of each kind, the 1000, two 400, 100, 200, 150, four 300 and 200 boards, the 90 real ones and the 10 of teardrops
         # (the real boards' worlds as KiCad's router sees them, their routes as it routes them, their DRC and fills as
         # KiCad's finds and makes them by their rules, their teardrops as KiCad makes them, and routes the port makes
-        # on them by their rules through kicad-cli's DRC)
+        # on them by their rules through kicad-cli's DRC; ten of them with their zones' outlines and properties
+        # edited, and ten with their footprints' and pads' properties set and items locked, read back and written
+        # by KiCad's pcbnew, filled by its zone filler and checked by kicad-cli's DRC)
         env:
           JSPICE_REQUIRE_KICAD: "1"
           KICAD_GEOMETRY_REFERENCE: ${{ runner.temp }}/kicad-reference/kicad-geometry-2000.json

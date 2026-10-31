@@ -104,10 +104,11 @@ extension BoardEditing {
         return change("Edit Text", drawings: [uuid])
     }
 
-    /// The board's texts and drawings (its outline aside) moved by `delta` (mm), as one change
+    /// The board's texts and drawings (its outline aside) moved by `delta` (mm), as one change; the locked left where
+    /// they are, as KiCad's move leaves them (unless overridesLocks)
     public func moveDrawings(_ uuids: [String], by delta: KiCadPoint) -> Edit? {
         guard !isRouting, delta != .zero else { return nil }
-        let wanted = Set(uuids)
+        let wanted = Set(unlocked(uuids))
         var moved: [String] = []
         func shifted(_ list: SExpr) {
             guard let x = list.number(at: 0), let y = list.number(at: 1) else { return }
@@ -125,10 +126,10 @@ extension BoardEditing {
     }
 
     /// The board's texts turned by `degrees` counterclockwise about their own positions, as KiCad's Rotate turns a
-    /// text selected alone, as one change
+    /// text selected alone, as one change (the locked left as they are)
     public func rotateTexts(_ uuids: [String], by degrees: Double = 90) -> Edit? {
         guard !isRouting else { return nil }
-        let nodes = texts(uuids)
+        let nodes = texts(unlocked(uuids))
         guard !nodes.isEmpty else { return nil }
         for node in nodes {
             guard let at = node["at"], let x = at.number(at: 0), let y = at.number(at: 1) else { continue }
@@ -138,10 +139,11 @@ extension BoardEditing {
         return change("Rotate", drawings: nodes.compactMap { $0.value("uuid") })
     }
 
-    /// The board's texts and drawings (its outline aside) taken away, by id, as one change
+    /// The board's texts and drawings (its outline aside) taken away, by id, as one change (the locked left alone)
     public func removeDrawings(_ uuids: Set<String>) -> Edit? {
         guard !isRouting else { return nil }
-        let gone = router.board.boardDrawings.filter { uuids.contains($0.value("uuid") ?? "") }
+        let kept = Set(unlocked(Array(uuids)))
+        let gone = router.board.boardDrawings.filter { kept.contains($0.value("uuid") ?? "") }
         guard !gone.isEmpty else { return nil }
         for node in gone { router.board.root.remove(node) }
         router.boardChanged()

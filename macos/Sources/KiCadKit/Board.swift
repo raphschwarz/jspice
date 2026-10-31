@@ -51,6 +51,9 @@ public final class KiCadBoard {
 
     public var zones: [KiCadZone] { root.all("zone").map { KiCadZone($0, board: self) } }
 
+    /// The zone a zone node of this board (or one to be put on it) stands for
+    public func zone(_ node: SExpr) -> KiCadZone { KiCadZone(node, board: self) }
+
     /// The board's own drawings (not the footprints'): lines, rectangles, arcs, circles and polygons
     public var drawings: [KiCadDrawing] {
         root.items.filter { KiCadDrawing.heads.contains($0.head ?? "") }.map { KiCadDrawing($0, placement: nil) }
@@ -478,10 +481,12 @@ public struct KiCadFootprint {
 
     /// Turns it over onto the other side of the board where it stands, as KiCad's FOOTPRINT::SetLayerAndFlip does (a
     /// mirror top to bottom about its position and a half turn): its items' layers swapped front for back, their
-    /// places mirrored on the footprint, its angle and theirs reflected, its texts read mirrored
-    public func flip() {
+    /// places mirrored on the footprint, its angle and theirs reflected, its texts read mirrored. With `leftRight`
+    /// false, as FOOTPRINT::Flip turns it over top to bottom (FLIP_DIRECTION::TOP_BOTTOM, the board editor's default:
+    /// the mirror without the half turn, its texts' angles 180° less theirs, not kept upright)
+    public func flip(leftRight: Bool = true) {
         let theta = rotation
-        let turned = KiCadFootprint.normalize(180 - theta)
+        let turned = KiCadFootprint.normalize(leftRight ? 180 - theta : -theta)
         let origin = position
         func mirror(_ list: SExpr?) {
             guard let list, let x = list.number(at: 0), let y = list.number(at: 1) else { return }
@@ -508,10 +513,16 @@ public struct KiCadFootprint {
                 for i in 1..<list.items.count where list.items[i].kind == .string {
                     list.items[i] = SExpr(string: KiCadFootprint.flipLayer(list.items[i].text))
                 }
+                // (a list of layers written as KiCad writes one: its wildcards first, then each by its id)
+                if name == "layers" {
+                    let named = list.items.dropFirst().filter { $0.kind == .string && !$0.text.contains("*") && !$0.text.contains("&") }
+                    let rest = list.items.dropFirst().filter { !($0.kind == .string && !$0.text.contains("*") && !$0.text.contains("&")) }
+                    list.items = [list.items[0]] + rest + named.sorted { KiCadFootprint.layerOrder($0.text) < KiCadFootprint.layerOrder($1.text) }
+                }
             }
         }
         node.set(SExpr("layer", KiCadFootprint.flipLayer(layer)))
-        KiCadFootprint.transformAbsolute(node) { KiCadPoint(2 * origin.x - $0.x, $0.y) }
+        KiCadFootprint.transformAbsolute(node) { leftRight ? KiCadPoint(2 * origin.x - $0.x, $0.y) : KiCadPoint($0.x, 2 * origin.y - $0.y) }
         var at = [origin.x, origin.y] as [SExprConvertible]
         if turned != 0 { at.append(turned) }
         node.set(SExpr("at", at))
@@ -520,7 +531,8 @@ public struct KiCadFootprint {
             case "pad":
                 if let a = child["at"], let x = a.number(at: 0), let y = a.number(at: 1) {
                     let local = (a.number(at: 2) ?? 0) - theta
-                    let angle = KiCadFootprint.normalize360(turned - local)
+                    // (top to bottom: its angle negated, the footprint's set to 0 while its pads turn over)
+                    let angle = KiCadFootprint.normalize360(leftRight ? turned - local : -(a.number(at: 2) ?? 0))
                     var values = [x, -y] as [SExprConvertible]
                     if angle != 0 { values.append(angle) }
                     child.set(SExpr("at", values))
@@ -529,7 +541,9 @@ public struct KiCadFootprint {
                 mirror(child["rect_delta"])
                 if let chamfer = child["chamfer"] {
                     let swap = ["top_left": "bottom_left", "bottom_left": "top_left", "top_right": "bottom_right", "bottom_right": "top_right"]
-                    for i in 1..<chamfer.items.count { chamfer.items[i] = SExpr(symbol: swap[chamfer.items[i].text] ?? chamfer.items[i].text) }
+                    let corners = Set(chamfer.arguments.map { swap[$0.text] ?? $0.text })
+                    // (in the order KiCad writes them)
+                    chamfer.items = [chamfer.items[0]] + ["top_left", "top_right", "bottom_left", "bottom_right"].filter(corners.contains).map { SExpr(symbol: $0) }
                 }
                 for primitive in child["primitives"]?.arguments ?? [] { mirrorPoints(primitive) }
                 flipLayers(child)
@@ -538,9 +552,10 @@ public struct KiCadFootprint {
                     // mirrored top to bottom (180 - angle), then the half turn (-angle), then kept upright as the
                     // half turn keeps a text upright (PCB_TEXT::KeepUpright): one that would read upside down is
                     // turned half round again, its justification reversed
-                    var angle = KiCadFootprint.normalize360(-(a.number(at: 2) ?? 0))
+                    // (top to bottom, PCB_TEXT::Flip alone: 180° less its angle, as it comes)
+                    var angle = leftRight ? KiCadFootprint.normalize360(-(a.number(at: 2) ?? 0)) : 180 - (a.number(at: 2) ?? 0)
                     let upright = !child.flag("unlocked") && !a.arguments.contains { $0.kind == .symbol && $0.text == "unlocked" }
-                    if upright && angle >= 180 {
+                    if leftRight && upright && angle >= 180 {
                         angle -= 180
                         if let justify = child["effects"]?["justify"] {
                             let opposite = ["left": "right", "right": "left", "top": "bottom", "bottom": "top"]
@@ -585,6 +600,17 @@ public struct KiCadFootprint {
         }
     }
 
+    /// A layer's place in KiCad 10's numbering of its layers (PCB_LAYER_ID), the order it writes them in
+    public static func layerOrder(_ name: String) -> Int {
+        let fixed: [String: Int] = ["F.Cu": 0, "F.Mask": 1, "B.Cu": 2, "B.Mask": 3, "F.SilkS": 5, "B.SilkS": 7, "F.Adhes": 9, "B.Adhes": 11,
+                                    "F.Paste": 13, "B.Paste": 15, "Dwgs.User": 17, "Cmts.User": 19, "Eco1.User": 21, "Eco2.User": 23,
+                                    "Edge.Cuts": 25, "Margin": 27, "B.CrtYd": 29, "F.CrtYd": 31, "B.Fab": 33, "F.Fab": 35]
+        if let id = fixed[name] { return id }
+        if name.hasPrefix("In"), name.hasSuffix(".Cu"), let n = Int(name.dropFirst(2).dropLast(3)) { return 2 + 2 * n }
+        if name.hasPrefix("User."), let n = Int(name.dropFirst(5)) { return 37 + 2 * n }
+        return 1000
+    }
+
     /// The layer on the other side: F.Cu for B.Cu, B.SilkS for F.SilkS…
     public static func flipLayer(_ layer: String) -> String {
         if layer.hasPrefix("F.") { return "B." + layer.dropFirst(2) }
@@ -607,14 +633,14 @@ public struct KiCadFootprint {
     }
 
     /// An item's angle as KiCad writes a pad's or a text's: from 0 up to 360
-    static func normalize360(_ degrees: Double) -> Double {
+    public static func normalize360(_ degrees: Double) -> Double {
         var d = degrees.truncatingRemainder(dividingBy: 360)
         if d < 0 { d += 360 }
         return d == 360 ? 0 : d
     }
 
     /// A footprint's angle as KiCad writes it: above -180, up to 180
-    static func normalize(_ degrees: Double) -> Double {
+    public static func normalize(_ degrees: Double) -> Double {
         var d = degrees.truncatingRemainder(dividingBy: 360)
         if d < 0 { d += 360 }
         if d > 180 { d -= 360 }

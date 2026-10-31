@@ -270,6 +270,33 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   justification, beside what KiCad's Add Text gives a new text on its layer by the board's project, and each
   footprint's reference, value, library id, place, angle, side, board-only attribute and pads' nets. `PlacingTests`
   runs it on boards the port's `BoardEditing.addText` and `addFootprint` placed texts and footprints on.
+- `properties.py`: zones', footprints', pads' and other items' properties as KiCad reads, sets and writes them.
+  `properties.py read BOARD.kicad_pcb...` (JSON on standard output): through KiCad's `pcbnew` module, each zone's and
+  rule area's name, net, layers, priority, lock, clearance, minimum width, pad connection, thermal gap and spoke
+  width, fill mode and hatch, island removal and its area, corner smoothing and radius, outline display, keepouts and
+  placement, and its outline and holes; each footprint's place, angle, side, lock, attributes, clearance, zone
+  connection, margins and fields (text, shown, place on the footprint, size, pen, italic, layer, angle, kept upright,
+  knockout, mirrored) and pads (number, type, shape, place, angle, size, trapezoid, hole, offset, layers, rounding and
+  chamfers, clearance, zone connection, thermal spokes and gap, margins, net, fabrication property); each track's,
+  via's and drawing's lock; and each track's and via's net (which KiCad, reading a board, gives a track from the
+  pads it joins). `properties.py resave IN OUT`: the board read and written again by KiCad. `properties.py apply
+  PLAN.json`: the plan's changes made by KiCad's own code to each board it names, and the board saved: a zone's
+  settings given by `ZONE_SETTINGS` (`operator<<` of the zone, the values set, `ExportSetting`, the net as
+  `Edit_Zone_Params` sets it), its outline by `SHAPE_POLY_SET`'s `SetVertex`, `InsertVertex`, `RemoveVertex`,
+  `RemoveContour` and `RemoveNullSegments` as the point editor changes it, and zones moved (`ZONE::Move`).
+  `ZoneEditingTests` edits zones on boards with the port (corners and edges dragged, corners added and taken away,
+  zones moved, their properties set as the dialogs set them), and checks that KiCad reads every property and outline
+  back as set, that KiCad's code making the same changes writes the same zones, and that `fills.py` and `drc.py` of
+  the edited boards are what the port's `ZoneFiller` and `BoardDRC` make of them; `PropertiesTests` sets footprints'
+  and pads' properties and locks items, and checks KiCad reads them back as set, writes each footprint changed as the
+  port wrote it (its drawings and pads in KiCad's own sorted order, a nanometre's turn of an item on a footprint
+  turned off square aside), and that `drc.py` of the boards is what `BoardDRC` finds (a board on which KiCad gives a
+  track another net as it reads it left out). With `--draw OUT.kicad_pcb`, the board both edit
+  (`Tests/KiCadRouterTests/Fixtures/zoneedits/zones`, with its `.fills` and `.drc` for `FillTests` and `DRCTests`):
+  on four copper layers, zones with holes, of several nets, layers, priorities, fill modes and smoothings, one
+  locked, rule areas (one with a hole, one on two layers), footprints on both sides at 0, 90, 30 and 45 degrees with
+  pads of every shape (rectangle, rounded, chamfered, oval, round, trapezoid, custom, plated and unplated holes,
+  offsets), tracks and vias, some of them locked.
 - `boxes.py`: what KiCad's box selection takes on boards (`boxes.py BOARD.kicad_pcb...`): rectangles drawn on each
   (a third anywhere, the others round an item's box with each side moved by up to 0.6 mm) and, through KiCad's
   `pcbnew` module, the tracks, arcs, vias and footprints whose `HitTest( BOX2I, aContained )` holds, wholly in each
@@ -307,6 +334,45 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   the three whose box took items, edge-6's copy of everything pasted into random-2-15 (of fewer layers), arrays of
   random-2-15 and edge-6, aligns of random-2-15 and random-2-43; the projects of the boards KiCad saved left out.
   `KICAD_CLIPBOARD_REFERENCE` names another folder of them.
+- `appearance.py`: KiCad's Appearance panel and the board's part of the project's local settings (the `.kicad_prl`'s
+  `board`: visible layers as LSET's hexadecimal, visible objects by name, opacities, high contrast mode, active layer
+  and preset), for checking the port's (`LocalSettings.swift`: `KiCadAppearanceControls`, `KiCadBoardAppearance`,
+  `KiCadLocalSettings`). Neither reaches KiCad's Python module, so, as `boardsetup.py` does, it runs pcbnew under Xvfb
+  with an action plugin of its own. `appearance.py BOARD.kicad_pcb...` writes `BOARD.appearance` (JSON) beside each
+  board: two runs of KiCad, the first on the board with no local settings, the second on what the first left, each
+  clicking the panel's controls at random as a user does (a layer's eye, an object's eye, an opacity slider let go,
+  Normal, Dim or Hide for inactive layers, a layer's name, a built-in preset), then File ▸ Save twice: each run's
+  steps, the `.kicad_prl` the first Save wrote (KiCad writes it before it copies the frame's display options and active
+  layer into it, so it has those as the board was opened) and the one the second left (with them as the editor has
+  them, as closing the editor writes them).
+  `AppearanceTests` opens each board on the same settings, makes the same steps with the port and checks its settings
+  against both files, and that every file KiCad wrote comes out byte for byte as it was when the port reads
+  and writes it. The boards of `Tests/KiCadRouterTests/Fixtures/nets` have theirs.
+- `nets.py`: KiCad's Net Inspector and its Highlight Net on boards, for checking the port's (`NetInspector.swift`,
+  with `LengthCalculation`, and `NetHighlight.swift`). Neither the panel nor the highlight tool reaches KiCad's Python
+  module, so, as `boardsetup.py` and `tuning.py` do, it runs pcbnew under Xvfb with an action plugin of its own and
+  drives it as a user does. `nets.py BOARD.kicad_pcb...` writes `BOARD.nets` (JSON) beside each board: in a first run
+  (the board's `.kicad_prl` made to show every net, from a random active copper layer, inactive layers now and then
+  dimmed or hidden, now and then a copper layer, tracks, vias, pads or a side's footprints hidden) View ▸ Panels ▸ Net
+  Inspector opened and each net's row read (every column's text: name, net class, total length, via count, via length,
+  track length, die length, pad count, each copper layer's length), the rows' order sorted by each column up and down
+  (the model's `Compare`), the nets shown for filter texts typed in its filter box; then the view zoomed to fit and
+  calibrated as `tuning.py` does, and at points near pads, tracks, vias and zones and anywhere on the board the pointer
+  moved there and the highlight key (`` ` ``) pressed: the net codes KiCad highlights (its board's `std::set`, read as
+  libstdc++ lays one out) and whether it highlights at all. In a second run the nets grouped by net class and by custom
+  group rules (a wildcard pattern, regular expressions between `^` and `$` and between slashes, a part of a name), each
+  group's sums and its nets. And through KiCad's `pcbnew` module each track's `BOARD::GetTrackLength`, to the
+  nanometre. `nets.py boards OUTDIR COUNT [SEED]` makes random boards for it: nets routed between their pads on two,
+  four or six layers of random thicknesses (lines of segments and arcs, vias of every type, vias in pads, lines ending
+  off a via's centre in its copper, branches, stubs, lines of no length, pads' lengths to their dies, flipped
+  footprints, zones, net classes by pattern, names such as `R1`, `R10`, `4k7` and `sig3` that KiCad's
+  `ValueStringCompare` sorts in its own way, the project's use of via heights now and then off). `NetInspectorTests`
+  and `NetHighlightTests` check the port against them: the same rows, orders, filtered nets, groups and track lengths,
+  and the same net highlighted at each point with the same five pixels' accuracy. KiCad measures some things in the
+  order of its items' places in memory, which differs from one run of it to another: which pad a via joined to pads of
+  both sides finds first (its height through the board or none), and in which order a cluster's lines are merged and
+  cut by vias at both ends (a few nanometres); there the tests take KiCad's value where the port comes to it with
+  another of those orders, and count them. The boards of `Tests/KiCadRouterTests/Fixtures/nets` have theirs.
 - `rules.py`: random design rules for boards (`rules.py [--fills] [--all] [--seed SEED] BOARD.kicad_pcb...`): a
   rules file beside each board (`BOARD.kicad_dru`, where KiCad's DRC engine finds it, and the port's `BoardDRC`,
   `ZoneFiller` and `BoardRouter` with it), of one to six rules of random conditions on what the board has: its net

@@ -17,6 +17,9 @@ struct PCBView: View {
     @State private var scale: CGFloat?
     @AppStorage("pcbSide") private var sideName = PCBSide.front.rawValue
     private var side: PCBSide { PCBSide(rawValue: sideName) ?? .front }
+    /// Whether the Appearance panel and the Net Inspector are shown
+    @AppStorage("pcbAppearancePanel") private var showsAppearance = true
+    @AppStorage("pcbNetInspector") private var showsNetInspector = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -24,6 +27,14 @@ struct PCBView: View {
                 bar
                 Divider()
                 content
+                if showsNetInspector && board.availability == .board {
+                    Divider()
+                    PCBNetInspector(appearance: board.appearance, picture: board.picture).frame(height: 230)
+                }
+            }
+            if showsAppearance && board.availability == .board {
+                Divider()
+                PCBAppearancePanel(appearance: board.appearance, sideName: $sideName).frame(width: 230)
             }
             Divider()
             PCBSidePanel(editor: editor, board: board).frame(width: 300)
@@ -47,6 +58,13 @@ struct PCBView: View {
                     .help("Zoom in")
                 Button { scale = nil } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
                     .help("Fit the board in the window")
+                Divider().frame(height: 18)
+                Toggle(isOn: $showsAppearance) { Image(systemName: "square.3.layers.3d") }
+                    .toggleStyle(.button)
+                    .help("Show the Appearance panel: the board's layers and objects, which are shown, and the active layer")
+                Toggle(isOn: $showsNetInspector) { Image(systemName: "list.bullet.rectangle") }
+                    .toggleStyle(.button)
+                    .help("Show the Net Inspector: the board's nets and their lengths")
             }
             if let busy = board.busy {
                 ProgressView().controlSize(.small)
@@ -101,10 +119,14 @@ struct PCBView: View {
             let fit = max(1, min((geometry.size.width - 40) / picture.bounds.width, (geometry.size.height - 40) / picture.bounds.height))
             let s = scale ?? fit
             let view = PCBTransform(bounds: picture.bounds, scale: s, mirrored: side == .back)
-            ScrollView([.horizontal, .vertical]) {
-                PCBBoardCanvas(board: board, editing: board.editing, picture: picture, view: view, side: side,
-                               selected: selectedFootprints(picture)) { readout(picture, view, at: $0) }
-                .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+            ScrollViewReader { proxy in
+                ScrollView([.horizontal, .vertical]) {
+                    PCBBoardCanvas(board: board, editing: board.editing, appearance: board.appearance, picture: picture, view: view,
+                                   side: side, selected: selectedFootprints(picture)) { readout(picture, view, at: $0) }
+                    .overlay(alignment: .topLeading) { PCBZoomAnchor(appearance: board.appearance, view: view) }
+                    .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+                }
+                .modifier(PCBZoomFollower(appearance: board.appearance, scale: $scale, size: geometry.size, proxy: proxy))
             }
             .onAppear { fitted = fit }
             .onChange(of: fit) { _, value in fitted = value }
@@ -192,6 +214,8 @@ struct PCBPainter {
     let drc: KiCadFabrication.DRCReport?
     /// Tracks and vias not drawn, by id (those the track being routed has shoved aside, drawn where they now go)
     var hidden: Set<String> = []
+    /// What the Appearance panel shows of the board and how, the nets highlighted (none: everything, as it is)
+    var display: PCBDisplay?
 
     static let background = Color(red: 0, green: 0.063, blue: 0.137)
     static let substrate = Color(red: 0.05, green: 0.16, blue: 0.13)
@@ -234,6 +258,9 @@ struct PCBPainter {
 
     func draw(_ context: GraphicsContext) {
         let s = view.scale
+        // (only what the appearance shows)
+        let picture = display?.visible(self.picture) ?? self.picture
+        let a = display?.appearance ?? KiCadBoardAppearance()
         // the board itself
         let closed = picture.outline.filter(\.closed)
         if !closed.isEmpty {
@@ -251,14 +278,14 @@ struct PCBPainter {
         if side == .front { layers.reverse() }
         for layer in layers {
             let dim = layer != near
-            let tint = color(layer).opacity(dim ? 0.45 : 0.9)
+            let tint = color(layer).opacity((dim ? 0.45 : 0.9) * (display?.alpha(layer) ?? 1))
             for zone in picture.zones where zone.layer == layer && !zone.isRuleArea {
                 if zone.fills.isEmpty {
                     context.stroke(view.path(zone.outline, closed: true), with: .color(tint), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 } else {
                     var fill = Path()
                     for polygon in zone.fills { fill.addPath(view.path(polygon, closed: true)) }
-                    context.fill(fill, with: .color(color(layer).opacity(dim ? 0.25 : 0.5)))
+                    context.fill(fill, with: .color(color(layer).opacity((dim ? 0.25 : 0.5) * (display?.alpha(layer) ?? 1) * a.zoneOpacity / 0.6)))
                 }
             }
             // rule areas (keepouts) on the layer: outlined, as KiCad draws them, in red
@@ -268,23 +295,23 @@ struct PCBPainter {
                 context.stroke(outline, with: .color(Color.red.opacity(dim ? 0.4 : 0.8)), style: StrokeStyle(lineWidth: 1, dash: [6, 3]))
             }
             for track in picture.tracks where track.layer == layer && !hidden.contains(track.uuid) {
-                context.stroke(view.path(track.points, closed: false), with: .color(tint),
+                context.stroke(view.path(track.points, closed: false), with: .color(tint.opacity(a.trackOpacity)),
                                style: StrokeStyle(lineWidth: max(0.5, track.width * s), lineCap: .round, lineJoin: .round))
             }
             let padSide = layer == "F.Cu" ? "F" : layer == "B.Cu" ? "B" : nil
             if let padSide {
                 var pads = Path()
                 for pad in picture.pads where pad.sides == padSide { pads.addPath(view.path(pad.outline, closed: true)) }
-                context.fill(pads, with: .color(tint))
+                context.fill(pads, with: .color(tint.opacity(a.padOpacity)))
             }
         }
         // plated through the board
         var plated = Path()
         for pad in picture.pads where pad.sides == "FB" { plated.addPath(view.path(pad.outline, closed: true)) }
-        context.fill(plated, with: .color(Self.plated))
+        context.fill(plated, with: .color(Self.plated.opacity(a.padOpacity)))
         for via in picture.vias where !hidden.contains(via.uuid) {
             let c = view.point(via.center), r = via.size * s / 2
-            context.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(Self.via))
+            context.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(Self.via.opacity(a.viaOpacity)))
         }
         // holes
         var holes = Path()
@@ -309,7 +336,7 @@ struct PCBPainter {
 
         // silkscreen, this side's
         let silkLayer = side == .front ? "F.SilkS" : "B.SilkS"
-        let silk = side == .front ? Self.frontSilk : Self.backSilk
+        let silk = (side == .front ? Self.frontSilk : Self.backSilk).opacity(display?.alpha(silkLayer) ?? 1)
         for line in picture.silkscreen where line.layer == silkLayer {
             let path = view.path(line.points, closed: line.closed)
             if line.filled { context.fill(path, with: .color(silk.opacity(0.85))) }
@@ -360,6 +387,9 @@ struct PCBPainter {
         }
         context.stroke(airwires, with: .color(Color.white.opacity(0.7)), lineWidth: 0.8)
 
+        // the nets highlighted (the rest darkened)
+        display?.drawHighlight(context, picture, view)
+
         // what the design rules check found
         if let drc {
             for violation in drc.violations + drc.unconnected {
@@ -385,6 +415,8 @@ struct PCBPainter {
 struct PCBBoardCanvas: View {
     @ObservedObject var board: BoardController
     @ObservedObject var editing: PCBEditing
+    @ObservedObject var appearance: PCBAppearance
+    /// The board as it is (all of it: what is shown of it is `shown`)
     let picture: KiCadBoardPicture
     let view: PCBTransform
     let side: PCBSide
@@ -394,13 +426,16 @@ struct PCBBoardCanvas: View {
 
     /// The footprints selected: those of the parts selected in the schematic, and those selected here
     private var footprints: Set<String> { selected.union(editing.footprintSelection) }
+    /// What the Appearance panel shows of the board, which is what the pointer picks from
+    private var shown: KiCadBoardPicture { appearance.display.visible(picture) }
 
     var body: some View {
         Canvas { context, _ in
             let draggedTexts = editing.draggingTexts ? Set(editing.dragging?.uuids ?? []) : []
             PCBPainter(picture: picture, view: view, side: side, selected: footprints, drc: board.drc ?? editing.quickDRC,
                        hidden: (editing.preview?.moved ?? []).union(editing.dragPreview?.moved ?? []).union(editing.pairPreview?.moved ?? [])
-                           .union(draggedTexts).union(editing.footprintDragPreview?.moved ?? []))
+                           .union(draggedTexts).union(editing.footprintDragPreview?.moved ?? []),
+                       display: appearance.display)
                 .draw(context)
             // the board's texts being dragged, where they go, and those selected, boxed
             for text in picture.texts where draggedTexts.contains(text.uuid) {
@@ -418,6 +453,10 @@ struct PCBBoardCanvas: View {
                            zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePointer, editing.layer, editing.zoneKind == .keepout) : nil,
                            tuning: editing.tuning, pattern: editing.tool == .select ? editing.selectedPattern : nil)
                 .draw(context)
+            // the zone selected, and the point editor's handles on it
+            if editing.tool == .select, let outline = editing.zoneOutlineShown {
+                PCBZoneHandles(outline: outline, view: view).draw(context)
+            }
             // the box being drawn to select with: solid taking what is wholly in it, dashed what it touches
             if let area = editing.selectionArea {
                 let a = view.point(area.from), b = view.point(area.to)
@@ -443,11 +482,15 @@ struct PCBBoardCanvas: View {
         }
         .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
             .onChanged { drag in
+                let flags = NSEvent.modifierFlags
+                if editing.zoneDragChanged(from: view.board(drag.startLocation), to: view.board(drag.location), in: picture, slop: 5 / view.scale,
+                                           pixel: 1 / view.scale, fixedLength: flags.contains(.command), free: flags.contains(.shift)) { return }
                 editing.dragChanged(from: view.board(drag.startLocation), to: view.board(drag.location), in: picture,
                                     selected: footprints, leftward: drag.location.x < drag.startLocation.x,
                                     moveOnly: NSEvent.modifierFlags.contains(.option))
             }
             .onEnded { drag in
+                if editing.zoneDragEnded(at: view.board(drag.location)) { return }
                 let flags = NSEvent.modifierFlags
                 let mode = PCBEditing.AreaSelection(shift: flags.contains(.shift), command: flags.contains(.command))
                 guard editing.selectionArea != nil else {
@@ -465,6 +508,12 @@ struct PCBBoardCanvas: View {
             let p = view.board(location)
             let flags = NSEvent.modifierFlags
             let extending = flags.contains(.command) || flags.contains(.shift)
+            let picture = shown
+            // (the highlight tool: the net there highlighted)
+            if appearance.highlightTool && !editing.isDragging && !editing.isRouting {
+                appearance.highlightNet(at: p, scale: view.scale, picture: picture)
+                return
+            }
             // (a track or via being dragged with the pointer: kept there)
             if editing.isDragging {
                 Task { await editing.fixDrag(at: p) }
@@ -487,6 +536,7 @@ struct PCBBoardCanvas: View {
                 // a tuning pattern (a click on one of its tracks, as KiCad selects one), else a track or via, else a
                 // connection still to route (routed), else a part
                 if !extending { editing.patternSelection = nil }
+                if !extending { editing.deselectZone() }
                 if !extending, let pattern = editing.pattern(at: p, in: picture, slop: 3 / view.scale) {
                     editing.patternSelection = pattern
                     editing.selection = []
@@ -513,6 +563,8 @@ struct PCBBoardCanvas: View {
                         if extending { editing.footprintSelection.formSymmetricDifference([uuid]) } else { editing.footprintSelection = [uuid] }
                     } else if !extending {
                         editing.footprintSelection = []
+                        // (else the zone there, by its outline or its fill)
+                        editing.selectZone(at: p, slop: 3 / view.scale)
                     }
                 }
             }
@@ -523,6 +575,7 @@ struct PCBBoardCanvas: View {
         .onKeyPress(phases: .down) { press in key(press) ? .handled : .ignored }
         .onDeleteCommand {
             if editing.undoZoneCorner() { return }
+            if editing.deleteZoneSelection(slop: 5 / view.scale) { return }
             editing.isRouting ? editing.undoSegment() : editing.deleteSelection()
         }
         .onChange(of: editing.tool) { _, _ in focused = true }
@@ -532,6 +585,8 @@ struct PCBBoardCanvas: View {
     private func key(_ press: KeyPress) -> Bool {
         // the menus' keys (⌘ and ⌥) left to them
         guard press.modifiers.isDisjoint(with: [.command, .option, .control]) else { return false }
+        // (a zone's handles and corners, properties and locks: PCBZoneEditing.swift, PCBProperties.swift)
+        if editing.propertiesKey(press, footprints: footprints) { return true }
         switch press.key {
         case .escape:
             if editing.isDragging {
@@ -555,6 +610,7 @@ struct PCBBoardCanvas: View {
             return true
         case .delete, .deleteForward:
             if editing.undoZoneCorner() { return true }
+            if editing.deleteZoneSelection(slop: 5 / view.scale) { return true }
             if editing.isRouting { editing.undoSegment() } else { editing.deleteSelection() }
             return true
         case .return, .end:
@@ -566,6 +622,20 @@ struct PCBBoardCanvas: View {
             return true
         case .pageDown:
             editing.stepLayer(1)
+            return true
+        default:
+            break
+        }
+        // (KiCad's Highlight Net at the pointer, Clear Net Highlighting, and the high contrast mode)
+        switch press.characters {
+        case "`":
+            if let p = editing.pointer { appearance.highlightNet(at: p, scale: view.scale, picture: shown) }
+            return true
+        case "~":
+            appearance.clearHighlight()
+            return true
+        case "h" where !editing.isRouting, "H" where !editing.isRouting:
+            appearance.toggleHighContrast()
             return true
         default:
             break
@@ -946,6 +1016,7 @@ struct PCBEditBar: View {
                 .fixedSize()
                 .help("The diameter and drill of the vias selected")
             }
+            PCBPropertiesBar(editing: editing)
             if editing.tool == .select, let pattern = editing.selectedPattern {
                 // (the tuning pattern selected: its target and largest amplitude, as its properties panel sets them)
                 Text(pattern.mode == .skew ? "Skew" : "Length").foregroundStyle(.secondary)

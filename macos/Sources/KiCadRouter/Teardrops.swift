@@ -438,7 +438,7 @@ public final class Teardrops {
                 }
                 if !tdParams.onPadsInZones && areItemsInSameZone(pad, track) { continue }
                 let pos = p.pad.pos
-                if !startHitsPad && !endHitsPad && trackHitTest(track, pos, 0) {
+                if !startHitsPad && !endHitsPad && Self.trackHitTest(track, pos, 0) {
                     // (a track across the pad: a teardrop each side)
                     let stub = buildCrossingStub(track, pos)
                     stub.trackStart = track.trackEnd
@@ -458,15 +458,15 @@ public final class Teardrops {
                     || Double(track.trackWidth) >= Double(annularWidth) * tdParams.widthToSizeFilterRatio {
                     continue
                 }
-                let startHitsVia = viaHitTest(via, track.trackStart, 0)
-                let endHitsVia = viaHitTest(via, track.trackEnd, 0)
+                let startHitsVia = Self.viaHitTest(via, track.trackStart, 0)
+                let endHitsVia = Self.viaHitTest(via, track.trackEnd, 0)
                 if startHitsVia && endHitsVia { continue }
                 if startHitsVia != endHitsVia
                     && computeChordThroughShape(track, via, layer, startHitsVia ? track.trackStart : track.trackEnd) < track.trackWidth {
                     continue
                 }
                 let pos = v.start
-                if !startHitsVia && !endHitsVia && trackHitTest(track, pos, 0) {
+                if !startHitsVia && !endHitsVia && Self.trackHitTest(track, pos, 0) {
                     let stub = buildCrossingStub(track, pos)
                     stub.trackStart = track.trackEnd
                     tryCreateTrackTeardrop(tdParams, .padVia, stub, track, via, pos, Self.teardropUuid(track, via, 0))
@@ -530,7 +530,7 @@ public final class Teardrops {
                     var pads: [BoardDRC.CopperItem] = [], vias: [BoardDRC.CopperItem] = []
                     connectedPadsAndVias(track, &pads, &vias)
                     for pad in pads where padHitTest(pad, pos, 0) { existingPadOrVia = true }
-                    for via in vias where viaHitTest(via, pos, 0) { existingPadOrVia = true }
+                    for via in vias where Self.viaHitTest(via, pos, 0) { existingPadOrVia = true }
                     if existingPadOrVia { continue }
                     tryCreateTrackTeardrop(params, .trackEnd, track, track, candidate, pos, Self.teardropUuid(track, candidate, 0))
                 }
@@ -714,29 +714,41 @@ public final class Teardrops {
     private func boundingRadius(_ pad: BoardDRC.CopperItem) -> Int {
         if let r = boundingRadii[ObjectIdentifier(pad)] { return r }
         guard let p = pad.pad else { return 0 }
+        let r = Self.boundingRadius(p, drc.world)
+        boundingRadii[ObjectIdentifier(pad)] = r
+        return r
+    }
+
+    /// The same of a board's pad
+    static func boundingRadius(_ p: BoardDRC.Pad, _ world: BoardWorld) -> Int {
         var r = 0
-        if let poly = drc.world.padPolygon(p.pad, primitives: p.primitives, errorLocation: .outside) {
+        if let poly = world.padPolygon(p.pad, primitives: p.primitives, errorLocation: .outside) {
             for outline in poly.polygons {
                 for q in outline[0].points { r = max(r, KiMath.round((q - p.pad.pos).distance(.zero))) }
             }
         }
         r = max(r, KiMath.round(Double(p.pad.drill.x) / 2.0))
         r = max(r, KiMath.round(Double(p.pad.drill.y) / 2.0))
-        boundingRadii[ObjectIdentifier(pad)] = r
         return r
     }
 
     /// PAD::HitTest of a point on a layer (`layer` nil: on any, its hole too)
     private func padHitTest(_ pad: BoardDRC.CopperItem, _ p: IPoint, _ accuracy: Int, _ layer: Int? = nil) -> Bool {
         guard let pp = pad.pad else { return false }
-        if let layer, !drc.world.copper(pp.pad.layers).contains(layer) { return false }
+        return Self.padHitTest(pp, p, accuracy, layer, drc.world, boundingRadius: boundingRadius(pad)) { padPolygon(pad) }
+    }
+
+    /// The same of a board's pad, its bounding radius and its polygon (the error inside) given
+    static func padHitTest(_ pp: BoardDRC.Pad, _ p: IPoint, _ accuracy: Int, _ layer: Int?, _ world: BoardWorld,
+                           boundingRadius: Int, polygon: () -> PolySet) -> Bool {
+        if let layer, !world.copper(pp.pad.layers).contains(layer) { return false }
         let delta = p - pp.pad.pos
-        let r = boundingRadius(pad) + accuracy
+        let r = boundingRadius + accuracy
         if delta.squaredNorm > r * r { return false }
-        if padPolygon(pad).contains(p, accuracy: accuracy) { return true }
+        if polygon().contains(p, accuracy: accuracy) { return true }
         if layer != nil { return false }
         // (its hole, a segment of the drill's width, of none without a hole: SHAPE_SEGMENT::Collide of a point)
-        guard case .segment(let s, let w) = drc.world.holeShape(pp.pad) else { return false }
+        guard case .segment(let s, let w) = world.holeShape(pp.pad) else { return false }
         let minDist = (w + 1) / 2 + accuracy
         let d = s.squaredDistance(p)
         return d == 0 || d < minDist * minDist
@@ -745,7 +757,7 @@ public final class Teardrops {
     private func padHitTest(_ pad: BoardDRC.CopperItem, _ p: IPoint, onLayer layer: Int) -> Bool { padHitTest(pad, p, 0, layer) }
 
     /// PCB_VIA::HitTest
-    private func viaHitTest(_ via: BoardDRC.CopperItem, _ p: IPoint, _ accuracy: Int) -> Bool {
+    static func viaHitTest(_ via: BoardDRC.CopperItem, _ p: IPoint, _ accuracy: Int) -> Bool {
         guard let v = via.via else { return false }
         let maxDist = accuracy + v.diameter / 2
         let rel = DPoint(Double(p.x - v.start.x), Double(p.y - v.start.y))
@@ -753,7 +765,7 @@ public final class Teardrops {
     }
 
     /// PCB_TRACK::HitTest and PCB_ARC::HitTest of a point
-    private func trackHitTest(_ t: BoardDRC.CopperItem, _ p: IPoint, _ accuracy: Int) -> Bool {
+    static func trackHitTest(_ t: BoardDRC.CopperItem, _ p: IPoint, _ accuracy: Int) -> Bool {
         if t.kind == .arc {
             let maxDist = Double(accuracy) + Double(t.trackWidth) / 2.0
             if t.trackStart.distance(p) <= maxDist || t.trackEnd.distance(p) <= maxDist { return true }
@@ -776,8 +788,8 @@ public final class Teardrops {
     private func hitTest(_ other: BoardDRC.CopperItem, _ p: IPoint) -> Bool {
         switch other.kind {
         case .pad: return padHitTest(other, p, 0, nil)
-        case .via: return viaHitTest(other, p, 0)
-        default: return trackHitTest(other, p, 0)
+        case .via: return Self.viaHitTest(other, p, 0)
+        default: return Self.trackHitTest(other, p, 0)
         }
     }
 
