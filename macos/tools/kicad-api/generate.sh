@@ -1,6 +1,6 @@
 #!/bin/sh
-# Generates Sources/KiCadLink/Generated from KiCad's API (the .proto files under proto/, from KiCad 10.0.7's
-# api/proto: https://gitlab.com/kicad/code/kicad/-/tree/10.0.7/api/proto), for the version of SwiftProtobuf the
+# Generates Sources/KiCadLink/Generated from KiCad's API (the .proto files under proto/, from KiCad 10.0.8's
+# api/proto: https://gitlab.com/kicad/code/kicad/-/tree/10.0.8/api/proto), for the version of SwiftProtobuf the
 # package depends on.
 #
 # Needs protoc (3.21 or later) and protoc-gen-swift built from swift-protobuf at that version:

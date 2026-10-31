@@ -148,7 +148,19 @@ public enum KiCadFootprintMessage {
         instance.symbolSheetName = node.value("sheetname") ?? ""
         instance.symbolSheetFilename = node.value("sheetfile") ?? ""
         instance.symbolFootprintFilters = footprint.property("ki_fp_filters") ?? ""
+        instance.symbolUnits = symbolUnits(footprint)
         return instance
+    }
+
+    /// The units of the footprint's symbol, their names and pins, as KiCad's API carries them since KiCad 10.0.8
+    /// (FootprintUnitInfo: FOOTPRINT::Serialize's m_unitInfo, the board file's units)
+    public static func symbolUnits(_ footprint: KiCadFootprint) -> [Kiapi_Board_Types_FootprintUnitInfo] {
+        footprint.units.map { unit in
+            var info = Kiapi_Board_Types_FootprintUnitInfo()
+            info.name = unit.name
+            info.pinNumbers = unit.pins
+            return info
+        }
     }
 
     /// The path of the symbol a footprint is linked to ("/<sheet>/<symbol>"), as the API carries it: the ids after the

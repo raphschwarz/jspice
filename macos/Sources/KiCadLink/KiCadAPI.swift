@@ -95,7 +95,7 @@ public final class KiCadAPI {
 
     // MARK: - KiCad and its documents
 
-    /// "10.0.7"
+    /// "10.0.8"
     public func version() throws -> (major: Int, minor: Int, patch: Int, full: String) {
         let v = try call(Kiapi_Common_Commands_GetVersion(), Kiapi_Common_Commands_GetVersionResponse.self).version
         return (Int(v.major), Int(v.minor), Int(v.patch), v.fullVersion)

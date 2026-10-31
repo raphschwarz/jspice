@@ -210,7 +210,7 @@ public final class KiCadLiveBoard {
     }
 
     /// Makes a footprint as KiCad has it what ours is: its reference, value and fields, its fabrication flags, its link
-    /// to the schematic, and its pads' nets and pins
+    /// to the schematic (with its symbol's units, which KiCad's API takes since 10.0.8), and its pads' nets and pins
     static func patch(_ instance: inout Kiapi_Board_Types_FootprintInstance, from footprint: KiCadFootprint) throws {
         instance.referenceField.text.text.text = footprint.reference
         instance.valueField.text.text.text = footprint.value
@@ -221,6 +221,7 @@ public final class KiCadLiveBoard {
         instance.attributes.excludeFromBillOfMaterials = attributes.contains("exclude_from_bom")
         instance.attributes.excludeFromPositionFiles = attributes.contains("exclude_from_pos_files")
         instance.symbolPath = KiCadFootprintMessage.sheetPath(footprint.path)
+        instance.symbolUnits = KiCadFootprintMessage.symbolUnits(footprint)
 
         let mandatory: Set<String> = ["Reference", "Value", "Datasheet", "Description", "Footprint"]
         var fields: [String: String] = [:]

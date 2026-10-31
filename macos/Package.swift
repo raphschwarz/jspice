@@ -35,7 +35,7 @@ let package = Package(
         .target(name: "KiCadKit"),
         // KiCad's PCB editor while it runs, through KiCad's API (its protobuf messages over a local NNG socket): the board
         // kept up to date with the schematic as one undoable change, the editors' selections followed both ways.
-        // (Generated: KiCad 10.0.7's API messages, made by tools/kicad-api/generate.sh)
+        // (Generated: KiCad 10.0.8's API messages, made by tools/kicad-api/generate.sh)
         .target(name: "KiCadLink", dependencies: ["KiCadKit", .product(name: "SwiftProtobuf", package: "swift-protobuf")]),
         // The board editor's router, ported from KiCad's (pcbnew/router and the geometry under it, libs/kimath): KiCad's
         // whole nanometres and its rounding, so that what is routed here is what KiCad would route, checked against

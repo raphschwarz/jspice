@@ -37,6 +37,25 @@ final class KiCadAPITests: XCTestCase {
         XCTAssertFalse(KiCadAPI.document(document, is: folder.appendingPathComponent("amp.kicad_pcb")))
     }
 
+    /// A footprint's symbol units (the board file's units) go with it, as KiCad 10.0.8's API carries them
+    /// (FootprintInstance.symbol_units), made and patched alike
+    func testAFootprintCarriesItsSymbolUnits() throws {
+        let board = try KiCadBoard(text: """
+            (kicad_pcb (version 20260206) (generator "pcbnew") (generator_version "10.0") (general (thickness 1.6))
+              (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (footprint "Package_SO:SOIC-8" (layer "F.Cu") (uuid "f0000000-0000-0000-0000-000000000001") (at 10 10)
+                (units (unit (name "A") (pins "1" "2" "3")) (unit (name "B") (pins "5" "6" "7")))))
+            """)
+        let footprint = try XCTUnwrap(board.footprints.first)
+        let expected = [("A", ["1", "2", "3"]), ("B", ["5", "6", "7"])]
+        var instance = try KiCadFootprintMessage.instance(footprint)
+        XCTAssertEqual(instance.symbolUnits.map(\.name), expected.map(\.0))
+        XCTAssertEqual(instance.symbolUnits.map(\.pinNumbers), expected.map(\.1))
+        instance.symbolUnits = []
+        try KiCadLiveBoard.patch(&instance, from: footprint)
+        XCTAssertEqual(instance.symbolUnits.map(\.pinNumbers), expected.map(\.1))
+    }
+
     func testKiCadSaysWhoItIsAndWhatItHasOpen() throws {
         let api = try api()
         let version = try api.version()
