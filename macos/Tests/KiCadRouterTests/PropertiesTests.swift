@@ -306,19 +306,21 @@ final class PropertiesTests: XCTestCase {
                 XCTAssertTrue(Self.sameAsKiCad(ours, k), "\(name) footprint \(uuid) as KiCad writes it:\n\(ours.compact)\n\(k.compact)")
             }
         }
-        // (a board on which KiCad, reading it, gave a track the net of a pad it now meets, which BoardDRC does not,
-        // left out of the comparison of their checks, and counted)
+        // (a board on which KiCad, reading it, gave a track or a copper drawing the net of a pad it now meets, which
+        // BoardDRC does not, left out of the comparison of their checks, and counted)
         let checked = try written.filter { file in
             let nets = (read[file.path] as? [String: Any])?["nets"] as? [String: String] ?? [:]
             let board = try KiCadBoard.read(file)
-            let ours: [(String, String)] = board.tracks.map { ($0.uuid, $0.net ?? "") } + board.vias.map { ($0.uuid, $0.net ?? "") }
+            let drawings: [(String, String)] = board.root.items.filter { $0.head?.hasPrefix("gr_") == true && $0.head != "gr_text" }
+                .compactMap { node in node.value("uuid").map { ($0, BoardDRC.netName(node)) } }
+            let ours: [(String, String)] = board.tracks.map { ($0.uuid, $0.net ?? "") } + board.vias.map { ($0.uuid, $0.net ?? "") } + drawings
             return ours.allSatisfy { item in nets[item.0] == nil || nets[item.0] == item.1 }
         }
         for file in checked { XCTAssertNotNil(try ZoneEditingTests.run("drc.py", [file.path]), "drc.py \(file.lastPathComponent)") }
         let (drcSummary, _, drcDifferences) = try DRCTests.compare(checked)
         print("PropertiesTests: \(written.count) boards, \(edits) changes (\(refused) refused as KiCad refuses them); KiCad read \(footprintsRead) "
               + "footprints, \(padsRead) pads and \(locksRead) locks as set, wrote \(footprintsWritten) footprints changed as the port does; DRC (\(written.count - checked.count) boards left out, "
-              + "their tracks given other nets by KiCad as it read them): \(drcSummary)")
+              + "their tracks or copper drawings given other nets by KiCad as it read them): \(drcSummary)")
         XCTAssertGreaterThan(edits, 0)
         XCTAssertTrue(drcDifferences.isEmpty, "\(drcDifferences.count) differences from KiCad's DRC:\n" + drcDifferences.prefix(30).joined(separator: "\n"))
     }

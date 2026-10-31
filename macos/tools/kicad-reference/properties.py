@@ -141,6 +141,9 @@ def read(path):
         out["nets"][t.m_Uuid.AsString()] = t.GetNetname()
     for d in board.GetDrawings():
         out["locked"][d.m_Uuid.AsString()] = d.IsLocked()
+        # (a drawing on copper is connected: the net KiCad gives it as it reads the board)
+        if isinstance(d, pcbnew.PCB_SHAPE) and d.IsOnCopperLayer():
+            out["nets"][d.m_Uuid.AsString()] = d.GetNetname()
     return out
 
 
