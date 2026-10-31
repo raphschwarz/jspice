@@ -402,6 +402,10 @@ struct PCBBoardCanvas: View {
                        hidden: (editing.preview?.moved ?? []).union(editing.dragPreview?.moved ?? []).union(editing.pairPreview?.moved ?? [])
                            .union(draggedTexts).union(editing.footprintDragPreview?.moved ?? []))
                 .draw(context)
+            // the board's other graphics, its dimensions, and what the graphics tools are doing (PCBGraphics.swift)
+            PCBGraphicsPainter(picture: picture, view: view, graphics: editing.graphics, selection: editing.selection,
+                               dragging: draggedTexts.isEmpty ? nil : (draggedTexts, editing.dragging?.delta ?? .zero))
+                .draw(context)
             // the board's texts being dragged, where they go, and those selected, boxed
             for text in picture.texts where draggedTexts.contains(text.uuid) {
                 PCBPainter.drawText(text, in: context, view: view, color: .white, offset: editing.dragging?.delta ?? .zero)
@@ -434,6 +438,7 @@ struct PCBBoardCanvas: View {
                     return
                 }
                 let p = view.board(pointer)
+                editing.graphics.scale = view.scale
                 editing.pointerMoved(p)
                 // (a line of the ratsnest under the pointer, where a click routes it: not over a track, which it selects)
                 let wire = editing.tool == .select && picture.copper(at: p, layers: picture.copperLayers, slop: 3 / view.scale) == nil
@@ -443,11 +448,14 @@ struct PCBBoardCanvas: View {
         }
         .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
             .onChanged { drag in
+                // (an edit point of the graphic selected dragged, as KiCad's point editor drags it)
+                if editing.graphics.dragChanged(from: view.board(drag.startLocation), to: view.board(drag.location)) { return }
                 editing.dragChanged(from: view.board(drag.startLocation), to: view.board(drag.location), in: picture,
                                     selected: footprints, leftward: drag.location.x < drag.startLocation.x,
                                     moveOnly: NSEvent.modifierFlags.contains(.option))
             }
             .onEnded { drag in
+                if editing.graphics.dragEnded() { return }
                 let flags = NSEvent.modifierFlags
                 let mode = PCBEditing.AreaSelection(shift: flags.contains(.shift), command: flags.contains(.command))
                 guard editing.selectionArea != nil else {
@@ -483,6 +491,8 @@ struct PCBBoardCanvas: View {
                 editing.textClick(at: p)
             case .footprint:
                 editing.footprintClick(at: p)
+            case .draw, .dimension, .measure:
+                editing.graphics.click(at: p, double: (NSApp.currentEvent?.clickCount ?? 1) >= 2)
             case .select:
                 // a tuning pattern (a click on one of its tracks, as KiCad selects one), else a track or via, else a
                 // connection still to route (routed), else a part
@@ -504,6 +514,13 @@ struct PCBBoardCanvas: View {
                         board.select(footprint: nil, extending: false)
                         editing.footprintSelection = []
                     }
+                } else if let item = editing.graphics.item(at: p) {
+                    // a graphic or dimension of the board's own (a graphic selected alone shows its edit points)
+                    if extending { editing.selection.formSymmetricDifference([item]) } else {
+                        editing.selection = [item]
+                        board.select(footprint: nil, extending: false)
+                        editing.footprintSelection = []
+                    }
                 } else if !extending, let wire = picture.airwire(at: p, slop: 3 / view.scale) {
                     editing.routeConnection(wire)
                 } else {
@@ -522,7 +539,7 @@ struct PCBBoardCanvas: View {
         .focusEffectDisabled()
         .onKeyPress(phases: .down) { press in key(press) ? .handled : .ignored }
         .onDeleteCommand {
-            if editing.undoZoneCorner() { return }
+            if editing.undoZoneCorner() || editing.graphics.back() { return }
             editing.isRouting ? editing.undoSegment() : editing.deleteSelection()
         }
         .onChange(of: editing.tool) { _, _ in focused = true }
@@ -530,6 +547,25 @@ struct PCBBoardCanvas: View {
     }
 
     private func key(_ press: KeyPress) -> Bool {
+        // KiCad's keys for its drawing tools and its measure tool (⌃⇧L, ⌃⇧A, ⌃⇧C, ⌃⇧P, ⌃⇧H, ⌃⇧M)
+        if press.modifiers.contains(.control) && press.modifiers.contains(.shift) && !press.modifiers.contains(.command) && !editing.isRouting {
+            let kinds: [String: PCBGraphicsEditing.Kind] = ["l": .line, "a": .arc, "c": .circle, "p": .polygon]
+            let key = press.characters.lowercased()
+            if let kind = kinds[key] {
+                editing.graphics.kind = kind
+                editing.tool = .draw
+                return true
+            }
+            if key == "h" {
+                editing.graphics.dimensionKind = .orthogonal
+                editing.tool = .dimension
+                return true
+            }
+            if key == "m" {
+                editing.tool = .measure
+                return true
+            }
+        }
         // the menus' keys (⌘ and ⌥) left to them
         guard press.modifiers.isDisjoint(with: [.command, .option, .control]) else { return false }
         switch press.key {
@@ -544,6 +580,8 @@ struct PCBBoardCanvas: View {
                 // (the zone being drawn dropped)
             } else if editing.tuning != nil {
                 editing.cancelTuning()
+            } else if editing.graphics.escape() {
+                // (the graphic or dimension being drawn dropped, or the ruler taken away)
             } else if editing.tool != .select {
                 editing.tool = .select
             } else {
@@ -554,7 +592,7 @@ struct PCBBoardCanvas: View {
             }
             return true
         case .delete, .deleteForward:
-            if editing.undoZoneCorner() { return true }
+            if editing.undoZoneCorner() || editing.graphics.back() { return true }
             if editing.isRouting { editing.undoSegment() } else { editing.deleteSelection() }
             return true
         case .return, .end:
@@ -587,6 +625,7 @@ struct PCBBoardCanvas: View {
         case "v" where press.modifiers.contains(.shift) && !editing.isRouting: editing.tool = .via
         case "v": editing.placeVia()
         case "/": editing.flipPosture()
+        case "w" where editing.tool == .draw: editing.graphics.stepWidth(!press.modifiers.contains(.shift))
         case "w": editing.stepWidth(press.modifiers.contains(.shift) ? -1 : 1)
         case "b": editing.fillZones()
         case "i", "u": editing.selectNets(in: picture)
@@ -820,6 +859,12 @@ struct PCBEditBar: View {
             return "Add text: click to place the words typed in beside the tool, on the layer chosen, as KiCad's Add Text places them (of the board's text style for the layer; mirrored underneath); drag a text with the select tool to move it, R turns it, ⌫ deletes it"
         case .footprint:
             return "Place a footprint (A): look for one of KiCad's libraries' beside the tool, click to place it, as KiCad's Place Footprint places one (a part of the board alone, not in the schematic: a logo, a test point, a fiducial)"
+        case .draw:
+            return "Draw lines, arcs, rectangles, circles and polygons (⌃⇧L, ⌃⇧A, ⌃⇧C, ⌃⇧P) on any layer, as KiCad's drawing tools draw them: of the layer's pen (W, ⇧W wider, narrower), on Board Outline the board's edge; a graphic selected shows its points to drag"
+        case .dimension:
+            return "Draw dimensions (⌃⇧H): aligned, orthogonal, center, radial and leader, as KiCad's dimension tools draw them, of the board's dimension settings"
+        case .measure:
+            return "Measure (⌃⇧M): click two points for the distance between them, its x and y and its angle, as KiCad's measure tool shows them (⇧ holds it to 45°); it changes nothing"
         case .zone:
             return "Draw a zone (Z): click its corners, double-click the last: a copper zone of a net, filled round everything else as KiCad fills it, or a rule area keeping tracks, vias, pads or pours out (⌫ takes a corner back, Esc drops it)"
         }
@@ -1000,6 +1045,7 @@ struct PCBEditBar: View {
             if editing.tool == .footprint {
                 PCBFootprintSearch(editing: editing)
             }
+            PCBGraphicsBar(editing: editing, graphics: editing.graphics)
             if editing.tool == .zone {
                 Picker("Layer", selection: $editing.layer) {
                     ForEach(editing.layers, id: \.self) { layer in
