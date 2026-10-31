@@ -261,6 +261,20 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   and touched by it, next to the board as `BOARD.boxes` (JSON). `BoxSelectionTests` checks the port's
   (`BoxSelection`, which the PCB view's box selection goes by) against them; the boards of
   `Tests/KiCadRouterTests/Fixtures/boards`, `arcboards`, `courtyards` and `silk` have theirs.
+- `appearance.py`: KiCad's Appearance panel and the board's part of the project's local settings (the `.kicad_prl`'s
+  `board`: visible layers as LSET's hexadecimal, visible objects by name, opacities, high contrast mode, active layer
+  and preset), for checking the port's (`LocalSettings.swift`: `KiCadAppearanceControls`, `KiCadBoardAppearance`,
+  `KiCadLocalSettings`). Neither reaches KiCad's Python module, so, as `boardsetup.py` does, it runs pcbnew under Xvfb
+  with an action plugin of its own. `appearance.py BOARD.kicad_pcb...` writes `BOARD.appearance` (JSON) beside each
+  board: two runs of KiCad, the first on the board with no local settings, the second on what the first left, each
+  clicking the panel's controls at random as a user does (a layer's eye, an object's eye, an opacity slider let go,
+  Normal, Dim or Hide for inactive layers, a layer's name, a built-in preset), then File ▸ Save twice: each run's
+  steps, the `.kicad_prl` the first Save wrote (KiCad writes it before it copies the frame's display options and active
+  layer into it, so it has those as the board was opened) and the one the second left (with them as the editor has
+  them, as closing the editor writes them).
+  `AppearanceTests` opens each board on the same settings, makes the same steps with the port and checks its settings
+  against both files, and that every file KiCad wrote comes out byte for byte as it was when the port reads
+  and writes it. The boards of `Tests/KiCadRouterTests/Fixtures/nets` have theirs.
 - `nets.py`: KiCad's Net Inspector and its Highlight Net on boards, for checking the port's (`NetInspector.swift`,
   with `LengthCalculation`, and `NetHighlight.swift`). Neither the panel nor the highlight tool reaches KiCad's Python
   module, so, as `boardsetup.py` and `tuning.py` do, it runs pcbnew under Xvfb with an action plugin of its own and

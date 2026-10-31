@@ -4,9 +4,14 @@
 // dump( 2 )), thirdparty/nlohmann_json (its serializer: indentation, escapes, numbers), common/settings/
 // layer_settings_utils.cpp (UserVisbilityLayers, VisibilityLayerToString, RenderLayerFromVisbilityString),
 // include/layer_ids.h (PCB_LAYER_ID, GAL_LAYER_ID), common/lset.cpp and include/base_set.h (LSET::Name, FmtHex,
-// ParseHex), common/settings/builtin_color_themes.h and color_settings.cpp (the "KiCad Default" theme, GetDefaultColor)
-// and pcbnew/widgets/appearance_controls.cpp (the layers the Appearance panel lists, their order and tooltips; the
-// built-in layer presets).
+// ParseHex), common/settings/builtin_color_themes.h and color_settings.cpp (the "KiCad Default" theme, GetDefaultColor),
+// pcbnew/widgets/appearance_controls.cpp (the layers the Appearance panel lists, their order and tooltips; the
+// built-in layer presets; the objects' rows; how a click on the panel's controls changes the appearance:
+// onLayerVisibilityToggled, onObjectVisibilityChanged, onObjectOpacitySlider, onLayerLeftClick,
+// onLayerPresetChanged, doApplyLayerPreset, syncLayerPresetSelection, OnBoardChanged), include/project/
+// board_project_settings.h (LAYER_PRESET), pcbnew/pcb_edit_frame.cpp (onBoardLoaded: the appearance as a board is
+// opened), pcbnew/pcbnew_config.cpp (LoadProjectSettings, SaveProjectLocalSettings, saveProjectSettings) and
+// pcbnew/files.cpp (SavePcbFile: the local settings written before the frame's are copied into them).
 // Copyright (C) 2020 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -362,10 +367,10 @@ public enum KiCadLayers {
     /// The layers a board has (its layers table: BOARD::GetEnabledLayers), by id, and its own names for them
     /// (BOARD::GetLayerName: the user's name, else the canonical one)
     public static func enabled(_ board: KiCadBoard) -> [(id: Int, name: String, canonical: String)] {
+        // (each entry its id, canonical name, type and the user's name: `(9 "F.Adhes" user "F.Adhesive")`)
         (board.root["layers"]?.items ?? []).compactMap { entry in
-            guard let id = entry.number(at: 0).map({ Int($0) }) ?? entry.text(at: 0).flatMap({ Int($0) }),
-                  let canonical = entry.text(at: 1) else { return nil }
-            let user = entry.text(at: 3) ?? ""
+            guard let id = entry.head.flatMap({ Int($0) }), let canonical = entry.text(at: 0) else { return nil }
+            let user = entry.text(at: 2) ?? ""
             return (id, user.isEmpty ? canonical : user, canonical)
         }
     }
@@ -573,11 +578,41 @@ public struct KiCadBoardAppearance: Equatable, Sendable {
         ])
     }
 
+    /// The Objects tab's rows (s_objectSettings): each object, its title and tooltip, whether it has an eye and an
+    /// opacity slider; nil for the gaps between groups of them
+    public static let objectRows: [(item: Item?, title: String, tooltip: String, eye: Bool, opacity: Bool)] = [
+        (.tracks, "Tracks", "Show tracks", true, true),
+        (.vias, "Vias", "Show all vias", true, true),
+        (.pads, "Pads", "Show all pads", true, true),
+        (.zones, "Zones", "Show copper zones", true, true),
+        (.shapes, "Filled Shapes", "Opacity of filled shapes", false, true),
+        (.bitmaps, "Images", "Show user images", true, true),
+        (nil, "", "", false, false),
+        (.footprintsFront, "Footprints Front", "Show footprints that are on board's front", true, false),
+        (.footprintsBack, "Footprints Back", "Show footprints that are on board's back", true, false),
+        (.footprintValues, "Values", "Show footprint values", true, false),
+        (.footprintReferences, "References", "Show footprint references", true, false),
+        (.footprintText, "Footprint Text", "Show all footprint text", true, false),
+        (nil, "", "", false, false),
+        (.ratsnest, "Ratsnest", "Show unconnected nets as a ratsnest", true, false),
+        (.drcWarnings, "DRC Warnings", "DRC violations with a Warning severity", true, false),
+        (.drcErrors, "DRC Errors", "DRC violations with an Error severity", true, false),
+        (.drcExclusions, "DRC Exclusions", "DRC violations which have been individually excluded", true, false),
+        (.footprintAnchors, "Anchors", "Show footprint and text origins as a cross", true, false),
+        (.points, "Points", "Show explicit snap points as crosses", true, false),
+        (.lockedItemShadows, "Locked Item Shadow", "Show a shadow on locked items", true, false),
+        (.conflictShadows, "Colliding Courtyards", "Show colliding footprint courtyards", true, false),
+        (.boardOutlineArea, "Board Area Shadow", "Show board area shadow", true, false),
+        (.drawingSheet, "Drawing Sheet", "Show drawing sheet borders and title block", true, false),
+        (.grid, "Grid", "Show the (x,y) grid dots", true, false),
+    ]
+
     // MARK: Layer presets
 
     /// The Appearance panel's built-in layer presets (APPEARANCE_CONTROLS' presetAllLayers... presetBackAssembly):
-    /// their names, layers, and whether they show the board from underneath; the assembly views show the default
-    /// objects too, and make their side's silkscreen the active layer
+    /// their names, layers, and whether they show the board from underneath; the assembly views make their side's
+    /// silkscreen the active layer (the objects they would show are not taken: a built-in preset leaves the objects
+    /// as they are)
     public struct Preset: Sendable {
         public var name: String
         public var layers: KiCadLayers.Set128
@@ -610,6 +645,132 @@ public struct KiCadBoardAppearance: Equatable, Sendable {
                    activeLayer: 7),
         ]
     }()
+}
+
+/// KiCad's Appearance panel on a board (APPEARANCE_CONTROLS, with the editor frame's part in it): the board's
+/// appearance as KiCad takes it from the local settings as it opens the board, then changed as a click on the panel's
+/// controls changes it, and the local settings' "board" as KiCad then writes them
+public struct KiCadAppearanceControls: Sendable {
+    /// The appearance as it now is (the board's visible layers and objects, the display options, the active layer)
+    public private(set) var appearance: KiCadBoardAppearance
+    /// The layers the board has (BOARD::GetLayerSet), by id
+    public let boardLayers: Set<Int>
+    /// The layer preset chosen, while the layers are as it left them (m_currentPreset: none after a layer or an
+    /// object is shown or hidden, as none of the built-in ones is then the panel's selection)
+    public private(set) var preset: String?
+    /// Whether the board is seen from underneath (m_FlipBoardView, which the back presets turn on)
+    public private(set) var flipped = false
+    /// The PCB editor's own setting of whether the ratsnest is shown (pcbnew's m_ShowGlobalRatsnest, not the
+    /// board's: true by default), which the board's ratsnest visibility follows
+    public private(set) var showGlobalRatsnest: Bool
+    /// The appearance as the local settings had it as the board was opened (what KiCad's File > Save writes of the
+    /// display options and the active layer: it writes the local settings before it copies the frame's into them)
+    public let opened: KiCadBoardAppearance
+
+    /// The panel as KiCad sets it up as it opens a board (PCB_EDIT_FRAME::onBoardLoaded): the ratsnest shown as the
+    /// editor's setting has it, no preset chosen (no built-in one has the objects a board's local settings give),
+    /// then the local settings' preset applied by its name, and their active layer made the active one if the board
+    /// has it
+    public init(opening settings: KiCadBoardAppearance, boardLayers: Set<Int>, showGlobalRatsnest: Bool = true) {
+        appearance = settings
+        self.boardLayers = boardLayers
+        self.showGlobalRatsnest = showGlobalRatsnest
+        if showGlobalRatsnest { appearance.visibleItems.insert(.ratsnest) } else { appearance.visibleItems.remove(.ratsnest) }
+        opened = settings
+        // (the frame's active layer before the settings' is F.Cu)
+        appearance.activeLayer = 0
+        if KiCadBoardAppearance.presets.contains(where: { $0.name == settings.activeLayerPreset }) {
+            applyPreset(settings.activeLayerPreset)
+        }
+        if boardLayers.contains(settings.activeLayer) { appearance.activeLayer = settings.activeLayer }
+    }
+
+    /// A layer's eye clicked (onLayerVisibilityToggled)
+    public mutating func toggleLayer(_ id: Int) {
+        appearance.visibleLayers.set(id, !appearance.visibleLayers.contains(id))
+        preset = nil
+    }
+
+    /// An object's eye clicked (onObjectVisibilityChanged): footprint text takes values and references with it, and
+    /// either of those shown shows footprint text again; the ratsnest's is the editor's setting
+    public mutating func setVisible(_ item: KiCadBoardAppearance.Item, _ visible: Bool) {
+        setVisible(item, visible, final: true)
+    }
+
+    private mutating func setVisible(_ item: KiCadBoardAppearance.Item, _ visible: Bool, final: Bool) {
+        switch item {
+        case .ratsnest:
+            showGlobalRatsnest = visible
+        case .footprintText where final:
+            setVisible(.footprintReferences, visible, final: false)
+            setVisible(.footprintValues, visible, final: false)
+        case .footprintReferences, .footprintValues:
+            if visible { setVisible(.footprintText, true, final: false) }
+        default:
+            break
+        }
+        if appearance.visibleItems.contains(item) != visible {
+            if visible { appearance.visibleItems.insert(item) } else { appearance.visibleItems.remove(item) }
+            preset = nil
+        }
+    }
+
+    /// An object's opacity slider let go at `value` (0 to 100: onObjectOpacitySlider of value / 100.0f, a float)
+    public mutating func setOpacity(_ item: KiCadBoardAppearance.Item, slider value: Int) {
+        let v = Double(Float(value) / 100.0)
+        switch item {
+        case .tracks: appearance.trackOpacity = v
+        case .vias: appearance.viaOpacity = v
+        case .pads: appearance.padOpacity = v
+        case .zones: appearance.zoneOpacity = v
+        case .bitmaps: appearance.imageOpacity = v
+        case .shapes: appearance.shapeOpacity = v
+        default: break
+        }
+    }
+
+    public mutating func setHighContrast(_ mode: KiCadBoardAppearance.HighContrast) {
+        appearance.highContrast = mode
+    }
+
+    /// A layer's name clicked (onLayerLeftClick): it made the active layer, if the board has it
+    public mutating func setActiveLayer(_ id: Int) {
+        guard boardLayers.contains(id) else { return }
+        appearance.activeLayer = id
+    }
+
+    /// A built-in layer preset chosen (onLayerPresetChanged, doApplyLayerPreset): its layers shown, the objects left
+    /// as they are; the active layer its own (the assembly views'), or else, where the active one is not among its
+    /// layers, the first of them (by id), if the board has it; the board seen from underneath or not as it says
+    public mutating func applyPreset(_ name: String) {
+        guard let p = KiCadBoardAppearance.presets.first(where: { $0.name == name }) else { return }
+        preset = p.name
+        appearance.visibleLayers = p.layers
+        var active: Int?
+        if let a = p.activeLayer {
+            active = a
+        } else if p.layers != KiCadLayers.Set128(), !p.layers.contains(appearance.activeLayer) {
+            active = (0..<128).first { p.layers.contains($0) }
+        }
+        if let active, boardLayers.contains(active) { appearance.activeLayer = active }
+        flipped = p.flipped
+    }
+
+    /// The local settings' "board" as KiCad writes them as it closes the board (the frame's display options, active
+    /// layer and preset copied into them, then written)
+    public var closed: KiCadBoardAppearance {
+        var a = appearance
+        a.activeLayerPreset = preset ?? ""
+        return a
+    }
+
+    /// The same as KiCad's File > Save writes them: the layers and objects as they are, the rest as opened
+    public var saved: KiCadBoardAppearance {
+        var a = opened
+        a.visibleLayers = appearance.visibleLayers
+        a.visibleItems = appearance.visibleItems
+        return a
+    }
 }
 
 /// A project's local settings (its .kicad_prl: PROJECT_LOCAL_SETTINGS) as KiCad reads and writes them: the board's

@@ -1,0 +1,68 @@
+{
+ "runs": [
+  {
+   "steps": [
+    [
+     "object",
+     "Ratsnest"
+    ],
+    [
+     "layer",
+     "B.Courtyard"
+    ],
+    [
+     "layer",
+     "B.Adhesive"
+    ],
+    [
+     "layer",
+     "User.Eco1"
+    ],
+    [
+     "layer",
+     "F.Paste"
+    ],
+    [
+     "contrast",
+     "Normal"
+    ]
+   ],
+   "saved": "{\n  \"board\": {\n    \"active_layer\": 0,\n    \"active_layer_preset\": \"\",\n    \"auto_track_width\": true,\n    \"hidden_netclasses\": [],\n    \"hidden_nets\": [],\n    \"high_contrast_mode\": 0,\n    \"net_color_mode\": 1,\n    \"opacity\": {\n      \"images\": 0.6,\n      \"pads\": 1.0,\n      \"shapes\": 1.0,\n      \"tracks\": 1.0,\n      \"vias\": 1.0,\n      \"zones\": 0.6\n    },\n    \"prototype_zone_fills\": false,\n    \"selection_filter\": {\n      \"dimensions\": true,\n      \"footprints\": true,\n      \"graphics\": true,\n      \"keepouts\": true,\n      \"lockedItems\": false,\n      \"otherItems\": true,\n      \"pads\": true,\n      \"text\": true,\n      \"tracks\": true,\n      \"vias\": true,\n      \"zones\": true\n    },\n    \"visible_items\": [\n      \"vias\",\n      \"footprint_text\",\n      \"footprint_anchors\",\n      \"grid\",\n      \"footprints_front\",\n      \"footprints_back\",\n      \"footprint_values\",\n      \"footprint_references\",\n      \"tracks\",\n      \"drc_errors\",\n      \"drawing_sheet\",\n      \"bitmaps\",\n      \"pads\",\n      \"zones\",\n      \"drc_warnings\",\n      \"drc_exclusions\",\n      \"locked_item_shadows\",\n      \"conflict_shadows\",\n      \"shapes\",\n      \"board_outline_area\",\n      \"ly_points\"\n    ],\n    \"visible_layers\": \"ffffffff_ffffffff_ffffffff_dfdfd7ff\",\n    \"zone_display_mode\": 0\n  },\n  \"git\": {\n    \"integration_disabled\": false,\n    \"repo_type\": \"\",\n    \"repo_username\": \"\",\n    \"ssh_key\": \"\"\n  },\n  \"meta\": {\n    \"filename\": \"b.kicad_prl\",\n    \"version\": 5\n  },\n  \"net_inspector_panel\": {\n    \"col_hidden\": [\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false\n    ],\n    \"col_order\": [\n      0,\n      1,\n      2,\n      3,\n      4,\n      5,\n      6,\n      7,\n      8,\n      9,\n      10,\n      11\n    ],\n    \"col_widths\": [],\n    \"custom_group_rules\": [],\n    \"expanded_rows\": [],\n    \"filter_by_net_name\": true,\n    \"filter_by_netclass\": true,\n    \"filter_text\": \"\",\n    \"group_by_constraint\": false,\n    \"group_by_netclass\": false,\n    \"show_time_domain_details\": false,\n    \"show_unconnected_nets\": false,\n    \"show_zero_pad_nets\": false,\n    \"sort_ascending\": true,\n    \"sorting_column\": -1\n  },\n  \"open_jobsets\": [],\n  \"project\": {\n    \"files\": []\n  },\n  \"schematic\": {\n    \"hierarchy_collapsed\": [],\n    \"selection_filter\": {\n      \"graphics\": true,\n      \"images\": true,\n      \"labels\": true,\n      \"lockedItems\": false,\n      \"otherItems\": true,\n      \"pins\": true,\n      \"ruleAreas\": true,\n      \"symbols\": true,\n      \"text\": true,\n      \"wires\": true\n    }\n  }\n}\n",
+   "saved_changed": true,
+   "saved_again": "{\n  \"board\": {\n    \"active_layer\": 0,\n    \"active_layer_preset\": \"\",\n    \"auto_track_width\": true,\n    \"hidden_netclasses\": [],\n    \"hidden_nets\": [],\n    \"high_contrast_mode\": 0,\n    \"net_color_mode\": 1,\n    \"opacity\": {\n      \"images\": 0.6,\n      \"pads\": 1.0,\n      \"shapes\": 1.0,\n      \"tracks\": 1.0,\n      \"vias\": 1.0,\n      \"zones\": 0.6\n    },\n    \"prototype_zone_fills\": false,\n    \"selection_filter\": {\n      \"dimensions\": true,\n      \"footprints\": true,\n      \"graphics\": true,\n      \"keepouts\": true,\n      \"lockedItems\": false,\n      \"otherItems\": true,\n      \"pads\": true,\n      \"text\": true,\n      \"tracks\": true,\n      \"vias\": true,\n      \"zones\": true\n    },\n    \"visible_items\": [\n      \"vias\",\n      \"footprint_text\",\n      \"footprint_anchors\",\n      \"grid\",\n      \"footprints_front\",\n      \"footprints_back\",\n      \"footprint_values\",\n      \"footprint_references\",\n      \"tracks\",\n      \"drc_errors\",\n      \"drawing_sheet\",\n      \"bitmaps\",\n      \"pads\",\n      \"zones\",\n      \"drc_warnings\",\n      \"drc_exclusions\",\n      \"locked_item_shadows\",\n      \"conflict_shadows\",\n      \"shapes\",\n      \"board_outline_area\",\n      \"ly_points\"\n    ],\n    \"visible_layers\": \"ffffffff_ffffffff_ffffffff_dfdfd7ff\",\n    \"zone_display_mode\": 0\n  },\n  \"git\": {\n    \"integration_disabled\": false,\n    \"repo_type\": \"\",\n    \"repo_username\": \"\",\n    \"ssh_key\": \"\"\n  },\n  \"meta\": {\n    \"filename\": \"b.kicad_prl\",\n    \"version\": 5\n  },\n  \"net_inspector_panel\": {\n    \"col_hidden\": [\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false\n    ],\n    \"col_order\": [\n      0,\n      1,\n      2,\n      3,\n      4,\n      5,\n      6,\n      7,\n      8,\n      9,\n      10,\n      11\n    ],\n    \"col_widths\": [],\n    \"custom_group_rules\": [],\n    \"expanded_rows\": [],\n    \"filter_by_net_name\": true,\n    \"filter_by_netclass\": true,\n    \"filter_text\": \"\",\n    \"group_by_constraint\": false,\n    \"group_by_netclass\": false,\n    \"show_time_domain_details\": false,\n    \"show_unconnected_nets\": false,\n    \"show_zero_pad_nets\": false,\n    \"sort_ascending\": true,\n    \"sorting_column\": -1\n  },\n  \"open_jobsets\": [],\n  \"project\": {\n    \"files\": []\n  },\n  \"schematic\": {\n    \"hierarchy_collapsed\": [],\n    \"selection_filter\": {\n      \"graphics\": true,\n      \"images\": true,\n      \"labels\": true,\n      \"lockedItems\": false,\n      \"otherItems\": true,\n      \"pins\": true,\n      \"ruleAreas\": true,\n      \"symbols\": true,\n      \"text\": true,\n      \"wires\": true\n    }\n  }\n}\n",
+   "saved_again_changed": false
+  },
+  {
+   "steps": [
+    [
+     "object",
+     "Anchors"
+    ],
+    [
+     "contrast",
+     "Dim"
+    ],
+    [
+     "object",
+     "Grid"
+    ],
+    [
+     "preset",
+     "Back Layers"
+    ],
+    [
+     "layer",
+     "User.Drawings"
+    ],
+    [
+     "layer",
+     "F.Cu"
+    ]
+   ],
+   "saved": "{\n  \"board\": {\n    \"active_layer\": 0,\n    \"active_layer_preset\": \"\",\n    \"auto_track_width\": true,\n    \"hidden_netclasses\": [],\n    \"hidden_nets\": [],\n    \"high_contrast_mode\": 0,\n    \"net_color_mode\": 1,\n    \"opacity\": {\n      \"images\": 0.6,\n      \"pads\": 1.0,\n      \"shapes\": 1.0,\n      \"tracks\": 1.0,\n      \"vias\": 1.0,\n      \"zones\": 0.6\n    },\n    \"prototype_zone_fills\": false,\n    \"selection_filter\": {\n      \"dimensions\": true,\n      \"footprints\": true,\n      \"graphics\": true,\n      \"keepouts\": true,\n      \"lockedItems\": false,\n      \"otherItems\": true,\n      \"pads\": true,\n      \"text\": true,\n      \"tracks\": true,\n      \"vias\": true,\n      \"zones\": true\n    },\n    \"visible_items\": [\n      \"vias\",\n      \"footprint_text\",\n      \"ratsnest\",\n      \"footprints_front\",\n      \"footprints_back\",\n      \"footprint_values\",\n      \"footprint_references\",\n      \"tracks\",\n      \"drc_errors\",\n      \"drawing_sheet\",\n      \"bitmaps\",\n      \"pads\",\n      \"zones\",\n      \"drc_warnings\",\n      \"drc_exclusions\",\n      \"locked_item_shadows\",\n      \"conflict_shadows\",\n      \"shapes\",\n      \"board_outline_area\",\n      \"ly_points\"\n    ],\n    \"visible_layers\": \"00000000_00000000_00000002_2202888d\",\n    \"zone_display_mode\": 0\n  },\n  \"git\": {\n    \"integration_disabled\": false,\n    \"repo_type\": \"\",\n    \"repo_username\": \"\",\n    \"ssh_key\": \"\"\n  },\n  \"meta\": {\n    \"filename\": \"b.kicad_prl\",\n    \"version\": 5\n  },\n  \"net_inspector_panel\": {\n    \"col_hidden\": [\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false\n    ],\n    \"col_order\": [\n      0,\n      1,\n      2,\n      3,\n      4,\n      5,\n      6,\n      7,\n      8,\n      9,\n      10,\n      11\n    ],\n    \"col_widths\": [],\n    \"custom_group_rules\": [],\n    \"expanded_rows\": [],\n    \"filter_by_net_name\": true,\n    \"filter_by_netclass\": true,\n    \"filter_text\": \"\",\n    \"group_by_constraint\": false,\n    \"group_by_netclass\": false,\n    \"show_time_domain_details\": false,\n    \"show_unconnected_nets\": false,\n    \"show_zero_pad_nets\": false,\n    \"sort_ascending\": true,\n    \"sorting_column\": -1\n  },\n  \"open_jobsets\": [],\n  \"project\": {\n    \"files\": []\n  },\n  \"schematic\": {\n    \"hierarchy_collapsed\": [],\n    \"selection_filter\": {\n      \"graphics\": true,\n      \"images\": true,\n      \"labels\": true,\n      \"lockedItems\": false,\n      \"otherItems\": true,\n      \"pins\": true,\n      \"ruleAreas\": true,\n      \"symbols\": true,\n      \"text\": true,\n      \"wires\": true\n    }\n  }\n}\n",
+   "saved_changed": true,
+   "saved_again": "{\n  \"board\": {\n    \"active_layer\": 2,\n    \"active_layer_preset\": \"\",\n    \"auto_track_width\": true,\n    \"hidden_netclasses\": [],\n    \"hidden_nets\": [],\n    \"high_contrast_mode\": 1,\n    \"net_color_mode\": 1,\n    \"opacity\": {\n      \"images\": 0.6,\n      \"pads\": 1.0,\n      \"shapes\": 1.0,\n      \"tracks\": 1.0,\n      \"vias\": 1.0,\n      \"zones\": 0.6\n    },\n    \"prototype_zone_fills\": false,\n    \"selection_filter\": {\n      \"dimensions\": true,\n      \"footprints\": true,\n      \"graphics\": true,\n      \"keepouts\": true,\n      \"lockedItems\": false,\n      \"otherItems\": true,\n      \"pads\": true,\n      \"text\": true,\n      \"tracks\": true,\n      \"vias\": true,\n      \"zones\": true\n    },\n    \"visible_items\": [\n      \"vias\",\n      \"footprint_text\",\n      \"ratsnest\",\n      \"footprints_front\",\n      \"footprints_back\",\n      \"footprint_values\",\n      \"footprint_references\",\n      \"tracks\",\n      \"drc_errors\",\n      \"drawing_sheet\",\n      \"bitmaps\",\n      \"pads\",\n      \"zones\",\n      \"drc_warnings\",\n      \"drc_exclusions\",\n      \"locked_item_shadows\",\n      \"conflict_shadows\",\n      \"shapes\",\n      \"board_outline_area\",\n      \"ly_points\"\n    ],\n    \"visible_layers\": \"00000000_00000000_00000002_2202888d\",\n    \"zone_display_mode\": 0\n  },\n  \"git\": {\n    \"integration_disabled\": false,\n    \"repo_type\": \"\",\n    \"repo_username\": \"\",\n    \"ssh_key\": \"\"\n  },\n  \"meta\": {\n    \"filename\": \"b.kicad_prl\",\n    \"version\": 5\n  },\n  \"net_inspector_panel\": {\n    \"col_hidden\": [\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false,\n      false\n    ],\n    \"col_order\": [\n      0,\n      1,\n      2,\n      3,\n      4,\n      5,\n      6,\n      7,\n      8,\n      9,\n      10,\n      11\n    ],\n    \"col_widths\": [],\n    \"custom_group_rules\": [],\n    \"expanded_rows\": [],\n    \"filter_by_net_name\": true,\n    \"filter_by_netclass\": true,\n    \"filter_text\": \"\",\n    \"group_by_constraint\": false,\n    \"group_by_netclass\": false,\n    \"show_time_domain_details\": false,\n    \"show_unconnected_nets\": false,\n    \"show_zero_pad_nets\": false,\n    \"sort_ascending\": true,\n    \"sorting_column\": -1\n  },\n  \"open_jobsets\": [],\n  \"project\": {\n    \"files\": []\n  },\n  \"schematic\": {\n    \"hierarchy_collapsed\": [],\n    \"selection_filter\": {\n      \"graphics\": true,\n      \"images\": true,\n      \"labels\": true,\n      \"lockedItems\": false,\n      \"otherItems\": true,\n      \"pins\": true,\n      \"ruleAreas\": true,\n      \"symbols\": true,\n      \"text\": true,\n      \"wires\": true\n    }\n  }\n}\n",
+   "saved_again_changed": true
+  }
+ ]
+}
