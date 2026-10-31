@@ -267,29 +267,7 @@ extension BoardEditing {
         }
 
         // the setup: the stackup first in it, and the board's thickness the stackup's
-        if let node = stackup.node {
-            let setup = board.root["setup"] ?? {
-                let s = SExpr("setup")
-                board.root.insert(s, after: ["layers"])
-                return s
-            }()
-            if let i = setup.items.firstIndex(where: { $0.head == "stackup" }) {
-                setup.items[i] = node
-            } else {
-                setup.items.insert(node, at: 1)
-            }
-        }
-        let general = board.root["general"] ?? {
-            let g = SExpr("general")
-            board.root.insert(g, after: ["generator_version", "generator", "version"])
-            return g
-        }()
-        let thickness = SExpr("thickness", Keyword(BoardStackup.formatLength(stackup.boardThickness)))
-        if let i = general.items.firstIndex(where: { $0.head == "thickness" }) {
-            general.items[i] = thickness
-        } else {
-            general.items.insert(thickness, at: min(1, general.items.count))
-        }
+        Self.writeStackup(stackup, to: board)
 
         if copperGone.isEmpty {
             router.boardChanged()

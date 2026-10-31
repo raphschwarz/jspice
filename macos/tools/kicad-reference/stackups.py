@@ -139,37 +139,80 @@ def main():
         with open(name + ".kicad_pro", "w") as f:
             json.dump(project, f, indent=2)
         # (KiCad's DRC of it, every net too long, its length said)
-        with tempfile.TemporaryDirectory() as tmp:
-            for ext in (".kicad_pcb", ".kicad_pro"):
-                with open(name + ext) as src, open(os.path.join(tmp, "b" + ext), "w") as dst:
-                    dst.write(src.read())
-            with open(os.path.join(tmp, "b.kicad_dru"), "w") as f:
-                f.write("(version 1)\n(rule \"len\" (condition \"A.NetName != ''\") (constraint length (max 0.001mm)))\n")
-            report_path = os.path.join(tmp, "drc.json")
-            subprocess.run(["kicad-cli", "pcb", "drc", "--format", "json", "--units", "mm", "--severity-all", "-o",
-                            report_path, os.path.join(tmp, "b.kicad_pcb")], check=True, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL)
-            with open(report_path) as f:
-                report = json.load(f)
-        heights = []
-        for v in report["violations"]:
-            if v["type"] != "length_out_of_range":
-                continue
-            actual = re.search(r"actual ([0-9.]+) mm", v["description"])
-            net = next((re.search(r"\[(N[0-9]+)\]", it["description"]).group(1) for it in v["items"]
-                        if re.search(r"\[(N[0-9]+)\]", it["description"])), None)
-            if not actual or net not in nets:
-                continue
-            length, a, b = nets[net]
-            heights.append({"layers": [a, b], "height": round(float(actual.group(1)) * 1_000_000) - length})
-        if len(heights) != len(nets):
-            sys.exit(f"{name}: KiCad's DRC gave {len(heights)} lengths for {len(nets)} nets")
-        heights.sort(key=lambda h: h["layers"])
+        heights = heights_of(name + ".kicad_pcb", nets)
         with open(name + ".stackup", "w") as f:
             json.dump({"heights": heights}, f, indent=1)
             f.write("\n")
     print(f"{out}: {count} boards")
 
 
+def heights_of(board, nets):
+    """KiCad's height between each two layers of `board` (a stackups.py board: `nets`, each net's tracks' length and
+    layers), from kicad-cli's DRC of it"""
+    name = board[:-len(".kicad_pcb")]
+    with tempfile.TemporaryDirectory() as tmp:
+        for ext in (".kicad_pcb", ".kicad_pro"):
+            if os.path.exists(name + ext):
+                with open(name + ext) as src, open(os.path.join(tmp, "b" + ext), "w") as dst:
+                    dst.write(src.read())
+        with open(os.path.join(tmp, "b.kicad_dru"), "w") as f:
+            f.write("(version 1)\n(rule \"len\" (condition \"A.NetName != ''\") (constraint length (max 0.001mm)))\n")
+        report_path = os.path.join(tmp, "drc.json")
+        subprocess.run(["kicad-cli", "pcb", "drc", "--format", "json", "--units", "mm", "--severity-all", "-o",
+                        report_path, os.path.join(tmp, "b.kicad_pcb")], check=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+        with open(report_path) as f:
+            report = json.load(f)
+    heights = []
+    for v in report["violations"]:
+        if v["type"] != "length_out_of_range":
+            continue
+        actual = re.search(r"actual ([0-9.]+) mm", v["description"])
+        net = next((re.search(r"\[(N[0-9]+)\]", it["description"]).group(1) for it in v["items"]
+                    if re.search(r"\[(N[0-9]+)\]", it["description"])), None)
+        if not actual or net not in nets:
+            continue
+        length, a, b = nets[net]
+        heights.append({"layers": [a, b], "height": round(float(actual.group(1)) * 1_000_000) - length})
+    if len(heights) != len(nets):
+        sys.exit(f"{name}: KiCad's DRC gave {len(heights)} lengths for {len(nets)} nets")
+    heights.sort(key=lambda h: h["layers"])
+    return heights
+
+
+def nets_of(board):
+    """A stackups.py board's nets read back from its file: each net's two tracks' length (nm) and their layers, the
+    first's then the second's"""
+    text = open(board).read()
+    nets = {}
+    for m in re.finditer(r'\(segment \(start ([-0-9.]+) ([-0-9.]+)\) \(end ([-0-9.]+) ([-0-9.]+)\) \(width [0-9.]+\) '
+                         r'\(layer "([^"]+)"\) \(net "(N[0-9]+)"\)', " ".join(text.split())):
+        x0, y0, x1, y1 = (round(float(v) * 1_000_000) for v in m.groups()[:4])
+        length = abs(x1 - x0) + abs(y1 - y0)
+        net = m.group(6)
+        if net in nets:
+            nets[net] = (nets[net][0] + length, nets[net][1], m.group(5))
+        else:
+            nets[net] = (length, m.group(5), None)
+    return nets
+
+
+def measure(boards):
+    """Each board (one of stackups.py's, its stackup changed elsewhere: the port's stackup editor) read and written
+    again by KiCad (pcbnew.LoadBoard, SaveBoard: the stackup as KiCad reads it back), and BOARD.stackup beside it, its
+    heights as KiCad measures them"""
+    import pcbnew
+    for board in boards:
+        pcbnew.SaveBoard(board, pcbnew.LoadBoard(board))
+        heights = heights_of(board, nets_of(board))
+        with open(board[:-len(".kicad_pcb")] + ".stackup", "w") as f:
+            json.dump({"heights": heights}, f, indent=1)
+            f.write("\n")
+        print(board, len(heights), file=sys.stderr)
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "measure":
+        measure(sys.argv[2:])
+    else:
+        main()
