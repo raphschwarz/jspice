@@ -255,6 +255,33 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   justification, beside what KiCad's Add Text gives a new text on its layer by the board's project, and each
   footprint's reference, value, library id, place, angle, side, board-only attribute and pads' nets. `PlacingTests`
   runs it on boards the port's `BoardEditing.addText` and `addFootprint` placed texts and footprints on.
+- `properties.py`: zones', footprints', pads' and other items' properties as KiCad reads, sets and writes them.
+  `properties.py read BOARD.kicad_pcb...` (JSON on standard output): through KiCad's `pcbnew` module, each zone's and
+  rule area's name, net, layers, priority, lock, clearance, minimum width, pad connection, thermal gap and spoke
+  width, fill mode and hatch, island removal and its area, corner smoothing and radius, outline display, keepouts and
+  placement, and its outline and holes; each footprint's place, angle, side, lock, attributes, clearance, zone
+  connection, margins and fields (text, shown, place on the footprint, size, pen, italic, layer, angle, kept upright,
+  knockout, mirrored) and pads (number, type, shape, place, angle, size, trapezoid, hole, offset, layers, rounding and
+  chamfers, clearance, zone connection, thermal spokes and gap, margins, net, fabrication property); each track's,
+  via's and drawing's lock; and each track's and via's net (which KiCad, reading a board, gives a track from the
+  pads it joins). `properties.py resave IN OUT`: the board read and written again by KiCad. `properties.py apply
+  PLAN.json`: the plan's changes made by KiCad's own code to each board it names, and the board saved: a zone's
+  settings given by `ZONE_SETTINGS` (`operator<<` of the zone, the values set, `ExportSetting`, the net as
+  `Edit_Zone_Params` sets it), its outline by `SHAPE_POLY_SET`'s `SetVertex`, `InsertVertex`, `RemoveVertex`,
+  `RemoveContour` and `RemoveNullSegments` as the point editor changes it, and zones moved (`ZONE::Move`).
+  `ZoneEditingTests` edits zones on boards with the port (corners and edges dragged, corners added and taken away,
+  zones moved, their properties set as the dialogs set them), and checks that KiCad reads every property and outline
+  back as set, that KiCad's code making the same changes writes the same zones, and that `fills.py` and `drc.py` of
+  the edited boards are what the port's `ZoneFiller` and `BoardDRC` make of them; `PropertiesTests` sets footprints'
+  and pads' properties and locks items, and checks KiCad reads them back as set, writes each footprint changed as the
+  port wrote it (its drawings and pads in KiCad's own sorted order, a nanometre's turn of an item on a footprint
+  turned off square aside), and that `drc.py` of the boards is what `BoardDRC` finds (a board on which KiCad gives a
+  track another net as it reads it left out). With `--draw OUT.kicad_pcb`, the board both edit
+  (`Tests/KiCadRouterTests/Fixtures/zoneedits/zones`, with its `.fills` and `.drc` for `FillTests` and `DRCTests`):
+  on four copper layers, zones with holes, of several nets, layers, priorities, fill modes and smoothings, one
+  locked, rule areas (one with a hole, one on two layers), footprints on both sides at 0, 90, 30 and 45 degrees with
+  pads of every shape (rectangle, rounded, chamfered, oval, round, trapezoid, custom, plated and unplated holes,
+  offsets), tracks and vias, some of them locked.
 - `boxes.py`: what KiCad's box selection takes on boards (`boxes.py BOARD.kicad_pcb...`): rectangles drawn on each
   (a third anywhere, the others round an item's box with each side moved by up to 0.6 mm) and, through KiCad's
   `pcbnew` module, the tracks, arcs, vias and footprints whose `HitTest( BOX2I, aContained )` holds, wholly in each
