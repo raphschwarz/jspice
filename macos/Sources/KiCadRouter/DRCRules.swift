@@ -365,7 +365,26 @@ extension BoardDRC {
         let r: RuleItem
         switch c.kind {
         case .zone:
-            r = ruleZone(c.zoneNode, uuid: c.uuid, footprint: c.footprint) ?? RuleItem(.zone, uuid: c.uuid)
+            if let z = ruleZone(c.zoneNode, uuid: c.uuid, footprint: c.footprint) {
+                r = z
+            } else {
+                // (a zone of no node: a teardrop the teardrop manager has just made, as createTeardrop makes it: on
+                // its track's layer and net, its local clearance 0, its pads connected in full)
+                r = RuleItem(.zone, uuid: c.uuid)
+                let layers = c.layers.map(kiLayer)
+                r.layerSet = KiLayerSet(layers)
+                r.layer = layers.count == 1 ? layers[0] : KiLayer.undefined
+                r.isOnCopper = true
+                r.connected = true
+                r.isTeardrop = c.teardrop
+                r.netCode = c.net
+                r.netName = c.netName
+                r.netClass = ruleNetClass(c.netName)
+                r.zoneOutline = c.zoneOutline
+                r.bbox = RuleFunctions.polyBox(c.zoneOutline)
+                r.localClearance = (c.localClearance?.value ?? 0, "zone")
+                r.zonePadConnection = .full
+            }
         case .track, .arc:
             r = RuleItem(c.kind == .track ? .track : .arc, uuid: c.uuid)
             let l = c.layers.first.map(kiLayer) ?? KiLayer.undefined
