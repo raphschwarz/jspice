@@ -70,6 +70,12 @@ public struct KiCadBoardPicture: Sendable {
         public var source: String
         public var layer: String
         public var uuid: String
+
+        public init(source: String, layer: String, uuid: String) {
+            self.source = source
+            self.layer = layer
+            self.uuid = uuid
+        }
     }
 
     public var outline: [Line] = []
