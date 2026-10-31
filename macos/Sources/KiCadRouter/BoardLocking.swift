@@ -1,4 +1,4 @@
-// Items locked and unlocked as KiCad's Lock and Unlock lock them (KiCad 10.0.7: pcbnew/tools/board_editor_control.cpp,
+// Items locked and unlocked as KiCad's Lock and Unlock lock them (KiCad 10.0.8: pcbnew/tools/board_editor_control.cpp,
 // BOARD_EDITOR_CONTROL::modifyLockSelected), and a locked one known as KiCad knows it (BOARD_ITEM::IsLocked, PAD::IsLocked,
 // pcbnew/tools/pcb_selection_tool.cpp, HasLockedDescendant), written as pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp
 // writes it. Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as
@@ -21,6 +21,13 @@ extension BoardEditing {
         if let node = lockableNodes([uuid]).first { return isLockedNode(node) }
         if let (_, fp) = padNode(uuid) { return isLocked(fp.uuid) }
         return false
+    }
+
+    /// PCB_SELECTION_TOOL::HasLockedDescendant: whether a group or tuning pattern of that id has an item locked
+    /// among its members and theirs (a footprint's own items left out: they are not members)
+    func hasLockedDescendant(_ uuid: String) -> Bool {
+        guard let node = BoardItems.item(router.board, uuid), node.head == "group" || node.head == "generated" else { return false }
+        return BoardItems.descendants(node, in: router.board).contains { $0.value("uuid").map(isLocked) ?? false }
     }
 
     /// The ids of those KiCad's selection for a move, turn, flip or deletion keeps (FilterCollectorForLockedItems: the

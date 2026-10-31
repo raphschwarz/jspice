@@ -1,5 +1,5 @@
 // Copy, cut, paste and duplicate on the board being edited, each pasted or duplicated selection one change, as KiCad's
-// PCB editor makes them (KiCad 10.0.7: pcbnew/tools/edit_tool.cpp, EDIT_TOOL::copyToClipboard, cutToClipboard,
+// PCB editor makes them (KiCad 10.0.8: pcbnew/tools/edit_tool.cpp, EDIT_TOOL::copyToClipboard, cutToClipboard,
 // Duplicate and DeleteItems; pcbnew/tools/pcb_control.cpp, PCB_CONTROL::Paste, pruneItemLayers and placeBoardItems;
 // pcbnew/board.cpp, BOARD::MapNets and GetUniqueZoneName; pcbnew/board_item.cpp and footprint.cpp, Duplicate;
 // pcbnew/pcb_group.cpp, DeepDuplicate; pcbnew/pcb_track.cpp, PCB_VIA::HasValidLayerPair; include/layer_range.h; pcbnew/
@@ -29,9 +29,12 @@ extension BoardEditing {
         BoardClipboard.text(router.board, items: uuids, reference: Self.nm(reference))
     }
 
-    /// The items copied (`copy`) and taken away, as KiCad's Cut: the text, and the change ("Cut")
+    /// The items copied (`copy`) and taken away, as KiCad's Cut: the text, and the change ("Cut"); nil, nothing
+    /// copied or taken away, when any of them is locked or holds a locked item (unless overridesLocks), as KiCad's
+    /// copyToClipboard stops when its selection tool filtered locked items (ReportFilteredLockedItems)
     public func cut(_ uuids: [String], reference: KiCadPoint) -> (text: String, edit: Edit?)? {
-        guard !isRouting, let text = copy(uuids, reference: reference) else { return nil }
+        guard !isRouting, overridesLocks || !uuids.contains(where: { isLocked($0) || hasLockedDescendant($0) }),
+              let text = copy(uuids, reference: reference) else { return nil }
         return (text, removeItems(Set(uuids), name: "Cut"))
     }
 

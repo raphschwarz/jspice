@@ -48,6 +48,16 @@ final class PropertiesTests: XCTestCase {
         let lockedTracks = session.board.copperItems.filter { $0.value("locked") == "yes" }.compactMap { $0.value("uuid") }
         XCTAssertEqual(lockedTracks.count, 2)
         XCTAssertNil(session.remove(Set(lockedTracks)))
+        // nor cut, nor anything selected with them (KiCad 10.0.8's Cut stops when locks block its selection; its
+        // 10.0.7 copied nothing and then deleted the whole selection), unless locks are overridden
+        XCTAssertNil(session.cut(lockedTracks + [r1], reference: .zero))
+        XCTAssertNotNil(session.board.footprint(uuid: r1))
+        XCTAssertEqual(session.board.copperItems.filter { $0.value("locked") == "yes" }.count, 2)
+        let cutter = BoardEditing(board: try KiCadBoard.read(file))
+        cutter.overridesLocks = true
+        let cut = try XCTUnwrap(cutter.cut(lockedTracks + [r1], reference: .zero))
+        XCTAssertEqual(cut.edit?.name, "Cut")
+        XCTAssertNil(cutter.board.footprint(uuid: r1))
         // unlocked, they are: Unlock as one change
         let unlock = try XCTUnwrap(session.setLocked(Set(lockedTracks + [r2]), false))
         XCTAssertEqual(unlock.name, "Unlock")
