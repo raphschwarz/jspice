@@ -573,6 +573,7 @@ struct PCBBoardCanvas: View {
         .focused($focused)
         .focusEffectDisabled()
         .onKeyPress(phases: .down) { press in key(press) ? .handled : .ignored }
+        .modifier(PCBClipboardCommands(board: board, editing: editing, footprints: footprints, scale: Double(view.scale)))
         .onDeleteCommand {
             if editing.undoZoneCorner() { return }
             if editing.deleteZoneSelection(slop: 5 / view.scale) { return }
@@ -1318,6 +1319,7 @@ struct PCBBoardSetupSection: View {
                 .disabled(diameter == nil || drill == nil)
             }
             .help("A via's diameter and hole for the routing tool's width menu (Board Setup ▸ Pre-defined Sizes); the hole smaller than the via")
+            PCBSetupEditorsRow(board: board, editing: editing)
         }
     }
 

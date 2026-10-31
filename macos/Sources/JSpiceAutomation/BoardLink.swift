@@ -288,6 +288,14 @@ public final class BoardLink {
     /// where it has none
     public func designRules() -> String? { BoardDRC.designRules(projectFile) }
 
+    /// The board's rules file (its .kicad_dru beside the project) written as `text`, as KiCad's Board Setup writes its
+    /// Custom Rules page (PANEL_SETUP_RULES::TransferDataFromWindow: the page's text as it is, the file written whole
+    /// in one go, AtomicWriteFile); KiCad's DRC engine reads it again each time it checks the board
+    public func setDesignRules(_ text: String) throws {
+        let url = projectFile.deletingPathExtension().appendingPathExtension("kicad_dru")
+        try Data(text.utf8).write(to: url, options: .atomic)
+    }
+
     /// The schematic's parts each footprint of `board` stands for: top-level parts (the block for a part inside one)
     public static func parts(_ result: PCBSync.Result, _ board: KiCadBoard, _ circuit: Circuit) -> [String: [UUID]] {
         let top = topLevel(circuit)

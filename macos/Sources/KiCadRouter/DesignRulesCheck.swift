@@ -95,3 +95,11 @@ public enum DesignRulesCheck {
         return out + rest
     }
 }
+
+extension BoardEditing {
+    /// What KiCad's "Check rule syntax" says of `text` (a .kicad_dru) for the board being edited and its project
+    /// (DesignRulesCheck.check)
+    public func checkDesignRules(_ text: String) -> [RulesMessage] {
+        DesignRulesCheck.check(text, board: router.board, project: project)
+    }
+}
