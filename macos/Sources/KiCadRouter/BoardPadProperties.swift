@@ -135,11 +135,16 @@ extension BoardEditing {
         case "circle": p.shape = .circle
         case "oval": p.shape = .oval
         case "trapezoid": p.shape = .trapezoid
-        case "roundrect":
-            // (a roundrect with chamfers is KiCad's CHAMFERED_RECT, the dialog's chamfered rounded one where rounded too)
-            p.shape = chamfers.isEmpty ? .roundrect : rratio > 0 ? .chamferedRoundRect : .chamferedRect
         case "custom": p.shape = anchor == "rect" ? .customRect : .customCircle
-        default: p.shape = .rect
+        default:
+            // (KiCad's parser makes a pad CHAMFERED_RECT for a chamfer ratio above 0 or any chamfered corner, even one
+            // with no corners chamfered; the dialog's chamfered rounded one where its roundrect is rounded too)
+            let chamfered = (pad["chamfer_ratio"]?.number(at: 0) ?? 0) > 0 || !chamfers.isEmpty
+            if shape == "roundrect" {
+                p.shape = !chamfered ? .roundrect : rratio > 0 ? .chamferedRoundRect : .chamferedRect
+            } else {
+                p.shape = chamfered ? .chamferedRect : .rect
+            }
         }
         // (where it is on the board: its footprint's position and its own on the footprint, turned)
         let rel = BoardWorld.point(pad["at"])

@@ -34,6 +34,12 @@ final class PropertiesTests: XCTestCase {
         XCTAssertNotNil(apertures.setPadProperties(r1Pad.uuid, aperture))
         XCTAssertEqual(apertures.padProperties(r1Pad.uuid)?.number, "")
         XCTAssertEqual(apertures.padProperties(r1Pad.uuid)?.type, .aperture)
+        // a chamfered rectangle with none of its corners chamfered is still one, as KiCad's parser reads its chamfer
+        // ratio (CI run 79)
+        var chamfered = try XCTUnwrap(apertures.padProperties(r1Pad.uuid))
+        (chamfered.shape, chamfered.chamferRatio, chamfered.chamferedCorners) = (.chamferedRect, 0.2, [])
+        XCTAssertNotNil(apertures.setPadProperties(r1Pad.uuid, chamfered))
+        XCTAssertEqual(apertures.padProperties(r1Pad.uuid)?.shape, .chamferedRect)
         // a locked footprint is not moved, turned, turned over or dragged; the others with it are
         XCTAssertNil(session.moveFootprint(r2, to: KiCadPoint(1, 1)))
         XCTAssertNil(session.rotateFootprints([r2]))
