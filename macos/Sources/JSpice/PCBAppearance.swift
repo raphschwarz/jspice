@@ -6,6 +6,7 @@
 
 import SwiftUI
 import AppKit
+import KiCadLink
 import KiCadKit
 import KiCadRouter
 

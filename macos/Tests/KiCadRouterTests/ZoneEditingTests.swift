@@ -77,111 +77,111 @@ final class ZoneEditingTests: XCTestCase {
         return try KiCadBoard(text: text)
     }
 
-    static let zone = "a0000000-0000-0000-0000-000000000001"
+    static let zoneID = "a0000000-0000-0000-0000-000000000001"
 
     func testThePointEditorsGeometry() throws {
         func session(_ c: [[KiCadPoint]], locked: Bool = false) throws -> BoardEditing { BoardEditing(board: try Self.board(c, locked: locked)) }
-        func pts(_ e: BoardEditing) -> [[KiCadPoint]] { Self.mm(e.zoneContours(Self.zone) ?? []) }
+        func pts(_ e: BoardEditing) -> [[KiCadPoint]] { Self.mm(e.zoneContours(Self.zoneID) ?? []) }
         let square = [[KiCadPoint(10, 10), KiCadPoint(30, 10), KiCadPoint(30, 30), KiCadPoint(10, 30)]]
         // a corner moved
         var e = try session(square)
-        var edit = try XCTUnwrap(e.moveZoneCorner(Self.zone, index: 2, to: KiCadPoint(33, 31)))
+        var edit = try XCTUnwrap(e.moveZoneCorner(Self.zoneID, index: 2, to: KiCadPoint(33, 31)))
         XCTAssertEqual(edit.name, "Move Point")
-        XCTAssertEqual(edit.zones, [Self.zone])
+        XCTAssertEqual(edit.zones, [Self.zoneID])
         XCTAssertEqual(pts(e), [[KiCadPoint(10, 10), KiCadPoint(30, 10), KiCadPoint(33, 31), KiCadPoint(10, 30)]])
         XCTAssertNil(e.board.zones[0].node["filled_polygon"], "unfilled")
         // an edge dragged: its neighbours keep their directions (here at right angles: the edge moves straight out)
         e = try session(square)
-        _ = try XCTUnwrap(e.moveZoneEdge(Self.zone, index: 1, to: KiCadPoint(35, 21)))
+        _ = try XCTUnwrap(e.moveZoneEdge(Self.zoneID, index: 1, to: KiCadPoint(35, 21)))
         XCTAssertEqual(pts(e), [[KiCadPoint(10, 10), KiCadPoint(35, 10), KiCadPoint(35, 30), KiCadPoint(10, 30)]])
         // between neighbours that meet (a trapezoid): the edge shortens, and goes no further than where they meet
         let trapezoid = [[KiCadPoint(0, 0), KiCadPoint(40, 0), KiCadPoint(30, 10), KiCadPoint(10, 10)]]
         e = try session(trapezoid)
-        _ = try XCTUnwrap(e.moveZoneEdge(Self.zone, index: 2, to: KiCadPoint(20, 15)))
+        _ = try XCTUnwrap(e.moveZoneEdge(Self.zoneID, index: 2, to: KiCadPoint(20, 15)))
         XCTAssertEqual(pts(e), [[KiCadPoint(0, 0), KiCadPoint(40, 0), KiCadPoint(25, 15), KiCadPoint(15, 15)]])
         e = try session(trapezoid)
-        _ = try XCTUnwrap(e.moveZoneEdge(Self.zone, index: 2, to: KiCadPoint(20, 50)))
+        _ = try XCTUnwrap(e.moveZoneEdge(Self.zoneID, index: 2, to: KiCadPoint(20, 50)))
         XCTAssertEqual(pts(e), [[KiCadPoint(0, 0), KiCadPoint(40, 0), KiCadPoint(20, 20)]], "met at the neighbours' crossing, the corner the same twice taken out")
         // at its own length (Ctrl)
         e = try session(trapezoid)
-        _ = try XCTUnwrap(e.moveZoneEdge(Self.zone, index: 2, to: KiCadPoint(20, 15), fixedLength: true))
+        _ = try XCTUnwrap(e.moveZoneEdge(Self.zoneID, index: 2, to: KiCadPoint(20, 15), fixedLength: true))
         XCTAssertEqual(pts(e), [[KiCadPoint(0, 0), KiCadPoint(40, 0), KiCadPoint(30, 15), KiCadPoint(10, 15)]])
         // a corner added at the nearest edge's nearest point; at one of its corners, its midpoint
         e = try session(square)
-        edit = try XCTUnwrap(e.addZoneCorner(Self.zone, at: KiCadPoint(18, 9)))
+        edit = try XCTUnwrap(e.addZoneCorner(Self.zoneID, at: KiCadPoint(18, 9)))
         XCTAssertEqual(edit.name, "Add Zone Corner")
         XCTAssertEqual(pts(e), [[KiCadPoint(10, 10), KiCadPoint(18, 10), KiCadPoint(30, 10), KiCadPoint(30, 30), KiCadPoint(10, 30)]])
         e = try session(square)
-        _ = try XCTUnwrap(e.addZoneCorner(Self.zone, at: KiCadPoint(9, 9)))
+        _ = try XCTUnwrap(e.addZoneCorner(Self.zoneID, at: KiCadPoint(9, 9)))
         XCTAssertEqual(pts(e), [[KiCadPoint(10, 10), KiCadPoint(20, 10), KiCadPoint(30, 10), KiCadPoint(30, 30), KiCadPoint(10, 30)]])
         // the closing edge's corner goes before the contour's first
         e = try session(square)
-        _ = try XCTUnwrap(e.addZoneCorner(Self.zone, at: KiCadPoint(9, 22)))
+        _ = try XCTUnwrap(e.addZoneCorner(Self.zoneID, at: KiCadPoint(9, 22)))
         XCTAssertEqual(pts(e), [[KiCadPoint(10, 22), KiCadPoint(10, 10), KiCadPoint(30, 10), KiCadPoint(30, 30), KiCadPoint(10, 30)]])
         // corners taken away: not the outline's last three; a hole's with the hole
         let holed = square + [[KiCadPoint(15, 15), KiCadPoint(25, 15), KiCadPoint(20, 25)]]
         e = try session(holed)
-        XCTAssertFalse(e.canRemoveZoneCorner(Self.zone, index: 0) && false)
-        XCTAssertTrue(e.canRemoveZoneCorner(Self.zone, index: 5))
-        edit = try XCTUnwrap(e.removeZoneCorner(Self.zone, index: 5))
+        XCTAssertFalse(e.canRemoveZoneCorner(Self.zoneID, index: 0) && false)
+        XCTAssertTrue(e.canRemoveZoneCorner(Self.zoneID, index: 5))
+        edit = try XCTUnwrap(e.removeZoneCorner(Self.zoneID, index: 5))
         XCTAssertEqual(edit.name, "Remove Zone Corner")
         XCTAssertEqual(pts(e), square, "the hole taken away")
-        _ = try XCTUnwrap(e.removeZoneCorner(Self.zone, index: 1))
+        _ = try XCTUnwrap(e.removeZoneCorner(Self.zoneID, index: 1))
         XCTAssertEqual(pts(e), [[KiCadPoint(10, 10), KiCadPoint(30, 30), KiCadPoint(10, 30)]])
-        XCTAssertFalse(e.canRemoveZoneCorner(Self.zone, index: 0))
-        XCTAssertNil(e.removeZoneCorner(Self.zone, index: 0))
+        XCTAssertFalse(e.canRemoveZoneCorner(Self.zoneID, index: 0))
+        XCTAssertNil(e.removeZoneCorner(Self.zoneID, index: 0))
         // an edge of a hole dragged
         let window = [[KiCadPoint(15, 15), KiCadPoint(25, 15), KiCadPoint(25, 25), KiCadPoint(15, 25)]]
         e = try session(square + window)
-        _ = try XCTUnwrap(e.moveZoneEdge(Self.zone, index: 4, to: KiCadPoint(20, 13)))
+        _ = try XCTUnwrap(e.moveZoneEdge(Self.zoneID, index: 4, to: KiCadPoint(20, 13)))
         XCTAssertEqual(pts(e), square + [[KiCadPoint(15, 13), KiCadPoint(25, 13), KiCadPoint(25, 25), KiCadPoint(15, 25)]])
         // a triangle's edge, its neighbours meeting at its third corner, where the polygon has more than three edges in
         // all: EC_CONVERGING finds the neighbours crossing there (SEG::Intersect takes the corner they share) and makes
         // the edge that point, and the triangle, its corners the same, comes to nothing
         e = try session(holed)
-        _ = try XCTUnwrap(e.moveZoneEdge(Self.zone, index: 4, to: KiCadPoint(20, 13)))
+        _ = try XCTUnwrap(e.moveZoneEdge(Self.zoneID, index: 4, to: KiCadPoint(20, 13)))
         XCTAssertEqual(pts(e), square)
         // a corner dragged across the outline: KiCad 10's point editor keeps the outline crossing itself
         e = try session(square)
-        _ = try XCTUnwrap(e.moveZoneCorner(Self.zone, index: 0, to: KiCadPoint(40, 40)))
+        _ = try XCTUnwrap(e.moveZoneCorner(Self.zoneID, index: 0, to: KiCadPoint(40, 40)))
         XCTAssertEqual(pts(e), [[KiCadPoint(40, 40), KiCadPoint(30, 10), KiCadPoint(30, 30), KiCadPoint(10, 30)]])
         // dragged onto its neighbour: the one the same as the next taken out (RemoveNullSegments)
         e = try session(square)
-        _ = try XCTUnwrap(e.moveZoneCorner(Self.zone, index: 0, to: KiCadPoint(30, 10)))
+        _ = try XCTUnwrap(e.moveZoneCorner(Self.zoneID, index: 0, to: KiCadPoint(30, 10)))
         XCTAssertEqual(pts(e), [[KiCadPoint(30, 10), KiCadPoint(30, 30), KiCadPoint(10, 30)]])
         // a corner snapped where it sees its neighbours at a right angle, within 2°
         e = try session([[KiCadPoint(0, 0), KiCadPoint(20, 0), KiCadPoint(20.5, 20), KiCadPoint(0, 20)]])
-        XCTAssertNotNil(e.startZoneDrag(Self.zone, handle: .corner(2)))
+        XCTAssertNotNil(e.startZoneDrag(Self.zoneID, handle: .corner(2)))
         let snapped = try XCTUnwrap(e.dragZonePoint(to: KiCadPoint(20.4, 20.1), stickyDistance: 0.05))
         XCTAssertEqual(abs(BoardEditing.segAngle(Seg(BoardEditing.nm(snapped[0][2]), BoardEditing.nm(snapped[0][1])),
                                                  Seg(BoardEditing.nm(snapped[0][2]), BoardEditing.nm(snapped[0][3]))) - 90), 0, accuracy: 0.01)
         XCTAssertNotNil(e.finishZoneDrag())
         // a drag dropped changes nothing
         e = try session(square)
-        XCTAssertNotNil(e.startZoneDrag(Self.zone, handle: .corner(1)))
+        XCTAssertNotNil(e.startZoneDrag(Self.zoneID, handle: .corner(1)))
         e.dragZonePoint(to: KiCadPoint(50, 50))
         e.cancelZoneDrag()
         XCTAssertNil(e.finishZoneDrag())
         XCTAssertEqual(pts(e), square)
         // a locked zone is not edited, unless locks are overridden; nor moved
         e = try session(square, locked: true)
-        XCTAssertFalse(e.canEditZoneOutline(Self.zone))
-        XCTAssertNil(e.moveZoneCorner(Self.zone, index: 0, to: KiCadPoint(1, 1)))
-        XCTAssertNil(e.addZoneCorner(Self.zone, at: KiCadPoint(1, 1)))
-        XCTAssertNil(e.moveZones([Self.zone], by: KiCadPoint(1, 1)))
-        XCTAssertNil(e.removeZones([Self.zone]))
+        XCTAssertFalse(e.canEditZoneOutline(Self.zoneID))
+        XCTAssertNil(e.moveZoneCorner(Self.zoneID, index: 0, to: KiCadPoint(1, 1)))
+        XCTAssertNil(e.addZoneCorner(Self.zoneID, at: KiCadPoint(1, 1)))
+        XCTAssertNil(e.moveZones([Self.zoneID], by: KiCadPoint(1, 1)))
+        XCTAssertNil(e.removeZones([Self.zoneID]))
         e.overridesLocks = true
-        XCTAssertNotNil(e.moveZoneCorner(Self.zone, index: 0, to: KiCadPoint(1, 1)))
+        XCTAssertNotNil(e.moveZoneCorner(Self.zoneID, index: 0, to: KiCadPoint(1, 1)))
         // moved whole
         e = try session(holed)
-        edit = try XCTUnwrap(e.moveZones([Self.zone], by: KiCadPoint(1.5, -2)))
+        edit = try XCTUnwrap(e.moveZones([Self.zoneID], by: KiCadPoint(1.5, -2)))
         XCTAssertEqual(edit.name, "Move")
         XCTAssertEqual(pts(e), holed.map { $0.map { KiCadPoint($0.x + 1.5, $0.y - 2) } })
         // picked by an edge or a corner of its outline or a hole, not by its inside while it has no fill
         e = try session(holed)
-        XCTAssertEqual(e.zone(at: KiCadPoint(20, 10.05), layers: ["F.Cu"], slop: 0), Self.zone)
-        XCTAssertEqual(e.zone(at: KiCadPoint(25.15, 15.1), layers: ["F.Cu"], slop: 0), Self.zone)
-        XCTAssertEqual(e.zone(at: KiCadPoint(20, 10.4), layers: ["F.Cu"], slop: 0.5), Self.zone)
+        XCTAssertEqual(e.zone(at: KiCadPoint(20, 10.05), layers: ["F.Cu"], slop: 0), Self.zoneID)
+        XCTAssertEqual(e.zone(at: KiCadPoint(25.15, 15.1), layers: ["F.Cu"], slop: 0), Self.zoneID)
+        XCTAssertEqual(e.zone(at: KiCadPoint(20, 10.4), layers: ["F.Cu"], slop: 0.5), Self.zoneID)
         XCTAssertNil(e.zone(at: KiCadPoint(20, 10.4), layers: ["F.Cu"], slop: 0))
         XCTAssertNil(e.zone(at: KiCadPoint(12, 20), layers: ["F.Cu"], slop: 0))
         // unique zone names, as BOARD::MakeUniqueZoneName makes them
