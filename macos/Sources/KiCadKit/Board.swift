@@ -249,9 +249,10 @@ public final class KiCadBoard {
         }
     }
 
-    static let textHeads: Set<String> = ["gr_text", "gr_text_box"]
+    /// The board's own texts, and its dimensions (whose texts KiCad writes in them)
+    static let textHeads: Set<String> = ["gr_text", "gr_text_box", "dimension"]
 
-    /// The board's own texts and drawings, its outline aside (as they stand in its file)
+    /// The board's own texts, dimensions and drawings, its outline aside (as they stand in its file)
     public var boardDrawings: [SExpr] {
         root.items.filter { item in
             let head = item.head ?? ""

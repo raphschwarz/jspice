@@ -573,9 +573,10 @@ public final class BoardEditing {
         return change(name, changed: changed)
     }
 
-    /// Tracks and vias taken away, by id (and the board's own texts and drawings of those ids)
+    /// Tracks and vias taken away, by id (and the board's own texts, graphics, its outline's too, and dimensions of
+    /// those ids)
     public func remove(_ uuids: Set<String>) -> Edit? {
-        let drawings = router.board.boardDrawings.filter { uuids.contains($0.value("uuid") ?? "") }
+        let drawings = drawingNodes(uuids)
         if !drawings.isEmpty {
             for node in drawings { router.board.root.remove(node) }
             router.boardChanged()
@@ -583,7 +584,7 @@ public final class BoardEditing {
         let copper = uuids.subtracting(drawings.compactMap { $0.value("uuid") })
         if !copper.isEmpty { router.remove(copper) }
         let name = drawings.isEmpty ? (uuids.count == 1 ? "Delete Track" : "Delete Tracks") : uuids.count == 1 ? "Delete" : "Delete Items"
-        return change(name, drawings: drawings.compactMap { $0.value("uuid") })
+        return change(name, outline: drawings.contains { $0.value("layer") == "Edge.Cuts" }, drawings: drawings.compactMap { $0.value("uuid") })
     }
 
     private func commit(_ name: String) -> Edit? {

@@ -261,6 +261,42 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   and touched by it, next to the board as `BOARD.boxes` (JSON). `BoxSelectionTests` checks the port's
   (`BoxSelection`, which the PCB view's box selection goes by) against them; the boards of
   `Tests/KiCadRouterTests/Fixtures/boards`, `arcboards`, `courtyards` and `silk` have theirs.
+- `graphics.py`: boards' graphics and dimensions as KiCad reads them (`graphics.py BOARD.kicad_pcb...`, JSON on
+  standard output): each `PCB_SHAPE` (its kind, points, an arc's middle and centre as KiCad has them once read, a
+  rectangle's corner radius, a polygon's corners, pen, fill and layer) beside what KiCad's drawing tools give a new
+  graphic on its layer (`GetLineThickness`; a polygon filled but on Edge.Cuts and the courtyards), each dimension
+  (its kind, points, height, the text `Update` made, where and at what angle, what it measured, and the lines
+  `GetShapes` holds), the board's dimension defaults, and each item as `pcbnew.SaveBoard` writes it again.
+  `graphics.py --transform OPS.json BOARD` first moves and turns items as KiCad's `Move` and `Rotate` do (a rotation
+  of no centre about the one `EDIT_TOOL::Rotate` takes for an item alone). `GraphicsTests` runs it on boards the
+  port's tools drew on (`GraphicTool`, `DimensionTool`, `ShapePointEditor`, `BoardEditing.addShape`, `setShape`,
+  `addCorner`, `removeCorner`, `moveDrawings`, `rotateTexts`, `removeDrawings`): KiCad reads every graphic and
+  dimension as the port made it and writes it again as the port wrote it; and has kicad-cli's DRC and the port's
+  agree on outlines the port's line, arc and polygon tools drew.
+- `drawing.py`: KiCad's drawing tools and point editor driven by the pointer, for checking the port's against. As
+  `tuning.py` does, it runs pcbnew under Xvfb with an action plugin of its own and a copy of the user's configuration
+  (a micrometre's grid, magnetic snapping off, the plan's angle snap mode). `drawing.py boards OUTDIR COUNT [SEED]`
+  makes boards to draw on (an outline; their projects' line widths and dimension defaults random) and beside each
+  `BOARD.plan`: lines (chains, finished by a double click or a click in the same place), rectangles, circles, arcs
+  (centre, start, then the pointer round to the end), polygons (finished by a double click or a click on the first
+  corner), a dimension of each kind, then edit points of what was drawn dragged (a line's ends, a rectangle's corners,
+  sides and centre, a circle's centre and rim, an arc's start, middle, end and centre, a polygon's corners), each
+  drag kept a millimetre from the graphic's other edit points. KiCad's point editor also snaps a dragged point to the
+  graphic as it was (its edit points, and at 45° or 90° where the lines of those angles cross it: KiCad 10's
+  construction geometry and snap lines), which the port does not: an arc is not dragged at 45° or 90°, nor a
+  rectangle's side or a polygon's corner at 45°.
+  `drawing.py draw BOARD...` does each plan in KiCad: the tool picked from the Place menu (highlighted first, as a
+  pick from the menu bar is: KiCad takes a command it was not highlighted for as a hotkey's, of the pointer's place,
+  and its drawing tools then start with a click there), the pointer moved to a pixel where the view puts a whole
+  micrometre (the view's transform fitted to the status bar's readings of the pointer at fifty pixels, each a
+  micrometre of the grid, to well under that) and clicked; the board saved after the drawing (`BOARD-drawn`) and after
+  the edits (`BOARD-edited`), and `BOARD.drawn`: every event, the ids of what each step made, the system's drag
+  threshold, and `graphics.py`'s reading of the two boards.
+  `DrawingToolsTests` gives the port's tools and point editor the same events on `Tests/KiCadRouterTests/Fixtures/
+  drawing` (`drawing.py boards ... 3`, then `draw`; `KICAD_DRAWING_REFERENCE` names a folder of more): every
+  graphic and dimension the port makes is KiCad's, to the nanometre, and every graphic its point editor leaves.
+  (No Ctrl: in KiCad 10 it takes the grid away as well as the angle, and the pointer's place is then known only to
+  a pixel.)
 - `rules.py`: random design rules for boards (`rules.py [--fills] [--all] [--seed SEED] BOARD.kicad_pcb...`): a
   rules file beside each board (`BOARD.kicad_dru`, where KiCad's DRC engine finds it, and the port's `BoardDRC`,
   `ZoneFiller` and `BoardRouter` with it), of one to six rules of random conditions on what the board has: its net
