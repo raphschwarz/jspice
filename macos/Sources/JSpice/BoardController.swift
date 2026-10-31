@@ -39,7 +39,10 @@ final class BoardController: ObservableObject {
     }
 
     @Published private(set) var availability: Availability = .unsaved
-    @Published private(set) var picture: KiCadBoardPicture?
+    @Published private(set) var picture: KiCadBoardPicture? {
+        // (the appearance's layers, highlighted nets and net inspector follow the board)
+        didSet { if picture == nil { appearance.close() } else { appearance.boardChanged() } }
+    }
     /// Whether KiCad's PCB editor has the board open and JSpice reaches it through KiCad's API
     @Published private(set) var isLive = false
     /// Whether KiCad's PCB editor has the board open, reached or not
@@ -80,6 +83,12 @@ final class BoardController: ObservableObject {
         let editing = PCBEditing()
         editing.controller = self
         return editing
+    }()
+    /// The board's appearance (layers and objects shown, the active layer), its nets highlighted and inspected
+    lazy var appearance: PCBAppearance = {
+        let appearance = PCBAppearance()
+        appearance.controller = self
+        return appearance
     }()
     /// A board shown without KiCad or a link to it (`show`), edited where it is, in memory, and its project's settings
     private var shownBoard: KiCadBoard?

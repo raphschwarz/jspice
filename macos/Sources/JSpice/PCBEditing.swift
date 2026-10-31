@@ -52,7 +52,12 @@ final class PCBEditing: ObservableObject {
     }
     /// The copper layer tracks are routed on
     @Published var layer = "F.Cu" {
-        didSet { if layer != oldValue { layerChanged() } }
+        didSet {
+            if layer != oldValue {
+                layerChanged()
+                controller?.appearance.editingLayerChanged(layer)
+            }
+        }
     }
     @Published private(set) var layers = ["F.Cu", "B.Cu"]
     /// New tracks' width in mm, nil for their net class's (or the pre-defined size chosen, `sizeChoice`)
