@@ -135,12 +135,22 @@ final class ZoneEditingTests: XCTestCase {
         e = try session(square + window)
         _ = try XCTUnwrap(e.moveZoneEdge(Self.zoneID, index: 4, to: KiCadPoint(20, 13)))
         XCTAssertEqual(pts(e), square + [[KiCadPoint(15, 13), KiCadPoint(25, 13), KiCadPoint(25, 25), KiCadPoint(15, 25)]])
-        // a triangle's edge, its neighbours meeting at its third corner, where the polygon has more than three edges in
-        // all: EC_CONVERGING finds the neighbours crossing there (SEG::Intersect takes the corner they share) and makes
-        // the edge that point, and the triangle, its corners the same, comes to nothing
+        // a triangle's edge (here a triangular hole's): its neighbours meet at its third corner, which KiCad 10.0.8's
+        // EC_CONVERGING keeps the corners from folding into (KiCad 10.0.7's found the neighbours crossing at the corner
+        // they share and made the edge that point, and the hole came to nothing)
         e = try session(holed)
         _ = try XCTUnwrap(e.moveZoneEdge(Self.zoneID, index: 4, to: KiCadPoint(20, 13)))
-        XCTAssertEqual(pts(e), square)
+        XCTAssertEqual(pts(e), square + [[KiCadPoint(14, 13), KiCadPoint(26, 13), KiCadPoint(20, 25)]])
+        // nor stops a triangle's edge where its neighbours converge: it goes on through their corner
+        let triangle = [[KiCadPoint(10, 10), KiCadPoint(30, 10), KiCadPoint(20, 30)]]
+        e = try session(triangle)
+        _ = try XCTUnwrap(e.moveZoneEdge(Self.zoneID, index: 0, to: KiCadPoint(20, 40)))
+        XCTAssertEqual(pts(e), [[KiCadPoint(25, 40), KiCadPoint(15, 40), KiCadPoint(20, 30)]])
+        // a triangle's corner dragged onto its neighbour: RemoveNullSegmentsIfPolygonSurvives keeps the outline as
+        // dragged, as taking the null segment out would leave two corners
+        e = try session(triangle)
+        _ = try XCTUnwrap(e.moveZoneCorner(Self.zoneID, index: 0, to: KiCadPoint(30, 10)))
+        XCTAssertEqual(e.board.zones[0].node["polygon"]?["pts"]?.all("xy").count, 3)
         // a corner dragged across the outline: KiCad 10's point editor keeps the outline crossing itself
         e = try session(square)
         _ = try XCTUnwrap(e.moveZoneCorner(Self.zoneID, index: 0, to: KiCadPoint(40, 40)))
@@ -189,6 +199,35 @@ final class ZoneEditingTests: XCTestCase {
         XCTAssertEqual(BoardEditing.uniqueZoneName("GND_1", inUse: ["GND_1"]), "GND_2")
         XCTAssertEqual(BoardEditing.uniqueZoneName("a_b", inUse: ["a_b"]), "a_b_1")
         XCTAssertEqual(BoardEditing.uniqueZoneName("", inUse: [""]), "")
+    }
+
+    /// KiCad 10.0.8's own tests of EC_CONVERGING (qa/tests/common/test_edit_constraints.cpp), with their points:
+    /// an edge of a triangle dragged through the corner its neighbours meet at, and a triangular hole's edge dragged
+    /// in, keeping its corners
+    func testKiCadsEditConstraintsCases() {
+        func drag(_ points: [IPoint], _ ends: [Int], edge i: Int, to position: IPoint) -> [IPoint] {
+            var points = points
+            let c = BoardEditing.converging(i, points, ends)
+            // (EDIT_LINE::SetPosition, then ApplyConstraint)
+            let difference = position - BoardEditing.midpoint(points[i], points[c.end])
+            points[i] += difference
+            points[c.end] += difference
+            BoardEditing.applyConverging(c, handle: BoardEditing.midpoint(points[i], points[c.end]), fixedLength: false,
+                                         points: &points)
+            return points
+        }
+        // TriangleEdgeDragPassesThroughTheCollapsePoint
+        var p = drag([IPoint(0, 0), IPoint(40, 0), IPoint(20, 30)], [2], edge: 0, to: IPoint(20, 60))
+        XCTAssertEqual(p[0], IPoint(40, 60))
+        XCTAssertEqual(p[1], IPoint(0, 60))
+        // TriangularHoleEdgeDragKeepsItsCorners
+        let (points, ends) = BoardEditing.editPoints([[IPoint(0, 0), IPoint(60, 0), IPoint(60, 60), IPoint(0, 60)],
+                                                      [IPoint(20, 20), IPoint(40, 20), IPoint(30, 40)]])
+        XCTAssertEqual(points[4], IPoint(20, 20))
+        XCTAssertEqual(points[5], IPoint(40, 20))
+        p = drag(points, ends, edge: 4, to: IPoint(30, 30))
+        XCTAssertEqual(p[4], IPoint(25, 30))
+        XCTAssertEqual(p[5], IPoint(35, 30))
     }
 
     // MARK: - Against KiCad

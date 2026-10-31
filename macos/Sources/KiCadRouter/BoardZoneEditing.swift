@@ -1,4 +1,4 @@
-// A zone's outline edited after it is drawn, as KiCad's point editor edits it (KiCad 10.0.7:
+// A zone's outline edited after it is drawn, as KiCad's point editor edits it (KiCad 10.0.8:
 // pcbnew/tools/pcb_point_editor.cpp, PCB_POINT_EDITOR's OnSelectionChange drag, addCorner, removeCorner and
 // CanRemoveCorner, its ZONE_POINT_EDIT_BEHAVIOR; common/tool/point_editor_behavior.cpp, POLYGON_POINT_EDIT_BEHAVIOR;
 // common/tool/edit_constraints.cpp, EC_CONVERGING and EC_LINE; common/tool/edit_points.cpp, EDIT_POINTS' contours),
@@ -100,6 +100,8 @@ extension BoardEditing {
         var perpVector: IPoint
         var halfLength: Double
         var originCollinear: Bool, endCollinear: Bool
+        /// Whether the edges either side of it end at the same corner (m_contourIsTriangle)
+        var contourIsTriangle: Bool
         /// Which side's line the edge follows when both neighbours run on along it (m_colinearConstraint)
         var collinearIsOriginSide: Bool?
         var convergencePoint: IPoint
@@ -184,7 +186,7 @@ extension BoardEditing {
         return Converging(origin: i, end: end, prevOrigin: prevOrigin, nextEnd: nextEnd, originSideLine: o - po,
                           endSideLine: e - ne, draggedVector: dragged, originalCenter: center, perpVector: dragged.perpendicular,
                           halfLength: Double(dragged.norm) / 2, originCollinear: originCollinear, endCollinear: endCollinear,
-                          collinearIsOriginSide: originCollinear ? true : endCollinear ? false : nil, convergencePoint: convergence)
+                          contourIsTriangle: prevOrigin == nextEnd, collinearIsOriginSide: originCollinear ? true : endCollinear ? false : nil, convergencePoint: convergence)
     }
 
     /// EC_LINE::Apply: `p` projected onto the line through `constrainer` along `line` (on a grid of a nanometre, as
@@ -196,11 +198,13 @@ extension BoardEditing {
     }
 
     /// EC_CONVERGING::Apply, the edge's handle at `handle`: the edge's two corners set
-    static func applyConverging(_ c: Converging, handle: IPoint, fixedLength: Bool, points: inout [IPoint], lines: Int) {
+    static func applyConverging(_ c: Converging, handle: IPoint, fixedLength: Bool, points: inout [IPoint]) {
         let perpLine = Seg(c.originalCenter, c.originalCenter + c.perpVector)
         let toHandle = Seg(handle, handle + c.draggedVector)
         var newCenter = perpLine.intersectLines(toHandle) ?? handle
-        if !fixedLength {
+        // (not past the point the neighbours converge at, unless the contour is a triangle, with no corner to fold
+        // away there)
+        if !fixedLength && !c.contourIsTriangle {
             let centerToConv = c.convergencePoint - c.originalCenter
             let centerToNew = newCenter - c.originalCenter
             if centerToConv.dot(c.perpVector) != 0 {
@@ -237,9 +241,10 @@ extension BoardEditing {
         let endSide = Seg(points[c.nextEnd], points[c.nextEnd] + c.endSideLine)
         if let p = dragged.intersectLines(originSide) { points[c.origin] = p }
         if let p = dragged.intersectLines(endSide) { points[c.end] = p }
+        if c.contourIsTriangle { return }
         // (the neighbours crossing: the polygon would cross itself, the edge made a point where they cross)
         let o = Seg(points[c.origin], points[c.prevOrigin]), e = Seg(points[c.end], points[c.nextEnd])
-        if let p = e.intersect(o), lines > 3 {
+        if let p = e.intersect(o) {
             points[c.origin] = p
             points[c.end] = p
         }
@@ -355,7 +360,7 @@ extension BoardEditing {
                 d.points[i] += pos - mid
                 d.points[c.end] += pos - mid
                 Self.applyConverging(c, handle: Self.midpoint(d.points[i], d.points[c.end]), fixedLength: ctrl,
-                                     points: &d.points, lines: d.points.count)
+                                     points: &d.points)
                 if snap != nil {
                     // (an anchor the edge's line passes near: the edge put through it, if the constraint leaves it
                     // within KiCad's five pixels of it)
@@ -366,7 +371,7 @@ extension BoardEditing {
                         d.points[i] += anchor - at
                         d.points[c.end] += anchor - at
                         Self.applyConverging(c, handle: Self.midpoint(d.points[i], d.points[c.end]), fixedLength: ctrl,
-                                             points: &d.points, lines: d.points.count)
+                                             points: &d.points)
                         let projected = Self.midpoint(d.points[i], d.points[c.end])
                         if (projected - anchor).norm > KiMath.round(stickyDistance * 1e6) { d.points = constrained }
                     }
@@ -397,13 +402,14 @@ extension BoardEditing {
     }
 
     /// The button let go: the drag kept as one change, "Move Point" as KiCad names it: the outline as dragged, its
-    /// corners the same as the ones after them taken out (FinalizeItem's RemoveNullSegments), the zone unfilled and
-    /// then filled again (refillsZones). Nil if the drag moved nothing.
+    /// corners the same as the ones after them taken out where three corners or more are left
+    /// (FinalizeItem's RemoveNullSegmentsIfPolygonSurvives), the zone unfilled and then filled again (refillsZones).
+    /// Nil if the drag moved nothing.
     public func finishZoneDrag() -> Edit? {
         guard let d = zoneDrag else { return nil }
         zoneDrag = nil
         guard d.moved, let node = zoneNode(d.uuid) else { return nil }
-        let contours = Self.removingNullSegments(Self.contours(d.points, d.contourEnds))
+        let contours = Self.removingNullSegmentsIfPolygonSurvives(Self.contours(d.points, d.contourEnds))
         guard contours != d.original else { return nil }
         Self.setOutline(node, contours)
         router.boardChanged()
@@ -427,6 +433,14 @@ extension BoardEditing {
         guard startZoneDrag(uuid, handle: .edge(index)) != nil else { return nil }
         dragZonePoint(to: p, ctrl: fixedLength, shift: true)
         return finishZoneDrag()
+    }
+
+    /// POLYGON_POINT_EDIT_BEHAVIOR::RemoveNullSegmentsIfPolygonSurvives: the outline with its null segments taken
+    /// out (RemoveNullSegments), unless that leaves fewer than three corners in all (TotalVertices), when it is kept
+    /// as it is
+    static func removingNullSegmentsIfPolygonSurvives(_ contours: ZoneContours) -> ZoneContours {
+        let cleaned = removingNullSegments(contours)
+        return cleaned.reduce(0) { $0 + $1.count } >= 3 ? cleaned : contours
     }
 
     /// SHAPE_POLY_SET::RemoveNullSegments: each corner the same as the next of its contour (the last's, the first)

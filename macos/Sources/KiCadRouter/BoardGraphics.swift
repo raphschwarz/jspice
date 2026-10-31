@@ -1,4 +1,4 @@
-// Graphics drawn on the board and edited, as KiCad's PCB editor draws and edits them (KiCad 10.0.7): pcbnew/tools/
+// Graphics drawn on the board and edited, as KiCad's PCB editor draws and edits them (KiCad 10.0.8): pcbnew/tools/
 // drawing_tool.cpp (DRAWING_TOOL::DrawLine, DrawRectangle, DrawCircle and DrawArc, with drawShape and drawArc, and
 // DrawZone drawing a polygon), pcbnew/tools/zone_create_helper.cpp (ZONE_CREATE_HELPER::OnComplete and commitZone, the
 // polygon made a PCB_SHAPE), include/preview_items/two_point_geom_manager.h, include/preview_items/
@@ -1432,7 +1432,8 @@ public struct ShapePointEditor: Sendable {
         }
     }
 
-    /// The drag finished (FinalizeItem: a polygon's corners in the same place one after another made one)
+    /// The drag finished (FinalizeItem: a polygon's corners in the same place one after another made one, unless
+    /// fewer than three would be left, RemoveNullSegmentsIfPolygonSurvives)
     public mutating func endDrag() {
         dragOrigin = nil
         forcedCursor = nil
@@ -1442,8 +1443,10 @@ public struct ShapePointEditor: Sendable {
             var out: [IPoint] = []
             for p in shape.points where out.last != p { out.append(p) }
             if out.count > 1 && out.first == out.last { out.removeLast() }
-            shape.points = out
-            points = out
+            if out.count >= 3 {
+                shape.points = out
+                points = out
+            }
         }
     }
 }
