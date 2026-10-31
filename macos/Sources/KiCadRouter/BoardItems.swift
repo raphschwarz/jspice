@@ -217,6 +217,24 @@ enum BoardItems {
         at.items = list.items
     }
 
+    /// Whether the port turns the item as KiCad does at any angle (`rotate`): not a table, an image, a dimension, a
+    /// barcode or a text box, nor a rectangle of rounded corners (which KiCad makes a polygon of arcs' points off
+    /// square), nor a footprint with one of those
+    static func rotatable(_ node: SExpr) -> Bool {
+        let rounded = { (n: SExpr) in (n.head == "gr_rect" || n.head == "fp_rect") && (n["radius"]?.number(at: 0) ?? 0) > 0 }
+        switch node.head ?? "" {
+        case "footprint":
+            return !node.items.contains { rounded($0) || ["fp_text_box", "dimension", "table", "image", "barcode"].contains($0.head ?? "") }
+        case "segment", "arc", "via", "target", "point", "gr_text", "zone", "gr_line", "gr_circle", "gr_arc", "gr_poly",
+             "gr_curve", "group", "generated":
+            return true
+        case "gr_rect":
+            return !rounded(node)
+        default:
+            return false
+        }
+    }
+
     /// The item turned about `c` by `degrees` counterclockwise, as KiCad's Rotate turns it; nil where the port does not
     /// turn its kind (a table, an image, a dimension, a barcode)
     @discardableResult
@@ -247,7 +265,9 @@ enum BoardItems {
                 node.set(SExpr("start", mm(p.x), mm(p.y)))
                 node.set(SExpr("end", mm(q.x), mm(q.y)))
             } else {
-                let corners = [a, IPoint(b.x, a.y), b, IPoint(a.x, b.y)].map { KiMath.rotate($0, around: c, angle) }
+                // (ROUNDRECT::TransformToPolygon's corners: from the top left, clockwise, of the rectangle normalized)
+                let (x0, x1, y0, y1) = (min(a.x, b.x), max(a.x, b.x), min(a.y, b.y), max(a.y, b.y))
+                let corners = [IPoint(x0, y0), IPoint(x1, y0), IPoint(x1, y1), IPoint(x0, y1)].map { KiMath.rotate($0, around: c, angle) }
                 node.items[0] = SExpr(symbol: "gr_poly")
                 node.items.removeAll { $0.head == "start" || $0.head == "end" || $0.head == "radius" }
                 node.items.insert(SExpr("pts", corners.map { SExpr("xy", mm($0.x), mm($0.y)) }), at: 1)

@@ -116,12 +116,17 @@ extension BoardEditing {
     /// or "Arrange selection"): copies of them (as Duplicate makes them) in each place of the array but the last,
     /// and the items themselves moved to its last (ARRAY_TOOL goes through the places backwards, the items last); each
     /// place's footprints, from the second place on, given references the board and the places before do not have if
-    /// asked. Arranging, each item in turn taken to the next place, from the first item's position.
+    /// asked. Arranging, each item in turn taken to the next place, from the first item's position. Nil where a
+    /// circle turns an item the port does not turn as KiCad does (BoardItems.rotatable).
     public func createArray(_ uuids: [String], options: ArrayOptions) -> Edit? {
         guard !isRouting, options.size > 0 else { return nil }
         let board = router.board
         let selection = uuids.compactMap { BoardItems.item(board, $0) }
         guard !selection.isEmpty else { return nil }
+        if case .circular(let c) = options.layout, c.rotateItems,
+           !(selection + selection.flatMap { BoardItems.descendants($0, in: board) }).allSatisfy(BoardItems.rotatable) {
+            return nil
+        }
         let size = options.size
         func members(_ g: SExpr, among pool: [SExpr]) -> [SExpr] {
             var out: [SExpr] = [], seen = Set<String>()
