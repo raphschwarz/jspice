@@ -554,6 +554,9 @@ struct PCBPadPropertiesSheet: View {
                                                           ("pad_prop_heatsink", "Heatsink pad"), ("pad_prop_castellated", "Castellated pad"),
                                                           ("pad_prop_mechanical", "Mechanical pad"), ("pad_prop_pressfit", "Press-fit pad")]
 
+    private static let corners: [(PadProperties.Corner, String)] = [(.topLeft, "Top left"), (.topRight, "Top right"),
+                                                                     (.bottomLeft, "Bottom left"), (.bottomRight, "Bottom right")]
+
     /// The copper layers' choices the pad's type has, as the dialog's (updatePadLayersList)
     private var copperChoices: [(PadProperties.CopperLayers, String)] {
         switch p.type {
@@ -627,8 +630,7 @@ struct PCBPadPropertiesSheet: View {
                         GridRow {
                             Text("Chamfered")
                             HStack {
-                                ForEach([(PadProperties.Corner.topLeft, "Top left"), (.topRight, "Top right"),
-                                         (.bottomLeft, "Bottom left"), (.bottomRight, "Bottom right")], id: \.0) { corner, title in
+                                ForEach(Self.corners, id: \.0) { corner, title in
                                     Toggle(title, isOn: Binding(get: { p.chamferedCorners.contains(corner) },
                                                                 set: { if $0 { p.chamferedCorners.insert(corner) } else { p.chamferedCorners.remove(corner) } }))
                                 }
