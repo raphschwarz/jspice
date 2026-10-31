@@ -146,6 +146,14 @@ final class PCBEditing: ObservableObject {
     @Published private(set) var patterns: [BoardEditing.TuningPatternInfo] = []
     /// The tuning pattern selected (its uuid), as KiCad selects one: a click on one of its tracks
     @Published var patternSelection: String?
+    /// The zone selected (its uuid), whose corners and edges the point editor's handles show (PCBZoneEditing.swift)
+    @Published var zoneSelection: String?
+    /// The selected zone's outline and holes (mm) as they are, or as the drag of one of its handles makes them
+    @Published var zoneOutline: [[KiCadPoint]]?
+    /// The zone's handle being dragged, or the zone moved whole
+    var zoneDrag: PCBZoneDrag?
+    /// The properties sheet open: a zone's, a footprint's or a pad's (PCBProperties.swift)
+    @Published var propertiesSheet: PCBPropertiesSheet?
 
     static let widths: [Double] = [0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.5, 2.0]
     /// Vias' diameters and drills to choose from (mm)
@@ -155,7 +163,7 @@ final class PCBEditing: ObservableObject {
     static let viaSizes = [(0.4, 0.2), (0.45, 0.25), (0.5, 0.3), (0.6, 0.3), (0.7, 0.35), (0.8, 0.4), (1.0, 0.5), (1.2, 0.6)].map { ViaSize(diameter: $0.0, drill: $0.1) }
 
     weak var controller: BoardController?
-    private let engine = PCBRouteEngine()
+    let engine = PCBRouteEngine()
     private var undoStack: [BoardEditing.Edit] = []
     private var redoStack: [BoardEditing.Edit] = []
     private var pendingMove: KiCadPoint?

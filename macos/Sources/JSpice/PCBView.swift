@@ -418,6 +418,10 @@ struct PCBBoardCanvas: View {
                            zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePointer, editing.layer, editing.zoneKind == .keepout) : nil,
                            tuning: editing.tuning, pattern: editing.tool == .select ? editing.selectedPattern : nil)
                 .draw(context)
+            // the zone selected, and the point editor's handles on it
+            if editing.tool == .select, let outline = editing.zoneOutlineShown {
+                PCBZoneHandles(outline: outline, view: view).draw(context)
+            }
             // the box being drawn to select with: solid taking what is wholly in it, dashed what it touches
             if let area = editing.selectionArea {
                 let a = view.point(area.from), b = view.point(area.to)
@@ -443,11 +447,15 @@ struct PCBBoardCanvas: View {
         }
         .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
             .onChanged { drag in
+                let flags = NSEvent.modifierFlags
+                if editing.zoneDragChanged(from: view.board(drag.startLocation), to: view.board(drag.location), in: picture, slop: 5 / view.scale,
+                                           pixel: 1 / view.scale, fixedLength: flags.contains(.command), free: flags.contains(.shift)) { return }
                 editing.dragChanged(from: view.board(drag.startLocation), to: view.board(drag.location), in: picture,
                                     selected: footprints, leftward: drag.location.x < drag.startLocation.x,
                                     moveOnly: NSEvent.modifierFlags.contains(.option))
             }
             .onEnded { drag in
+                if editing.zoneDragEnded(at: view.board(drag.location)) { return }
                 let flags = NSEvent.modifierFlags
                 let mode = PCBEditing.AreaSelection(shift: flags.contains(.shift), command: flags.contains(.command))
                 guard editing.selectionArea != nil else {
@@ -487,6 +495,7 @@ struct PCBBoardCanvas: View {
                 // a tuning pattern (a click on one of its tracks, as KiCad selects one), else a track or via, else a
                 // connection still to route (routed), else a part
                 if !extending { editing.patternSelection = nil }
+                if !extending { editing.deselectZone() }
                 if !extending, let pattern = editing.pattern(at: p, in: picture, slop: 3 / view.scale) {
                     editing.patternSelection = pattern
                     editing.selection = []
@@ -513,6 +522,8 @@ struct PCBBoardCanvas: View {
                         if extending { editing.footprintSelection.formSymmetricDifference([uuid]) } else { editing.footprintSelection = [uuid] }
                     } else if !extending {
                         editing.footprintSelection = []
+                        // (else the zone there, by its outline or its fill)
+                        editing.selectZone(at: p, slop: 3 / view.scale)
                     }
                 }
             }
@@ -523,6 +534,7 @@ struct PCBBoardCanvas: View {
         .onKeyPress(phases: .down) { press in key(press) ? .handled : .ignored }
         .onDeleteCommand {
             if editing.undoZoneCorner() { return }
+            if editing.deleteZoneSelection(slop: 5 / view.scale) { return }
             editing.isRouting ? editing.undoSegment() : editing.deleteSelection()
         }
         .onChange(of: editing.tool) { _, _ in focused = true }
@@ -532,6 +544,8 @@ struct PCBBoardCanvas: View {
     private func key(_ press: KeyPress) -> Bool {
         // the menus' keys (⌘ and ⌥) left to them
         guard press.modifiers.isDisjoint(with: [.command, .option, .control]) else { return false }
+        // (a zone's handles and corners, properties and locks: PCBZoneEditing.swift, PCBProperties.swift)
+        if editing.propertiesKey(press, footprints: footprints) { return true }
         switch press.key {
         case .escape:
             if editing.isDragging {
@@ -555,6 +569,7 @@ struct PCBBoardCanvas: View {
             return true
         case .delete, .deleteForward:
             if editing.undoZoneCorner() { return true }
+            if editing.deleteZoneSelection(slop: 5 / view.scale) { return true }
             if editing.isRouting { editing.undoSegment() } else { editing.deleteSelection() }
             return true
         case .return, .end:
@@ -946,6 +961,7 @@ struct PCBEditBar: View {
                 .fixedSize()
                 .help("The diameter and drill of the vias selected")
             }
+            PCBPropertiesBar(editing: editing)
             if editing.tool == .select, let pattern = editing.selectedPattern {
                 // (the tuning pattern selected: its target and largest amplitude, as its properties panel sets them)
                 Text(pattern.mode == .skew ? "Skew" : "Length").foregroundStyle(.secondary)
