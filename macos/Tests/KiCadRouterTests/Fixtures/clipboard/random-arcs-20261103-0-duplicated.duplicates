@@ -1,0 +1,12 @@
+{
+ "duplicates": [],
+ "dialogs": [
+  {
+   "dialog": "Warning",
+   "said": [
+    "Rule Area on B.Cu is malformed.",
+    "This zone cannot be handled by the router.\nPlease verify it is not a self-intersecting polygon."
+   ]
+  }
+ ]
+}

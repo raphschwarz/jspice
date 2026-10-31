@@ -1,0 +1,71 @@
+{
+ "duplicates": [
+  {
+   "copy": "box",
+   "box": [
+    [
+     96.387,
+     49.45
+    ],
+    [
+     112.225,
+     66.033
+    ]
+   ],
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e"
+   ],
+   "start": [
+    108.09,
+    63.474
+   ],
+   "end": [
+    111.073,
+    65.452
+   ],
+   "made": [
+    "390b34ba-338b-4d72-acd7-42367bc82219",
+    "2336a531-a82e-48c6-beb5-bed09e82e30d",
+    "09e8954e-c83b-40f1-ab00-94abdb4e5ce3"
+   ]
+  },
+  {
+   "copy": "one",
+   "box": [
+    [
+     96.587,
+     57.558
+    ],
+    [
+     112.157,
+     78.313
+    ]
+   ],
+   "selection": [
+    "ca29cde8-6d15-48c7-baef-83b805ec7db9"
+   ],
+   "start": [
+    106.96,
+    74.619
+   ],
+   "end": [
+    105.547,
+    76.032
+   ],
+   "made": [
+    "9f236882-1e57-49b7-8b21-67db068a630c"
+   ]
+  }
+ ],
+ "dialogs": [
+  {
+   "dialog": "Warning",
+   "said": [
+    "Rule area 'Keepout 97' on F.Cu, B.Cu and In2.Cu is malformed.",
+    "This zone cannot be handled by the router.\nPlease verify it is not a self-intersecting polygon."
+   ]
+  }
+ ]
+}

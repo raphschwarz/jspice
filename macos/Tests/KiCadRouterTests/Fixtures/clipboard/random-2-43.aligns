@@ -1,0 +1,143 @@
+{
+ "aligns": [
+  {
+   "action": "alignTop",
+   "board": "random-2-43-align-0.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    96.883,
+    49.943
+   ]
+  },
+  {
+   "action": "alignBottom",
+   "board": "random-2-43-align-1.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    96.883,
+    49.943
+   ]
+  },
+  {
+   "action": "alignLeft",
+   "board": "random-2-43-align-2.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    104.072,
+    54.182
+   ]
+  },
+  {
+   "action": "alignRight",
+   "board": "random-2-43-align-3.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    96.883,
+    49.943
+   ]
+  },
+  {
+   "action": "alignCenterX",
+   "board": "random-2-43-align-4.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    96.883,
+    49.943
+   ]
+  },
+  {
+   "action": "alignCenterY",
+   "board": "random-2-43-align-5.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    104.072,
+    54.182
+   ]
+  },
+  {
+   "action": "distributeHorizontallyCenters",
+   "board": "random-2-43-align-6.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    104.072,
+    54.182
+   ]
+  },
+  {
+   "action": "distributeHorizontallyGaps",
+   "board": "random-2-43-align-7.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    104.072,
+    54.182
+   ]
+  },
+  {
+   "action": "distributeVerticallyCenters",
+   "board": "random-2-43-align-8.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    104.072,
+    54.182
+   ]
+  },
+  {
+   "action": "distributeVerticallyGaps",
+   "board": "random-2-43-align-9.kicad_pcb",
+   "selection": [
+    "7deb83e7-30e2-4bd1-80cf-b61905df04df",
+    "09a95d4f-2d4b-44d5-90fb-cd2ce5d3f97e",
+    "703447bb-8c6d-4de8-a2d3-c420639f3857"
+   ],
+   "cursor": [
+    104.072,
+    54.182
+   ]
+  }
+ ],
+ "dialogs": [
+  {
+   "dialog": "Warning",
+   "said": [
+    "Rule area 'Keepout 97' on F.Cu, B.Cu and In2.Cu is malformed.",
+    "This zone cannot be handled by the router.\nPlease verify it is not a self-intersecting polygon."
+   ]
+  }
+ ]
+}

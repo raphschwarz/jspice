@@ -222,7 +222,15 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   of each (to a tenth of a micrometre) less its tracks'. Each board is written with its project and BOARD.stackup
   (JSON: each pair of layers and the height between them). `StackupTests` checks the port's (`Stackup`, which
   `BoardWorld` gives the router's interface) against them; `Tests/KiCadRouterTests/Fixtures/stackups` holds
-  `stackups.py ... 12 20261109`, and `KICAD_STACKUP_REFERENCE` names another folder of them.
+  `stackups.py ... 12 20261109`, and `KICAD_STACKUP_REFERENCE` names another folder of them. `stackups.py measure
+  BOARD.kicad_pcb...` measures boards of its own whose stackups were changed elsewhere: each read and written again by
+  KiCad (`pcbnew.LoadBoard`, `SaveBoard`: the stackup as KiCad reads it back), and its heights measured as above.
+  `StackupEditTests` edits each board's stackup as Board Setup's Physical Stackup and Board Finish pages do
+  (`BoardEditing.setStackup`, `BoardStackupEditing.swift`: thicknesses, sublayers, locks, materials from KiCad's lists
+  or named, colours, the finish and the edge options, by random numbers of the board's own), and checks the port's
+  stackup and thickness against KiCad's reading of them and its heights against KiCad's;
+  `Tests/KiCadRouterTests/Fixtures/stackupedits` holds `stackups.py measure` of the port's edits of the 12 boards
+  (written with `KICAD_STACKUP_EDIT_DUMP`).
 - `boardsetup.py`: KiCad's Board Setup dialog, driven as a user drives it, for checking the port's
   `BoardEditing.setCopperLayerCount` (`BoardSetup.swift`, with `BoardStackup.swift`) and its pre-defined sizes against.
   Neither the dialog nor the board's stackup is reached by KiCad's Python module, so it runs KiCad's PCB editor itself
@@ -246,6 +254,13 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   its track width menu picks them (JSON on standard output). `BoardSetupTests` makes KiCad's steps with the port on the
   boards of `Tests/KiCadRouterTests/Fixtures/boards`, `stackups` and `setup` (which holds `boardsetup.py edge`'s board),
   checks its boards against KiCad's, and, where KiCad is installed, has KiCad read the port's boards (`check`).
+  `boardsetup.py rules BOARD.kicad_pcb` checks rules files on the dialog's Custom Rules page instead: each of its
+  `RULE_CASES` (broken in each of the ways KiCad's rules parser, its expression compiler and its plausibility check
+  report, and some whole) put in the page's editor and checked with its Check rule syntax button, one after another,
+  and `BOARD.rules` (JSON) written beside the board: each case's text, its report as the page shows it, and its links'
+  targets (`line:column`, where a click on one takes the editor). `RulesCheckTests` checks the port's
+  (`DesignRulesCheck.check`, with `DesignRulesParser`'s reports) against them, message for message and link for link;
+  `Tests/KiCadRouterTests/Fixtures/rulescheck` holds those of `Fixtures/boards`' random-2-43.
 - `drc.py`: kicad-cli's design rules check of boards (`drc.py BOARD.kicad_pcb...`): its report of each, as the
   board is (its zones not refilled), errors and warnings, next to it as `BOARD.drc` (JSON, its date taken out).
   `DRCTests` checks the port's DRC (`BoardDRC`) against it: the same violations of the checks it makes, between the
@@ -261,6 +276,37 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   and touched by it, next to the board as `BOARD.boxes` (JSON). `BoxSelectionTests` checks the port's
   (`BoxSelection`, which the PCB view's box selection goes by) against them; the boards of
   `Tests/KiCadRouterTests/Fixtures/boards`, `arcboards`, `courtyards` and `silk` have theirs.
+- `editing.py`: KiCad's copy, paste, duplicate, Create Array and align and distribute, done by KiCad's own PCB editor,
+  for checking the port's (`BoardClipboard.swift`, `BoardClipboardEditing.swift`, `BoardArray.swift`,
+  `BoardAlign.swift`) against. None of them is reached by KiCad's Python module, so, as `tuning.py` does, it runs the
+  editor under Xvfb with an action plugin of its own and a copy of the user's configuration (a micrometre grid, magnetic
+  items off, hotkeys of its own for align and distribute), and drives it as a user does: the view zoomed to fit and its
+  scale read from the status bar, items selected by a box drawn with the pointer, the tools started by their keys, the
+  pointer moved and clicked to place what they move, Create Array's fields filled in, the clipboard read and written
+  through `wx.TheClipboard`; the selection (`pcbnew.GetCurrentSelection`) and the pointer written down at each step.
+  `editing.py copy OUTDIR BOARD.kicad_pcb...` copies each board into OUTDIR (written again by KiCad first) and writes
+  `BOARD.copies`: the view's scale and, for each copy (everything; a box's items; a footprint alone), the box, the
+  selection, the pointer at Ctrl+C and the clipboard's text. `editing.py paste BOARD.kicad_pcb [SOURCE.kicad_pcb]`
+  pastes those copies (or SOURCE's) one after another where the pointer is clicked, the box's also with Paste
+  Special's unique references, and a text that is not KiCad's: `BOARD-pasted.kicad_pcb` (or `BOARD-from-SOURCE`) and
+  `.pastes`; with `--ours COPIES` the port's copies of the same selections instead (`BOARD.ours`, which
+  `ClipboardTests` writes with `KICAD_CLIPBOARD_DUMP`), into `BOARD-ours-pasted`: so KiCad reads the port's clipboard
+  text. `editing.py duplicate BOARD.kicad_pcb` duplicates the box's items and the footprint (Ctrl+D, moved, a click);
+  `editing.py array BOARD.kicad_pcb` runs Create Array on the box's items with each of `ARRAYS` (grids of counts,
+  spacings, offsets and stagger by rows and by columns, centred or not; circles about a centre, by an angle or a full
+  circle, either way round, the items turned or not; the selection arranged; references kept or made unique), each a
+  run of its own, `BOARD-array-N.kicad_pcb` and `BOARD.arrays` with the dialog's fields as KiCad read them;
+  `editing.py align BOARD.kicad_pcb` runs each of the ten align and distribute actions on the box's items, the pointer
+  over one of them or not, the board saved after each (`BOARD-align-N.kicad_pcb`, `BOARD.aligns`). `ClipboardTests`
+  and `ArrayAlignTests` make the same with the port and check its texts against KiCad's, character for character, and
+  its boards against KiCad's, item for item (ids aside; and the nets of the tracks, vias and drawings of a cluster of
+  no pads, which, where a copy joins two nets there, KiCad takes from the first item with a net its search comes to,
+  starting at the item of the lowest address in memory: each such cluster of one net on both boards).
+  `Tests/KiCadRouterTests/Fixtures/clipboard` holds them for `Fixtures/boards`' random-2-15 and random-2-43,
+  `arcboards`' random-arcs-20261103-0 and `setup`'s edge-6: copies, pastes and ours pastes of all four, duplicates of
+  the three whose box took items, edge-6's copy of everything pasted into random-2-15 (of fewer layers), arrays of
+  random-2-15 and edge-6, aligns of random-2-15 and random-2-43; the projects of the boards KiCad saved left out.
+  `KICAD_CLIPBOARD_REFERENCE` names another folder of them.
 - `rules.py`: random design rules for boards (`rules.py [--fills] [--all] [--seed SEED] BOARD.kicad_pcb...`): a
   rules file beside each board (`BOARD.kicad_dru`, where KiCad's DRC engine finds it, and the port's `BoardDRC`,
   `ZoneFiller` and `BoardRouter` with it), of one to six rules of random conditions on what the board has: its net

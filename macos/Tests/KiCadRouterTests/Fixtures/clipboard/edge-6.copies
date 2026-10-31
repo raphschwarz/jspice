@@ -1,0 +1,114 @@
+{
+ "scale": 0.04280291345329906,
+ "transform": {
+  "px": 729,
+  "py": 390,
+  "wx": 110.003,
+  "wy": 98.966,
+  "sx": 0.04280291345329906,
+  "sy": 0.042803468208092506,
+  "canvas": [
+   340,
+   102,
+   1946,
+   1442
+  ]
+ },
+ "copies": [
+  {
+   "name": "all",
+   "box": null,
+   "selection": [
+    "00000000-0000-4000-8000-000000000020",
+    "00000000-0000-4000-8000-000000000021",
+    "00000000-0000-4000-8000-000000000019",
+    "00000000-0000-4000-8000-000000000008",
+    "00000000-0000-4000-8000-000000000033",
+    "00000000-0000-4000-8000-000000000030",
+    "00000000-0000-4000-8000-000000000014",
+    "00000000-0000-4000-8000-000000000010",
+    "00000000-0000-4000-8000-000000000023",
+    "00000000-0000-4000-8000-000000000011",
+    "00000000-0000-4000-8000-000000000012",
+    "00000000-0000-4000-8000-000000000034",
+    "00000000-0000-4000-8000-000000000007",
+    "00000000-0000-4000-8000-000000000031",
+    "00000000-0000-4000-8000-000000000032",
+    "00000000-0000-4000-8000-000000000016",
+    "00000000-0000-4000-8000-000000000013",
+    "00000000-0000-4000-8000-000000000035",
+    "00000000-0000-4000-8000-000000000002",
+    "00000000-0000-4000-8000-000000000022",
+    "00000000-0000-4000-8000-000000000018",
+    "00000000-0000-4000-8000-000000000017",
+    "00000000-0000-4000-8000-000000000009",
+    "00000000-0000-4000-8000-000000000003",
+    "00000000-0000-4000-8000-000000000006",
+    "00000000-0000-4000-8000-000000000004"
+   ],
+   "cursor": [
+    130.377,
+    130.213
+   ],
+   "text": "(kicad_pcb\n\t(version 20260206)\n\t(generator \"pcbnew\")\n\t(generator_version \"10.0\")\n\t(layers\n\t\t(0 \"F.Cu\" signal)\n\t\t(4 \"In1.Cu\" signal)\n\t\t(6 \"In2.Cu\" signal)\n\t\t(8 \"In3.Cu\" signal)\n\t\t(10 \"In4.Cu\" signal)\n\t\t(2 \"B.Cu\" signal)\n\t\t(9 \"F.Adhes\" user \"F.Adhesive\")\n\t\t(11 \"B.Adhes\" user \"B.Adhesive\")\n\t\t(13 \"F.Paste\" user)\n\t\t(15 \"B.Paste\" user)\n\t\t(5 \"F.SilkS\" user \"F.Silkscreen\")\n\t\t(7 \"B.SilkS\" user \"B.Silkscreen\")\n\t\t(1 \"F.Mask\" user)\n\t\t(3 \"B.Mask\" user)\n\t\t(17 \"Dwgs.User\" user \"User.Drawings\")\n\t\t(19 \"Cmts.User\" user \"User.Comments\")\n\t\t(25 \"Edge.Cuts\" user)\n\t\t(27 \"Margin\" user)\n\t\t(31 \"F.CrtYd\" user \"F.Courtyard\")\n\t\t(29 \"B.CrtYd\" user \"B.Courtyard\")\n\t\t(35 \"F.Fab\" user)\n\t\t(33 \"B.Fab\" user)\n\t)\n\t(zone\n\t\t(net \"N0\")\n\t\t(layer \"In4.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000020\")\n\t\t(hatch edge 0.5)\n\t\t(connect_pads\n\t\t\t(clearance 0.5)\n\t\t)\n\t\t(min_thickness 0.25)\n\t\t(fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5) (island_removal_mode 0))\n\t\t(polygon\n\t\t\t(pts\n\t\t\t\t(xy 20 -30) (xy 28 -30) (xy 28 -22) (xy 20 -22)\n\t\t\t)\n\t\t)\n\t\t(filled_polygon\n\t\t\t(layer \"In4.Cu\")\n\t\t\t(pts\n\t\t\t\t(xy 20.5 -29.5) (xy 27.5 -29.5) (xy 27.5 -22.5) (xy 20.5 -22.5)\n\t\t\t)\n\t\t)\n\t)\n\t(zone\n\t\t(net \"N0\")\n\t\t(layers \"In1.Cu\" \"In2.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000021\")\n\t\t(hatch edge 0.5)\n\t\t(connect_pads\n\t\t\t(clearance 0.5)\n\t\t)\n\t\t(min_thickness 0.25)\n\t\t(fill (thermal_gap 0.5) (thermal_bridge_width 0.5) (island_removal_mode 0))\n\t\t(polygon\n\t\t\t(pts\n\t\t\t\t(xy 20 -20) (xy 28 -20) (xy 28 -12) (xy 20 -12)\n\t\t\t)\n\t\t)\n\t)\n\t(zone\n\t\t(net \"N0\")\n\t\t(layers \"F.Cu\" \"In3.Cu\" \"In4.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000019\")\n\t\t(hatch edge 0.5)\n\t\t(connect_pads\n\t\t\t(clearance 0.5)\n\t\t)\n\t\t(min_thickness 0.25)\n\t\t(fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5) (island_removal_mode 0))\n\t\t(property\n\t\t\t(layer \"In4.Cu\")\n\t\t\t(hatch_position\n\t\t\t\t(xy 1 1)\n\t\t\t)\n\t\t)\n\t\t(polygon\n\t\t\t(pts\n\t\t\t\t(xy 10 -30) (xy 18 -30) (xy 18 -22) (xy 10 -22)\n\t\t\t)\n\t\t)\n\t\t(filled_polygon\n\t\t\t(layer \"F.Cu\")\n\t\t\t(pts\n\t\t\t\t(xy 10.5 -29.5) (xy 17.5 -29.5) (xy 17.5 -22.5) (xy 10.5 -22.5)\n\t\t\t)\n\t\t)\n\t\t(filled_polygon\n\t\t\t(layer \"In3.Cu\")\n\t\t\t(pts\n\t\t\t\t(xy 10.5 -29.5) (xy 17.5 -29.5) (xy 17.5 -22.5) (xy 10.5 -22.5)\n\t\t\t)\n\t\t)\n\t\t(filled_polygon\n\t\t\t(layer \"In4.Cu\")\n\t\t\t(pts\n\t\t\t\t(xy 10.5 -29.5) (xy 17.5 -29.5) (xy 17.5 -22.5) (xy 10.5 -22.5)\n\t\t\t)\n\t\t)\n\t)\n\t(via\n\t\t(at -10 -30)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"F.Cu\" \"B.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000008\")\n\t)\n\t(gr_line\n\t\t(start 45 -35)\n\t\t(end 45 10)\n\t\t(stroke (width 0.05) (type default))\n\t\t(layer \"Edge.Cuts\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000033\")\n\t)\n\t(group \"\"\n\t\t(uuid \"00000000-0000-4000-8000-000000000030\")\n\t\t(members \"00000000-0000-4000-8000-000000000015\")\n\t)\n\t(gr_line\n\t\t(start -30 -10)\n\t\t(end -25 -10)\n\t\t(stroke (width 0.2) (type default))\n\t\t(layer \"In4.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000015\")\n\t)\n\t(via micro\n\t\t(at 2 -30)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"F.Cu\" \"In1.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000014\")\n\t)\n\t(via buried\n\t\t(at -6 -30)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"In1.Cu\" \"In4.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000010\")\n\t)\n\t(footprint \"JSpice:Odd\"\n\t\t(version 20260206)\n\t\t(generator \"pcbnew\")\n\t\t(generator_version \"10.0\")\n\t\t(layer \"F.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000023\")\n\t\t(at 0 0)\n\t\t(property \"Reference\" \"J1\"\n\t\t\t(at 0 -3 0)\n\t\t\t(layer \"F.SilkS\")\n\t\t\t(uuid \"1b2e726d-08f9-41c1-a389-8ab8a4b35571\")\n\t\t\t(effects\n\t\t\t\t(font (size 1 1) (thickness 0.15))\n\t\t\t)\n\t\t)\n\t\t(property \"Value\" \"Odd\"\n\t\t\t(at 0 3 0)\n\t\t\t(layer \"F.Fab\")\n\t\t\t(uuid \"fb29f2dc-3ecd-439c-b143-04ef6ced8058\")\n\t\t\t(effects\n\t\t\t\t(font (size 1 1) (thickness 0.15))\n\t\t\t)\n\t\t)\n\t\t(property \"Datasheet\" \"\"\n\t\t\t(at 0 0 0)\n\t\t\t(layer \"F.Fab\")\n\t\t\t(hide yes)\n\t\t\t(uuid \"19eff23e-ad90-4947-8ecb-3014fd50d0b7\")\n\t\t\t(effects\n\t\t\t\t(font (size 1.27 1.27))\n\t\t\t)\n\t\t)\n\t\t(property \"Description\" \"\"\n\t\t\t(at 0 0 0)\n\t\t\t(layer \"F.Fab\")\n\t\t\t(hide yes)\n\t\t\t(uuid \"4143778a-a3e0-4771-a986-ab29109f5f08\")\n\t\t\t(effects\n\t\t\t\t(font (size 1.27 1.27))\n\t\t\t)\n\t\t)\n\t\t(duplicate_pad_numbers_are_jumpers no)\n\t\t(fp_line\n\t\t\t(start -2 0)\n\t\t\t(end 2 0)\n\t\t\t(stroke (width 0.2) (type default))\n\t\t\t(layer \"In4.Cu\")\n\t\t\t(uuid \"00000000-0000-4000-8000-000000000026\")\n\t\t)\n\t\t(pad \"1\" thru_hole circle\n\t\t\t(at 0 0)\n\t\t\t(size 1.6 1.6)\n\t\t\t(drill 0.8)\n\t\t\t(layers \"*.Cu\" \"F.Mask\")\n\t\t\t(remove_unused_layers no)\n\t\t\t(uuid \"00000000-0000-4000-8000-000000000027\")\n\t\t)\n\t\t(pad \"2\" thru_hole circle\n\t\t\t(at 2.54 0)\n\t\t\t(size 1.6 1.6)\n\t\t\t(drill 0.8)\n\t\t\t(layers \"*.Cu\" \"*.Mask\")\n\t\t\t(remove_unused_layers no)\n\t\t\t(uuid \"00000000-0000-4000-8000-000000000028\")\n\t\t)\n\t\t(pad \"3\" smd rect\n\t\t\t(at 5 0)\n\t\t\t(size 1 1)\n\t\t\t(layers \"F.Cu\" \"F.Mask\" \"F.Paste\")\n\t\t\t(uuid \"00000000-0000-4000-8000-000000000029\")\n\t\t)\n\t\t(embedded_fonts no)\n\t)\n\t(via buried\n\t\t(at -4 -30)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"In2.Cu\" \"In3.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000011\")\n\t)\n\t(via micro\n\t\t(at -2 -30)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"In3.Cu\" \"In4.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000012\")\n\t)\n\t(gr_line\n\t\t(start 45 10)\n\t\t(end -35 10)\n\t\t(stroke (width 0.05) (type default))\n\t\t(layer \"Edge.Cuts\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000034\")\n\t)\n\t(arc\n\t\t(start -18 -30)\n\t\t(mid -16 -28)\n\t\t(end -18 -26)\n\t\t(width 0.2)\n\t\t(layer \"In3.Cu\")\n\t\t(net \"N3\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000007\")\n\t)\n\t(group \"\"\n\t\t(uuid \"00000000-0000-4000-8000-000000000031\")\n\t\t(members \"00000000-0000-4000-8000-000000000001\" \"00000000-0000-4000-8000-000000000005\")\n\t)\n\t(segment\n\t\t(start -30 -22)\n\t\t(end -20 -22)\n\t\t(width 0.2)\n\t\t(layer \"In4.Cu\")\n\t\t(net \"N4\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000005\")\n\t)\n\t(segment\n\t\t(start -30 -30)\n\t\t(end -20 -30)\n\t\t(width 0.2)\n\t\t(layer \"F.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000001\")\n\t)\n\t(gr_line\n\t\t(start -35 -35)\n\t\t(end 45 -35)\n\t\t(stroke (width 0.05) (type default))\n\t\t(layer \"Edge.Cuts\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000032\")\n\t)\n\t(gr_rect\n\t\t(start -24 -10)\n\t\t(end -22 -8)\n\t\t(stroke (width 0.1) (type default))\n\t\t(fill no)\n\t\t(layer \"In2.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000016\")\n\t)\n\t(via blind\n\t\t(at 0 -30)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"In3.Cu\" \"B.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000013\")\n\t)\n\t(gr_line\n\t\t(start -35 10)\n\t\t(end -35 -35)\n\t\t(stroke (width 0.05) (type default))\n\t\t(layer \"Edge.Cuts\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000035\")\n\t)\n\t(segment\n\t\t(start -30 -28)\n\t\t(end -20 -28)\n\t\t(width 0.2)\n\t\t(layer \"In1.Cu\")\n\t\t(net \"N1\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000002\")\n\t)\n\t(zone\n\t\t(layers \"F.Cu\" \"B.Cu\" \"In1.Cu\" \"In2.Cu\" \"In3.Cu\" \"In4.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000022\")\n\t\t(hatch edge 0.5)\n\t\t(connect_pads\n\t\t\t(clearance 0)\n\t\t)\n\t\t(min_thickness 0.25)\n\t\t(keepout\n\t\t\t(tracks not_allowed)\n\t\t\t(vias not_allowed)\n\t\t\t(pads allowed)\n\t\t\t(copperpour allowed)\n\t\t\t(footprints allowed)\n\t\t)\n\t\t(placement\n\t\t\t(enabled no)\n\t\t\t(sheetname \"\")\n\t\t)\n\t\t(fill (thermal_gap 0.5) (thermal_bridge_width 0.5) (island_removal_mode 0))\n\t\t(polygon\n\t\t\t(pts\n\t\t\t\t(xy 30 -30) (xy 38 -30) (xy 38 -22) (xy 30 -22)\n\t\t\t)\n\t\t)\n\t)\n\t(gr_line\n\t\t(start -30 0)\n\t\t(end -25 0)\n\t\t(stroke (width 0.2) (type default))\n\t\t(layer \"Dwgs.User\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000018\")\n\t)\n\t(gr_text \"inner\"\n\t\t(at -30 -5 0)\n\t\t(layer \"In3.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000017\")\n\t\t(effects\n\t\t\t(font (size 1 1) (thickness 0.15))\n\t\t)\n\t)\n\t(via blind\n\t\t(at -8 -30)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"F.Cu\" \"In2.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000009\")\n\t)\n\t(segment\n\t\t(start -30 -26)\n\t\t(end -20 -26)\n\t\t(width 0.2)\n\t\t(layer \"In2.Cu\")\n\t\t(net \"N2\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000003\")\n\t)\n\t(segment\n\t\t(start -30 -20)\n\t\t(end -20 -20)\n\t\t(width 0.2)\n\t\t(layer \"B.Cu\")\n\t\t(net \"N5\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000006\")\n\t)\n\t(segment\n\t\t(start -30 -24)\n\t\t(end -20 -24)\n\t\t(width 0.2)\n\t\t(layer \"In3.Cu\")\n\t\t(net \"N3\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000004\")\n\t)\n)\n"
+  },
+  {
+   "name": "box",
+   "box": [
+    [
+     94.475,
+     94.475
+    ],
+    [
+     153.532,
+     124.005
+    ]
+   ],
+   "selection": [
+    "00000000-0000-4000-8000-000000000019",
+    "00000000-0000-4000-8000-000000000008",
+    "00000000-0000-4000-8000-000000000030",
+    "00000000-0000-4000-8000-000000000014",
+    "00000000-0000-4000-8000-000000000010",
+    "00000000-0000-4000-8000-000000000011",
+    "00000000-0000-4000-8000-000000000012",
+    "00000000-0000-4000-8000-000000000007",
+    "00000000-0000-4000-8000-000000000031",
+    "00000000-0000-4000-8000-000000000016",
+    "00000000-0000-4000-8000-000000000013",
+    "00000000-0000-4000-8000-000000000002",
+    "00000000-0000-4000-8000-000000000009",
+    "00000000-0000-4000-8000-000000000003",
+    "00000000-0000-4000-8000-000000000006",
+    "00000000-0000-4000-8000-000000000004"
+   ],
+   "cursor": [
+    136.926,
+    110.78
+   ],
+   "text": "(kicad_pcb\n\t(version 20260206)\n\t(generator \"pcbnew\")\n\t(generator_version \"10.0\")\n\t(layers\n\t\t(0 \"F.Cu\" signal)\n\t\t(4 \"In1.Cu\" signal)\n\t\t(6 \"In2.Cu\" signal)\n\t\t(8 \"In3.Cu\" signal)\n\t\t(10 \"In4.Cu\" signal)\n\t\t(2 \"B.Cu\" signal)\n\t\t(9 \"F.Adhes\" user \"F.Adhesive\")\n\t\t(11 \"B.Adhes\" user \"B.Adhesive\")\n\t\t(13 \"F.Paste\" user)\n\t\t(15 \"B.Paste\" user)\n\t\t(5 \"F.SilkS\" user \"F.Silkscreen\")\n\t\t(7 \"B.SilkS\" user \"B.Silkscreen\")\n\t\t(1 \"F.Mask\" user)\n\t\t(3 \"B.Mask\" user)\n\t\t(17 \"Dwgs.User\" user \"User.Drawings\")\n\t\t(19 \"Cmts.User\" user \"User.Comments\")\n\t\t(25 \"Edge.Cuts\" user)\n\t\t(27 \"Margin\" user)\n\t\t(31 \"F.CrtYd\" user \"F.Courtyard\")\n\t\t(29 \"B.CrtYd\" user \"B.Courtyard\")\n\t\t(35 \"F.Fab\" user)\n\t\t(33 \"B.Fab\" user)\n\t)\n\t(zone\n\t\t(net \"N0\")\n\t\t(layers \"F.Cu\" \"In3.Cu\" \"In4.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000019\")\n\t\t(hatch edge 0.5)\n\t\t(connect_pads\n\t\t\t(clearance 0.5)\n\t\t)\n\t\t(min_thickness 0.25)\n\t\t(fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5) (island_removal_mode 0))\n\t\t(property\n\t\t\t(layer \"In4.Cu\")\n\t\t\t(hatch_position\n\t\t\t\t(xy 1 1)\n\t\t\t)\n\t\t)\n\t\t(polygon\n\t\t\t(pts\n\t\t\t\t(xy 0 -8) (xy 8 -8) (xy 8 0) (xy 0 0)\n\t\t\t)\n\t\t)\n\t\t(filled_polygon\n\t\t\t(layer \"F.Cu\")\n\t\t\t(pts\n\t\t\t\t(xy 0.5 -7.5) (xy 7.5 -7.5) (xy 7.5 -0.5) (xy 0.5 -0.5)\n\t\t\t)\n\t\t)\n\t\t(filled_polygon\n\t\t\t(layer \"In3.Cu\")\n\t\t\t(pts\n\t\t\t\t(xy 0.5 -7.5) (xy 7.5 -7.5) (xy 7.5 -0.5) (xy 0.5 -0.5)\n\t\t\t)\n\t\t)\n\t\t(filled_polygon\n\t\t\t(layer \"In4.Cu\")\n\t\t\t(pts\n\t\t\t\t(xy 0.5 -7.5) (xy 7.5 -7.5) (xy 7.5 -0.5) (xy 0.5 -0.5)\n\t\t\t)\n\t\t)\n\t)\n\t(via\n\t\t(at -20 -8)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"F.Cu\" \"B.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000008\")\n\t)\n\t(group \"\"\n\t\t(uuid \"00000000-0000-4000-8000-000000000030\")\n\t\t(members \"00000000-0000-4000-8000-000000000015\")\n\t)\n\t(gr_line\n\t\t(start -40 12)\n\t\t(end -35 12)\n\t\t(stroke (width 0.2) (type default))\n\t\t(layer \"In4.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000015\")\n\t)\n\t(via micro\n\t\t(at -8 -8)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"F.Cu\" \"In1.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000014\")\n\t)\n\t(via buried\n\t\t(at -16 -8)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"In1.Cu\" \"In4.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000010\")\n\t)\n\t(via buried\n\t\t(at -14 -8)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"In2.Cu\" \"In3.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000011\")\n\t)\n\t(via micro\n\t\t(at -12 -8)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"In3.Cu\" \"In4.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000012\")\n\t)\n\t(arc\n\t\t(start -28 -8)\n\t\t(mid -26 -6)\n\t\t(end -28 -4)\n\t\t(width 0.2)\n\t\t(layer \"In3.Cu\")\n\t\t(net \"N3\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000007\")\n\t)\n\t(group \"\"\n\t\t(uuid \"00000000-0000-4000-8000-000000000031\")\n\t\t(members \"00000000-0000-4000-8000-000000000001\" \"00000000-0000-4000-8000-000000000005\")\n\t)\n\t(segment\n\t\t(start -40 0)\n\t\t(end -30 0)\n\t\t(width 0.2)\n\t\t(layer \"In4.Cu\")\n\t\t(net \"N4\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000005\")\n\t)\n\t(segment\n\t\t(start -40 -8)\n\t\t(end -30 -8)\n\t\t(width 0.2)\n\t\t(layer \"F.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000001\")\n\t)\n\t(gr_rect\n\t\t(start -34 12)\n\t\t(end -32 14)\n\t\t(stroke (width 0.1) (type default))\n\t\t(fill no)\n\t\t(layer \"In2.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000016\")\n\t)\n\t(via blind\n\t\t(at -10 -8)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"In3.Cu\" \"B.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000013\")\n\t)\n\t(segment\n\t\t(start -40 -6)\n\t\t(end -30 -6)\n\t\t(width 0.2)\n\t\t(layer \"In1.Cu\")\n\t\t(net \"N1\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000002\")\n\t)\n\t(via blind\n\t\t(at -18 -8)\n\t\t(size 0.6)\n\t\t(drill 0.3)\n\t\t(layers \"F.Cu\" \"In2.Cu\")\n\t\t(net \"N0\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000009\")\n\t)\n\t(segment\n\t\t(start -40 -4)\n\t\t(end -30 -4)\n\t\t(width 0.2)\n\t\t(layer \"In2.Cu\")\n\t\t(net \"N2\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000003\")\n\t)\n\t(segment\n\t\t(start -40 2)\n\t\t(end -30 2)\n\t\t(width 0.2)\n\t\t(layer \"B.Cu\")\n\t\t(net \"N5\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000006\")\n\t)\n\t(segment\n\t\t(start -40 -2)\n\t\t(end -30 -2)\n\t\t(width 0.2)\n\t\t(layer \"In3.Cu\")\n\t\t(net \"N3\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000004\")\n\t)\n)\n"
+  },
+  {
+   "name": "one",
+   "box": [
+    [
+     127.6,
+     125.852
+    ],
+    [
+     135.8,
+     134.148
+    ]
+   ],
+   "selection": [
+    "00000000-0000-4000-8000-000000000023"
+   ],
+   "cursor": [
+    133.373,
+    132.866
+   ],
+   "text": "(footprint \"JSpice:Odd\"\n\t(version 20260206)\n\t(generator \"pcbnew\")\n\t(generator_version \"10.0\")\n\t(layer \"F.Cu\")\n\t(uuid \"00000000-0000-4000-8000-000000000023\")\n\t(at -1.7 0)\n\t(property \"Reference\" \"J1\"\n\t\t(at 0 -3 0)\n\t\t(layer \"F.SilkS\")\n\t\t(uuid \"7c86e205-9afe-4cbd-b8d1-2fd2478dbfba\")\n\t\t(effects\n\t\t\t(font (size 1 1) (thickness 0.15))\n\t\t)\n\t)\n\t(property \"Value\" \"Odd\"\n\t\t(at 0 3 0)\n\t\t(layer \"F.Fab\")\n\t\t(uuid \"d1ba2bf5-ddac-4532-a679-7e8936daba1b\")\n\t\t(effects\n\t\t\t(font (size 1 1) (thickness 0.15))\n\t\t)\n\t)\n\t(property \"Datasheet\" \"\"\n\t\t(at 0 0 0)\n\t\t(layer \"F.Fab\")\n\t\t(hide yes)\n\t\t(uuid \"ef834bb7-4a00-4748-b392-b83b72f34147\")\n\t\t(effects\n\t\t\t(font (size 1.27 1.27))\n\t\t)\n\t)\n\t(property \"Description\" \"\"\n\t\t(at 0 0 0)\n\t\t(layer \"F.Fab\")\n\t\t(hide yes)\n\t\t(uuid \"2007fb5d-68e0-4ea2-aae9-93627c1cad9e\")\n\t\t(effects\n\t\t\t(font (size 1.27 1.27))\n\t\t)\n\t)\n\t(duplicate_pad_numbers_are_jumpers no)\n\t(fp_line\n\t\t(start -2 0)\n\t\t(end 2 0)\n\t\t(stroke (width 0.2) (type default))\n\t\t(layer \"In4.Cu\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000026\")\n\t)\n\t(pad \"1\" thru_hole circle\n\t\t(at 0 0)\n\t\t(size 1.6 1.6)\n\t\t(drill 0.8)\n\t\t(layers \"*.Cu\" \"F.Mask\")\n\t\t(remove_unused_layers no)\n\t\t(uuid \"00000000-0000-4000-8000-000000000027\")\n\t)\n\t(pad \"2\" thru_hole circle\n\t\t(at 2.54 0)\n\t\t(size 1.6 1.6)\n\t\t(drill 0.8)\n\t\t(layers \"*.Cu\" \"*.Mask\")\n\t\t(remove_unused_layers no)\n\t\t(uuid \"00000000-0000-4000-8000-000000000028\")\n\t)\n\t(pad \"3\" smd rect\n\t\t(at 5 0)\n\t\t(size 1 1)\n\t\t(layers \"F.Cu\" \"F.Mask\" \"F.Paste\")\n\t\t(uuid \"00000000-0000-4000-8000-000000000029\")\n\t)\n\t(embedded_fonts no)\n)\n"
+  }
+ ],
+ "dialogs": []
+}
