@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_copper_clearance.cpp (tracks, vias, pads and drawings against
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_copper_clearance.cpp (tracks, vias, pads and drawings against
 // what is near them and against zones' fills), pcbnew/drc/drc_cache_generator.cpp and drc_rtree.h (the copper items'
 // R-tree, each layer's, and how a search of it goes), pcbnew/drc/drc_engine.cpp (EvalRules for clearances and hole
 // clearances on the implicit rules), pcbnew/drc/drc_test_provider.cpp (forEachGeometryItem: the order items are

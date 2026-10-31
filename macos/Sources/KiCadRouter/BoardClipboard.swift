@@ -1,4 +1,4 @@
-// Copy, cut, paste and duplicate, as KiCad's PCB editor does them (KiCad 10.0.7: pcbnew/kicad_clipboard.cpp,
+// Copy, cut, paste and duplicate, as KiCad's PCB editor does them (KiCad 10.0.8: pcbnew/kicad_clipboard.cpp,
 // CLIPBOARD_IO::SaveSelection, the clipboard's text: a footprint alone as itself, its pads on no net, else a board of
 // the selection, its layers and its items, each unlocked and placed about the reference point; pcbnew/tools/
 // edit_tool.cpp, EDIT_TOOL::copyToClipboard, cutToClipboard and Duplicate; pcbnew/tools/pcb_control.cpp,

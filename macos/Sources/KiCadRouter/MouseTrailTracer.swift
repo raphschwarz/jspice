@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_mouse_trail_tracer.h and pns_mouse_trail_tracer.cpp.
+// Ported from KiCad 10.0.8: pcbnew/router/pns_mouse_trail_tracer.h and pns_mouse_trail_tracer.cpp.
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 

@@ -1,5 +1,5 @@
 // A via placed on its own as KiCad's Add Vias tool places one (pcbnew/tools/drawing_tool.cpp, DRAWING_TOOL::DrawVia's
-// VIA_PLACER, KiCad 10.0.7): snapped onto the track, pad or drawing under the pointer, given the net of what it is put
+// VIA_PLACER, KiCad 10.0.8): snapped onto the track, pad or drawing under the pointer, given the net of what it is put
 // on, refused where the board's design rules keep it off other nets' copper or holes or out of a rule area, and
 // splitting the track it is put on. GNU General Public License version 3 or later, as the DRC (see KICAD-NOTICE.md).
 

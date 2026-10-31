@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: common/eda_text.cpp (GetEffectiveTextShape, GetTextBox, GetEffectiveTextPenWidth, the
+// Ported from KiCad 10.0.8: common/eda_text.cpp (GetEffectiveTextShape, GetTextBox, GetEffectiveTextPenWidth, the
 // setters' clamping), pcbnew/pcb_text.cpp (GetShownText, GetDrawRotation, GetBoundingBox, GetEffectiveShape, Rotate),
 // pcbnew/pcb_field.cpp (GetShownText), pcbnew/footprint.cpp (ResolveTextVar, as far as a footprint's own fields and
 // name, SetOrientation), common/common.cpp (ResolveTextVars, ExpandTextVars), common/string_utils.cpp

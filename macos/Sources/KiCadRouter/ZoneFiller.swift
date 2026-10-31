@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/zone_filler.cpp (ZONE_FILLER::Fill: the zones' fills made in the order their
+// Ported from KiCad 10.0.8: pcbnew/zone_filler.cpp (ZONE_FILLER::Fill: the zones' fills made in the order their
 // knockouts need, isolated islands removed by each zone's mode, the iterative refill of zones that can take back what
 // a removed island or a higher zone's fill left them, islands outside the board's outline dropped;
 // zoneKnockoutMayInteract), pcbnew/zone.cpp (HigherPriority, SameNet, GetBoundingBox, IsIsland), pcbnew/

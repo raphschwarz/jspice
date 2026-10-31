@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_optimizer.h and pns_optimizer.cpp (single tracks, and differential
+// Ported from KiCad 10.0.8: pcbnew/router/pns_optimizer.h and pns_optimizer.cpp (single tracks, and differential
 // pairs' segments merged), and the rotation and angles of libs/kimath/src/trigo.cpp and
 // libs/kimath/include/geometry/eda_angle.h.
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.

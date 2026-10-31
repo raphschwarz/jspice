@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_courtyard_clearance.cpp (footprints' courtyards: malformed
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_courtyard_clearance.cpp (footprints' courtyards: malformed
 // and missing ones, courtyards overlapping or nearer than a rule's clearance, and plated and unplated holes in
 // another footprint's courtyard, each by EvalRules of the courtyard clearance between the two), with
 // libs/kimath/src/geometry/shape_poly_set.cpp (SHAPE_POLY_SET::Collide: two sets triangle by triangle, the nearest

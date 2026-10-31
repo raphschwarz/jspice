@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_sliver_checker.cpp (copper slivers: each copper layer's
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_sliver_checker.cpp (copper slivers: each copper layer's
 // copper made one polygon set, and the narrow points of its outlines), with pcbnew/drc/drc_test_provider.cpp
 // (forEachGeometryItem: the order the board's items are taken in), common/eda_shape.cpp
 // (EDA_SHAPE::TransformShapeToPolygon), pcbnew/pcb_track.cpp (PCB_TRACK::TransformShapeToPolygon) and

@@ -1,4 +1,4 @@
-// Align and distribute, as KiCad's PCB editor does them (KiCad 10.0.7: pcbnew/tools/align_distribute_tool.cpp,
+// Align and distribute, as KiCad's PCB editor does them (KiCad 10.0.8: pcbnew/tools/align_distribute_tool.cpp,
 // ALIGN_DISTRIBUTE_TOOL: GetSelections, selectTarget, AlignTop, AlignBottom, AlignLeft, AlignRight, AlignCenterX,
 // AlignCenterY, DistributeItems, doDistributeGaps and doDistributeCenters, with getBoundingBox; libs/kimath/src/geometry/
 // distribute.cpp, GetDeltasForDistributeByGaps and GetDeltasForDistributeByPoints; libs/kimath/include/math/box2.h,

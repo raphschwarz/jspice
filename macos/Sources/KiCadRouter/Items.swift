@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_layerset.h, pns_item.h, pns_item.cpp, pns_linked_item.h, pns_hole.h,
+// Ported from KiCad 10.0.8: pcbnew/router/pns_layerset.h, pns_item.h, pns_item.cpp, pns_linked_item.h, pns_hole.h,
 // pns_hole.cpp, pns_solid.h, pns_solid.cpp, pns_segment.h, pns_arc.h, pns_arc.cpp, pns_via.h and pns_via.cpp (padstacks
 // of one size only).
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.

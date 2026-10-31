@@ -1,4 +1,4 @@
-// A board's stackup edited as the Board Setup dialog's Physical Stackup and Board Finish pages edit it (KiCad 10.0.7:
+// A board's stackup edited as the Board Setup dialog's Physical Stackup and Board Finish pages edit it (KiCad 10.0.8:
 // pcbnew/board_stackup_manager/panel_board_stackup.cpp, buildLayerStackPanel and lazyBuildRowUI: the rows of the
 // layers the board has; onAddDielectricLayer and onRemoveDielectricLayer, a dielectric's sublayers;
 // onMaterialChange with dielectric_material.cpp, DIELECTRIC_SUBSTRATE_LIST: a material of KiCad's lists, its epsilon

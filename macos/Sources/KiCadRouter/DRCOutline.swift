@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_misc.cpp (testOutline, its error handler and
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_misc.cpp (testOutline, its error handler and
 // findClosestOutlineGap: the board's outline, DRCE_INVALID_OUTLINE), pcbnew/convert_shape_list_to_polygon.cpp
 // (TestBoardOutlinesGraphicItems, buildChainedClosedContour, BuildBoardPolygonOutlines and isCopperOutside, with the
 // conversion in Outlines.swift), pcbnew/board.cpp and pcbnew/footprint.cpp (BOARD::Visit and FOOTPRINT::Visit: the

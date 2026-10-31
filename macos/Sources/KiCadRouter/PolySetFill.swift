@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/src/geometry/shape_poly_set.cpp (SHAPE_POLY_SET as far as KiCad's zone filler
+// Ported from KiCad 10.0.8: libs/kimath/src/geometry/shape_poly_set.cpp (SHAPE_POLY_SET as far as KiCad's zone filler
 // uses one besides what PolySet.swift has: Deflate, Area, BBox, DeletePolygon, Contains and containsSingle, Collide of
 // a shape, Unfracture with unfractureSingle, InflateWithLinkedHoles, RemoveNullSegments, Chamfer and Fillet) and
 // libs/kimath/src/geometry/corner_operations.cpp (chamferFilletPolygon).

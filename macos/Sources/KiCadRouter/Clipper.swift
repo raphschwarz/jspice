@@ -1,4 +1,4 @@
-// Ported from Clipper2 2.0.1 (the version KiCad 10.0.7 ships, thirdparty/clipper2), as KiCad compiles it (USINGZ):
+// Ported from Clipper2 2.0.1 (the version KiCad 10.0.8 ships, thirdparty/clipper2), as KiCad compiles it (USINGZ):
 // Clipper2Lib/include/clipper2/clipper.core.h, clipper.h (the helpers used here) and clipper.engine.h (the tree).
 // Clipper2: Copyright Angus Johnson 2010-2026, https://www.angusj.com.
 // Boost Software License 1.0, https://www.boost.org/LICENSE_1_0.txt (see KICAD-NOTICE.md).

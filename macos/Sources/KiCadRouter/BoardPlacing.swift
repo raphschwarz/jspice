@@ -1,4 +1,4 @@
-// Texts and footprints placed on the board on their own, as KiCad's PCB editor places them (KiCad 10.0.7:
+// Texts and footprints placed on the board on their own, as KiCad's PCB editor places them (KiCad 10.0.8:
 // pcbnew/tools/drawing_tool.cpp, DRAWING_TOOL::PlaceText: a new text's attributes from the board's design settings,
 // pcbnew/board_design_settings.cpp, GetTextSize, GetTextThickness, GetTextItalic, GetTextUpright and GetLayerClass, and
 // include/gr_text.h, InferBold; pcbnew/tools/board_editor_control.cpp, BOARD_EDITOR_CONTROL::PlaceFootprint, with

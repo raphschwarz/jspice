@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_kicad_iface.cpp (SyncWorld, syncPad, syncTrack, syncVia, syncZone,
+// Ported from KiCad 10.0.8: pcbnew/router/pns_kicad_iface.cpp (SyncWorld, syncPad, syncTrack, syncVia, syncZone,
 // syncGraphicalItem), pcbnew/pad.cpp (BuildEffectiveShapes, TransformShapeToPolygon, MergePrimitivesAsPolygon,
 // FlashLayer, IsOnCopperLayer, GetClearanceOverrides), common/eda_shape.cpp (makeEffectiveShapes, SetArcGeometry,
 // GetArcAngle, rotate, TransformShapeToPolygon, GetRadius, GetRectCorners, SetCornerRadius, IsPolyShapeValid),

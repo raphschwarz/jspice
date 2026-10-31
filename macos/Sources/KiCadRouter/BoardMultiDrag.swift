@@ -1,6 +1,6 @@
 // Several tracks dragged together on a KiCad board, as KiCad's router tool drags the tracks selected
 // (ROUTER_TOOL::InlineDrag, pcbnew/router/router_tool.cpp: the selection's segments and arcs handed to the router's
-// MULTI_DRAGGER, from the point of the nearest of them to the pointer), KiCad 10.0.7.
+// MULTI_DRAGGER, from the point of the nearest of them to the pointer), KiCad 10.0.8.
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as KiCad
 // (see KICAD-NOTICE.md).
 

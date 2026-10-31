@@ -1,4 +1,4 @@
-// Pads' properties set as KiCad's pad properties dialog sets them (KiCad 10.0.7: pcbnew/dialogs/
+// Pads' properties set as KiCad's pad properties dialog sets them (KiCad 10.0.8: pcbnew/dialogs/
 // dialog_pad_properties.cpp, DIALOG_PAD_PROPERTIES's initValues, updatePadLayersList, onPadShapeSelection,
 // transferDataToPad and TransferDataFromWindow; pcbnew/pad.cpp, PAD::Flip, SetAttribute and CanHaveNumber;
 // pcbnew/pad_utils.cpp, GetDefaultIpcRoundingRatio), written as pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp

@@ -8,7 +8,7 @@
 // (pcbnew/generators/pcb_tuning_pattern.cpp and .h, pcbnew/pcb_generator.cpp, pcbnew/tools/generator_tool.cpp,
 // generator_tool_pns_proxy.cpp, pcbnew/board_commit.cpp (a removed item leaves its group),
 // pcbnew/board_design_settings.cpp (tuning_pattern_settings), pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp and
-// pcb_io_kicad_sexpr_parser.cpp, include/string_any_map.h, KiCad 10.0.7).
+// pcb_io_kicad_sexpr_parser.cpp, include/string_any_map.h, KiCad 10.0.8).
 // Copyright (C) 2023 Alex Shvartzkop; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 

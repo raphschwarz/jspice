@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_engine.cpp (InitEngine: the rules file beside the board's project; the
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_engine.cpp (InitEngine: the rules file beside the board's project; the
 // checks' constraints by EvalRules), pcbnew/drc/drc_test_provider_track_width.cpp, drc_test_provider_via_diameter.cpp,
 // drc_test_provider_hole_size.cpp, drc_test_provider_annular_width.cpp, drc_test_provider_hole_to_hole.cpp,
 // pcbnew/drc/drc_test_provider.cpp (formatMsg), pcbnew/drc/drc_item.cpp (the checks' keys and titles),

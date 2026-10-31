@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_diff_pair.h, pns_diff_pair.cpp and ranged_num.h (without what the
+// Ported from KiCad 10.0.8: pcbnew/router/pns_diff_pair.h, pns_diff_pair.cpp and ranged_num.h (without what the
 // pair placer does not call: gateways projected orthogonally, pairs' total lengths).
 // Copyright (C) 2013-2015 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).

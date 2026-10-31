@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: what the design rules engine reads of a board's items, as KiCad's BOARD_ITEMs give it:
+// Ported from KiCad 10.0.8: what the design rules engine reads of a board's items, as KiCad's BOARD_ITEMs give it:
 // pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp (layer masks such as *.Cu, a zone's settings and its being
 // filled, groups), pcbnew/pcb_track.cpp (a via's layer set and tenting, GetEffectiveShape of tracks, arcs and vias,
 // FlashLayer), pcbnew/pad.cpp (GetEffectiveShape, GetLayerSet, the pad's properties' values), pcbnew/footprint.cpp

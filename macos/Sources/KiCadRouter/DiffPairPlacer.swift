@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_diff_pair_placer.h and pns_diff_pair_placer.cpp (walkaround, shove
+// Ported from KiCad 10.0.8: pcbnew/router/pns_diff_pair_placer.h and pns_diff_pair_placer.cpp (walkaround, shove
 // and mark-obstacles modes).
 // Copyright (C) 2013-2015 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).

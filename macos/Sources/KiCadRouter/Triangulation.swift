@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/include/geometry/polygon_triangulation.h (POLYGON_TRIANGULATION),
+// Ported from KiCad 10.0.8: libs/kimath/include/geometry/polygon_triangulation.h (POLYGON_TRIANGULATION),
 // libs/kimath/include/geometry/vertex_set.h and libs/kimath/src/geometry/vertex_set.cpp (VERTEX, VERTEX_SET), and
 // SHAPE_POLY_SET::TRIANGULATED_POLYGON's vertices and triangles. KiCad's triangulation is based on Lamot and Žalik's
 // uniform plane subdivision and derived from K-3D (Copyright (c) 2005-2006, Romain Behar, GPL-2) and earcut

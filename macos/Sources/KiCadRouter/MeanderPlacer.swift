@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_meander_placer_base.h, pns_meander_placer_base.cpp,
+// Ported from KiCad 10.0.8: pcbnew/router/pns_meander_placer_base.h, pns_meander_placer_base.cpp,
 // pns_meander_placer.h, pns_meander_placer.cpp, and the parts of pns_topology.cpp a length tuning uses
 // (AssembleTuningPath, walkTuningPath, findLinesFromVia) (the length domain: not the time domain's delays).
 // Copyright (C) 2013-2015 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.

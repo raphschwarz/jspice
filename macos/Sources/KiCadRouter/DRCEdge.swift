@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_edge_clearance.cpp (copper and silkscreen against the board's
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_edge_clearance.cpp (copper and silkscreen against the board's
 // edges: the R-tree of its Edge.Cuts and Margin drawings, rectangles and outlines cut into their sides, and of unplated
 // slots, each item's search of it, and resolveSilkDisposition: silkscreen the board's outline cuts across),
 // pcbnew/drc/drc_engine.cpp (EvalRules of the edge and silk clearances between an edge and an item), pcbnew/drc/drc_rtree.h

@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/zone_filler.cpp (fillSingleZone, fillCopperZone, fillNonCopperZone,
+// Ported from KiCad 10.0.8: pcbnew/zone_filler.cpp (fillSingleZone, fillCopperZone, fillNonCopperZone,
 // knockoutThermalReliefs, buildCopperItemClearances, buildDifferentNetZoneClearances, subtractHigherPriorityZones,
 // buildThermalSpokes, buildHatchZoneThermalRings, addHatchFillTypeOnZone, connect_nearby_polys with its
 // VERTEX_CONNECTOR, postKnockoutMinWidthPrune, dropSubResolutionOutlines, refillZoneFromCache, addKnockout and

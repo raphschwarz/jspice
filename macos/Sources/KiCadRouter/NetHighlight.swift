@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/tools/board_inspection_tool.cpp (highlightNet: the net of the item under the
+// Ported from KiCad 10.0.8: pcbnew/tools/board_inspection_tool.cpp (highlightNet: the net of the item under the
 // pointer, HighlightNet's toggle, ClearHighlight), pcbnew/collectors.cpp and collectors.h (GENERAL_COLLECTOR::Inspect
 // and Collect, GENERAL_COLLECTORS_GUIDE: the items at a point, those on the preferred layer first, what the display's
 // visibility leaves out), pcbnew/pcb_base_frame.cpp (GetCollectorsGuide), pcbnew/board.cpp (BOARD::Visit's order),

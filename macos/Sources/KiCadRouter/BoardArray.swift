@@ -1,4 +1,4 @@
-// Create Array, as KiCad's PCB editor makes one (KiCad 10.0.7: pcbnew/tools/array_tool.cpp, ARRAY_TOOL::CreateArray and
+// Create Array, as KiCad's PCB editor makes one (KiCad 10.0.8: pcbnew/tools/array_tool.cpp, ARRAY_TOOL::CreateArray and
 // onDialogClosed, TransformItem; common/array_options.cpp, ARRAY_GRID_OPTIONS and ARRAY_CIRCULAR_OPTIONS' GetTransform,
 // getGridCoords and gtItemPosRelativeToItem0; pcbnew/dialogs/dialog_create_array.cpp, what the dialog's fields make
 // of the options; pcbnew/tools/board_reannotate_tool.cpp, ReannotateDuplicates; include/math/vector2d.h, VECTOR2's

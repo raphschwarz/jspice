@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/include/math/vector2d.h, libs/kimath/src/math/util.cpp (rescale),
+// Ported from KiCad 10.0.8: libs/kimath/include/math/vector2d.h, libs/kimath/src/math/util.cpp (rescale),
 // libs/kimath/include/geometry/seg.h and libs/kimath/src/geometry/seg.cpp, libs/kimath/src/trigo.cpp
 // (TestSegmentHit), libs/kimath/include/math/box2.h, libs/kimath/include/geometry/direction45.h and
 // libs/kimath/src/geometry/direction_45.cpp.

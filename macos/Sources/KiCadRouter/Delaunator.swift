@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: thirdparty/delaunator (delaunator.cpp and delaunator.hpp), KiCad's copy of delaunator-cpp
+// Ported from KiCad 10.0.8: thirdparty/delaunator (delaunator.cpp and delaunator.hpp), KiCad's copy of delaunator-cpp
 // (https://github.com/abellgithub/delaunator-cpp, after Mapbox's Delaunator), under the MIT License (its text in
 // KICAD-NOTICE.md).
 

@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/board_stackup_manager/board_stackup.h and board_stackup.cpp
+// Ported from KiCad 10.0.8: pcbnew/board_stackup_manager/board_stackup.h and board_stackup.cpp
 // (BOARD_STACKUP_ITEM, BOARD_STACKUP::BuildDefaultStackupList, GetLayerDistance), the stackup as
 // pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp reads it (parseBoardStackup), and
 // pcbnew/length_delay_calculation/length_delay_calculation.cpp (StackupHeight).

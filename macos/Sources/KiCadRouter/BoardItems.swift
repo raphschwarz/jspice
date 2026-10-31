@@ -1,5 +1,5 @@
 // A board's items as KiCad's PCB editor moves, turns, unlocks and gives new ids to them, on the board's own file
-// (KiCad 10.0.7: pcbnew/footprint.cpp, FOOTPRINT::Move and Rotate; pcbnew/pcb_track.cpp, PCB_TRACK, PCB_ARC and PCB_VIA's
+// (KiCad 10.0.8: pcbnew/footprint.cpp, FOOTPRINT::Move and Rotate; pcbnew/pcb_track.cpp, PCB_TRACK, PCB_ARC and PCB_VIA's
 // Move and Rotate; pcbnew/zone.cpp, ZONE::Move and Rotate; common/eda_shape.cpp, EDA_SHAPE::move and rotate;
 // pcbnew/pcb_text.cpp, PCB_TEXT::Move and Rotate; pcbnew/pcb_dimension.cpp, PCB_DIMENSION_BASE::Move;
 // pcbnew/pcb_group.cpp and pcb_generator.cpp, PCB_GROUP and PCB_GENERATOR's Move and Rotate, with

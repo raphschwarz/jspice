@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_node.h, pns_node.cpp, pns_index.h, pns_index.cpp and pns_joint.h.
+// Ported from KiCad 10.0.8: pcbnew/router/pns_node.h, pns_node.cpp, pns_index.h, pns_index.cpp and pns_joint.h.
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 

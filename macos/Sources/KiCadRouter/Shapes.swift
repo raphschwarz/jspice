@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/src/geometry/shape_collisions.cpp (the arc cases in Arc.swift), libs/kimath/src/geometry/shape_rect.cpp,
+// Ported from KiCad 10.0.8: libs/kimath/src/geometry/shape_collisions.cpp (the arc cases in Arc.swift), libs/kimath/src/geometry/shape_rect.cpp,
 // libs/kimath/include/geometry/shape_circle.h and shape_segment.h, and pcbnew/router/pns_utils.cpp (the hulls).
 // Copyright (C) 2013-2015 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).

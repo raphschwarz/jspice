@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/include/geometry/shape_poly_set.h and libs/kimath/src/geometry/shape_poly_set.cpp
+// Ported from KiCad 10.0.8: libs/kimath/include/geometry/shape_poly_set.h and libs/kimath/src/geometry/shape_poly_set.cpp
 // (SHAPE_POLY_SET as far as KiCad's router uses one: CacheTriangulation( false ) and what it calls, Fracture with its
 // cache-friendly fracture, Simplify with splitCollinearOutlines and the Clipper2 union of booleanOp and importTree,
 // splitSelfTouchingOutlines, SimplifyOutlines, PointInside; and as far as a custom pad's outline needs one:

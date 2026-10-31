@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: common/project/project_local_settings.cpp (PROJECT_LOCAL_SETTINGS: the board's part of a
+// Ported from KiCad 10.0.8: common/project/project_local_settings.cpp (PROJECT_LOCAL_SETTINGS: the board's part of a
 // project's local settings, their defaults and how each is read and written), common/settings/json_settings.cpp
 // (JSON_SETTINGS::SaveToFile and formatFileContents: the file as read with the settings written into it, nlohmann's
 // dump( 2 )), thirdparty/nlohmann_json (its serializer: indentation, escapes, numbers), common/settings/

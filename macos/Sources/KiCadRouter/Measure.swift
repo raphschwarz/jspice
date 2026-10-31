@@ -1,4 +1,4 @@
-// What KiCad's measure tool shows (KiCad 10.0.7: pcbnew/tools/pcb_viewer_tools.cpp, PCB_VIEWER_TOOLS::MeasureTool;
+// What KiCad's measure tool shows (KiCad 10.0.8: pcbnew/tools/pcb_viewer_tools.cpp, PCB_VIEWER_TOOLS::MeasureTool;
 // common/preview_items/ruler_item.cpp, RULER_ITEM::GetDimensionStrings; common/preview_items/preview_utils.cpp,
 // DimensionLabel; include/preview_items/two_point_geom_manager.h): a ruler from a click to the pointer, Shift holding
 // it to 45°, and its readout. GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).

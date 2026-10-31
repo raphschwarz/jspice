@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: thirdparty/rtree/geometry/rtree.h (Guttman's R-tree, quadratic split, spherical volumes)
+// Ported from KiCad 10.0.8: thirdparty/rtree/geometry/rtree.h (Guttman's R-tree, quadratic split, spherical volumes)
 // and libs/kimath/include/geometry/shape_index.h. Original algorithm by Antonin Guttman and Michael Stonebraker
 // (1983); ANSI C by Melinda Green (1994); C++ by Greg Douglas (2004); Copyright (C) 2013 CERN; Copyright The KiCad
 // Developers, see KiCad's AUTHORS.txt.

@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/convert_shape_list_to_polygon.cpp (ConvertOutlineToPolygon and
+// Ported from KiCad 10.0.8: pcbnew/convert_shape_list_to_polygon.cpp (ConvertOutlineToPolygon and
 // doConvertOutlineToPolygon with what they call: processClosedShape, processShapeSegment, findNeighbours and the
 // chaining of open shapes end to end, buildContourHierarchy, findCrossingContours, addOutlinesToPolygon,
 // addHolesToPolygon, checkSelfIntersections; its arcs never kept in the polygons, as all but KiCad's STEP export ask),

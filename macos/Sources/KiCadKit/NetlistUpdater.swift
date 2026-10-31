@@ -8,7 +8,7 @@ public protocol KiCadFootprintSource {
 extension KiCadFootprintLibrary: KiCadFootprintSource {}
 
 /// Brings a board up to date with the schematic: KiCad's BOARD_NETLIST_UPDATER (pcbnew/netlist_reader/
-/// board_netlist_updater.cpp, KiCad 10.0.7) brought over to work on the board's file, what KiCad's Update PCB from
+/// board_netlist_updater.cpp, KiCad 10.0.8) brought over to work on the board's file, what KiCad's Update PCB from
 /// Schematic does. Each part finds its footprint by the id of the symbol it stands for; a part with none gets one from
 /// its library, a footprint whose part has changed footprint is exchanged for the new one where it stands; references,
 /// values, fields and the pads' nets are made the schematic's; footprints whose parts are gone are removed; zones and

@@ -1,4 +1,4 @@
-// Zones', footprints' and pads' properties set as KiCad's properties dialogs set them (KiCad 10.0.7: a zone's by
+// Zones', footprints' and pads' properties set as KiCad's properties dialogs set them (KiCad 10.0.8: a zone's by
 // pcbnew/edit_zone_helpers.cpp, PCB_EDIT_FRAME::Edit_Zone_Params, with pcbnew/dialogs/panel_zone_properties.cpp,
 // PANEL_ZONE_PROPERTIES::AcceptOptions, pcbnew/dialogs/dialog_copper_zones.cpp and dialog_rule_area_properties.cpp's
 // TransferDataFromWindow, and pcbnew/zone_settings.cpp, ZONE_SETTINGS::operator<< and ExportSetting; a footprint's by

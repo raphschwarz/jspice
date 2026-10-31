@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/include/geometry/shape_arc.h, libs/kimath/src/geometry/shape_arc.cpp, the
+// Ported from KiCad 10.0.8: libs/kimath/include/geometry/shape_arc.h, libs/kimath/src/geometry/shape_arc.cpp, the
 // arc cases of libs/kimath/src/geometry/shape_collisions.cpp and shape_nearest_points.cpp, and pcbnew/router/
 // pns_utils.cpp (ArcHull).
 // Copyright (C) 2017 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.

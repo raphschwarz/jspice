@@ -1,5 +1,5 @@
 // Graphics and dimensions drawn on the board and edited, each as one change, as KiCad's PCB editor commits them
-// (KiCad 10.0.7): pcbnew/tools/drawing_tool.cpp (Draw Line, Draw Rectangle, Draw Circle, Draw Arc, Draw Dimension),
+// (KiCad 10.0.8): pcbnew/tools/drawing_tool.cpp (Draw Line, Draw Rectangle, Draw Circle, Draw Arc, Draw Dimension),
 // pcbnew/tools/zone_create_helper.cpp (Draw Polygon), pcbnew/tools/pcb_point_editor.cpp (Move Point, PCB_POINT_EDITOR::
 // addCorner and removeCorner: Add Zone Corner, Split Segment, Split Arc, Remove Polygon Corner). The graphics' and
 // dimensions' geometry is BoardGraphics.swift's and Dimensions.swift's. GNU General Public License version 3 or later,

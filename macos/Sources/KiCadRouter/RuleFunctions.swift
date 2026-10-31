@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/pcbexpr_functions.cpp (the rules' functions: existsOnLayer, isPlated, the
+// Ported from KiCad 10.0.8: pcbnew/pcbexpr_functions.cpp (the rules' functions: existsOnLayer, isPlated, the
 // courtyard intersections with collidesWithCourtyard, testFootprintSelector and searchFootprintsNearItem,
 // intersectsArea, intersectsKeepout and enclosedByArea with getDeflatedZoneOutline, collidesWithArea and
 // searchAreas, the group, footprint and sheet memberships, the via types, isCoupledDiffPair, inDiffPair, getField,

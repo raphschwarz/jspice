@@ -3,7 +3,7 @@
 // getPNSLine, initBaseLine(s), removeToBaseline, recoverBaseline and resetToBaseline; GENERATOR_TOOL_PNS_PROXY and
 // its interface, PNS_KICAD_IFACE_GENERATOR: the changes it keeps, an item it made and took off again none;
 // pcbnew/generators/pcb_tuning_pattern.cpp, pcbnew/tools/generator_tool_pns_proxy.cpp, pcbnew/board.cpp's
-// DpCoupledNet, KiCad 10.0.7).
+// DpCoupledNet, KiCad 10.0.8).
 // Copyright (C) 2023 Alex Shvartzkop; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 

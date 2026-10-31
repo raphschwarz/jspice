@@ -1,4 +1,4 @@
-// Footprints' and pads' properties set as KiCad's footprint and pad properties dialogs set them (KiCad 10.0.7:
+// Footprints' and pads' properties set as KiCad's footprint and pad properties dialogs set them (KiCad 10.0.8:
 // pcbnew/dialogs/dialog_footprint_properties.cpp, DIALOG_FOOTPRINT_PROPERTIES's TransferDataToWindow, Validate,
 // OnAddField and TransferDataFromWindow, with pcbnew/pcb_fields_grid_table.cpp's columns; pcbnew/footprint.cpp,
 // FOOTPRINT::Rotate and Flip, pcbnew/pcb_text.cpp, PCB_TEXT::KeepUpright; pcbnew/dialogs/dialog_pad_properties.cpp,

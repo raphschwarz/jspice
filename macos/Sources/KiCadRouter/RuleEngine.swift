@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_engine.cpp (DRC_ENGINE: loadImplicitRules, loadRules, compileRules,
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_engine.cpp (DRC_ENGINE: loadImplicitRules, loadRules, compileRules,
 // InitEngine's falling back on the implicit rules when the user's do not parse, EvalRules with its net ties, local
 // overrides, the net class clearances' fast way, its inheritance from a pad's footprint, the clearance's local
 // clearances and board minimum, EvalZoneConnection, ProcessAssertions, HasRulesForConstraintType,

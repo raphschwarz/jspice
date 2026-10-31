@@ -1,7 +1,7 @@
 // Footprints dragged on a KiCad board with the tracks on their pads, as KiCad's router tool drags them
 // (ROUTER_TOOL::InlineDrag, pcbnew/router/router_tool.cpp: the footprints' pads, zones and drawings handed to the
 // router's COMPONENT_DRAGGER), and the drag kept as KiCad's PNS_KICAD_IFACE::Commit keeps it
-// (pcbnew/router/pns_kicad_iface.cpp: each footprint moved by its pads' offset, the tracks as dragged), KiCad 10.0.7.
+// (pcbnew/router/pns_kicad_iface.cpp: each footprint moved by its pads' offset, the tracks as dragged), KiCad 10.0.8.
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as KiCad
 // (see KICAD-NOTICE.md).
 

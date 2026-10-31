@@ -1,4 +1,4 @@
-// Dimensions on the board, as KiCad's PCB editor makes and draws them (KiCad 10.0.7): pcbnew/pcb_dimension.cpp
+// Dimensions on the board, as KiCad's PCB editor makes and draws them (KiCad 10.0.8): pcbnew/pcb_dimension.cpp
 // (PCB_DIMENSION_BASE and its aligned, orthogonal, leader, radial and centre kinds: updateGeometry, updateText,
 // GetValueText, drawAnArrow, segPolyIntersection, segCircleIntersection, CollectKnockedOutSegments, Move, Rotate,
 // PCB_DIM_ORTHOGONAL::Rotate), pcbnew/tools/drawing_tool.cpp (DRAWING_TOOL::DrawDimension and constrainDimension: a

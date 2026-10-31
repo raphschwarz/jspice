@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_shove.h and pns_shove.cpp (lines and vias pushed out of a routed
+// Ported from KiCad 10.0.8: pcbnew/router/pns_shove.h and pns_shove.cpp (lines and vias pushed out of a routed
 // line's way, and lines walked round what cannot be pushed; not arcs, which the port's lines do not have).
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).

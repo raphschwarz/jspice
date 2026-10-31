@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/footprint.cpp (FOOTPRINT::BuildCourtyardCaches: a footprint's courtyards made of
+// Ported from KiCad 10.0.8: pcbnew/footprint.cpp (FOOTPRINT::BuildCourtyardCaches: a footprint's courtyards made of
 // its drawings on F.CrtYd and B.CrtYd, and whether either is malformed), pcbnew/pcb_io/kicad_sexpr/
 // pcb_io_kicad_sexpr_parser.cpp (parsePCB_SHAPE: a drawing's line width where it has none, and the drawing placed
 // with its footprint) and common/eda_shape.cpp (rotate and move as they leave a drawing's ends, an arc's middle,

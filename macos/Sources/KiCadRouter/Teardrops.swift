@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/teardrop/teardrop.cpp (TEARDROP_MANAGER: UpdateTeardrops on a full update, its
+// Ported from KiCad 10.0.8: pcbnew/teardrop/teardrop.cpp (TEARDROP_MANAGER: UpdateTeardrops on a full update, its
 // teardrops on pads and vias, tracks crossing them, AddTeardropsOnTracks, setTeardropPriorities, createTeardrop and
 // createTeardropMask, createAndAddTeardropWithMask, tryCreateTrackTeardrop, teardropUuid, maskUuidFor, and
 // buildCrossingStub as KiCad 10.0.8 changed it, the one change 10.0.8 made to the teardrop manager),

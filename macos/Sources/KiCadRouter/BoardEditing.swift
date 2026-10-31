@@ -1,5 +1,5 @@
 // A board edited here, a track at a time, as KiCad's router tool drives its router (pcbnew/router/router_tool.cpp,
-// KiCad 10.0.7): magnetic pads, the start layer taken from a one-sided pad, a click fixing the track, a double click
+// KiCad 10.0.8): magnetic pads, the start layer taken from a one-sided pad, a click fixing the track, a double click
 // finishing it, Escape keeping what is fixed; differential pairs routed as its Route Differential Pair routes them;
 // tracks and vias dragged as its drag tools drag them. GNU General Public License version 3 or later, as the router
 // (see KICAD-NOTICE.md).

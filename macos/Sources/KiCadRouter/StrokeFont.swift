@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: common/font/stroke_font.cpp (STROKE_FONT: loadNewStrokeFont, GetTextAsGlyphs,
+// Ported from KiCad 10.0.8: common/font/stroke_font.cpp (STROKE_FONT: loadNewStrokeFont, GetTextAsGlyphs,
 // GetInterline), common/font/glyph.cpp (STROKE_GLYPH::Transform), common/font/font.cpp (FONT::Draw, getLinePositions,
 // drawMarkup, boundingBoxSingleLine, StringBoundaryLimits), include/font/font_metrics.h (METRICS' defaults),
 // include/markup_parser.h and common/markup_parser.cpp (the markup of overbars, subscripts, superscripts and links,

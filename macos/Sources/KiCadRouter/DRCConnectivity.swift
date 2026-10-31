@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/connectivity (connectivity_algo.cpp, connectivity_items.cpp, connectivity_data.cpp:
+// Ported from KiCad 10.0.8: pcbnew/connectivity (connectivity_algo.cpp, connectivity_items.cpp, connectivity_data.cpp:
 // what touches what in the copper, the clusters of it, the nets propagated through them, and whether a track's or
 // via's end is left dangling), pcbnew/ratsnest/ratsnest_data.cpp (each net's missing connections: a minimum spanning
 // tree of its anchors over their Delaunay triangulation), pcbnew/drc/drc_test_provider_connectivity.cpp (the DRC's

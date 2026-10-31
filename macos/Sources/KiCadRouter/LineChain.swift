@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/include/geometry/shape_line_chain.h and
+// Ported from KiCad 10.0.8: libs/kimath/include/geometry/shape_line_chain.h and
 // libs/kimath/src/geometry/shape_line_chain.cpp (its arcs too, as the router keeps them in its lines).
 // Copyright (C) 2013 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).

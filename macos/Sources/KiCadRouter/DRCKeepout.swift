@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_disallow.cpp (items in keepout areas: tracks against the
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_disallow.cpp (items in keepout areas: tracks against the
 // areas keeping tracks out, each crossing, and every other item by the implicit keepout rules), pcbnew/drc/drc_engine.cpp
 // (loadImplicitRules' keepout area rules and EvalRules of DISALLOW_CONSTRAINT: what each item's type is kept out by,
 // its layers, the last rule that applies), pcbnew/pcbexpr_functions.cpp (intersectsKeepout: collidesWithArea, an

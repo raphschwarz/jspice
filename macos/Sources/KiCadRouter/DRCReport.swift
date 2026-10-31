@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: common/rc_item.cpp (GetJsonViolation: the items a report names, as they describe
+// Ported from KiCad 10.0.8: common/rc_item.cpp (GetJsonViolation: the items a report names, as they describe
 // themselves), pcbnew/board.cpp (FillItemMap, GetLayerName), pcbnew/board_item.cpp (LayerMaskDescribe) and the items'
 // GetItemDescription: pcbnew/pcb_track.cpp, pcbnew/pad.cpp, pcbnew/pcb_shape.cpp, pcbnew/pcb_text.cpp,
 // pcbnew/pcb_field.cpp, pcbnew/zone.cpp and pcbnew/footprint.cpp.

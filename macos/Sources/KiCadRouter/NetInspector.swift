@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/length_delay_calculation/length_delay_calculation.cpp (CalculateLengthDetails:
+// Ported from KiCad 10.0.8: pcbnew/length_delay_calculation/length_delay_calculation.cpp (CalculateLengthDetails:
 // optimiseVias, mergeLines, mergeShapeLineChains, optimiseTracesInPads, OptimiseTraceInVia; GetLengthCalculationItem,
 // StackupHeight) and length_delay_calculation_item.h (SetLayers), pcbnew/widgets/pcb_net_inspector_panel.cpp
 // (buildColumns, buildNetsList, netFilterMatches, relevantConnectivityItems, calculateNets, formatLength),

@@ -1,4 +1,4 @@
-// A rules file checked as KiCad's Board Setup checks one (KiCad 10.0.7: pcbnew/dialogs/panel_setup_rules.cpp,
+// A rules file checked as KiCad's Board Setup checks one (KiCad 10.0.8: pcbnew/dialogs/panel_setup_rules.cpp,
 // PANEL_SETUP_RULES::OnCompile and checkPlausibility: the text's variables expanded, DRC_RULES_PARSER::Parse with a
 // reporter, a PARSE_ERROR said at its place, then the rules' shared conditions, undefined net classes and layers;
 // common/common.cpp, ExpandTextVars). GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).

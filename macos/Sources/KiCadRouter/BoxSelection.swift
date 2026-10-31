@@ -1,4 +1,4 @@
-// What a box drawn on a board selects, as KiCad's PCB editor selects it (KiCad 10.0.7: pcbnew/tools/
+// What a box drawn on a board selects, as KiCad's PCB editor selects it (KiCad 10.0.8: pcbnew/tools/
 // pcb_selection_tool.cpp, PCB_SELECTION_TOOL::SelectMultiple with a rectangle): the tracks, arcs, vias and footprints
 // whose HitTest( BOX2I, aContained ) is true: wholly in the box when it is drawn left to right, touched by it when
 // drawn right to left (KiCad's greedy selection). Ported from pcbnew/pcb_track.cpp (PCB_TRACK, PCB_ARC and PCB_VIA's

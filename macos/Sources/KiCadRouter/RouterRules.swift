@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_kicad_iface.cpp (PNS_PCBNEW_RULE_RESOLVER: QueryConstraint, a line of
+// Ported from KiCad 10.0.8: pcbnew/router/pns_kicad_iface.cpp (PNS_PCBNEW_RULE_RESOLVER: QueryConstraint, a line of
 // several segments with no board item evaluated segment by segment where the rules have geometry-dependent
 // conditions, getBoardItem's dummy tracks, arcs and vias, Clearance and its caches of board items' and temporary
 // items' clearances, HasUserDefinedPhysicalConstraint; PNS_KICAD_IFACE_BASE::ImportSizes, the sizes the rules give)

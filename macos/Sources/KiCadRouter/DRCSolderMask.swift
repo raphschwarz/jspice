@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_solder_mask.cpp (solder mask apertures bridging items of
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_solder_mask.cpp (solder mask apertures bridging items of
 // different nets: each aperture against the others on its mask layer, each copper item against the apertures over it,
 // each aperture against the copper zones under it, and apertures with no copper of their own (mask drawings, free pads)
 // bridging by the nets they expose; and, where the board asks a minimum web width, buildRTrees' whole mask and

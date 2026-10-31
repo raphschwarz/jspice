@@ -6,7 +6,7 @@
 // (GENERATOR_TOOL's listener: EditStart, Update, EditFinish), every pattern tuned again as Edit > Update All Tuning
 // Patterns tunes them (GENERATOR_TOOL::RegenerateAllOfType), and a pattern deleted as EDIT_TOOL deletes one
 // (genRemove) (pcbnew/generators/pcb_tuning_pattern.cpp, pcbnew/tools/generator_tool.cpp, pcbnew/tools/
-// pcb_point_editor.cpp, pcbnew/tools/edit_tool.cpp, KiCad 10.0.7).
+// pcb_point_editor.cpp, pcbnew/tools/edit_tool.cpp, KiCad 10.0.8).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as KiCad
 // (see KICAD-NOTICE.md).
 

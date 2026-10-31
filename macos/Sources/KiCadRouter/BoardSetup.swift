@@ -1,4 +1,4 @@
-// A board set up as KiCad 10.0.7's Board Setup dialog sets it up: its copper layer count changed as the dialog's
+// A board set up as KiCad 10.0.8's Board Setup dialog sets it up: its copper layer count changed as the dialog's
 // Physical Stackup and Board Editor Layers pages change it on OK (pcbnew/dialogs/panel_setup_layers.cpp,
 // PANEL_SETUP_LAYERS::TransferDataFromWindow and transferDataFromWindow: the items on the layers removed taken away as
 // pcbnew/board.cpp's BOARD::RemoveAllItemsOnLayer takes them, the layers enabled as BOARD_DESIGN_SETTINGS::

@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/include/geometry/eda_angle.h, libs/kimath/include/math/vector2d.h (VECTOR2D),
+// Ported from KiCad 10.0.8: libs/kimath/include/geometry/eda_angle.h, libs/kimath/include/math/vector2d.h (VECTOR2D),
 // libs/kimath/src/trigo.cpp (RotatePoint, CalcArcCenter, CalcArcMid), libs/kimath/src/geometry/circle.cpp and
 // libs/kimath/src/geometry/geometry_utils.cpp (GetArcToSegmentCount, CircleToEndSegmentDeltaRadius).
 // Copyright (C) 2013-2017 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.

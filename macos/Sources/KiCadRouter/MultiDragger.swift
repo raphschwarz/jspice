@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_multi_dragger.h and pns_multi_dragger.cpp (several tracks dragged
+// Ported from KiCad 10.0.8: pcbnew/router/pns_multi_dragger.h and pns_multi_dragger.cpp (several tracks dragged
 // together, their segments or their ends).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).

@@ -14,7 +14,7 @@ public struct KiCadInstallation: Sendable, Hashable {
     public var models3D: URL?
     /// The board and project templates
     public var templates: URL?
-    /// "10.0.7"
+    /// "10.0.8"
     public var version: String
 
     public init(cli: URL, pcbEditor: URL?, footprints: URL?, models3D: URL?, templates: URL?, version: String) {

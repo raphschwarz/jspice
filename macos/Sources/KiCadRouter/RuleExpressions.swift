@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: common/libeval_compiler/libeval_compiler.cpp and grammar.lemon, include/libeval_compiler/
+// Ported from KiCad 10.0.8: common/libeval_compiler/libeval_compiler.cpp and grammar.lemon, include/libeval_compiler/
 // libeval_compiler.h (LIBEVAL: the tokenizer, the grammar's precedences as its lemon parser applies them, the code
 // generation with its errors and its short-circuit jumps, the stack machine that runs it, VALUE's comparisons),
 // pcbnew/pcbexpr_evaluator.cpp (PCBEXPR_UCODE::CreateVarRef, PCBEXPR_VAR_REF::GetValue and the values of layers,

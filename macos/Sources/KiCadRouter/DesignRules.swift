@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_rule_parser.cpp (DRC_RULES_PARSER: a .kicad_dru's version, its rules, their
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_rule_parser.cpp (DRC_RULES_PARSER: a .kicad_dru's version, its rules, their
 // layers, conditions, constraints, values with units and severities), common/drc_rules.keywords (its keywords),
 // common/dsnlexer.cpp (DSNLEXER::NextTok: how the file is cut into tokens, isNumber, isSpace),
 // pcbnew/drc/drc_rule.h and drc_rule.cpp (DRC_RULE, DRC_CONSTRAINT, DRC_CONSTRAINT_T, DRC_DISALLOW_T),

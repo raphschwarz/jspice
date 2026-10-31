@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: libs/kimath/src/convert_basic_shapes_to_polygon.cpp (rectangles with rounded or cut
+// Ported from KiCad 10.0.8: libs/kimath/src/convert_basic_shapes_to_polygon.cpp (rectangles with rounded or cut
 // corners, trapezoids, circles, rings, segments with round ends and arcs of some width as polygons, and arcs as
 // polylines), libs/kimath/src/geometry/arc_chord_params.cpp and include/geometry/arc_chord_params.h, libs/kimath/src/
 // geometry/seg.cpp (ReflectPoint) and libs/kimath/src/geometry/geometry_utils.cpp (GetCircleToPolyCorrection).

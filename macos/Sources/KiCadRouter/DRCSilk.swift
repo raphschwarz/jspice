@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_silk_clearance.cpp (silkscreen against silkscreen and against
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_silk_clearance.cpp (silkscreen against silkscreen and against
 // the solder mask's openings: the silk items' R-tree and their targets', each pair of pieces QueryCollidingPairs
 // meets, as far as the board's outline), pcbnew/drc/drc_rtree.h (Insert: an item's pieces on a layer and a pad's hole;
 // QueryCollidingPairs), pcbnew/drc/drc_test_provider.cpp (forEachGeometryItem of every kind of item, isInvisibleText),

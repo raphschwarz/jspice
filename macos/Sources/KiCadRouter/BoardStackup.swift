@@ -1,4 +1,4 @@
-// A board's physical stackup as KiCad 10.0.7 keeps it, reads it, writes it and makes it anew:
+// A board's physical stackup as KiCad 10.0.8 keeps it, reads it, writes it and makes it anew:
 // pcbnew/board_stackup_manager/board_stackup.h and board_stackup.cpp (BOARD_STACKUP_ITEM and its defaults,
 // BOARD_STACKUP::BuildDefaultStackupList, SynchronizeWithBoard, BuildBoardThicknessFromStackup, FormatBoardStackup),
 // the stackup as pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp reads it (parseBoardStackup, and the default
