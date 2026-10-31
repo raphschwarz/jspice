@@ -1,7 +1,7 @@
 # KiCad reference
 
 The tools used to check JSpice's board router (`Sources/KiCadRouter`, ported from KiCad's) against KiCad's own code:
-programs linked with KiCad 10.0.7's geometry library (`libs/kimath`), its polygon clipper (`thirdparty/clipper2`) and
+programs linked with KiCad 10.0.8's geometry library (`libs/kimath`), its polygon clipper (`thirdparty/clipper2`) and
 its PCB editor's router (`pcbnew/router`), compiled from KiCad's sources as they are. They link KiCad's code, so they
 are under KiCad's license, the GNU General Public License version 3 or later (see `../../KICAD-NOTICE.md`).
 
@@ -11,7 +11,10 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   for `KICAD_GEOMETRY_REFERENCE`, `KICAD_CLIPPER_REFERENCE` and `KICAD_ARC_GEOMETRY_REFERENCE`. It compiles KiCad's
   code with `NDEBUG`, as KiCad's release builds are compiled: KiCad's plain assertions are left out, as they are in
   the KiCad its users run, which goes on past one of them (the shove's, that a via it moves ends a line's first or
-  last segment, which it need not when the line has arcs).
+  last segment, which it need not when the line has arcs). Built from 10.0.8, it makes every fixture below that it
+  and `scenes.py` make the same, byte for byte, as built from 10.0.7 (10.0.8 changed the router only where it asks
+  the board what a zone joins, which `router.cpp`'s scenes have no board for, and `libs/kimath` not at all in what
+  it answers).
 - `geometry.cpp`: random cases, chosen to reach the corners (segments along the 45° directions or nearly, touching,
   overlapping, of no length; chains that share points; shapes close together), with KiCad's answers for them: vector
   lengths and resizing, `rescale`, segment distances, intersections and collisions, `DIRECTION_45` and the traces it

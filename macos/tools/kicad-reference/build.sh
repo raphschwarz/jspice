@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds this folder's programs against KiCad's own code: KiCad 10.0.7's sources (libs/kimath, the PCB editor's
+# Builds this folder's programs against KiCad's own code: KiCad 10.0.8's sources (libs/kimath, the PCB editor's
 # router in pcbnew/router, and the parts of common/ they use) fetched from KiCad's GitLab and compiled as they are.
 # Needs a C++20 compiler, wxWidgets 3.2's headers and libraries, and Boost's and GLM's headers (on Ubuntu: g++,
 # libwxgtk3.2-dev, libboost-dev, libglm-dev). KICAD_REFERENCE_BUILD is where the sources and objects go.
@@ -12,7 +12,7 @@
 # (scenes.py makes the boards the router tests use).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
-version=10.0.7
+version=10.0.8
 work=${KICAD_REFERENCE_BUILD:-${TMPDIR:-/tmp}/kicad-reference}
 src="$work/kicad-$version"
 obj="$work/obj"
@@ -20,12 +20,12 @@ mkdir -p "$src" "$obj"
 
 for part in include libs/core libs/kimath libs/kiplatform common pcbnew thirdparty; do
     name=$(echo "$part" | tr / -)
-    if [ ! -e "$work/.have-$name" ]; then
+    if [ ! -e "$work/.have-$version-$name" ]; then
         echo "fetching KiCad $version's $part"
         curl -sSfL "https://gitlab.com/kicad/code/kicad/-/archive/$version/kicad-$version.tar.gz?path=$part" | tar xz -C "$work"
         cp -R "$work/kicad-$version-$name/." "$src/"
         rm -rf "$work/kicad-$version-$name"
-        touch "$work/.have-$name"
+        touch "$work/.have-$version-$name"
     fi
 done
 

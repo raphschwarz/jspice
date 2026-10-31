@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A KiCad board as KiCad's router sees it, written as a scene for router.cpp and KiCadRouterTests: each item KiCad's
-PNS_KICAD_IFACE_BASE::SyncWorld puts in the router's world (KiCad 10.0.7, pcbnew/router/pns_kicad_iface.cpp), in the
+PNS_KICAD_IFACE_BASE::SyncWorld puts in the router's world (KiCad 10.0.8, pcbnew/router/pns_kicad_iface.cpp), in the
 order it puts them there, with the shapes KiCad itself makes of them, and what the rule resolver asks of their board
 items: net class clearances, local clearance overrides, which layers a pad or via is flashed on.
 

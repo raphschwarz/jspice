@@ -42,8 +42,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/kicad-reference
-          key: kicad-reference-10.0.7-${{ hashFiles('macos/tools/kicad-reference/build.sh', 'macos/tools/kicad-reference/stubs.cpp', 'macos/tools/kicad-reference/patch.py') }}
-          restore-keys: kicad-reference-10.0.7-
+          key: kicad-reference-10.0.8-${{ hashFiles('macos/tools/kicad-reference/build.sh', 'macos/tools/kicad-reference/stubs.cpp', 'macos/tools/kicad-reference/patch.py') }}
+          restore-keys: kicad-reference-10.0.8-
       - name: KiCad's own geometry and router code, built
         run: |
           sudo apt-get install -y --no-install-recommends g++ libwxgtk3.2-dev libboost-dev libglm-dev

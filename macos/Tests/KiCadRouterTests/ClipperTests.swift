@@ -3,7 +3,7 @@ import XCTest
 @testable import KiCadRouter
 
 /// The polygon clipper against KiCad's own: Fixtures/kicad-clipper.json holds random cases and what Clipper2, as
-/// KiCad 10.0.7 ships and compiles it, makes of them (tools/kicad-reference/clipper.cpp). KICAD_CLIPPER_REFERENCE
+/// KiCad 10.0.8 ships and compiles it, makes of them (tools/kicad-reference/clipper.cpp). KICAD_CLIPPER_REFERENCE
 /// names another such file, a larger one say. Paths must match point for point, z values and the order of the paths
 /// and of their points included, and so must the calls of the z callback.
 final class ClipperTests: XCTestCase {

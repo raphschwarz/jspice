@@ -3,7 +3,7 @@ import XCTest
 @testable import KiCadRouter
 
 /// Line chains with arcs in them, against KiCad's own: Fixtures/kicad-arc-geometry.json holds random chains of segments
-/// and arcs, as the router keeps a track's path, what KiCad 10.0.7's SHAPE_LINE_CHAIN makes of them (cut, split,
+/// and arcs, as the router keeps a track's path, what KiCad 10.0.8's SHAPE_LINE_CHAIN makes of them (cut, split,
 /// spliced, turned round, simplified, collided, walked round: tools/kicad-reference/geometry.cpp --arcs), and the
 /// traces DIRECTION_45 starts in each corner mode, rounded too. The port must keep the same points, the same arcs
 /// (to their centres) and the same note of which point is on which arc. KICAD_ARC_GEOMETRY_REFERENCE names another

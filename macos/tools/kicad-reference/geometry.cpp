@@ -1,4 +1,4 @@
-// KiCad's own geometry (libs/kimath and the router's hulls in pcbnew/router/pns_utils.cpp, KiCad 10.0.7) on random
+// KiCad's own geometry (libs/kimath and the router's hulls in pcbnew/router/pns_utils.cpp, KiCad 10.0.8) on random
 // cases, written as JSON for KiCadRouterTests: each case's input and what KiCad makes of it, so that the router's Swift
 // port can be checked against KiCad to the nanometre. build.sh builds this against KiCad's sources.
 //

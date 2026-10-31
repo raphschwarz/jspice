@@ -3,7 +3,7 @@ import XCTest
 @testable import KiCadRouter
 
 /// The router against KiCad's own: Fixtures/kicad-routes.json holds boards with routes to make on them, and what
-/// KiCad 10.0.7's router made of each (tools/kicad-reference/router.cpp, made by scenes.py); kicad-board-routes.json
+/// KiCad 10.0.8's router made of each (tools/kicad-reference/router.cpp, made by scenes.py); kicad-board-routes.json
 /// the same on the boards of Fixtures/boards, as KiCad's router sees them (scenes.py --boards); kicad-shove-routes.json
 /// routes that shove what is in their way (scenes.py --mode shove), with the board as the router has it after each
 /// step, what it has shoved where; kicad-drag-routes.json and kicad-board-drag-routes.json tracks and vias dragged

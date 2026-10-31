@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import KiCadRouter
 
-/// The router's geometry against KiCad's own: Fixtures/kicad-geometry.json holds random cases and what KiCad 10.0.7's
+/// The router's geometry against KiCad's own: Fixtures/kicad-geometry.json holds random cases and what KiCad 10.0.8's
 /// code makes of them (tools/kicad-reference/geometry.cpp, linked with KiCad's libs/kimath and the router's hulls).
 /// KICAD_GEOMETRY_REFERENCE names another such file, a larger one say.
 final class GeometryTests: XCTestCase {

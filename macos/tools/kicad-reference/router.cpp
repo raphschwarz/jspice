@@ -1,4 +1,4 @@
-// KiCad's own interactive router (pcbnew/router, KiCad 10.0.7) driven on a board given as JSON: its pads, tracks,
+// KiCad's own interactive router (pcbnew/router, KiCad 10.0.8) driven on a board given as JSON: its pads, tracks,
 // arc tracks, vias and outline, and the routes to make on it (where each starts, where the pointer goes, where it is
 // fixed, and the corner mode its new tracks turn in: mitered or rounded).
 // For each route it writes what KiCad's router does: the head and the tail after each step (a move, a via, a layer

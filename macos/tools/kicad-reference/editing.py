@@ -487,7 +487,7 @@ def copy(outdir, boards):
     for src in boards:
         board = os.path.join(outdir, os.path.basename(src))
         copy_board(src, board)
-        # (the board as KiCad 10.0.7 itself writes it, which is what its copies are made of)
+        # (the board as KiCad 10.0.8 itself writes it, which is what its copies are made of)
         import pcbnew
         pcbnew.SaveBoard(board, pcbnew.LoadBoard(board))
         rng = random.Random("copy-" + os.path.basename(board))

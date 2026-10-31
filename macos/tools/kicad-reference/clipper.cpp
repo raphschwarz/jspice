@@ -1,4 +1,4 @@
-// The polygon clipper KiCad 10.0.7 ships (thirdparty/clipper2, Clipper2 by Angus Johnson) on random cases, written as
+// The polygon clipper KiCad 10.0.8 ships (thirdparty/clipper2, Clipper2 by Angus Johnson) on random cases, written as
 // JSON for KiCadRouterTests: boolean operations (union, intersection, difference, xor, with every fill rule, open
 // subject paths, collinear points kept or not, solutions reversed or not) and offsets (every join and end type,
 // growing and shrinking, miter limits and arc tolerances), each as paths and as a tree of outlines and holes, with
