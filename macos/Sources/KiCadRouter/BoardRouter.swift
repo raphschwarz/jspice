@@ -5,7 +5,7 @@
 // tuning patterns drive the router's meander placers
 // (pcbnew/router/router_tool.cpp, pns_tool_base.cpp, pns_kicad_iface.cpp, pcbnew/tools/pcb_grid_helper.cpp,
 // pcbnew/generators/pcb_tuning_pattern.cpp, pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp, pcbnew/pcb_track.cpp,
-// KiCad 10.0.7).
+// KiCad 10.0.8).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as KiCad
 // (see KICAD-NOTICE.md).
 
@@ -42,7 +42,26 @@ public final class BoardRouter {
         router.setInterface(iface)
         router.settings.mode = .walkaround
         iface.boardPadPolygon = { [unowned self] w in self.world.tuningPolygon(w, in: self.board) }
+        iface.boardConnectedItems = { [unowned self] uuid in self.boardConnectedItems(uuid) }
         router.syncWorld()
+    }
+
+    /// The board's connectivity as KiCad's board keeps it (BOARD::GetConnectivity: its copper as the file has it, the
+    /// zones' fills among it), made when the router first asks of it after the board changed
+    private var connectivity: (drc: BoardDRC, cn: BoardDRC.Connectivity, items: [String: [BoardDRC.CopperItem]])?
+
+    /// CONNECTIVITY_DATA::GetConnectedItems( aItem ) of the board item of that uuid: the items (their uuids) of its
+    /// net's clusters it is in, zones and all; nil for one KiCad does not take as connected (BOARD_ITEM::IsConnected:
+    /// a footprint's drawing, a text, a rule area) or that the connectivity does not have
+    func boardConnectedItems(_ uuid: String) -> [String]? {
+        if connectivity == nil {
+            let drc = BoardDRC(board: board, project: project, designRules: designRules)
+            let copper = drc.makeCopper()
+            let cn = drc.buildConnectivity(copper)
+            connectivity = (drc, cn, Dictionary(grouping: copper.items, by: \.uuid))
+        }
+        guard let c = connectivity, let items = c.items[uuid]?.filter(\.connected), !items.isEmpty else { return nil }
+        return items.flatMap { c.drc.connectedItems(c.cn, $0, excludeZones: false) }.map(\.uuid).filter { !$0.isEmpty }
     }
 
     /// The board changed here other than by routing (a footprint moved): what changed taken in
@@ -59,6 +78,7 @@ public final class BoardRouter {
     /// The board read again, the tuning pattern `editing` (its uuid) being edited: its tracks not locked, as KiCad's
     /// router does not lock a generator's that is being edited
     func reload(editing: String?) {
+        connectivity = nil
         world = BoardWorld(board: board, project: project, editing: editing)
         iface.items = world.items
         iface.stackupHeights = world.stackupHeights

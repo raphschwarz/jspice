@@ -961,6 +961,41 @@ final class BoardEditingTests: XCTestCase {
 
     /// A keepout zone and another net's arc track in the way of a track: kept clear of (the keepout cut into KiCad's
     /// triangles, the arc the port's stand-in for KiCad's arc items)
+    /// Where the ratsnest says the track being routed goes (GetNearestRatnestAnchor, which Attempt Finish routes to):
+    /// the nearest item of its net it is not joined to, leaving out what the board joins to it through a zone's fill,
+    /// which the router does not model (KiCad 10.0.8's TOPOLOGY::NearestUnconnectedItem with
+    /// RemoveBoardConnected; KiCad 10.0.7's went to the nearer pad, which the fill already joins)
+    func testTheRatsnestTargetLeavesOutWhatAZoneJoins() throws {
+        func board(filled: Bool) throws -> KiCadBoard {
+            func footprint(_ n: Int, _ x: Double) -> String {
+                """
+                  (footprint "T:P" (layer "F.Cu") (uuid "f0000000-0000-0000-0000-00000000000\(n)") (at \(x) 50)
+                    (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net "GND") (uuid "b0000000-0000-0000-0000-00000000000\(n)")))
+                """
+            }
+            let fill = filled ? "(filled_polygon (layer \"F.Cu\") (pts (xy 5 45) (xy 35 45) (xy 35 55) (xy 5 55)))" : ""
+            return try KiCadBoard(text: """
+                (kicad_pcb (version 20260206) (generator "pcbnew") (generator_version "10.0") (general (thickness 1.6))
+                  (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+                  (gr_rect (start 0 0) (end 100 100) (stroke (width 0.1) (type default)) (fill no) (layer "Edge.Cuts") (uuid "e0000000-0000-0000-0000-000000000001"))
+                \(footprint(1, 10))
+                \(footprint(2, 30))
+                \(footprint(3, 80))
+                  (zone (net "GND") (layer "F.Cu") (uuid "a0000000-0000-0000-0000-000000000001") (hatch edge 0.5)
+                    (connect_pads yes (clearance 0.5)) (min_thickness 0.25) (fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5))
+                    (polygon (pts (xy 5 45) (xy 35 45) (xy 35 55) (xy 5 55))) \(fill)))
+                """)
+        }
+        let far = IPoint(80_000_000, 50_000_000), near = IPoint(30_000_000, 50_000_000)
+        for (filled, target) in [(true, far), (false, near)] {
+            let router = BoardRouter(board: try board(filled: filled))
+            XCTAssertTrue(router.start(at: IPoint(10_000_000, 50_000_000), layer: 0))
+            XCTAssertEqual(router.target, target, filled ? "filled" : "unfilled")
+            router.move(to: IPoint(14_000_000, 53_000_000))
+            XCTAssertEqual(router.target, target, filled ? "filled, routed some way" : "unfilled, routed some way")
+        }
+    }
+
     func testKeepoutsAndArcTracksAreKeptClearOf() throws {
         let file = try XCTUnwrap(Self.boards().first)
         let board = try KiCadBoard.read(file)

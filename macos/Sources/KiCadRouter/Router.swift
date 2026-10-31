@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_router.h and pns_router.cpp (routing a track or a differential pair,
+// Ported from KiCad 10.0.8: pcbnew/router/pns_router.h and pns_router.cpp (routing a track or a differential pair,
 // tuning a track's or a pair's length or a pair's skew, dragging a segment, corner or via, a footprint's pads with
 // the tracks on them, and several tracks at once), and PNS_KICAD_IFACE_BASE::CalculateRoutedPathLength (pcbnew/router/pns_kicad_iface.cpp) with the
 // parts of pcbnew/length_delay_calculation/length_delay_calculation.cpp it uses (CalculateLengthDetails, its length).
@@ -35,10 +35,16 @@ public protocol RouterInterface: AnyObject {
     /// The length of a path of lines and vias from `startPad` to `endPad`, as the board measures it for a length
     /// tuning (KiCad's CalculateRoutedPathLength)
     func calculateRoutedPathLength(_ path: [Item], startPad: Solid?, endPad: Solid?) -> Int
+    /// Every item of `items` taken out that the board already joins to one of `joined` through what the router does
+    /// not model, such as zones (KiCad 10.0.8's RemoveBoardConnected)
+    func removeBoardConnected(_ joined: [Item], _ items: inout [Item])
 }
 
 extension RouterInterface {
     public func nonRoutableReason(_ item: Item) -> String? { nil }
+
+    /// ROUTER_IFACE's RemoveBoardConnected: nothing taken out, as a router with no board behind it has it
+    public func removeBoardConnected(_ joined: [Item], _ items: inout [Item]) {}
 
     /// The length of a path of lines and vias, as KiCad's LENGTH_DELAY_CALCULATION::CalculateLength works it out for
     /// a length tuning's path (PNS_KICAD_IFACE_BASE::CalculateRoutedPathLength: none of the path's optimisations
@@ -433,7 +439,7 @@ public final class Router {
     public func nearestRatnestAnchor() -> (point: IPoint, layers: LayerRange, item: Item)? {
         guard let placer, let net = currentNets.first, net != nil, let trace = placer.traces().first as? Line,
               let lastNode = placer.currentNode(loopsRemoved: true) else { return nil }
-        let topo = Topology(lastNode)
+        let topo = Topology(lastNode, iface)
         if trace.segmentCount > 0 { return topo.nearestUnconnectedAnchorPoint(trace) }
         guard let jt = lastNode.findJoint(placer.currentStart, layer: placer.currentLayer, net: net),
               let (it, anchor) = topo.nearestUnconnectedItem(jt) else { return nil }

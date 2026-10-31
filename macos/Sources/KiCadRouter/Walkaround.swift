@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_walkaround.h, pns_walkaround.cpp, pns_topology.h and the parts of
+// Ported from KiCad 10.0.8: pcbnew/router/pns_walkaround.h, pns_walkaround.cpp, pns_topology.h and the parts of
 // pns_topology.cpp the walkaround and the line placer use.
 // Copyright (C) 2013-2014 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
@@ -14,8 +14,14 @@ public struct Topology {
     }
 
     let world: Node
+    /// The board's side, which says what the board joins through what the router does not model (zones), for the
+    /// search for unconnected items (nil: nothing)
+    let iface: RouterInterface?
 
-    public init(_ world: Node) { self.world = world }
+    public init(_ world: Node, _ iface: RouterInterface? = nil) {
+        self.world = world
+        self.iface = iface
+    }
 
     /// The line's segments in the world made as few as its shape allows
     @discardableResult
@@ -56,15 +62,22 @@ public struct Topology {
         return processed
     }
 
-    /// The nearest item of the joint's net not connected to it, and which of its anchors
+    /// The nearest item of the joint's net not connected to it, and which of its anchors: neither through the
+    /// joints, nor on the board through what the router does not model (zones: RemoveBoardConnected)
     public func nearestUnconnectedItem(_ start: Joint, kinds: ItemKind = .any) -> (Item, Int)? {
         var connected = Set<ObjectIdentifier>()
+        var joined: [Item] = []
         for jt in connectedJoints(start) {
-            for link in jt.links { connected.insert(ObjectIdentifier(link)) }
+            for link in jt.links {
+                connected.insert(ObjectIdentifier(link))
+                joined.append(link)
+            }
         }
         // (KiCad's set goes by address; here by the order the items were made)
-        let disconnected = world.allItems(inNet: start.net).filter { !connected.contains(ObjectIdentifier($0)) }
+        var disconnected = world.allItems(inNet: start.net).filter { !connected.contains(ObjectIdentifier($0)) }
             .sorted { $0.serial < $1.serial }
+        // (the router does not model zones, so the board decides what they already join it to)
+        iface?.removeBoardConnected(joined, &disconnected)
         var bestDist = Int(Int32.max)
         var best: (Item, Int)?
         for item in disconnected where item.ofKind(kinds) {
@@ -94,7 +107,7 @@ public struct Topology {
             connected = jt.links.first { $0.owner !== tmpNode }
         }
         if let connected { return (jt.pos, jt.layers, connected) }
-        guard let (it, anchor) = Topology(tmpNode).nearestUnconnectedItem(jt) else { return nil }
+        guard let (it, anchor) = Topology(tmpNode, iface).nearestUnconnectedItem(jt) else { return nil }
         return (it.anchor(anchor), it.layers, it)
     }
 

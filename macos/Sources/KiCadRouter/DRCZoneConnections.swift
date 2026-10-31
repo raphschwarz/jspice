@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/drc/drc_test_provider_zone_connections.cpp (thermal reliefs with too few spokes:
+// Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_zone_connections.cpp (thermal reliefs with too few spokes:
 // starved thermals), with pcbnew/drc/drc_engine.cpp (EvalZoneConnection, and EvalRules of the minimum spoke count and
 // the thermal relief gap, whose rule names the violation), pcbnew/connectivity/connectivity_algo.cpp (FillIsolatedIslandsMap:
 // a fill's islands that touch one item only) and pcbnew/connectivity/connectivity_data.cpp (GetConnectedTracks,
@@ -160,8 +160,8 @@ extension BoardDRC {
     }
 
     /// CONNECTIVITY_DATA::GetConnectedItems( aItem, EXCLUDE_ZONES ): the items of the cluster of the item's net (zones
-    /// left out) it is in
-    func connectedItems(_ cn: Connectivity, _ item: CopperItem) -> [CopperItem] {
+    /// left out, unless `excludeZones` is false: GetConnectedItems( aItem )) it is in
+    func connectedItems(_ cn: Connectivity, _ item: CopperItem, excludeZones: Bool = true) -> [CopperItem] {
         guard item.net > 0, let roots = cn.entries[ObjectIdentifier(item)] else { return [] }
         var visited = Set<ObjectIdentifier>()
         var queue: [CNItem] = []
@@ -170,7 +170,7 @@ extension BoardDRC {
         while head < queue.count {
             let current = queue[head]
             head += 1
-            for n in current.connected where n.net == item.net && !n.isZone && visited.insert(ObjectIdentifier(n)).inserted {
+            for n in current.connected where n.net == item.net && !(excludeZones && n.isZone) && visited.insert(ObjectIdentifier(n)).inserted {
                 queue.append(n)
             }
         }

@@ -1,4 +1,4 @@
-// Ported from KiCad 10.0.7: pcbnew/router/pns_kicad_iface.cpp (PNS_KICAD_IFACE_BASE::SyncWorld and its sync
+// Ported from KiCad 10.0.8: pcbnew/router/pns_kicad_iface.cpp (PNS_KICAD_IFACE_BASE::SyncWorld and its sync
 // functions, PNS_PCBNEW_RULE_RESOLVER::Clearance, IsKeepout, DpCoupledNet, DpNetPolarity and DpNetPair), the parts of
 // pcbnew/drc/drc_engine.cpp (DRC_ENGINE::EvalRules) that a board without rules of the user's own takes (a board's
 // own rules go by its rules engine, RouterRules), and pcbnew/board.cpp's BOARD::MatchDpSuffix and DpCoupledNet.
@@ -376,10 +376,31 @@ public final class WorldInterface: RouterInterface {
     /// which a length tuning counts for a via: none, 0
     public var stackupHeights: [[Int]] = []
 
+    /// The board's connectivity behind the world (PNS_KICAD_IFACE_BASE's board, BOARD::GetConnectivity): the board
+    /// items (by uuid) one is connected to, zones and all (CONNECTIVITY_DATA::GetConnectedItems), nil for one the
+    /// board does not take as connected (BOARD_ITEM::IsConnected). None: no board behind the world (router.cpp's
+    /// scenes), and RemoveBoardConnected takes nothing out.
+    public var boardConnectedItems: ((String) -> [String]?)?
+
     public init(items: [WorldItem], layers: Int, rules: WorldRules) {
         self.items = items
         layerCount = layers
         resolver = WorldResolver(rules: rules)
+    }
+
+    /// PNS_KICAD_IFACE_BASE::RemoveBoardConnected: the items of `items` whose board items the board's connectivity
+    /// joins to the board item of one of `joined` (through a zone, say, which the router does not model) taken out;
+    /// a router item's board item its m_parent, which its copies keep
+    public func removeBoardConnected(_ joined: [Item], _ items: inout [Item]) {
+        guard let connectedItems = boardConnectedItems else { return }
+        func parent(_ item: Item) -> String? { (item.boardItem as? WorldItemRef)?.item.source }
+        var boardJoined = Set<String>()
+        for item in joined {
+            guard let p = parent(item), !boardJoined.contains(p), let connected = connectedItems(p) else { continue }
+            boardJoined.insert(p)
+            boardJoined.formUnion(connected)
+        }
+        items.removeAll { parent($0).map(boardJoined.contains) ?? false }
     }
 
     /// What ROUTER::isStartingPointRoutable reads from a non-routable item's board item: a pad without plating, a
