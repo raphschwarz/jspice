@@ -27,6 +27,13 @@ final class PropertiesTests: XCTestCase {
         let r1Pad = try XCTUnwrap(session.board.footprints.first { $0.reference == "R1" }?.pads.first)
         XCTAssertEqual(session.pad(at: r1Pad.position), r1Pad.uuid)
         XCTAssertNil(session.pad(at: KiCadPoint(-50, -50)))
+        // a pad on no copper (an aperture) keeps no number, as PAD::CanHaveNumber has it
+        let apertures = BoardEditing(board: try KiCadBoard.read(file))
+        var aperture = try XCTUnwrap(apertures.padProperties(r1Pad.uuid))
+        (aperture.type, aperture.copperLayers, aperture.technicalLayers, aperture.number) = (.aperture, .none, ["F.Paste"], "EP")
+        XCTAssertNotNil(apertures.setPadProperties(r1Pad.uuid, aperture))
+        XCTAssertEqual(apertures.padProperties(r1Pad.uuid)?.number, "")
+        XCTAssertEqual(apertures.padProperties(r1Pad.uuid)?.type, .aperture)
         // a locked footprint is not moved, turned, turned over or dragged; the others with it are
         XCTAssertNil(session.moveFootprint(r2, to: KiCadPoint(1, 1)))
         XCTAssertNil(session.rotateFootprints([r2]))
@@ -120,10 +127,14 @@ final class PropertiesTests: XCTestCase {
     }
 
     /// Random new properties for a pad, as a user might give it in the dialog
-    static func randomPad(_ was: PadProperties, nets: [String], free: Bool, rng: inout Rand) -> PadProperties {
+    /// (`removesLayers`: a plated pad may be kept only on the layers connected to it, which BoardDRC does not check as
+    /// KiCad does, and leaves the board out of its comparison for: on every other board only)
+    static func randomPad(_ was: PadProperties, nets: [String], free: Bool, removesLayers: Bool, rng: inout Rand) -> PadProperties {
         var p = was
         let custom = p.shape == .customCircle || p.shape == .customRect
-        if rng.bool(0.2) { p.number = rng.pick(["1", "2", "A1", "EP"]) }
+        // (the dialog's number greyed out for a pad that can have none: an unplated hole, a pad on no copper)
+        let numbered = p.type != .npth && p.type != .aperture && !(p.type == .throughHole && p.copperLayers == .none)
+        if rng.bool(0.2), numbered { p.number = rng.pick(["1", "2", "A1", "EP"]) }
         // (a pad's net changed only where no track or via meets it: KiCad gives a track the net of what it joins as
         // it reads the board, which BoardDRC does not)
         if free && rng.bool(0.2) { p.net = nets.isEmpty || rng.bool(0.2) ? nil : rng.pick(nets) }
@@ -149,7 +160,10 @@ final class PropertiesTests: XCTestCase {
                 let d = min(p.size.x, p.size.y) * 0.5
                 p.drill = KiCadPoint(d, p.oblongHole ? d * 1.5 : d)
             }
-            if p.type == .throughHole && rng.bool(0.3) { p.copperLayers = rng.pick([.all, .outerAndConnected, .connectedOnly]) }
+            if p.type == .throughHole && rng.bool(0.3) {
+                let layers: PadProperties.CopperLayers = rng.pick([.all, .outerAndConnected, .connectedOnly])
+                p.copperLayers = removesLayers ? layers : .all
+            }
         }
         if rng.bool(0.3) { p.clearance = rng.bool(0.3) ? nil : rng.pick([0.1, 0.2]) }
         if rng.bool(0.3) { p.solderMaskMargin = rng.bool(0.3) ? nil : rng.pick([0.05, 0]) }
@@ -192,7 +206,8 @@ final class PropertiesTests: XCTestCase {
                 for pad in session.board.footprint(uuid: uuid)?.pads ?? [] where rng.bool(0.5) {
                     guard let was = session.padProperties(pad.uuid) else { continue }
                     let wiredNets = Set(session.board.tracks.compactMap(\.net) + session.board.vias.compactMap(\.net))
-                    let wanted = Self.randomPad(was, nets: nets.filter { !wiredNets.contains($0) }, free: !wiredNets.contains(was.net ?? ""), rng: &rng)
+                    let wanted = Self.randomPad(was, nets: nets.filter { !wiredNets.contains($0) }, free: !wiredNets.contains(was.net ?? ""),
+                                                 removesLayers: n % 2 == 1, rng: &rng)
                     if let problem = session.padPropertiesProblem(pad.uuid, wanted) {
                         XCTAssertNil(session.setPadProperties(pad.uuid, wanted), problem)
                         refused += 1

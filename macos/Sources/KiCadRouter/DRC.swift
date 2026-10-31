@@ -131,8 +131,12 @@ public struct BoardDRC {
 
     /// What of the user's design rules the port's checks do not follow as KiCad's do, by name (the checks then may
     /// not find what KiCad's find)
-    public var unsupported: Set<String> { ruleState.board.unsupported.union(unsupportedRules) }
+    public var unsupported: Set<String> { ruleState.board.unsupported.union(unsupportedRules).union(unsupportedItems) }
     private var unsupportedRules: Set<String> = []
+    /// The board's items the checks do not see as KiCad's do: a plated pad or a via kept only on the layers connected
+    /// to it (KiCad's PAD::FlashLayer and PCB_VIA::FlashLayer then ask the connectivity which; the checks here take
+    /// it on all its layers)
+    private var unsupportedItems: Set<String> = []
 
     /// The design rules check of `board`, its project's JSON in `project` (nil for KiCad's defaults) and the rules of
     /// its .kicad_dru in `designRules`
@@ -278,6 +282,7 @@ public struct BoardDRC {
                     }
                 }
                 t.unconnectedLayers = UnconnectedLayerMode(node)
+                if t.unconnectedLayers != .keepAll { unsupportedItems.insert("via without unconnected layers") }
                 t.free = node.value("free") == "yes"
                 tracks.append(t)
             default:
@@ -291,6 +296,9 @@ public struct BoardDRC {
                     pad: world.readPad(node, placement),
                     primitives: (node["primitives"]?.arguments ?? []).filter { $0.head != "gr_bbox" && $0.head != "gr_vector" },
                     pinType: node.value("pintype") ?? "", unconnectedLayers: UnconnectedLayerMode(node))
+            }
+            if pads.contains(where: { $0.pad.attribute == .pth && $0.unconnectedLayers != .keepAll }) {
+                unsupportedItems.insert("pad without unconnected layers")
             }
             var footprint = Footprint(reference: placement.reference, pads: pads)
             footprint.duplicatePadNumbersAreJumpers = fp.value("duplicate_pad_numbers_are_jumpers") == "yes"

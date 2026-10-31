@@ -1,9 +1,9 @@
 // Pads' properties set as KiCad's pad properties dialog sets them (KiCad 10.0.7: pcbnew/dialogs/
 // dialog_pad_properties.cpp, DIALOG_PAD_PROPERTIES's initValues, updatePadLayersList, onPadShapeSelection,
-// transferDataToPad and TransferDataFromWindow; pcbnew/pad.cpp, PAD::Flip and SetAttribute; pcbnew/pad_utils.cpp,
-// GetDefaultIpcRoundingRatio), written as pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp writes a pad (format( PAD ),
-// formatLayers). Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or
-// later, as KiCad (see KICAD-NOTICE.md).
+// transferDataToPad and TransferDataFromWindow; pcbnew/pad.cpp, PAD::Flip, SetAttribute and CanHaveNumber;
+// pcbnew/pad_utils.cpp, GetDefaultIpcRoundingRatio), written as pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp
+// writes a pad (format( PAD ), formatLayers). Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General
+// Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
 import Foundation
 import KiCadKit
@@ -225,7 +225,8 @@ extension BoardEditing {
     }
 
     /// The pad given properties `p`, as KiCad's pad properties dialog gives them (transferDataToPad and
-    /// TransferDataFromWindow): a surface pad's hole none, an unplated one's number and net none, its layers those of
+    /// TransferDataFromWindow): a surface pad's hole none, an unplated one's number and net none (an aperture's, or any
+    /// pad's on no copper, its number none, PAD::CanHaveNumber), its layers those of
     /// the dialog's choices (its other layers dropped), its rounding kept to 0.5 at most; one of a footprint on the
     /// back turned over again after (PAD::Flip: its layers, offset, trapezoid and chamfered corners back to the back,
     /// its angle to its footprint's negated); written as KiCad writes a pad, as one change ("Edit Pad Properties").
@@ -298,7 +299,10 @@ extension BoardEditing {
         let relative = KiMath.rotate(Self.nm(p.position) - Self.nm(fp.position), EDAAngle(degrees: -fp.rotation))
         let angle = KiCadFootprint.normalize360((flipped ? -p.orientation : p.orientation) + fp.rotation)
         // the pad, as KiCad writes one
-        var items: [SExprConvertible] = [p.type == .npth ? "" : p.number, Keyword(attribute), Keyword(shapeName)]
+        // (its number none where it can have none, PAD::CanHaveNumber: an unplated hole's, or an aperture's, a pad on no
+        // copper, which the dialog's number is greyed out for and KiCad's parser clears as it reads it)
+        let canHaveNumber = p.type != .npth && layers.contains { $0.hasSuffix(".Cu") }
+        var items: [SExprConvertible] = [canHaveNumber ? p.number : "", Keyword(attribute), Keyword(shapeName)]
         var at: [SExprConvertible] = [Double(relative.x) / 1e6, Double(relative.y) / 1e6]
         if angle != 0 { at.append(angle) }
         items.append(SExpr("at", at))

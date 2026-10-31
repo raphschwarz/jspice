@@ -557,6 +557,10 @@ struct PCBPadPropertiesSheet: View {
     private static let corners: [(PadProperties.Corner, String)] = [(.topLeft, "Top left"), (.topRight, "Top right"),
                                                                      (.bottomLeft, "Bottom left"), (.bottomRight, "Bottom right")]
 
+    /// Whether the pad's type connects (has a number and a net), as the dialog's hasConnection: not an unplated hole's
+    /// or an aperture's
+    private var connects: Bool { p.type != .npth && p.type != .aperture }
+
     /// The copper layers' choices the pad's type has, as the dialog's (updatePadLayersList)
     private var copperChoices: [(PadProperties.CopperLayers, String)] {
         switch p.type {
@@ -585,11 +589,13 @@ struct PCBPadPropertiesSheet: View {
                         .labelsHidden().fixedSize()
                         .onChange(of: p.type) { _, _ in
                             if !copperChoices.contains(where: { $0.0 == p.copperLayers }) { p.copperLayers = copperChoices[0].0 }
+                            // (a type with no connection, its number and net cleared, as onPadTypeSelected clears them)
+                            if !connects { (p.number, p.net) = ("", nil) }
                         }
                     }
                     GridRow {
                         Text("Pad number")
-                        TextField("", text: $p.number).frame(width: 100).disabled(p.type == .npth)
+                        TextField("", text: $p.number).frame(width: 100).disabled(!connects)
                     }
                     GridRow {
                         Text("Net")
@@ -597,7 +603,7 @@ struct PCBPadPropertiesSheet: View {
                             Text("<no net>").tag(String?.none)
                             ForEach(editing.nets, id: \.self) { Text($0).tag(String?.some($0)) }
                         }
-                        .labelsHidden().frame(width: 160).disabled(p.type == .npth)
+                        .labelsHidden().frame(width: 160).disabled(!connects)
                     }
                     GridRow {
                         Text("Shape")
