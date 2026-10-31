@@ -261,6 +261,31 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   and touched by it, next to the board as `BOARD.boxes` (JSON). `BoxSelectionTests` checks the port's
   (`BoxSelection`, which the PCB view's box selection goes by) against them; the boards of
   `Tests/KiCadRouterTests/Fixtures/boards`, `arcboards`, `courtyards` and `silk` have theirs.
+- `nets.py`: KiCad's Net Inspector and its Highlight Net on boards, for checking the port's (`NetInspector.swift`,
+  with `LengthCalculation`, and `NetHighlight.swift`). Neither the panel nor the highlight tool reaches KiCad's Python
+  module, so, as `boardsetup.py` and `tuning.py` do, it runs pcbnew under Xvfb with an action plugin of its own and
+  drives it as a user does. `nets.py BOARD.kicad_pcb...` writes `BOARD.nets` (JSON) beside each board: in a first run
+  (the board's `.kicad_prl` made to show every net, from a random active copper layer, inactive layers now and then
+  dimmed or hidden, now and then a copper layer, tracks, vias, pads or a side's footprints hidden) View ▸ Panels ▸ Net
+  Inspector opened and each net's row read (every column's text: name, net class, total length, via count, via length,
+  track length, die length, pad count, each copper layer's length), the rows' order sorted by each column up and down
+  (the model's `Compare`), the nets shown for filter texts typed in its filter box; then the view zoomed to fit and
+  calibrated as `tuning.py` does, and at points near pads, tracks, vias and zones and anywhere on the board the pointer
+  moved there and the highlight key (`` ` ``) pressed: the net codes KiCad highlights (its board's `std::set`, read as
+  libstdc++ lays one out) and whether it highlights at all. In a second run the nets grouped by net class and by custom
+  group rules (a wildcard pattern, regular expressions between `^` and `$` and between slashes, a part of a name), each
+  group's sums and its nets. And through KiCad's `pcbnew` module each track's `BOARD::GetTrackLength`, to the
+  nanometre. `nets.py boards OUTDIR COUNT [SEED]` makes random boards for it: nets routed between their pads on two,
+  four or six layers of random thicknesses (lines of segments and arcs, vias of every type, vias in pads, lines ending
+  off a via's centre in its copper, branches, stubs, lines of no length, pads' lengths to their dies, flipped
+  footprints, zones, net classes by pattern, names such as `R1`, `R10`, `4k7` and `sig3` that KiCad's
+  `ValueStringCompare` sorts in its own way, the project's use of via heights now and then off). `NetInspectorTests`
+  and `NetHighlightTests` check the port against them: the same rows, orders, filtered nets, groups and track lengths,
+  and the same net highlighted at each point with the same five pixels' accuracy. KiCad measures some things in the
+  order of its items' places in memory, which differs from one run of it to another: which pad a via joined to pads of
+  both sides finds first (its height through the board or none), and in which order a cluster's lines are merged and
+  cut by vias at both ends (a few nanometres); there the tests take KiCad's value where the port comes to it with
+  another of those orders, and count them. The boards of `Tests/KiCadRouterTests/Fixtures/nets` have theirs.
 - `rules.py`: random design rules for boards (`rules.py [--fills] [--all] [--seed SEED] BOARD.kicad_pcb...`): a
   rules file beside each board (`BOARD.kicad_dru`, where KiCad's DRC engine finds it, and the port's `BoardDRC`,
   `ZoneFiller` and `BoardRouter` with it), of one to six rules of random conditions on what the board has: its net

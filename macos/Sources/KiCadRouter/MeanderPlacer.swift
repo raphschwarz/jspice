@@ -603,14 +603,19 @@ extension Topology {
     /// position, on a layer the pad is flashed on, and that starts (or else ends) in its polygon. Whether it changed
     static func optimiseTraceInPad(_ line: inout LineChain, _ pad: Solid, _ info: WorldItem, _ layer: Int,
                                    _ polygon: () -> PolySet?) -> Bool {
-        guard line.pointCount >= 2 else { return false }
-        if line.point(0) != pad.pos && line.lastPoint != pad.pos { return false }
         let flashed = info.flashed.isEmpty ? info.layers.overlaps(layer) : (layer >= 0 && layer < info.flashed.count && info.flashed[layer])
+        return optimiseTraceInPad(&line, padPosition: pad.pos, flashed: flashed, polygon)
+    }
+
+    /// The same of a pad at `padPosition`, flashed on the line's layer or not (the net inspector's pads, a board's)
+    static func optimiseTraceInPad(_ line: inout LineChain, padPosition: IPoint, flashed: Bool, _ polygon: () -> PolySet?) -> Bool {
+        guard line.pointCount >= 2 else { return false }
+        if line.point(0) != padPosition && line.lastPoint != padPosition { return false }
         guard flashed, let shape = polygon() else { return false }
         if shape.contains(line.point(0)) {
-            return clipLineToPad(&line, pad.pos, shape, forward: true)
+            return clipLineToPad(&line, padPosition, shape, forward: true)
         } else if shape.contains(line.lastPoint) {
-            return clipLineToPad(&line, pad.pos, shape, forward: false)
+            return clipLineToPad(&line, padPosition, shape, forward: false)
         }
         return false
     }
@@ -708,11 +713,15 @@ extension Topology {
     /// there put in its place (KiCad's OptimiseTraceInVia and clipLineToVia: the crossing nearest the point outside).
     /// Whether it changed
     static func optimiseTraceInVia(_ line: inout LineChain, _ via: Via) -> Bool {
+        optimiseTraceInVia(&line, center: via.pos, radius: via.diameter / 2)
+    }
+
+    /// The same of a via at `center` of radius `r` (the net inspector's vias, a board's)
+    static func optimiseTraceInVia(_ line: inout LineChain, center: IPoint, radius r: Int) -> Bool {
         guard line.pointCount >= 2 else { return false }
-        let r = via.diameter / 2
         // (SHAPE_CIRCLE::Collide of a point, at no clearance: at the centre, or nearer than the radius)
         func inside(_ p: IPoint) -> Bool {
-            let d = (p - via.pos).squaredNorm
+            let d = (p - center).squaredNorm
             return d == 0 || d < r * r
         }
         let forward: Bool
@@ -734,7 +743,7 @@ extension Topology {
             firstOutside = vertex
             let prevVertex = vertex - delta
             let seg = Seg(line.point(vertex), line.point(prevVertex))
-            let pts = Circle(via.pos, r).intersect(seg)
+            let pts = Circle(center, r).intersect(seg)
             if var best = pts.first {
                 let outside = line.point(vertex)
                 for p in pts.dropFirst() where (p - outside).squaredNorm < (best - outside).squaredNorm { best = p }
@@ -745,13 +754,13 @@ extension Topology {
         if firstOutside < 0 { return false }
         var newChain = LineChain()
         if forward {
-            newChain.append(via.pos)
+            newChain.append(center)
             if let intersection { newChain.append(intersection) }
             newChain.append(line.slice(firstOutside, -1))
         } else {
             newChain.append(line.slice(0, firstOutside))
             if let intersection { newChain.append(intersection) }
-            newChain.append(via.pos)
+            newChain.append(center)
         }
         line = newChain
         return true
