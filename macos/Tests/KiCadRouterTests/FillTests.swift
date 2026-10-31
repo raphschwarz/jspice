@@ -9,14 +9,15 @@ import KiCadKit
 /// and ZoneFiller must make the same, polygon for polygon, point for point. KICAD_BOARD_REFERENCE names a folder of
 /// such boards (or several, separated by colons); with none, Fixtures/fills (a board drawn by fills.py --draw to take
 /// the filler down the ways random boards do not, and one by --draw-open whose edges do not close) and Fixtures/rules
-/// (boards with rules files, the drawn one's of the filler's constraints among them). FILL_BOARD keeps
+/// (boards with rules files, the drawn one's of the filler's constraints among them) and Fixtures/zoneedits (zones with
+/// holes, on inner layers, hatched and smoothed, drawn by properties.py --draw). FILL_BOARD keeps
 /// to the boards whose names contain it; FILL_DUMP names a folder to write the port's fills and their stages to.
 final class FillTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] {
             return f.split(separator: ":").map { URL(fileURLWithPath: String($0)) }
         }
-        return ["fills", "rules"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
+        return ["fills", "rules", "zoneedits"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
     }
 
     func testZonesFilledAsKiCadFillsThem() throws {
@@ -24,6 +25,14 @@ final class FillTests: XCTestCase {
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.pathExtension == "kicad_pcb" && (only == nil || $0.lastPathComponent.contains(only!)) }
             .sorted { $0.path < $1.path }
+        let (summary, differences) = try Self.compare(files)
+        print("FillTests: " + summary)
+        XCTAssertTrue(differences.isEmpty, "\(differences.count) fills differ from KiCad's:\n" + differences.prefix(40).joined(separator: "\n"))
+    }
+
+    /// The port's fills of the boards `files` against KiCad's (NAME.fills beside each; one without is left out): what
+    /// was compared, and each difference
+    static func compare(_ files: [URL]) throws -> (summary: String, differences: [String]) {
         var boards = 0, zones = 0, layers = 0, polygons = 0, points = 0, unsupportedBoards = 0
         var differences: [String] = []
         var unsupported: [String: Int] = [:]
@@ -107,8 +116,7 @@ final class FillTests: XCTestCase {
                 }
             }
         }
-        print("FillTests: \(boards) boards (\(unsupportedBoards) with what the port does not make: \(unsupported.sorted { $0.key < $1.key })), "
-              + "\(zones) zones, \(layers) zone layers, \(polygons) polygons, \(points) points; \(differences.count) differ")
-        XCTAssertTrue(differences.isEmpty, "\(differences.count) fills differ from KiCad's:\n" + differences.prefix(40).joined(separator: "\n"))
+        return ("\(boards) boards (\(unsupportedBoards) with what the port does not make: \(unsupported.sorted { $0.key < $1.key })), "
+                + "\(zones) zones, \(layers) zone layers, \(polygons) polygons, \(points) points; \(differences.count) differ", differences)
     }
 }

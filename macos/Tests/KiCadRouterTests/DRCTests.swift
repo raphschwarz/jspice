@@ -15,13 +15,14 @@ import KiCadKit
 /// runs the port once got wrong: a net tie's pad of arcs against items of no net, a footprint reaching a keepout's box
 /// by its texts only) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
 /// KiCad cannot compile, whose rules before the one it cannot it keeps, one it cannot read, one of the filler's
-/// constraints, and three of rules.py's). A board with a rules file beside it (NAME.kicad_dru, rules.py's) is checked
+/// constraints, and three of rules.py's) and Fixtures/zoneedits (zones with holes and rule areas, footprints of every
+/// pad shape on both sides, locked items: properties.py --draw). A board with a rules file beside it (NAME.kicad_dru, rules.py's) is checked
 /// by its rules, as kicad-cli checks it; one whose rules the port does not follow as KiCad's do (BoardDRC.unsupported)
 /// is left out, and counted.
 final class DRCTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards", "courtyards", "outlines", "thermals", "copper", "texts", "silk", "regressions", "rules"].compactMap {
+        return ["boards", "courtyards", "outlines", "thermals", "copper", "texts", "silk", "regressions", "rules", "zoneedits"].compactMap {
             Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures")
         }
     }
@@ -43,6 +44,15 @@ final class DRCTests: XCTestCase {
         defer { BoardDRC.disallowByEngine = false }
         let files = try Self.folders.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) }
             .filter { $0.pathExtension == "kicad_pcb" }.sorted { $0.path < $1.path }
+        let (summary, boards, differences) = try Self.compare(files)
+        print("DRCTests: " + summary)
+        XCTAssertGreaterThan(boards, 0)
+        XCTAssert(differences.isEmpty, "\(differences.count) differences from KiCad's DRC:\n" + differences.prefix(30).joined(separator: "\n"))
+    }
+
+    /// BoardDRC of the boards `files` against kicad-cli's (NAME.drc beside each; one without is left out): what was
+    /// compared, how many boards, and each difference
+    static func compare(_ files: [URL]) throws -> (summary: String, boards: Int, differences: [String]) {
         var boards = 0, found = 0, exactUnconnected = 0, descriptions = 0, ambiguousBoards = 0, unsureFound = 0
         var ruleBoards = 0, unsupportedBoards = 0
         var unsupported: [String: Int] = [:]
@@ -240,15 +250,14 @@ final class DRCTests: XCTestCase {
         if let path = ProcessInfo.processInfo.environment["DRC_DIFFERENCES"] {
             try? all.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
         }
-        print("DRCTests: \(boards) boards (\(ruleBoards) with rules of their own"
+        let summary = ("\(boards) boards (\(ruleBoards) with rules of their own"
               + (unsupportedBoards > 0 ? ", \(unsupportedBoards) with what the port does not follow: \(unsupported.sorted { $0.key < $1.key })" : "")
               + "), \(found) violations of the checks made: "
               + byType.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }.joined(separator: ", ")
               + " (\(exactUnconnected) of the missing connections between the same items as KiCad's)"
               + (ambiguousBoards > 0 ? "; \(ambiguousBoards) boards with arcs KiCad may join or not, their connections not compared" : "")
               + (unsureFound > 0 ? "; \(unsureFound) violations KiCad may find or not left out" : ""))
-        XCTAssertGreaterThan(boards, 0)
-        XCTAssert(differences.isEmpty, "\(differences.count) differences from KiCad's DRC:\n" + differences.prefix(30).joined(separator: "\n"))
+        return (summary, boards, differences)
     }
 
     /// What `a` has more of than `b` (as multisets)
