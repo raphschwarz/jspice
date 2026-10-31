@@ -1,7 +1,8 @@
 // Ported from KiCad 10.0.7: pcbnew/teardrop/teardrop.cpp (TEARDROP_MANAGER: UpdateTeardrops on a full update, its
 // teardrops on pads and vias, tracks crossing them, AddTeardropsOnTracks, setTeardropPriorities, createTeardrop and
-// createTeardropMask, createAndAddTeardropWithMask, tryCreateTrackTeardrop, teardropUuid, maskUuidFor,
-// buildCrossingStub), pcbnew/teardrop/teardrop_utils.cpp (all of it: GetWidth, IsRound, BuildTrackCaches,
+// createTeardropMask, createAndAddTeardropWithMask, tryCreateTrackTeardrop, teardropUuid, maskUuidFor, and
+// buildCrossingStub as KiCad 10.0.8 changed it, the one change 10.0.8 made to the teardrop manager),
+// pcbnew/teardrop/teardrop_utils.cpp (all of it: GetWidth, IsRound, BuildTrackCaches,
 // ensureCopperIndex, copperNetcode, pairClearance, zoneConnections, areItemsInSameZone, collidesWithOtherNets,
 // computeFittedTeardropPolygon, computeChordThroughShape, findTouchingTrack, computeCurvedForRoundShape,
 // computeCornerTangentControlPoint, isPointOnOvalEnd, isPointOnRoundedCorner, computeCurvedForRectShape,
@@ -609,15 +610,22 @@ public final class Teardrops {
         }
     }
 
-    /// buildCrossingStub: a segment of the track's layer, width and net from one of its ends (set after) to `end`
-    private func buildCrossingStub(_ track: BoardDRC.CopperItem, _ end: IPoint) -> BoardDRC.CopperItem {
+    /// buildCrossingStub as KiCad 10.0.8 has it: a segment of the track's layer, width and net from one of its ends
+    /// (set after) to the point of the track's centreline nearest `crossedPos` (SEG::NearestPoint, or for an arc
+    /// SHAPE_ARC::NearestPoint), so that the teardrop follows the track however far off the pad's or via's centre it
+    /// crosses (10.0.7 aimed it at `crossedPos` itself)
+    private func buildCrossingStub(_ track: BoardDRC.CopperItem, _ crossedPos: IPoint) -> BoardDRC.CopperItem {
         let stub = BoardDRC.CopperItem(kind: .track, uuid: "")
         stub.layers = track.layers
         stub.trackWidth = track.trackWidth
         stub.net = track.net
         stub.netName = track.netName
         stub.netIdentity = track.netIdentity
-        stub.trackEnd = end
+        if track.kind == .arc {
+            stub.trackEnd = ShapeArc(start: track.trackStart, mid: track.trackMid, end: track.trackEnd, width: 0).nearestPoint(crossedPos)
+        } else {
+            stub.trackEnd = Seg(track.trackStart, track.trackEnd).nearestPoint(crossedPos)
+        }
         return stub
     }
 

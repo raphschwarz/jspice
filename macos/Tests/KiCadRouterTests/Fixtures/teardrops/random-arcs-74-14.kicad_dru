@@ -1,0 +1,33 @@
+(version 1)
+
+(rule r0
+  (condition "A.Size_X > 0.5mm")
+  (constraint hole_size (min 0.55mm) (max 0.59mm))
+)
+
+(rule r1
+  (condition "(A.isPlated() && A.intersectsFrontCourtyard('U5') && A.Type == 'Graphic')")
+  (constraint assertion "A.intersectsArea('Keepout 1')")
+)
+
+(rule r2
+  (condition "A.existsOnLayer('B.Cu')")
+  (constraint annular_width (min 0.28mm) (max 0.45mm))
+)
+
+(rule r3
+  (condition "A.memberOfSheet('/') && (A.inDiffPair('*') || A.Type != 'Track')")
+  (constraint assertion "A.Type != 'Pad'")
+)
+
+(rule r4
+  (condition "A.isPlated()")
+  (constraint assertion "(A.isPlated() || A.Layer == 'F.Cu')")
+)
+
+(rule r5
+  (layer 'F.Cu')
+  (condition "((B.Pad_Number == '4' || A.Type == 'pad') && B.intersectsFrontCourtyard('U7'))")
+  (constraint assertion "A.Pad_Type == 'Edge connector'")
+  (constraint hole_clearance (min 0.31mm))
+)

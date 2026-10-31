@@ -549,9 +549,11 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   going on into a second at a random bend, or arcs, on any layer, now and then another net's track or via close by;
   track ends of two widths; now and then a zone of a net, filled. `KICAD_TEARDROP_REFERENCE` names a folder of them
   (it has none of the other references `KICAD_BOARD_REFERENCE`'s boards have). `Tests/KiCadRouterTests/Fixtures/
-  teardrops` holds `drawn` (`--draw`), `teardrops-1-1` (`--boards ... 2 1`) and three of the CI's random boards of its
-  run 49 (`random-49-20`, `random-arcs-49-3` and `custom-49-0`, of `boards.py ... 49`, `--arcs` and `--custom-pads`),
-  with `teardrops.py --random 49`.
+  teardrops` holds `drawn` (`--draw`, made with KiCad 10.0.7: 10.0.8's one change to teardrops changes none of its)
+  and four boards of the CI's run 74, made with KiCad 10.0.8 (whose teardrops on a track across a pad or via off its
+  centre follow the track's centreline, as 10.0.7's did not): `teardrops-74-0` (`--boards ... 10 74`) and
+  `random-74-25`, `random-arcs-74-14` and `custom-74-18` (of `boards.py ... 74`, `--arcs` and `--custom-pads`, with
+  `teardrops.py --random 74`), each `.teardrops` without the board pcbnew saved (its `board`).
 - `thermals.py`: a board of thermal reliefs for `DRCTests`' starved thermals (`thermals.py OUT.kicad_pcb [SEED]`):
   pads of a zone's net in its fill (filled by KiCad's zone filler), their spokes cut off by tracks of other nets and
   the board's edge, the board asking three spokes of each; pads joined solidly or not at all by the pad or its
