@@ -1,0 +1,34 @@
+(version 1)
+
+(rule r0
+  (condition "A.Via_Type != 'Buried'")
+  (constraint assertion "A.isCoupledDiffPair() || A.Size_Y <= 0.8mm")
+)
+
+(rule r1
+  (layer F.Cu)
+  (condition "A.NetClass == 'Clock'")
+  (constraint assertion "A.Layer == 'In*.Cu'")
+)
+
+(rule r2
+  (condition "A.intersectsFrontCourtyard('U*')")
+  (constraint annular_width (min 0.27mm))
+)
+
+(rule r3
+  (condition "A.NetClass == 'Default'")
+  (constraint hole_size (min 0.29mm))
+)
+
+(rule r4
+  (layer F.Cu)
+  (condition "!A.Locked")
+  (constraint assertion "!(A.NetClass == 'Digital')")
+)
+
+(rule r5
+  (condition "A.isCoupledDiffPair()")
+  (constraint assertion "A.Hole_Size_Y < 0.28mm")
+  (severity ignore)
+)

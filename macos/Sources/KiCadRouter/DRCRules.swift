@@ -302,6 +302,12 @@ extension BoardDRC {
         r.bbox = b.bbox
         r.netClass = ruleNetClass("")
         r.netCode = 0
+        // (a drawing on copper is a BOARD_CONNECTED_ITEM: its net, as the copper checks read it)
+        if kind == .shape, let cu = copperItem(b.uuid, c), cu.net > 0 {
+            r.netCode = cu.net
+            r.netName = cu.netName
+            r.netClass = ruleNetClass(cu.netName)
+        }
         if let node = b.node { r.properties["Locked"] = .bool(node.value("locked") == "yes" || node.flag("locked")) }
         if kind == .field, let name = b.node?.text(at: 0) { r.properties["Name"] = .string(name) }
         ruleState.byKey[key] = r
