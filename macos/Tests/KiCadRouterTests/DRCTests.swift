@@ -13,7 +13,8 @@ import KiCadKit
 /// silkscreen over each other), Fixtures/silk (silkscreen of every kind over pads, vias, tracks, mask and itself,
 /// across the board's edges; with a silk clearance, and with a minimum mask web), Fixtures/regressions (boards of CI
 /// runs the port once got wrong: a net tie's pad of arcs against items of no net, a footprint reaching a keepout's box
-/// by its texts only, a copper circle of a net that a rule's assertion names by its net class) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
+/// by its texts only, a copper circle of a net that a rule's assertion names by its net class, a copper rectangle a rule asks
+/// hasExactNetclass of, a footprint's edge near copper under a rule of a wider edge clearance than the board's) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
 /// KiCad cannot compile, whose rules before the one it cannot it keeps, one it cannot read, one of the filler's
 /// constraints, and three of rules.py's) and Fixtures/zoneedits (zones with holes and rule areas, footprints of every
 /// pad shape on both sides, locked items: properties.py --draw). A board with a rules file beside it (NAME.kicad_dru, rules.py's) is checked

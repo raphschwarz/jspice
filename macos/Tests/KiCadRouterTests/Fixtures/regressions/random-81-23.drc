@@ -1,0 +1,3920 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.8",
+ "schematic_parity": [],
+ "source": "random-81-23.kicad_pcb",
+ "unconnected_items": [
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 28 [N2] of U6 on F.Cu",
+     "pos": {
+      "x": 133.083337,
+      "y": 70.845919
+     },
+     "uuid": "57b3f529-804c-4657-91dc-7bbae62ecb42"
+    },
+    {
+     "description": "PTH pad 1 [N2] of U9",
+     "pos": {
+      "x": 115.720795,
+      "y": 75.590548
+     },
+     "uuid": "71d867f4-deaf-4779-ba32-bf8e10208844"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 32 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 134.225951,
+      "y": 100.959933
+     },
+     "uuid": "eeb1c38a-dcab-4898-a121-7852777c352d"
+    },
+    {
+     "description": "Pad 34 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 135.225951,
+      "y": 100.959933
+     },
+     "uuid": "5f983540-4c7d-426b-a5ae-f6d0c2205739"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 21 [N2] of U6 on F.Cu",
+     "pos": {
+      "x": 134.833337,
+      "y": 73.877008
+     },
+     "uuid": "8a528512-438b-47e2-8f62-0eb5ca9e0850"
+    },
+    {
+     "description": "Pad 28 [N2] of U6 on F.Cu",
+     "pos": {
+      "x": 133.083337,
+      "y": 70.845919
+     },
+     "uuid": "57b3f529-804c-4657-91dc-7bbae62ecb42"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 34 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 135.225951,
+      "y": 100.959933
+     },
+     "uuid": "5f983540-4c7d-426b-a5ae-f6d0c2205739"
+    },
+    {
+     "description": "Pad 4 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 98.809933
+     },
+     "uuid": "c0c25ec9-93fe-41d4-9c46-627bcbff825c"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 4 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 98.809933
+     },
+     "uuid": "c0c25ec9-93fe-41d4-9c46-627bcbff825c"
+    },
+    {
+     "description": "Pad 4 [N2] of U10 on B.Cu",
+     "pos": {
+      "x": 150.292415,
+      "y": 101.649594
+     },
+     "uuid": "0a53fe56-3456-4883-8c2c-bb37d4c8540e"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Rectangle [N2] on B.Cu",
+     "pos": {
+      "x": 138.897922,
+      "y": 75.153403
+     },
+     "uuid": "f65101c9-51bd-4a3d-9019-17e197e4255d"
+    },
+    {
+     "description": "Pad 21 [N2] of U6 on F.Cu",
+     "pos": {
+      "x": 134.833337,
+      "y": 73.877008
+     },
+     "uuid": "8a528512-438b-47e2-8f62-0eb5ca9e0850"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Rectangle [N2] on B.Cu",
+     "pos": {
+      "x": 138.897922,
+      "y": 75.153403
+     },
+     "uuid": "f65101c9-51bd-4a3d-9019-17e197e4255d"
+    },
+    {
+     "description": "Pad 2 [N2] of U5 on F.Cu",
+     "pos": {
+      "x": 149.160028,
+      "y": 83.37188
+     },
+     "uuid": "b9b8c88e-2747-4cfc-9798-eb4166a78236"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 4 [N2] of U10 on B.Cu",
+     "pos": {
+      "x": 150.292415,
+      "y": 101.649594
+     },
+     "uuid": "0a53fe56-3456-4883-8c2c-bb37d4c8540e"
+    },
+    {
+     "description": "Pad 2 [N2] of U5 on F.Cu",
+     "pos": {
+      "x": 149.160028,
+      "y": 83.37188
+     },
+     "uuid": "b9b8c88e-2747-4cfc-9798-eb4166a78236"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track [SIG1] on F.Cu, length 9.4340 mm",
+     "pos": {
+      "x": 134.229395,
+      "y": 76.13095
+     },
+     "uuid": "a65caff0-493d-41f0-9a95-46a3dfc977ba"
+    },
+    {
+     "description": "Pad 16 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 133.725951,
+      "y": 95.159933
+     },
+     "uuid": "27c4cb13-7dea-49a4-a59c-e6012c60a82d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 3 [SIG1] of U6 on F.Cu",
+     "pos": {
+      "x": 129.426415,
+      "y": 74.111944
+     },
+     "uuid": "d6021da4-ddc2-4227-92c1-66dd382537c1"
+    },
+    {
+     "description": "Pad 15 [SIG1] of U6 on F.Cu",
+     "pos": {
+      "x": 133.796382,
+      "y": 76.38095
+     },
+     "uuid": "8cdfc2e6-b472-4867-8fb9-0a151bd1bf98"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 31 [SIG1] of U6 on F.Cu",
+     "pos": {
+      "x": 131.329395,
+      "y": 71.108002
+     },
+     "uuid": "1f5de467-14ab-4039-8e7e-c3faa2f43185"
+    },
+    {
+     "description": "Pad 3 [SIG1] of U6 on F.Cu",
+     "pos": {
+      "x": 129.426415,
+      "y": 74.111944
+     },
+     "uuid": "d6021da4-ddc2-4227-92c1-66dd382537c1"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 31 [SIG1] of U6 on F.Cu",
+     "pos": {
+      "x": 131.329395,
+      "y": 71.108002
+     },
+     "uuid": "1f5de467-14ab-4039-8e7e-c3faa2f43185"
+    },
+    {
+     "description": "Pad 1 [SIG1] of U2 on B.Cu",
+     "pos": {
+      "x": 136.533414,
+      "y": 61.551909
+     },
+     "uuid": "9ef6dbf3-76f1-4364-99c4-6900264d420d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 27 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 99.809933
+     },
+     "uuid": "536aaf01-2b4b-4594-a259-195fbb93f630"
+    },
+    {
+     "description": "Pad 2 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 99.809933
+     },
+     "uuid": "535bb035-9f03-4588-9ed2-a268297969ab"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 28 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 100.309933
+     },
+     "uuid": "76bebc79-df4c-4c24-a52f-4098a1f5e36a"
+    },
+    {
+     "description": "Pad 27 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 99.809933
+     },
+     "uuid": "536aaf01-2b4b-4594-a259-195fbb93f630"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 16 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 133.725951,
+      "y": 95.159933
+     },
+     "uuid": "27c4cb13-7dea-49a4-a59c-e6012c60a82d"
+    },
+    {
+     "description": "Pad 12 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 135.725951,
+      "y": 95.159933
+     },
+     "uuid": "126909c3-a15a-4016-a5cf-5f506d859ff8"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 8 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 96.809933
+     },
+     "uuid": "4ae71b53-47f6-46af-a843-2aff578d60e9"
+    },
+    {
+     "description": "Pad 12 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 135.725951,
+      "y": 95.159933
+     },
+     "uuid": "126909c3-a15a-4016-a5cf-5f506d859ff8"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 6 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 97.809933
+     },
+     "uuid": "be09e6ee-b002-4a65-b54e-f90675724be6"
+    },
+    {
+     "description": "Pad 8 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 96.809933
+     },
+     "uuid": "4ae71b53-47f6-46af-a843-2aff578d60e9"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 99.809933
+     },
+     "uuid": "535bb035-9f03-4588-9ed2-a268297969ab"
+    },
+    {
+     "description": "Pad 6 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 97.809933
+     },
+     "uuid": "be09e6ee-b002-4a65-b54e-f90675724be6"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [SIG1] of U8 on F.Cu",
+     "pos": {
+      "x": 142.197026,
+      "y": 55.193322
+     },
+     "uuid": "bbe9f81e-a829-4e14-898e-0fdbc68aa4c0"
+    },
+    {
+     "description": "Pad 1 [SIG1] of U2 on B.Cu",
+     "pos": {
+      "x": 136.533414,
+      "y": 61.551909
+     },
+     "uuid": "9ef6dbf3-76f1-4364-99c4-6900264d420d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 3 [SIG1] of U10 on B.Cu",
+     "pos": {
+      "x": 152.492415,
+      "y": 101.649594
+     },
+     "uuid": "855cda32-cccf-4193-bae4-743f2113ccf9"
+    },
+    {
+     "description": "Pad 2 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 99.809933
+     },
+     "uuid": "535bb035-9f03-4588-9ed2-a268297969ab"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "PTH pad 1 [SIG1] of U4",
+     "pos": {
+      "x": 160.430046,
+      "y": 55.282535
+     },
+     "uuid": "69ba4e21-a882-46a2-92df-02fa34d613e3"
+    },
+    {
+     "description": "Pad 1 [SIG1] of U8 on F.Cu",
+     "pos": {
+      "x": 142.197026,
+      "y": 55.193322
+     },
+     "uuid": "bbe9f81e-a829-4e14-898e-0fdbc68aa4c0"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "PTH pad 1 [SIG1] of U4",
+     "pos": {
+      "x": 160.430046,
+      "y": 64.172535
+     },
+     "uuid": "83563c00-2b74-47a6-8b39-b7ff491f5ae4"
+    },
+    {
+     "description": "PTH pad 1 [SIG1] of U4",
+     "pos": {
+      "x": 160.430046,
+      "y": 55.282535
+     },
+     "uuid": "69ba4e21-a882-46a2-92df-02fa34d613e3"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [PWR1] of U14 on B.Cu",
+     "pos": {
+      "x": 108.260069,
+      "y": 85.092741
+     },
+     "uuid": "d96eec18-28ae-48ba-ae92-3e7be644e9e6"
+    },
+    {
+     "description": "Pad 2 [PWR1] of U14 on B.Cu",
+     "pos": {
+      "x": 111.460069,
+      "y": 85.092741
+     },
+     "uuid": "39d15c76-718a-4f71-92b7-d18ad40239f8"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [PWR1] of U14 on B.Cu",
+     "pos": {
+      "x": 111.460069,
+      "y": 85.092741
+     },
+     "uuid": "39d15c76-718a-4f71-92b7-d18ad40239f8"
+    },
+    {
+     "description": "Pad 2 [PWR1] of U3 on B.Cu",
+     "pos": {
+      "x": 124.272048,
+      "y": 94.416157
+     },
+     "uuid": "4d36d516-24ba-4daf-9906-5082915ba5ac"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [PWR1] of U3 on B.Cu",
+     "pos": {
+      "x": 124.272048,
+      "y": 94.416157
+     },
+     "uuid": "4d36d516-24ba-4daf-9906-5082915ba5ac"
+    },
+    {
+     "description": "Pad 12 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 132.497344,
+      "y": 77.13095
+     },
+     "uuid": "bfcaa75b-5325-4016-8b9c-66ac067313ee"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 32 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 130.896382,
+      "y": 71.358002
+     },
+     "uuid": "d9cc928f-3626-4e95-9fa7-e1dff43442e6"
+    },
+    {
+     "description": "Pad 12 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 132.497344,
+      "y": 77.13095
+     },
+     "uuid": "bfcaa75b-5325-4016-8b9c-66ac067313ee"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [PWR1] of U8 on F.Cu",
+     "pos": {
+      "x": 142.197026,
+      "y": 53.318322
+     },
+     "uuid": "b03dc50c-620a-409a-88f3-b7d9cf472a8e"
+    },
+    {
+     "description": "Pad 32 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 130.896382,
+      "y": 71.358002
+     },
+     "uuid": "d9cc928f-3626-4e95-9fa7-e1dff43442e6"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [PWR1] of U5 on F.Cu",
+     "pos": {
+      "x": 149.160028,
+      "y": 82.41188
+     },
+     "uuid": "0a07579b-5d80-4750-8aac-d5c366cc5a0c"
+    },
+    {
+     "description": "Pad 12 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 132.497344,
+      "y": 77.13095
+     },
+     "uuid": "bfcaa75b-5325-4016-8b9c-66ac067313ee"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Rectangle [PWR1] on F.Cu",
+     "pos": {
+      "x": 160.645337,
+      "y": 97.344463
+     },
+     "uuid": "510e6693-2d3c-4175-9754-0babeeebd5a3"
+    },
+    {
+     "description": "Pad 1 [PWR1] of U5 on F.Cu",
+     "pos": {
+      "x": 149.160028,
+      "y": 82.41188
+     },
+     "uuid": "0a07579b-5d80-4750-8aac-d5c366cc5a0c"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [N3] of U3 on B.Cu",
+     "pos": {
+      "x": 124.698952,
+      "y": 96.037191
+     },
+     "uuid": "610179f3-c1e0-45fd-afe8-ec737f83728c"
+    },
+    {
+     "description": "Pad 20 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 96.309933
+     },
+     "uuid": "d65aa0d7-d17f-4e1e-9984-97f1900e0bbb"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 24 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 98.309933
+     },
+     "uuid": "26ead2b7-54d6-40f8-865c-1f7c67812bdb"
+    },
+    {
+     "description": "Pad 20 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 96.309933
+     },
+     "uuid": "d65aa0d7-d17f-4e1e-9984-97f1900e0bbb"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 24 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 98.309933
+     },
+     "uuid": "26ead2b7-54d6-40f8-865c-1f7c67812bdb"
+    },
+    {
+     "description": "Pad 1 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 100.309933
+     },
+     "uuid": "c264a2d5-73d1-4e4c-8752-e4f4a5e4aa2f"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 17 [N3] of U6 on F.Cu",
+     "pos": {
+      "x": 134.662408,
+      "y": 75.88095
+     },
+     "uuid": "fbc52fb6-26ad-436f-b9c1-04c854fc8b1f"
+    },
+    {
+     "description": "Pad 33 [N3] of U6 on F.Cu",
+     "pos": {
+      "x": 130.46337,
+      "y": 71.608002
+     },
+     "uuid": "4ffeb217-871d-4bc0-b8b8-dfa1fa7fab0b"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 17 [N3] of U6 on F.Cu",
+     "pos": {
+      "x": 134.662408,
+      "y": 75.88095
+     },
+     "uuid": "fbc52fb6-26ad-436f-b9c1-04c854fc8b1f"
+    },
+    {
+     "description": "Pad 20 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 96.309933
+     },
+     "uuid": "d65aa0d7-d17f-4e1e-9984-97f1900e0bbb"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 100.309933
+     },
+     "uuid": "c264a2d5-73d1-4e4c-8752-e4f4a5e4aa2f"
+    },
+    {
+     "description": "Pad 2 [N3] of U10 on B.Cu",
+     "pos": {
+      "x": 152.492415,
+      "y": 99.949594
+     },
+     "uuid": "25a3016a-4e7b-4933-a808-15071e3039da"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [N3] of U2 on B.Cu",
+     "pos": {
+      "x": 137.033414,
+      "y": 63.151909
+     },
+     "uuid": "23558396-904e-42a8-805c-67e7ee668da5"
+    },
+    {
+     "description": "Pad 33 [N3] of U6 on F.Cu",
+     "pos": {
+      "x": 130.46337,
+      "y": 71.608002
+     },
+     "uuid": "4ffeb217-871d-4bc0-b8b8-dfa1fa7fab0b"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "PTH pad 1 [N3] of U4",
+     "pos": {
+      "x": 157.380046,
+      "y": 59.727535
+     },
+     "uuid": "5af6549c-3758-437f-bdf4-507d36586e36"
+    },
+    {
+     "description": "Pad 2 [N3] of U2 on B.Cu",
+     "pos": {
+      "x": 137.033414,
+      "y": 63.151909
+     },
+     "uuid": "23558396-904e-42a8-805c-67e7ee668da5"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [/sub/clk] of U14 on B.Cu",
+     "pos": {
+      "x": 109.860069,
+      "y": 85.592741
+     },
+     "uuid": "5bc84ec9-133d-4167-830b-49f1f2d0e583"
+    },
+    {
+     "description": "Pad 2 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 129.176415,
+      "y": 73.678932
+     },
+     "uuid": "49eed0b0-3517-4631-9f7a-5c821ddfc449"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 129.176415,
+      "y": 73.678932
+     },
+     "uuid": "49eed0b0-3517-4631-9f7a-5c821ddfc449"
+    },
+    {
+     "description": "Pad 1 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 128.926415,
+      "y": 73.245919
+     },
+     "uuid": "bfbe9dd1-e6ed-4dd5-916c-61ba024fe504"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 129.176415,
+      "y": 73.678932
+     },
+     "uuid": "49eed0b0-3517-4631-9f7a-5c821ddfc449"
+    },
+    {
+     "description": "Pad 8 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 130.676415,
+      "y": 76.277008
+     },
+     "uuid": "5a1d16e1-7afa-4d06-8350-8a7a24df8b8a"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 10 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 131.176415,
+      "y": 77.143033
+     },
+     "uuid": "d4ba65fc-fd91-4059-8a3e-373cc05a2f8d"
+    },
+    {
+     "description": "Pad 8 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 130.676415,
+      "y": 76.277008
+     },
+     "uuid": "5a1d16e1-7afa-4d06-8350-8a7a24df8b8a"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 21 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 96.809933
+     },
+     "uuid": "fd9b8d5a-2da0-4cf0-93f4-aa8b612e49c3"
+    },
+    {
+     "description": "Pad 23 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 97.809933
+     },
+     "uuid": "c393d87c-34dd-4872-815d-f5f5b6d6ec2d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 21 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 96.809933
+     },
+     "uuid": "fd9b8d5a-2da0-4cf0-93f4-aa8b612e49c3"
+    },
+    {
+     "description": "Pad 10 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 131.176415,
+      "y": 77.143033
+     },
+     "uuid": "d4ba65fc-fd91-4059-8a3e-373cc05a2f8d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 23 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 97.809933
+     },
+     "uuid": "c393d87c-34dd-4872-815d-f5f5b6d6ec2d"
+    },
+    {
+     "description": "Pad 33 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 134.725951,
+      "y": 100.959933
+     },
+     "uuid": "b894e1d6-e28f-4f97-b020-1e72959c45fd"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 13 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 132.930357,
+      "y": 76.88095
+     },
+     "uuid": "d7c011e1-b316-4384-92c7-a38493ca9f25"
+    },
+    {
+     "description": "Pad 10 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 131.176415,
+      "y": 77.143033
+     },
+     "uuid": "d4ba65fc-fd91-4059-8a3e-373cc05a2f8d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 27 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 133.333337,
+      "y": 71.278932
+     },
+     "uuid": "26cdce49-a6bb-45c6-ac4d-64c2b77f37b9"
+    },
+    {
+     "description": "Pad 2 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 129.176415,
+      "y": 73.678932
+     },
+     "uuid": "49eed0b0-3517-4631-9f7a-5c821ddfc449"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 36 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 136.225951,
+      "y": 100.959933
+     },
+     "uuid": "87236784-5cf4-41cc-a06b-d8a8db7e1588"
+    },
+    {
+     "description": "Pad 33 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 134.725951,
+      "y": 100.959933
+     },
+     "uuid": "b894e1d6-e28f-4f97-b020-1e72959c45fd"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 36 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 136.225951,
+      "y": 100.959933
+     },
+     "uuid": "87236784-5cf4-41cc-a06b-d8a8db7e1588"
+    },
+    {
+     "description": "Pad 3 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 99.309933
+     },
+     "uuid": "c15c85d2-f0d9-492d-9420-55f9bccb6749"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 2 [/sub/clk] of U2 on B.Cu",
+     "pos": {
+      "x": 137.033414,
+      "y": 59.951909
+     },
+     "uuid": "7e6cab93-527f-411e-9a60-62b1c0c3207c"
+    },
+    {
+     "description": "Pad 27 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 133.333337,
+      "y": 71.278932
+     },
+     "uuid": "26cdce49-a6bb-45c6-ac4d-64c2b77f37b9"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Via [/sub/clk] on F.Cu - B.Cu",
+     "pos": {
+      "x": 144.143168,
+      "y": 101.953641
+     },
+     "uuid": "53617d66-7f23-43e3-833f-aad5c8004bee"
+    },
+    {
+     "description": "Pad 1 [/sub/clk] of U10 on B.Cu",
+     "pos": {
+      "x": 150.292415,
+      "y": 99.949594
+     },
+     "uuid": "888ec9f1-c143-4e5a-b0ac-a0354472cb7d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Via [/sub/clk] on F.Cu - B.Cu",
+     "pos": {
+      "x": 144.143168,
+      "y": 101.953641
+     },
+     "uuid": "53617d66-7f23-43e3-833f-aad5c8004bee"
+    },
+    {
+     "description": "Pad 3 [/sub/clk] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 99.309933
+     },
+     "uuid": "c15c85d2-f0d9-492d-9420-55f9bccb6749"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 1 [/sub/clk] of U10 on B.Cu",
+     "pos": {
+      "x": 150.292415,
+      "y": 99.949594
+     },
+     "uuid": "888ec9f1-c143-4e5a-b0ac-a0354472cb7d"
+    },
+    {
+     "description": "Pad 1 [/sub/clk] of U7 on F.Cu",
+     "pos": {
+      "x": 154.082863,
+      "y": 90.486079
+     },
+     "uuid": "d105a0dd-c4ad-481e-afdb-c8198ddeec83"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 35 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.597344,
+      "y": 72.108002
+     },
+     "uuid": "42726418-ac2d-4f4a-b4b5-a9ccc2e649e7"
+    },
+    {
+     "description": "Pad 36 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.164332,
+      "y": 72.358002
+     },
+     "uuid": "dc547be6-fc9e-4ff1-bc46-f44187ee0fbd"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 35 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.597344,
+      "y": 72.108002
+     },
+     "uuid": "42726418-ac2d-4f4a-b4b5-a9ccc2e649e7"
+    },
+    {
+     "description": "Pad 37 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 131.599876,
+      "y": 73.076489
+     },
+     "uuid": "39d31a78-32dd-4b3c-ade2-760780dacf99"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 4 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.676415,
+      "y": 74.544957
+     },
+     "uuid": "fdf209a1-2352-4713-9119-ed78fc0de860"
+    },
+    {
+     "description": "Pad 36 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.164332,
+      "y": 72.358002
+     },
+     "uuid": "dc547be6-fc9e-4ff1-bc46-f44187ee0fbd"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 37 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 131.599876,
+      "y": 73.076489
+     },
+     "uuid": "39d31a78-32dd-4b3c-ade2-760780dacf99"
+    },
+    {
+     "description": "Pad 38 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 132.752376,
+      "y": 75.072678
+     },
+     "uuid": "4d696df9-af21-4462-bf1b-0cd590fcf430"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 37 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 131.599876,
+      "y": 73.076489
+     },
+     "uuid": "39d31a78-32dd-4b3c-ade2-760780dacf99"
+    },
+    {
+     "description": "Pad 24 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 134.083337,
+      "y": 72.57797
+     },
+     "uuid": "e7db9252-2b3d-4ecf-b81f-7848f4ecb0bb"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 25 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 98.809933
+     },
+     "uuid": "b5011a29-27d3-44e3-b491-9fe70ef0b436"
+    },
+    {
+     "description": "Pad 37 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 134.475951,
+      "y": 99.119933
+     },
+     "uuid": "7787a6f8-e7a9-412f-97e9-b642bc7dce37"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 38 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 132.752376,
+      "y": 75.072678
+     },
+     "uuid": "4d696df9-af21-4462-bf1b-0cd590fcf430"
+    },
+    {
+     "description": "Pad 13 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 135.225951,
+      "y": 95.159933
+     },
+     "uuid": "f9448a98-f686-4fba-a303-9777f5d2e642"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 38 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 134.475951,
+      "y": 96.814933
+     },
+     "uuid": "10824c69-7d02-42cf-a38f-534b2860c784"
+    },
+    {
+     "description": "Pad 13 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 135.225951,
+      "y": 95.159933
+     },
+     "uuid": "f9448a98-f686-4fba-a303-9777f5d2e642"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Pad 38 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 134.475951,
+      "y": 96.814933
+     },
+     "uuid": "10824c69-7d02-42cf-a38f-534b2860c784"
+    },
+    {
+     "description": "Pad 37 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 134.475951,
+      "y": 99.119933
+     },
+     "uuid": "7787a6f8-e7a9-412f-97e9-b642bc7dce37"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  }
+ ],
+ "violations": [
+  {
+   "description": "Front solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [SIG1] on F.Cu, length 9.4340 mm",
+     "pos": {
+      "x": 134.229395,
+      "y": 76.13095
+     },
+     "uuid": "a65caff0-493d-41f0-9a95-46a3dfc977ba"
+    },
+    {
+     "description": "Pad 14 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 133.36337,
+      "y": 76.63095
+     },
+     "uuid": "32dc50d2-fcdf-48a6-903f-8e1499c0d351"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Front solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "Track [SIG1] on F.Cu, length 9.4340 mm",
+     "pos": {
+      "x": 134.229395,
+      "y": 76.13095
+     },
+     "uuid": "a65caff0-493d-41f0-9a95-46a3dfc977ba"
+    },
+    {
+     "description": "Pad 16 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 134.229395,
+      "y": 76.13095
+     },
+     "uuid": "5f9a8a53-6862-4aff-be3c-2ac2956da372"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Board has malformed outline (not a closed shape) (gap 3.4000 mm)",
+   "items": [
+    {
+     "description": "Segment of U14 on Edge.Cuts",
+     "pos": {
+      "x": 111.610069,
+      "y": 79.092741
+     },
+     "uuid": "d89eaf91-212c-4fa0-b1cc-919067ff4465"
+    },
+    {
+     "description": "Segment of U14 on Edge.Cuts",
+     "pos": {
+      "x": 108.110069,
+      "y": 83.592741
+     },
+     "uuid": "659df091-d209-4c74-850a-0fc7200915de"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Board has malformed outline (not a closed shape) (gap 3.4000 mm)",
+   "items": [
+    {
+     "description": "Segment of U3 on Edge.Cuts",
+     "pos": {
+      "x": 118.285029,
+      "y": 93.994133
+     },
+     "uuid": "b207a2d5-6a73-4e51-a19b-1005fc45b399"
+    },
+    {
+     "description": "Segment of U3 on Edge.Cuts",
+     "pos": {
+      "x": 122.621626,
+      "y": 97.694664
+     },
+     "uuid": "f99e9681-6675-4174-a9ae-adc420352725"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Board has malformed outline (not a closed shape) (gap 3.4000 mm)",
+   "items": [
+    {
+     "description": "Segment of U2 on Edge.Cuts",
+     "pos": {
+      "x": 143.033414,
+      "y": 63.301909
+     },
+     "uuid": "5ef9cfc0-cc26-4586-b563-5fba932c18ca"
+    },
+    {
+     "description": "Segment of U2 on Edge.Cuts",
+     "pos": {
+      "x": 138.533414,
+      "y": 59.801909
+     },
+     "uuid": "0c4f86d4-40dd-4d0f-bddc-cb247be629e5"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 25 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 133.833337,
+      "y": 72.144957
+     },
+     "uuid": "4f7cf1e5-3cc9-4a25-8426-508648aa18fa"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 132.484395,
+      "y": 73.108521
+     },
+     "uuid": "695fd6e8-5f26-4a6b-bd14-3c080600c54e"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [SIG1] of U13 on F.Paste",
+     "pos": {
+      "x": 133.728451,
+      "y": 97.184933
+     },
+     "uuid": "8c1d008b-158a-4d4d-9831-35e8f37fe880"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 16 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 133.725951,
+      "y": 95.159933
+     },
+     "uuid": "27c4cb13-7dea-49a4-a59c-e6012c60a82d"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [PWR1] of U13 on F.Paste",
+     "pos": {
+      "x": 135.223451,
+      "y": 96.434933
+     },
+     "uuid": "c77e623b-a058-43bf-9eee-d853429bb87b"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 25 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 133.833337,
+      "y": 72.144957
+     },
+     "uuid": "4f7cf1e5-3cc9-4a25-8426-508648aa18fa"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 132.484395,
+      "y": 73.108521
+     },
+     "uuid": "695fd6e8-5f26-4a6b-bd14-3c080600c54e"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 1 [SIG1] of U2 on B.Cu",
+     "pos": {
+      "x": 136.533414,
+      "y": 61.551909
+     },
+     "uuid": "9ef6dbf3-76f1-4364-99c4-6900264d420d"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [N3] of U2 on B.Cu",
+     "pos": {
+      "x": 137.033414,
+      "y": 63.151909
+     },
+     "uuid": "23558396-904e-42a8-805c-67e7ee668da5"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 2 [N3] of U2 on B.Cu",
+     "pos": {
+      "x": 137.033414,
+      "y": 63.151909
+     },
+     "uuid": "23558396-904e-42a8-805c-67e7ee668da5"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [PWR1] of U3 on B.Cu",
+     "pos": {
+      "x": 124.272048,
+      "y": 94.416157
+     },
+     "uuid": "4d36d516-24ba-4daf-9906-5082915ba5ac"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [<no net>] of U3 on B.Cu",
+     "pos": {
+      "x": 124.126886,
+      "y": 97.612863
+     },
+     "uuid": "061ff26d-a009-43ff-9f4b-cb28d30f2954"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 1 [N3] of U3 on B.Cu",
+     "pos": {
+      "x": 124.698952,
+      "y": 96.037191
+     },
+     "uuid": "610179f3-c1e0-45fd-afe8-ec737f83728c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "PTH pad 1 [SIG1] of U4",
+     "pos": {
+      "x": 160.430046,
+      "y": 55.282535
+     },
+     "uuid": "69ba4e21-a882-46a2-92df-02fa34d613e3"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "PTH pad 1 [SIG1] of U4",
+     "pos": {
+      "x": 160.430046,
+      "y": 64.172535
+     },
+     "uuid": "83563c00-2b74-47a6-8b39-b7ff491f5ae4"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "PTH pad 1 [N3] of U4",
+     "pos": {
+      "x": 157.380046,
+      "y": 59.727535
+     },
+     "uuid": "5af6549c-3758-437f-bdf4-507d36586e36"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "NPTH pad of U11",
+     "pos": {
+      "x": 146.917707,
+      "y": 57.730449
+     },
+     "uuid": "a2120192-f0d5-4f83-964e-c0dadf950a2c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "PTH pad 1 [N3] of U4",
+     "pos": {
+      "x": 157.380046,
+      "y": 59.727535
+     },
+     "uuid": "5af6549c-3758-437f-bdf4-507d36586e36"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "NPTH pad of U11",
+     "pos": {
+      "x": 146.917707,
+      "y": 57.730449
+     },
+     "uuid": "a2120192-f0d5-4f83-964e-c0dadf950a2c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 4 [N2] of U10 on B.Cu",
+     "pos": {
+      "x": 150.292415,
+      "y": 101.649594
+     },
+     "uuid": "0a53fe56-3456-4883-8c2c-bb37d4c8540e"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [N3] of U10 on B.Cu",
+     "pos": {
+      "x": 152.492415,
+      "y": 99.949594
+     },
+     "uuid": "25a3016a-4e7b-4933-a808-15071e3039da"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 4 [N2] of U10 on B.Cu",
+     "pos": {
+      "x": 150.292415,
+      "y": 101.649594
+     },
+     "uuid": "0a53fe56-3456-4883-8c2c-bb37d4c8540e"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 3 [SIG1] of U10 on B.Cu",
+     "pos": {
+      "x": 152.492415,
+      "y": 101.649594
+     },
+     "uuid": "855cda32-cccf-4193-bae4-743f2113ccf9"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 2 [N3] of U10 on B.Cu",
+     "pos": {
+      "x": 152.492415,
+      "y": 99.949594
+     },
+     "uuid": "25a3016a-4e7b-4933-a808-15071e3039da"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [PWR1] of U14 on B.Cu",
+     "pos": {
+      "x": 108.260069,
+      "y": 85.092741
+     },
+     "uuid": "d96eec18-28ae-48ba-ae92-3e7be644e9e6"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [PWR1] of U14 on B.Cu",
+     "pos": {
+      "x": 111.460069,
+      "y": 85.092741
+     },
+     "uuid": "39d15c76-718a-4f71-92b7-d18ad40239f8"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "PTH pad 1 [<no net>] of U12",
+     "pos": {
+      "x": 120.551582,
+      "y": 85.935874
+     },
+     "uuid": "7aa71e01-44a1-476a-ba6e-00d1dfa36928"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "PTH pad 2 [<no net>] of U12",
+     "pos": {
+      "x": 122.283633,
+      "y": 84.935874
+     },
+     "uuid": "4ef6d888-7ebf-4bc3-a805-6886b0df18e2"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "PTH pad 1 [<no net>] of U12",
+     "pos": {
+      "x": 120.551582,
+      "y": 85.935874
+     },
+     "uuid": "7aa71e01-44a1-476a-ba6e-00d1dfa36928"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [N2] of U5 on F.Cu",
+     "pos": {
+      "x": 149.160028,
+      "y": 83.37188
+     },
+     "uuid": "b9b8c88e-2747-4cfc-9798-eb4166a78236"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 1 [PWR1] of U5 on F.Cu",
+     "pos": {
+      "x": 149.160028,
+      "y": 82.41188
+     },
+     "uuid": "0a07579b-5d80-4750-8aac-d5c366cc5a0c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 2 [N2] of U5 on F.Cu",
+     "pos": {
+      "x": 149.160028,
+      "y": 83.37188
+     },
+     "uuid": "b9b8c88e-2747-4cfc-9798-eb4166a78236"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "PTH pad 2 [<no net>] of U12",
+     "pos": {
+      "x": 122.283633,
+      "y": 84.935874
+     },
+     "uuid": "4ef6d888-7ebf-4bc3-a805-6886b0df18e2"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [<no net>] of U7 on F.Cu",
+     "pos": {
+      "x": 152.207863,
+      "y": 90.486079
+     },
+     "uuid": "f4ffb6b6-f475-4b92-ad11-17e423804a1d"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 2 [<no net>] of U7 on F.Cu",
+     "pos": {
+      "x": 152.207863,
+      "y": 90.486079
+     },
+     "uuid": "f4ffb6b6-f475-4b92-ad11-17e423804a1d"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 37 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 134.475951,
+      "y": 99.119933
+     },
+     "uuid": "7787a6f8-e7a9-412f-97e9-b642bc7dce37"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 38 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 134.475951,
+      "y": 96.814933
+     },
+     "uuid": "10824c69-7d02-42cf-a38f-534b2860c784"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 34 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 135.225951,
+      "y": 100.959933
+     },
+     "uuid": "5f983540-4c7d-426b-a5ae-f6d0c2205739"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 35 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 135.725951,
+      "y": 100.959933
+     },
+     "uuid": "cc7db76b-b675-4803-aed6-3efb0d7a91d0"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 37 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 134.475951,
+      "y": 99.119933
+     },
+     "uuid": "7787a6f8-e7a9-412f-97e9-b642bc7dce37"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 34 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 135.225951,
+      "y": 100.959933
+     },
+     "uuid": "5f983540-4c7d-426b-a5ae-f6d0c2205739"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 38 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 134.475951,
+      "y": 96.814933
+     },
+     "uuid": "10824c69-7d02-42cf-a38f-534b2860c784"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 35 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 135.725951,
+      "y": 100.959933
+     },
+     "uuid": "cc7db76b-b675-4803-aed6-3efb0d7a91d0"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 32 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 134.225951,
+      "y": 100.959933
+     },
+     "uuid": "eeb1c38a-dcab-4898-a121-7852777c352d"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 30 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 133.225951,
+      "y": 100.959933
+     },
+     "uuid": "c161d333-4ed9-4a5e-8790-8a07c31285be"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 28 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 100.309933
+     },
+     "uuid": "76bebc79-df4c-4c24-a52f-4098a1f5e36a"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 31 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 133.725951,
+      "y": 100.959933
+     },
+     "uuid": "27e7cfc7-19f9-4d8e-ac59-04004aae69e0"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 30 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 133.225951,
+      "y": 100.959933
+     },
+     "uuid": "c161d333-4ed9-4a5e-8790-8a07c31285be"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 27 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 99.809933
+     },
+     "uuid": "536aaf01-2b4b-4594-a259-195fbb93f630"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 32 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 134.225951,
+      "y": 100.959933
+     },
+     "uuid": "eeb1c38a-dcab-4898-a121-7852777c352d"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 25 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 98.809933
+     },
+     "uuid": "b5011a29-27d3-44e3-b491-9fe70ef0b436"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 31 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 133.725951,
+      "y": 100.959933
+     },
+     "uuid": "27e7cfc7-19f9-4d8e-ac59-04004aae69e0"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 24 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 98.309933
+     },
+     "uuid": "26ead2b7-54d6-40f8-865c-1f7c67812bdb"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 25 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 98.809933
+     },
+     "uuid": "b5011a29-27d3-44e3-b491-9fe70ef0b436"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 20 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 96.309933
+     },
+     "uuid": "d65aa0d7-d17f-4e1e-9984-97f1900e0bbb"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 15 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 134.225951,
+      "y": 95.159933
+     },
+     "uuid": "5ebfa4d7-1a65-41ed-a68b-4e4eeede6a85"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 24 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 98.309933
+     },
+     "uuid": "26ead2b7-54d6-40f8-865c-1f7c67812bdb"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 17 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 133.225951,
+      "y": 95.159933
+     },
+     "uuid": "426194fd-9c82-451c-b1b6-2671674fb3ad"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 20 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 132.075951,
+      "y": 96.309933
+     },
+     "uuid": "d65aa0d7-d17f-4e1e-9984-97f1900e0bbb"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 15 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 134.225951,
+      "y": 95.159933
+     },
+     "uuid": "5ebfa4d7-1a65-41ed-a68b-4e4eeede6a85"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 14 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 134.725951,
+      "y": 95.159933
+     },
+     "uuid": "ee2b0e29-1a9a-4c6e-ae25-8870cf10d958"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 13 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 135.225951,
+      "y": 95.159933
+     },
+     "uuid": "f9448a98-f686-4fba-a303-9777f5d2e642"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 17 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 133.225951,
+      "y": 95.159933
+     },
+     "uuid": "426194fd-9c82-451c-b1b6-2671674fb3ad"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 12 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 135.725951,
+      "y": 95.159933
+     },
+     "uuid": "126909c3-a15a-4016-a5cf-5f506d859ff8"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 10 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 95.809933
+     },
+     "uuid": "86beed28-d300-45b9-aa04-c32c2cc13751"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 14 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 134.725951,
+      "y": 95.159933
+     },
+     "uuid": "ee2b0e29-1a9a-4c6e-ae25-8870cf10d958"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 13 [VCC] of U13 on F.Cu",
+     "pos": {
+      "x": 135.225951,
+      "y": 95.159933
+     },
+     "uuid": "f9448a98-f686-4fba-a303-9777f5d2e642"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 9 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 96.309933
+     },
+     "uuid": "e4097173-886e-4e09-a148-95da3081e877"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 10 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 95.809933
+     },
+     "uuid": "86beed28-d300-45b9-aa04-c32c2cc13751"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 8 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 96.809933
+     },
+     "uuid": "4ae71b53-47f6-46af-a843-2aff578d60e9"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 6 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 97.809933
+     },
+     "uuid": "be09e6ee-b002-4a65-b54e-f90675724be6"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 4 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 98.809933
+     },
+     "uuid": "c0c25ec9-93fe-41d4-9c46-627bcbff825c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [SIG1] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 99.809933
+     },
+     "uuid": "535bb035-9f03-4588-9ed2-a268297969ab"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 9 [<no net>] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 96.309933
+     },
+     "uuid": "e4097173-886e-4e09-a148-95da3081e877"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [PWR1] of U13 on F.Paste",
+     "pos": {
+      "x": 133.725951,
+      "y": 98.649933
+     },
+     "uuid": "6bfef277-7e61-4d71-8fef-11003a076f7f"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 4 [N2] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 98.809933
+     },
+     "uuid": "c0c25ec9-93fe-41d4-9c46-627bcbff825c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 1 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 100.309933
+     },
+     "uuid": "c264a2d5-73d1-4e4c-8752-e4f4a5e4aa2f"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [SIG1] of U13 on F.Paste",
+     "pos": {
+      "x": 133.728451,
+      "y": 96.434933
+     },
+     "uuid": "c762cccf-c40d-49f3-b18b-eb5d7faaffea"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U13 on F.Paste",
+     "pos": {
+      "x": 133.725951,
+      "y": 99.589933
+     },
+     "uuid": "53afb994-fbc6-4045-a85e-0fed68f11750"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [VCC] of U13 on F.Paste",
+     "pos": {
+      "x": 135.223451,
+      "y": 97.184933
+     },
+     "uuid": "90bc296e-e5c9-42d5-9cd2-fad904a568b5"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 1 [N3] of U13 on F.Cu",
+     "pos": {
+      "x": 136.875951,
+      "y": 100.309933
+     },
+     "uuid": "c264a2d5-73d1-4e4c-8752-e4f4a5e4aa2f"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [SIG1] of U13 on F.Paste",
+     "pos": {
+      "x": 135.225951,
+      "y": 98.649933
+     },
+     "uuid": "04c08b22-9336-48d1-b8bb-1e9e0797d7eb"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U13 on F.Paste",
+     "pos": {
+      "x": 133.725951,
+      "y": 99.589933
+     },
+     "uuid": "53afb994-fbc6-4045-a85e-0fed68f11750"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad [VCC] of U13 on F.Paste",
+     "pos": {
+      "x": 135.223451,
+      "y": 97.184933
+     },
+     "uuid": "90bc296e-e5c9-42d5-9cd2-fad904a568b5"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 1 [<no net>] of U1 on F.Cu",
+     "pos": {
+      "x": 108.707282,
+      "y": 96.236795
+     },
+     "uuid": "0b071a04-45e5-454b-981c-2c4f1704738c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [<no net>] of U1 on F.Cu",
+     "pos": {
+      "x": 107.057282,
+      "y": 96.236795
+     },
+     "uuid": "af2e9062-ac1f-42c0-9e19-b9b4cc19772a"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 1 [<no net>] of U1 on F.Cu",
+     "pos": {
+      "x": 108.707282,
+      "y": 96.236795
+     },
+     "uuid": "0b071a04-45e5-454b-981c-2c4f1704738c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 2 [<no net>] of U1 on F.Cu",
+     "pos": {
+      "x": 107.057282,
+      "y": 96.236795
+     },
+     "uuid": "af2e9062-ac1f-42c0-9e19-b9b4cc19772a"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 38 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 132.752376,
+      "y": 75.072678
+     },
+     "uuid": "4d696df9-af21-4462-bf1b-0cd590fcf430"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 37 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 131.599876,
+      "y": 73.076489
+     },
+     "uuid": "39d31a78-32dd-4b3c-ade2-760780dacf99"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 36 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.164332,
+      "y": 72.358002
+     },
+     "uuid": "dc547be6-fc9e-4ff1-bc46-f44187ee0fbd"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 38 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 132.752376,
+      "y": 75.072678
+     },
+     "uuid": "4d696df9-af21-4462-bf1b-0cd590fcf430"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 35 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.597344,
+      "y": 72.108002
+     },
+     "uuid": "42726418-ac2d-4f4a-b4b5-a9ccc2e649e7"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 37 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 131.599876,
+      "y": 73.076489
+     },
+     "uuid": "39d31a78-32dd-4b3c-ade2-760780dacf99"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 34 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 130.030357,
+      "y": 71.858002
+     },
+     "uuid": "9aae7bce-257f-4612-a9bf-f91a1aeed5e5"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 36 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.164332,
+      "y": 72.358002
+     },
+     "uuid": "dc547be6-fc9e-4ff1-bc46-f44187ee0fbd"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 35 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.597344,
+      "y": 72.108002
+     },
+     "uuid": "42726418-ac2d-4f4a-b4b5-a9ccc2e649e7"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 34 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 130.030357,
+      "y": 71.858002
+     },
+     "uuid": "9aae7bce-257f-4612-a9bf-f91a1aeed5e5"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 32 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 130.896382,
+      "y": 71.358002
+     },
+     "uuid": "d9cc928f-3626-4e95-9fa7-e1dff43442e6"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 33 [N3] of U6 on F.Cu",
+     "pos": {
+      "x": 130.46337,
+      "y": 71.608002
+     },
+     "uuid": "4ffeb217-871d-4bc0-b8b8-dfa1fa7fab0b"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 30 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 131.762408,
+      "y": 70.858002
+     },
+     "uuid": "aa7bdce7-c130-40a1-a636-c9bdd49cf829"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 31 [SIG1] of U6 on F.Cu",
+     "pos": {
+      "x": 131.329395,
+      "y": 71.108002
+     },
+     "uuid": "1f5de467-14ab-4039-8e7e-c3faa2f43185"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 28 [N2] of U6 on F.Cu",
+     "pos": {
+      "x": 133.083337,
+      "y": 70.845919
+     },
+     "uuid": "57b3f529-804c-4657-91dc-7bbae62ecb42"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 30 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 131.762408,
+      "y": 70.858002
+     },
+     "uuid": "aa7bdce7-c130-40a1-a636-c9bdd49cf829"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 33 [N3] of U6 on F.Cu",
+     "pos": {
+      "x": 130.46337,
+      "y": 71.608002
+     },
+     "uuid": "4ffeb217-871d-4bc0-b8b8-dfa1fa7fab0b"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 24 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 134.083337,
+      "y": 72.57797
+     },
+     "uuid": "e7db9252-2b3d-4ecf-b81f-7848f4ecb0bb"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 28 [N2] of U6 on F.Cu",
+     "pos": {
+      "x": 133.083337,
+      "y": 70.845919
+     },
+     "uuid": "57b3f529-804c-4657-91dc-7bbae62ecb42"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 23 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 134.333337,
+      "y": 73.010982
+     },
+     "uuid": "5ea60c5d-b39b-40b7-8b9b-f6d10057a350"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 21 [N2] of U6 on F.Cu",
+     "pos": {
+      "x": 134.833337,
+      "y": 73.877008
+     },
+     "uuid": "8a528512-438b-47e2-8f62-0eb5ca9e0850"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 20 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 135.083337,
+      "y": 74.31002
+     },
+     "uuid": "972029c2-2d27-4e0f-97c0-896f62a403ad"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 24 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 134.083337,
+      "y": 72.57797
+     },
+     "uuid": "e7db9252-2b3d-4ecf-b81f-7848f4ecb0bb"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 23 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 134.333337,
+      "y": 73.010982
+     },
+     "uuid": "5ea60c5d-b39b-40b7-8b9b-f6d10057a350"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 21 [N2] of U6 on F.Cu",
+     "pos": {
+      "x": 134.833337,
+      "y": 73.877008
+     },
+     "uuid": "8a528512-438b-47e2-8f62-0eb5ca9e0850"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 20 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 135.083337,
+      "y": 74.31002
+     },
+     "uuid": "972029c2-2d27-4e0f-97c0-896f62a403ad"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 16 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 134.229395,
+      "y": 76.13095
+     },
+     "uuid": "5f9a8a53-6862-4aff-be3c-2ac2956da372"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 15 [SIG1] of U6 on F.Cu",
+     "pos": {
+      "x": 133.796382,
+      "y": 76.38095
+     },
+     "uuid": "8cdfc2e6-b472-4867-8fb9-0a151bd1bf98"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 17 [N3] of U6 on F.Cu",
+     "pos": {
+      "x": 134.662408,
+      "y": 75.88095
+     },
+     "uuid": "fbc52fb6-26ad-436f-b9c1-04c854fc8b1f"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 14 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 133.36337,
+      "y": 76.63095
+     },
+     "uuid": "32dc50d2-fcdf-48a6-903f-8e1499c0d351"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 16 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 134.229395,
+      "y": 76.13095
+     },
+     "uuid": "5f9a8a53-6862-4aff-be3c-2ac2956da372"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 17 [N3] of U6 on F.Cu",
+     "pos": {
+      "x": 134.662408,
+      "y": 75.88095
+     },
+     "uuid": "fbc52fb6-26ad-436f-b9c1-04c854fc8b1f"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 12 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 132.497344,
+      "y": 77.13095
+     },
+     "uuid": "bfcaa75b-5325-4016-8b9c-66ac067313ee"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 14 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 133.36337,
+      "y": 76.63095
+     },
+     "uuid": "32dc50d2-fcdf-48a6-903f-8e1499c0d351"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 9 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 130.926415,
+      "y": 76.71002
+     },
+     "uuid": "da49ad13-d166-4771-aae5-b7f225d00921"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 6 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 130.176415,
+      "y": 75.410982
+     },
+     "uuid": "6c037e62-30f8-4fca-b4fd-3a1e998bcbfa"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 4 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.676415,
+      "y": 74.544957
+     },
+     "uuid": "fdf209a1-2352-4713-9119-ed78fc0de860"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 3 [SIG1] of U6 on F.Cu",
+     "pos": {
+      "x": 129.426415,
+      "y": 74.111944
+     },
+     "uuid": "d6021da4-ddc2-4227-92c1-66dd382537c1"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 9 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 130.926415,
+      "y": 76.71002
+     },
+     "uuid": "da49ad13-d166-4771-aae5-b7f225d00921"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 6 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 130.176415,
+      "y": 75.410982
+     },
+     "uuid": "6c037e62-30f8-4fca-b4fd-3a1e998bcbfa"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad 4 [VCC] of U6 on F.Cu",
+     "pos": {
+      "x": 129.676415,
+      "y": 74.544957
+     },
+     "uuid": "fdf209a1-2352-4713-9119-ed78fc0de860"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [SIG1] of U6 on F.Paste",
+     "pos": {
+      "x": 132.014395,
+      "y": 72.294457
+     },
+     "uuid": "cf7d2b60-92aa-455a-8569-bbad81ac3565"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [N3] of U6 on F.Paste",
+     "pos": {
+      "x": 133.58973,
+      "y": 75.028017
+     },
+     "uuid": "a3411d5b-4e58-463c-9291-7fcd7963e8f9"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [N3] of U6 on F.Paste",
+     "pos": {
+      "x": 132.295022,
+      "y": 75.775517
+     },
+     "uuid": "97537d50-7e6e-4860-8029-778b393c7a15"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 133.21473,
+      "y": 74.378498
+     },
+     "uuid": "aeefaa76-9b37-421a-ae78-c4351195bf5c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 131.920022,
+      "y": 75.125998
+     },
+     "uuid": "3fb567c2-d809-4498-a024-6ebf37e4888a"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad [N3] of U6 on F.Paste",
+     "pos": {
+      "x": 133.58973,
+      "y": 75.028017
+     },
+     "uuid": "a3411d5b-4e58-463c-9291-7fcd7963e8f9"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad [N3] of U6 on F.Paste",
+     "pos": {
+      "x": 132.295022,
+      "y": 75.775517
+     },
+     "uuid": "97537d50-7e6e-4860-8029-778b393c7a15"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 133.21473,
+      "y": 74.378498
+     },
+     "uuid": "aeefaa76-9b37-421a-ae78-c4351195bf5c"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 131.920022,
+      "y": 75.125998
+     },
+     "uuid": "3fb567c2-d809-4498-a024-6ebf37e4888a"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 131.185357,
+      "y": 73.858521
+     },
+     "uuid": "7cc2e171-5972-44c8-af7d-a0566b3f802b"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 130.715357,
+      "y": 73.044457
+     },
+     "uuid": "ba3a0589-6b90-43c4-a154-4548ae8b05c7"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 131.185357,
+      "y": 73.858521
+     },
+     "uuid": "7cc2e171-5972-44c8-af7d-a0566b3f802b"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Pad [<no net>] of U6 on F.Paste",
+     "pos": {
+      "x": 130.715357,
+      "y": 73.044457
+     },
+     "uuid": "ba3a0589-6b90-43c4-a154-4548ae8b05c7"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 1 [SIG1] of U8 on F.Cu",
+     "pos": {
+      "x": 142.197026,
+      "y": 55.193322
+     },
+     "uuid": "bbe9f81e-a829-4e14-898e-0fdbc68aa4c0"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "Pad 2 [PWR1] of U8 on F.Cu",
+     "pos": {
+      "x": 142.197026,
+      "y": 53.318322
+     },
+     "uuid": "b03dc50c-620a-409a-88f3-b7d9cf472a8e"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r2')",
+   "items": [
+    {
+     "description": "PTH pad 1 [N2] of U9",
+     "pos": {
+      "x": 115.720795,
+      "y": 75.590548
+     },
+     "uuid": "71d867f4-deaf-4779-ba32-bf8e10208844"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "Rectangle [N2] on B.Cu",
+     "pos": {
+      "x": 138.897922,
+      "y": 75.153403
+     },
+     "uuid": "f65101c9-51bd-4a3d-9019-17e197e4255d"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Assertion failure (rule 'r4')",
+   "items": [
+    {
+     "description": "PTH pad 1 [N2] of U9",
+     "pos": {
+      "x": 115.720795,
+      "y": 75.590548
+     },
+     "uuid": "71d867f4-deaf-4779-ba32-bf8e10208844"
+    }
+   ],
+   "severity": "error",
+   "type": "assertion_failure"
+  },
+  {
+   "description": "Hole size out of range (board setup constraints min hole 0.3000 mm; actual 0.2000 mm)",
+   "items": [
+    {
+     "description": "Via [/sub/clk] on F.Cu - B.Cu",
+     "pos": {
+      "x": 144.143168,
+      "y": 101.953641
+     },
+     "uuid": "53617d66-7f23-43e3-833f-aad5c8004bee"
+    }
+   ],
+   "severity": "error",
+   "type": "drill_out_of_range"
+  },
+  {
+   "description": "Board edge clearance violation (board setup constraints edge clearance 0.5000 mm; actual 0.2547 mm)",
+   "items": [
+    {
+     "description": "Rectangle on Edge.Cuts",
+     "pos": {
+      "x": 100.0,
+      "y": 50.0
+     },
+     "uuid": "cf2b30c2-5c31-422c-a179-38057b19834a"
+    },
+    {
+     "description": "Rectangle [PWR1] on F.Cu",
+     "pos": {
+      "x": 160.645337,
+      "y": 97.344463
+     },
+     "uuid": "510e6693-2d3c-4175-9754-0babeeebd5a3"
+    }
+   ],
+   "severity": "error",
+   "type": "copper_edge_clearance"
+  },
+  {
+   "description": "Items shorting two nets (nets <no net> and SIG1)",
+   "items": [
+    {
+     "description": "Pad 14 [<no net>] of U6 on F.Cu",
+     "pos": {
+      "x": 133.36337,
+      "y": 76.63095
+     },
+     "uuid": "32dc50d2-fcdf-48a6-903f-8e1499c0d351"
+    },
+    {
+     "description": "Track [SIG1] on F.Cu, length 9.4340 mm",
+     "pos": {
+      "x": 134.229395,
+      "y": 76.13095
+     },
+     "uuid": "a65caff0-493d-41f0-9a95-46a3dfc977ba"
+    }
+   ],
+   "severity": "error",
+   "type": "shorting_items"
+  },
+  {
+   "description": "Clearance violation (netclass 'Power' clearance 0.3000 mm; actual 0.2500 mm)",
+   "items": [
+    {
+     "description": "Pad 12 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 132.497344,
+      "y": 77.13095
+     },
+     "uuid": "bfcaa75b-5325-4016-8b9c-66ac067313ee"
+    },
+    {
+     "description": "Pad 13 [/sub/clk] of U6 on F.Cu",
+     "pos": {
+      "x": 132.930357,
+      "y": 76.88095
+     },
+     "uuid": "d7c011e1-b316-4384-92c7-a38493ca9f25"
+    }
+   ],
+   "severity": "error",
+   "type": "clearance"
+  },
+  {
+   "description": "Clearance violation (netclass 'Power' clearance 0.3000 mm; actual 0.2500 mm)",
+   "items": [
+    {
+     "description": "Pad 31 [SIG1] of U6 on F.Cu",
+     "pos": {
+      "x": 131.329395,
+      "y": 71.108002
+     },
+     "uuid": "1f5de467-14ab-4039-8e7e-c3faa2f43185"
+    },
+    {
+     "description": "Pad 32 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 130.896382,
+      "y": 71.358002
+     },
+     "uuid": "d9cc928f-3626-4e95-9fa7-e1dff43442e6"
+    }
+   ],
+   "severity": "error",
+   "type": "clearance"
+  },
+  {
+   "description": "Clearance violation (netclass 'Power' clearance 0.3000 mm; actual 0.2500 mm)",
+   "items": [
+    {
+     "description": "Pad 33 [N3] of U6 on F.Cu",
+     "pos": {
+      "x": 130.46337,
+      "y": 71.608002
+     },
+     "uuid": "4ffeb217-871d-4bc0-b8b8-dfa1fa7fab0b"
+    },
+    {
+     "description": "Pad 32 [PWR1] of U6 on F.Cu",
+     "pos": {
+      "x": 130.896382,
+      "y": 71.358002
+     },
+     "uuid": "d9cc928f-3626-4e95-9fa7-e1dff43442e6"
+    }
+   ],
+   "severity": "error",
+   "type": "clearance"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG1] on F.Cu, length 9.4340 mm",
+     "pos": {
+      "x": 134.229395,
+      "y": 76.13095
+     },
+     "uuid": "a65caff0-493d-41f0-9a95-46a3dfc977ba"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [/sub/clk] on F.Cu - B.Cu",
+     "pos": {
+      "x": 144.143168,
+      "y": 101.953641
+     },
+     "uuid": "53617d66-7f23-43e3-833f-aad5c8004bee"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  }
+ ]
+}
