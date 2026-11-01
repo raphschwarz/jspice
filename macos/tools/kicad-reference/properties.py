@@ -208,7 +208,11 @@ def outline(z, op):
     if kind == "setVertices":
         for i, (x, y) in enumerate(op["points"]):
             poly.SetVertex(i, pcbnew.VECTOR2I(x, y))
-        poly.RemoveNullSegments()
+        # (POLYGON_POINT_EDIT_BEHAVIOR::RemoveNullSegmentsIfPolygonSurvives, as FinalizeItem has it in 10.0.8)
+        cleaned = pcbnew.SHAPE_POLY_SET(poly)
+        cleaned.RemoveNullSegments()
+        if cleaned.TotalVertices() >= 3:
+            poly.RemoveNullSegments()
     elif kind == "insertVertex":
         poly.InsertVertex(op["index"], pcbnew.VECTOR2I(*op["point"]))
     elif kind == "removeVertex":

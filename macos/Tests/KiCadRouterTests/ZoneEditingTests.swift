@@ -353,7 +353,7 @@ final class ZoneEditingTests: XCTestCase {
         var plan: [[String: Any]] = []
         var written: [URL] = []
         var expected: [String: [String: (props: ZoneProperties, contours: BoardEditing.ZoneContours)]] = [:]
-        var edits = 0, refused = 0, crossings = 0
+        var edits = 0, refused = 0, crossings = 0, collapsed = 0
         for (n, file) in try Self.boards().enumerated() {
             let original = try Self.copy(file, to: work, as: "original-\(n)")
             let board = try KiCadBoard.read(original)
@@ -408,6 +408,14 @@ final class ZoneEditingTests: XCTestCase {
                     _ = dragged
                     let last = try XCTUnwrap(session.dragZonePoint(to: target, ctrl: ctrl, shift: shift, stickyDistance: 0.05))
                     let lastPoints = last.flatMap { $0.map { [BoardWorld.iu($0.x), BoardWorld.iu($0.y)] } }
+                    // (a drag that leaves a contour fewer than three corners apart, dropped: KiCad's point editor keeps
+                    // such an outline as dragged, its corners on each other (RemoveNullSegmentsIfPolygonSurvives), and
+                    // reads it back with them merged, an outline its zone keeps nothing of; not the editing compared)
+                    if last.contains(where: { c in Set(c.map { [BoardWorld.iu($0.x), BoardWorld.iu($0.y)] }).count < 3 }) {
+                        session.cancelZoneDrag()
+                        collapsed += 1
+                        continue
+                    }
                     guard let edit = session.finishZoneDrag() else { continue }
                     XCTAssertEqual(edit.name, "Move Point")
                     edits += 1
@@ -524,7 +532,7 @@ final class ZoneEditingTests: XCTestCase {
         }
         let (fillSummary, fillDifferences) = try FillTests.compare(written)
         let (drcSummary, _, drcDifferences) = try DRCTests.compare(written)
-        print("ZoneEditingTests: \(written.count) boards, \(edits) changes (\(refused) refused as KiCad refuses them, \(crossings) corners dragged across their outlines); KiCad read \(zonesRead) zones as edited, "
+        print("ZoneEditingTests: \(written.count) boards, \(edits) changes (\(refused) refused as KiCad refuses them, \(crossings) corners dragged across their outlines, \(collapsed) drags that left an outline no area dropped); KiCad read \(zonesRead) zones as edited, "
               + "wrote \(zonesWritten) as the port does; fills: \(fillSummary); DRC: \(drcSummary)")
         XCTAssertGreaterThan(edits, 0)
         XCTAssertTrue(fillDifferences.isEmpty, "\(fillDifferences.count) fills differ from KiCad's:\n" + fillDifferences.prefix(30).joined(separator: "\n"))
