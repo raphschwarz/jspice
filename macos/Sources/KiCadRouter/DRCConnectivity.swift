@@ -177,7 +177,7 @@ extension BoardDRC {
         /// How many clusters have been made (their serials)
         var clusterSerial = 0
         /// The ratsnest's clusters of each board item in one (by its uuid): a zone's, one for each of its fill's
-        /// islands
+        /// islands the ratsnest has (not those kept on their own, which internalRecalculateRatsnest leaves out)
         var clusterOf: [String: [Int]] = [:]
         /// Pairs of items (their uuids) that touch tried one way round and not the other (two arcs, say: KiCad's
         /// collision of arcs is not the same both ways): KiCad tries each pair one way, which by where the two are in
@@ -453,10 +453,12 @@ extension BoardDRC {
         var boardEdges: [Int: [CNEdge]] = [:]
         var order: [Int] = []
         for cl in clusters {
+            // (an island of a zone kept on its own, no pad in it, not added to the ratsnest:
+            // CONNECTIVITY_DATA::internalRecalculateRatsnest leaves it out, so no missing connection is to it)
+            if cl.isOrphaned && cl.items.count == 1 && cl.items[0].isZone { continue }
             for item in cl.items where cn.clusterOf[item.parent.uuid]?.last != cl.serial {
                 cn.clusterOf[item.parent.uuid, default: []].append(cl.serial)
             }
-            if cl.isOrphaned && cl.items.count == 1 && cl.items[0].isZone { continue }
             let net = cl.originNet
             guard net > 0 else { continue }
             if nodes[net] == nil { order.append(net) }
@@ -521,7 +523,13 @@ extension BoardDRC {
     }
 
     /// RN_NET::TRIANGULATOR_STATE::Triangulate: the edges of the triangulation of the nodes' places, and between
-    /// the nodes in one place
+    /// the nodes in one place. The triangulation's node of a place is the first of its anchors in the multiset, the
+    /// one added first: which goes by the order of the net's clusters, SearchClusters' (its roots taken from a
+    /// std::set of the items by their addresses, then std::sort by net, which keeps no order among one net's), so by
+    /// where KiCad's items are in memory, which differs from one run of KiCad to the next. Of anchors of two clusters
+    /// in one place (a pad on its own, and an arc of another cluster starting at it, say), the missing connections to
+    /// that place are to either, the same lengths; the port's are to the one it adds first, by the order it made
+    /// them in.
     static func triangulate(_ all: [CNAnchor]) -> [CNEdge] {
         var edges: [CNEdge] = []
         func addEdge(_ a: CNAnchor, _ b: CNAnchor) { edges.append(CNEdge(source: a, target: b, weight: dist(a, b))) }

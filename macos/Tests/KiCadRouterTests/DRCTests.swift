@@ -16,7 +16,8 @@ import KiCadKit
 /// by its texts only, a copper circle of a net that a rule's assertion names by its net class, a copper rectangle a rule asks
 /// hasExactNetclass of, a footprint's edge near copper under a rule of a wider edge clearance than the board's, a footprint's
 /// outline of chained lines across the board's, a net tie footprint whose pad was renumbered out of its pad groups,
-/// pads on no layer under a rule's assertion) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
+/// pads on no layer under a rule's assertion, a pad on its own with an arc of a zone's cluster starting at it, the
+/// missing connections to it either's) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
 /// KiCad cannot compile, whose rules before the one it cannot it keeps, one it cannot read, one of the filler's
 /// constraints, and three of rules.py's) and Fixtures/zoneedits (zones with holes and rule areas, footprints of every
 /// pad shape on both sides, locked items: properties.py --draw). A board with a rules file beside it (NAME.kicad_dru, rules.py's) is checked
@@ -192,8 +193,9 @@ final class DRCTests: XCTestCase {
                 if theirsU.count != oursU.count {
                     differences.append("\(name): KiCad finds \(theirsU.count) missing connections, ours \(oursU.count)")
                 }
-                // (a zone is in as many clusters as it has fills, one for each island on each of its layers: KiCad's
-                // connection is to one of them, which its report does not say; so the clusters of KiCad's connections
+                // (a zone is in as many clusters as it has fills, one for each island on each of its layers the
+                // ratsnest has: KiCad's connection is to one of them, which its report does not say (one of an island
+                // kept on its own, which the ratsnest leaves out, it never is); so the clusters of KiCad's connections
                 // are chosen, the plain ones first, so that each joins two not joined yet, if they can be)
                 var edges: [[[Int]]] = [], edgeItems: [[String]] = []
                 for e in theirsU {
