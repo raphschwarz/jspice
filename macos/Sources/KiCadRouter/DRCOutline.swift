@@ -247,6 +247,13 @@ extension BoardDRC {
     /// TestBoardOutlinesGraphicItems: false if a drawing on Edge.Cuts is too small to see (1 µm or less), or two closed
     /// contours (closed drawings, and open ones chained into a loop) cross
     func testBoardOutlinesGraphicItems(_ cuts: [EdgeCut], _ errors: inout [OutlineError]) -> Bool {
+        var unsure: [Set<String>] = []
+        return testBoardOutlinesGraphicItems(cuts, &errors, &unsure)
+    }
+
+    /// The same, with the pairs of drawings a crossing of contours may be told of where KiCad's choice of them goes by
+    /// where its drawings are in memory (`unsure`)
+    func testBoardOutlinesGraphicItems(_ cuts: [EdgeCut], _ errors: inout [OutlineError], _ unsure: inout [Set<String>]) -> Bool {
         var success = true
         let minDist = 1000
         for (i, c) in cuts.enumerated() {
@@ -282,6 +289,9 @@ extension BoardDRC {
         }
         let maxError = world.rules.maxError
         var closed: [(owner: Int, contour: LineChain)] = []
+        // (each contour's drawings, where the one KiCad names for it is not sure: a footprint's open drawings chained,
+        // whose chain starts at the first of them in memory, which need not be the first KiCad read)
+        var maybeOwners: [[Int]] = []
         var open: [Int] = []
         for (i, c) in cuts.enumerated() {
             switch c.shape.kind {
@@ -290,6 +300,7 @@ extension BoardDRC {
                 var owners: [Outlines.SegKey: Int] = [:]
                 Outlines.processClosedShape(c.shape, i, &contour, &owners, maxError)
                 closed.append((i, contour))
+                maybeOwners.append([i])
             case .segment, .arc, .bezier:
                 open.append(i)
             }
@@ -301,9 +312,12 @@ extension BoardDRC {
             let tree = Outlines.EndpointTree(shapes)
             var remaining = Set(shapes.indices)
             while let start = remaining.min() {
+                let before = remaining
                 if let (contour, owner) = Self.buildChainedClosedContour(start, &remaining, tree, shapes, maxError: maxError,
                                                                         chainingEpsilon: Self.outlinesChainingEpsilon) {
                     closed.append((open[owner], contour))
+                    let chain = before.subtracting(remaining).map { open[$0] }.sorted()
+                    maybeOwners.append(chain.count > 1 && chain.contains { cuts[$0].footprint != nil } ? chain : [open[owner]])
                 } else {
                     remaining.remove(start)
                 }
@@ -315,6 +329,9 @@ extension BoardDRC {
                 if closed[ii].contour.intersect(closed[jj].contour, excludeColinearAndTouching: true).isEmpty { continue }
                 success = false
                 errors.append(("(self-intersecting)", closed[ii].owner, closed[jj].owner))
+                if maybeOwners[ii].count > 1 || maybeOwners[jj].count > 1 {
+                    for a in maybeOwners[ii] { for b in maybeOwners[jj] { unsure.append([cuts[a].uuid, cuts[b].uuid]) } }
+                }
             }
         }
         return success
@@ -499,8 +516,11 @@ extension BoardDRC {
         }
 
         var errors: [OutlineError] = []
+        var unsure: [Set<String>] = []
         // drawings too small to see, closed contours crossing
-        if !testBoardOutlinesGraphicItems(cuts, &errors) && errors.isEmpty {
+        let tested = testBoardOutlinesGraphicItems(cuts, &errors, &unsure)
+        for u in unsure { out.addUnsure("invalid_outline", u) }
+        if !tested && errors.isEmpty {
             // (never so: each failure is told the handler)
             out.add("invalid_outline", "(Suspicious items found on Edge.Cuts layer)", [Self.boardUUID])
         }
