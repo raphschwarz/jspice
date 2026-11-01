@@ -1,0 +1,29 @@
+(version 1)
+
+(rule r0
+  (condition "A.inDiffPair('LVDS0_')")
+  (constraint assertion "A.hasNetclass('Clock')")
+  (severity warning)
+)
+
+(rule r1
+  (condition "!(B.Library_Link == 'CP_Radial_D5.0mm_P2.00mm')")
+  (constraint hole_clearance (min 0.31mm))
+)
+
+(rule r2
+  (layer outer)
+  (condition "A.insideArea('Keepout 71')")
+  (constraint clearance (min 0.25mm))
+  (constraint track_width (min 0.11mm) (opt 0.22mm) (max 0.0161in))
+)
+
+(rule r3
+  (condition "B.Pad_Number != '23'")
+  (constraint clearance (min 18.5mil))
+)
+
+(rule r4
+  (condition "(B.Diameter >= 0.7mm || B.Pad_Shape == 'R*')")
+  (constraint clearance (min 0.27mm))
+)

@@ -8,7 +8,8 @@ import KiCadKit
 /// zone's polygons on each of its layers, outline and holes, their points, and whether KiCad keeps it as an island),
 /// and ZoneFiller must make the same, polygon for polygon, point for point. KICAD_BOARD_REFERENCE names a folder of
 /// such boards (or several, separated by colons); with none, Fixtures/fills (a board drawn by fills.py --draw to take
-/// the filler down the ways random boards do not, and one by --draw-open whose edges do not close) and Fixtures/rules
+/// the filler down the ways random boards do not, one by --draw-open whose edges do not close, and a random one whose
+/// rule asks whether the zone being filled is inside a rule area, which it is not while KiCad fills it) and Fixtures/rules
 /// (boards with rules files, the drawn one's of the filler's constraints among them) and Fixtures/zoneedits (zones with
 /// holes, on inner layers, hatched and smoothed, drawn by properties.py --draw). FILL_BOARD keeps
 /// to the boards whose names contain it; FILL_DUMP names a folder to write the port's fills and their stages to.

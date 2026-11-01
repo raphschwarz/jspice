@@ -147,9 +147,14 @@ public final class ZoneFiller {
         let item: BoardDRC.CopperItem?
         /// The zone as the rules see it, once asked
         var rule: RuleItem?
-        var fills: [Int: PolySet] = [:]
+        /// Its fill on each layer; once it is filled again, the one the rules see too (ZONE's m_FilledPolysList,
+        /// which insideArea and intersectsKeepout of the zone collide with a rule area)
+        var fills: [Int: PolySet] = [:] { didSet { if filled { rule?.zoneFills = ruleFills } } }
         var islands: [Int: Set<Int>] = [:]
         var filled = false
+
+        /// Its fill as the rules keep it: each polygon's outline (the fill fractured, as a board's is read)
+        var ruleFills: [Int: [LineChain]] { fills.mapValues { $0.polygons.map { $0[0] } } }
 
         init(node: SExpr, uuid: String, key: String, footprint: Int?, ruleArea: Bool, keepout: [Bool], layers: [Int], net: Int, priority: Int,
              teardropType: Int, minThickness: Int, localClearance: Int, padConnection: BoardDRC.ZoneConnection, thermalGap: Int,
@@ -363,6 +368,11 @@ public final class ZoneFiller {
             z.fills = [:]
             z.islands = [:]
             z.filled = false
+            // ZONE::UnFill: to the rules too, until the fills are all made (collidesWithArea: a zone not IsFilled is in
+            // no keepout, so a rule's A.insideArea() of a zone being filled is false all through its fill)
+            let r = ruleZone(z)
+            r.zoneFilled = false
+            r.zoneFills = [:]
         }
         var order = toFill
         Clipper.introSort(&order) { $0.higherPriority($1) }
@@ -374,7 +384,13 @@ public final class ZoneFiller {
 
         // the isolated islands, by the connectivity of the new fills
         var isolated = isolatedIslands(toFill.flatMap { z in z.layers.map { (z, $0) } })
-        for z in toFill { z.filled = true }
+        // (SetIsFilled: the rules see the new fills from here, the islands' removal and the refills changing them)
+        for z in toFill {
+            z.filled = true
+            let r = ruleZone(z)
+            r.zoneFilled = true
+            r.zoneFills = z.ruleFills
+        }
         var removedIslands = Set<FillKey>()
         var initiallyFullyIsolated = Set<FillKey>()
         for z in toFill {
