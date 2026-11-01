@@ -1,0 +1,12 @@
+(version 1)
+
+(rule r0
+  (condition "B.NetName == 'N1'")
+  (constraint hole_clearance (min 5.9mil))
+  (constraint edge_clearance (min 0.18mm))
+)
+
+(rule r1
+  (condition "A.inDiffPair('CLK') || A.Layer == 'B.Cu' && A.Reference == 'U*'")
+  (constraint assertion "A.insideArea('Keepout 1') || A.memberOfFootprint('U9') || A.Reference == 'U14'")
+)

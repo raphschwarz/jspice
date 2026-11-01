@@ -15,7 +15,8 @@ import KiCadKit
 /// runs the port once got wrong: a net tie's pad of arcs against items of no net, a footprint reaching a keepout's box
 /// by its texts only, a copper circle of a net that a rule's assertion names by its net class, a copper rectangle a rule asks
 /// hasExactNetclass of, a footprint's edge near copper under a rule of a wider edge clearance than the board's, a footprint's
-/// outline of chained lines across the board's, a net tie footprint whose pad was renumbered out of its pad groups) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
+/// outline of chained lines across the board's, a net tie footprint whose pad was renumbered out of its pad groups,
+/// pads on no layer under a rule's assertion) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
 /// KiCad cannot compile, whose rules before the one it cannot it keeps, one it cannot read, one of the filler's
 /// constraints, and three of rules.py's) and Fixtures/zoneedits (zones with holes and rule areas, footprints of every
 /// pad shape on both sides, locked items: properties.py --draw). A board with a rules file beside it (NAME.kicad_dru, rules.py's) is checked

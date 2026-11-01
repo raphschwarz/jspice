@@ -342,7 +342,9 @@ extension BoardDRC {
         }
         // the items in forEachGeometryItem's order: the board's, then each footprint's and the footprint itself
         var byFootprint: [Int: [BoardItem]] = [:]
-        for b in items {
+        // (forEachGeometryItem of every layer: an item on none left out, a pad with a hole kept, as it pierces them
+        // all)
+        for b in items where !b.layers.isEmpty || (b.kind == .pad && b.hole != nil) {
             if let f = b.footprint { byFootprint[f, default: []].append(b) } else { test(ruleItem(b, c)) }
         }
         for (f, fp) in ruleState.footprints.enumerated() {
