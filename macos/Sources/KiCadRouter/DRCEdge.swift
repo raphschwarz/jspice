@@ -123,9 +123,10 @@ extension BoardDRC {
 
     /// The edges' R-trees, Edge.Cuts' and Margin's: the board's drawings on them, then the footprints', in the order
     /// forEachGeometryItem gathers them, and then the unplated slots (drilled round holes are hole clearances' to
-    /// check, not a mill's), each piece's box grown by the largest edge clearance
+    /// check, not a mill's), each piece's box grown by the largest edge clearance of the rules
+    /// (m_largestEdgeClearance, which a rule of a wider edge clearance than the board's makes wider)
     func edgeTrees(_ c: Copper) -> (edges: RTree<EdgeEntry, Double>, margin: RTree<EdgeEntry, Double>) {
-        let largest = settings.edgeClearance
+        let largest = largestEdgeClearance
         let edgeLayers: Set<String> = ["Edge.Cuts", "Margin"]
         let drawingHeads: Set<String> = ["line", "rect", "arc", "circle", "poly", "curve"]
         func isEdgeDrawing(_ node: SExpr, _ prefix: String) -> Bool {

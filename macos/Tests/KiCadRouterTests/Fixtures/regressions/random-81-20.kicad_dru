@@ -1,0 +1,15 @@
+(version 1)
+
+(rule r0
+  (constraint edge_clearance (min 0.96mm))
+)
+
+(rule r1
+  (constraint hole_clearance (min 9.8mil))
+)
+
+(rule r2
+  (condition "(B.Width == 0.31mm && A.Pad_Shape == 'Rounded rectangle')")
+  (constraint edge_clearance (min 0.35mm))
+  (constraint hole_to_hole (min 0.73mm))
+)
