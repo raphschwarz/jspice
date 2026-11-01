@@ -333,6 +333,8 @@ public struct BoardDRC {
         // (the miscellaneous checks': the board's outline, the rules' assertions)
         checkOutline(&out)
         checkAssertions(&out, copper, items)
+        // (the footprint checks': a net tie's copper shorting pads it does not tie)
+        checkNetTies(&out, copper)
         checkCopperClearances(&out, copper)
         checkEdgeClearances(&out, copper, items, outline)
         // (by the rules engine where the board has rules of the user's own: their disallows among the keepouts', and the

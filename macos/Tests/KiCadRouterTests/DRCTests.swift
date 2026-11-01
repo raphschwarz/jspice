@@ -15,7 +15,7 @@ import KiCadKit
 /// runs the port once got wrong: a net tie's pad of arcs against items of no net, a footprint reaching a keepout's box
 /// by its texts only, a copper circle of a net that a rule's assertion names by its net class, a copper rectangle a rule asks
 /// hasExactNetclass of, a footprint's edge near copper under a rule of a wider edge clearance than the board's, a footprint's
-/// outline of chained lines across the board's) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
+/// outline of chained lines across the board's, a net tie footprint whose pad was renumbered out of its pad groups) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
 /// KiCad cannot compile, whose rules before the one it cannot it keeps, one it cannot read, one of the filler's
 /// constraints, and three of rules.py's) and Fixtures/zoneedits (zones with holes and rule areas, footprints of every
 /// pad shape on both sides, locked items: properties.py --draw). A board with a rules file beside it (NAME.kicad_dru, rules.py's) is checked
@@ -138,6 +138,18 @@ final class DRCTests: XCTestCase {
                             && !ours.contains(key(v.type, v.severity, v.description, v.items.map(\.uuid)))
                     }
                     if missing.isEmpty { continue }
+                }
+                // (both at the limit, the port with fewer in its report: violations a rule makes ignored took some of
+                // its count (DRC_ENGINE::ReportViolation counts them), and which of the items KiCad's threads met first
+                // decides how many of those it met; so each KiCad reports is one the port finds, past the limit)
+                if m < limit && ourReport.counts[type, default: 0] == limit {
+                    if unlimited == nil { unlimited = drc.runReport(limited: false) }
+                    let all = unlimited!.violations.filter { $0.type == type }.map { key($0.type, $0.severity, $0.description, $0.items) }
+                    let theirs = report.violations.filter { $0.type == type }.map { key($0.type, $0.severity, $0.description, $0.items.map(\.uuid)) }
+                    for d in Self.minus(theirs, all).prefix(5) {
+                        differences.append("\(name): KiCad finds, ours does not even past the limit: \(d)")
+                    }
+                    continue
                 }
                 if m != limit { differences.append("\(name): KiCad finds \(limit) \(type), its limit, ours \(m)") }
             }
