@@ -638,7 +638,10 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   `scenes.py --arcs --mode drag --shoving ... ../../Tests/KiCadRouterTests/Fixtures/kicad-arc-drag-routes.json 25 20261101`,
   and on boards with arc tracks `kicad-board-arc-routes.json`
   `scenes.py --arcs --rounded --mode mix --boards ... 2 20261103 ../../Tests/KiCadRouterTests/Fixtures/arcboards/*.json`
-  and `kicad-board-arc-drag-routes.json`
+  with one case of the CI's run 83 after them, `random-arcs-83-7-mix-83-0` (of `scenes.py --arcs --rounded --mode mix
+  --boards ... 2 83` on that run's `boards.py --arcs ... 20 83`: a via placed where a walk round ends, the walk's line
+  cut inside a nearly straight arc on the way and measured in an int, as KiCad measures it), and
+  `kicad-board-arc-drag-routes.json`
   `scenes.py --arcs --mode drag --boards ... 2 20261103 ../../Tests/KiCadRouterTests/Fixtures/arcboards/*.json`.
   With `--mode meander`, length tunings, each chosen on the board as the tunings before it left it (KiCad's router
   run on those first), so that a track tuned can be tuned again: on boards with tracks to tune (lines of a few long

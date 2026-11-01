@@ -552,7 +552,8 @@ public final class Optimizer {
         guard let startPad = findPadOrVia(aLine.layer, aLine.net, pStart) else { return false }
         let endPad = findPadOrVia(aLine.layer, aLine.net, pEnd)
         let thr = aLine.width * 10
-        let len = aLine.cLine.length
+        // (the length in an int, as KiCad keeps it, cut to it)
+        let len = Int(Int32(truncatingIfNeeded: aLine.cLine.length))
         let startMatch = startPad.ofKind([.via, .solid])
         let endMatch = endPad.map { $0.ofKind([.via, .solid]) } ?? (aLine.via != nil)
         if startMatch && endMatch && len < thr {

@@ -260,7 +260,10 @@ public final class LinePlacer: PlacementAlgo {
         if idx < 0 { return false }
         var rv = true
         let l2 = l.slice(0, idx)
-        let dist = l2.length
+        // (KiCad keeps the length in an int, the chain's long long length cut to it, as here: cut inside an arc of a
+        // very big radius, the piece of the arc left can have its three points in line, its centre as far off as an
+        // int goes, and be all but a full circle that far round, a length the int wraps, to less than nothing)
+        let dist = Int(Int32(truncatingIfNeeded: l2.length))
         if dist < thresholdDist { rv = false }
         if currentNode!.checkColliding(Line(head, l2)) != nil { rv = false }
         if rv {
@@ -334,8 +337,9 @@ public final class LinePlacer: PlacementAlgo {
             let wr = walkaround.route(initTrack)
             var bestLine: Line?
             let cw = Walkaround.Policy.cw.rawValue, ccw = Walkaround.Policy.ccw.rawValue
-            var lenCw = wr.status[cw] != .stuck ? wr.lines[cw].cLine.length : Int(Int32.max)
-            var lenCcw = wr.status[ccw] != .stuck ? wr.lines[ccw].cLine.length : Int(Int32.max)
+            // (the lengths in ints, as KiCad keeps them, cut to them)
+            var lenCw = wr.status[cw] != .stuck ? Int(Int32(truncatingIfNeeded: wr.lines[cw].cLine.length)) : Int(Int32.max)
+            var lenCcw = wr.status[ccw] != .stuck ? Int(Int32(truncatingIfNeeded: wr.lines[ccw].cLine.length)) : Int(Int32.max)
             if wr.status[cw] == .done {
                 Router.dbg("wf-result-cw-preopt: \(wr.lines[cw].cLine.points)")
                 Optimizer.optimize(wr.lines[cw], effort: .mergeSegments, world: currentNode!)
@@ -346,7 +350,7 @@ public final class LinePlacer: PlacementAlgo {
                     wr.lines[cw].setShape(tmpTail.cLine)
                     wr.lines[cw].withLine { $0.append(tmpHead.cLine) }
                 }
-                lenCw = wr.lines[cw].cLine.length
+                lenCw = Int(Int32(truncatingIfNeeded: wr.lines[cw].cLine.length))
                 bestLine = wr.lines[cw]
             }
             if wr.status[ccw] == .done {
@@ -357,7 +361,7 @@ public final class LinePlacer: PlacementAlgo {
                     wr.lines[ccw].setShape(tmpTail.cLine)
                     wr.lines[ccw].withLine { $0.append(tmpHead.cLine) }
                 }
-                lenCcw = wr.lines[ccw].cLine.length
+                lenCcw = Int(Int32(truncatingIfNeeded: wr.lines[ccw].cLine.length))
                 if lenCcw < lenCw { bestLine = wr.lines[ccw] }
             }
             let bestLength = lenCw < lenCcw ? lenCw : lenCcw
