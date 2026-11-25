@@ -39,6 +39,8 @@ struct ElementInspector: View {
 
     var body: some View {
         Form {
+            ElementProblemsSection(simulation: editor.simulation, id: element.id)
+
             Section {
                 HStack(spacing: 10) {
                     Image(nsImage: SymbolIcons.image(element.kind))
@@ -379,6 +381,36 @@ private struct MIDISection: View {
 }
 
 /// A block part: which block it is, its pins, and the knobs and switches inside this copy of it
+/// The problems that name the selected part, at the top of its inspector: what is wrong, and what to do about it
+struct ElementProblemsSection: View {
+    @ObservedObject var simulation: SimulationController
+    let id: UUID
+
+    var body: some View {
+        let problems = simulation.diagnostics(for: id)
+        if !problems.isEmpty {
+            Section {
+                ForEach(problems) { problem in
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(problem.message).fixedSize(horizontal: false, vertical: true)
+                            if let hint = problem.hint, !hint.isEmpty {
+                                Text(hint)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    } icon: {
+                        Image(systemName: problem.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(problem.severity == .error ? Color.red : Color.orange)
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct BlockSection: View {
     @ObservedObject var editor: EditorState
     let element: Element

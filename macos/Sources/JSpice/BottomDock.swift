@@ -97,8 +97,8 @@ struct BottomDock: View {
     @ObservedObject var editor: EditorState
     let simulation: SimulationController
     let circuit: Circuit
-    /// The simulation's problems, followed here rather than the whole status, which changes on every frame
-    @State private var problems: [String] = []
+    /// The simulation's diagnostics, followed here rather than the whole status, which changes on every frame
+    @State private var diagnostics: [Diagnostic] = []
 
     /// The microcontrollers that have something to show in the Chip tab: a serial monitor, or an STM32's bus trace
     /// and pins
@@ -126,10 +126,19 @@ struct BottomDock: View {
         Self.tabs(for: editor.circuit, problemCount: Self.problemCount(of: editor))
     }
 
-    /// The simulation's problems and what was left out when the circuit's file was read
+    /// The simulation's diagnostics (notes included) and what was left out when the circuit's file was read: everything
+    /// the Problems tab lists
     @MainActor
     static func problemCount(of editor: EditorState) -> Int {
-        editor.simulation.status.problems.count + editor.circuit.loadNotes.count
+        editor.simulation.status.diagnostics.count + editor.circuit.loadNotes.count
+    }
+
+    /// What the Problems tab's badge counts: errors and warnings, not notes; red when there are errors, orange for
+    /// warnings alone
+    static func badge(for diagnostics: [Diagnostic]) -> (count: Int, isError: Bool) {
+        let errors = diagnostics.filter { $0.severity == .error }.count
+        let warnings = diagnostics.filter { $0.severity == .warning }.count
+        return (errors + warnings, errors > 0)
     }
 
     /// The chip the Chip tab shows: the selected one, or else the circuit's first
@@ -142,12 +151,12 @@ struct BottomDock: View {
 
     var body: some View {
         let notes = circuit.loadNotes
-        let tabs = Self.tabs(for: circuit, problemCount: problems.count + notes.count)
+        let tabs = Self.tabs(for: circuit, problemCount: diagnostics.count + notes.count)
         VStack(spacing: 0) {
             if let first = tabs.first {
                 let active = tabs.contains(editor.dockTab) ? editor.dockTab : first
                 DockResizeHandle(editor: editor)
-                tabBar(tabs, active: active, problemCount: problems.count + notes.count)
+                tabBar(tabs, active: active, badge: Self.badge(for: diagnostics))
                 if !editor.dockCollapsed {
                     Divider()
                     content(active, notes: notes)
@@ -157,14 +166,15 @@ struct BottomDock: View {
                 }
             }
         }
-        .onReceive(simulation.$status.map(\.problems).removeDuplicates()) { if problems != $0 { problems = $0 } }
+        .onReceive(simulation.$status.map(\.diagnostics).removeDuplicates()) { if diagnostics != $0 { diagnostics = $0 } }
     }
 
-    private func tabBar(_ tabs: [DockTab], active: DockTab, problemCount: Int) -> some View {
+    private func tabBar(_ tabs: [DockTab], active: DockTab, badge: (count: Int, isError: Bool)) -> some View {
         HStack(spacing: 4) {
             ForEach(tabs) { tab in
                 DockTabButton(tab: tab, selected: tab == active && !editor.dockCollapsed,
-                              count: tab == .problems ? problemCount : 0) {
+                              count: tab == .problems ? badge.count : 0,
+                              badgeColor: badge.isError ? .red : .orange) {
                     if tab == active && !editor.dockCollapsed {
                         editor.dockCollapsed = true
                     } else {
@@ -228,7 +238,7 @@ struct BottomDock: View {
                 ChipDock(editor: editor, chip: chip)
             }
         case .problems:
-            ProblemsList(problems: problems, notes: notes)
+            ProblemsList(editor: editor, circuit: circuit, diagnostics: diagnostics, notes: notes)
         }
     }
 }
@@ -238,6 +248,7 @@ private struct DockTabButton: View {
     let tab: DockTab
     let selected: Bool
     let count: Int
+    var badgeColor: Color = .red
     let action: () -> Void
 
     var body: some View {
@@ -251,7 +262,7 @@ private struct DockTabButton: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.red, in: Capsule())
+                        .background(badgeColor, in: Capsule())
                 }
             }
             .font(.callout)
@@ -379,13 +390,18 @@ struct DockColumn<Content: View>: View {
     }
 }
 
-/// Every problem the simulation reports, and what was left out when the circuit's file was read
+/// Every problem the simulation reports, grouped by severity, and what was left out when the circuit's file was read
+/// (listed with the notes). Clicking a problem selects its parts on the schematic and brings them into view.
 private struct ProblemsList: View {
-    let problems: [String]
+    @ObservedObject var editor: EditorState
+    let circuit: Circuit
+    let diagnostics: [Diagnostic]
     let notes: [String]
 
+    private static let order: [Diagnostic.Severity] = [.error, .warning, .note]
+
     var body: some View {
-        if problems.isEmpty && notes.isEmpty {
+        if diagnostics.isEmpty && notes.isEmpty {
             VStack(spacing: 6) {
                 Label("No problems", systemImage: "checkmark.seal.fill")
                     .font(.headline)
@@ -396,37 +412,136 @@ private struct ProblemsList: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 8) {
-                    if !problems.isEmpty {
-                        Text("Simulation")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        ForEach(Array(problems.enumerated()), id: \.offset) { _, problem in
-                            Label {
-                                Text(problem).fixedSize(horizontal: false, vertical: true)
-                            } icon: {
-                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
-                            }
-                        }
-                    }
-                    if !notes.isEmpty {
-                        Text("Opening the file")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, problems.isEmpty ? 0 : 6)
-                        ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
-                            Label {
-                                Text(note).fixedSize(horizontal: false, vertical: true)
-                            } icon: {
-                                Image(systemName: "doc.badge.ellipsis").foregroundStyle(.orange)
-                            }
-                        }
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Self.order, id: \.self) { severity in
+                        group(severity)
                     }
                 }
-                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
             }
+        }
+    }
+
+    /// The problems of one severity under a heading with their count (the file's notes with the notes)
+    @ViewBuilder
+    private func group(_ severity: Diagnostic.Severity) -> some View {
+        let items = diagnostics.filter { $0.severity == severity }
+        let fileNotes = severity == .note ? notes : []
+        let count = items.count + fileNotes.count
+        if count > 0 {
+            Text("\(Self.title(severity)) (\(count))")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.top, severity == firstShown ? 0 : 8)
+            ForEach(items) { diagnostic in
+                row(diagnostic)
+            }
+            ForEach(Array(fileNotes.enumerated()), id: \.offset) { _, note in
+                fileNote(note)
+            }
+        }
+    }
+
+    private func row(_ diagnostic: Diagnostic) -> some View {
+        let selected = !diagnostic.elements.isEmpty && Set(diagnostic.elements) == editor.selection
+        return ProblemRow(diagnostic: diagnostic, parts: partNames(diagnostic), selected: selected) {
+            editor.reveal(diagnostic)
+        }
+    }
+
+    private func fileNote(_ note: String) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note).fixedSize(horizontal: false, vertical: true)
+                Text("Opening the file").font(.caption).foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: "doc.badge.ellipsis").foregroundStyle(.blue)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .textSelection(.enabled)
+    }
+
+    /// The first group shown, which needs no space above its heading
+    private var firstShown: Diagnostic.Severity? {
+        Self.order.first { severity in
+            diagnostics.contains { $0.severity == severity } || (severity == .note && !notes.isEmpty)
+        }
+    }
+
+    static func title(_ severity: Diagnostic.Severity) -> String {
+        switch severity {
+        case .error: return "Errors"
+        case .warning: return "Warnings"
+        case .note: return "Notes"
+        }
+    }
+
+    /// The names of the parts a problem concerns, as the schematic labels them
+    private func partNames(_ diagnostic: Diagnostic) -> String? {
+        let names = diagnostic.elements.compactMap { id -> String? in
+            guard let element = circuit[id] else { return nil }
+            return element.name.isEmpty ? element.kind.displayName : element.name
+        }
+        guard !names.isEmpty else { return nil }
+        let shown = names.prefix(6).joined(separator: ", ")
+        return names.count > 6 ? "\(shown) and \(names.count - 6) more" : shown
+    }
+}
+
+/// One problem: an icon by severity, the message, what to do about it, and the parts it concerns; clicking it shows
+/// those parts
+private struct ProblemRow: View {
+    let diagnostic: Diagnostic
+    let parts: String?
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: Self.symbol(diagnostic.severity))
+                    .foregroundStyle(Self.color(diagnostic.severity))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(diagnostic.message)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let hint = diagnostic.hint, !hint.isEmpty {
+                        Text(hint)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let parts {
+                        Label(parts, systemImage: "scope")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(selected ? Color.accentColor.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(parts == nil ? diagnostic.message : "Select \(parts ?? "") on the schematic")
+    }
+
+    static func symbol(_ severity: Diagnostic.Severity) -> String {
+        switch severity {
+        case .error: return "xmark.octagon.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .note: return "info.circle.fill"
+        }
+    }
+
+    static func color(_ severity: Diagnostic.Severity) -> Color {
+        switch severity {
+        case .error: return .red
+        case .warning: return .orange
+        case .note: return .blue
         }
     }
 }

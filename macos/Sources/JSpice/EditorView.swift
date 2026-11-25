@@ -142,22 +142,29 @@ struct StatusBar: View {
         .background(.bar)
     }
 
+    /// The hovered part, its voltage and current, and what is wrong with it when a problem names it
     private var hoverDescription: String? {
         guard let id = editor.hovered else { return nil }
         let simulator = simulation.simulator
         guard let index = simulator.circuit.index(of: id) else { return nil }
         let element = simulator.circuit.elements[index]
         let name = element.name.isEmpty ? element.kind.displayName : "\(element.name) · \(element.kind.displayName)"
+        let description: String
         if element.kind == .wire {
             let nodeVoltage = simulator.terminalVoltages(index).first ?? 0
-            return "\(name) at \(SI.format(nodeVoltage, unit: "V")) · \(SI.format(simulator.current(index), unit: "A"))"
+            description = "\(name) at \(SI.format(nodeVoltage, unit: "V")) · \(SI.format(simulator.current(index), unit: "A"))"
+        } else if element.kind == .ground {
+            description = name
+        } else {
+            description = "\(name) · \(SI.format(simulator.voltageAcross(index), unit: "V")) · \(SI.format(simulator.current(index), unit: "A"))"
         }
-        if element.kind == .ground { return name }
-        return "\(name) · \(SI.format(simulator.voltageAcross(index), unit: "V")) · \(SI.format(simulator.current(index), unit: "A"))"
+        guard let problem = simulation.diagnostics(for: id).first else { return description }
+        return "\(description) · \(problem.message)"
     }
 }
 
-/// The circuit's first problem over the schematic, and how many more there are; click it to see them all in the dock
+/// The circuit's most severe problem over the schematic (red for an error, orange for a warning; notes alone show no
+/// banner), and how many more there are; click it to see them all in the dock
 struct ProblemBanner: View {
     let editor: EditorState
     @ObservedObject var simulation: SimulationController
@@ -165,14 +172,15 @@ struct ProblemBanner: View {
     let notes: Int
 
     var body: some View {
-        let problems = simulation.status.problems
-        if let problem = problems.first {
-            let more = problems.count - 1 + notes
+        let diagnostics = simulation.status.diagnostics
+        if let problem = diagnostics.filter({ $0.severity != .note }).min(by: { $0.severity < $1.severity }) {
+            let more = diagnostics.count - 1 + notes
+            let isError = problem.severity == .error
             Button {
                 editor.showDock(.problems)
             } label: {
                 HStack(spacing: 8) {
-                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    Label(problem.message, systemImage: isError ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
                     if more > 0 {
                         Text("+\(more) more")
                             .font(.callout.weight(.semibold))
@@ -185,7 +193,7 @@ struct ProblemBanner: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(Color.red.opacity(0.88), in: Capsule())
+                .background((isError ? Color.red : Color.orange).opacity(0.88), in: Capsule())
                 .contentShape(Capsule())
             }
             .buttonStyle(.plain)

@@ -163,6 +163,10 @@ final class CircuitCanvasView: NSView {
             lastFitRequest = editor.fitRequest
             fitCircuit()
         }
+        if let ids = editor.pendingReveal, bounds.width > 10, bounds.height > 10 {
+            editor.pendingReveal = nil
+            reveal(ids)
+        }
         let palette = CanvasPalette.forAppearance(effectiveAppearance)
         let accent = NSColor.controlAccentColor.usingColorSpace(.sRGB).map { RGBA($0.redComponent, $0.greenComponent, $0.blueComponent) }
             ?? RGBA(0, 0.48, 1)
@@ -214,7 +218,74 @@ final class CircuitCanvasView: NSView {
         drawTerminals(ctx, circuit, palette)
         drawLabels(circuit, live: live, palette)
         drawSelectionHandles(ctx, circuit, accent)
+        drawProblemBadges(ctx, circuit, palette)
         drawDragFeedback(ctx, palette, accent, lineWidth)
+    }
+
+    /// A red (error) or orange (warning) badge at the top right of each part a problem names. The lookup of parts to
+    /// severities is made by the simulation controller when its diagnostics change, so a frame without problems costs
+    /// one emptiness check, and one with them a dictionary lookup per part.
+    private func drawProblemBadges(_ ctx: CGContext, _ circuit: Circuit, _ palette: CanvasPalette) {
+        let severities = editor.simulation.severityByElement
+        guard !severities.isEmpty else { return }
+        let error = palette.isDark ? RGBA(1.0, 0.33, 0.33) : RGBA(0.86, 0.16, 0.18)
+        let warning = palette.isDark ? RGBA(1.0, 0.66, 0.16) : RGBA(0.93, 0.52, 0.0)
+        let r = min(9, max(5.5, unit * 0.36))
+        for element in circuit.elements {
+            guard let severity = severities[element.id] else { continue }
+            let points = element.extentPoints
+            guard let maxX = points.map(\.x).max(), let minY = points.map(\.y).min() else { continue }
+            // just outside the part's top right corner, clear of its symbol
+            let corner = screen(GridPoint(maxX, minY))
+            let center = CGPoint(x: corner.x + r * 0.9, y: corner.y - r * 0.9)
+            let rect = CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r)
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: 0, height: 1), blur: 2, color: CGColor(gray: 0, alpha: 0.3))
+            ctx.setFillColor((severity == .error ? error : warning).cgColor)
+            ctx.fillEllipse(in: rect)
+            ctx.restoreGState()
+            ctx.setStrokeColor(palette.background.cgColor)
+            ctx.setLineWidth(1.2)
+            ctx.strokeEllipse(in: rect)
+            // an exclamation mark: a bar and a dot (the view is flipped, so y grows downwards)
+            ctx.setStrokeColor(CGColor(gray: 1, alpha: 1))
+            ctx.setLineWidth(max(1.4, r * 0.28))
+            ctx.setLineCap(.round)
+            ctx.move(to: CGPoint(x: center.x, y: center.y - r * 0.5))
+            ctx.addLine(to: CGPoint(x: center.x, y: center.y + r * 0.12))
+            ctx.strokePath()
+            let dot = max(0.9, r * 0.16)
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+            ctx.fillEllipse(in: CGRect(x: center.x - dot, y: center.y + r * 0.48 - dot, width: 2 * dot, height: 2 * dot))
+        }
+    }
+
+    /// Brings parts into view: nothing moves when they are all on screen already; otherwise the view pans to centre
+    /// them, zooming out only when they do not fit at the zoom shown
+    private func reveal(_ ids: Set<UUID>) {
+        let points = editor.circuit.elements.filter { ids.contains($0.id) }.flatMap(\.extentPoints)
+        guard let minX = points.map(\.x).min(), let maxX = points.map(\.x).max(),
+              let minY = points.map(\.y).min(), let maxY = points.map(\.y).max() else { return }
+        // room around the parts for their labels and badges, and clear of the banners over the top of the canvas
+        let padding: CGFloat = 2
+        let visible = CGRect(x: 16, y: 64, width: bounds.width - 32, height: bounds.height - 80)
+        guard visible.width > 40, visible.height > 40 else { return }
+        let topLeft = screen(GridPoint(minX, minY))
+        let bottomRight = screen(GridPoint(maxX, maxY))
+        let box = CGRect(x: topLeft.x - padding * unit, y: topLeft.y - padding * unit,
+                         width: bottomRight.x - topLeft.x + 2 * padding * unit,
+                         height: bottomRight.y - topLeft.y + 2 * padding * unit)
+        if visible.contains(box) { return }
+        var zoom = editor.zoom
+        if box.width > visible.width || box.height > visible.height {
+            let fit = min(visible.width / box.width, visible.height / box.height)
+            zoom = max(0.3, editor.zoom * fit)
+        }
+        let newUnit = EditorState.gridSize * zoom
+        let centerX = CGFloat(minX + maxX) / 2, centerY = CGFloat(minY + maxY) / 2
+        editor.viewAdjusted = true
+        if zoom != editor.zoom { editor.zoom = zoom }
+        editor.pan = CGPoint(x: visible.midX - centerX * newUnit, y: visible.midY - centerY * newUnit)
     }
 
     private func drawGrid(_ ctx: CGContext, _ palette: CanvasPalette) {

@@ -31,6 +31,8 @@ enum ScreenshotRunner {
         var board: BoardKind = .schematic
         /// The tab the dock under the canvas is open on, in place of the first the circuit has
         var dock: DockTab?
+        /// Click the Problems tab's first problem that names parts, as a person would, before the shot
+        var revealProblem = false
     }
 
     static let shots: [Shot] = [
@@ -100,6 +102,7 @@ enum ScreenshotRunner {
         Shot(name: "63-dock-problems-light", example: "broken", dark: false, seconds: 1, dock: .problems),
         Shot(name: "64-dock-chip-light", example: "arduino-knob", dark: false, seconds: 2, select: .atmega328p, dock: .chip),
         Shot(name: "65-dock-breadboard-panel-dark", example: "fuzz", dark: true, seconds: 2, board: .breadboard, dock: .panel),
+        Shot(name: "66-dock-problem-clicked-light", example: "broken", dark: false, seconds: 1, dock: .problems, revealProblem: true),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool, drawings: Bool = false) {
@@ -255,6 +258,11 @@ enum ScreenshotRunner {
 
             // let it lay out and simulate in real time
             try? await Task.sleep(nanoseconds: UInt64((shot.seconds + 1) * 1_000_000_000))
+            if shot.revealProblem,
+               let problem = editor.simulation.status.diagnostics.first(where: { $0.severity != .note && !$0.elements.isEmpty }) {
+                editor.reveal(problem)
+                try? await Task.sleep(nanoseconds: 600_000_000)
+            }
             InteractionTest.capture(window, to: directory.appendingPathComponent("\(shot.name).png"))
             window.orderOut(nil)
             window.close()

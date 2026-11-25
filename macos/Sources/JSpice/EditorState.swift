@@ -1176,6 +1176,25 @@ final class EditorState: ObservableObject {
         fitRequest += 1
     }
 
+    /// Parts waiting to be brought into view by the schematic's next drawing (see `CircuitCanvasView.reveal`)
+    var pendingReveal: Set<UUID>?
+
+    /// Shows a problem's parts: selects them, switches to the schematic if a board is showing, and pans or zooms out
+    /// just enough to bring them into view (nothing moves when they are already on screen). What a row of the dock's
+    /// Problems tab does when clicked.
+    func reveal(_ ids: Set<UUID>) {
+        let present = ids.filter { circuit[$0] != nil }
+        guard !present.isEmpty else { return }
+        selection = present
+        if board != .schematic { board = .schematic }
+        pendingReveal = present
+        canvas?.needsDisplay = true
+    }
+
+    func reveal(_ diagnostic: Diagnostic) {
+        reveal(Set(diagnostic.elements))
+    }
+
     /// Redraws the circuit as a tidy schematic, keeping every connection
     func tidyUp() {
         guard let next = try? SchematicLayout.tidy(circuit) else { return }

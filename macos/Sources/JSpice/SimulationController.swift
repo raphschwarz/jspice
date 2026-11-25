@@ -13,6 +13,8 @@ final class SimulationController: ObservableObject {
         /// Fraction of the requested speed actually reached (below 1 when the circuit is too heavy to keep up)
         var achieved: Double = 1
         var problems: [String] = []
+        /// The circuit's problems with the parts they concern, errors first (`problems` is their messages, notes left out)
+        var diagnostics: [Diagnostic] = []
         var failed = false
         var automatic = true
         /// Sound on: running in real time, one step per audio sample
@@ -339,9 +341,31 @@ final class SimulationController: ObservableObject {
         publish()
     }
 
+    /// The most severe error or warning concerning each part of the drawn circuit (notes left out), made once when the
+    /// diagnostics change, for the canvas to mark the parts and the status bar to say why
+    private(set) var severityByElement: [UUID: Diagnostic.Severity] = [:]
+
+    /// The errors and warnings concerning one part of the drawn circuit, most severe first
+    func diagnostics(for id: UUID) -> [Diagnostic] {
+        guard severityByElement[id] != nil else { return [] }
+        return status.diagnostics.filter { $0.severity != .note && $0.elements.contains(id) }
+    }
+
     private func publish() {
+        let diagnostics = simulator.diagnostics
         let next = Status(time: simulator.time, speed: speed, timeStep: simulator.timeStep, achieved: achieved,
-                          problems: simulator.problems, failed: simulator.isFailed, automatic: automatic, audio: playing)
+                          problems: simulator.problems, diagnostics: diagnostics, failed: simulator.isFailed,
+                          automatic: automatic, audio: playing)
+        if next.diagnostics != status.diagnostics {
+            var severities: [UUID: Diagnostic.Severity] = [:]
+            for diagnostic in diagnostics where diagnostic.severity != .note {
+                for id in diagnostic.elements {
+                    if let known = severities[id], known <= diagnostic.severity { continue }
+                    severities[id] = diagnostic.severity
+                }
+            }
+            severityByElement = severities
+        }
         if next != status { status = next }
     }
 }
