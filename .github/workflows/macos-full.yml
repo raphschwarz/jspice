@@ -4,16 +4,18 @@ name: macos-full
 # Mac app. Three jobs side by side, each packaging the app for itself (jobs do not share a filesystem): the tests with
 # the toolchains, the firmware and the makers' models they need; the benchmarks and profiles (informational: their
 # job cannot fail the run); and the drawings for schematic capture with their evaluation.
+# A push to another branch runs the first of these alone, and only when it touches what runs firmware (the
+# microcontroller emulators, the firmware loader, the debugger, chip support): the fast lane cannot check those against
+# real firmware.
 
 on:
   schedule:
     - cron: '17 3 * * *'
   push:
-    branches: [master]
     paths: ['macos/**', '.github/workflows/macos-full.yml']
   workflow_dispatch:
 
-# a newer push to master cancels the push run it supersedes; nightly and manual runs are never cancelled by one
+# a newer push to a branch cancels the push run it supersedes; nightly and manual runs are never cancelled by one
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
@@ -22,10 +24,46 @@ permissions:
   contents: read
 
 jobs:
+  # which jobs this run is for: all of them nightly, on demand and on master; on another branch the firmware tests
+  # alone, if the push touches what they check
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      everything: ${{ steps.decide.outputs.everything }}
+      firmware: ${{ steps.decide.outputs.firmware }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Decide
+        id: decide
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          everything=false
+          firmware=false
+          if [ "$GITHUB_EVENT_NAME" != push ] || [ "$GITHUB_REF" = refs/heads/master ]; then
+            everything=true
+            firmware=true
+          else
+            # (a branch's first push has no commit before it: compare with where it left master)
+            base="$BEFORE"
+            if ! git cat-file -e "$base^{commit}" 2>/dev/null; then base=$(git merge-base origin/master HEAD); fi
+            if git diff --name-only "$base" HEAD | grep -qE '^macos/Sources/CortexM4/|^macos/Sources/CircuitKit/(RP2040/|STM32|AVR|GDBServer|FirmwareFile|ChipSupport|ArduinoToolchain|PicoToolchain|Microcontroller)|^\.github/workflows/macos-full\.yml$'; then
+              firmware=true
+            fi
+          fi
+          echo "everything=$everything" >> "$GITHUB_OUTPUT"
+          echo "firmware=$firmware" >> "$GITHUB_OUTPUT"
+          echo "everything=$everything firmware=$firmware"
+
   # the tests gated on what earlier steps install and build: the AVR and Pico toolchains (found in Application Support,
   # required by JSPICE_REQUIRE_TOOLCHAIN), the Mutable Instruments firmware (JSPICE_*_HEX, written to GITHUB_ENV by
   # their steps, so they must stay in this job before the test step) and the makers' models (JSPICE_MAKER_MODELS)
   firmware-tests:
+    needs: scope
+    if: needs.scope.outputs.firmware == 'true'
     runs-on: macos-latest
     timeout-minutes: 90
     defaults:
@@ -108,6 +146,8 @@ jobs:
 
   # log-only measurements: speed at audio rate, profiles and disassembly, and a build without Swift's checks
   benchmarks:
+    needs: scope
+    if: needs.scope.outputs.everything == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     continue-on-error: true
@@ -295,6 +335,8 @@ jobs:
 
   # the example schematics drawn as PNG and PDF, read back by the capture evaluation when an ANTHROPIC_API_KEY is set
   capture:
+    needs: scope
+    if: needs.scope.outputs.everything == 'true'
     runs-on: macos-latest
     timeout-minutes: 40
     defaults:
