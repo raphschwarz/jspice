@@ -1039,6 +1039,16 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
     public var block: BlockDefinition?
     /// An audio input part's sound
     public var audio: AudioClip?
+    /// Fields of the part in its file that this build does not know (added by a newer version), written back as they
+    /// were. A part this build cannot read at all is kept by its circuit instead (`Circuit.preserved`).
+    public var unknownFields: [String: JSONValue] = [:]
+
+    /// The fields of a part in the file. A new stored property that is saved needs a key here and a line in
+    /// `init(from:)` and `encode(to:)` (a test checks every stored property is written).
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, kind, name, a, b, params, closed, flipped, code, firmware, block, audio
+    }
+    static let knownKeys = Set(CodingKeys.allCases.map(\.rawValue))
 
     public init(id: UUID = UUID(), kind: ElementKind, name: String = "", a: GridPoint, b: GridPoint,
                 params: [String: Double] = [:], closed: Bool = false, flipped: Bool = false) {
@@ -1066,6 +1076,31 @@ public struct Element: Identifiable, Codable, Hashable, Sendable {
         firmware = try container.decodeIfPresent(Data.self, forKey: .firmware)
         block = try container.decodeIfPresent(BlockDefinition.self, forKey: .block)
         audio = try container.decodeIfPresent(AudioClip.self, forKey: .audio)
+        let any = try decoder.container(keyedBy: AnyCodingKey.self)
+        for key in any.allKeys where !Self.knownKeys.contains(key.stringValue) {
+            unknownFields[key.stringValue] = try any.decode(JSONValue.self, forKey: key)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(name, forKey: .name)
+        try container.encode(a, forKey: .a)
+        try container.encode(b, forKey: .b)
+        try container.encode(params, forKey: .params)
+        try container.encode(closed, forKey: .closed)
+        try container.encode(flipped, forKey: .flipped)
+        try container.encodeIfPresent(code, forKey: .code)
+        try container.encodeIfPresent(firmware, forKey: .firmware)
+        try container.encodeIfPresent(block, forKey: .block)
+        try container.encodeIfPresent(audio, forKey: .audio)
+        guard !unknownFields.isEmpty else { return }
+        var any = encoder.container(keyedBy: AnyCodingKey.self)
+        for (key, value) in unknownFields where !Self.knownKeys.contains(key) {
+            try any.encode(value, forKey: AnyCodingKey(key))
+        }
     }
 
     /// How the part is drawn as a box with pins down its sides: a chip's, or a block's from its ports

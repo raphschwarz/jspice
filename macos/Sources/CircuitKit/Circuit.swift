@@ -146,6 +146,17 @@ public struct Circuit: Codable, Hashable, Sendable {
     public var sequence: StepSequence?
     /// MIDI controllers mapped to the circuit's knobs and switches
     public var midiMappings: [MIDIMapping]
+    /// What the file held that this build could not read, written back on saving (see CircuitFormat.swift)
+    public var preserved = PreservedContent()
+    /// How the circuit was read from its file; not saved, and ignored by `==`
+    var loadInfo = CircuitLoadInfo()
+
+    /// The fields of a circuit file. A new stored property that is saved needs a key here and a line in `init(from:)`
+    /// and `encode(to:)`.
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case elements, scopes, settings, netNames, sequence, midiMappings, formatVersion
+    }
+    static let knownKeys = Set(CodingKeys.allCases.map(\.rawValue))
 
     public init(elements: [Element] = [], scopes: [ScopeSpec] = [], settings: SimulationSettings = SimulationSettings(),
                 netNames: [String: String] = [:], sequence: StepSequence? = nil, midiMappings: [MIDIMapping] = []) {
@@ -157,14 +168,79 @@ public struct Circuit: Codable, Hashable, Sendable {
         self.midiMappings = midiMappings
     }
 
+    /// Reads what this build understands and keeps the rest in `preserved`: list entries it cannot read (a part of an
+    /// unknown kind, a scope of an unknown quantity), fields it does not know, and fields it knows but cannot read.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        elements = try container.decodeIfPresent([Element].self, forKey: .elements) ?? []
-        scopes = try container.decodeIfPresent([ScopeSpec].self, forKey: .scopes) ?? []
-        settings = try container.decodeIfPresent(SimulationSettings.self, forKey: .settings) ?? SimulationSettings()
-        netNames = try container.decodeIfPresent([String: String].self, forKey: .netNames) ?? [:]
-        sequence = try container.decodeIfPresent(StepSequence.self, forKey: .sequence)
-        midiMappings = try container.decodeIfPresent([MIDIMapping].self, forKey: .midiMappings) ?? []
+        var preserved = PreservedContent()
+        let readElements = Tolerant<Element>.split(try container.decodeIfPresent([Tolerant<Element>].self, forKey: .elements) ?? [])
+        elements = readElements.values
+        preserved.elements = readElements.preserved
+        let readScopes = Tolerant<ScopeSpec>.split(try container.decodeIfPresent([Tolerant<ScopeSpec>].self, forKey: .scopes) ?? [])
+        scopes = readScopes.values
+        preserved.scopes = readScopes.preserved
+        let readMappings = Tolerant<MIDIMapping>.split(try container.decodeIfPresent([Tolerant<MIDIMapping>].self, forKey: .midiMappings) ?? [])
+        midiMappings = readMappings.values
+        preserved.midiMappings = readMappings.preserved
+
+        /// A field read if it can be, else the default, with the field kept as it was
+        func field<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+            do {
+                return try container.decodeIfPresent(T.self, forKey: key) ?? fallback
+            } catch {
+                preserved.unreadableFields[key.rawValue] = try container.decode(JSONValue.self, forKey: key)
+                return fallback
+            }
+        }
+        settings = try field(.settings, SimulationSettings())
+        netNames = try field(.netNames, [:])
+        sequence = try field(.sequence, StepSequence?.none)
+
+        let any = try decoder.container(keyedBy: AnyCodingKey.self)
+        for key in any.allKeys where !Self.knownKeys.contains(key.stringValue) {
+            preserved.fields[key.stringValue] = try any.decode(JSONValue.self, forKey: key)
+        }
+        self.preserved = preserved
+        loadInfo.recognized = CodingKeys.allCases.contains { container.contains($0) }
+        if decoder.codingPath.isEmpty {
+            loadInfo.fileVersion = (try? container.decodeIfPresent(Int.self, forKey: .formatVersion)) ?? 1
+        }
+    }
+
+    /// Writes the circuit as the file has it, with what was preserved from reading put back. The format version goes at
+    /// the top of a file only (a circuit encoded on its own), not in a block's circuit inside one.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        var list = container.nestedUnkeyedContainer(forKey: .elements)
+        try list.encode(elements, mergingPreserved: preserved.elements)
+        list = container.nestedUnkeyedContainer(forKey: .scopes)
+        try list.encode(scopes, mergingPreserved: preserved.scopes)
+        list = container.nestedUnkeyedContainer(forKey: .midiMappings)
+        try list.encode(midiMappings, mergingPreserved: preserved.midiMappings)
+
+        // a field that could not be read goes back as it was, unless it was changed from the default put in its place
+        func field<T: Encodable & Equatable>(_ key: CodingKeys, _ value: T, fallback: T) throws {
+            if value == fallback, let raw = preserved.unreadableFields[key.rawValue] {
+                try container.encode(raw, forKey: key)
+            } else {
+                try container.encode(value, forKey: key)
+            }
+        }
+        try field(.settings, settings, fallback: SimulationSettings())
+        try field(.netNames, netNames, fallback: [:])
+        if let sequence {
+            try container.encode(sequence, forKey: .sequence)
+        } else if let raw = preserved.unreadableFields[CodingKeys.sequence.rawValue] {
+            try container.encode(raw, forKey: .sequence)
+        }
+        if encoder.codingPath.isEmpty {
+            try container.encode(max(Self.formatVersion, loadInfo.fileVersion ?? Self.formatVersion), forKey: .formatVersion)
+        }
+
+        var any = encoder.container(keyedBy: AnyCodingKey.self)
+        for (key, value) in preserved.fields where !Self.knownKeys.contains(key) {
+            try any.encode(value, forKey: AnyCodingKey(key))
+        }
     }
 
     public subscript(id: UUID) -> Element? {

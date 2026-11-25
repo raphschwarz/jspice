@@ -21,7 +21,8 @@ final class CircuitDocument: ReferenceFileDocument {
         guard let data = configuration.file.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        circuit = try JSONDecoder().decode(Circuit.self, from: data)
+        // tolerant of what a newer version added (see `Circuit.loadNotes`); throws a readable error for other files
+        circuit = try Circuit.decodeDocument(from: data)
     }
 
     func snapshot(contentType: UTType) throws -> Circuit {
