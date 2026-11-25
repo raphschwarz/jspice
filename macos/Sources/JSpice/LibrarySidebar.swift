@@ -90,13 +90,47 @@ enum SymbolIcons {
     }
 }
 
+/// The part kinds placed or chosen most recently, newest first, kept in the user defaults for every window
+@MainActor
+final class RecentParts: ObservableObject {
+    static let shared = RecentParts()
+    static let limit = 6
+    static let defaultsKey = "RecentPartKinds"
+
+    @Published private(set) var kinds: [ElementKind]
+
+    init() {
+        let names = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? []
+        kinds = Array(names.compactMap { ElementKind(rawValue: $0) }.filter(Self.isRecordable).prefix(Self.limit))
+    }
+
+    /// Parts worth offering again: not wires (drawn all the time, W) and not blocks (the Blocks section lists them)
+    static func isRecordable(_ kind: ElementKind) -> Bool {
+        kind.isPlaceable && kind != .wire && kind != .block
+    }
+
+    func record(_ kind: ElementKind) {
+        guard Self.isRecordable(kind), kinds.first != kind else { return }
+        var next = kinds.filter { $0 != kind }
+        next.insert(kind, at: 0)
+        kinds = Array(next.prefix(Self.limit))
+        UserDefaults.standard.set(kinds.map(\.rawValue), forKey: Self.defaultsKey)
+    }
+}
+
 struct LibrarySidebar: View {
     @ObservedObject var editor: EditorState
+    @ObservedObject private var recents = RecentParts.shared
     @State private var search = ""
+    /// The library sections folded away, by name (kept between launches)
+    @AppStorage("LibraryCollapsedSections") private var collapsedSections = ""
+    @Environment(\.openWindow) private var openWindow
+
+    private var searchText: String { search.trimmingCharacters(in: .whitespaces).lowercased() }
 
     /// The parts of a category that match the search (by name, category or the real parts they model)
     private func kinds(in category: ElementCategory) -> [ElementKind] {
-        let text = search.trimmingCharacters(in: .whitespaces).lowercased()
+        let text = searchText
         return ElementKind.allCases.filter { kind in
             kind.isPlaceable && kind.category == category
                 && (text.isEmpty || kind.searchTerms.contains { $0.lowercased().contains(text) })
@@ -105,21 +139,74 @@ struct LibrarySidebar: View {
 
     /// The saved blocks that match the search
     private var blocks: [BlockDefinition] {
-        let text = search.trimmingCharacters(in: .whitespaces).lowercased()
+        let text = searchText
         return editor.libraryBlocks.filter { text.isEmpty || $0.name.lowercased().contains(text) || "block".contains(text) }
+    }
+
+    /// Whether a section is unfolded; every section is while searching, so nothing that matches is hidden
+    private func isExpanded(_ name: String) -> Binding<Bool> {
+        Binding(
+            get: { !searchText.isEmpty || !collapsedSections.split(separator: "|").contains { $0 == name } },
+            set: { expanded in
+                var names = collapsedSections.split(separator: "|").map(String.init).filter { $0 != name }
+                if !expanded { names.append(name) }
+                collapsedSections = names.joined(separator: "|")
+            })
+    }
+
+    private func partRow(_ kind: ElementKind) -> some View {
+        ToolRow(title: kind.displayName, shortcut: kind.shortcutLabel, isActive: editor.tool == kind) {
+            Image(nsImage: SymbolIcons.image(kind))
+                .renderingMode(.template)
+                .frame(width: 34, height: 22)
+        } action: {
+            // back to the canvas, so Esc and the shortcuts work at once
+            editor.choose(editor.tool == kind ? nil : kind)
+        }
     }
 
     var body: some View {
         List {
-            Section("Tools") {
+            Section {
+                Button {
+                    openWindow(id: ExampleGalleryView.windowID)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.grid.2x2.fill")
+                            .foregroundStyle(.tint)
+                            .frame(width: 34, height: 22)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Example Circuits")
+                            Text("Pedals, synths, amps, Arduino…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "arrow.up.forward.app").foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Browse about ninety ready-made circuits, by category, in their own window")
                 ToolRow(title: "Select", shortcut: "Esc", isActive: editor.tool == nil) {
                     Image(systemName: "cursorarrow").frame(width: 34, height: 22)
                 } action: {
                     editor.tool = nil
                 }
             }
+            if searchText.isEmpty && !recents.kinds.isEmpty {
+                Section(isExpanded: isExpanded("Recent")) {
+                    ForEach(recents.kinds) { kind in
+                        partRow(kind)
+                    }
+                } header: {
+                    Text("Recent")
+                }
+            }
             ForEach(ElementCategory.allCases.filter { !kinds(in: $0).isEmpty || ($0 == .blocks && !blocks.isEmpty) }) { category in
-                Section(category.rawValue) {
+                Section(isExpanded: isExpanded(category.rawValue)) {
                     if category == .blocks {
                         // the blocks saved with Circuit ▸ Save as Block
                         ForEach(blocks, id: \.name) { block in
@@ -137,42 +224,15 @@ struct LibrarySidebar: View {
                         }
                     }
                     ForEach(kinds(in: category)) { kind in
-                        ToolRow(title: kind.displayName, shortcut: kind.shortcutLabel, isActive: editor.tool == kind) {
-                            Image(nsImage: SymbolIcons.image(kind))
-                                .renderingMode(.template)
-                                .frame(width: 34, height: 22)
-                        } action: {
-                            // back to the canvas, so Esc and the shortcuts work at once
-                            editor.choose(editor.tool == kind ? nil : kind)
-                        }
+                        partRow(kind)
                     }
-                }
-            }
-            Section("Examples") {
-                ForEach(Examples.all.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }) { example in
-                    Button {
-                        editor.load(example)
-                    } label: {
-                        Label {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(example.title)
-                                Text(example.summary)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                        } icon: {
-                            Image(systemName: example.symbol)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.vertical, 2)
+                } header: {
+                    Text(category.rawValue)
                 }
             }
         }
         .listStyle(.sidebar)
-        .searchable(text: $search, placement: .sidebar, prompt: "Parts and examples")
+        .searchable(text: $search, placement: .sidebar, prompt: "Search parts")
     }
 }
 

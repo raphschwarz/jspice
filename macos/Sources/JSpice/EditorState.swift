@@ -173,6 +173,7 @@ final class EditorState: ObservableObject {
 
     @discardableResult
     func add(_ element: Element) -> UUID {
+        RecentParts.shared.record(element.kind)
         var id = element.id
         edit("Add \(element.kind.displayName)") { circuit in
             id = circuit.add(element)
@@ -218,6 +219,7 @@ final class EditorState: ObservableObject {
 
     /// Picks a tool from the keyboard or the palette, and gives the schematic the keyboard back
     func choose(_ kind: ElementKind?) {
+        if let kind { RecentParts.shared.record(kind) }
         tool = kind
         if kind != .block { blockToPlace = nil }
         showQuickAdd = false
@@ -1016,6 +1018,16 @@ final class EditorState: ObservableObject {
         simulation.reset()
         simulation.setRunning(true)
         requestFit()
+    }
+
+    /// Opens an example without losing work: in this window when it is empty (as from the welcome view), otherwise in
+    /// a new document window, which starts running and fitted to the circuit as every newly opened window does
+    func open(_ example: Example, newDocument: NewDocumentAction) {
+        if circuit.elements.isEmpty {
+            load(example)
+        } else {
+            ExampleGalleryView.openInNewWindow(example, newDocument: newDocument)
+        }
     }
 
     func requestFit() {

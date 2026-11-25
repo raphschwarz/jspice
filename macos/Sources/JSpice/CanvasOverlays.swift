@@ -85,31 +85,135 @@ struct ZoomControl: View {
 
 // MARK: - Quick add
 
-/// ⌘K or /: type to find a part (by name, category or the real part it models, such as "TL072") or an example, and
-/// press Return to place it
+/// A command the palette offers besides parts and examples
+enum PaletteCommand: String, CaseIterable, Hashable {
+    case runPause, reset, tidyUp, zoomToFit, rotate, flip, duplicate, delete, saveAsBlock, exampleGallery, shortcuts
+    case togglePanel, toggleCurrent, toggleValues, toggleInspector
+
+    /// What it is found by: its name first, then other words for it
+    var searchTerms: [String] {
+        switch self {
+        case .runPause: return ["Run or Pause", "play", "start", "stop", "simulation"]
+        case .reset: return ["Reset", "restart", "time zero", "simulation"]
+        case .tidyUp: return ["Tidy Up", "layout", "clean up", "arrange"]
+        case .zoomToFit: return ["Zoom to Fit", "fit", "view"]
+        case .rotate: return ["Rotate", "turn"]
+        case .flip: return ["Flip", "mirror"]
+        case .duplicate: return ["Duplicate", "copy"]
+        case .delete: return ["Delete", "remove"]
+        case .saveAsBlock: return ["Save as Block…", "subcircuit", "library"]
+        case .exampleGallery: return ["Open Example Gallery", "examples", "browse", "circuits"]
+        case .shortcuts: return ["Keyboard Shortcuts", "keys", "help"]
+        case .togglePanel: return ["Show or Hide Front Panel", "panel", "knobs", "controls"]
+        case .toggleCurrent: return ["Show or Hide Current Dots", "current", "flow", "animation"]
+        case .toggleValues: return ["Show or Hide Values", "values", "labels"]
+        case .toggleInspector: return ["Show or Hide Inspector", "inspector", "properties"]
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .runPause: return "playpause.fill"
+        case .reset: return "backward.end.fill"
+        case .tidyUp: return "wand.and.stars"
+        case .zoomToFit: return "arrow.up.left.and.arrow.down.right"
+        case .rotate: return "rotate.right"
+        case .flip: return "arrow.left.and.right.righttriangle.left.righttriangle.right"
+        case .duplicate: return "plus.square.on.square"
+        case .delete: return "trash"
+        case .saveAsBlock: return "square.on.square.dashed"
+        case .exampleGallery: return "square.grid.2x2"
+        case .shortcuts: return "keyboard"
+        case .togglePanel: return "slider.horizontal.3"
+        case .toggleCurrent: return "circle.dotted"
+        case .toggleValues: return "textformat.123"
+        case .toggleInspector: return "sidebar.right"
+        }
+    }
+
+    var shortcut: String? {
+        switch self {
+        case .runPause: return "Space"
+        case .reset: return "⇧⌘↩"
+        case .tidyUp: return "⌥⌘T"
+        case .zoomToFit: return "⌘0"
+        case .rotate: return "⌘R"
+        case .flip: return "F"
+        case .duplicate: return "⌘D"
+        case .delete: return "⌫"
+        case .saveAsBlock: return "⇧⌘B"
+        case .shortcuts: return "⌘/"
+        case .exampleGallery, .togglePanel, .toggleCurrent, .toggleValues, .toggleInspector: return nil
+        }
+    }
+
+    /// The name shown, for the editor's state now ("Pause" while running, "Hide …" while shown)
+    @MainActor
+    func title(for editor: EditorState) -> String {
+        switch self {
+        case .runPause: return editor.simulation.isRunning ? "Pause" : "Run"
+        case .togglePanel: return editor.showPanel ? "Hide Front Panel" : "Show Front Panel"
+        case .toggleCurrent: return editor.showCurrent ? "Hide Current Dots" : "Show Current Dots"
+        case .toggleValues: return editor.showValues ? "Hide Values" : "Show Values"
+        case .toggleInspector: return editor.showInspector ? "Hide Inspector" : "Show Inspector"
+        default: return searchTerms[0]
+        }
+    }
+
+    /// Whether it would do anything now
+    @MainActor
+    func isAvailable(in editor: EditorState) -> Bool {
+        switch self {
+        case .rotate, .duplicate, .delete: return !editor.selection.isEmpty
+        case .flip: return editor.canFlipSelection
+        case .tidyUp, .saveAsBlock: return !editor.circuit.elements.isEmpty
+        default: return true
+        }
+    }
+}
+
+/// ⌘K or /: type to find a part (by name, category or the real part it models, such as "TL072"), an example or a
+/// command, and press Return to place, open or run it
 struct QuickAddPalette: View {
     @ObservedObject var editor: EditorState
     @State private var query = ""
     @State private var highlighted = 0
     @FocusState private var focused: Bool
+    @Environment(\.newDocument) private var newDocument
+    @Environment(\.openWindow) private var openWindow
 
-    private enum Item: Hashable {
+    enum Item: Hashable {
         case part(ElementKind)
+        case command(PaletteCommand)
         case example(String)
     }
 
-    private var items: [Item] {
+    /// Everything that matches the text, best first. Parts score as they always did; a command scores four worse than
+    /// a part matched as well, an example ten, so a part-like query keeps its parts on top. Only parts for no text.
+    static func rankedItems(for query: String) -> [Item] {
         let text = query.trimmingCharacters(in: .whitespaces).lowercased()
         let parts = ElementKind.allCases.filter(\.isPlaceable)
             .compactMap { kind -> (Item, Int)? in
                 guard let score = Self.score(text, kind.searchTerms) else { return nil }
                 return (.part(kind), score)
             }
+        let commands = text.isEmpty ? [] : PaletteCommand.allCases.compactMap { command -> (Item, Int)? in
+            guard let score = Self.score(text, command.searchTerms) else { return nil }
+            return (.command(command), score + 4)
+        }
         let examples = text.isEmpty ? [] : Examples.all.compactMap { example -> (Item, Int)? in
             guard let score = Self.score(text, [example.title]) else { return nil }
             return (.example(example.id), score + 10)
         }
-        return (parts + examples).sorted { $0.1 < $1.1 }.map(\.0)
+        return (parts + commands + examples).sorted { $0.1 < $1.1 }.map(\.0)
+    }
+
+    /// The ranked items, without commands that would do nothing now (Rotate with nothing selected)
+    private var items: [Item] {
+        Self.rankedItems(for: query).filter { item in
+            if case .command(let command) = item { return command.isAvailable(in: editor) }
+            return true
+        }
     }
 
     /// Lower is better: the name starts with the text, a word does, it contains it, or its letters appear in order
@@ -216,13 +320,24 @@ struct QuickAddPalette: View {
                 }
                 Spacer()
                 if let shortcut = kind.shortcutLabel { KeyCap(shortcut) }
+            case .command(let command):
+                Image(systemName: command.symbol)
+                    .frame(width: 34, height: 22)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(command.title(for: editor))
+                    Text("Command").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let shortcut = command.shortcut { KeyCap(shortcut) }
             case .example(let id):
                 let example = Examples.example(id)
                 Image(systemName: example?.symbol ?? "doc")
                     .frame(width: 34, height: 22)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(example?.title ?? id)
-                    Text("Example").font(.caption).foregroundStyle(.secondary)
+                    Text(editor.circuit.elements.isEmpty ? "Example" : "Example · opens in a new window")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
@@ -237,11 +352,38 @@ struct QuickAddPalette: View {
         switch item {
         case .part(let kind)?:
             editor.choose(kind)
-        case .example(let id)?:
-            if let example = Examples.example(id) { editor.load(example) }
+        case .command(let command)?:
             close()
+            run(command)
+        case .example(let id)?:
+            close()
+            // in this window when it is empty, otherwise in a new one, so nothing drawn is replaced
+            if let example = Examples.example(id) { editor.open(example, newDocument: newDocument) }
         case nil:
             break
+        }
+    }
+
+    private func run(_ command: PaletteCommand) {
+        switch command {
+        case .runPause: editor.simulation.toggleRunning()
+        case .reset: editor.simulation.reset()
+        case .tidyUp: editor.tidyUp()
+        case .zoomToFit: editor.requestFit()
+        case .rotate: editor.rotateSelection()
+        case .flip: editor.flipSelection()
+        case .duplicate: editor.duplicateSelection()
+        case .delete: editor.deleteSelection()
+        case .saveAsBlock:
+            // once the palette has gone, so the alert is over the window alone
+            let editor = self.editor
+            Task { @MainActor in editor.promptSaveAsBlock() }
+        case .exampleGallery: openWindow(id: ExampleGalleryView.windowID)
+        case .shortcuts: editor.showShortcuts = true
+        case .togglePanel: editor.showPanel.toggle()
+        case .toggleCurrent: editor.showCurrent.toggle()
+        case .toggleValues: editor.showValues.toggle()
+        case .toggleInspector: editor.showInspector.toggle()
         }
     }
 

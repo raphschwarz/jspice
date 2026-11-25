@@ -7,6 +7,8 @@ public struct Example: Identifiable, Sendable {
     public let summary: String
     /// SF Symbol name for the library
     public let symbol: String
+    /// Where the gallery files it (from `Examples.categories`, by id)
+    public let category: ExampleCategory
     /// The circuit, built (and most laid out from a netlist) the first time it is asked for: the library lists every
     /// example's title, and building them all took half a second
     public var circuit: Circuit { made.circuit }
@@ -17,8 +19,90 @@ public struct Example: Identifiable, Sendable {
         self.title = title
         self.summary = summary
         self.symbol = symbol
+        category = Examples.categories[id] ?? .basics
         made = LazyCircuit(circuit)
     }
+
+    /// What the example does that the gallery shows as badges, known without building the circuit: whether it makes
+    /// sound (its title or summary says so) and whether a microcontroller runs it (its category). `features(of:)` of
+    /// the built circuit agrees (a test checks it) and adds the knobs and the keyboard.
+    public var quickFeatures: ExampleFeatures {
+        var features: ExampleFeatures = []
+        if Examples.silent.contains(id) {
+            // a speaker part, but nothing to hear
+        } else if title.contains("(sound)") || summary.contains("Turn on sound") || summary.contains("turn on sound") {
+            features.insert(.sound)
+        }
+        if category == .microcontrollers { features.insert(.microcontroller) }
+        return features
+    }
+
+    /// The features of a built circuit (blocks included)
+    public static func features(of circuit: Circuit) -> ExampleFeatures {
+        let elements = circuit.flattened(expandingModels: false).elements
+        var features: ExampleFeatures = []
+        if elements.contains(where: { $0.kind == .speaker }) { features.insert(.sound) }
+        if elements.contains(where: { $0.kind.isMicrocontroller }) { features.insert(.microcontroller) }
+        if elements.contains(where: { $0.kind == .potentiometer }) { features.insert(.knobs) }
+        if elements.contains(where: { $0.kind == .keyboardPitch || $0.kind == .keyboardGate }) { features.insert(.keyboard) }
+        return features
+    }
+}
+
+/// The gallery's sections, in the order it shows them: what audio builders look for first
+public enum ExampleCategory: String, CaseIterable, Sendable, Identifiable, Hashable {
+    case pedals = "Pedals & Effects"
+    case synth = "Synth"
+    case amplifiers = "Amplifiers & Tubes"
+    case audio = "Mics, Dynamics & EQ"
+    case sequencers = "Logic & Sequencers"
+    case microcontrollers = "Microcontrollers"
+    case basics = "Basics"
+    case memristors = "Memristors"
+
+    public var id: String { rawValue }
+    public var displayName: String { rawValue }
+
+    /// SF Symbol for the gallery's sidebar
+    public var symbol: String {
+        switch self {
+        case .pedals: return "guitars"
+        case .synth: return "pianokeys"
+        case .amplifiers: return "hifispeaker.fill"
+        case .audio: return "mic.fill"
+        case .sequencers: return "square.grid.3x1.below.line.grid.1x2"
+        case .microcontrollers: return "cpu"
+        case .basics: return "lightbulb"
+        case .memristors: return "point.3.connected.trianglepath.dotted"
+        }
+    }
+
+    /// The examples in this category, in library order
+    public var examples: [Example] { Examples.all.filter { $0.category == self } }
+}
+
+/// What an example does, for the gallery's badges
+public struct ExampleFeatures: OptionSet, Sendable, Hashable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+
+    /// It plays through a speaker (turn on sound)
+    public static let sound = ExampleFeatures(rawValue: 1)
+    /// A microcontroller runs a sketch or firmware in it
+    public static let microcontroller = ExampleFeatures(rawValue: 2)
+    /// It has potentiometers to turn
+    public static let knobs = ExampleFeatures(rawValue: 4)
+    /// It is played from the computer's or a MIDI keyboard
+    public static let keyboard = ExampleFeatures(rawValue: 8)
+}
+
+/// A few examples picked for one interest, for the welcome view
+public struct FeaturedExamples: Sendable, Identifiable {
+    public let title: String
+    public let symbol: String
+    public let ids: [String]
+    public var id: String { title }
+    public var examples: [Example] { ids.compactMap { Examples.example($0) } }
 }
 
 /// A circuit made once, when first asked for (from any thread)
@@ -76,6 +160,45 @@ public enum Examples {
         ringModulator, chorus, fuzz, guitarFuzz, tubeAmp, overdrive, lowpassGate, arduinoBlink, arduinoFade, arduinoKnob, arduinoMelody, arduinoDAC, megaBarGraph, tinyDimmer, picoKnob, picoMelody,
         memristorHysteresis, memristorPulses,
     ] + audioExamples + chipExamples
+
+    /// Each example's category, by id (a test checks that every example has one and that no id here is stale)
+    static let categories: [String: ExampleCategory] = {
+        let groups: [(ExampleCategory, [String])] = [
+            (.pedals, ["tube-screamer", "rat", "overdrive", "fuzz", "guitar-fuzz", "pickup-fuzz", "cmos-fuzz", "tremolo",
+                       "h11f1-tremolo", "chorus", "bbd-chorus-mn3102", "pt2399-echo", "mn3011-multitap", "fv1-reverb",
+                       "belton-reverb", "spring-reverb", "ringmod", "mc1496-ring", "sa612-ring", "diode-ring",
+                       "frequency-shifter", "pll-octave", "true-bypass"]),
+            (.synth, ["voice", "synth", "vco", "vcf", "acid", "chipvoice", "random", "lpg", "pwm", "wind", "lfo", "vca",
+                      "sh", "xr2206"]),
+            (.amplifiers, ["tube-amp", "tone-stacks", "lm386-amp", "power-amp", "headphone-amp", "lm3900-amp"]),
+            (.audio, ["mic-preamp", "phantom-preamp", "electret-preamp", "ssm2166-agc", "balanced-line", "compressor",
+                      "that4301-compressor", "opto-compressor", "compander", "noise-gate", "baxandall", "graphic-eq",
+                      "parametric-eq", "lm1036", "bargraph"]),
+            (.sequencers, ["baby10", "cmos-sequencer", "shift-sequencer", "cmos-drone", "beeper", "tone", "555", "schmitt"]),
+            (.microcontrollers, ["arduino-blink", "arduino-fade", "arduino-knob", "arduino-melody", "arduino-dac",
+                                 "arduino-mcp4822", "arduino-mcp3008-mcp4725", "arduino-mega-bargraph", "attiny85-dimmer",
+                                 "pico-knob", "pico-melody", "pico-pcm5102"]),
+            (.basics, ["led", "divider", "rc", "lowpass", "lc", "rectifier", "zener", "dimmer", "blinker", "nmos", "cmos",
+                       "opamp", "opamp-stability", "blocks"]),
+            (.memristors, ["memristor", "memristor-pulses"]),
+        ]
+        var table: [String: ExampleCategory] = [:]
+        for (category, ids) in groups {
+            for id in ids { table[id] = category }
+        }
+        return table
+    }()
+
+    /// Examples with a speaker part that their text does not call sound (none yet; `quickFeatures` honours it)
+    static let silent: Set<String> = []
+
+    /// What the welcome view offers an empty window, by interest: pedals first, then synths, microcontrollers, basics
+    public static let featured: [FeaturedExamples] = [
+        FeaturedExamples(title: "Pedals & effects", symbol: "guitars", ids: ["tube-screamer", "guitar-fuzz", "pt2399-echo"]),
+        FeaturedExamples(title: "Synth", symbol: "pianokeys", ids: ["voice", "acid", "baby10"]),
+        FeaturedExamples(title: "Microcontrollers", symbol: "cpu", ids: ["arduino-melody", "pico-melody", "arduino-knob"]),
+        FeaturedExamples(title: "Basics", symbol: "lightbulb", ids: ["led", "rc", "blinker"]),
+    ]
 
     /// A circuit drawn from a netlist by the tidy layout, with scopes on the named parts
     static func drawn(_ parts: [NetlistPart], scopes: [(String, Quantity)]) -> Circuit {
