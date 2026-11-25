@@ -8,12 +8,23 @@ public enum FirmwareFile {
         case badRecord(line: Int)
         case badChecksum(line: Int)
         case empty
+        /// Data from `lowest` up to `end` (exclusive), more than `maximumSpan` from the flash's start
+        case tooLarge(lowest: Int, end: Int)
 
         public var description: String {
             switch self {
             case .badRecord(let line): return "line \(line) is not an Intel HEX record"
             case .badChecksum(let line): return "line \(line)'s checksum does not match"
             case .empty: return "the file holds no firmware"
+            case .tooLarge(let lowest, let end):
+                let megabytes = (Double(end - lowest) / 1_048_576 * 10).rounded() / 10
+                func hex(_ address: Int) -> String {
+                    let digits = String(address, radix: 16, uppercase: true)
+                    return "0x" + String(repeating: "0", count: max(0, 8 - digits.count)) + digits
+                }
+                return "this HEX file spans \(megabytes) MB from \(hex(lowest)) to \(hex(end - 1)); it may include EEPROM, fuse or option-byte records (an AVR's EEPROM at 0x810000, an STM32's"
+                    + " option bytes at 0x1FFFC000 or 0x1FFFF800), which are not flash: build the HEX file from the"
+                    + " flash sections only"
             }
         }
     }
@@ -34,6 +45,12 @@ public enum FirmwareFile {
     static let picoFlash = 0x1000_0000
     /// Where an STM32's flash does
     static let stm32Flash = 0x0800_0000
+    /// The most a HEX file's image may span, from the flash's start (or its lowest record) to its highest record's end:
+    /// twice the largest flash a part has (the Pico's 2 MB; an STM32F405's is 1 MB, an ATmega2560's 256 KB with its
+    /// bootloader at the top), so that a file with records far past the flash (an AVR's EEPROM, fuses and lock bits,
+    /// at 0x810000-0x830000 in the ELF's address space; an STM32's option bytes) is refused before an image as large
+    /// as the space between is made
+    public static let maximumSpan = 0x40_0000
 
     /// Intel HEX: data (00), end of file (01), and the extended segment (02) and linear (04) address records that
     /// place data past 64 KB; start address records (03, 05) are left out. An image placed in the RP2040's or an
@@ -42,12 +59,14 @@ public enum FirmwareFile {
         var chunks: [(address: Int, bytes: ArraySlice<UInt8>)] = []
         var base = 0
         func image() throws -> Data {
-            guard let lowest = chunks.map(\.address).min() else { throw DecodeError.empty }
+            guard let lowest = chunks.map(\.address).min(), let end = chunks.map({ $0.address + $0.bytes.count }).max() else {
+                throw DecodeError.empty
+            }
             let origin = lowest >= picoFlash ? picoFlash : lowest >= stm32Flash ? stm32Flash : 0
-            var image: [UInt8] = []
+            guard end - origin <= maximumSpan else { throw DecodeError.tooLarge(lowest: lowest, end: end) }
+            var image = [UInt8](repeating: 0xFF, count: end - origin)
             for chunk in chunks {
                 let at = chunk.address - origin
-                if image.count < at + chunk.bytes.count { image += [UInt8](repeating: 0xFF, count: at + chunk.bytes.count - image.count) }
                 image.replaceSubrange(at..<(at + chunk.bytes.count), with: chunk.bytes)
             }
             return Data(image)
