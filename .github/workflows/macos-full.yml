@@ -1,0 +1,336 @@
+name: macos-full
+
+# The full lane: what the fast lane (macos.yml) leaves out, nightly, on demand, and on pushes to master touching the
+# Mac app. Three jobs side by side, each packaging the app for itself (jobs do not share a filesystem): the tests with
+# the toolchains, the firmware and the makers' models they need; the benchmarks and profiles (informational: their
+# job cannot fail the run); and the drawings for schematic capture with their evaluation.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  push:
+    branches: [master]
+    paths: ['macos/**', '.github/workflows/macos-full.yml']
+  workflow_dispatch:
+
+# a newer push to master cancels the push run it supersedes; nightly and manual runs are never cancelled by one
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # the tests gated on what earlier steps install and build: the AVR and Pico toolchains (found in Application Support,
+  # required by JSPICE_REQUIRE_TOOLCHAIN), the Mutable Instruments firmware (JSPICE_*_HEX, written to GITHUB_ENV by
+  # their steps, so they must stay in this job before the test step) and the makers' models (JSPICE_MAKER_MODELS)
+  firmware-tests:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Package JSpice.app
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        run: ./scripts/bundle.sh
+      - name: Chip support (installs Arduino's AVR toolchain as the app does, compiles a sketch)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 10
+        run: |
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --install-chip-support avr
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/kitchen.ino build/kitchen.bin
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/mega.ino build/mega.bin --board mega
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/avr-reference/sketches/tiny.ino build/tiny.bin --board attiny85
+      - name: Mutable Instruments' Grids firmware (GPL-3.0, built from its repository for an emulator test, not kept)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 10
+        run: |
+          gcc_path=$(find "$HOME/Library/Application Support/JSpice" -path '*bin/avr-gcc' -type f | head -1)
+          test -n "$gcc_path"
+          rm -rf build/grids-src
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/pichenettes/eurorack build/grids-src
+          git -C build/grids-src sparse-checkout set grids
+          git clone -q --depth 1 https://github.com/pichenettes/avril build/grids-src/avrlib
+          # (avrlib's makefile does not quote the tools' path, and Application Support has a space)
+          ln -sfn "$(dirname "$gcc_path")" build/avr-tools
+          make -C build/grids-src -f grids/makefile AVRLIB_TOOLS_PATH="$PWD/build/avr-tools/" > build/grids-build.log 2>&1 || { tail -30 build/grids-build.log; exit 1; }
+          ls -l build/grids-src/build/grids/grids.hex
+          echo "JSPICE_GRIDS_HEX=$PWD/build/grids-src/build/grids/grids.hex" >> "$GITHUB_ENV"
+      - name: Mutable Instruments' Rings, Plaits, Tides 2 and Braids firmware (GPL-3.0, built from its repository for emulator tests, not kept)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 15
+        run: |
+          # Arm's own toolchain (with newlib), as the modules are built with: its 15.2.rel1 release from Arm, checked
+          # against the checksum Arm publishes (Homebrew's cask follows Arm's newest, and its checksum has lagged a
+          # re-published download); on an Intel runner, the cask
+          if [ "$(uname -m)" = arm64 ]; then
+            archive=arm-gnu-toolchain-15.2.rel1-darwin-arm64-arm-none-eabi
+            curl -fsSL --retry 3 -o "build/$archive.tar.xz" \
+              "https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/$archive.tar.xz"
+            echo "1938a84b7105c192e3fb4fa5e893ba25f425f7ddab40515ae608cd40f68669a8  build/$archive.tar.xz" | shasum -a 256 -c -
+            tar -xJf "build/$archive.tar.xz" -C build
+            gcc_path="$PWD/build/$archive/bin/arm-none-eabi-gcc"
+          else
+            brew install --cask gcc-arm-embedded > build/arm-toolchain.log 2>&1 || { tail -20 build/arm-toolchain.log; exit 1; }
+            gcc_path=$(command -v arm-none-eabi-gcc || find /Applications -path '*bin/arm-none-eabi-gcc' -type f | head -1)
+          fi
+          test -n "$gcc_path"
+          "$gcc_path" --version | head -1
+          ln -sfn "$(dirname "$(dirname "$gcc_path")")" build/arm-toolchain
+          for module in rings plaits tides2 braids; do
+            tools/arm-reference/build-mutable.sh $module "$PWD/build/mutable" "$PWD/build/arm-toolchain/" > build/mutable.out
+            hex=$(tail -1 build/mutable.out)
+            ls -l "$hex"
+            echo "JSPICE_$(echo $module | tr a-z A-Z)_HEX=$hex" >> "$GITHUB_ENV"
+          done
+      - name: Chip support for the Pico (installs arduino-pico and its gcc as the app does, compiles a sketch)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 25
+        run: |
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --install-chip-support rp2040
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --compile-sketch tools/pico-reference/sketches/kitchen.ino build/pico-kitchen.bin --board pico
+      - name: Test the simulation engine
+        timeout-minutes: 25
+        # optimised, as the app runs it: audio-rate tests take minutes in a debug build
+        env:
+          JSPICE_REQUIRE_TOOLCHAIN: '1'
+          # download the makers' models of MakerModelCatalog and check them against ngspice's figures
+          JSPICE_MAKER_MODELS: '1'
+        run: swift test -c release -Xswiftc -enable-testing
+
+  # log-only measurements: speed at audio rate, profiles and disassembly, and a build without Swift's checks
+  benchmarks:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Package JSpice.app
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        run: ./scripts/bundle.sh
+      - name: Simulation speed at audio rate (release build)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 5
+        run: |
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25
+          # an engine switch off and on, run for run on the same machine (machines differ by half from run to run): first
+          # one that changes nothing, for what the benchmark makes of two settings alike; then the predictor's choice
+          # between line and parabola, which cost the LED bargraph a sixth at the same solves
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch nothing 0.25 frequency-shifter bargraph voice mc1496-ring || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch choose-predictor 0.25 bargraph voice acid opto-compressor || true
+          # and that choice made for all the unknowns together rather than unknown by unknown
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch choose-predictor-together 0.25 bargraph voice acid opto-compressor synth vco mc1496-ring guitar-fuzz tube-screamer rat || true
+          # junctions turning off taken down through their exponential: the circuits with junctions that switch
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch limit-junctions-down 0.25 opto-compressor guitar-fuzz pickup-fuzz rat tube-screamer fuzz overdrive mc1496-ring sa612-ring voice acid tube-amp power-amp rectifier || true
+          # and what bypassing behavioural sources and diodes whose junctions have not moved saves
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch bypass 0.25 bargraph rectifier led zener fuzz rat tube-screamer opto-compressor voice frequency-shifter || true
+          # factors kept between iterations (as for makers' models) in circuits of built-in op-amps and multipliers,
+          # whose slopes move little in their linear range
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch reuse-everywhere 0.25 frequency-shifter graphic-eq parametric-eq lm1036 vcf balanced-line mic-preamp compander || true
+          # the microcontrollers: their instructions a step, what each costs and which run most; base matrices kept by
+          # what the bus parts switch, and the AVR's decode table, each off and on
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-instructions 0.25 pico-knob pico-pcm5102 pico-melody arduino-fade arduino-blink arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch keep-switched-matrices 0.25 arduino-mcp3008-mcp4725 arduino-mcp4822 arduino-dac || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch skip-quiet-ticks 0.25 arduino-fade arduino-blink arduino-knob attiny85-dimmer arduino-mega-bargraph || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch decode-ahead 0.25 arduino-fade arduino-knob arduino-melody arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
+          # the Pico's instructions in stretches, its clock ticked once for each rather than after every one
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch run-stretches 0.25 pico-knob pico-pcm5102 pico-melody || true
+          # and a stretch going on past a register rather than ending there
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch stretch-past-registers 0.25 pico-knob pico-pcm5102 pico-melody || true
+          # and PIO delay loops' turns taken directly where they only count down
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch quiet-pio-turns 0.25 pico-melody pico-pcm5102 || true
+          # and the interpreters inside their run loops rather than called for each instruction
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-switch inline-interpreter 0.25 pico-knob pico-pcm5102 arduino-fade arduino-blink arduino-mega-bargraph attiny85-dimmer arduino-mcp3008-mcp4725 || true
+          # where Newton-Raphson gives substeps up (each costs a dozen iterations and two half substeps): which unknowns
+          # keep moving, in the synth voice, the sequenced acid line and the fuzz
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-rejections 0.25 voice acid guitar-fuzz || true
+          # how many iterations steps take, and what keeps the costliest going: the circuits that take most
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-iterations 0.25 opto-compressor guitar-fuzz rat tube-screamer pickup-fuzz || true
+          # bigger circuits: examples drawn 1, 2, 4 and 8 times over in one circuit (the cost a copy should stay flat)
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-scale 0.1 voice acid guitar-fuzz tube-screamer mc1496-ring bargraph tube-amp || true
+          # and laying out a netlist (an import, a circuit built from parts) of a growing chain of op-amp stages
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-layout 4 8 16 32 64 || true
+          # where the time goes, for the synth voice playing its sequence (every iteration factored), and for the ring
+          # modulator of transistors, the slowest analog example
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 acid > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile.txt | head -45
+          python3 scripts/profile-callers.py build/profile.txt 30 || true
+          # its stamping loop and Newton-Raphson's own, instruction by instruction: where their own samples fall
+          python3 scripts/hot-instructions.py build/profile.txt Simulator.stampNonlinear 8 build/hot-acid-stamp.lldb || true
+          lldb --batch -s build/hot-acid-stamp.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -100 || true
+          python3 scripts/hot-instructions.py build/profile.txt "Simulator.newton(iterations" 8 build/hot-acid-newton.lldb || true
+          lldb --batch -s build/hot-acid-newton.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -100 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 mc1496-ring > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-ring.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-ring.txt | head -45
+          python3 scripts/profile-callers.py build/profile-ring.txt 30 || true
+          # its transistors' stamps, instruction by instruction: where their own samples fall
+          python3 scripts/hot-instructions.py build/profile-ring.txt Simulator.stampBipolar 10 build/hot-ring.lldb || true
+          lldb --batch -s build/hot-ring.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -130 || true
+          # and for the frequency shifter (op-amps' Hilbert networks and multipliers) and the LM3915 level meter, among
+          # the slowest of the rest
+          for id in frequency-shifter bargraph; do
+            ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 $id > /dev/null &
+            sleep 1
+            sample $! 3 -file build/profile-$id.txt > /dev/null 2>&1 || true
+            kill $! 2>/dev/null || true
+            echo "== $id"
+            sed -n '/Sort by top of stack/,$p' build/profile-$id.txt | head -30
+            python3 scripts/profile-callers.py build/profile-$id.txt 25 || true
+          done
+          # and for an LED and its resistor, the smallest nonlinear circuit: what every step and iteration costs whatever
+          # the circuit
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 led > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-led.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-led.txt | head -45
+          python3 scripts/profile-callers.py build/profile-led.txt 30 || true
+          # and for the Pico running flat out
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-knob > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-pico.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-pico.txt | head -45
+          python3 scripts/profile-callers.py build/profile-pico.txt 30 || true
+          # the Cortex-M0+'s instruction loop (in a stretch's run), instruction by instruction: where its own samples fall
+          python3 scripts/hot-instructions.py build/profile-pico.txt CortexM0.runStretch 12 build/hot-pico.lldb || true
+          lldb --batch -s build/hot-pico.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -160 || true
+          # the same with Instruments' Time Profiler, which samples the instruction itself (sample's report can put a
+          # function's own samples at the return address of the last call it made); given a minute at most
+          # (attached once the circuit is built, for the run alone)
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-knob > /dev/null &
+          sleep 1
+          perl -e 'alarm 90; exec @ARGV' xcrun xctrace record --template 'Time Profiler' --time-limit 3s --output build/pico.trace \
+            --attach $! > build/xctrace.log 2>&1 || tail -5 build/xctrace.log
+          kill $! 2>/dev/null || true
+          perl -e 'alarm 90; exec @ARGV' xcrun xctrace export --input build/pico.trace \
+            --xpath '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]' > build/pico-time.xml 2> build/xctrace-export.log || tail -5 build/xctrace-export.log
+          # (the tables the trace holds, in case the profile's is not where the export looked)
+          perl -e 'alarm 60; exec @ARGV' xcrun xctrace export --input build/pico.trace --toc 2>&1 | grep -E "<table|<run|schema" | head -40 || true
+          ls -la build/pico-time.xml || true
+          python3 scripts/xctrace-hot.py build/pico-time.xml CortexM0. 40 build/hot-pico-tp.lldb || true
+          lldb --batch -s build/hot-pico-tp.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -480 || true
+          # and for the Pico driving an I2S DAC from PIO
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-pcm5102 > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-i2s.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-i2s.txt | head -45
+          python3 scripts/profile-callers.py build/profile-i2s.txt 30 || true
+          # and for the Pico playing a melody: 34 instructions a step, its core mostly waiting while PIO plays the tone
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 pico-melody > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-melody.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-melody.txt | head -45
+          python3 scripts/profile-callers.py build/profile-melody.txt 30 || true
+          # and for an Arduino fading an LED
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 arduino-fade > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-avr.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-avr.txt | head -45
+          python3 scripts/profile-callers.py build/profile-avr.txt 30 || true
+          python3 scripts/hot-instructions.py build/profile-avr.txt AVR.run 10 build/hot-avr.lldb || true
+          lldb --batch -s build/hot-avr.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -130 || true
+          # and for an Arduino reading an SPI ADC and writing an I2C DAC (its pins' events go to the parts as it runs)
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 60 arduino-mcp3008-mcp4725 > /dev/null &
+          sleep 1
+          sample $! 3 -file build/profile-bus.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-bus.txt | head -45
+          python3 scripts/profile-callers.py build/profile-bus.txt 30 || true
+          # and for makers' op-amp models (downloaded from TI, as the app does) as followers at 48 kHz
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker LM358 0.25 || true
+          # the same with the guess at each substep extrapolated through one whose decisions moved, as before
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker LM358 0.25 1 predict-past-decisions=on | grep -E "follower|by its place|chattering" || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 1 predict-past-decisions=on | grep -E "follower|by its place" || true
+          # two in a row, as a pedal's two op-amps: real time needs them under 20.8 us a step together
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 0.5 2 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA1656 0.5 2 || true
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark-maker OPA2134 60 2 > /dev/null &
+          sleep 2
+          sample $! 3 -file build/profile-maker.txt > /dev/null 2>&1 || true
+          kill $! 2>/dev/null || true
+          sed -n '/Sort by top of stack/,$p' build/profile-maker.txt | head -70
+          # with what each function costs with all it calls, and who calls the runtime's copies and checks
+          python3 scripts/profile-callers.py build/profile-maker.txt 45 || true
+          # their behavioural sources' stamps, instruction by instruction: where their own samples fall
+          python3 scripts/hot-instructions.py build/profile-maker.txt Simulator.stampBehavior 10 build/hot-maker.lldb || true
+          lldb --batch -s build/hot-maker.lldb ./build/JSpice.app/Contents/MacOS/jspice-mcp 2>&1 | grep -v "^(lldb)" | head -130 || true
+      - name: What Swift's bounds and overflow checks cost (a build without them, for comparing; not shipped)
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          swift build -c release --product jspice-mcp --scratch-path .build-unchecked -Xswiftc -Ounchecked 2>&1 | tail -3
+          # each example with the shipped build and then without the checks, back to back
+          for id in mc1496-ring voice opto-compressor guitar-fuzz bargraph frequency-shifter arduino-fade attiny85-dimmer pico-knob pico-pcm5102; do
+            ./build/JSpice.app/Contents/MacOS/jspice-mcp --benchmark 0.25 $id | sed 's/^/checked    /'
+            .build-unchecked/release/jspice-mcp --benchmark 0.25 $id | sed 's/^/unchecked  /'
+          done
+
+  # the example schematics drawn as PNG and PDF, read back by the capture evaluation when an ANTHROPIC_API_KEY is set
+  capture:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Package JSpice.app
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        run: ./scripts/bundle.sh
+      - name: Drawings for schematic capture (example schematics as PNG and PDF), read back when a key is set
+        if: hashFiles('macos/scripts/bundle.sh') != ''
+        timeout-minutes: 20
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ./build/JSpice.app/Contents/MacOS/JSpice --render-drawings "$PWD/build/drawings"
+          ls build/drawings
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "No ANTHROPIC_API_KEY secret: the drawings are not read back (add one to score schematic capture)"
+          else
+            # the PNGs: a PDF of the same schematic would be read from its own text as well
+            mkdir -p build/drawings-png && cp build/drawings/*.png build/drawings-png/
+            ./build/JSpice.app/Contents/MacOS/jspice-mcp --capture-eval build/drawings-png | tee build/capture-eval.txt
+          fi
+      - name: Upload drawings
+        if: always() && hashFiles('macos/build/drawings/*.png') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-drawings
+          path: |
+            macos/build/drawings
+            macos/build/capture-eval.txt
+          if-no-files-found: ignore

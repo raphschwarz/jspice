@@ -1,8 +1,14 @@
 name: build
 
 on:
+  # the Java project: not run for changes that touch only the Mac app or its workflows
   push:
+    paths-ignore: ['macos/**', '.github/workflows/macos.yml', '.github/workflows/macos-full.yml']
   pull_request:
+    paths-ignore: ['macos/**', '.github/workflows/macos.yml', '.github/workflows/macos-full.yml']
+
+permissions:
+  contents: read
 
 jobs:
   build:
