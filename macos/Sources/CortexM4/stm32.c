@@ -234,6 +234,14 @@ struct STM32 {
     int8_t dma_request[2][8][8];
     Channel channel[2][7];          // the F373's
     uint32_t channel_isr[2];
+    // A transfer whose destination is the DMA controllers' own registers can enable a stream (or channel): that
+    // stream's transfers run after the one under way, not inside it (`dma_deferred`, `channel_deferred`, by bit), so
+    // that streams enabling each other cannot nest without end; and the items one outermost DMA activity (a register
+    // written, a peripheral's request) may move in all are counted (`dma_budget`), so that streams re-enabling each
+    // other cannot run for ever under the chip's lock
+    int dma_depth;
+    uint32_t dma_budget;
+    uint32_t dma_deferred[2], channel_deferred[2];
 
     Adc adc[3];
     uint32_t adc_ccr;
@@ -471,6 +479,26 @@ static void exti_check(STM32 *m, int port) {
 
 static bool request_active(STM32 *m, int request);
 
+enum {
+    DMA_BUDGET = 1u << 20,  // items one outermost DMA activity may move: sixteen whole 65535-item transfers
+    DMA_NESTING = 4,        // transfers nested in transfers (a peripheral's request raised by a DMA write) at most
+};
+
+static void dma_run_deferred(STM32 *m);
+
+/// A DMA activity begun (the outermost one sets the budget) and ended (the outermost one runs what was deferred)
+static void dma_enter(STM32 *m) { if (m->dma_depth++ == 0) m->dma_budget = DMA_BUDGET; }
+static void dma_leave(STM32 *m) {
+    if (m->dma_depth == 1) dma_run_deferred(m);
+    m->dma_depth--;
+}
+/// One item more may move
+static bool dma_spend(STM32 *m) {
+    if (m->dma_budget == 0) return false;
+    m->dma_budget--;
+    return true;
+}
+
 static void dma_update_irq(STM32 *m, int d, int s) {
     Stream *st = &m->dma[d][s];
     int shift = (s & 1 ? 6 : 0) + (s & 2 ? 16 : 0);
@@ -518,7 +546,8 @@ static bool dma_transfer(STM32 *m, int d, int s) {
     if (st->ndtr == st->start_ndtr / 2) dma_flag(m, d, s, 0x10);
     if (st->ndtr == 0) {
         dma_flag(m, d, s, 0x20);
-        if ((cr >> 18) & 1) {
+        // (memory to memory has neither double-buffer nor circular mode, RM0090 9.3.9-9.3.10: the transfer ends)
+        if ((cr >> 18) & 1 && dir != 2) {
             st->cr ^= 1u << 19;  // double buffer: the other memory next
             st->ndtr = st->start_ndtr;
             st->done = 0;
@@ -578,8 +607,11 @@ static void pump_channels(STM32 *m, int request) {
             if (requests[0] != request && requests[1] != request && requests[2] != request && requests[3] != request) {
                 continue;
             }
+            if (m->dma_depth >= DMA_NESTING) { m->channel_deferred[d] |= 1u << c; continue; }
+            dma_enter(m);
             int guard = 0x10000;
-            while (guard-- > 0 && request_active(m, request) && channel_transfer(m, d, c)) {}
+            while (guard-- > 0 && request_active(m, request) && dma_spend(m) && channel_transfer(m, d, c)) {}
+            dma_leave(m);
         }
     }
 }
@@ -595,6 +627,20 @@ static uint32_t channel_read(STM32 *m, int d, uint32_t offset) {
     case 0x0C: return ch->cmar;
     }
     return 0;
+}
+
+/// A channel just enabled: memory to memory all at once (as far as the budget goes), else its requests served
+static void channel_start(STM32 *m, int d, int c) {
+    Channel *ch = &m->channel[d][c];
+    if (!(ch->ccr & 1)) return;
+    if ((ch->ccr >> 14) & 1) {
+        int guard = 0x10000;
+        while (guard-- > 0 && dma_spend(m) && channel_transfer(m, d, c)) {}
+        if ((ch->ccr & 1) && ch->cndtr) m->channel_deferred[d] |= 1u << c;  // the rest at the next DMA activity
+    } else {
+        const uint8_t *requests = m->model == STM32_F103 ? channel_requests_f1[d][c] : channel_requests[d][c];
+        for (int k = 0; k < 4 && requests[k]; k++) pump_channels(m, requests[k]);
+    }
 }
 
 static void channel_write(STM32 *m, int d, uint32_t offset, uint32_t value) {
@@ -620,11 +666,12 @@ static void channel_write(STM32 *m, int d, uint32_t offset, uint32_t value) {
         if (!was && (value & 1)) {
             ch->start_cndtr = ch->cndtr;
             ch->done = 0;
-            if ((value >> 14) & 1) {
-                while (channel_transfer(m, d, c)) {}  // memory to memory: all at once
+            if (m->dma_depth > 0) {
+                m->channel_deferred[d] |= 1u << c;  // enabled by a DMA transfer: run after it
             } else {
-                const uint8_t *requests = m->model == STM32_F103 ? channel_requests_f1[d][c] : channel_requests[d][c];
-                for (int k = 0; k < 4 && requests[k]; k++) pump_channels(m, requests[k]);
+                dma_enter(m);
+                channel_start(m, d, c);
+                dma_leave(m);
             }
         }
         channel_update_irq(m, d, c);
@@ -642,9 +689,49 @@ static void pump(STM32 *m, int request) {
     for (int d = 0; d < 2; d++) {
         for (int s = 0; s < 8; s++) {
             if (m->dma_request[d][s][(m->dma[d][s].cr >> 25) & 7] != request) continue;
+            if (m->dma_depth >= DMA_NESTING) { m->dma_deferred[d] |= 1u << s; continue; }
+            dma_enter(m);
             int guard = 0x10000;
-            while (guard-- > 0 && request_active(m, request) && dma_transfer(m, d, s)) {}
+            while (guard-- > 0 && request_active(m, request) && dma_spend(m) && dma_transfer(m, d, s)) {}
+            dma_leave(m);
         }
+    }
+}
+
+/// A stream just enabled: memory to memory all at once (as far as the budget goes), else its request served
+static void stream_start(STM32 *m, int d, int s) {
+    Stream *st = &m->dma[d][s];
+    if (!(st->cr & 1)) return;
+    if (((st->cr >> 6) & 3) == 2) {
+        int guard = 0x10000;
+        while (guard-- > 0 && dma_spend(m) && dma_transfer(m, d, s)) {}
+        if ((st->cr & 1) && st->ndtr) m->dma_deferred[d] |= 1u << s;  // the rest at the next DMA activity
+    } else {
+        int request = m->dma_request[d][s][(st->cr >> 25) & 7];
+        if (request) pump(m, request);
+    }
+}
+
+/// The streams and channels enabled by DMA transfers, once those are done (at the outermost level), while the budget
+/// lasts; what is left waits for the next DMA activity
+static void dma_run_deferred(STM32 *m) {
+    while (m->dma_budget > 0) {
+        bool any = false;
+        for (int d = 0; d < 2; d++) {
+            for (int s = 0; s < 8; s++) {
+                if (!(m->dma_deferred[d] & (1u << s))) continue;
+                m->dma_deferred[d] &= ~(1u << s);
+                any = true;
+                stream_start(m, d, s);
+            }
+            for (int c = 0; c < 7; c++) {
+                if (!(m->channel_deferred[d] & (1u << c))) continue;
+                m->channel_deferred[d] &= ~(1u << c);
+                any = true;
+                channel_start(m, d, c);
+            }
+        }
+        if (!any) return;
     }
 }
 
@@ -684,11 +771,12 @@ static void dma_write(STM32 *m, int d, uint32_t offset, uint32_t value) {
             st->done = 0;
             if (st->ndtr == 0) {
                 st->cr &= ~1u;
-            } else if (((value >> 6) & 3) == 2) {
-                while (dma_transfer(m, d, s)) {}  // memory to memory: all at once
+            } else if (m->dma_depth > 0) {
+                m->dma_deferred[d] |= 1u << s;  // enabled by a DMA transfer: run after it
             } else {
-                int request = m->dma_request[d][s][(st->cr >> 25) & 7];
-                if (request) pump(m, request);
+                dma_enter(m);
+                stream_start(m, d, s);
+                dma_leave(m);
             }
         }
         dma_update_irq(m, d, s);
@@ -2947,6 +3035,7 @@ static void reset_peripherals(STM32 *m, int bus, uint32_t bits) {
             if ((bits >> (21 + d)) & 1) {
                 memset(m->dma[d], 0, sizeof m->dma[d]);
                 m->dma_isr[d][0] = m->dma_isr[d][1] = 0;
+                m->dma_deferred[d] = 0;
                 for (int s = 0; s < 8; s++) { m->dma[d][s].fcr = 0x21; dma_update_irq(m, d, s); }
             }
         }
@@ -3045,6 +3134,8 @@ static void reset_all(STM32 *m) {
     for (int d = 0; d < 2; d++) for (int s = 0; s < 8; s++) m->dma[d][s].fcr = 0x21;
     memset(m->channel, 0, sizeof m->channel);
     memset(m->channel_isr, 0, sizeof m->channel_isr);
+    memset(m->dma_deferred, 0, sizeof m->dma_deferred);
+    memset(m->channel_deferred, 0, sizeof m->channel_deferred);
     for (int i = 0; i < 3; i++) reset_sdadc(&m->sdadc[i]);
     memset(m->i2c2_regs, 0, sizeof m->i2c2_regs);
     reset_adcs(m);
