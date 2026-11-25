@@ -3,7 +3,8 @@ import CircuitKit
 
 let speedPresets: [Double] = [1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 5e-3, 2e-3, 1e-3, 5e-4, 2e-4, 1e-4, 1e-5, 1e-6]
 
-/// The window toolbar: run and reset, the speed, sound, the view (schematic or a board) and what the canvas shows
+/// The window toolbar: run and reset, the speed, sound, the view (schematic or a board), what the canvas shows and the
+/// inspector. (Zooming is on the canvas's own control and in the View menu; the front panel is a tab of the dock.)
 struct EditorToolbar: ToolbarContent {
     @ObservedObject var editor: EditorState
     @ObservedObject var simulation: SimulationController
@@ -56,10 +57,6 @@ struct EditorToolbar: ToolbarContent {
             }
             .pickerStyle(.segmented)
             .help("Show the schematic, or the circuit built on a solderless breadboard (full or half size), stripboard or perfboard, with its bill of materials")
-            Toggle(isOn: $editor.showPanel) {
-                Label("Panel", systemImage: "slider.horizontal.3")
-            }
-            .help("Show the front panel: knobs and switches for the circuit's potentiometers and switches")
             Toggle(isOn: $editor.showCurrent) {
                 Label("Current", systemImage: "bolt.fill")
             }
@@ -68,9 +65,6 @@ struct EditorToolbar: ToolbarContent {
                 Label("Values", systemImage: "textformat.123")
             }
             .help("Show part names and values")
-            Button { editor.changeZoom(by: 0.8) } label: { Label("Zoom Out", systemImage: "minus.magnifyingglass") }
-            Button { editor.changeZoom(by: 1.25) } label: { Label("Zoom In", systemImage: "plus.magnifyingglass") }
-            Button { editor.requestFit() } label: { Label("Zoom to Fit", systemImage: "arrow.up.left.and.down.right.magnifyingglass") }
             Button {
                 editor.showInspector.toggle()
             } label: {

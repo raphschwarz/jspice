@@ -26,11 +26,45 @@ final class EditorState: ObservableObject {
     @Published var hovered: UUID?
     @Published var zoom: CGFloat = 1.25
     @Published var pan = CGPoint(x: 120, y: 120)
-    @Published var showValues = true
-    @Published var showCurrent = true
-    @Published var showInspector = true
-    /// The front panel of knobs and switches below the schematic
-    @Published var showPanel = true
+    // What the window shows is remembered for the next window and launch (see `ViewPreferences`, which keeps the
+    // automated modes on the built-in defaults)
+    @Published var showValues = ViewPreferences.bool(.showValues, default: true) {
+        didSet { ViewPreferences.set(showValues, for: .showValues) }
+    }
+    @Published var showCurrent = ViewPreferences.bool(.showCurrent, default: true) {
+        didSet { ViewPreferences.set(showCurrent, for: .showCurrent) }
+    }
+    @Published var showInspector = ViewPreferences.bool(.showInspector, default: true) {
+        didSet { ViewPreferences.set(showInspector, for: .showInspector) }
+    }
+    /// The bottom dock's tab (scopes, front panel, chip, problems): the one chosen last, shown when the circuit has it
+    @Published var dockTab: DockTab = ViewPreferences.dockTab() {
+        didSet { ViewPreferences.set(dockTab.rawValue, for: .dockTab) }
+    }
+    /// The bottom dock folded down to its tab bar
+    @Published var dockCollapsed = ViewPreferences.bool(.dockCollapsed, default: false) {
+        didSet { ViewPreferences.set(dockCollapsed, for: .dockCollapsed) }
+    }
+    /// The height of the bottom dock's contents, below its tab bar
+    @Published var dockHeight: CGFloat = ViewPreferences.dockHeight() {
+        didSet { ViewPreferences.set(Double(dockHeight), for: .dockHeight) }
+    }
+    /// The front panel of knobs and switches open in the bottom dock
+    var showPanel: Bool {
+        get { dockTab == .panel && !dockCollapsed }
+        set {
+            if newValue {
+                showDock(.panel)
+            } else if dockTab == .panel {
+                dockCollapsed = true
+            }
+        }
+    }
+    /// Opens the bottom dock on a tab
+    func showDock(_ tab: DockTab) {
+        if dockTab != tab { dockTab = tab }
+        if dockCollapsed { dockCollapsed = false }
+    }
     /// What the window shows: the schematic, or the circuit as built on a breadboard or stripboard
     @Published var board: BoardKind = .schematic
     /// The quick-add palette (⌘K or /): type a part's name to place it

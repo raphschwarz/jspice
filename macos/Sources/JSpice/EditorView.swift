@@ -1,7 +1,8 @@
 import SwiftUI
 import CircuitKit
 
-/// One circuit window: library | canvas, scopes and status bar | inspector.
+/// One circuit window: library | canvas (or a board), the dock of scopes, panel, chip and problems, and the status bar |
+/// inspector.
 struct EditorView: View {
     @ObservedObject var document: CircuitDocument
     @StateObject private var editor: EditorState
@@ -29,15 +30,9 @@ struct EditorView: View {
                 case .stripboard: StripboardView(editor: editor, circuit: document.circuit)
                 case .perfboard: PerfboardView(editor: editor, circuit: document.circuit)
                 }
-                // a board is for building: the panel and scopes give it their room
-                let onBoard = editor.board != .schematic && !document.circuit.elements.isEmpty
-                if editor.showPanel && FrontPanel.hasControls(document.circuit) && !onBoard {
-                    FrontPanel(editor: editor, circuit: document.circuit)
-                }
-                if !document.circuit.scopes.isEmpty && !onBoard {
-                    Divider()
-                    ScopePanel(editor: editor, circuit: document.circuit)
-                }
+                // the scopes, panel, chip and problems, under the schematic and the boards alike (shown only when the
+                // circuit has one of them)
+                BottomDock(editor: editor, simulation: editor.simulation, circuit: document.circuit)
                 Divider()
                 StatusBar(editor: editor, simulation: editor.simulation)
                     .sheet(isPresented: $editor.showChipSupport) { ChipSupportSheet(editor: editor) }
@@ -45,6 +40,10 @@ struct EditorView: View {
                                                 set: { if !$0 { editor.editingSketch = nil } })) {
                         if let id = editor.editingSketch { SketchEditorSheet(editor: editor, elementID: id) }
                     }
+            }
+            // a scope just added is shown
+            .onChange(of: document.circuit.scopes.count) { old, new in
+                if new > old { editor.showDock(.scopes) }
             }
             .toolbar { EditorToolbar(editor: editor, simulation: editor.simulation) }
             .inspector(isPresented: $editor.showInspector) {
@@ -70,7 +69,7 @@ struct EditorView: View {
             .overlay(alignment: .top) {
                 VStack(spacing: 8) {
                     ToolHUD(editor: editor)
-                    ProblemBanner(simulation: editor.simulation)
+                    ProblemBanner(editor: editor, simulation: editor.simulation, notes: document.circuit.loadNotes.count)
                     CaptureBanner(editor: editor)
                 }
                 .padding(.top, 12)
@@ -156,19 +155,41 @@ struct StatusBar: View {
     }
 }
 
+/// The circuit's first problem over the schematic, and how many more there are; click it to see them all in the dock
 struct ProblemBanner: View {
+    let editor: EditorState
     @ObservedObject var simulation: SimulationController
+    /// What was left out when the circuit's file was read, also listed with the problems
+    let notes: Int
 
     var body: some View {
-        if let problem = simulation.status.problems.first {
-            Label(problem, systemImage: "exclamationmark.triangle.fill")
+        let problems = simulation.status.problems
+        if let problem = problems.first {
+            let more = problems.count - 1 + notes
+            Button {
+                editor.showDock(.problems)
+            } label: {
+                HStack(spacing: 8) {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    if more > 0 {
+                        Text("+\(more) more")
+                            .font(.callout.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.white.opacity(0.22), in: Capsule())
+                    }
+                }
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(Color.red.opacity(0.88), in: Capsule())
-                .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
-                .padding(.horizontal, 24)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help(more > 0 ? "Show all \(more + 1) problems in the dock" : "Show the problem in the dock")
+            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+            .padding(.horizontal, 24)
         }
     }
 }

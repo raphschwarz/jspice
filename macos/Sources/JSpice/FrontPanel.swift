@@ -107,7 +107,8 @@ struct FrontPanel: View {
             .padding(.horizontal, 34)
             .padding(.vertical, 14)
         }
-        .frame(height: 128)
+        // (in the dock: at least its own height, and the faceplate fills whatever height the dock is given)
+        .frame(minHeight: 128, maxHeight: .infinity)
         .background(Faceplate())
         .environment(\.colorScheme, .dark)
     }

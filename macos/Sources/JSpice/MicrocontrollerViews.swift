@@ -26,7 +26,9 @@ let blinkTemplate = """
 
 // MARK: - Inspector
 
-/// The microcontroller's part of the inspector: its program, uploading, and its serial monitor
+/// The microcontroller's part of the inspector: its program, uploading, and (for an STM32) its debugger. Its serial
+/// monitor, bus trace and pins are in the Chip tab of the dock under the canvas, where they have room and stay open
+/// while other parts are selected.
 struct MicrocontrollerSection: View {
     @ObservedObject var editor: EditorState
     let element: Element
@@ -72,15 +74,20 @@ struct MicrocontrollerSection: View {
                     .foregroundStyle(.secondary)
                 Button("Install Chip Support…") { editor.showChipSupport = true }
             }
+            if BottomDock.chips(in: editor.circuit).contains(where: { $0.id == element.id }) {
+                let isSTM32 = element.kind.board?.compilesSketches == false
+                Button {
+                    editor.showDock(.chip)
+                } label: {
+                    Label(isSTM32 ? "Show Serial, Bus Trace and Pins" : "Show Serial Monitor", systemImage: "terminal")
+                }
+                .help(isSTM32 ? "Open the chip's serial monitor, bus trace and pins in the dock under the canvas"
+                              : "Open the chip's serial monitor in the dock under the canvas")
+            }
         } header: {
             Text("Program")
         }
-        if element.kind.board?.hasSerial ?? true, let index = editor.circuit.index(of: element.id) {
-            SerialMonitor(simulation: editor.simulation, index: index)
-        }
         if element.kind.board?.compilesSketches == false, let index = editor.circuit.index(of: element.id) {
-            BusTrace(simulation: editor.simulation, index: index)
-            PinFunctions(simulation: editor.simulation, index: index)
             DebuggerSection(simulation: editor.simulation, index: index, id: element.id)
         }
     }
@@ -104,7 +111,7 @@ struct SerialMonitor: View {
     @State private var input = ""
 
     var body: some View {
-        Section {
+        DockColumn("Serial Monitor") {
             TimelineView(.periodic(from: .now, by: 0.2)) { _ in
                 let text = simulation.serialOutput(index)
                 ScrollViewReader { proxy in
@@ -116,7 +123,7 @@ struct SerialMonitor: View {
                             .textSelection(.enabled)
                         Color.clear.frame(height: 1).id("end")
                     }
-                    .frame(height: 140)
+                    .frame(minHeight: 40, maxHeight: .infinity)
                     .onChange(of: text) { _, _ in proxy.scrollTo("end") }
                 }
             }
@@ -126,8 +133,6 @@ struct SerialMonitor: View {
                     .onSubmit(send)
                 Button("Send", action: send).disabled(input.isEmpty)
             }
-        } header: {
-            Text("Serial Monitor")
         }
     }
 
@@ -146,7 +151,7 @@ struct BusTrace: View {
     @State private var bus = "All"
 
     var body: some View {
-        Section {
+        DockColumn("Bus Trace") {
             Toggle("Trace the buses", isOn: $tracing)
                 .onChange(of: tracing) { _, on in simulation.stm32(index)?.tracesBuses = on }
                 .onAppear { tracing = simulation.stm32(index)?.tracesBuses ?? false }
@@ -172,7 +177,7 @@ struct BusTrace: View {
                                 .textSelection(.enabled)
                                 Color.clear.frame(height: 1).id("end")
                             }
-                            .frame(height: 180)
+                            .frame(minHeight: 40, maxHeight: .infinity)
                             .onChange(of: shown.last?.time) { _, _ in proxy.scrollTo("end") }
                         }
                         if shown.isEmpty {
@@ -181,8 +186,6 @@ struct BusTrace: View {
                     }
                 }
             }
-        } header: {
-            Text("Bus Trace")
         }
     }
 }
@@ -193,28 +196,29 @@ struct PinFunctions: View {
     let index: Int
 
     var body: some View {
-        Section {
+        DockColumn("Pins") {
             TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                 let chip = simulation.stm32(index)
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(chip?.notices ?? [], id: \.self) { notice in
-                        Text(notice).font(.caption).foregroundStyle(.orange)
-                    }
-                    // (the pins the firmware has given a function, its plain inputs left out)
-                    let pins = (chip?.pinFunctions ?? []).filter { $0.function != "a GPIO input" }
-                    ForEach(Array(pins.enumerated()), id: \.offset) { _, pin in
-                        HStack {
-                            Text(pin.pin).font(.caption.monospaced()).frame(width: 44, alignment: .leading)
-                            Text(pin.function).font(.caption)
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(chip?.notices ?? [], id: \.self) { notice in
+                            Text(notice).font(.caption).foregroundStyle(.orange)
+                        }
+                        // (the pins the firmware has given a function, its plain inputs left out)
+                        let pins = (chip?.pinFunctions ?? []).filter { $0.function != "a GPIO input" }
+                        ForEach(Array(pins.enumerated()), id: \.offset) { _, pin in
+                            HStack {
+                                Text(pin.pin).font(.caption.monospaced()).frame(width: 44, alignment: .leading)
+                                Text(pin.function).font(.caption)
+                            }
+                        }
+                        if chip == nil {
+                            Text("Run the circuit to see what the firmware makes of each pin.").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    if chip == nil {
-                        Text("Run the circuit to see what the firmware makes of each pin.").font(.caption).foregroundStyle(.secondary)
-                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-        } header: {
-            Text("Pins")
         }
     }
 }

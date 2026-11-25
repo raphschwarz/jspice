@@ -25,6 +25,8 @@ enum ScreenshotRunner {
         var response: String?
         /// The circuit as built on a board, in place of the schematic
         var board: BoardKind = .schematic
+        /// The tab the dock under the canvas is open on, in place of the first the circuit has
+        var dock: DockTab?
     }
 
     static let shots: [Shot] = [
@@ -86,6 +88,11 @@ enum ScreenshotRunner {
         Shot(name: "58-stripboard-fuzz-light", example: "fuzz", dark: false, seconds: 3, board: .stripboard),
         Shot(name: "59-stripboard-netlist-dark", example: "netlist", dark: true, seconds: 3, board: .stripboard),
         Shot(name: "60-perfboard-fuzz-light", example: "fuzz", dark: false, seconds: 3, board: .perfboard),
+        Shot(name: "61-dock-scopes-light", example: "lfo", dark: false, seconds: 2, dock: .scopes),
+        Shot(name: "62-dock-panel-dark", example: "tone", dark: true, seconds: 1.5, dock: .panel),
+        Shot(name: "63-dock-problems-light", example: "broken", dark: false, seconds: 1, dock: .problems),
+        Shot(name: "64-dock-chip-light", example: "arduino-knob", dark: false, seconds: 2, select: .atmega328p, dock: .chip),
+        Shot(name: "65-dock-breadboard-panel-dark", example: "fuzz", dark: true, seconds: 2, board: .breadboard, dock: .panel),
     ]
 
     static func run(outputDirectory: String, selfTest: Bool, drawings: Bool = false) {
@@ -141,7 +148,7 @@ enum ScreenshotRunner {
             let editor = EditorState(document: document)
             editor.showCurrent = false
             editor.showValues = true
-            editor.showPanel = false
+            editor.dockCollapsed = true
             editor.showInspector = false
             let controller = NSHostingController(rootView: EditorView(document: document, editor: editor))
             let window = NSWindow(contentViewController: controller)
@@ -178,12 +185,31 @@ enum ScreenshotRunner {
         return (try? SchematicLayout.layout(parts)) ?? Circuit()
     }
 
+    /// A circuit with two problems for the dock's Problems tab: two batteries, each shorted by a wire around it
+    static func brokenDemo() -> Circuit {
+        var circuit = Circuit()
+        for x in [0, 10] {
+            circuit.add(Element(kind: .dcVoltage, a: GridPoint(x, 4), b: GridPoint(x, 0), params: ["voltage": 5]))
+            circuit.add(Element(kind: .wire, a: GridPoint(x, 0), b: GridPoint(x + 4, 0)))
+            circuit.add(Element(kind: .resistor, a: GridPoint(x + 4, 0), b: GridPoint(x + 4, 4)))
+            circuit.add(Element(kind: .wire, a: GridPoint(x + 4, 4), b: GridPoint(x, 4)))
+            circuit.add(Element(kind: .wire, a: GridPoint(x, 0), b: GridPoint(x - 3, 0)))
+            circuit.add(Element(kind: .wire, a: GridPoint(x - 3, 0), b: GridPoint(x - 3, 4)))
+            circuit.add(Element(kind: .wire, a: GridPoint(x - 3, 4), b: GridPoint(x, 4)))
+        }
+        // the two share a ground
+        circuit.add(Element(kind: .wire, a: GridPoint(4, 4), b: GridPoint(7, 4)))
+        circuit.add(Element(kind: .ground, a: GridPoint(0, 4), b: GridPoint(0, 5)))
+        return circuit
+    }
+
     private static func capture(to directory: URL) async {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for shot in shots {
             NSApp.appearance = NSAppearance(named: shot.dark ? .darkAqua : .aqua)
             let example = shot.example.flatMap { Examples.example($0) }
-            var circuit = example?.circuit ?? (shot.example == "netlist" ? netlistDemo() : Circuit())
+            var circuit = example?.circuit
+                ?? (shot.example == "netlist" ? netlistDemo() : shot.example == "broken" ? brokenDemo() : Circuit())
             if shot.tidy, let tidied = try? SchematicLayout.tidy(circuit) { circuit = tidied }
             if let name = shot.response, let element = circuit.elements.first(where: { $0.name == name }) {
                 circuit.scopes = [ScopeSpec(elementID: element.id, quantity: .voltage, plot: .frequencyResponse)]
@@ -200,6 +226,7 @@ enum ScreenshotRunner {
             }
             editor.tool = shot.tool
             editor.board = shot.board
+            if let tab = shot.dock { editor.showDock(tab) }
 
             let controller = NSHostingController(rootView: EditorView(document: document, editor: editor))
             controller.sceneBridgingOptions = [.toolbars, .title]

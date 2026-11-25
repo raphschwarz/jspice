@@ -1,7 +1,7 @@
 import SwiftUI
 import CircuitKit
 
-/// Scope traces under the canvas: one row per scoped quantity, newest values on the right, or a part's current plotted
+/// Scope traces in the dock under the canvas: one row per scoped quantity, newest values on the right, or a part's current plotted
 /// against its voltage.
 struct ScopePanel: View {
     @ObservedObject var editor: EditorState
@@ -10,11 +10,15 @@ struct ScopePanel: View {
     var body: some View {
         VStack(spacing: 0) {
             ForEach(circuit.scopes) { spec in
-                if let element = circuit[spec.elementID] {
-                    ScopeRow(editor: editor, spec: spec, element: element,
-                             sources: circuit.elements.filter { $0.kind.isVoltageSource || $0.kind == .currentSource })
-                    if spec.id != circuit.scopes.last?.id { Divider() }
+                // (one view per scope, with the scope's id, for the dock to scroll to)
+                VStack(spacing: 0) {
+                    if let element = circuit[spec.elementID] {
+                        ScopeRow(editor: editor, spec: spec, element: element,
+                                 sources: circuit.elements.filter { $0.kind.isVoltageSource || $0.kind == .currentSource })
+                        if spec.id != circuit.scopes.last?.id { Divider() }
+                    }
                 }
+                .id(spec.id)
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))
