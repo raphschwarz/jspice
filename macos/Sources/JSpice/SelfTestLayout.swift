@@ -6,6 +6,9 @@ extension InteractionTest {
     /// The window's layout: the dock under the canvas opens on a scope just added, offers Problems for a broken circuit,
     /// folds and unfolds, and the self-test's view choices are not remembered in the user defaults
     static func checkLayout(editor: EditorState, document: CircuitDocument, window: NSWindow) async {
+        // the checks before these group their undo steps by hand; from here on, an undo manager that groups them itself
+        // (registering an undo outside a group raises an exception in one that does not)
+        editor.undoManager = UndoManager()
         let stored = ViewPreferences.storedValues()
         check(ViewPreferences.isAutomated, "the self-test runs with the built-in view settings, not the user's")
 

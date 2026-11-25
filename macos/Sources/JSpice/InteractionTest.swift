@@ -11,6 +11,8 @@ enum InteractionTest {
 
     static func check(_ condition: Bool, _ description: String) {
         print(condition ? "PASS  \(description)" : "FAIL  \(description)")
+        // (so that a crash later in the run leaves the checks before it in the log)
+        fflush(stdout)
         if !condition { failures.append(description) }
     }
 
