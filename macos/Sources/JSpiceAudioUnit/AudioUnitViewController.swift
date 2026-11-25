@@ -129,7 +129,7 @@ struct PluginPanel: View {
                 }
             }
             Spacer(minLength: 0)
-            Text("Design a circuit in JSpice, then File ▸ Export as Audio Unit to play it here.")
+            Text("Design a circuit in JSpice, then File ▸ Export ▸ Audio Unit… to play it here.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

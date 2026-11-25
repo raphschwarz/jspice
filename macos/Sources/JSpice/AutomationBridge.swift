@@ -9,7 +9,7 @@ enum EditorRegistry {
     static weak var active: EditorState?
 }
 
-/// Whether AI agents may drive the app: Circuit ▸ AI Control (MCP)
+/// Whether AI agents may drive the app: JSpice ▸ AI Control (MCP), and Settings ▸ AI Control
 enum AIControlMode: String, CaseIterable {
     /// No listening at all
     case off
@@ -57,9 +57,9 @@ final class AIControlConsent: @unchecked Sendable {
     private static let automated = CommandLine.arguments.contains { ["--self-test", "--screenshots", "--render-drawings", "--render-icon"].contains($0) }
 
     static let offMessage = "AI control is off in JSpice. To let this agent work on the circuit, the user can choose "
-        + "Circuit ▸ AI Control (MCP) ▸ Ask or Always Allow in JSpice; then call the tool again."
+        + "JSpice ▸ AI Control (MCP) ▸ Ask or Always Allow (or Settings ▸ AI Control) in JSpice; then call the tool again."
     static let deniedMessage = "The user chose Don't Allow when JSpice asked whether to let an AI agent control it. To allow "
-        + "it, they can choose Circuit ▸ AI Control (MCP) ▸ Always Allow in JSpice, or Ask to be asked again; then call the tool again."
+        + "it, they can choose JSpice ▸ AI Control (MCP) ▸ Always Allow in JSpice, or Ask to be asked again; then call the tool again."
     static let waitingMessage = "JSpice is asking the user whether to let an AI agent control it, and has no answer yet. "
         + "Ask them to choose Allow in the JSpice window, then call the tool again."
 
@@ -124,7 +124,7 @@ final class AIControlConsent: @unchecked Sendable {
     }
 }
 
-/// Circuit ▸ AI Control (MCP), kept up to date when the prompt's Always Allow changes the choice
+/// JSpice ▸ AI Control (MCP), kept up to date when the prompt's Always Allow changes the choice
 struct AIControlMenu: View {
     @AppStorage(AIControlMode.defaultsKey) private var mode: AIControlMode = .ask
 
@@ -142,7 +142,7 @@ struct AIControlMenu: View {
 
 /// Lets AI agents drive the open circuit through the Model Context Protocol. The app listens on a local socket; the
 /// bundled `jspice-mcp` server connects to it, so every tool call (build a circuit, change a value, simulate…) acts on
-/// the frontmost window as an undoable edit. Agents get control only as Circuit ▸ AI Control (MCP) says: never, after
+/// the frontmost window as an undoable edit. Agents get control only as JSpice ▸ AI Control (MCP) says: never, after
 /// the user allows it in a prompt, or always.
 @MainActor
 final class AutomationBridge {
@@ -196,7 +196,7 @@ final class AutomationBridge {
             + "agent such as Claude does. JSpice cannot tell which program it is.\n\nIf you allow it, it can change the "
             + "open circuit, read and write files anywhere your account can, install chip support (compilers), and open a "
             + "debugging port.\n\nAllow lets agents work until you quit JSpice. You can change this at any time in "
-            + "Circuit ▸ AI Control (MCP)."
+            + "JSpice ▸ Settings… ▸ AI Control."
         alert.alertStyle = .warning
         // the default button (Return) is the safe answer
         alert.addButton(withTitle: "Don't Allow")
@@ -236,7 +236,7 @@ final class AutomationBridge {
         let session = CircuitSession()
         // schematic capture finds the key the app keeps in the login keychain, as the app's own import does
         session.apiKey = { APIKeyStore.key }
-        session.apiKeySource = "in JSpice, choose Circuit ▸ Import Schematic from Image or PDF… once and enter a key (it is kept in the login keychain), or set ANTHROPIC_API_KEY"
+        session.apiKeySource = "in JSpice, enter a key in Settings ▸ API Key (it is kept in the login keychain), or set ANTHROPIC_API_KEY"
         let server = MCPServer(session: session)
         server.serverName = "jspice-app"
         server.authorize = { AIControlConsent.shared.refusal() }

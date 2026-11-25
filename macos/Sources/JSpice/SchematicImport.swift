@@ -51,7 +51,7 @@ enum APIKeyStore {
 }
 
 extension EditorState {
-    /// Reads a schematic drawing into the window (File ▸ Import Schematic from Image or PDF)
+    /// Reads a schematic drawing into the window (File ▸ Import ▸ Schematic from Image or PDF…)
     func importSchematic() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.pdf, .png, .jpeg, .heic, .tiff, .image]

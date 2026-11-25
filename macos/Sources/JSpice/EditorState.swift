@@ -381,7 +381,7 @@ final class EditorState: ObservableObject {
 
     // MARK: - SPICE
 
-    /// Replaces the circuit with a SPICE netlist, drawn as a schematic (File ▸ Import SPICE Netlist)
+    /// Replaces the circuit with a SPICE netlist, drawn as a schematic (File ▸ Import ▸ SPICE Netlist…)
     func importSpice() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = ["cir", "net", "sp", "spi", "spice", "ckt"].compactMap { UTType(filenameExtension: $0) } + [.plainText]
@@ -407,7 +407,7 @@ final class EditorState: ObservableObject {
         }
     }
 
-    /// Imports a subcircuit of a maker's model file into the block library with the file's provenance (File ▸ Import
+    /// Imports a subcircuit of a maker's model file into the block library with the file's provenance (File ▸ Import ▸
     /// Maker's Model); an op-amp's (five pins, in a model's usual order) figures are measured, to be set beside its
     /// datasheet's
     func importMakerModel() {
@@ -456,7 +456,7 @@ final class EditorState: ObservableObject {
         }
     }
 
-    /// Downloads a part's model from its maker (File ▸ Download Maker's Model), saves it in the block library and shows
+    /// Downloads a part's model from its maker (File ▸ Import ▸ Download Maker's Model), saves it in the block library and shows
     /// its figures beside its datasheet's
     func downloadMakerModel(_ model: MakerModelCatalog.Model) {
         Task.detached(priority: .userInitiated) {
@@ -489,7 +489,7 @@ final class EditorState: ObservableObject {
         }
     }
 
-    /// Writes the circuit as a SPICE deck (File ▸ Export SPICE Netlist)
+    /// Writes the circuit as a SPICE deck (File ▸ Export ▸ SPICE Netlist…)
     func exportSpice() {
         let save = NSSavePanel()
         save.allowedContentTypes = [UTType(filenameExtension: "cir") ?? .plainText]
@@ -523,7 +523,7 @@ final class EditorState: ObservableObject {
         }
     }
 
-    /// Writes the circuit as a KiCad netlist, for a printed circuit board (File ▸ Export KiCad Netlist)
+    /// Writes the circuit as a KiCad netlist, for a printed circuit board (File ▸ Export ▸ KiCad Netlist…)
     func exportKiCad() {
         let save = NSSavePanel()
         save.allowedContentTypes = [UTType(filenameExtension: "net") ?? .plainText]
@@ -549,7 +549,7 @@ final class EditorState: ObservableObject {
     }
 
     /// Saves the circuit where the JSpice Audio Unit finds it, as a preset of its effect or instrument
-    /// (File ▸ Export as Audio Unit)
+    /// (File ▸ Export ▸ Audio Unit…)
     func exportAudioUnit() {
         let effect = PluginLibrary.effect(circuit) != nil, instrument = PluginLibrary.instrument(circuit) != nil
         guard effect || instrument else {
@@ -594,7 +594,7 @@ final class EditorState: ObservableObject {
         }
     }
 
-    /// Renders the circuit's speaker to a WAV file, offline, for as long as asked (File ▸ Export Sound)
+    /// Renders the circuit's speaker to a WAV file, offline, for as long as asked (File ▸ Export ▸ Sound…)
     func exportSound() {
         guard let speaker = circuit.elements.firstIndex(where: { $0.kind == .speaker }) else {
             let alert = NSAlert()

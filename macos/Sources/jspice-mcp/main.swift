@@ -5,7 +5,7 @@ import JSpiceAutomation
 // `jspice-mcp`: a Model Context Protocol server on standard input and output, so an AI agent can build, simulate and
 // measure circuits with the JSpice engine. Add it to an MCP client (Claude Desktop, Claude Code) as a stdio server.
 //
-// If the JSpice app is running (and Circuit ▸ AI Control lets agents in), requests go to the circuit in its frontmost
+// If the JSpice app is running (and JSpice ▸ AI Control lets agents in), requests go to the circuit in its frontmost
 // window, so you can watch the agent work and undo its changes; otherwise, or with --headless, the server simulates on
 // its own, as it does from then on if the app quits.
 // --app insists on the app. --benchmark [seconds] [example…] times the engine alone at the audio sample rate,
@@ -794,7 +794,7 @@ final class AppProxy: @unchecked Sendable {
         + "fresh, empty circuit. The circuit you were working on in JSpice is not here: build or load it again. To work "
         + "in the app again, open JSpice and restart the jspice-mcp server."
     static let appGone = "The JSpice app quit, and jspice-mcp was started with --app, so it does not simulate on its "
-        + "own. Open JSpice (with Circuit ▸ AI Control allowing agents) and restart the jspice-mcp server."
+        + "own. Open JSpice (with JSpice ▸ AI Control (MCP) allowing agents) and restart the jspice-mcp server."
 
     init(connection: Int32, insistOnApp: Bool) {
         self.connection = connection
@@ -949,7 +949,7 @@ if !arguments.contains("--headless"), let fd = LocalSocket.connect(to: path) {
     }
     proxy.inputEnded()
 } else if arguments.contains("--app") {
-    log("the JSpice app is not running, or Circuit ▸ AI Control is set to Don't Allow")
+    log("the JSpice app is not running, or JSpice ▸ AI Control (MCP) is set to Don't Allow")
     exit(1)
 } else {
     log("simulating on its own (the JSpice app is not running)")
