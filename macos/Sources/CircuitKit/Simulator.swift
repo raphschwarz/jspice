@@ -359,20 +359,72 @@ public final class Simulator {
     private var i2cTransfer: [(part: Int, index: Int, data: UInt32, command: Bool)] = []
     private var codecExchanges: [STM32Microcontroller.FrameExchange?] = []
     private var codecTargets: [STM32Microcontroller.I2CTarget?] = []
-    /// Each CV DAC's outputs' codes, then its input registers'
-    private var cvDacCodes: [[UInt16]] = []
-    /// Each PCA9685's registers, and the one its next byte written goes to
-    private var pwmRegisters: [[UInt8]] = []
-    private var pwmPointer: [Int] = []
-    /// Each TLC5947's shift register's twenty-four 12-bit levels, then its latched ones; and when BLANK last fell
-    private var sinkLevels: [[UInt16]] = []
-    private var sinkStart: [Double] = []
-    /// Each EEPROM's memory (made as it is first reached), its address pointer, the bytes of the page write under way
-    /// (written at its STOP), and when its write cycle ends
-    private var eepromData: [[UInt8]] = []
-    private var eepromPointer: [Int] = []
-    private var eepromPending: [[(address: Int, byte: UInt8)]] = []
-    private var eepromBusy: [Double] = []
+    /// What a part written over a bus holds (a CV DAC, a PCA9685, a TLC5947, an EEPROM), all in one, so that whatever
+    /// carries a part's state (`load`, `adoptState`, `initialiseState`, a thrown-away substep) carries all of it.
+    /// A part has only its own kind's fields filled; the rest stay empty.
+    struct BusPartState: Equatable {
+        struct Write: Equatable {
+            var address: Int
+            var byte: UInt8
+        }
+        /// A CV DAC's outputs' codes, then its input registers'
+        var cvDacCodes: [UInt16] = []
+        /// A PCA9685's registers, and the one its next byte written goes to
+        var pwmRegisters: [UInt8] = []
+        var pwmPointer = 0
+        /// A TLC5947's shift register's twenty-four 12-bit levels, then its latched ones; and when BLANK last fell
+        var sinkLevels: [UInt16] = []
+        var sinkStart = 0.0
+        /// An EEPROM's memory (made as it is first reached), its address pointer, the bytes of the page write under
+        /// way (written at its STOP), and when its write cycle ends
+        var eepromData: [UInt8] = []
+        var eepromPointer = 0
+        var eepromPending: [Write] = []
+        var eepromBusy = 0.0
+
+        /// A part of this kind as it comes from the box
+        init(_ kind: ElementKind) {
+            switch kind {
+            case .cvDac: cvDacCodes = [UInt16](repeating: 0, count: 16)
+            case .ledDriver: pwmRegisters = Logic.pwmReset()
+            case .ledSink: sinkLevels = [UInt16](repeating: 0, count: 48)
+            default: break
+            }
+        }
+
+        init() {}
+
+        /// Takes on `other`'s contents, copied into its own storage where the sizes allow: never sharing `other`'s
+        /// (which the simulator on the sound's thread would then have to copy as it next writes), and allocating
+        /// nothing once the sizes match
+        mutating func copy(from other: BusPartState) {
+            Self.copy(&cvDacCodes, other.cvDacCodes)
+            Self.copy(&pwmRegisters, other.pwmRegisters)
+            pwmPointer = other.pwmPointer
+            Self.copy(&sinkLevels, other.sinkLevels)
+            sinkStart = other.sinkStart
+            Self.copy(&eepromData, other.eepromData)
+            eepromPointer = other.eepromPointer
+            Self.copy(&eepromPending, other.eepromPending)
+            eepromBusy = other.eepromBusy
+        }
+
+        @inline(__always) private static func copy<T>(_ target: inout [T], _ source: [T]) {
+            if target.count == source.count {
+                guard !source.isEmpty else { return }
+                Simulator.adopt(&target, source)
+            } else {
+                target.removeAll(keepingCapacity: true)
+                target.append(contentsOf: source)
+            }
+        }
+    }
+    /// Each element's bus-part state (empty for other parts)
+    private var busParts: [BusPartState] = []
+    /// The TLC5947s and PCA9685s, whose state can move within a substep (their pins followed by the circuit's logic),
+    /// and what they held at the substep's start, for when it is thrown away
+    private var substepBusParts: [Int] = []
+    private var rejectBusParts: [BusPartState] = []
     /// For each STM32, the CV DACs on its SPI ports (their SCLK on the port's SCK pin) and the chip's pin wired to each
     /// one's SYNC (-1: none); the bits each DAC has taken since its SYNC fell (`bits` past its word: the word taken)
     private var spiLinks: [[(port: Int, dac: Int, sync: Int)]] = []
@@ -950,6 +1002,8 @@ public final class Simulator {
         var noise: UInt64
         var delay: DelayHistory?
         var brigade: BucketBrigade?
+        var kind: ElementKind
+        var bus: BusPartState
     }
 
     /// Switches to a changed circuit, keeping the state (charge, current, memristor state) of elements that remain
@@ -968,7 +1022,8 @@ public final class Simulator {
                     : [Double](repeating: 0, count: 3 * Self.chargeSlots),
                 meyer: i < meyerHistory.count ? meyerHistory[i] : MeyerHistory(),
                 digital: digitalState[i], logic: logicStates[i], module: moduleStates[i],
-                noise: noiseState[i], delay: delayHistory[i], brigade: bucketBrigades[i])
+                noise: noiseState[i], delay: delayHistory[i], brigade: bucketBrigades[i],
+                kind: element.kind, bus: i < busParts.count ? busParts[i] : BusPartState())
         }
         // chips keep running through edits that leave their firmware alone
         var previousChips: [UUID: (firmware: Data?, chip: Microcontroller, carry: Double)] = [:]
@@ -1006,15 +1061,7 @@ public final class Simulator {
         Self.zeroed(&limitedVoltage3, count)
         digitalState = Array(repeating: false, count: count)
         logicStates = Array(repeating: LogicState(), count: count)
-        cvDacCodes = Array(repeating: [UInt16](repeating: 0, count: 16), count: count)
-        pwmRegisters = Array(repeating: [], count: count)
-        pwmPointer = Array(repeating: 0, count: count)
-        sinkLevels = Array(repeating: [], count: count)
-        sinkStart = Array(repeating: 0, count: count)
-        eepromData = Array(repeating: [], count: count)
-        eepromPointer = Array(repeating: 0, count: count)
-        eepromPending = Array(repeating: [], count: count)
-        eepromBusy = Array(repeating: 0, count: count)
+        busParts = Array(repeating: BusPartState(), count: count)
         moduleStates = Array(repeating: ModuleState(), count: count)
         noiseState = Array(repeating: 0, count: count)
         opAmpCrossings = Array(repeating: 0, count: count)
@@ -1064,6 +1111,8 @@ public final class Simulator {
         digitalIndices = indices { $0.isDigital }
         chipIndices = indices { $0.isMicrocontroller }
         switchingLogic = indices { [.i2cDac, .ledDriver, .spiAdc, .analogMux, .analogSelector].contains($0) }
+        substepBusParts = indices { $0 == .ledDriver || $0 == .ledSink }
+        rejectBusParts = Array(repeating: BusPartState(), count: substepBusParts.count)
         chips = [:]
         chipPinStates = [:]
         pinKey = 0
@@ -1129,6 +1178,8 @@ public final class Simulator {
                 logicStates[i] = state.logic
                 moduleStates[i] = state.module
                 noiseState[i] = state.noise
+                // (a part that is now of another kind starts as one fresh from the box)
+                busParts[i] = state.kind == element.kind ? state.bus : BusPartState(element.kind)
                 if let delay = state.delay, element.kind == .delayLine || element.kind == .digitalDelay {
                     // a delay line keeps what it holds, in a history long enough for its new settings
                     let capacity = delayCapacity(i, timeStep: timeStep)
@@ -1217,24 +1268,10 @@ public final class Simulator {
         // a Schmitt inverter's input starts low, so its output starts high; a 555 decides from its trigger
         digitalState[i] = element.kind == .schmittInverter
         logicStates[i] = LogicState()
-        if i < cvDacCodes.count { cvDacCodes[i] = [UInt16](repeating: 0, count: 16) }
-        if i < pwmRegisters.count {
-            pwmRegisters[i] = element.kind == .ledDriver ? Logic.pwmReset() : []
-            pwmPointer[i] = 0
-            // (its all-call address answered from reset)
-            if element.kind == .ledDriver { logicStates[i].latch = Logic.i2cAllCall }
-        }
-        if i < sinkLevels.count {
-            sinkLevels[i] = element.kind == .ledSink ? [UInt16](repeating: 0, count: 48) : []
-            sinkStart[i] = 0
-        }
-        if i < eepromData.count {
-            // (an EEPROM from the factory: every byte erased, 0xFF)
-            eepromData[i] = []
-            eepromPointer[i] = 0
-            eepromPending[i] = []
-            eepromBusy[i] = 0
-        }
+        // (an EEPROM from the factory: every byte erased, 0xFF, its memory made as it is first reached)
+        if i < busParts.count { busParts[i] = BusPartState(element.kind) }
+        // (a PCA9685's all-call address answered from reset)
+        if element.kind == .ledDriver { logicStates[i].latch = Logic.i2cAllCall }
         // a keyboard's pitch starts at the present note rather than gliding up from 0 V
         if element.kind == .keyboardPitch { capacitorVoltage[i] = keyboard.pitchVoltage }
         // each noise source has its own sequence, the same every run
@@ -1360,6 +1397,12 @@ public final class Simulator {
         if logicStates != other.logicStates { matrixIsCurrent = false }
         Self.adopt(&logicStates, other.logicStates)
         Self.adopt(&moduleStates, other.moduleStates)
+        // (what the bus parts hold is on the right-hand side and in the nonlinear block, not the base matrix)
+        for i in busParts.indices { busParts[i].copy(from: other.busParts[i]) }
+        // the words the converters on a chip's buses are part way through taking
+        Self.adopt(&spiWords, other.spiWords)
+        Self.adopt(&spiAdcStates, other.spiAdcStates)
+        Self.adopt(&i2cTransfer, other.i2cTransfer)
         for (i, chip) in chips {
             guard let source = other.chips[i] else { continue }
             chip.adopt(source)
@@ -1568,6 +1611,8 @@ public final class Simulator {
                 if hasDigital {
                     rejectDigital = digitalState
                     rejectLogic = logicStates
+                    // (and what a PCA9685 or TLC5947 clocked by them takes in)
+                    for (k, i) in substepBusParts.enumerated() { rejectBusParts[k].copy(from: busParts[i]) }
                 }
             }
             Self.copy(x, into: &substepStartX)
@@ -1594,6 +1639,9 @@ public final class Simulator {
                     digitalState = rejectDigital
                     logicStates = rejectLogic
                     matrixIsCurrent = false
+                }
+                if hasDigital {
+                    for (k, i) in substepBusParts.enumerated() { busParts[i].copy(from: rejectBusParts[k]) }
                 }
                 rejectedSubsteps += 1
                 trace?("  substep at level \(level) rejected: " + (converged ? String(format: "error %.3g", error) : "not converged"))
@@ -3414,10 +3462,10 @@ public final class Simulator {
                 stampCurrent(r, 0, nodes[8], Logic.codecOutput(Int32(bitPattern: logicStates[i].latch), c.supply, c.value) * c.outputConductance)
                 stampCurrent(r, 0, nodes[9], Logic.codecOutput(Int32(truncatingIfNeeded: logicStates[i].count), c.supply, c.value) * c.outputConductance)
             case .cvDac:
-                guard i < cvDacCodes.count else { continue }
+                guard busParts[i].cvDacCodes.count >= 8 else { continue }
                 let c = constants[i]
                 for k in 0..<8 where 3 + k < nodes.count {
-                    stampCurrent(r, 0, nodes[3 + k], Double(cvDacCodes[i][k]) / 65536 * c.value * c.outputConductance)
+                    stampCurrent(r, 0, nodes[3 + k], Double(busParts[i].cvDacCodes[k]) / 65536 * c.value * c.outputConductance)
                 }
             case .i2cDac:
                 guard nodes.count > 3 else { continue }
@@ -4972,7 +5020,7 @@ public final class Simulator {
                 for k in 0..<24 where 4 + k < nodes.count && nodes[4 + k] > 0 {
                     let node = nodes[4 + k]
                     let v = voltage(node)
-                    let (current, slope) = count.map { $0 < Int(sinkLevels[i][24 + k]) } == true
+                    let (current, slope) = count.map { $0 < Int(busParts[i].sinkLevels[24 + k]) } == true
                         ? Logic.sinkCurrent(v, full: c.high) : (current: 0.0, slope: 0.0)
                     stampConductance(matrix, m, node, 0, slope + 1e-9 + junctionConductance)
                     stampCurrent(rhs, node, 0, current - slope * v)
@@ -5591,12 +5639,12 @@ public final class Simulator {
         case .ledSink:
             // XLAT takes the register as it was before an SCLK edge at the same moment, as a 74HC595's RCLK does
             if next.bits & 2 != 0 {
-                for k in 0..<24 { sinkLevels[i][24 + k] = sinkLevels[i][k] }
+                for k in 0..<24 { busParts[i].sinkLevels[24 + k] = busParts[i].sinkLevels[k] }
                 next.count &+= 1
             }
-            if next.bits & 1 != 0 { Logic.sinkShift(&sinkLevels[i], bit: next.inputs & 1 != 0) }
-            if next.bits & 8 != 0 { next.shift = sinkLevels[i][23] >> 11 & 1 != 0 ? 1 : 0 }
-            if next.bits & 4 != 0 { sinkStart[i] = time }
+            if next.bits & 1 != 0 { Logic.sinkShift(&busParts[i].sinkLevels, bit: next.inputs & 1 != 0) }
+            if next.bits & 8 != 0 { next.shift = busParts[i].sinkLevels[23] >> 11 & 1 != 0 ? 1 : 0 }
+            if next.bits & 4 != 0 { busParts[i].sinkStart = time }
             // (BLANK turns every output off or lets them run)
             if (next.inputs ^ old.inputs) & 8 != 0 { next.count &+= 1 }
             next.bits = 0
@@ -5609,8 +5657,8 @@ public final class Simulator {
 
     /// A TLC5947's grayscale counter now (nil while BLANK is high)
     private func sinkCount(_ i: Int) -> Int? {
-        guard i < sinkLevels.count, sinkLevels[i].count == 48 else { return nil }
-        return Logic.sinkCount(elapsed: time - sinkStart[i], frequency: constants[i].frequency,
+        guard i < busParts.count, busParts[i].sinkLevels.count == 48 else { return nil }
+        return Logic.sinkCount(elapsed: time - busParts[i].sinkStart, frequency: constants[i].frequency,
                                blank: logicStates[i].inputs & 8 != 0)
     }
 
@@ -5619,7 +5667,7 @@ public final class Simulator {
         let nodes = topology.elementNodes[i]
         let count = sinkCount(i)
         return (0..<24).map { k in
-            guard 4 + k < nodes.count, let count, count < Int(sinkLevels[i][24 + k]) else { return 0 }
+            guard 4 + k < nodes.count, let count, count < Int(busParts[i].sinkLevels[24 + k]) else { return 0 }
             return Logic.sinkCurrent(v(nodes[4 + k]), full: constants[i].high).current
         }
     }
@@ -5628,32 +5676,32 @@ public final class Simulator {
     /// there, one register on for each with MODE1's AI set. PRE_SCALE takes a write only while it sleeps; ALL_LED's
     /// registers write every channel's
     private func pwmByte(_ i: Int, index: Int, byte: UInt8) {
-        guard i < pwmRegisters.count, pwmRegisters[i].count == 256 else { return }
+        guard i < busParts.count, busParts[i].pwmRegisters.count == 256 else { return }
         if index == 0 {
-            pwmPointer[i] = Int(byte)
+            busParts[i].pwmPointer = Int(byte)
             return
         }
-        let register = pwmPointer[i]
+        let register = busParts[i].pwmPointer
         switch register {
         case 0xFE:
-            if pwmRegisters[i][0] & 0x10 != 0 { pwmRegisters[i][0xFE] = byte }
+            if busParts[i].pwmRegisters[0] & 0x10 != 0 { busParts[i].pwmRegisters[0xFE] = byte }
         case 0xFA...0xFD:
-            pwmRegisters[i][register] = byte
-            for k in 0..<16 { pwmRegisters[i][6 + 4 * k + register - 0xFA] = byte }
+            busParts[i].pwmRegisters[register] = byte
+            for k in 0..<16 { busParts[i].pwmRegisters[6 + 4 * k + register - 0xFA] = byte }
         case 0:
-            pwmRegisters[i][0] = byte
+            busParts[i].pwmRegisters[0] = byte
             // ALLCALL: whether it answers at 0x70
             if byte & 1 != 0 { logicStates[i].latch |= Logic.i2cAllCall } else { logicStates[i].latch &= ~Logic.i2cAllCall }
         default:
-            pwmRegisters[i][register] = byte
+            busParts[i].pwmRegisters[register] = byte
         }
-        if pwmRegisters[i][0] & 0x20 != 0 { pwmPointer[i] = (register + 1) & 0xFF }
+        if busParts[i].pwmRegisters[0] & 0x20 != 0 { busParts[i].pwmPointer = (register + 1) & 0xFF }
     }
 
     /// A PCA9685's sixteen outputs now (all off while OE is high)
     private func pwmOutputs(_ i: Int) -> [Bool] {
-        guard i < pwmRegisters.count else { return [] }
-        return Logic.pwmOutputs(pwmRegisters[i], time: time, enabled: logicStates[i].inputs & 4 == 0)
+        guard i < busParts.count else { return [] }
+        return Logic.pwmOutputs(busParts[i].pwmRegisters, time: time, enabled: logicStates[i].inputs & 4 == 0)
     }
 
     /// An MCP3008's conversion: SGL/DIFF and D2–D0 pick the input (single-ended against ground, or a pair: CH2k and
@@ -6183,9 +6231,9 @@ public final class Simulator {
                 let pins = (0...2).reduce(0) { $0 | (high(3 + $1) ? 1 << $1 : 0) }
                 guard Int(address) & ~blocks == (0x50 | pins) & ~blocks else { continue }
                 // in its write cycle it answers nothing: a firmware polls for its acknowledge until it does
-                if time < eepromBusy[device.part] { return false }
-                if eepromData[device.part].count != size { eepromData[device.part] = [UInt8](repeating: 0xFF, count: size) }
-                eepromPending[device.part] = []
+                if time < busParts[device.part].eepromBusy { return false }
+                if busParts[device.part].eepromData.count != size { busParts[device.part].eepromData = [UInt8](repeating: 0xFF, count: size) }
+                busParts[device.part].eepromPending = []
                 i2cTransfer[i].part = device.part
                 i2cTransfer[i].data = UInt32(Int(address) & blocks)
                 return true
@@ -6212,15 +6260,15 @@ public final class Simulator {
     /// EEPROM's next byte (on through its whole memory, round to the start)
     private func i2cRead(_ i: Int) -> UInt8 {
         let part = i2cTransfer[i].part
-        if part >= 0, kinds[part] == .i2cEeprom, !eepromData[part].isEmpty {
-            let at = eepromPointer[part] % eepromData[part].count
-            eepromPointer[part] = (at + 1) % eepromData[part].count
-            return eepromData[part][at]
+        if part >= 0, kinds[part] == .i2cEeprom, !busParts[part].eepromData.isEmpty {
+            let at = busParts[part].eepromPointer % busParts[part].eepromData.count
+            busParts[part].eepromPointer = (at + 1) % busParts[part].eepromData.count
+            return busParts[part].eepromData[at]
         }
-        guard part >= 0, kinds[part] == .ledDriver, part < pwmRegisters.count, pwmRegisters[part].count == 256 else { return 0xFF }
-        let register = pwmPointer[part]
-        let byte = pwmRegisters[part][register]
-        if pwmRegisters[part][0] & 0x20 != 0 { pwmPointer[part] = (register + 1) & 0xFF }
+        guard part >= 0, kinds[part] == .ledDriver, part < busParts.count, busParts[part].pwmRegisters.count == 256 else { return 0xFF }
+        let register = busParts[part].pwmPointer
+        let byte = busParts[part].pwmRegisters[register]
+        if busParts[part].pwmRegisters[0] & 0x20 != 0 { busParts[part].pwmPointer = (register + 1) & 0xFF }
         return byte
     }
 
@@ -6268,15 +6316,15 @@ public final class Simulator {
         let addressBytes = size > 2048 ? 2 : 1
         if index < addressBytes {
             if addressBytes == 2 && index == 0 {
-                eepromPointer[part] = Int(byte) << 8
+                busParts[part].eepromPointer = Int(byte) << 8
             } else {
-                eepromPointer[part] = ((addressBytes == 2 ? eepromPointer[part] : block << 8) | Int(byte)) % size
+                busParts[part].eepromPointer = ((addressBytes == 2 ? busParts[part].eepromPointer : block << 8) | Int(byte)) % size
             }
             return
         }
-        let at = eepromPointer[part]
-        eepromPending[part].append((at, byte))
-        eepromPointer[part] = at / page * page + (at + 1) % page
+        let at = busParts[part].eepromPointer
+        busParts[part].eepromPending.append(BusPartState.Write(address: at, byte: byte))
+        busParts[part].eepromPointer = at / page * page + (at + 1) % page
     }
 
     /// A STOP on an STM32's I²C bus: an EEPROM written to starts its write cycle, its page written as it ends (unless
@@ -6284,19 +6332,30 @@ public final class Simulator {
     private func i2cStop(_ i: Int) {
         let part = i2cTransfer[i].part
         i2cTransfer[i].part = -1
-        guard part >= 0, kinds[part] == .i2cEeprom, !eepromPending[part].isEmpty else { return }
-        let pending = eepromPending[part]
-        eepromPending[part] = []
+        guard part >= 0, kinds[part] == .i2cEeprom, !busParts[part].eepromPending.isEmpty else { return }
+        let pending = busParts[part].eepromPending
+        busParts[part].eepromPending = []
         let nodes = topology.elementNodes[part]
         if nodes.count > 2 && voltage(nodes[2]) > constants[part].supply / 2 { return }
-        for (address, byte) in pending where address < eepromData[part].count { eepromData[part][address] = byte }
-        eepromBusy[part] = time + constants[part].frequency
+        for write in pending where write.address < busParts[part].eepromData.count {
+            busParts[part].eepromData[write.address] = write.byte
+        }
+        busParts[part].eepromBusy = time + constants[part].frequency
+    }
+
+    /// What a bus part holds now, and putting something in it as its bus would (for tests)
+    func busPartState(_ i: Int) -> BusPartState {
+        busParts[i]
+    }
+
+    func setBusPartState(_ i: Int, _ state: BusPartState) {
+        busParts[i] = state
     }
 
     /// What an EEPROM holds (nil for another part, or one nothing has reached yet: every byte still 0xFF)
     public func eepromContents(_ index: Int) -> [UInt8]? {
-        guard index < eepromData.count, index < kinds.count, kinds[index] == .i2cEeprom, !eepromData[index].isEmpty else { return nil }
-        return eepromData[index]
+        guard index < busParts.count, index < kinds.count, kinds[index] == .i2cEeprom, !busParts[index].eepromData.isEmpty else { return nil }
+        return busParts[index].eepromData
     }
 
     /// Which of an STM32's ports reach the parts wired to it, as its firmware has set it up now; why not, for those they
@@ -6379,8 +6438,8 @@ public final class Simulator {
                 // a DAC8568's SYNC is the frame's left half: a word each frame; a DAC8564's, each PCM word
                 let format = Int(constants[j].high)
                 guard format < 2 else { continue }
-                Logic.cvDacWord(UInt32(bitPattern: left), format: format, codes: &cvDacCodes[j])
-                if format == 1 { Logic.cvDacWord(UInt32(bitPattern: right), format: 1, codes: &cvDacCodes[j]) }
+                Logic.cvDacWord(UInt32(bitPattern: left), format: format, codes: &busParts[j].cvDacCodes)
+                if format == 1 { Logic.cvDacWord(UInt32(bitPattern: right), format: 1, codes: &busParts[j].cvDacCodes) }
                 continue
             }
             logicStates[j].latch = UInt32(bitPattern: left)
@@ -6414,7 +6473,7 @@ public final class Simulator {
             count += bits
             if count >= wordBits {
                 let word = UInt32(truncatingIfNeeded: (shift >> UInt64(count - wordBits)) & ((1 << UInt64(wordBits)) - 1))
-                Logic.cvDacWord(word, format: format, codes: &cvDacCodes[j])
+                Logic.cvDacWord(word, format: format, codes: &busParts[j].cvDacCodes)
                 // the bits past it wait for the next SYNC; with none wired, they start the next word
                 if link.sync < 0 {
                     count -= wordBits
@@ -6960,7 +7019,7 @@ public final class Simulator {
                 outputs = [(8, Logic.codecOutput(Int32(bitPattern: state.latch), c.supply, c.value)),
                            (9, Logic.codecOutput(Int32(truncatingIfNeeded: state.count), c.supply, c.value))]
             case .cvDac:
-                outputs = (0..<8).map { (3 + $0, i < cvDacCodes.count ? Double(cvDacCodes[i][$0]) / 65536 * c.value : 0) }
+                outputs = (0..<8).map { (3 + $0, busParts[i].cvDacCodes.count >= 8 ? Double(busParts[i].cvDacCodes[$0]) / 65536 * c.value : 0) }
             case .ledDriver:
                 outputs = pwmOutputs(i).enumerated().map { (9 + $0.offset, $0.element ? c.supply : 0) }
             default:
