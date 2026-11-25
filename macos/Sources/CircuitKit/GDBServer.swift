@@ -133,7 +133,7 @@ public final class GDBServer: @unchecked Sendable {
     }
 
     private func converse(_ fd: Int32) {
-        var input: [UInt8] = []
+        var reader = GDBPacketReader()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
             var poller = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
@@ -141,29 +141,25 @@ public final class GDBServer: @unchecked Sendable {
             if ready > 0 {
                 let count = read(fd, &buffer, buffer.count)
                 if count <= 0 { return }
-                input += buffer[0..<count]
+                reader.feed(buffer[0..<count])
             } else if ready < 0 && errno != EINTR {
                 return
             }
-            // packets: $data#checksum; a lone 0x03 asks to halt
-            while let first = input.first {
-                if first == 0x03 {
-                    input.removeFirst()
+            while let event = reader.next() {
+                switch event {
+                case .interrupt:
                     withChip { core, _ in cm4_halt(core) }
                     if waiting { interrupted = true }
-                    continue
+                case .corrupt:
+                    send(fd, "-")  // GDB sends it again
+                case .packet(let packet):
+                    send(fd, "+")
+                    guard let reply = respond(to: packet) else { return }
+                    if !waiting { sendPacket(fd, reply) }
                 }
-                if first != UInt8(ascii: "$") {
-                    input.removeFirst()  // an acknowledgement
-                    continue
-                }
-                guard let hash = input.firstIndex(of: UInt8(ascii: "#")), input.count >= hash + 3 else { break }
-                let packet = String(decoding: input[1..<hash], as: UTF8.self)
-                input.removeFirst(hash + 3)
-                send(fd, "+")
-                guard let reply = respond(to: packet) else { return }
-                if !waiting { sendPacket(fd, reply) }
             }
+            // a packet longer than GDB was told it may send: not GDB, or not well; the connection ends
+            if reader.overflowed { return }
             // a continue or step done: the core halted
             if waiting, withChip({ core, _ in cm4_halted(core) }) {
                 waiting = false
@@ -215,39 +211,40 @@ public final class GDBServer: @unchecked Sendable {
             }
             return "OK"
         case "p":
-            guard let n = Int(rest, radix: 16), n < Self.registerCount else { return "E01" }
+            guard let n = Self.number(rest), n < Self.registerCount else { return "E01" }
             return withChip { core, _ in Self.hex(Self.register(core, n)) }
         case "P":
             let parts = rest.split(separator: "=")
-            guard parts.count == 2, let n = Int(parts[0], radix: 16), n < Self.registerCount else { return "E01" }
+            guard parts.count == 2, let n = Self.number(String(parts[0])), n < Self.registerCount else { return "E01" }
             let bytes = Self.bytes(String(parts[1]))
-            guard bytes.count == Self.registerSize(n) else { return "E01" }
+            guard parts[1].utf8.count == 2 * Self.registerSize(n), bytes.count == Self.registerSize(n) else { return "E01" }
             withChip { core, _ in Self.setRegister(core, n, bytes) }
             return "OK"
         case "m":
-            guard let (address, length) = Self.range(rest), length <= 0x4000 else { return "E01" }
+            guard let (address, length) = Self.range(rest), length <= Self.packetSize / 2 else { return "E01" }
             return withChip { core, stm32 in Self.hex(Self.readMemory(core, stm32, address, length)) }
         case "M":
             let parts = rest.split(separator: ":", maxSplits: 1)
             guard parts.count == 2, let (address, length) = Self.range(String(parts[0])) else { return "E01" }
-            let bytes = Self.bytes(String(parts[1]))
-            guard bytes.count == length else { return "E01" }
+            let data = String(parts[1])
+            let bytes = Self.bytes(data)
+            guard data.utf8.count == 2 * length, bytes.count == length else { return "E01" }
             withChip { core, stm32 in Self.writeMemory(core, stm32, address, bytes) }
             return "OK"
         case "c":
-            if let address = UInt32(rest, radix: 16) { withChip { core, _ in cm4_set_reg(core, 15, address) } }
+            if let address = Self.number(rest).map({ UInt32($0) }) { withChip { core, _ in cm4_set_reg(core, 15, address) } }
             withChip { core, _ in cm4_resume(core) }
             waiting = true
             return ""
         case "s":
-            if let address = UInt32(rest, radix: 16) { withChip { core, _ in cm4_set_reg(core, 15, address) } }
+            if let address = Self.number(rest).map({ UInt32($0) }) { withChip { core, _ in cm4_set_reg(core, 15, address) } }
             withChip { core, _ in cm4_step_once(core) }
             waiting = true
             return ""
         case "Z", "z":
             // Z0 (software) or Z1 (hardware) breakpoints, both kept by the core
             let fields = rest.split(separator: ",")
-            guard fields.count >= 2, fields[0] == "0" || fields[0] == "1", let address = UInt32(fields[1], radix: 16) else {
+            guard fields.count >= 2, fields[0] == "0" || fields[0] == "1", let address = Self.number(String(fields[1])).map({ UInt32($0) }) else {
                 return ""  // watchpoints are not kept
             }
             let on = command == "Z"
@@ -275,13 +272,15 @@ public final class GDBServer: @unchecked Sendable {
     }
 
     private func query(_ query: String) -> String {
-        if query.hasPrefix("Supported") { return "PacketSize=4000;qXfer:features:read+" }
-        if query.hasPrefix("Xfer:features:read:target.xml:") {
-            let span = query.dropFirst("Xfer:features:read:target.xml:".count).split(separator: ",")
-            guard span.count == 2, let offset = Int(span[0], radix: 16), let length = Int(span[1], radix: 16) else { return "E01" }
+        if query.hasPrefix("Supported") { return "PacketSize=\(String(Self.packetSize, radix: 16));qXfer:features:read+" }
+        if query.hasPrefix("Xfer:features:read:") {
+            let annex = query.dropFirst("Xfer:features:read:".count)
+            guard annex.hasPrefix("target.xml:") else { return "E00" }  // no other annex
+            let span = annex.dropFirst("target.xml:".count).split(separator: ",", omittingEmptySubsequences: false)
+            guard span.count == 2, let offset = Self.number(String(span[0])), let length = Self.number(String(span[1])) else { return "E01" }
             let document = Array(Self.targetDescription.utf8)
             guard offset < document.count else { return "l" }
-            let end = min(document.count, offset + length)
+            let end = offset + min(length, document.count - offset, Self.packetSize - 1)
             return (end == document.count ? "l" : "m") + String(decoding: document[offset..<end], as: UTF8.self)
         }
         if query == "Attached" { return "1" }
@@ -421,7 +420,7 @@ public final class GDBServer: @unchecked Sendable {
         return out
     }
 
-    private static func nibble(_ c: UInt8) -> UInt8? {
+    static func nibble(_ c: UInt8) -> UInt8? {
         switch c {
         case UInt8(ascii: "0")...UInt8(ascii: "9"): return c - UInt8(ascii: "0")
         case UInt8(ascii: "a")...UInt8(ascii: "f"): return c - UInt8(ascii: "a") + 10
@@ -430,11 +429,70 @@ public final class GDBServer: @unchecked Sendable {
         }
     }
 
-    /// "addr,length" in hex
+    /// The largest packet GDB may send (as qSupported tells it), and the largest reply's data
+    static let packetSize = 0x4000
+
+    /// A number in hex, as the protocol writes them: digits only (no sign, which Int(_:radix:) would take), at most
+    /// eight of them (no register, offset or length needs more)
+    static func number(_ text: String) -> Int? {
+        let digits = text.utf8
+        guard !digits.isEmpty, digits.count <= 8, digits.allSatisfy({ nibble($0) != nil }) else { return nil }
+        return Int(text, radix: 16)
+    }
+
+    /// "addr,length" in hex: a 32-bit address and a length that goes no further than the address space's end
     static func range(_ text: String) -> (UInt32, Int)? {
-        let parts = text.split(separator: ",")
-        guard parts.count == 2, let address = UInt32(parts[0], radix: 16), let length = Int(parts[1], radix: 16) else { return nil }
-        return (address, length)
+        let parts = text.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 2, let address = number(String(parts[0])), let length = number(String(parts[1])),
+              UInt64(address) + UInt64(length) <= 0x1_0000_0000 else { return nil }
+        return (UInt32(address), length)
+    }
+}
+
+/// The remote protocol's framing, apart from the socket: bytes in, packets out. A packet is `$data#cc`, `cc` its data's
+/// sum modulo 256 in hex; one whose sum does not match is answered `-` (and GDB sends it again). A lone 0x03 asks to
+/// halt; `+` and `-` (GDB's acknowledgements of the replies) and anything else between packets are dropped. A packet
+/// that has not ended within `GDBServer.packetSize` bytes (as qSupported told GDB) overflows: the connection ends.
+struct GDBPacketReader {
+    enum Event: Equatable {
+        case interrupt
+        case packet(String)
+        case corrupt
+    }
+
+    private var input: [UInt8] = []
+    private(set) var overflowed = false
+
+    mutating func feed<S: Sequence>(_ bytes: S) where S.Element == UInt8 {
+        guard !overflowed else { return }
+        input += bytes
+    }
+
+    /// The next packet or interrupt, nil while it has not all arrived
+    mutating func next() -> Event? {
+        while !overflowed, let first = input.first {
+            if first == 0x03 {
+                input.removeFirst()
+                return .interrupt
+            }
+            guard first == UInt8(ascii: "$") else {
+                input.removeFirst()
+                continue
+            }
+            guard let hash = input.firstIndex(of: UInt8(ascii: "#")) else {
+                // '$', the data, '#' and two digits
+                if input.count > GDBServer.packetSize + 4 { overflowed = true; input = [] }
+                return nil
+            }
+            guard input.count >= hash + 3 else { return nil }
+            let data = input[1..<hash]
+            let high = GDBServer.nibble(input[hash + 1]), low = GDBServer.nibble(input[hash + 2])
+            input.removeFirst(hash + 3)
+            let sum = data.reduce(UInt8(0)) { $0 &+ $1 }
+            guard let high, let low, (high << 4 | low) == sum else { return .corrupt }
+            return .packet(String(decoding: data, as: UTF8.self))
+        }
+        return nil
     }
 }
 
