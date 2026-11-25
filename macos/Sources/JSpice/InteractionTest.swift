@@ -7,9 +7,9 @@ import JSpiceAutomation
 /// hand, checks that it simulates, moves, deletes and undoes, and operates a switch. It exits with status 1 on any failure.
 @MainActor
 enum InteractionTest {
-    private static var failures: [String] = []
+    static var failures: [String] = []
 
-    private static func check(_ condition: Bool, _ description: String) {
+    static func check(_ condition: Bool, _ description: String) {
         print(condition ? "PASS  \(description)" : "FAIL  \(description)")
         if !condition { failures.append(description) }
     }
@@ -210,11 +210,11 @@ enum InteractionTest {
         return failures.isEmpty
     }
 
-    private static func pause(_ seconds: Double) async {
+    static func pause(_ seconds: Double) async {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
-    private static func findCanvas(in view: NSView?) -> CircuitCanvasView? {
+    static func findCanvas(in view: NSView?) -> CircuitCanvasView? {
         guard let view else { return nil }
         if let canvas = view as? CircuitCanvasView { return canvas }
         for subview in view.subviews {
