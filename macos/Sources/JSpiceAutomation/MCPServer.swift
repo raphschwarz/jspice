@@ -10,6 +10,12 @@ public final class MCPServer {
     public var serverVersion = "1.0"
     /// Runs each tool call, for example on the main thread when the session drives an open document
     public var perform: (@escaping () -> Any) -> Any = { $0() }
+    /// Asked before each tool call: nil lets it run; otherwise the call is refused with this message, as a JSON-RPC
+    /// error (the app refuses agents the user has not allowed)
+    public var authorize: () -> String? = { nil }
+
+    /// The JSON-RPC error code of a tool call refused by `authorize`
+    public static let refusedCode = -32001
 
     static let supportedVersions = ["2025-06-18", "2025-03-26", "2024-11-05"]
 
@@ -68,6 +74,7 @@ public final class MCPServer {
             }
             return result(["tools": tools])
         case "tools/call":
+            if let refusal = authorize() { return failure(Self.refusedCode, refusal) }
             guard let name = params["name"] as? String else { return failure(-32602, "tools/call needs a tool name") }
             guard CircuitSession.tools.contains(where: { $0.name == name }) else { return failure(-32602, "Unknown tool \(name)") }
             let arguments = params["arguments"] as? [String: Any] ?? [:]

@@ -15,7 +15,7 @@ public enum LocalSocket {
         return folder.appendingPathComponent("mcp.sock").path
     }
 
-    private static func address(_ path: String) -> sockaddr_un? {
+    static func address(_ path: String) -> sockaddr_un? {
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(path.utf8)
@@ -48,11 +48,24 @@ public enum LocalSocket {
         return fd
     }
 
+    /// Whether a process is accepting connections at `path` (a socket left behind by one that has gone is not)
+    public static func isLive(at path: String) -> Bool {
+        guard let fd = connect(to: path) else { return false }
+        close(fd)
+        return true
+    }
+
     /// Listens at `path` (readable only by this user) and serves each client on its own thread. Returns the listening
-    /// socket, to close with `stop`.
+    /// socket, to close with `stop`, or nil if another process is already listening there (its socket is left alone)
+    /// or the socket cannot be made. A socket left behind by a process that has gone is replaced.
     public static func listen(at path: String, handler: @escaping @Sendable (Int32) -> Void) -> Int32? {
         guard var address = address(path) else { return nil }
-        unlink(path)
+        if FileManager.default.fileExists(atPath: path) {
+            guard !isLive(at: path) else { return nil }
+            // only ever remove a socket: anything else at the path stays, and binding fails
+            let type = (try? FileManager.default.attributesOfItem(atPath: path))?[.type] as? FileAttributeType
+            if type == .typeSocket { unlink(path) }
+        }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
         let bound = withUnsafePointer(to: &address) {

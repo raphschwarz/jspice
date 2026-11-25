@@ -2141,12 +2141,18 @@ public final class CircuitSession {
         return result
     }
 
+    /// The Anthropic API key capture_schematic reads drawings with: ANTHROPIC_API_KEY by default; the app also looks in
+    /// the login keychain. Called on the tool's thread; the key is never logged or returned.
+    public var apiKey: () -> String? = { ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] }
+    /// How the agent's user can give capture_schematic a key, for its error when there is none
+    public var apiKeySource = "set ANTHROPIC_API_KEY in the environment of the MCP server (jspice-mcp)"
+
     func captureSchematic(_ arguments: [String: Any]) throws -> Any {
         let path = (try Self.text(arguments, "path") as NSString).expandingTildeInPath
         guard FileManager.default.fileExists(atPath: path) else { throw ToolError("No file at \(path)") }
-        let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+        let key = apiKey() ?? ""
         guard !key.isEmpty else {
-            throw ToolError("capture_schematic needs ANTHROPIC_API_KEY in the MCP server's environment; without it, look at the drawing yourself and call build_circuit")
+            throw ToolError("capture_schematic needs an Anthropic API key: \(apiKeySource). Without one, look at the drawing yourself and call build_circuit")
         }
         let hint = arguments["hint"] as? String
         // the tools are synchronous: wait for the reading, which runs on its own

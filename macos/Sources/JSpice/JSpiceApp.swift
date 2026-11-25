@@ -85,10 +85,7 @@ struct CircuitCommands: Commands {
             Button("Chip Support…") { editor?.showChipSupport = true }
                 .disabled(editor == nil)
             Divider()
-            Toggle("Allow AI Control (MCP)", isOn: Binding(
-                get: { AutomationBridge.shared.isEnabled },
-                set: { AutomationBridge.shared.isEnabled = $0 }
-            ))
+            AIControlMenu()
             Button("Copy MCP Server Configuration") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(AutomationBridge.clientConfiguration, forType: .string)

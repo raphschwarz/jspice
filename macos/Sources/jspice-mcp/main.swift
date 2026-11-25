@@ -773,28 +773,182 @@ if let flag = arguments.firstIndex(of: "--benchmark") {
     exit(0)
 }
 
+/// Hands the client's messages to the JSpice app and its replies back. If the app quits mid-session, the requests it had
+/// not answered get an error; later ones are answered here, on a fresh circuit, the next tool call's result saying so,
+/// or, with --app, refused.
+final class AppProxy: @unchecked Sendable {
+    private let lock = NSLock()
+    private let output = NSLock()
+    /// The connection to the app, nil once it has gone
+    private var connection: Int32?
+    /// Requests sent to the app and not answered yet: their ids, by the id written as JSON
+    private var pending: [String: Any] = [:]
+    /// What answers once the app has gone (nil with --app)
+    private var headless: MCPServer?
+    private var noticePending = false
+    private var inputDone = false
+    private let insistOnApp: Bool
+
+    static let quitNotice = "Note from jspice-mcp: the JSpice app quit, so this server now simulates on its own, on a "
+        + "fresh, empty circuit. The circuit you were working on in JSpice is not here: build or load it again. To work "
+        + "in the app again, open JSpice and restart the jspice-mcp server."
+    static let appGone = "The JSpice app quit, and jspice-mcp was started with --app, so it does not simulate on its "
+        + "own. Open JSpice (with Circuit ▸ AI Control allowing agents) and restart the jspice-mcp server."
+
+    init(connection: Int32, insistOnApp: Bool) {
+        self.connection = connection
+        self.insistOnApp = insistOnApp
+    }
+
+    /// One line from the client
+    func send(_ line: String) {
+        lock.lock()
+        let fd = connection
+        if fd != nil {
+            for message in Self.messages(line) {
+                if message["method"] is String, let id = message["id"], !(id is NSNull), let key = Self.key(id) { pending[key] = id }
+            }
+        }
+        lock.unlock()
+        if let fd {
+            if LocalSocket.write(fd, line) { return }
+            log("lost the connection to the JSpice app")
+            // answers this line's request too: it was counted as sent
+            appQuit()
+            return
+        }
+        answerAlone(line)
+    }
+
+    /// One line from the app
+    func received(_ line: String) {
+        lock.lock()
+        for message in Self.messages(line) {
+            if let id = message["id"], let key = Self.key(id) { pending[key] = nil }
+        }
+        lock.unlock()
+        write(line)
+    }
+
+    /// The app closed the connection (or it broke)
+    func appQuit() {
+        lock.lock()
+        guard connection != nil else {
+            lock.unlock()
+            return
+        }
+        // the descriptor stays open (it is not reused while the other thread may still use it)
+        connection = nil
+        let unanswered = Array(pending.values)
+        pending = [:]
+        let done = inputDone
+        if !insistOnApp && !done {
+            headless = MCPServer(session: CircuitSession())
+            noticePending = true
+        }
+        lock.unlock()
+        if !done { log(insistOnApp ? "the JSpice app quit; refusing requests (--app)" : "the JSpice app quit; simulating on its own") }
+        let quit = "The JSpice app quit before answering this request, so it may or may not have been done."
+        let message = done ? quit : quit + " " + (insistOnApp ? Self.appGone : Self.quitNotice)
+        for id in unanswered { write(Self.error(id: id, message)) }
+        if done { exit(unanswered.isEmpty ? 0 : 1) }
+    }
+
+    /// The client is done sending: tell the app, and wait for the replies still coming (the reader exits when the app
+    /// closes the connection after answering)
+    func inputEnded() -> Never {
+        lock.lock()
+        inputDone = true
+        let fd = connection
+        lock.unlock()
+        guard let fd else { exit(0) }
+        shutdown(fd, Int32(SHUT_WR))
+        while true { DispatchSemaphore(value: 0).wait() }
+    }
+
+    /// A line answered here, once the app has gone
+    private func answerAlone(_ line: String) {
+        lock.lock()
+        let server = headless
+        lock.unlock()
+        guard let server else {
+            for message in Self.messages(line) {
+                if message["method"] is String, let id = message["id"], !(id is NSNull) { write(Self.error(id: id, Self.appGone)) }
+            }
+            return
+        }
+        guard var reply = server.handle(line) else { return }
+        // the agent hears that the app has gone in the result of its next tool call
+        if let message = Self.messages(line).first, message["method"] as? String == "tools/call", Self.messages(line).count == 1 {
+            lock.lock()
+            let notice = noticePending
+            noticePending = false
+            lock.unlock()
+            if notice, let noted = Self.withNotice(reply) { reply = noted }
+        }
+        write(reply)
+    }
+
+    private func write(_ line: String) {
+        output.lock()
+        FileHandle.standardOutput.write((line + "\n").data(using: .utf8)!)
+        output.unlock()
+    }
+
+    /// The messages in a line: one, or a batch's
+    private static func messages(_ line: String) -> [[String: Any]] {
+        guard let data = line.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) else { return [] }
+        if let message = object as? [String: Any] { return [message] }
+        return (object as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+    }
+
+    private static func key(_ id: Any) -> String? {
+        guard !(id is NSNull), let data = try? JSONSerialization.data(withJSONObject: id, options: [.fragmentsAllowed]) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func encode(_ object: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes]) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func error(id: Any, _ message: String) -> String {
+        encode(["jsonrpc": "2.0", "id": id, "error": ["code": -32000, "message": message]])
+            ?? #"{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"The JSpice app quit"}}"#
+    }
+
+    /// A tool call's reply with the notice that the app has gone: first in its content, or before its error
+    private static func withNotice(_ reply: String) -> String? {
+        guard var message = messages(reply).first else { return nil }
+        if var result = message["result"] as? [String: Any], let content = result["content"] as? [Any] {
+            let notice: [Any] = [["type": "text", "text": quitNotice]]
+            result["content"] = notice + content
+            message["result"] = result
+        } else if var error = message["error"] as? [String: Any], let text = error["message"] as? String {
+            error["message"] = quitNotice + "\n\n" + text
+            message["error"] = error
+        } else {
+            return nil
+        }
+        return encode(message)
+    }
+}
+
 if !arguments.contains("--headless"), let fd = LocalSocket.connect(to: path) {
     log("connected to the JSpice app")
+    let proxy = AppProxy(connection: fd, insistOnApp: arguments.contains("--app"))
     // replies (and anything else the app sends) go straight to the client
     Thread.detachNewThread {
-        LocalSocket.readLines(fd) { line in
-            FileHandle.standardOutput.write((line + "\n").data(using: .utf8)!)
-        }
+        LocalSocket.readLines(fd) { line in proxy.received(line) }
         log("the JSpice app closed the connection")
-        exit(0)
+        proxy.appQuit()
     }
     while let line = readLine(strippingNewline: true) {
-        guard LocalSocket.write(fd, line) else {
-            log("lost the connection to the JSpice app")
-            exit(1)
-        }
+        proxy.send(line)
     }
-    // the client is done sending: tell the app, and wait for the replies still coming (the reader exits when the
-    // app closes the connection after answering)
-    shutdown(fd, Int32(SHUT_WR))
-    DispatchSemaphore(value: 0).wait()
+    proxy.inputEnded()
 } else if arguments.contains("--app") {
-    log("the JSpice app is not running, or Allow AI Control is off")
+    log("the JSpice app is not running, or Circuit ▸ AI Control is set to Don't Allow")
     exit(1)
 } else {
     log("simulating on its own (the JSpice app is not running)")
