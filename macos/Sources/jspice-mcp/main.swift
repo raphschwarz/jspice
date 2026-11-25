@@ -5,8 +5,9 @@ import JSpiceAutomation
 // `jspice-mcp`: a Model Context Protocol server on standard input and output, so an AI agent can build, simulate and
 // measure circuits with the JSpice engine. Add it to an MCP client (Claude Desktop, Claude Code) as a stdio server.
 //
-// If the JSpice app is running (with Allow AI Control on), requests go to the circuit in its frontmost window, so you
-// can watch the agent work and undo its changes; otherwise, or with --headless, the server simulates on its own.
+// If the JSpice app is running (and Circuit ▸ AI Control lets agents in), requests go to the circuit in its frontmost
+// window, so you can watch the agent work and undo its changes; otherwise, or with --headless, the server simulates on
+// its own, as it does from then on if the app quits.
 // --app insists on the app. --benchmark [seconds] [example…] times the engine alone at the audio sample rate,
 // --benchmark-maker PART [seconds] a maker's op-amp model, --benchmark-switch NAME [seconds] [example…] the
 // examples with one of the engine's switches off and on, and --benchmark-scale [seconds] [example…] the examples drawn
