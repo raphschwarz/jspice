@@ -66,12 +66,15 @@ public enum ChipSupport {
         case download(String)
         case checksum(String)
         case unpack(String)
+        /// An archive whose checksum could not be checked, so it was not installed
+        case unverifiable(String)
 
         public var description: String {
             switch self {
             case .index(let text): return "The package index: \(text)"
             case .download(let text): return "Download failed: \(text)"
             case .checksum(let text): return "\(text) did not arrive intact (its checksum differs); try again"
+            case .unverifiable(let text): return "\(text), so it was not installed"
             case .unpack(let text): return "Could not unpack \(text)"
             }
         }
@@ -171,14 +174,14 @@ public enum ChipSupport {
               let tools = arduino["tools"] as? [[String: Any]] else { throw InstallError.index("not in the expected form") }
         let avr = platforms.filter { $0["architecture"] as? String == "avr" }
             .sorted { AVRToolchain.newerFirst($0["version"] as? String ?? "", $1["version"] as? String ?? "") }
-        guard let platform = avr.first, let core = archive(platform, name: "Arduino AVR core") else {
+        guard let platform = avr.first, let core = try archive(platform, name: "Arduino AVR core") else {
             throw InstallError.index("no Arduino AVR core")
         }
         let dependency = (platform["toolsDependencies"] as? [[String: Any]])?.first { $0["name"] as? String == "avr-gcc" }
         guard let version = dependency?["version"] as? String,
               let tool = tools.first(where: { $0["name"] as? String == "avr-gcc" && $0["version"] as? String == version }),
               let systems = tool["systems"] as? [[String: Any]] else { throw InstallError.index("no avr-gcc for the AVR core") }
-        guard let system = bestSystem(systems), let compiler = archive(system, name: "avr-gcc", version: version) else {
+        guard let system = bestSystem(systems), let compiler = try archive(system, name: "avr-gcc", version: version) else {
             throw InstallError.index("no avr-gcc \(version) for this computer")
         }
         return (core, compiler)
@@ -194,20 +197,25 @@ public enum ChipSupport {
         let releases = platforms.filter { $0["architecture"] as? String == "rp2040" }
             .sorted { AVRToolchain.newerFirst($0["version"] as? String ?? "", $1["version"] as? String ?? "") }
         guard let platform = releases.first(where: { $0["version"] as? String == PicoToolchain.coreVersion }) ?? releases.first,
-              let core = archive(platform, name: "arduino-pico") else { throw InstallError.index("no arduino-pico") }
+              let core = try archive(platform, name: "arduino-pico") else { throw InstallError.index("no arduino-pico") }
         let dependency = (platform["toolsDependencies"] as? [[String: Any]])?.first { $0["name"] as? String == "pqt-gcc" }
         guard let version = dependency?["version"] as? String,
               let tool = tools.first(where: { $0["name"] as? String == "pqt-gcc" && $0["version"] as? String == version }),
               let systems = tool["systems"] as? [[String: Any]] else { throw InstallError.index("no gcc for arduino-pico") }
-        guard let system = bestSystem(systems), let compiler = archive(system, name: "arm-none-eabi-gcc", version: version) else {
+        guard let system = bestSystem(systems), let compiler = try archive(system, name: "arm-none-eabi-gcc", version: version) else {
             throw InstallError.index("no arm-none-eabi-gcc \(version) for this computer")
         }
         return (core, compiler)
     }
 
-    private static func archive(_ entry: [String: Any], name: String, version: String? = nil) -> Archive? {
+    /// An index entry's archive; nil where it has no URL or checksum. Only an https URL is taken: the checksum beside
+    /// it is all that vouches for the archive, and it came over https with the index.
+    static func archive(_ entry: [String: Any], name: String, version: String? = nil) throws -> Archive? {
         guard let urlText = entry["url"] as? String, let url = URL(string: urlText),
               let checksum = entry["checksum"] as? String else { return nil }
+        guard url.scheme?.lowercased() == "https" else {
+            throw InstallError.index("\(name)'s archive is not served over https (\(urlText)); it was not downloaded")
+        }
         let size = (entry["size"] as? String).flatMap { Int($0) } ?? (entry["size"] as? Int) ?? 0
         return Archive(name: name, version: version ?? entry["version"] as? String ?? "?", url: url, checksum: checksum, size: size)
     }
@@ -258,12 +266,22 @@ public enum ChipSupport {
         try data.write(to: file)
     }
 
+    /// The archive's bytes against the index's checksum, "SHA-256:" and 64 hex digits (as both Arduino's and
+    /// arduino-pico's indexes give every archive). An archive whose checksum is in any other form (the index format's
+    /// SHA-1 or MD5, or none JSpice can read), or that cannot be hashed here, is not installed: unchecked, it could be
+    /// anything.
     static func verify(_ data: Data, _ archive: Archive) throws {
-        #if canImport(CryptoKit)
         let parts = archive.checksum.split(separator: ":", maxSplits: 1)
-        guard parts.count == 2, parts[0].uppercased() == "SHA-256" else { return }
+        let expected = parts.count == 2 ? parts[1].lowercased() : ""
+        guard parts.count == 2, parts[0].uppercased() == "SHA-256", expected.count == 64,
+              expected.allSatisfy({ $0.isHexDigit }) else {
+            throw InstallError.unverifiable("\(archive.url.lastPathComponent)'s checksum in the package index (\"\(archive.checksum)\") is not a SHA-256")
+        }
+        #if canImport(CryptoKit)
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        guard digest == parts[1].lowercased() else { throw InstallError.checksum(archive.url.lastPathComponent) }
+        guard digest == expected else { throw InstallError.checksum(archive.url.lastPathComponent) }
+        #else
+        throw InstallError.unverifiable("\(archive.url.lastPathComponent) cannot be checked: SHA-256 is not available on this system")
         #endif
     }
 
