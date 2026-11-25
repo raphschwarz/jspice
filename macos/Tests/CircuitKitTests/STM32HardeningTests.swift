@@ -89,4 +89,31 @@ final class STM32HardeningTests: XCTestCase {
         cm4_write(core, Self.channel(0, 0x00), on, 4)
         XCTAssertEqual(cm4_read(core, Self.channel(0, 0x04), 4), 0, "channel 1 ran its 65535 items")
     }
+
+    /// An exception return with IPSR holding a number the core has no exception for (IPSR is nine bits; GDB or a
+    /// stacked xPSR can put 300 there) is a UsageFault (INVPC), not a write past the 256-entry `active` array (into
+    /// `enabled`: IRQ 28 was disabled)
+    func testAnExceptionReturnFromAnExceptionNumberPastTheTableFaults() throws {
+        let cpu = try XCTUnwrap(cm4_create())
+        defer { cm4_destroy(cpu) }
+        let flash = try XCTUnwrap(cm4_add_memory(cpu, 0x0800_0000, 0x1_0000, false))
+        cm4_alias(cpu, 0, 0x0800_0000)
+        _ = try XCTUnwrap(cm4_add_memory(cpu, 0x2000_0000, 0x1_0000, true))
+        var vectors = [UInt32](repeating: 0x0800_0101, count: 16)
+        vectors[0] = 0x2000_8000
+        for (k, word) in vectors.enumerated() { for b in 0..<4 { flash[4 * k + b] = UInt8(truncatingIfNeeded: word >> (8 * b)) } }
+        flash[0x100] = 0xFE; flash[0x101] = 0xE7  // b .
+        flash[0x200] = 0x70; flash[0x201] = 0x47  // bx lr
+        cm4_configure(cpu, 82, 4)
+        cm4_reset(cpu)
+        cm4_write(cpu, 0xE000_E100, 1 << 28, 4)  // IRQ 28 enabled: exception 44, which active[300] would have been
+        cm4_set_reg(cpu, 15, 0x0800_0200)
+        cm4_set_reg(cpu, 14, 0xFFFF_FFF1)
+        cm4_set_xpsr(cpu, 0x0100_0000 | 300)
+        _ = cm4_step(cpu)
+        _ = cm4_step(cpu)
+        XCTAssertEqual(cm4_read(cpu, 0xE000_ED28, 4) & (1 << 18), 1 << 18, "INVPC")
+        XCTAssertEqual(cm4_xpsr(cpu) & 0x1FF, 3, "in HardFault (UsageFault is off)")
+        XCTAssertEqual(cm4_read(cpu, 0xE000_E100, 4) & (1 << 28), 1 << 28, "IRQ 28 still enabled")
+    }
 }

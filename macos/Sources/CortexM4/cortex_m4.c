@@ -549,7 +549,9 @@ static int active_count(const CM4 *c) {
 static void exception_return(CM4 *c, uint32_t exc_return) {
     int returning = (int)c->ipsr;
     uint32_t mode = exc_return & 0xF;
-    if (mode != 0x1 && mode != 0x9 && mode != 0xD) {
+    // IPSR is nine bits (a debugger or a stacked xPSR can put any value there); returning from an exception number the
+    // chip does not have is returning from one that is not active: INVPC (ARMv7-M B1.5.8)
+    if ((mode != 0x1 && mode != 0x9 && mode != 0xD) || returning <= 0 || returning >= 16 + c->interrupts) {
         usage_fault(c, UFSR_INVPC);
         return;
     }

@@ -2061,7 +2061,9 @@ static void sdadc_update_irq(STM32 *m, int i) {
 /// A channel's result: single-ended, 0 V to the reference (times the gain) over the whole range; differential (the
 /// negative input at 0 V), half the reference either side of 0
 static uint32_t sdadc_value(const STM32 *m, const Sdadc *a, int i, int channel) {
-    uint32_t conf = a->conf[(a->confchr[channel / 8] >> (4 * (channel % 8))) & 3];
+    // CONFCHx selects CONF0R-CONF2R; its fourth value is reserved (RM0313 15.5.9), taken here as CONF2R
+    uint32_t select = (a->confchr[channel / 8] >> (4 * (channel % 8))) & 3;
+    uint32_t conf = a->conf[select > 2 ? 2 : select];
     static const double gains[8] = {1, 2, 4, 8, 16, 32, 1, 0.5};
     static const double references[4] = {3.3, 1.22, 1.8, 3.3};  // REFV: VREFSD+ (at 3.3 V), 1.22 V, 1.8 V, VDDSD
     double gain = gains[(conf >> 20) & 7], reference = references[(m->sdadc[0].cr1 >> 8) & 3];
