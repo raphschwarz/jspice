@@ -200,6 +200,9 @@ enum InteractionTest {
         check(!document.circuit.elements.contains { $0.name == "RA" }, "undo takes back the agent's change")
         AutomationBridge.shared.stop()
 
+        // the window's layout: the dock, its tabs and what it remembers
+        await checkLayout(editor: editor, document: document, window: window)
+
         return finish(window)
     }
 
