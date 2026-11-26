@@ -212,6 +212,8 @@ enum InteractionTest {
         await checkNotices(editor: editor)
         // the inspector: several parts edited at once, and stepping through standard values
         await checkInspector(editor: editor, document: document)
+        // drawing: wires with a corner and from free terminals, values typed on the canvas, paste at the pointer
+        await checkEditing(editor: editor, document: document, window: window, canvas: canvas)
 
         return finish(window)
     }
