@@ -1316,11 +1316,20 @@ final class EditorState: ObservableObject {
             let kinds = read.leftOut.compactMap { $0.raw["kind"]?.stringValue }
             var seen = Set<String>()
             let names = kinds.filter { seen.insert($0).inserted }
-            notify(.warning, count == 1 ? "1 part was left out of the paste" : "\(count) parts were left out of the paste",
-                   detail: (copied.isEmpty ? "None of the copied parts" : "\(count == 1 ? "It is" : "They are") of a kind")
-                       + (copied.isEmpty ? " could be read" : " this version of JSpice cannot read")
-                       + (names.isEmpty ? "." : " (\(names.joined(separator: ", "))).")
-                       + (copied.isEmpty ? "" : " The other \(copied.count == 1 ? "part was" : "\(copied.count) parts were") pasted."))
+            var detail: String
+            if copied.isEmpty {
+                detail = "None of the copied parts could be read"
+            } else {
+                detail = count == 1 ? "It is of a kind" : "They are of kinds"
+                detail += " this version of JSpice cannot read"
+            }
+            if !names.isEmpty { detail += " (" + names.joined(separator: ", ") + ")" }
+            detail += "."
+            if !copied.isEmpty {
+                detail += copied.count == 1 ? " The other part was pasted." : " The other \(copied.count) parts were pasted."
+            }
+            let title = count == 1 ? "1 part was left out of the paste" : "\(count) parts were left out of the paste"
+            notify(.warning, title, detail: detail)
         }
         guard !copied.isEmpty else { return }
         var elements = copied
