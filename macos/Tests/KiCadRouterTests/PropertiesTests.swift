@@ -279,10 +279,9 @@ final class PropertiesTests: XCTestCase {
         return p
     }
 
-    /// Random new properties for a pad, as a user might give it in the dialog
-    /// (`removesLayers`: a plated pad may be kept only on the layers connected to it, which BoardDRC does not check as
-    /// KiCad does, and leaves the board out of its comparison for: on every other board only)
-    static func randomPad(_ was: PadProperties, nets: [String], removesLayers: Bool, rng: inout Rand) -> PadProperties {
+    /// Random new properties for a pad, as a user might give it in the dialog (a plated pad kept on all its copper
+    /// layers, or only on those connected to it, its outer ones too or not)
+    static func randomPad(_ was: PadProperties, nets: [String], rng: inout Rand) -> PadProperties {
         var p = was
         let custom = p.shape == .customCircle || p.shape == .customRect
         // (the dialog's number greyed out for a pad that can have none: an unplated hole, a pad on no copper)
@@ -313,10 +312,7 @@ final class PropertiesTests: XCTestCase {
                 let d = min(p.size.x, p.size.y) * 0.5
                 p.drill = KiCadPoint(d, p.oblongHole ? d * 1.5 : d)
             }
-            if p.type == .throughHole && rng.bool(0.3) {
-                let layers: PadProperties.CopperLayers = rng.pick([.all, .outerAndConnected, .connectedOnly])
-                p.copperLayers = removesLayers ? layers : .all
-            }
+            if p.type == .throughHole && rng.bool(0.3) { p.copperLayers = rng.pick([.all, .outerAndConnected, .connectedOnly]) }
         }
         if rng.bool(0.3) { p.clearance = rng.bool(0.3) ? nil : rng.pick([0.1, 0.2]) }
         if rng.bool(0.3) { p.solderMaskMargin = rng.bool(0.3) ? nil : rng.pick([0.05, 0]) }
@@ -358,7 +354,7 @@ final class PropertiesTests: XCTestCase {
                 // its pads
                 for pad in session.board.footprint(uuid: uuid)?.pads ?? [] where rng.bool(0.5) {
                     guard let was = session.padProperties(pad.uuid) else { continue }
-                    let wanted = Self.randomPad(was, nets: nets, removesLayers: n % 2 == 1, rng: &rng)
+                    let wanted = Self.randomPad(was, nets: nets, rng: &rng)
                     if let problem = session.padPropertiesProblem(pad.uuid, wanted) {
                         XCTAssertNil(session.setPadProperties(pad.uuid, wanted), problem)
                         refused += 1

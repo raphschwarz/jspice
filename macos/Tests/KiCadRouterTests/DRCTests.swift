@@ -19,14 +19,16 @@ import KiCadKit
 /// pads on no layer under a rule's assertion, a pad on its own with an arc of a zone's cluster starting at it, the
 /// missing connections to it either's) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
 /// KiCad cannot compile, whose rules before the one it cannot it keeps, one it cannot read, one of the filler's
-/// constraints, and three of rules.py's) and Fixtures/zoneedits (zones with holes and rule areas, footprints of every
-/// pad shape on both sides, locked items: properties.py --draw). A board with a rules file beside it (NAME.kicad_dru, rules.py's) is checked
+/// constraints, and three of rules.py's), Fixtures/zoneedits (zones with holes and rule areas, footprints of every
+/// pad shape on both sides, locked items: properties.py --draw) and Fixtures/flashing (plated pads and vias kept only
+/// on the copper layers connected to them: fills.py --draw-flashing's board, and boards.py --unconnected-layers'). A board with a rules file beside it (NAME.kicad_dru, rules.py's) is checked
 /// by its rules, as kicad-cli checks it; one whose rules the port does not follow as KiCad's do (BoardDRC.unsupported)
 /// is left out, and counted.
 final class DRCTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards", "courtyards", "outlines", "thermals", "copper", "texts", "silk", "regressions", "rules", "zoneedits"].compactMap {
+        return ["boards", "courtyards", "outlines", "thermals", "copper", "texts", "silk", "regressions", "rules", "zoneedits",
+                "flashing"].compactMap {
             Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures")
         }
     }

@@ -11,9 +11,12 @@ and rings, rectangles, filled or outlined, of some width or none) instead. With 
 pairs to route instead: a connector and a chip with two pairs of their pads of pairs' nets, a net class with a diff
 pair width and gap of its own, parts and tracks of other nets between. With --arcs, arc tracks too (from a random
 sequence of their own, so that the rest of each board is as it is without them): out of pads of their net, rounding
-the turns of tracks of a few segments, or on their own.
+the turns of tracks of a few segments, or on their own. With --unconnected-layers, plated pads and vias kept only on
+the copper layers connected to them (from a random sequence of their own too): their unconnected layers removed, or
+all but their ends, a via's kept on its ends only; and more vias, in the board's zones and on its pads, set so before
+the zones are filled; copper zones on every board, and four copper layers on most.
 
-    boards.py [--custom-pads | --pairs] [--arcs] OUTDIR COUNT [SEED]
+    boards.py [--custom-pads | --pairs] [--arcs] [--unconnected-layers] OUTDIR COUNT [SEED]
 """
 
 import math
@@ -210,11 +213,12 @@ def keepouts(rng, board, x0, y0, x1, y1, copper, footprints):
             board.Add(zone)
 
 
-def copper_zones(rng, board, x0, y0, x1, y1, copper, nets):
+def copper_zones(rng, board, x0, y0, x1, y1, copper, nets, always=False):
     """Copper zones on half the boards, filled by KiCad's own zone filler as the board is saved: boxes and polygons of
     a net (now and then of none), on one copper layer or a few, of different priorities, their pads joined by thermal
-    reliefs, solidly or not at all, some with a clearance of their own, now and then two of one net overlapping"""
-    if rng.random() < 0.5:
+    reliefs, solidly or not at all, some with a clearance of their own, now and then two of one net overlapping (on
+    every board, `always`)"""
+    if rng.random() < 0.5 and not always:
         return False
     for _ in range(rng.randint(1, 3)):
         zone = pcbnew.ZONE(board)
@@ -265,6 +269,44 @@ def layered_vias(rng, board, x0, y0, x1, y1, nets):
         v.SetDrill(d // 2 // 50_000 * 50_000)
         v.SetNet(rng.choice(nets))
         board.Add(v)
+
+
+def unconnected_layers(rng, board, x0, y0, x1, y1, nets, pads):
+    """Plated pads and vias kept only on the copper layers connected to them (PADSTACK::UNCONNECTED_LAYER_MODE):
+    some more through vias first, in the board's zones (of their nets mostly), on its pads, or anywhere; then each
+    plated pad and via, now and then, set to remove its unconnected layers (REMOVE_ALL) or all but its ends
+    (REMOVE_EXCEPT_START_AND_END), a via to keep its ends only (START_END_ONLY)"""
+    zones = [z for z in board.Zones() if not z.GetIsRuleArea()]
+    plated = [p for p in pads if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH]
+    for _ in range(rng.randint(4, 12)):
+        v = pcbnew.PCB_VIA(board)
+        r = rng.random()
+        if plated and r < 0.2:
+            p = rng.choice(plated)
+            v.SetPosition(p.GetPosition())
+            net = p.GetNet()
+        elif zones and r < 0.85:
+            z = rng.choice(zones)
+            box = z.GetBoundingBox()
+            v.SetPosition(vec(rng.randint(box.GetLeft(), box.GetRight()), rng.randint(box.GetTop(), box.GetBottom())))
+            net = z.GetNet() if rng.random() < 0.8 else rng.choice(nets)
+        else:
+            v.SetPosition(vec(rng.randint(x0 + 3 * MM, x1 - 3 * MM), rng.randint(y0 + 3 * MM, y1 - 3 * MM)))
+            net = rng.choice(nets)
+        d = rng.randint(5, 9) * 100_000
+        v.SetWidth(pcbnew.F_Cu, d)
+        v.SetDrill(d * rng.randint(4, 6) // 10)
+        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        v.SetNet(net)
+        board.Add(v)
+    pad_modes = [pcbnew.UNCONNECTED_LAYER_MODE_REMOVE_ALL, pcbnew.UNCONNECTED_LAYER_MODE_REMOVE_EXCEPT_START_AND_END]
+    via_modes = pad_modes + [pcbnew.UNCONNECTED_LAYER_MODE_START_END_ONLY]
+    for p in plated:
+        if rng.random() < 0.7:
+            p.Padstack().SetUnconnectedLayerMode(rng.choice(pad_modes))
+    for t in board.Tracks():
+        if t.Type() == pcbnew.PCB_VIA_T and rng.random() < 0.75:
+            t.Padstack().SetUnconnectedLayerMode(rng.choice(via_modes))
 
 
 # the eight directions a track goes, round the way KiCad's y axis turns
@@ -346,9 +388,12 @@ def custom_pad_footprints():
     return found
 
 
-def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None, arng=None, zrng=None):
+def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None, arng=None, zrng=None, urng=None):
     board = pcbnew.NewBoard(path)
     board.SetCopperLayerCount(rng.choice([2, 2, 4]))
+    # (pads and vias kept only on the layers connected to them on four layers more often than not)
+    if urng is not None and urng.random() < 0.6:
+        board.SetCopperLayerCount(4)
     size = rng.randint(30, 70) * MM
     x0, y0 = 100 * MM, 50 * MM
     x1, y1 = x0 + size, y0 + int(size * rng.uniform(0.6, 1.0))
@@ -431,8 +476,12 @@ def make(rng, path, krng, footprints_from=FOOTPRINTS, vrng=None, arng=None, zrng
     if arng is not None:
         plated = [p for p in pads if p.GetAttribute() != pcbnew.PAD_ATTRIB_NPTH]
         arc_tracks(arng, board, x0, y0, x1, y1, copper, nets, plated)
-    # copper zones, filled (the same)
-    if zrng is not None and copper_zones(zrng, board, x0, y0, x1, y1, copper, nets):
+    # copper zones (the same), then pads and vias kept only on the layers connected to them (the same), then the
+    # zones filled
+    zoned = zrng is not None and copper_zones(zrng, board, x0, y0, x1, y1, copper, nets, always=urng is not None)
+    if urng is not None:
+        unconnected_layers(urng, board, x0, y0, x1, y1, nets, pads)
+    if zoned:
         board.BuildConnectivity()
         pcbnew.ZONE_FILLER(board).Fill(board.Zones())
     pcbnew.SaveBoard(path, board)
@@ -530,7 +579,8 @@ def main():
     custom = "--custom-pads" in args
     pairs = "--pairs" in args
     arcs = "--arcs" in args
-    args = [a for a in args if a not in ("--custom-pads", "--pairs", "--arcs")]
+    unconnected = "--unconnected-layers" in args
+    args = [a for a in args if a not in ("--custom-pads", "--pairs", "--arcs", "--unconnected-layers")]
     out, count = args[0], int(args[1])
     seed = int(args[2]) if len(args) > 2 else 20261016
     footprints_from = custom_pad_footprints() if custom else FOOTPRINTS
@@ -539,12 +589,13 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     for n in range(count):
         kind = "pairs" if pairs else "custom" if custom else "random"
-        path = os.path.abspath(f"{out}/{kind}{'-arcs' if arcs else ''}-{seed}-{n}.kicad_pcb")
+        path = os.path.abspath(f"{out}/{kind}{'-arcs' if arcs else ''}{'-flashing' if unconnected else ''}-{seed}-{n}.kicad_pcb")
         if pairs:
             make_pairs(rng, path)
         else:
             make(rng, path, random.Random(f"keepouts-{seed}-{n}"), footprints_from, random.Random(f"vias-{seed}-{n}"),
-                 random.Random(f"arcs-{seed}-{n}") if arcs else None, random.Random(f"zones-{seed}-{n}"))
+                 random.Random(f"arcs-{seed}-{n}") if arcs else None, random.Random(f"zones-{seed}-{n}"),
+                 random.Random(f"flashing-{seed}-{n}") if unconnected else None)
         subprocess.run([sys.executable, f"{here}/board-scene.py", path, path[:-len(".kicad_pcb")] + ".json"], check=True,
                        stderr=subprocess.DEVNULL)
     print(f"{out}: {count} boards")

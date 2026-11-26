@@ -3,9 +3,11 @@
 module, each board's zones (BOARD::Zones, not its footprints' own) filled by pcbnew.ZONE_FILLER(board).Fill(
 board.Zones()), and each zone's filled polygons on each of its layers (each polygon's outline and holes, their points;
 whether KiCad keeps it as an island) written next to the board as BOARD.fills (JSON), the zones by their uuids (a
-teardrop, which KiCad writes with none, as "zone #N", N its place among the board's zones). With --twice, each board
-filled a second time from its first fill too, and any difference between the two said (KiCad's filler runs on
-threads).
+teardrop, which KiCad writes with none, as "zone #N", N its place among the board's zones); and, where the board has
+plated pads or vias kept only on the layers connected to them, the zone layer connections the filler leaves each of
+them (the layers it is flashed on whatever connects there, as KiCad writes them) as BOARD.flashing, by their uuids.
+With --twice, each board filled a second time from its first fill too, and any difference between the two said
+(KiCad's filler runs on threads).
 
     fills.py [--twice] BOARD.kicad_pcb...
 
@@ -23,6 +25,12 @@ footprint's own zone, zones on several layers and on no copper, corner smoothing
 With --draw-open, a small board whose edges do not close, the outline KiCad infers from their box cutting its zone.
 
     fills.py --draw-open OUT.kicad_pcb
+
+With --draw-flashing, a board of plated pads and vias kept only on the copper layers connected to them (each mode of
+it), in and out of zones of their nets and others', of several priorities, hatched and kept out, joined by tracks on
+inner layers, over each other; saved with its zones filled, then filled again from it.
+
+    fills.py --draw-flashing OUT.kicad_pcb
 """
 
 import json
@@ -65,10 +73,28 @@ def fill(board):
     pcbnew.ZONE_FILLER(board).Fill(board.Zones())
 
 
+def zone_layer_connections(board):
+    """Each plated pad's and via's zone layer connections once filled, of those that do not keep all their copper
+    layers (GetRemoveUnconnected): the copper layers the filler left it flashed on whatever connects there
+    (ZLO_FORCE_FLASHED), top to bottom, as KiCad writes them; by its uuid"""
+    layers = list(board.GetEnabledLayers().CuStack())
+    out = {}
+    for t in board.Tracks():
+        if t.Type() == pcbnew.PCB_VIA_T and t.GetRemoveUnconnected():
+            out[t.m_Uuid.AsString()] = [board.GetLayerName(l) for l in layers if t.GetZoneLayerOverride(l) == pcbnew.ZLO_FORCE_FLASHED]
+    for fp in board.Footprints():
+        for p in fp.Pads():
+            if p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH and p.GetRemoveUnconnected():
+                out[p.m_Uuid.AsString()] = [board.GetLayerName(l) for l in layers
+                                            if p.GetZoneLayerOverride(l) == pcbnew.ZLO_FORCE_FLASHED]
+    return out
+
+
 def write(path, twice=False):
     board = pcbnew.LoadBoard(path)
     fill(board)
     first = fills(board)
+    connections = zone_layer_connections(board)
     if twice:
         fill(board)
         second = fills(board)
@@ -77,12 +103,17 @@ def write(path, twice=False):
     with open(os.path.splitext(path)[0] + ".fills", "w") as f:
         json.dump(first, f, separators=(",", ":"))
         f.write("\n")
+    # (a board with pads or vias kept only on the layers connected to them: their zone layer connections)
+    if connections:
+        with open(os.path.splitext(path)[0] + ".flashing", "w") as f:
+            json.dump(connections, f, indent=1, sort_keys=True)
+            f.write("\n")
 
 
 def main():
     args = sys.argv[1:]
-    if args and args[0] in ("--draw", "--draw-open"):
-        (draw if args[0] == "--draw" else draw_open)(args[1])
+    if args and args[0] in ("--draw", "--draw-open", "--draw-flashing"):
+        {"--draw": draw, "--draw-open": draw_open, "--draw-flashing": draw_flashing}[args[0]](args[1])
         write(args[1])
         return
     twice = bool(args) and args[0] == "--twice"
@@ -501,6 +532,107 @@ def draw(path):
     t = t.replace('(name "TEARDROP")', '(name "TEARDROP") (attr (teardrop (type padvia)))')
     with open(path, "w") as f:
         f.write(t)
+
+
+def draw_flashing(path):
+    """A board of plated pads and vias kept only on the copper layers connected to them, taking KiCad's flashing of
+    them down the ways random boards do not: on four layers, vias of each mode (their unconnected layers removed, all
+    but their ends, kept on their ends only) in zones of their net, of another, under a higher zone of another net,
+    under one of priority 0 of another, in a rule area keeping out fills, in a hatched zone, and in a zone whose fill
+    does not reach them (a track of another net round one, the island inside it removed); vias joined to pads by
+    tracks on inner layers, a via in a pad, a blind via; pads over pads (both flashed only where connected, and one
+    not), two pads of a footprint over each other, a via kept on its ends only whose copper its net's fill reaches on
+    an inner layer, and tracks of another net past pads' holes where they are not flashed"""
+    board = pcbnew.NewBoard(path)
+    board.SetCopperLayerCount(4)
+    box_edges(board, 0, 0, 60, 40)
+    nets = {}
+    for name in ["GND", "VCC", "SIG", "SIG2"]:
+        n = pcbnew.NETINFO_ITEM(board, name)
+        board.Add(n)
+        nets[name] = n
+    gnd, vcc, sig, sig2 = nets["GND"], nets["VCC"], nets["SIG"], nets["SIG2"]
+    F, B, In1, In2 = pcbnew.F_Cu, pcbnew.B_Cu, pcbnew.In1_Cu, pcbnew.In2_Cu
+    remove_all = pcbnew.UNCONNECTED_LAYER_MODE_REMOVE_ALL
+    keep_ends = pcbnew.UNCONNECTED_LAYER_MODE_REMOVE_EXCEPT_START_AND_END
+    ends_only = pcbnew.UNCONNECTED_LAYER_MODE_START_END_ONLY
+
+    def mode_via(at, net, mode, top=F, bottom=B, size=0.8, drill=0.4):
+        v = pcbnew.PCB_VIA(board)
+        v.SetPosition(vec(*mm(*at)))
+        if (top, bottom) != (F, B):
+            v.SetViaType(pcbnew.VIATYPE_BLIND)
+        v.SetLayerPair(top, bottom)
+        v.SetWidth(pcbnew.F_Cu, mm(size)[0])
+        v.SetDrill(mm(drill)[0])
+        v.SetNet(net)
+        v.Padstack().SetUnconnectedLayerMode(mode)
+        board.Add(v)
+        return v
+
+    def header(ref, at, nets_modes, pitch=2.54):
+        fp = footprint(board, ref, at)
+        for i, (net, mode) in enumerate(nets_modes):
+            p = pad(fp, str(i + 1), net, kind="circle", size=(1.7, 1.7), drill=(1.0, 1.0))
+            p.SetFPRelativePosition(vec(*mm(0, pitch * i)))
+            if mode is not None:
+                p.Padstack().SetUnconnectedLayerMode(mode)
+        return fp
+
+    # zones: GND on In1 over the board, VCC above it on its right; GND hatched on In2's left, VCC on its right; GND
+    # and SIG2 of one priority on B.Cu; GND and then VCC over it, both of priority 0, on F.Cu; rule areas keeping out
+    # fills on In1, one a little square round a via's centre
+    zone(board, gnd, [In1], rect(2, 2, 58, 38))
+    zone(board, vcc, [In1], rect(30, 20, 50, 35), priority=1)
+    zone(board, gnd, [In2], rect(2, 2, 28, 38), hatch=(0.5, 1.0, 0, 0, 0.1))
+    zone(board, vcc, [In2], rect(32, 2, 58, 38))
+    zone(board, gnd, [B], rect(2, 2, 58, 18), priority=2)
+    zone(board, sig2, [B], rect(2, 20, 58, 38), priority=2)
+    zone(board, gnd, [F], rect(44, 2, 50, 7))
+    zone(board, vcc, [F], rect(40, 2, 58, 15))
+    zone(board, None, [In1], rect(5, 5, 12, 12), keepout=(False, False, False, True))
+    zone(board, None, [In1], rect(14.9, 33.9, 15.1, 34.1), keepout=(False, False, False, True))
+    # vias of each mode
+    mode_via((8, 8), gnd, remove_all)
+    mode_via((15, 15), gnd, keep_ends)
+    mode_via((20, 10), gnd, ends_only)
+    mode_via((22, 14), gnd, ends_only)
+    mode_via((40, 28), vcc, remove_all)
+    mode_via((45, 25), gnd, remove_all)
+    mode_via((50, 8), gnd, keep_ends)
+    mode_via((54, 10), vcc, remove_all)
+    mode_via((16, 32), sig2, remove_all)
+    mode_via((15, 34), gnd, remove_all)
+    mode_via((47, 4.5), gnd, remove_all)
+    mode_via((48.5, 5.5), vcc, remove_all)
+    mode_via((26, 6), gnd, keep_ends, top=F, bottom=In1, size=0.6, drill=0.3)
+    # one in a ring of another net's track on In1, its fill inside removed as an island
+    mode_via((25, 30), gnd, remove_all)
+    for a, b in [((23.4, 28.4), (26.6, 28.4)), ((26.6, 28.4), (26.6, 31.6)), ((26.6, 31.6), (23.4, 31.6)),
+                 ((23.4, 31.6), (23.4, 28.4))]:
+        track(board, a, b, sig, layer=In1, width=0.3)
+    # a via joined on In2 to a header's pad, and one in a pad
+    header("J1", (10, 20), [(gnd, remove_all), (sig, keep_ends), (gnd, keep_ends), (vcc, remove_all)])
+    mode_via((10, 20), gnd, keep_ends, size=0.6, drill=0.3)
+    mode_via((35, 10), sig, remove_all)
+    track(board, (10, 22.54), (35, 10), sig, layer=In2, width=0.25)
+    track(board, (10, 27.62), (18, 27.62), vcc, layer=In1, width=0.25)
+    # pads over pads: both flashed only where connected, then one kept on all its layers
+    header("J2", (36, 15), [(gnd, remove_all)])
+    header("J3", (36.6, 15), [(gnd, remove_all)])
+    header("J4", (42, 17), [(gnd, None)])
+    header("J5", (42.6, 17), [(gnd, remove_all)])
+    # two pads of a footprint over each other, one kept on all its layers, in another net's zone on In2
+    header("J6", (52, 30), [(gnd, remove_all), (gnd, None)], pitch=0.6)
+    # a via kept on its ends only, its copper wider than its hole's knockout in its net's zone on In1
+    mode_via((18, 4), gnd, ends_only, size=1.6, drill=0.3)
+    # another net's tracks past pads' holes
+    track(board, (6, 17.9), (14, 17.9), sig2, layer=In2, width=0.2)
+    track(board, (6, 26.3), (14, 26.3), sig2, layer=In1, width=0.2)
+    # (saved filled, with the zone layer connections its fill leaves, for drc.py too)
+    board.BuildConnectivity()
+    fill(board)
+    pcbnew.SaveBoard(path, board)
 
 
 if __name__ == "__main__":

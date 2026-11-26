@@ -7,11 +7,13 @@ import KiCadKit
 /// module) read each board and write what its router's SyncWorld makes of it; BoardWorld, reading the same board
 /// itself, must make the same items in the same order, with the same shapes to the nanometre and the same rules.
 /// KICAD_BOARD_REFERENCE names a folder of boards (NAME.kicad_pcb, NAME.kicad_pro if it has one) and KiCad's scenes
-/// of them (NAME.json); with none, Fixtures/boards and Fixtures/arcboards (boards with arc tracks).
+/// of them (NAME.json); with none, Fixtures/boards, Fixtures/arcboards (boards with arc tracks) and Fixtures/flashing
+/// (plated pads and vias kept only on the copper layers connected to them, flashed where KiCad's connectivity joins
+/// them to something or its zone filler left them so).
 final class BoardWorldTests: XCTestCase {
     private static var folders: [URL] {
         if let f = ProcessInfo.processInfo.environment["KICAD_BOARD_REFERENCE"] { return [URL(fileURLWithPath: f)] }
-        return ["boards", "arcboards"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
+        return ["boards", "arcboards", "flashing"].compactMap { Bundle.module.url(forResource: $0, withExtension: nil, subdirectory: "Fixtures") }
     }
 
     func testWorldsAsKiCadMakesThem() throws {

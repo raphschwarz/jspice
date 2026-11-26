@@ -1,0 +1,553 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Footprint has no courtyard defined",
+   "key": "missing_courtyard"
+  },
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads",
+   "key": "footprint_type_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.8",
+ "schematic_parity": [],
+ "source": "flashing.kicad_pcb",
+ "unconnected_items": [
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Via [GND] on F.Cu - B.Cu",
+     "pos": {
+      "x": 45.0,
+      "y": 25.0
+     },
+     "uuid": "ac3141be-6c2c-43ce-9fab-e9d1e5fe6c94"
+    },
+    {
+     "description": "Zone [GND] on In1.Cu, priority 0",
+     "pos": {
+      "x": 2.0,
+      "y": 2.0
+     },
+     "uuid": "652af063-f8e1-454d-8cfe-639e409b8e6e"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track [SIG] on In2.Cu, length 27.9688 mm",
+     "pos": {
+      "x": 10.0,
+      "y": 22.54
+     },
+     "uuid": "e6709e25-35c3-4b08-bf3a-3056d271a996"
+    },
+    {
+     "description": "Track [SIG] on In1.Cu, length 3.2000 mm",
+     "pos": {
+      "x": 23.4,
+      "y": 28.4
+     },
+     "uuid": "db599ce1-f589-45e6-8f29-cd01714e10e8"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track [VCC] on In1.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 10.0,
+      "y": 27.62
+     },
+     "uuid": "a76c0694-173f-414a-8f33-94627698746c"
+    },
+    {
+     "description": "Zone [VCC] on In1.Cu, priority 1",
+     "pos": {
+      "x": 30.0,
+      "y": 20.0
+     },
+     "uuid": "f314527c-1012-47d0-8b53-084e69b52e7d"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track [SIG2] on In1.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 6.0,
+      "y": 26.3
+     },
+     "uuid": "433db330-13a1-4bfe-9003-9459a15fdcc7"
+    },
+    {
+     "description": "Via [SIG2] on F.Cu - B.Cu",
+     "pos": {
+      "x": 16.0,
+      "y": 32.0
+     },
+     "uuid": "b81419d9-e842-4adc-a1d3-b5e083fafaf5"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  },
+  {
+   "description": "Missing connection between items",
+   "items": [
+    {
+     "description": "Track [SIG2] on In1.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 6.0,
+      "y": 26.3
+     },
+     "uuid": "433db330-13a1-4bfe-9003-9459a15fdcc7"
+    },
+    {
+     "description": "Track [SIG2] on In2.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 6.0,
+      "y": 17.9
+     },
+     "uuid": "a5b0e43f-d4e5-492c-9838-eddb05765248"
+    }
+   ],
+   "severity": "error",
+   "type": "unconnected_items"
+  }
+ ],
+ "violations": [
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "PTH pad 4 [VCC] of J1",
+     "pos": {
+      "x": 10.0,
+      "y": 27.62
+     },
+     "uuid": "6a349c41-164a-4aa1-831c-deb968637f53"
+    },
+    {
+     "description": "Zone [SIG2] on B.Cu, priority 2",
+     "pos": {
+      "x": 2.0,
+      "y": 20.0
+     },
+     "uuid": "6e323e3a-1629-4f2f-93dd-53d976414a39"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "PTH pad 1 [GND] of J6",
+     "pos": {
+      "x": 52.0,
+      "y": 30.0
+     },
+     "uuid": "3bc9e9d3-11e8-4185-bfa1-667ce32058ce"
+    },
+    {
+     "description": "Zone [SIG2] on B.Cu, priority 2",
+     "pos": {
+      "x": 2.0,
+      "y": 20.0
+     },
+     "uuid": "6e323e3a-1629-4f2f-93dd-53d976414a39"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Drilled holes co-located",
+   "items": [
+    {
+     "description": "PTH pad 1 [GND] of J1",
+     "pos": {
+      "x": 10.0,
+      "y": 20.0
+     },
+     "uuid": "29a751b0-056c-4261-9426-9abb27b52355"
+    },
+    {
+     "description": "Via [GND] on F.Cu - B.Cu",
+     "pos": {
+      "x": 10.0,
+      "y": 20.0
+     },
+     "uuid": "b26f3752-c1f1-49bf-bc9f-7530bf162595"
+    }
+   ],
+   "severity": "warning",
+   "type": "holes_co_located"
+  },
+  {
+   "description": "Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000 mm)",
+   "items": [
+    {
+     "description": "PTH pad 1 [GND] of J3",
+     "pos": {
+      "x": 36.6,
+      "y": 15.0
+     },
+     "uuid": "2c22efdc-bba8-40dd-b224-a1e863d3e8e9"
+    },
+    {
+     "description": "PTH pad 1 [GND] of J2",
+     "pos": {
+      "x": 36.0,
+      "y": 15.0
+     },
+     "uuid": "311143b0-6e1f-4e1a-8a6d-a3f02ce4dabc"
+    }
+   ],
+   "severity": "warning",
+   "type": "hole_to_hole"
+  },
+  {
+   "description": "Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000 mm)",
+   "items": [
+    {
+     "description": "PTH pad 1 [GND] of J4",
+     "pos": {
+      "x": 42.0,
+      "y": 17.0
+     },
+     "uuid": "c442fb75-e69f-4b19-8084-bb4a0a75bfbf"
+    },
+    {
+     "description": "PTH pad 1 [GND] of J5",
+     "pos": {
+      "x": 42.6,
+      "y": 17.0
+     },
+     "uuid": "f8f7e5ac-a087-4f14-b1e1-6da45cd85ad6"
+    }
+   ],
+   "severity": "warning",
+   "type": "hole_to_hole"
+  },
+  {
+   "description": "Drilled holes co-located",
+   "items": [
+    {
+     "description": "PTH pad 1 [GND] of J1",
+     "pos": {
+      "x": 10.0,
+      "y": 20.0
+     },
+     "uuid": "29a751b0-056c-4261-9426-9abb27b52355"
+    },
+    {
+     "description": "Via [GND] on F.Cu - B.Cu",
+     "pos": {
+      "x": 10.0,
+      "y": 20.0
+     },
+     "uuid": "b26f3752-c1f1-49bf-bc9f-7530bf162595"
+    }
+   ],
+   "severity": "warning",
+   "type": "holes_co_located"
+  },
+  {
+   "description": "Drilled hole too close to other hole (board setup constraints min 0.2500 mm; actual 0.0000 mm)",
+   "items": [
+    {
+     "description": "PTH pad 1 [GND] of J6",
+     "pos": {
+      "x": 52.0,
+      "y": 30.0
+     },
+     "uuid": "3bc9e9d3-11e8-4185-bfa1-667ce32058ce"
+    },
+    {
+     "description": "PTH pad 2 [GND] of J6",
+     "pos": {
+      "x": 52.0,
+      "y": 30.6
+     },
+     "uuid": "8fc70d1b-41c2-4a8f-9c4d-38a343f37378"
+    }
+   ],
+   "severity": "warning",
+   "type": "hole_to_hole"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Blind via [GND] on F.Cu - In1.Cu",
+     "pos": {
+      "x": 26.0,
+      "y": 6.0
+     },
+     "uuid": "0d7c58a1-22c3-41b9-bc07-29902a5d8487"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [GND] on F.Cu - B.Cu",
+     "pos": {
+      "x": 20.0,
+      "y": 10.0
+     },
+     "uuid": "211dd9bd-9641-4a4a-80df-58507d0d87df"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [GND] on F.Cu - B.Cu",
+     "pos": {
+      "x": 18.0,
+      "y": 4.0
+     },
+     "uuid": "4e5372de-70c1-405e-9a30-cfe00df72f78"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [GND] on F.Cu - B.Cu",
+     "pos": {
+      "x": 15.0,
+      "y": 34.0
+     },
+     "uuid": "79784e40-52dc-4ebb-a0e2-51ee41a5f254"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [GND] on F.Cu - B.Cu",
+     "pos": {
+      "x": 45.0,
+      "y": 25.0
+     },
+     "uuid": "ac3141be-6c2c-43ce-9fab-e9d1e5fe6c94"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [GND] on F.Cu - B.Cu",
+     "pos": {
+      "x": 10.0,
+      "y": 20.0
+     },
+     "uuid": "b26f3752-c1f1-49bf-bc9f-7530bf162595"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [GND] on F.Cu - B.Cu",
+     "pos": {
+      "x": 22.0,
+      "y": 14.0
+     },
+     "uuid": "b3d6e3dc-1ea6-4935-8750-1f9558a442b5"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [VCC] on In1.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 10.0,
+      "y": 27.62
+     },
+     "uuid": "a76c0694-173f-414a-8f33-94627698746c"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [SIG] on F.Cu - B.Cu",
+     "pos": {
+      "x": 35.0,
+      "y": 10.0
+     },
+     "uuid": "33f71061-2c45-48bc-ac13-177d2b4abe87"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Via is not connected or connected on only one layer",
+   "items": [
+    {
+     "description": "Via [SIG2] on F.Cu - B.Cu",
+     "pos": {
+      "x": 16.0,
+      "y": 32.0
+     },
+     "uuid": "b81419d9-e842-4adc-a1d3-b5e083fafaf5"
+    }
+   ],
+   "severity": "warning",
+   "type": "via_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on In1.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 6.0,
+      "y": 26.3
+     },
+     "uuid": "433db330-13a1-4bfe-9003-9459a15fdcc7"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Track has unconnected end",
+   "items": [
+    {
+     "description": "Track [SIG2] on In2.Cu, length 8.0000 mm",
+     "pos": {
+      "x": 6.0,
+      "y": 17.9
+     },
+     "uuid": "a5b0e43f-d4e5-492c-9838-eddb05765248"
+    }
+   ],
+   "severity": "warning",
+   "type": "track_dangling"
+  },
+  {
+   "description": "Isolated copper fill",
+   "items": [
+    {
+     "description": "Zone [SIG2] on B.Cu, priority 2",
+     "pos": {
+      "x": 2.0,
+      "y": 20.0
+     },
+     "uuid": "6e323e3a-1629-4f2f-93dd-53d976414a39"
+    }
+   ],
+   "severity": "warning",
+   "type": "isolated_copper"
+  },
+  {
+   "description": "Isolated copper fill",
+   "items": [
+    {
+     "description": "Zone [VCC] on F.Cu, priority 0",
+     "pos": {
+      "x": 40.0,
+      "y": 2.0
+     },
+     "uuid": "bc815475-fd51-4624-a335-8f5daf6c596f"
+    }
+   ],
+   "severity": "warning",
+   "type": "isolated_copper"
+  },
+  {
+   "description": "Isolated copper fill",
+   "items": [
+    {
+     "description": "Zone [VCC] on In1.Cu, priority 1",
+     "pos": {
+      "x": 30.0,
+      "y": 20.0
+     },
+     "uuid": "f314527c-1012-47d0-8b53-084e69b52e7d"
+    }
+   ],
+   "severity": "warning",
+   "type": "isolated_copper"
+  },
+  {
+   "description": "Isolated copper fill",
+   "items": [
+    {
+     "description": "Zone [VCC] on In2.Cu, priority 0",
+     "pos": {
+      "x": 32.0,
+      "y": 2.0
+     },
+     "uuid": "083c2aa0-30c3-43a6-bc25-37eb82d758c5"
+    }
+   ],
+   "severity": "warning",
+   "type": "isolated_copper"
+  }
+ ]
+}

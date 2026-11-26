@@ -191,7 +191,12 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   shapes and rules, to the nanometre: custom pads too, their anchors and pieces merged into one outline as KiCad
   merges them (a pad with a curve among its pieces aside: the port draws a convex outline round it, and says so);
   vias with their types (blind, buried, micro), which `router.cpp` gives KiCad's router's vias and writes with those
-  a route puts on (a via shoved or dragged keeps its type, and the port writes it back into the board so).
+  a route puts on (a via shoved or dragged keeps its type, and the port writes it back into the board so); and the
+  layers each pad and via is flashed on (`FlashLayer`, which KiCad's router asks of a pad's or via's board item,
+  `IsFlashedOnLayer`), those of one kept only on the layers connected to it by the board's connectivity. (KiCad's
+  router asks a via's copy, one the shove or a drag moved, the board via it keeps as its parent; `router.cpp` asks a
+  copy itself, which is flashed on every layer it is on: the same for every via but one flashing only where
+  connected, which no router scene has.)
 - `boards.py`: random boards made by KiCad itself (`boards.py [--custom-pads] OUTDIR COUNT [SEED]`; on four layers,
   blind, buried and micro vias too, from random numbers of their own): footprints from KiCad's own
   libraries with every kind of pad, turned and flipped, on two or four layers; nets in net classes chosen by
@@ -213,7 +218,15 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   (`boards.py --pairs ... 3 20261026`). With `--arcs`, arc tracks too, from random numbers of their own (so that the
   rest of each board is as it is without them): lines of segments and arcs, each arc tangent to the segments either
   side, out of pads of their net or from anywhere, some arcs one after another, now and then a locked one.
-  `Tests/KiCadRouterTests/Fixtures/arcboards` holds three (`boards.py --arcs ... 3 20261103`).
+  `Tests/KiCadRouterTests/Fixtures/arcboards` holds three (`boards.py --arcs ... 3 20261103`). With
+  `--unconnected-layers`, plated pads and vias kept only on the copper layers connected to them, from random numbers
+  of their own (their unconnected layers removed, or all but their ends, a via's kept on its ends only), more vias,
+  in the board's zones (of their nets mostly) and on its pads, copper zones on every board, and four layers on most,
+  set before the zones are filled: KiCad's flashing of them (`PAD::FlashLayer`, `PCB_VIA::FlashLayer`), which asks
+  the board's connectivity which tracks, vias and pads join each on each layer and the zone layer connections the
+  filler left it. `Tests/KiCadRouterTests/Fixtures/flashing` holds four (`random-flashing-20261126-1`, `-17`, `-21` and
+  `-22` of `boards.py --unconnected-layers ... 24 20261126`), with their `.drc` (`drc.py`), `.fills` and `.flashing`
+  (`fills.py`), for `DRCTests`, `FillTests` and `BoardWorldTests`.
 - `stackups.py`: boards of random stackups (`stackups.py OUTDIR COUNT [SEED]`: two to eight copper layers; a
   stackup of their own, copper and dielectrics of random thicknesses, dielectrics of up to three sublayers, now and
   then a thickness not given, or none, KiCad's default from the board's thickness and layers, now and then a solder
@@ -535,7 +548,18 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   with a cut-out, unplated holes, hatched zones turned and with smoothed holes, chamfered and filleted corners, zones
   on no copper and on three copper layers with a hole, a footprint's own zones, a net tie, a teardrop), filled and
   written as above; with `--draw-open OUT.kicad_pcb`, a small board whose edges do not close, its outline inferred
-  from their box. `Tests/KiCadRouterTests/Fixtures/fills` holds both (`drawn`, `open`).
+  from their box. `Tests/KiCadRouterTests/Fixtures/fills` holds both (`drawn`, `open`). Where a board has plated pads
+  or vias kept only on the copper layers connected to them (`(remove_unused_layers yes)`, `(keep_end_layers yes)`, a
+  via's `(start_end_only yes)`), the zone layer connections the filler leaves each of them too, as `BOARD.flashing`
+  (JSON, by uuid: the copper layers it is flashed on whatever connects there, `ZLO_FORCE_FLASHED`, as KiCad writes
+  them; the filler finds them from the zones' outlines before it fills, and drops those its fills do not reach after),
+  which `FillTests` checks the port's against, and as written back. With `--draw-flashing OUT.kicad_pcb`, a board of
+  such pads and vias taking KiCad's flashing of them down the ways random boards do not (on four layers, vias of each
+  mode in zones of their net and of others, under a higher zone of another net and under one of priority 0, in a rule
+  area keeping out fills, in a hatched zone, in a zone whose fill does not reach them; tracks on inner layers to pads,
+  a via in a pad, a blind via, pads over pads, two pads of a footprint over each other, tracks of another net past
+  holes where they are not flashed), saved filled and then filled again as above:
+  `Tests/KiCadRouterTests/Fixtures/flashing/flashing`, with its `.drc` and `board-scene.py`'s `.json`.
 - `teardrops.py`: KiCad's teardrops of boards (`teardrops.py [--random SEED] BOARD.kicad_pcb...`): each board copied to
   a folder of its own and run through kicad-cli's design rules check with its zones refilled and the board saved
   (`kicad-cli pcb drc --refill-zones --save-board`: `ZONE_FILLER_TOOL::FillAllZones`, which has
