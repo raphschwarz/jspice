@@ -604,12 +604,12 @@ if let flag = arguments.firstIndex(of: "--compile-sketch"), flag + 1 < arguments
         }
         board = named
     }
-    guard board.compilesSketches else {
+    guard let family = board.sketchFamily else {
         log("the \(board.chip) runs firmware built with its maker's tools: nothing to compile here")
         exit(2)
     }
-    guard ChipSupport.isAvailable(board.family) else {
-        log("no compiler for the \(board.chip): run jspice-mcp --install-chip-support \(board.family.rawValue)")
+    guard ChipSupport.isAvailable(family) else {
+        log("no compiler for the \(board.chip): run jspice-mcp --install-chip-support \(family.rawValue)")
         exit(1)
     }
     guard let source = try? String(contentsOfFile: arguments[flag + 1], encoding: .utf8) else {

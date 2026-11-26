@@ -335,7 +335,7 @@ private struct ChipDock: View {
         if let index = editor.circuit.index(of: chip.id) {
             HStack(alignment: .top, spacing: 0) {
                 if hasSerial {
-                    SerialMonitor(simulation: editor.simulation, index: index)
+                    SerialMonitor(simulation: editor.simulation, index: index, board: chip.kind.board)
                         .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
                 if hasSerial && isSTM32 {

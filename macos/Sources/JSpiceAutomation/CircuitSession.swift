@@ -812,17 +812,20 @@ public final class CircuitSession {
         let index = try microcontroller(arguments)
         let code = try Self.text(arguments, "code")
         let board = circuit.elements[index].kind.board ?? .uno
-        guard board.compilesSketches else {
+        guard let family = board.sketchFamily else {
             throw ToolError("the \(board.chip) runs firmware built with its maker's tools: give it with load_firmware")
         }
-        guard ChipSupport.isAvailable(board.family) else {
+        guard ChipSupport.isAvailable(family) else {
             throw ToolError("No compiler for the \(board.chip) is installed: call install_chip_support with family "
-                            + "\(board.family.rawValue) first (or install it from JSpice's Chip Support window)")
+                            + "\(family.rawValue) first (or install it from JSpice's Chip Support window)")
         }
         let result = SketchBuilder.build(code, board: board, chip: board.avrVariant(for: circuit.elements[index]))
         guard let firmware = result.firmware else {
             let errors = result.errors.map { ["line": $0.line, "column": $0.column, "message": $0.message] as [String: Any] }
-            return ["uploaded": false, "errors": errors, "log": String(result.log.suffix(4000))]
+            // (what went wrong when no line of the sketch says: a library, the linker, the size, a missing header)
+            var failure: [String: Any] = ["uploaded": false, "errors": errors, "log": String(result.log.suffix(4000))]
+            if let problem = result.problem { failure["problem"] = problem }
+            return failure
         }
         change("Upload Sketch") { circuit in
             circuit.elements[index].code = code
