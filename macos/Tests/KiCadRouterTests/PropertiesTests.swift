@@ -145,15 +145,15 @@ final class PropertiesTests: XCTestCase {
     /// Random new properties for a pad, as a user might give it in the dialog
     /// (`removesLayers`: a plated pad may be kept only on the layers connected to it, which BoardDRC does not check as
     /// KiCad does, and leaves the board out of its comparison for: on every other board only)
-    static func randomPad(_ was: PadProperties, nets: [String], free: Bool, removesLayers: Bool, rng: inout Rand) -> PadProperties {
+    static func randomPad(_ was: PadProperties, nets: [String], removesLayers: Bool, rng: inout Rand) -> PadProperties {
         var p = was
         let custom = p.shape == .customCircle || p.shape == .customRect
         // (the dialog's number greyed out for a pad that can have none: an unplated hole, a pad on no copper)
         let numbered = p.type != .npth && p.type != .aperture && !(p.type == .throughHole && p.copperLayers == .none)
         if rng.bool(0.2), numbered { p.number = rng.pick(["1", "2", "A1", "EP"]) }
-        // (a pad's net changed only where no track or via meets it: KiCad gives a track the net of what it joins as
-        // it reads the board, which BoardDRC does not)
-        if free && rng.bool(0.2) { p.net = nets.isEmpty || rng.bool(0.2) ? nil : rng.pick(nets) }
+        // (a pad's net changed where tracks and vias meet it too: KiCad gives them the net of what they join as the
+        // change is pushed, and as it reads the board)
+        if rng.bool(0.2) { p.net = nets.isEmpty || rng.bool(0.2) ? nil : rng.pick(nets) }
         if !custom && rng.bool(0.3) {
             p.shape = rng.pick([.circle, .oval, .rect, .trapezoid, .roundrect, .chamferedRect, .chamferedRoundRect])
             if p.shape == .roundrect || p.shape == .chamferedRoundRect { p.cornerRatio = PadProperties.defaultCornerRatio(p.size) }
@@ -221,9 +221,7 @@ final class PropertiesTests: XCTestCase {
                 // its pads
                 for pad in session.board.footprint(uuid: uuid)?.pads ?? [] where rng.bool(0.5) {
                     guard let was = session.padProperties(pad.uuid) else { continue }
-                    let wiredNets = Set(session.board.tracks.compactMap(\.net) + session.board.vias.compactMap(\.net))
-                    let wanted = Self.randomPad(was, nets: nets.filter { !wiredNets.contains($0) }, free: !wiredNets.contains(was.net ?? ""),
-                                                 removesLayers: n % 2 == 1, rng: &rng)
+                    let wanted = Self.randomPad(was, nets: nets, removesLayers: n % 2 == 1, rng: &rng)
                     if let problem = session.padPropertiesProblem(pad.uuid, wanted) {
                         XCTAssertNil(session.setPadProperties(pad.uuid, wanted), problem)
                         refused += 1
@@ -306,21 +304,32 @@ final class PropertiesTests: XCTestCase {
                 XCTAssertTrue(Self.sameAsKiCad(ours, k), "\(name) footprint \(uuid) as KiCad writes it:\n\(ours.compact)\n\(k.compact)")
             }
         }
-        // (a board on which KiCad, reading it, gave a track or a copper drawing the net of a pad it now meets, which
-        // BoardDRC does not, left out of the comparison of their checks, and counted)
-        let checked = try written.filter { file in
+        // the nets of the tracks, vias and drawings on copper the port wrote, given them as each change was pushed, as
+        // KiCad's connectivity gives them (BOARD_COMMIT::Push, PropagateNets), are those KiCad reads them with (the
+        // nets its connectivity gives them as it reads the board), those of pads it now meets among them
+        var netsRead = 0, netsPropagated = 0
+        for file in written {
             let nets = (read[file.path] as? [String: Any])?["nets"] as? [String: String] ?? [:]
             let board = try KiCadBoard.read(file)
+            let original = try KiCadBoard.read(work.appendingPathComponent(file.lastPathComponent.replacingOccurrences(of: "edited-", with: "original-")))
             let drawings: [(String, String)] = board.root.items.filter { $0.head?.hasPrefix("gr_") == true && $0.head != "gr_text" }
                 .compactMap { node in node.value("uuid").map { ($0, BoardDRC.netName(node)) } }
             let ours: [(String, String)] = board.tracks.map { ($0.uuid, $0.net ?? "") } + board.vias.map { ($0.uuid, $0.net ?? "") } + drawings
-            return ours.allSatisfy { item in nets[item.0] == nil || nets[item.0] == item.1 }
+            let was = Dictionary(original.tracks.map { ($0.uuid, $0.net ?? "") } + original.vias.map { ($0.uuid, $0.net ?? "") }
+                                 + original.root.items.filter { $0.head?.hasPrefix("gr_") == true }.compactMap { node in node.value("uuid").map { ($0, BoardDRC.netName(node)) } },
+                                 uniquingKeysWith: { a, _ in a })
+            for (uuid, net) in ours {
+                guard let k = nets[uuid] else { continue }
+                netsRead += 1
+                if was[uuid] != net { netsPropagated += 1 }
+                XCTAssertEqual(net, k, "\(file.lastPathComponent) \(uuid)'s net as KiCad's connectivity gives it")
+            }
         }
-        for file in checked { XCTAssertNotNil(try ZoneEditingTests.run("drc.py", [file.path]), "drc.py \(file.lastPathComponent)") }
-        let (drcSummary, _, drcDifferences) = try DRCTests.compare(checked)
+        for file in written { XCTAssertNotNil(try ZoneEditingTests.run("drc.py", [file.path]), "drc.py \(file.lastPathComponent)") }
+        let (drcSummary, _, drcDifferences) = try DRCTests.compare(written)
         print("PropertiesTests: \(written.count) boards, \(edits) changes (\(refused) refused as KiCad refuses them); KiCad read \(footprintsRead) "
-              + "footprints, \(padsRead) pads and \(locksRead) locks as set, wrote \(footprintsWritten) footprints changed as the port does; DRC (\(written.count - checked.count) boards left out, "
-              + "their tracks or copper drawings given other nets by KiCad as it read them): \(drcSummary)")
+              + "footprints, \(padsRead) pads and \(locksRead) locks as set, wrote \(footprintsWritten) footprints changed as the port does; "
+              + "\(netsRead) nets of tracks, vias and copper drawings read as the port gave them (\(netsPropagated) given another as changes were pushed); DRC: \(drcSummary)")
         XCTAssertGreaterThan(edits, 0)
         XCTAssertTrue(drcDifferences.isEmpty, "\(drcDifferences.count) differences from KiCad's DRC:\n" + drcDifferences.prefix(30).joined(separator: "\n"))
     }

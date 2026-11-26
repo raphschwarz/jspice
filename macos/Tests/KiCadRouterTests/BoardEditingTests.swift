@@ -739,17 +739,12 @@ final class BoardEditingTests: XCTestCase {
                 try? FileManager.default.copyItem(at: file.deletingPathExtension().appendingPathExtension("kicad_pro"),
                                                   to: copy.deletingPathExtension().appendingPathExtension("kicad_pro"))
                 let report = try KiCadFabrication(installation: kicad).drc(copy, refillZones: true)
-                // (a via of no net touching copper of a net takes that net as KiCad reads the board (its connectivity
-                // propagating it, as the port's does), and is then too near nothing: KiCad's placer refused it before,
-                // as the port's does)
-                if via.net == nil {
-                    let drc = BoardDRC(board: edit.after, project: Self.project(file))
-                    let c = drc.makeCopper()
-                    _ = drc.buildConnectivity(c)
-                    if let item = c.tracks.first(where: { $0.uuid == viaID }), item.net != 0 {
-                        renetted += 1
-                        continue
-                    }
+                // (a via placed of no net touching copper of a net takes that net as the change is pushed, the
+                // connectivity propagating it (BOARD_COMMIT::Push), and is then too near nothing: KiCad's placer refused
+                // it before, as the port's does)
+                if edit.propagated.contains(viaID) {
+                    renetted += 1
+                    continue
                 }
                 // (KiCad's check reports the first thing a via is too near on a layer: refused, the via has one; placed,
                 // none of copper of a net)

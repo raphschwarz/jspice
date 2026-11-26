@@ -293,9 +293,11 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   the edited boards are what the port's `ZoneFiller` and `BoardDRC` make of them; `PropertiesTests` sets footprints'
   and pads' properties and locks items, and checks KiCad reads them back as set, writes each footprint changed as the
   port wrote it (its drawings and pads in KiCad's own sorted order, a nanometre's turn of an item on a footprint
-  turned off square aside), and that `drc.py` of the boards is what `BoardDRC` finds (a board on which KiCad gives a
-  track another net as it reads it left out, and one with a plated pad kept only on the layers connected to it, which
-  `BoardDRC` names as what it does not follow). With `--draw OUT.kicad_pcb`, the board both edit
+  turned off square aside), that the nets of the tracks, vias and copper drawings the port wrote (given them as each
+  change was pushed, as `BOARD_COMMIT::Push` propagates them) are those KiCad reads them with (the nets its
+  connectivity gives them as it reads the board), and that `drc.py` of the boards is what `BoardDRC` finds (a board
+  with a plated pad kept only on the layers connected to it left out, which `BoardDRC` names as what it does not
+  follow). With `--draw OUT.kicad_pcb`, the board both edit
   (`Tests/KiCadRouterTests/Fixtures/zoneedits/zones`, with its `.fills` and `.drc` for `FillTests` and `DRCTests`):
   on four copper layers, zones with holes, of several nets, layers, priorities, fill modes and smoothings, one
   locked, rule areas (one with a hole, one on two layers), footprints on both sides at 0, 90, 30 and 45 degrees with

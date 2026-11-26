@@ -30,8 +30,16 @@ public final class BoardRouter {
     public internal(set) var lastAdded: [String] = []
     public internal(set) var lastRemoved: [String] = []
 
-    /// The router on `board`, its project's JSON in `project` and the rules of its .kicad_dru in `designRules`
-    public init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
+    /// The router on `board`, its project's JSON in `project` and the rules of its .kicad_dru in `designRules`; the
+    /// board taken as KiCad's router has it, read: its connectivity built (BOARD::BuildConnectivity), its tracks, vias
+    /// and drawings on copper given the nets of what they join, in `board` itself
+    public convenience init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
+        self.init(board: board, project: project, designRules: designRules, connectivityBuilt: false)
+    }
+
+    /// The same, `connectivityBuilt` where the board's has been already (a session's board, as each change leaves it)
+    init(board: KiCadBoard, project: [String: Any]?, designRules: String?, connectivityBuilt: Bool) {
+        if !connectivityBuilt { BoardDRC.buildConnectivity(board, project: project, designRules: designRules) }
         self.board = board
         self.project = project
         self.designRules = designRules

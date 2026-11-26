@@ -622,9 +622,11 @@ public final class ZoneFiller {
     // MARK: - Writing the fills back
 
     /// The board with each of its zones' fills replaced by the filler's, as KiCad writes them (its filled polygons
-    /// layer by layer, an island marked, the zone marked filled)
+    /// layer by layer, an island marked, the zone marked filled), and with the nets KiCad's connectivity gave its
+    /// tracks, vias and drawings on copper as it read the board (BOARD::BuildConnectivity), which KiCad writes with them
     public func refilledBoard(_ board: KiCadBoard) -> KiCadBoard {
         let out = board.copy()
+        BoardDRC.writeNets(of: copper, into: out)
         for (n, node) in out.root.all("zone").enumerated() {
             let uuid = Self.zoneKey(node, n)
             guard let layers = fills[uuid] else { continue }

@@ -42,8 +42,13 @@ extension BoardDRC {
     func itemDescriptions() -> [String: (description: String, position: KiCadPoint?)] {
         var out: [String: (description: String, position: KiCadPoint?)] = [:]
         func mm(_ p: IPoint) -> KiCadPoint { KiCadPoint(Double(p.x) / 1e6, Double(p.y) / 1e6) }
+        // (a track's, via's or board drawing's net as KiCad's connectivity gave it reading the board: the item's own,
+        // which it describes)
+        let copper = ruleState.copper(self)
+        let connected = Dictionary((copper.tracks + copper.drawings).map { ($0.uuid, $0.netName) }, uniquingKeysWith: { a, _ in a })
         func net(_ node: SExpr) -> String {
-            let n = Self.netName(node)
+            let n = node.head.map { ["segment", "arc", "via"].contains($0) || $0.hasPrefix("gr_") } == true
+                ? node.value("uuid").flatMap { connected[$0] } ?? Self.netName(node) : Self.netName(node)
             return n.isEmpty ? "<no net>" : n
         }
         func length(_ v: Double) -> String { String(format: "%.4f mm", v / 1e6) }

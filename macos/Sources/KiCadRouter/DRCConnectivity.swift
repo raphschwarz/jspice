@@ -2,7 +2,10 @@
 // what touches what in the copper, the clusters of it, the nets propagated through them, and whether a track's or
 // via's end is left dangling), pcbnew/ratsnest/ratsnest_data.cpp (each net's missing connections: a minimum spanning
 // tree of its anchors over their Delaunay triangulation), pcbnew/drc/drc_test_provider_connectivity.cpp (the DRC's
-// checks of them), pcbnew/pcb_shape.cpp (GetConnectionPoints) and pcbnew/pad.cpp (IsFreePad).
+// checks of them), pcbnew/pcb_shape.cpp (GetConnectionPoints) and pcbnew/pad.cpp (IsFreePad); the nets propagated
+// kept in the board's items as KiCad keeps them reading a board and pushing a change (pcbnew/board.cpp, BuildConnectivity;
+// pcbnew/files.cpp, OpenProjectFiles; pcbnew/python/scripting/pcbnew_scripting_helpers.cpp, LoadBoard and SaveBoard;
+// pcbnew/pcbnew_jobs_handler.cpp, getBoard; pcbnew/board_commit.cpp, Push).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -438,6 +441,54 @@ extension BoardDRC {
             }
         }
         cn.clusterSerial = serial
+    }
+
+    /// BOARD::BuildConnectivity of `board` itself, as KiCad builds it as it reads a board (PCB_EDIT_FRAME::
+    /// OpenProjectFiles, the pcbnew module's LoadBoard, kicad-cli's) and as a change is pushed (BOARD_COMMIT::Push,
+    /// CONNECTIVITY_DATA::RecalculateRatsnest): CONNECTIVITY_DATA::Build, whose CN_CONNECTIVITY_ALGO::PropagateNets
+    /// gives each cluster's tracks, arcs, vias (not free ones) and board drawings on copper the net of most of its
+    /// pads (not free ones), or with no pad among them the first net its search meets, unless pads of two nets meet
+    /// in it (propagateConnections); KiCad keeps the nets in the items, and writes them when it saves the board. The
+    /// items given another net, by id.
+    @discardableResult
+    public static func buildConnectivity(_ board: KiCadBoard, project: [String: Any]?, designRules: String?) -> (copper: [String], drawings: [String]) {
+        let drc = BoardDRC(board: board, project: project, designRules: designRules)
+        let copper = drc.makeCopper()
+        _ = drc.buildConnectivity(copper)
+        return writeNets(of: copper, into: board)
+    }
+
+    /// The nets the connectivity gave `copper`'s tracks, arcs, vias and board drawings written into `board`, as
+    /// KiCad writes them (pcb_io_kicad_sexpr.cpp: a drawing's after its layer, and none when it has none): those
+    /// changed, by id
+    @discardableResult
+    static func writeNets(of copper: Copper, into board: KiCadBoard) -> (copper: [String], drawings: [String]) {
+        var changed: [String] = []
+        let tracks = Dictionary(board.tracks.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
+        let vias = Dictionary(board.vias.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
+        for item in copper.tracks {
+            let now = item.netName.isEmpty ? nil : item.netName
+            if let t = tracks[item.uuid], t.net != now {
+                t.setNet(now)
+                changed.append(item.uuid)
+            } else if let v = vias[item.uuid], v.net != now {
+                v.setNet(now)
+                changed.append(item.uuid)
+            }
+        }
+        let drawings = Dictionary(board.root.items.filter { $0.head?.hasPrefix("gr_") == true }.map { ($0.value("uuid") ?? "", $0) },
+                                  uniquingKeysWith: { a, _ in a })
+        var drawn: [String] = []
+        for item in copper.drawings {
+            guard let node = drawings[item.uuid], netName(node) != item.netName else { continue }
+            if item.netName.isEmpty {
+                node.remove("net")
+            } else {
+                node.set(board.netList(item.netName, pad: false), after: ["layer", "layers"])
+            }
+            drawn.append(item.uuid)
+        }
+        return (changed, drawn)
     }
 
     // MARK: - The ratsnest

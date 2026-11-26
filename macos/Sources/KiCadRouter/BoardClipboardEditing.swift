@@ -238,48 +238,9 @@ extension BoardEditing {
                 drawings.append(id)
             }
         }
-        let nets = propagateNets()
         router.boardChanged()
-        return change(name, footprints: footprints, zones: zones, changed: copper + nets.copper,
-                      drawings: drawings + nets.drawings)
-    }
-
-    /// The board's tracks, vias and drawings on copper given the nets KiCad's connectivity gives them as the change is
-    /// committed (BOARD_COMMIT::Push, RecalculateRatsnest: CN_CONNECTIVITY_ALGO::PropagateNets, a cluster's pads' net
-    /// to its tracks, vias and drawings), as BoardDRC's port of it has them; those it changed, by id
-    func propagateNets() -> (copper: [String], drawings: [String]) {
-        let board = router.board
-        let drc = BoardDRC(board: board, project: project, designRules: designRules)
-        let copper = drc.makeCopper()
-        _ = drc.buildConnectivity(copper)
-        var changed: [String] = []
-        let tracks = Dictionary(board.tracks.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
-        let vias = Dictionary(board.vias.map { ($0.uuid, $0) }, uniquingKeysWith: { a, _ in a })
-        for item in copper.items where item.kind == .track || item.kind == .arc || item.kind == .via {
-            let now = item.netName.isEmpty ? nil : item.netName
-            if let t = tracks[item.uuid], t.net != now {
-                t.setNet(now)
-                changed.append(item.uuid)
-            } else if let v = vias[item.uuid], v.net != now {
-                v.setNet(now)
-                changed.append(item.uuid)
-            }
-        }
-        // (and its drawings on copper, connected items as its tracks are: KiCad writes a drawing's net after its layer,
-        // and none when it has none)
-        let drawings = Dictionary(board.root.items.filter { $0.head?.hasPrefix("gr_") == true }.map { ($0.value("uuid") ?? "", $0) },
-                                  uniquingKeysWith: { a, _ in a })
-        var drawn: [String] = []
-        for item in copper.drawings {
-            guard let node = drawings[item.uuid], BoardDRC.netName(node) != item.netName else { continue }
-            if item.netName.isEmpty {
-                node.remove("net")
-            } else {
-                node.set(board.netList(item.netName, pad: false), after: ["layer", "layers"])
-            }
-            drawn.append(item.uuid)
-        }
-        return (changed, drawn)
+        // (the nets its tracks, vias and drawings on copper take, as the change is pushed: change)
+        return change(name, footprints: footprints, zones: zones, changed: copper, drawings: drawings)
     }
 
     // MARK: - Duplicate

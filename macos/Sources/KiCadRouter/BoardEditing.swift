@@ -1,7 +1,9 @@
 // A board edited here, a track at a time, as KiCad's router tool drives its router (pcbnew/router/router_tool.cpp,
 // KiCad 10.0.8): magnetic pads, the start layer taken from a one-sided pad, a click fixing the track, a double click
 // finishing it, Escape keeping what is fixed; differential pairs routed as its Route Differential Pair routes them;
-// tracks and vias dragged as its drag tools drag them. GNU General Public License version 3 or later, as the router
+// tracks and vias dragged as its drag tools drag them; the board as KiCad reads it and each change pushed as
+// BOARD_COMMIT::Push pushes it, its connectivity built and the nets it propagates kept (pcbnew/board.cpp,
+// BuildConnectivity; pcbnew/board_commit.cpp). GNU General Public License version 3 or later, as the router
 // (see KICAD-NOTICE.md).
 
 import Foundation
@@ -39,6 +41,9 @@ public final class BoardEditing {
         public var teardropSettings: TeardropSettings?
         /// The tuning patterns made, changed or taken away, by id
         public var generators: [String] = []
+        /// The tracks, vias and drawings on copper given another net as the change was pushed, by id: those the
+        /// connectivity's PropagateNets changed (BOARD_COMMIT::Push, RecalculateRatsnest), among `changed` and `drawings`
+        public var propagated: [String] = []
         /// What it was, for an undo menu (and KiCad's own)
         public let name: String
     }
@@ -139,15 +144,18 @@ public final class BoardEditing {
     /// The board as the last change left it (each change is made from it)
     private var base: KiCadBoard
 
-    /// `board` is the board as it is: the session works on a copy of it, and leaves it as it is
+    /// `board` is the board as it is: the session works on a copy of it, and leaves it as it is. The copy is the
+    /// board as KiCad has it once it has read it: its connectivity built (BOARD::BuildConnectivity), the tracks, vias
+    /// and drawings on copper given the nets of what they join, which KiCad writes when it next saves the board.
     public init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
         self.project = project
         self.designRules = designRules
         let memory = TuningPatternMemory()
         base = board.copy()
+        BoardDRC.buildConnectivity(base, project: project, designRules: designRules)
         memory.read(base)
         patternMemory = memory
-        router = BoardRouter(board: base.copy(), project: project, designRules: designRules)
+        router = BoardRouter(board: base.copy(), project: project, designRules: designRules, connectivityBuilt: true)
         router.patternMemory = memory
     }
 
@@ -175,13 +183,15 @@ public final class BoardEditing {
         }
         let memory = TuningPatternMemory()
         let read = board.copy()
+        // (as KiCad reads it: its connectivity built)
+        BoardDRC.buildConnectivity(read, project: self.project, designRules: self.designRules)
         memory.read(read)
         if read.text == base.text && !rulesChanged && !router.router.routingInProgress { return }
         router.cancel()
         patternSession = nil
         base = read
         patternMemory = memory
-        router = BoardRouter(board: base.copy(), project: self.project, designRules: self.designRules)
+        router = BoardRouter(board: base.copy(), project: self.project, designRules: self.designRules, connectivityBuilt: true)
     }
 
     /// The board as it now is
@@ -515,7 +525,7 @@ public final class BoardEditing {
             let filled = refills ? refilled(base) : nil
             if let filled {
                 base = filled
-                router = BoardRouter(board: base.copy(), project: project, designRules: designRules)
+                router = BoardRouter(board: base.copy(), project: project, designRules: designRules, connectivityBuilt: true)
             }
             out.edit = Edit(before: start, after: base, added: added, removed: removed,
                             name: n == 1 ? "Route 1 Connection" : "Route \(n) Connections")
@@ -609,13 +619,27 @@ public final class BoardEditing {
         let generators = Self.generatorsChanged(base, router.board)
         guard !router.lastAdded.isEmpty || !router.lastRemoved.isEmpty || !footprints.isEmpty || !zones.isEmpty || outline
                 || !changed.isEmpty || !drawings.isEmpty || setup || !generators.isEmpty else { return nil }
+        // (the change pushed as BOARD_COMMIT::Push pushes it: the connectivity recalculated (RecalculateRatsnest), the
+        // nets it propagates to tracks, vias and drawings on copper part of the change; not while a track or pair is
+        // still being routed, the router going on with the nets it has, as KiCad's does until it syncs its world: as
+        // the routing ends)
+        var changed = changed, drawings = drawings, propagated: [String] = []
+        if !router.router.routingInProgress {
+            let nets = BoardDRC.buildConnectivity(router.board, project: project, designRules: designRules)
+            propagated = nets.copper + nets.drawings
+            if !nets.copper.isEmpty || !nets.drawings.isEmpty {
+                changed += nets.copper.filter { !changed.contains($0) }
+                drawings += nets.drawings.filter { !drawings.contains($0) }
+                router.reload()
+            }
+        }
         var after = router.board.copy()
         let (added, removed) = (router.lastAdded, router.lastRemoved)
         // (not while a track or pair is still being routed, which goes on in the router as it is)
         let filled = refillsZones && !router.router.routingInProgress ? refilled(after) : nil
         if let filled {
             after = filled
-            router = BoardRouter(board: after.copy(), project: project, designRules: designRules)
+            router = BoardRouter(board: after.copy(), project: project, designRules: designRules, connectivityBuilt: true)
         }
         var edit = Edit(before: base, after: after, added: added, removed: removed, name: name)
         edit.footprints = footprints
@@ -625,6 +649,7 @@ public final class BoardEditing {
         edit.drawings = drawings
         edit.setup = setup
         edit.generators = generators
+        edit.propagated = propagated
         edit.refilled = filled != nil
         lastRefilled = edit.refilled
         base = after

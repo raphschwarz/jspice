@@ -204,15 +204,14 @@ extension BoardEditing {
                 }
                 transform(item, index, pool: [])
             }
-            let nets = propagateNets()
             router.boardChanged()
             let arranged = selection.prefix(size)
             func ids(_ heads: Set<String>, _ among: Bool) -> [String] {
                 arranged.filter { heads.contains($0.head ?? "") == among }.compactMap { $0.value("uuid") }
             }
             return change("Arrange selection", footprints: ids(["footprint"], true), zones: ids(["zone"], true),
-                          changed: ids(["segment", "arc", "via"], true) + nets.copper,
-                          drawings: ids(["footprint", "zone", "segment", "arc", "via", "generated"], false) + nets.drawings)
+                          changed: ids(["segment", "arc", "via"], true),
+                          drawings: ids(["footprint", "zone", "segment", "arc", "via", "generated"], false))
         }
         var made: [SExpr] = []
         var added: [SExpr] = []

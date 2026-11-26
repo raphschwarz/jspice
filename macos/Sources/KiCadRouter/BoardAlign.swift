@@ -141,10 +141,8 @@ extension BoardEditing {
             default: drawings.append(id)
             }
         }
-        let nets = propagateNets()
         router.boardChanged()
-        return change(how.name, footprints: footprints, zones: zones, changed: copper + nets.copper,
-                      drawings: drawings + nets.drawings)
+        return change(how.name, footprints: footprints, zones: zones, changed: copper, drawings: drawings)
     }
 
     /// The items sorted by `key` of their boxes (std::sort's order of those of equal keys aside)

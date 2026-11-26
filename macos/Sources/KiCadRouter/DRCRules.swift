@@ -25,12 +25,14 @@ extension BoardDRC {
         var byKey: [String: RuleItem] = [:]
         /// The copper items by uuid, once asked
         var copperByUUID: [String: CopperItem]?
-        /// The board's copper items, the check's, or made when first asked
+        /// The board's copper items, the check's, or made when first asked (its connectivity built, as KiCad's board's
+        /// is once read: the items' nets those it propagates)
         var copper: Copper?
 
         func copper(_ drc: BoardDRC) -> Copper {
             if let copper { return copper }
             let c = drc.makeCopper()
+            _ = drc.buildConnectivity(c)
             copper = c
             return c
         }
