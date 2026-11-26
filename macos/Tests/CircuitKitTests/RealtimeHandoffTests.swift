@@ -265,7 +265,7 @@ final class RealtimeHandoffTests: XCTestCase {
         XCTAssertTrue(engine.processor === second)
     }
 
-    func testASwitchThatJoinsNodesStartsAfreshAndAPresetLoadsInTheBackground() throws {
+    func testASwitchThatJoinsNodesChangesTheEquationsAndAPresetLoadsInTheBackground() throws {
         let bypass = try PluginCharacterizationTests.circuit("3PDT true bypass")
         let engine = Self.engine(bypass)
         _ = Self.play(engine, blocks: 4, script: [:])
@@ -305,6 +305,104 @@ final class RealtimeHandoffTests: XCTestCase {
         _ = Self.play(engine, blocks: 60, script: [:])
         XCTAssertEqual(engine.processor?.oversampling, 2)
         XCTAssertEqual(engine.status.stepsPerSample, 2)
+    }
+
+    /// An echo (the MN3011 bucket-brigade multi-tap, whose repeats ring for a second), and a switch of its own off to
+    /// one side (closing it joins two nodes, so the equations change shape, but not the sound)
+    static func echoWithASwitch(_ name: String = "MN3011 multi-tap echo", settings: [String: Double] = [:]) throws -> (circuit: Circuit, switchIndex: Int) {
+        var circuit = try PluginCharacterizationTests.circuit(name)
+        for (knob, value) in settings {
+            let control = try XCTUnwrap(CircuitProcessor.controls(of: circuit).first { $0.name == knob })
+            CircuitProcessor.apply(control, value, to: &circuit)
+        }
+        let x = (circuit.elements.map { max($0.a.x, $0.b.x) }.max() ?? 0) + 20
+        _ = circuit.add(Element(kind: .ground, a: GridPoint(x, 0), b: GridPoint(x, 1)))
+        _ = circuit.add(Element(kind: .toggleSwitch, name: "MODE", a: GridPoint(x, 0), b: GridPoint(x + 4, 0)))
+        _ = circuit.add(Element(kind: .resistor, a: GridPoint(x + 4, 0), b: GridPoint(x + 4, 4), params: ["resistance": 10_000]))
+        _ = circuit.add(Element(kind: .ground, a: GridPoint(x + 4, 4), b: GridPoint(x + 4, 5)))
+        let index = try XCTUnwrap(CircuitProcessor.controls(of: circuit).firstIndex { $0.name == "MODE" })
+        return (circuit, index)
+    }
+
+    /// A 220 Hz tone for the first quarter second, then silence, in blocks of 256
+    static func toneThenSilence(_ block: Int) -> [Float] {
+        (0..<256).map { k in
+            let n = block * 256 + k
+            return n < 12_000 ? Float(0.5 * sin(2 * .pi * 220 * Double(n) / rate)) : 0
+        }
+    }
+
+    static func energy(_ samples: [Float]) -> Double { samples.reduce(0.0) { $0 + Double($1) * Double($1) } }
+
+    func testFlippingASwitchKeepsAnEchoRinging() throws {
+        let (circuit, switchIndex) = try Self.echoWithASwitch()
+        let flipAt = 60  // blocks (0.32 s): the tone has stopped, its repeats ring
+        let measured = 188  // blocks after the flip (one second)
+
+        // the switch flipped by `Simulator.load`, as the processor does in place
+        let inPlace = try XCTUnwrap(CircuitProcessor(circuit: circuit, sampleRate: Self.rate))
+        var reference = 0.0
+        var before = 0.0
+        for b in 0..<(flipAt + measured) {
+            if b == flipAt { inPlace.set(switchIndex, to: 1) }
+            var input = Self.toneThenSilence(b)
+            var output = [Float](repeating: 0, count: 256)
+            input.withUnsafeMutableBufferPointer { i in output.withUnsafeMutableBufferPointer { o in
+                inPlace.process(input: i.baseAddress, output: o.baseAddress!, frames: 256)
+            } }
+            if b >= flipAt { reference += Self.energy(output) } else if b >= flipAt - 10 { before += Self.energy(output) }
+        }
+
+        // through the engine: the render thread copies its state, the background loads it with the switch closed,
+        // and the processor made from it takes over ten blocks (53 ms, a slow build) later
+        let engine = PluginEngine()
+        engine.pollsInBackground = false
+        engine.load(circuit)
+        engine.allocate(sampleRate: Self.rate, maximumFrames: 4096)
+        var played = 0.0
+        var first: CircuitProcessor?
+        for b in 0..<(flipAt + measured) {
+            if b == flipAt {
+                first = engine.processor
+                engine.setControl(switchIndex, 1)
+                engine.prepareNow()  // asks the render thread for a snapshot
+            }
+            if b == flipAt + 10 {
+                // loads it and offers the processor
+                let started = Date()
+                engine.prepareNow()
+                print("loading the snapshot with the switch closed took \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+            }
+            engine.beginRender()
+            let processor = try XCTUnwrap(engine.processor)
+            var input = Self.toneThenSilence(b)
+            var output = [Float](repeating: 0, count: 256)
+            input.withUnsafeMutableBufferPointer { i in output.withUnsafeMutableBufferPointer { o in
+                processor.process(input: i.baseAddress, output: o.baseAddress!, frames: 256)
+            } }
+            engine.endRender(busy: 0, budget: 256 / Self.rate)
+            if b >= flipAt { played += Self.energy(output) }
+        }
+        let after = try XCTUnwrap(engine.processor)
+        XCTAssertFalse(after === first, "the processor for the closed switch took over")
+        XCTAssertNotEqual(after.shapeKey, first?.shapeKey)
+        XCTAssertEqual(after.controls[switchIndex].value, 1)
+
+        // the settled restart it used to do: the circuit with the switch closed, from rest, in silence
+        var closed = circuit
+        CircuitProcessor.apply(CircuitProcessor.controls(of: circuit)[switchIndex], 1, to: &closed)
+        let settled = try XCTUnwrap(CircuitProcessor(circuit: closed, sampleRate: Self.rate))
+        var restarted = 0.0
+        for _ in 0..<measured {
+            var output = [Float](repeating: 0, count: 256)
+            output.withUnsafeMutableBufferPointer { settled.process(input: nil, output: $0.baseAddress!, frames: 256) }
+            restarted += Self.energy(output)
+        }
+        print(String(format: "echo tail over the second after the switch: in place %.4g, through the engine %.4g (%.1f%%), settled restart %.4g; the ten blocks before %.4g",
+                     reference, played, 100 * played / reference, restarted, before))
+        XCTAssertGreaterThan(before, 0, "the echo was ringing when the switch flipped")
+        XCTAssertEqual(played, reference, accuracy: 0.25 * reference)
+        XCTAssertGreaterThan(played, 20 * restarted)
     }
 
     func testPreparingAKnobMoveTakesLittleTime() throws {

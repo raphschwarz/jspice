@@ -81,9 +81,13 @@ meter open. A dropout is a click or a gap; the CPU meter's overload marker (Logi
    hand while playing.
 2. **Echo through knob moves.** Choose **PT2399 echo**, play a short phrase and, while the repeats are still sounding,
    move **TIME** and **REPEATS** in the window: the repeats carry on (changed) rather than being cut off.
-3. **A switch.** Choose **3PDT true bypass** and flip **SW1** while playing. The sound switches after a short moment;
-   a switch that joins or parts parts of the circuit starts it again from rest, so a brief change in the sound is
-   expected, but no dropout and no thump.
+3. **A switch while an echo rings.** Choose **3PDT true bypass** and flip **SW1** while playing: the sound switches
+   after a short moment, with no dropout and no thump. Then, on an echo or reverb with a switch (export one from
+   JSpice, say **MN3011 multi-tap echo** with a bypass or mode switch added), play a phrase and flip the switch while
+   the repeats ring: the repeats carry on through the switch. Expected and acceptable: the tail resumes from where it
+   was when the switch was asked for, one build earlier (some tens of milliseconds, longer for big circuits), so
+   there is a small skip in the repeats, and for that moment the echo itself is silent (the dry sound carries on).
+   What would be a fault: the tail cut off entirely, a click to silence, or a thump.
 4. **Preset change while playing.** At 64 samples, step through the circuits in the Circuit menu (and in the host's
    own preset menu) while the transport runs. The old circuit keeps playing until the new one is ready (heavier ones
    take up to a second or so to settle), then the new one takes over: no gap of silence, no overload, the window

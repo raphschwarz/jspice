@@ -60,10 +60,22 @@ public final class CircuitProcessor {
     private var pendingParameters = false
 
     /// Nil when the circuit has no speaker to listen to
-    public init?(circuit: Circuit, sampleRate: Double, oversampling: Int = 2, start: Start = .settled, maximumFrames: Int = 4096) {
+    public convenience init?(circuit: Circuit, sampleRate: Double, oversampling: Int = 2, start: Start = .settled,
+                             maximumFrames: Int = 4096) {
+        self.init(prepared: Self.forPlugin(circuit), resuming: nil, sampleRate: sampleRate, oversampling: oversampling,
+                  start: start, maximumFrames: maximumFrames)
+    }
+
+    /// A processor around `simulator`, which already runs `circuit` (as `forPlugin` makes it) from a state of its own:
+    /// a snapshot of a playing processor, loaded on the background queue with a circuit that changed shape. Primed here.
+    convenience init?(resuming simulator: Simulator, circuit: Circuit, sampleRate: Double, oversampling: Int, maximumFrames: Int) {
+        self.init(prepared: circuit, resuming: simulator, sampleRate: sampleRate, oversampling: oversampling, start: .primed,
+                  maximumFrames: maximumFrames)
+    }
+
+    /// `circuit` as the plugin plays it: every audio input part plays the host's sound
+    public static func forPlugin(_ circuit: Circuit) -> Circuit {
         var circuit = circuit
-        guard let speaker = circuit.elements.firstIndex(where: { $0.kind == .speaker }) else { return nil }
-        // every audio input part plays the host's sound
         func live(_ elements: inout [Element]) {
             for i in elements.indices {
                 if elements[i].kind.playsClip { elements[i][param: "input"] = 1 }
@@ -74,6 +86,12 @@ public final class CircuitProcessor {
             }
         }
         live(&circuit.elements)
+        return circuit
+    }
+
+    private init?(prepared circuit: Circuit, resuming existing: Simulator?, sampleRate: Double, oversampling: Int,
+                  start: Start, maximumFrames: Int) {
+        guard let speaker = circuit.elements.firstIndex(where: { $0.kind == .speaker }) else { return nil }
         let flat = circuit.flattened()
         hasInput = flat.elements.contains { $0.kind == .audioInput }
         hasKeyboard = flat.elements.contains { $0.kind == .keyboardPitch || $0.kind == .keyboardGate }
@@ -88,7 +106,7 @@ public final class CircuitProcessor {
         blockerPole = exp(-2 * .pi * 4 / sampleRate)
         controls = Self.controls(of: circuit)
         let timeStep = 1 / (sampleRate * Double(self.oversampling))
-        simulator = Simulator(circuit: circuit, timeStep: timeStep)
+        simulator = existing ?? Simulator(circuit: circuit, timeStep: timeStep)
         simulator.errorControl = false
         var hasher = Hasher()
         hasher.combine(simulator.topology.matrixSize)
@@ -238,6 +256,44 @@ public final class CircuitProcessor {
         return true
     }
 
+    /// Takes on `other`'s output filter, so that a processor resuming from a snapshot of it carries on without a step
+    public func takeOutputFilter(from other: CircuitProcessor) {
+        (blockerInput, blockerOutput) = (other.blockerInput, other.blockerOutput)
+    }
+
+    /// Three simulators of this processor's circuit for `snapshot(into:)`, made off the render thread: `twin` and
+    /// `blank` never run (they own nothing large), `spare` has stepped twice so that its delay lines' storage exists
+    final class Spares {
+        let twin: Simulator
+        let spare: Simulator
+        let blank: Simulator
+
+        init(circuit: Circuit, timeStep: Double) {
+            twin = Simulator(circuit: circuit, timeStep: timeStep)
+            spare = Simulator(circuit: circuit, timeStep: timeStep)
+            blank = Simulator(circuit: circuit, timeStep: timeStep)
+            for simulator in [twin, spare, blank] { simulator.errorControl = false }
+            for _ in 0..<2 where !spare.isFailed { spare.step() }
+        }
+    }
+
+    /// Copies the running state into `spares.twin` (to be loaded with a changed circuit on the background queue) and
+    /// carries on playing. For the render thread: nothing large is freed or left shared.
+    ///
+    /// The delay lines' histories cannot be copied without allocating, and sharing them would make the next step here
+    /// copy them, so they are *moved*: the twin takes them (with everything else), this processor takes the spare's
+    /// empty ones of the same size (with its own state, copied there and back), and the spare lets go of those (taking
+    /// the blank's, which are nothing). Until the processor made from the twin takes over, this one plays with its
+    /// delay lines, echoes and reverbs empty. False (nothing changed) when the circuit has failed.
+    func snapshot(into spares: Spares) -> Bool {
+        guard !simulator.isFailed else { return false }
+        spares.twin.adoptState(of: simulator, delays: true)
+        spares.spare.adoptState(of: simulator, delays: false)
+        simulator.adoptState(of: spares.spare, delays: true)
+        spares.spare.adoptState(of: spares.blank, delays: true)
+        return true
+    }
+
     /// Starts again from rest, keeping the controls where they are
     public func reset() {
         simulator.reset()
@@ -314,7 +370,11 @@ public final class CircuitProcessor {
 ///   heavy) changes the model here, and a background queue prepares a complete processor for it, which the render
 ///   thread picks up at its next call by swapping one reference. A knob that leaves the circuit's equations the same
 ///   shape gets a primed processor that takes over the running state (`CircuitProcessor.takeOver`), so the sound
-///   carries on; anything else (a new circuit, a switch that joins or parts nodes) a settled one, from rest.
+///   carries on. A switch that joins or parts nodes (the same parts, other equations) asks the render thread for a
+///   snapshot of its state into spares made beforehand (`CircuitProcessor.snapshot`), which the background loads with
+///   the changed circuit (`Simulator.load` keeps each part's state by id) and offers; the processor playing goes on
+///   meanwhile, with its delay lines empty until the new one takes over from the snapshot (one build old). A new
+///   circuit, or a snapshot the render thread could not take, gets a settled processor, from rest.
 /// - Processors the render thread is done with go back through a retire list and are freed on the background queue.
 public final class PluginEngine: @unchecked Sendable {
     /// What the plugin's window shows about the render thread
@@ -340,9 +400,30 @@ public final class PluginEngine: @unchecked Sendable {
     final class Prepared {
         let processor: CircuitProcessor?
         let continues: Bool
-        init(_ processor: CircuitProcessor?, continues: Bool) {
+        /// Made from a snapshot of the one playing (it takes that one's output filter and notes, nothing else)
+        let resumes: Bool
+        init(_ processor: CircuitProcessor?, continues: Bool, resumes: Bool = false) {
             self.processor = processor
             self.continues = continues
+            self.resumes = resumes
+        }
+    }
+
+    /// A request for the render thread to copy its running state into `spares` (made beforehand on the background
+    /// queue for the circuit playing), so that the background can load it with a circuit whose equations changed
+    /// shape (a switch that joins or parts nodes) and carry every part's state on, as the app does with a circuit
+    /// edited while it runs
+    final class Snapshot {
+        let spares: CircuitProcessor.Spares
+        /// The processor it was made for: the render thread copies only from one of this shape
+        let shapeKey: Int
+        let generation: Int
+        /// Set by the render thread before it hands the request back (read after, through the exchange's lock)
+        var captured = false
+        init(_ spares: CircuitProcessor.Spares, shapeKey: Int, generation: Int) {
+            self.spares = spares
+            self.shapeKey = shapeKey
+            self.generation = generation
         }
     }
 
@@ -360,6 +441,8 @@ public final class PluginEngine: @unchecked Sendable {
 
     // between the threads
     private let exchange = ObjectExchange(retireCapacity: 8)
+    /// Snapshot requests: offered by the background, handed back (filled or not) through the retire list
+    private let snapshots = ObjectExchange(retireCapacity: 2)
     private let reportLock = TryLock()
     private var report = Status()
     private var askedAfresh = false
@@ -371,9 +454,19 @@ public final class PluginEngine: @unchecked Sendable {
     private var builtGeneration = -1
     private var builtVersion: UInt64 = .max
     private var offeredShape: Int?
+    /// The last processor offered: its circuit (as played), steps per sample and parts, for snapshots of it
+    private var offeredCircuit: Circuit?
+    private var offeredSteps = 0
+    private var offeredParts: [UUID] = []
+    /// A snapshot asked of the render thread and not yet handed back
+    private var awaiting: Snapshot?
+    /// Whether the background queue polls by itself while rendering (tests drive it with `prepareNow`)
+    var pollsInBackground = true
 
     // the render thread's own
     private var live: Prepared?
+    /// A snapshot request taken, until handed back (moved like `retiring`)
+    private var returning: AnyObject?
     /// The one replaced, until the exchange takes it (as `AnyObject` so that it is moved, not copied, into the retire
     /// list: see `ObjectExchange.tryRetire`)
     private var retiring: AnyObject?
@@ -443,12 +536,15 @@ public final class PluginEngine: @unchecked Sendable {
         timer?.cancel()
         timer = nil
         modelLock.withLock { sampleRate = nil }
-        let withdrawn = exchange.withdraw()
+        let withdrawn = (exchange.withdraw(), snapshots.withdraw())
         queue.async {
             _ = withdrawn
             self.builtGeneration = -1
             self.offeredShape = nil
+            self.offeredCircuit = nil
+            self.awaiting = nil
             _ = self.exchange.collectRetired()
+            _ = self.snapshots.collectRetired()
         }
     }
 
@@ -465,7 +561,7 @@ public final class PluginEngine: @unchecked Sendable {
     }
 
     private func startPolling() {
-        guard timer == nil else { return }
+        guard timer == nil, pollsInBackground else { return }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         // knob moves from the host's render events, and what the render thread asks for, are picked up this often
         timer.schedule(deadline: .now() + .milliseconds(5), repeating: .milliseconds(5), leeway: .milliseconds(2))
@@ -491,27 +587,68 @@ public final class PluginEngine: @unchecked Sendable {
             if afresh { generation += 1 }
             return (base, controlList, generation, sampleRate, maximumFrames, steps, values.snapshot())
         }
+        // a snapshot the render thread has handed back (taken, or declined)
+        var returned: Snapshot?
+        for object in snapshots.collectRetired() where object === awaiting {
+            returned = awaiting
+            awaiting = nil
+        }
+        if let waiting = awaiting {
+            // still out: nothing else is made meanwhile, unless another circuit or a fresh start has overtaken it
+            guard waiting.generation != model.generation else { return }
+            awaiting = nil
+            _ = snapshots.withdraw()
+        }
         guard let rate = model.rate, var circuit = model.circuit else { return }
         guard model.generation != builtGeneration || model.values.version != builtVersion else { return }
         for (k, control) in model.controls.enumerated() where k < model.values.values.count {
             CircuitProcessor.apply(control, model.values.values[k], to: &circuit)
         }
-        // a knob move carries on from the processor playing, unless one starting afresh is still waiting to be taken
-        var continues = model.generation == builtGeneration
-        if continues, let waiting = exchange.peek(), !unsafeDowncast(waiting, to: Prepared.self).continues { continues = false }
         var made: CircuitProcessor?
+        var continues = model.generation == builtGeneration
+        var resumes = false
+        if continues, let snapshot = returned, snapshot.generation == model.generation, snapshot.captured {
+            // the running state, copied a moment ago, loaded with the changed circuit: each part keeps its charge,
+            // current and delay line by id (`Simulator.load`), and the new equations are factored here
+            let played = CircuitProcessor.forPlugin(circuit)
+            snapshot.spares.twin.load(played)
+            made = CircuitProcessor(resuming: snapshot.spares.twin, circuit: played, sampleRate: rate, oversampling: offeredSteps,
+                                    maximumFrames: model.frames)
+            (continues, resumes) = (false, made != nil)
+        } else if continues, returned != nil {
+            // declined (the circuit had failed, or another processor was playing): from rest
+            continues = false
+        }
+        // a knob move carries on from the processor playing, unless one starting afresh is still waiting to be taken
+        if continues, let waiting = exchange.peek(), !unsafeDowncast(waiting, to: Prepared.self).continues { continues = false }
         if continues {
             made = CircuitProcessor(circuit: circuit, sampleRate: rate, oversampling: model.steps, start: .primed, maximumFrames: model.frames)
-            // (a switch that joins or parts nodes changes the equations: that needs a settled start)
-            if made == nil || made?.shapeKey != offeredShape { continues = false }
+            if let made, made.shapeKey != offeredShape {
+                continues = false
+                // a switch that joins or parts nodes changes the equations, not the parts: the render thread copies
+                // its state into spares made here for the circuit it plays, and the next call loads them
+                if let playing = offeredCircuit, let shape = offeredShape, offeredSteps == model.steps,
+                   made.simulator.flat.elements.map(\.id) == offeredParts {
+                    let spares = CircuitProcessor.Spares(circuit: playing, timeStep: 1 / (rate * Double(offeredSteps)))
+                    let snapshot = Snapshot(spares, shapeKey: shape, generation: model.generation)
+                    awaiting = snapshot
+                    let replaced = snapshots.offer(snapshot)
+                    _ = replaced
+                    return
+                }
+            }
+            if made == nil { continues = false }
         }
-        if !continues {
+        if !continues && !resumes {
             made = CircuitProcessor(circuit: circuit, sampleRate: rate, oversampling: model.steps, start: .settled, maximumFrames: model.frames)
         }
         builtGeneration = model.generation
         builtVersion = model.values.version
         offeredShape = made?.shapeKey
-        let replaced = exchange.offer(Prepared(made, continues: continues))
+        offeredCircuit = made?.circuit
+        offeredSteps = made?.oversampling ?? 0
+        offeredParts = made?.simulator.flat.elements.map(\.id) ?? []
+        let replaced = exchange.offer(Prepared(made, continues: continues, resumes: resumes))
         _ = replaced  // released here, on the background queue
     }
 
@@ -527,7 +664,10 @@ public final class PluginEngine: @unchecked Sendable {
         if retiring == nil, let object = exchange.tryTake() {
             let next = unsafeDowncast(object, to: Prepared.self)
             if !next.continues {
-                if let new = next.processor, let old = live?.processor { new.takeNotes(from: old) }
+                if let new = next.processor, let old = live?.processor {
+                    new.takeNotes(from: old)
+                    if next.resumes { new.takeOutputFilter(from: old) }
+                }
                 retiring = live
                 live = next
                 // a fresh start (another circuit, or fewer steps already) is judged afresh
@@ -541,6 +681,16 @@ public final class PluginEngine: @unchecked Sendable {
                 retiring = next
                 wantsAfresh = true
             }
+        }
+        // a snapshot asked for: copied from the processor playing (if it is the one the spares were made for) and
+        // handed back at the next call, so that no reference to it outlives the hand-back here
+        _ = snapshots.tryRetire(&returning)
+        if returning == nil, let object = snapshots.tryTake() {
+            let snapshot = unsafeDowncast(object, to: Snapshot.self)
+            if let playing = live?.processor, playing.shapeKey == snapshot.shapeKey {
+                snapshot.captured = playing.snapshot(into: snapshot.spares)
+            }
+            returning = object
         }
         pending.flush(to: values)
     }
