@@ -10,7 +10,7 @@ import JSpiceAutomation
 // its own, as it does from then on if the app quits.
 // --app insists on the app. --benchmark [seconds] [example…] times the engine alone at the audio sample rate,
 // --benchmark-maker PART [seconds] a maker's op-amp model, --benchmark-switch NAME [seconds] [example…] the
-// examples with one of the engine's switches off and on, and --benchmark-scale [seconds] [example…] the examples drawn
+// examples with one of the emulators' switches off and on, and --benchmark-scale [seconds] [example…] the examples drawn
 // several times over in one circuit. --version prints the version.
 
 let arguments = CommandLine.arguments
@@ -65,38 +65,20 @@ func benchmark(seconds: Double, ids: [String]) {
     }
 }
 
-/// The engine's switches a benchmark can compare, each off against on (all are on as the app runs)
+/// The microcontroller emulators' switches a benchmark can compare, each off against on (all are on as the app runs);
+/// the circuit engine's were settled and removed
 let switches: [String: (Bool) -> Void] = [
     // (changes nothing: what the benchmark makes of two settings alike)
     "nothing": { _ in },
-    "reuse-factors": { Simulator.reusesFactors = $0 },
-    "bypass": { Simulator.bypassesDevices = $0 },
-    "pin-switches": { Simulator.followsPinSwitches = $0 },
-    "rest-confirmation": { Simulator.restsConfirmation = $0 },
-    "confirm-by-balance": { Simulator.confirmsByBalance = $0 },
-    "reuse-past-still-columns": { Simulator.reusesPastStillColumns = $0 },
-    "give-up-when-stalled": { Simulator.givesUpWhenStalled = $0 },
-    "rest-reuse": { Simulator.restsReuse = $0 },
-    "retry-from-memory": { Simulator.retriesFromMemory = $0 },
-    "memory-first": { Simulator.triesMemoryFirst = $0 },
-    "skip-known-cycles": { Simulator.skipsKnownCycles = $0 },
-    "predict-past-decisions": { Simulator.predictsPastDecisions = $0 },
-    "quadratic-predictor": { Simulator.predictsQuadratically = $0 },
-    "rest-chords": { Simulator.restsChords = $0 },
-    "choose-predictor": { Simulator.choosesPredictor = $0 },
-    "choose-predictor-together": { Simulator.choosesPredictorTogether = $0 },
-    "reuse-everywhere": { Simulator.reusesFactorsEverywhere = $0 },
     "decode-ahead": { AVR.decodesAhead = $0 },
     "run-stretches": { Pico.runsStretches = $0 },
     "stretch-past-registers": { Pico.stretchesPastRegisters = $0 },
     "quiet-pio-turns": { Pico.takesQuietPIOTurns = $0 },
     "inline-interpreter": { AVR.inlinesInterpreter = $0; Pico.inlinesInterpreter = $0 },
     "skip-quiet-ticks": { AVR.skipsQuietTicks = $0 },
-    "keep-switched-matrices": { Simulator.keepsSwitchedMatrices = $0 },
-    "limit-junctions-down": { Simulator.limitsJunctionsDown = $0 },
 ]
 
-/// Simulates each example twice over, with one of the engine's switches off and on, in alternate runs of `seconds` of
+/// Simulates each example twice over, with one of the emulators' switches off and on, in alternate runs of `seconds` of
 /// circuit time (so the machine's ups and downs fall on both alike), and prints the time per step of the fastest of
 /// five runs each, and what the switch saves
 func benchmarkSwitch(_ name: String, seconds: Double, ids: [String]) {
@@ -697,7 +679,7 @@ if let flag = arguments.firstIndex(of: "--benchmark-maker"), flag + 1 < argument
     exit(0)
 }
 
-// --benchmark-switch NAME [seconds] [example…]: the examples with one of the engine's switches off and on
+// --benchmark-switch NAME [seconds] [example…]: the examples with one of the emulators' switches off and on
 if let flag = arguments.firstIndex(of: "--benchmark-switch"), flag + 1 < arguments.count {
     var rest = Array(arguments[(flag + 2)...])
     var seconds = 0.25

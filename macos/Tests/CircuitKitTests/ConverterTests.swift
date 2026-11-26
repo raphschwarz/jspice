@@ -218,28 +218,21 @@ final class ConverterTests: XCTestCase {
         XCTAssertEqual(last, 5.0 * code / 4096 * divider, accuracy: 0.01)
     }
 
-    func testBaseMatricesKeptBySwitchedStateGiveTheSameBusTraffic() throws {
+    func testBaseMatricesKeptBySwitchedStateGiveTheRightBusTraffic() throws {
         // the I²C lines and the ADC's DOUT switch the base matrix at nearly every step: those kept for each switched
-        // state serve again, rather than being built afresh, to the same reading, the same code written and the same
-        // output (to within Newton-Raphson's tolerance: kept factors may serve more often)
+        // state serve again, rather than being built afresh, to the right reading, code written and output
         let circuit = Examples.arduinoADCToDAC.circuit
         let dac = try index(circuit, "DAC")
         let arduino = try index(circuit, "U1")
-        var results: [(volts: Double, serial: String)] = []
-        for keeps in [false, true] {
-            Simulator.keepsSwitchedMatrices = keeps
-            defer { Simulator.keepsSwitchedMatrices = true }
-            var last = 0.0
-            var serial = ""
-            run(circuit, dt: 1e-5, seconds: 0.21, from: 0.2) { _, simulator in
-                last = simulator.voltageAcross(dac)
-                serial = String(decoding: simulator.chip(arduino)?.serialOutput ?? [], as: UTF8.self)
-            }
-            results.append((last, serial))
+        var last = 0.0
+        var serial = ""
+        run(circuit, dt: 1e-5, seconds: 0.21, from: 0.2) { _, simulator in
+            last = simulator.voltageAcross(dac)
+            serial = String(decoding: simulator.chip(arduino)?.serialOutput ?? [], as: UTF8.self)
         }
-        XCTAssertEqual(results[0].serial, results[1].serial)
-        XCTAssertTrue(results[1].serial.contains("CH0: 614"), results[1].serial)
-        XCTAssertEqual(results[0].volts, results[1].volts, accuracy: 1e-6)
+        // the knob at 0.6: 3 V, read as 614 of 1024 and written as 2456 of 4096
+        XCTAssertTrue(serial.contains("CH0: 614"), serial)
+        XCTAssertEqual(last, 5.0 * 2456 / 4096 * (10_000.0 / 10_010.0), accuracy: 0.01)
     }
 
     func testArduinoWritesBothHalvesOfTheMCP4822() throws {

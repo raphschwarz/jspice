@@ -87,8 +87,6 @@ public final class Simulator {
     public private(set) var reusedStampings = 0
     /// Solves that started again without them, their parts found elsewhere than the stamps had them
     public private(set) var restartedSolves = 0
-    /// Whether a behavioural source whose inputs have not moved is stamped from its last evaluation (see `stampBehavior`)
-    public static var bypassesDevices = true
     /// How far (relative, above 1 V) an input can move before a source is evaluated again
     static let bypassTolerance = 1e-9
     /// Of those iterations, how many factored the nonlinear block, and how many solved with factors kept from an earlier
@@ -101,19 +99,14 @@ public final class Simulator {
     /// Whether iterations time their stamping and solving
     public static var profiling = false
     /// Whether Newton-Raphson solves with the factors of an earlier iteration while the nonlinear block stays near the
-    /// values they were made from (the chord method); read at each iteration. Off, it factors at every iteration: for
-    /// comparing the two.
-    public static var reusesFactors = true
-    /// Whether it does so in every circuit, rather than only where nonlinear behavioural sources are (off: for
-    /// comparing). Kept factors, confirmations without a solve and kept stamps were made for a maker's op-amp model, its
-    /// piecewise-linear sources' slopes held still between their corners; a circuit of transistors, diodes and built-in
-    /// op-amps moves its slopes at every iteration, and keeping, packing and comparing for the few iterations they save
-    /// cost it more than they saved (CI, run for run: the ring modulator of transistors, the acid line, the Tube
-    /// Screamer and the LM1036 tone control 2 to 3% slower with them, the LED bar graph 8%, and the synth voice, with
-    /// the predictor choosing its guesses, 2.13 iterations a step for 1.70 without)
-    public static var reusesFactorsEverywhere = false
-    /// `reusesFactors`, for the present circuit
-    private var reusing: Bool { Self.reusesFactors && (dampsNewton || Self.reusesFactorsEverywhere) }
+    /// values they were made from (the chord method): only where nonlinear behavioural sources are. Kept factors,
+    /// confirmations without a solve and kept stamps were made for a maker's op-amp model, its piecewise-linear sources'
+    /// slopes held still between their corners; a circuit of transistors, diodes and built-in op-amps moves its slopes
+    /// at every iteration, and keeping, packing and comparing for the few iterations they save cost it more than they
+    /// saved (CI, run for run: the ring modulator of transistors, the acid line, the Tube Screamer and the LM1036 tone
+    /// control 2 to 3% slower with them, the LED bar graph 8%, and the synth voice, with the predictor choosing its
+    /// guesses, 2.13 iterations a step for 1.70 without)
+    private var reusing: Bool { dampsNewton }
     /// Solves done again because a behavioural source's decision (a comparator in a maker's model) changed during one,
     /// and solves left as they were after `decisionRounds` of that (a comparator chattering about its threshold)
     public private(set) var decisionSolves = 0
@@ -333,8 +326,6 @@ public final class Simulator {
     private var switchSolutions: [PinSwitch: SwitchSolution] = [:]
     /// Steps after a switch of the chips' pins that started from the solution after the same switch before
     public private(set) var switchesFollowed = 0
-    /// Whether they do (a test compares with stepping from the last solution)
-    public static var followsPinSwitches = true
     private var chipCycleCarry: [Double] = []
     private var chipIndices: [Int] = []
     /// For each chip (by its index among the parts), for each of its pins, the logic parts' inputs wired to it (the part
@@ -627,7 +618,6 @@ public final class Simulator {
     private var flipSolved: [[Double]] = []
     private var flipNext = 0
     static let flipMemoryKept = 4
-    public static var retriesFromMemory = true
     /// Rounds started again from such a solution, and how many of them then converged
     public private(set) var memoryRetries = 0
     public private(set) var memoryRetriesConverged = 0
@@ -641,7 +631,6 @@ public final class Simulator {
     /// sense. Their rounds start from the remembered solution at once (and from where the solve ended if that does not
     /// converge), rather than spending a few iterations swinging between the output stage's corners first.
     private var flipsFailingFromEnd = Set<[Int]>()
-    public static var triesMemoryFirst = true
     /// Rounds started from a remembered solution at once (counted in `memoryRetries` too)
     public private(set) var memoryFirstRounds = 0
     /// Flips (see `flipSignature`) at a solve's first round whose rounds went round in a cycle back to the decisions of
@@ -652,7 +641,6 @@ public final class Simulator {
     /// one time in eight, when the rounds are solved as before (a flip whose rounds settle is forgotten).
     private var cyclingFlips: [[Int]: (round: Int, times: Int)] = [:]
     private var cyclingFlipsSeen = 0
-    public static var skipsKnownCycles = true
     /// Solves whose decisions stayed at once for a flip known to go round in a cycle
     public private(set) var knownCycleSkips = 0
     /// The limited voltages where a solve ended, for a round from there after one from memory did not converge
@@ -695,10 +683,6 @@ public final class Simulator {
     /// Plans made since the start, and the seconds spent making them
     public private(set) var plans = 0
     public private(set) var planningSeconds = 0.0
-    /// Whether affine behavioural sources (gains, POLY of the first degree) are stamped as linear parts, out of the
-    /// nonlinear block; read when a circuit is loaded. Off, they are linearised at every iteration as any other: for
-    /// comparing the two.
-    public static var linearAffineSources = true
     /// The equations' shape, for profiling: unknowns, those in the nonlinear block (factored at every iteration), and
     /// the pivot orders kept for it
     public var planShape: (unknowns: Int, nonlinear: Int, orders: Int) {
@@ -744,23 +728,15 @@ public final class Simulator {
     /// extrapolates along the parabola through the three
     private var oldestX: [Double] = []
     private var quadraticReady = false
-    /// Whether the predictor extrapolates along a parabola where it can (off by default: for comparing). CI's
-    /// comparison: the ring modulator of transistors took a sixth fewer iterations with it, the VCF a tenth, but the
-    /// synth voice at rest a third more (its unknowns nearly still, the parabola carries their rounding three times
-    /// over), a diode clipper a tenth more, and a transistor multivibrator stopped oscillating: the parabola through a
-    /// switching edge starts Newton-Raphson on the far side of where the circuit goes.
-    public static var predictsQuadratically = false
-    /// Whether the predictor takes each unknown along the parabola or the straight line, whichever came nearer to where
-    /// that unknown ended the last substep (off, along the straight line throughout: for comparing): a signal moving
-    /// smoothly is followed along the parabola, while an unknown nearly still, or one that turned sharply, keeps to the
-    /// straight line. CI's comparison, in iterations a step: the ring modulator of transistors a seventh fewer, the
-    /// sequenced acid line, the mono synth and the VCF about a twelfth fewer, the guitar fuzz a twentieth more (the
-    /// parabola throughout: an eighth more), the synth voice at rest the same.
-    public static var choosesPredictor = true
-    /// Whether that choice is made for all the unknowns together, by which guess came nearer over them all (off, unknown
-    /// by unknown): a junction's two ends guessed one along the parabola and the other along the line can put the
-    /// junction itself further off than either guess would
-    public static var choosesPredictorTogether = false
+    /// The predictor takes each unknown along the parabola or the straight line, whichever came nearer to where that
+    /// unknown ended the last substep, unknown by unknown: a signal moving smoothly is followed along the parabola, while
+    /// an unknown nearly still, or one that turned sharply, keeps to the straight line. CI's comparison, in iterations a
+    /// step: the ring modulator of transistors a seventh fewer, the sequenced acid line, the mono synth and the VCF about
+    /// a twelfth fewer, the guitar fuzz a twentieth more, the synth voice at rest the same. (The parabola throughout
+    /// cost the guitar fuzz an eighth more, the synth voice at rest a third more, and stopped a transistor multivibrator
+    /// oscillating: the parabola through a switching edge starts Newton-Raphson on the far side of where the circuit
+    /// goes; the choice made for all the unknowns together did no better.)
+    ///
     /// Each unknown's guess along the straight line and along the parabola for the substep being solved, whether they
     /// are this substep's, and by unknown whether the parabola's came nearer last time
     private var lineGuess = UnsafeMutableBufferPointer<Double>(start: nil, count: 0)
@@ -773,7 +749,6 @@ public final class Simulator {
     /// end of its crossover dead zone bends the solution there; extrapolated through the bend, the guess lands far off
     /// and Newton-Raphson swings between the stage's corners until the substep is halved)
     private var decisionsMovedInSubstep = false
-    public static var predictsPastDecisions = false
     private var predictionRatio = 1.0
     /// The solution and junction voltages at the start of a step, to go back to for gmin stepping
     private var savedX: [Double] = []
@@ -868,8 +843,6 @@ public final class Simulator {
     private var confirmRest = 0
     static let confirmRateFloor = 0.02
     static let confirmRestSolves = 512
-    /// Whether confirmations rest after many misses (off, every solve tries them: for comparing the two)
-    public static var restsConfirmation = true
     /// How often kept (or former) factors served an iteration that asked for them (an average over about the last
     /// fifty), and the solves for which none asks once that falls below `chordRateFloor`: a transistor circuit playing
     /// a signal moves its slopes at every iteration, and keeping, packing and checking its factorings for chord steps
@@ -878,15 +851,6 @@ public final class Simulator {
     private var chordRest = 0
     static let chordRateFloor = 0.05
     static let chordRestSolves = 256
-    /// Whether kept factors rest so (off, every iteration asks for them: for comparing the two)
-    public static var restsChords = true
-    /// Whether a confirmation also takes a block whose changed entries balance at the solution (see `stampsUnchanged`),
-    /// whether kept factors serve past changes in the columns of unknowns that hold still (see `keptFactorsSuit`), and
-    /// whether a substep that can be halved gives up once Newton-Raphson stalls (see `stallsTolerated`): each off, for
-    /// comparing
-    public static var confirmsByBalance = true
-    public static var reusesPastStillColumns = true
-    public static var givesUpWhenStalled = true
     /// How often a step that started from the confirmed stamps was confirmed at its second iteration rather than
     /// started again (an average over about the last twenty), and the solves for which none starts from them once
     /// that falls below a half: a transistor circuit's parts move between steps, and the second iteration finds them
@@ -894,8 +858,6 @@ public final class Simulator {
     private var reuseRate = 1.0
     private var reuseRest = 0
     static let reuseRestSolves = 256
-    /// Whether that rest is taken (off, for comparing)
-    public static var restsReuse = true
     private var reuseAllowed = false
     private var confirmedPlanSerial = -1
     private var confirmedBaseVersion = -1
@@ -916,8 +878,6 @@ public final class Simulator {
     /// holds (and nothing else changed it): its matrices for the parts' switched state, kept from the last time they
     /// were so, serve again (a bus flips its lines at nearly every step)
     private var switchedMoved = false
-    /// Whether base matrices are kept by switched state so (off: built afresh at every switch, for comparing)
-    public static var keepsSwitchedMatrices = true
     /// The switched state the base matrices in `baseCache` are for, and those kept for others
     private var baseSwitched: [Int8] = []
     private var switchedCaches: [(state: [Int8], cache: [Int: (values: [Double], version: Int, order: EliminationProgram?)])] = []
@@ -1702,16 +1662,7 @@ public final class Simulator {
                     let block = plan.flatMap { $0.n == x.count ? $0.block : nil } ?? Array(0..<x.count)
                     x.withUnsafeBufferPointer { x in
                         block.withUnsafeBufferPointer { block in
-                            if Self.choosesPredictorTogether {
-                                var (offParabola, offLine) = (0.0, 0.0)
-                                for k in block {
-                                    offParabola += abs(parabola[k] - x[k])
-                                    offLine += abs(line[k] - x[k])
-                                }
-                                for k in block { nearer[k] = offParabola < offLine }
-                            } else {
-                                for k in block { nearer[k] = abs(parabola[k] - x[k]) < abs(line[k] - x[k]) }
-                            }
+                            for k in block { nearer[k] = abs(parabola[k] - x[k]) < abs(line[k] - x[k]) }
                         }
                     }
                 }
@@ -1721,7 +1672,7 @@ public final class Simulator {
             // the next substep predicts from this one's start and end, unless the circuit jumped (a part switched over)
             swap(&oldestX, &olderX)
             swap(&olderX, &substepStartX)
-            let smooth = !switched && (Self.predictsPastDecisions || !decisionsMovedInSubstep)
+            let smooth = !switched && !decisionsMovedInSubstep
             quadraticReady = predictorReady && smooth
             predictorReady = smooth
             (olderLevel, lastLevel) = (lastLevel, level)
@@ -1855,7 +1806,7 @@ public final class Simulator {
                 decisionsMovedInSubstep = true
                 // (the round just solved, kept only now that another may follow)
                 keepRound()
-                if Self.retriesFromMemory { rememberFlip(held: heldRounds[kept - 1], solved: solvedRounds[kept - 1]) }
+                rememberFlip(held: heldRounds[kept - 1], solved: solvedRounds[kept - 1])
                 // decisions made where it ended that an earlier round was solved with: the comparators go round in a
                 // cycle (a maker's model's crossover detector, whose switching turns off the stage that switched it),
                 // and no round would settle them. That round's solution stands, solved again from itself (a step or
@@ -1875,13 +1826,12 @@ public final class Simulator {
                     break
                 }
                 // the flip into this round: the decisions moved from where they were held to where the solve ended
-                let flip = (Self.retriesFromMemory && Self.triesMemoryFirst) || Self.skipsKnownCycles
-                    ? flipSignature(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1], now: x) : []
+                let flip = flipSignature(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1], now: x)
                 if rounds == 0 {
                     firstFlip = flip
                     // one known to go round in a cycle back to these decisions, or to those this round makes: they
                     // stay, now or once it is solved (see `cyclingFlips`)
-                    if Self.skipsKnownCycles && !flip.isEmpty, let known = cyclingFlips[flip], known.times >= 2 {
+                    if !flip.isEmpty, let known = cyclingFlips[flip], known.times >= 2 {
                         cyclingFlipsSeen &+= 1
                         if cyclingFlipsSeen % 8 != 0 {
                             if known.round == 0 {
@@ -1900,7 +1850,7 @@ public final class Simulator {
                 // a flip that did not converge from where the solve ended the last time, but did from memory, starts
                 // from memory at once (see `flipsFailingFromEnd`)
                 var triedMemory = false
-                if Self.retriesFromMemory && Self.triesMemoryFirst && !flip.isEmpty && flipsFailingFromEnd.contains(flip),
+                if !flip.isEmpty && flipsFailingFromEnd.contains(flip),
                    let start = rememberedStart(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1]) {
                     triedMemory = true
                     memoryRetries += 1
@@ -1931,7 +1881,7 @@ public final class Simulator {
                     decisionRoundIterations += newtonIterations - roundStart
                     if !converged { failedRoundIterations += newtonIterations - roundStart }
                     trace?("   Newton-Raphson " + (converged ? "converged" : "did not converge"))
-                    if !triedMemory && !converged && !isFailed && Self.retriesFromMemory,
+                    if !triedMemory && !converged && !isFailed,
                        let start = rememberedStart(previous: heldRounds[kept - 1], at: solvedRounds[kept - 1]) {
                         memoryRetries += 1
                         trace?("   again from the solution before the sources that moved last decided as they do now")
@@ -1942,7 +1892,7 @@ public final class Simulator {
                         memoryRetryIterations += newtonIterations - retryStart
                         if converged {
                             memoryRetriesConverged += 1
-                            if Self.triesMemoryFirst && !flip.isEmpty {
+                            if !flip.isEmpty {
                                 if flipsFailingFromEnd.count >= 64 { flipsFailingFromEnd.removeAll() }
                                 flipsFailingFromEnd.insert(flip)
                             }
@@ -2011,7 +1961,7 @@ public final class Simulator {
         guard olderX.count == x.count, ratio.isFinite, ratio > 0 else { return }
         let block = plan.flatMap { $0.n == x.count ? $0.block : nil }
         // (a maker's model's piecewise-linear sources take the same iterations from either guess)
-        if Self.choosesPredictor && !dampsNewton && quadraticReady && oldestX.count == x.count {
+        if !dampsNewton && quadraticReady && oldestX.count == x.count {
             let r = ratio
             let s = Double(1 << lastLevel) / Double(1 << olderLevel)
             let w0 = (r + 1) * (r + 1 + s) / (1 + s), w1 = -r * (r + 1 + s) / s, w2 = r * (r + 1) / ((1 + s) * s)
@@ -2043,26 +1993,6 @@ public final class Simulator {
                 }
             }
             guessesMade = true
-            return
-        }
-        if Self.predictsQuadratically && quadraticReady && oldestX.count == x.count {
-            // the parabola through the last three substeps' starts (the last ends at x), at this substep's end: with
-            // r this substep's length and s the one before last's, over the last's, x's weight is (r + 1)(r + 1 + s)/(1 + s),
-            // the last start's −r(r + 1 + s)/s, the one before's r(r + 1)/((1 + s)s) (3, −3 and 1 for equal lengths)
-            let r = ratio
-            let s = Double(1 << lastLevel) / Double(1 << olderLevel)
-            let w0 = (r + 1) * (r + 1 + s) / (1 + s), w1 = -r * (r + 1 + s) / s, w2 = r * (r + 1) / ((1 + s) * s)
-            x.withUnsafeMutableBufferPointer { x in
-                olderX.withUnsafeBufferPointer { older in
-                    oldestX.withUnsafeBufferPointer { oldest in
-                        if let block {
-                            for k in block { x[k] = w0 * x[k] + w1 * older[k] + w2 * oldest[k] }
-                        } else {
-                            for k in 0..<x.count { x[k] = w0 * x[k] + w1 * older[k] + w2 * oldest[k] }
-                        }
-                    }
-                }
-            }
             return
         }
         x.withUnsafeMutableBufferPointer { x in
@@ -2121,14 +2051,14 @@ public final class Simulator {
         // have stopped finding it (a transistor's slopes move at every iteration, and its block never stamps as it was
         // solved)
         if confirmRest > 0 { confirmRest -= 1 }
-        let confirming = reusing && (confirmRest == 0 || !Self.restsConfirmation)
+        let confirming = reusing && confirmRest == 0
         if chordRest > 0 { chordRest -= 1 }
-        let chording = reusing && (chordRest == 0 || !Self.restsChords)
+        let chording = reusing && chordRest == 0
         // only a solve that ends confirmed leaves stamps to start the next from, and only a solve that can start again
         // from where it started takes them (not one that a single iteration from the prediction ends)
         if reuseRest > 0 { reuseRest -= 1 }
         let mayReuse = confirming && confirmedStamps && junctionConductance == 0 && newtonFromSolveStart
-            && !(onlyQuasiLinear && predictedSolve) && (reuseRest == 0 || !Self.restsReuse)
+            && !(onlyQuasiLinear && predictedSolve) && reuseRest == 0
         confirmedStamps = false
         reuseAllowed = mayReuse
         // whether the first iteration started from them
@@ -2365,7 +2295,7 @@ public final class Simulator {
             if dampsNewton && iteration >= Self.dampingAfter && !limiting {
                 damping = change > 0.5 * lastChange ? max(damping / 2, 1.0 / 64) : min(damping * 2, 1)
             }
-            if Self.givesUpWhenStalled && dampsNewton && iterations == Self.halvingIterations && iteration >= 3 && !limiting {
+            if dampsNewton && iterations == Self.halvingIterations && iteration >= 3 && !limiting {
                 stalls = change > 0.5 * lastChange ? stalls + 1 : 0
                 if stalls >= Self.stallsTolerated {
                     trace?("    no nearer after \(stalls) iterations: the substep is halved")
@@ -2510,7 +2440,7 @@ public final class Simulator {
         // (where nonlinear behavioural sources are, as with factors kept past still columns: the synth voice, whose
         // confirmations are exact or nothing, took a ninth more iterations with confirmations by balance, and
         // refactored half as often again)
-        let balancing = Self.confirmsByBalance && dampsNewton && snapshotPoint.count == x.count
+        let balancing = dampsNewton && snapshotPoint.count == x.count
         var changed = false
         let finite = values.withUnsafeBufferPointer { v -> Bool in
             keptRowScale.withUnsafeBufferPointer { scale -> Bool in
@@ -2633,7 +2563,7 @@ public final class Simulator {
         // output stage, is what this is for; in a transistor circuit an unknown that held still since the factoring
         // starts to move at the next iteration as often as not, and the chord steps then contract slowly: the synth
         // voice took a fifth more iterations a step, and nearly twice the time)
-        let relaxed = Self.reusesPastStillColumns && dampsNewton && keptPointValid && keptPoint.count == x.count
+        let relaxed = dampsNewton && keptPointValid && keptPoint.count == x.count
         return values.withUnsafeBufferPointer { v -> Bool in
             keptValues.withUnsafeBufferPointer { kept -> Bool in
                 stampedSlots.withUnsafeBufferPointer { slots -> Bool in
@@ -3313,7 +3243,7 @@ public final class Simulator {
 
     /// A part switched what the base matrix holds (see `switchedMoved`)
     private func matrixSwitched() {
-        if Self.keepsSwitchedMatrices { switchedMoved = true } else { matrixIsCurrent = false }
+        switchedMoved = true
     }
 
     /// What the parts that switch the base matrix have switched into it, into `switchedScratch`: each chip pin driven,
@@ -4218,22 +4148,22 @@ public final class Simulator {
         stampCurrent(rhs, plus, minus, p * (current - g * v))
     }
 
-    /// Whether a conducting junction's step down is taken through its exponential too (off: only steps up are
-    /// limited, as SPICE limits them, for comparing). Newton-Raphson's step down, linear in the exponential, moves a
-    /// junction that the circuit is turning off by at most nVt an iteration however far its current is to fall (a
-    /// factor of e an iteration): CI's traces of the opto compressor's LED and the guitar fuzz's transistors, a dozen
-    /// such iterations and the substep given up, halved and given up again, a hundred iterations a step.
-    public static var limitsJunctionsDown = true
+    /// A conducting junction's step down is taken through its exponential too, not only its steps up as SPICE limits
+    /// them. Newton-Raphson's step down, linear in the exponential, moves a junction that the circuit is turning off by
+    /// at most nVt an iteration however far its current is to fall (a factor of e an iteration): CI's traces of the opto
+    /// compressor's LED and the guitar fuzz's transistors, a dozen such iterations and the substep given up, halved and
+    /// given up again, a hundred iterations a step.
+    ///
     /// The most a step down so taken falls, in nVt (a factor of e^12 in current)
     static let junctionDropLimit = 12.0
 
     /// Junction voltage limiting (as in SPICE's pnjlim), so Newton does not overshoot into exp() overflow; and, going
-    /// down (see `limitsJunctionsDown`), to the voltage at which the junction carries the current its linearisation
+    /// down (see `junctionDropLimit`), to the voltage at which the junction carries the current its linearisation
     /// gives at the new one: the same step through the logarithm that SPICE takes going up
     private func limitJunction(_ new: Double, old: Double, nvt: Double, critical: Double) -> Double {
         // (conducting: its conductance above about 1e-7 S; and a step of more than half nVt, which Newton-Raphson
         // takes while the junction's current falls by more than half)
-        if Self.limitsJunctionsDown && new < old && old > critical - 16 * nvt {
+        if new < old && old > critical - 16 * nvt {
             let argument = 1 + (new - old) / nvt
             if argument > 0 && argument < 0.5 {
                 limiting = true
@@ -4822,7 +4752,7 @@ public final class Simulator {
             let behavior = Behavior(expression: expression, program: program ?? SpiceExpression.Program(expression), inputs: inputs,
                                     voltage: element[param: "mode"] >= 0.5)
             longest = max(longest, behavior.program.count)
-            if Self.linearAffineSources && expression.isAffine {
+            if expression.isAffine {
                 let zeros = [Double](repeating: 0, count: max(inputs.count, 1))
                 behavior.linear = true
                 behavior.offset = zeros.withUnsafeBufferPointer { expression.value($0.baseAddress!, time: 0, celsius: kelvin - 273.15) }
@@ -4878,7 +4808,7 @@ public final class Simulator {
         // its decisions are made at, have moved less than half its reach from the last evaluation's: no decision in it
         // can have changed, so its value has moved along its slopes and its stamp is exactly the one it made.
         var bypass = false
-        if Self.bypassesDevices && b.evaluated && b.lastCelsius == celsius && !b.program.readsTime {
+        if b.evaluated && b.lastCelsius == celsius && !b.program.readsTime {
             // (a deciding source's value moves with where its decisions are held, which the first test does not see)
             var near = !b.decides
             var furthest = 0.0, finite = true
@@ -4915,7 +4845,7 @@ public final class Simulator {
             }
             b.lastValue = r[program.value]
             b.lastCelsius = celsius
-            b.reach = Self.bypassesDevices && program.piecewiseLinear ? program.straightReach(r, rates: behaviorRates) : 0
+            b.reach = program.piecewiseLinear ? program.straightReach(r, rates: behaviorRates) : 0
             b.evaluated = true
             b.evaluations += 1
         }
@@ -5146,7 +5076,7 @@ public final class Simulator {
             }
             // within half its reach of its last evaluation, both where it ended and where its decisions are held (and
             // its decisions made where it ended): every decision in it is as it was there, the same both ways
-            if Self.bypassesDevices && b.evaluated && b.reach > 0 && b.lastCelsius == celsius {
+            if b.evaluated && b.reach > 0 && b.lastCelsius == celsius {
                 let last = b.lastInputs, lastDecisions = b.lastDecisions
                 var furthest = 0.0, finite = true
                 for k in 0..<count {
@@ -5240,7 +5170,7 @@ public final class Simulator {
         var v = vd
         let junction: (current: Double, conductance: Double)
         var (q, cap) = (0.0, 0.0)
-        if Self.bypassesDevices && !linearising && abs(vd - d.lastVoltage) <= Self.bypassTolerance * (1 + abs(vd)) {
+        if !linearising && abs(vd - d.lastVoltage) <= Self.bypassTolerance * (1 + abs(vd)) {
             v = d.lastVoltage
             junction = (d.lastCurrent, d.lastConductance)
             (q, cap) = (d.lastCharge, d.lastCapacitance)
@@ -6946,7 +6876,7 @@ public final class Simulator {
         pinStatesMoved = false
         let key = pinSetupKey()
         defer { pinKey = key }
-        guard Self.followsPinSwitches, key != pinKey, hasNonlinear, let plan, plan.n == x.count, !plan.block.isEmpty else { return }
+        guard key != pinKey, hasNonlinear, let plan, plan.n == x.count, !plan.block.isEmpty else { return }
         let change = PinSwitch(from: pinKey, to: key)
         let before = plan.block.map { x[$0] }
         pinSwitch = (change, planSerial, before)
