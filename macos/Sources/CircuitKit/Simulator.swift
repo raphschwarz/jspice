@@ -1022,6 +1022,8 @@ public final class Simulator {
         var noise: UInt64
         var delay: DelayHistory?
         var brigade: BucketBrigade?
+        var spring: SpringTank?
+        var effects: EffectsProcessor?
         var kind: ElementKind
         var bus: BusPartState
     }
@@ -1043,7 +1045,7 @@ public final class Simulator {
                 meyer: i < meyerHistory.count ? meyerHistory[i] : MeyerHistory(),
                 digital: digitalState[i], logic: logicStates[i], module: moduleStates[i],
                 noise: noiseState[i], delay: delayHistory[i], brigade: bucketBrigades[i],
-                kind: element.kind, bus: i < busParts.count ? busParts[i] : BusPartState())
+                spring: springTanks[i], effects: effectsProcessors[i], kind: element.kind, bus: i < busParts.count ? busParts[i] : BusPartState())
         }
         // chips keep running through edits that leave their firmware alone
         var previousChips: [UUID: (firmware: Data?, chip: Microcontroller, carry: Double)] = [:]
@@ -1210,6 +1212,10 @@ public final class Simulator {
                    brigade.buckets.count == BucketBrigade.count(constants[i].value) {
                     bucketBrigades[i] = brigade
                 }
+                // a spring reverb's springs and an FV-1's delay memory and LFO ring on through the edit (an FV-1 given
+                // another program starts it afresh as it next steps)
+                if let spring = state.spring, element.kind == .springReverb { springTanks[i] = spring }
+                if let effects = state.effects, element.kind == .effectsProcessor { effectsProcessors[i] = effects }
             } else {
                 initialiseState(i)
             }
@@ -1302,6 +1308,7 @@ public final class Simulator {
         // each noise source has its own sequence, the same every run
         noiseState[i] = 0x9E37_79B9_7F4A_7C15 &* UInt64(i + 1) | 1
         delayHistory[i] = nil
+        springTanks[i] = nil
         bucketBrigades[i] = nil
         effectsProcessors[i] = nil
         // a comparator starts low, a divider at the start of its count (output high)
