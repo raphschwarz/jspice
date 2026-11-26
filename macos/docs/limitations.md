@@ -22,7 +22,7 @@ Part stress checks only parts with a rating: a transistor's, a pot's or an op-am
 
 ## Microcontrollers
 
-SPI and I²C work as masters only, with no slave mode. The STM32 compiles no sketches (its firmware is built elsewhere); its SPI, I²C and I²S reach the codec part, not other bus parts bit by bit; a firmware whose I²S port is a slave to its codec (Rings' later boards) runs at 48 kHz. The F373's I²C is kept, not run. The AVR has no watchdog, sleep modes or analog comparator. The Pico runs one core, and its firmware cannot write to flash (no LittleFS or EEPROM emulation). See [microcontrollers.md](microcontrollers.md).
+SPI and I²C work as masters only, with no slave mode. The STM32 compiles no sketches (its firmware is built elsewhere); its SPI frames reach the parts wired to its pins edge by edge (a 74HC595, an MCP4921, a TLC5947, a 74HC165 on MISO), but its I²C and I²S reach their parts a transaction or a frame at a time on the chip's own ports, not bit by bit: an MCP4725, PCA9685, 24LC EEPROM or codec answers on one of its I²C ports (the PCA9685 also from bit-banged GPIO writes), and an I²S DAC or codec takes its frames only from an I²S port; a firmware whose I²S port is a slave to its codec (Rings' later boards) runs at 48 kHz. The F373's I²C is kept, not run. The AVR has no watchdog, sleep modes or analog comparator. The Pico runs one core, and its firmware cannot write to flash (no LittleFS or EEPROM emulation). See [microcontrollers.md](microcontrollers.md).
 
 ## Schematic capture
 
