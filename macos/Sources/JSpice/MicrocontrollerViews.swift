@@ -1,11 +1,124 @@
+import AppKit
+import Combine
 import SwiftUI
 import CircuitKit
 
 /// Where a microcontroller's last upload got to
 enum SketchStatus: Equatable {
-    case building
-    case uploaded(bytes: Int)
-    case failed(errors: [SketchBuilder.Diagnostic], log: String)
+    /// Compiling: the step it is at ("Compiling the Arduino AVR core (first build only): 37 of 112 files")
+    case building(step: String, fraction: Double?)
+    /// Loaded into the chip (the sketch's warnings, if it was compiled here)
+    case uploaded(bytes: Int, warnings: [SketchBuilder.Diagnostic])
+    case failed(SketchFailure)
+    case cancelled
+
+    var isBuilding: Bool {
+        if case .building = self { return true }
+        return false
+    }
+}
+
+/// Why a sketch did not build: errors on its lines, or a problem no line explains, and all the compiler said
+struct SketchFailure: Equatable {
+    var errors: [SketchBuilder.Diagnostic] = []
+    var warnings: [SketchBuilder.Diagnostic] = []
+    /// What went wrong outside the sketch's lines (the core, a library, linking, size, a missing compiler)
+    var problem: String?
+    var log: String = ""
+
+    var headline: String {
+        if !errors.isEmpty { return "\(errors.count) error\(errors.count == 1 ? "" : "s") in the sketch" }
+        return "The sketch did not build"
+    }
+}
+
+extension SketchBuilder.Diagnostic {
+    /// "Line 12: 'foo' was not declared in this scope"
+    var lineText: String { "Line \(line)\(column > 0 ? ":\(column)" : ""): \(message)" }
+}
+
+// MARK: - Chip support activity
+
+/// What chip support is doing for each family, for the app as a whole: it outlives the sheet or Settings tab that
+/// started an install, keeps one install at a time per family, and can cancel it
+@MainActor
+final class ChipSupportModel: ObservableObject {
+    static let shared = ChipSupportModel()
+
+    @Published private(set) var states: [ChipFamily: ChipSupport.State] = [:]
+    private var installs: [ChipFamily: (id: UUID, task: Task<Void, Never>)] = [:]
+
+    private init() { refresh() }
+
+    func state(_ family: ChipFamily) -> ChipSupport.State {
+        states[family] ?? ChipSupport.installedState(family)
+    }
+
+    func isBusy(_ family: ChipFamily) -> Bool { installs[family] != nil }
+
+    /// Reads what is installed again (an Arduino IDE may have been installed meanwhile); a family installing, or one
+    /// whose install failed, keeps its state
+    func refresh() {
+        for family in ChipFamily.allCases where installs[family] == nil {
+            if case .failed? = states[family] { continue }
+            states[family] = ChipSupport.installedState(family)
+        }
+    }
+
+    func install(_ family: ChipFamily) {
+        guard installs[family] == nil else { return }
+        let id = UUID()
+        states[family] = .downloading(fraction: 0, message: "Starting…")
+        // (the model is the app's one, so the tasks name it rather than capture it)
+        let task = Task { @MainActor in
+            do {
+                try await ChipSupport.install(family) { progress in
+                    Task { @MainActor in ChipSupportModel.shared.update(family, id, progress) }
+                }
+                ChipSupportModel.shared.finish(family, id, nil)
+            } catch {
+                ChipSupportModel.shared.finish(family, id, error)
+            }
+        }
+        installs[family] = (id, task)
+    }
+
+    func cancel(_ family: ChipFamily) {
+        installs[family]?.task.cancel()
+    }
+
+    func remove(_ family: ChipFamily) {
+        guard installs[family] == nil else { return }
+        do {
+            try ChipSupport.uninstall(family)
+            states[family] = ChipSupport.installedState(family)
+        } catch {
+            states[family] = .failed("Could not remove it: \(error.localizedDescription)")
+        }
+    }
+
+    /// Clears a failure's message
+    func dismissFailure(_ family: ChipFamily) {
+        guard installs[family] == nil else { return }
+        states[family] = ChipSupport.installedState(family)
+    }
+
+    private func update(_ family: ChipFamily, _ id: UUID, _ progress: ChipSupport.Progress) {
+        // (a report that arrives after the install ended, or from an earlier one, is old news)
+        guard installs[family]?.id == id, progress.stage != .installed else { return }
+        states[family] = ChipSupport.State(progress)
+    }
+
+    /// The install ended: done (no error), cancelled, or failed
+    private func finish(_ family: ChipFamily, _ id: UUID, _ error: Error?) {
+        guard installs[family]?.id == id else { return }
+        installs[family] = nil
+        if let error, !(error is CancellationError), (error as? URLError)?.code != .cancelled {
+            states[family] = .failed((error as? ChipSupport.InstallError)?.description ?? error.localizedDescription)
+        } else {
+            states[family] = ChipSupport.installedState(family)
+        }
+    }
 }
 
 /// The sketch new microcontrollers start with
@@ -31,7 +144,15 @@ let blinkTemplate = """
 /// while other parts are selected.
 struct MicrocontrollerSection: View {
     @ObservedObject var editor: EditorState
+    @ObservedObject private var chipSupport = ChipSupportModel.shared
     let element: Element
+
+    init(editor: EditorState, element: Element) {
+        _editor = ObservedObject(wrappedValue: editor)
+        self.element = element
+    }
+
+    private var status: SketchStatus? { editor.sketchStatus[element.id] }
 
     var body: some View {
         Section {
@@ -41,20 +162,17 @@ struct MicrocontrollerSection: View {
                 Text(statusText).font(.callout)
                 Spacer()
             }
-            if case .failed(let errors, _)? = editor.sketchStatus[element.id] {
-                ForEach(Array(errors.prefix(4).enumerated()), id: \.offset) { _, error in
-                    Text("Line \(error.line): \(error.message)")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.red)
-                        .lineLimit(3)
-                }
-            }
+            SketchStatusDetails(status: status, errorLimit: 4)
             if element.kind.board?.compilesSketches ?? true {
                 HStack {
                     Button("Edit Sketch…") { editor.editingSketch = element.id }
-                    Button("Upload") { editor.uploadSketch(element.id, code: element.code ?? element.kind.board?.blinkSketch ?? blinkTemplate) }
-                        .disabled(editor.sketchStatus[element.id] == .building)
-                        .help("Compile the sketch and load it into the chip (⌘U)")
+                    if status?.isBuilding == true {
+                        Button("Cancel") { editor.cancelUpload(element.id) }
+                            .help("Stop compiling")
+                    } else {
+                        Button("Upload") { editor.uploadSketch(element.id, code: element.code ?? element.kind.board?.blinkSketch ?? blinkTemplate) }
+                            .help("Compile the sketch and load it into the chip (⌘U)")
+                    }
                     Button("Restart") { editor.simulation.reset() }
                         .help("Start the circuit, and the chip, from the beginning")
                 }
@@ -68,11 +186,24 @@ struct MicrocontrollerSection: View {
             }
             Button("Load Firmware…") { editor.loadFirmware(element.id) }
                 .help("Load a firmware file built elsewhere (Intel HEX or a raw image), as a programmer flashes it")
-            if element.kind.board?.compilesSketches ?? true, let family = element.kind.board?.family, !ChipSupport.isAvailable(family) {
-                Text("Compiling sketches needs chip support: \(family.summary).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Install Chip Support…") { editor.showChipSupport = true }
+            if let family = element.kind.board?.sketchFamily {
+                switch chipSupport.state(family) {
+                case .installed:
+                    EmptyView()
+                case .downloading(let fraction, let message):
+                    ProgressView(value: fraction) { Text("Installing chip support").font(.caption) } currentValueLabel: {
+                        Text(message).font(.caption)
+                    }
+                    Button("Cancel Install") { chipSupport.cancel(family) }
+                case .unpacking(let message):
+                    ProgressView { Text(message).font(.caption) }
+                    Button("Cancel Install") { chipSupport.cancel(family) }
+                case .notInstalled, .failed:
+                    Text("Compiling sketches needs chip support: \(family.summary).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Install Chip Support…") { editor.showChipSupport = true }
+                }
             }
             if BottomDock.chips(in: editor.circuit).contains(where: { $0.id == element.id }) {
                 let isSTM32 = element.kind.board?.compilesSketches == false
@@ -93,13 +224,80 @@ struct MicrocontrollerSection: View {
     }
 
     private var statusText: String {
-        switch editor.sketchStatus[element.id] {
-        case .building?: return "Compiling…"
-        case .uploaded(let bytes)?: return "Uploaded: \(bytes.formatted()) of \((element.kind.board?.flashSize(for: element) ?? 32_256).formatted()) bytes"
-        case .failed(let errors, _)?: return errors.isEmpty ? "The sketch did not build" : "\(errors.count) error\(errors.count == 1 ? "" : "s")"
+        let board = element.kind.board
+        let noun = board?.programNoun ?? "sketch"
+        switch status {
+        case .building(let step, _)?: return step + "…"
+        case .uploaded(let bytes, _)?:
+            return "Loaded: \(bytes.formatted()) of \((board?.flashSize(for: element) ?? 32_256).formatted()) bytes"
+        case .failed(let failure)?: return failure.headline
+        case .cancelled?: return "Compiling was cancelled"
         case nil:
-            if let firmware = element.firmware { return "Running its sketch (\(firmware.count.formatted()) bytes)" }
-            return "No sketch yet: edit one and upload it"
+            if let firmware = element.firmware { return "Running its \(noun) (\(firmware.count.formatted()) bytes)" }
+            return board?.compilesSketches ?? true ? "No sketch yet: edit one and upload it"
+                                                   : "No firmware yet: load a .hex or .bin file"
+        }
+    }
+}
+
+/// What a build said, under the inspector's status line and in the sketch editor: the sketch's errors and warnings
+/// on their lines, a problem no line explains, and the compiler's whole output to open
+struct SketchStatusDetails: View {
+    let status: SketchStatus?
+    /// How many errors and warnings to list (nil: all)
+    var errorLimit: Int?
+
+    var body: some View {
+        switch status {
+        case .building(_, let fraction?)?:
+            ProgressView(value: fraction)
+        case .building?:
+            ProgressView().progressViewStyle(.linear)
+        case .uploaded(_, let warnings)? where !warnings.isEmpty:
+            diagnostics(warnings)
+        case .failed(let failure)?:
+            if let problem = failure.problem {
+                Text(problem)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            diagnostics(failure.errors + failure.warnings)
+            if !failure.log.isEmpty {
+                DisclosureGroup("Compiler Output") {
+                    ScrollView {
+                        Text(failure.log)
+                            .font(.caption2.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 160)
+                }
+                .font(.caption)
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func diagnostics(_ all: [SketchBuilder.Diagnostic]) -> some View {
+        let shown = errorLimit.map { Array(all.prefix($0)) } ?? all
+        ForEach(Array(shown.enumerated()), id: \.offset) { _, diagnostic in
+            Label {
+                Text(diagnostic.lineText)
+                    .font(.caption.monospaced())
+                    .lineLimit(errorLimit == nil ? nil : 3)
+                    .textSelection(.enabled)
+            } icon: {
+                Image(systemName: diagnostic.isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                    .font(.caption)
+            }
+            .foregroundStyle(diagnostic.isError ? Color.red : Color.orange)
+        }
+        if shown.count < all.count {
+            Text("and \(all.count - shown.count) more in the sketch editor").font(.caption).foregroundStyle(.secondary)
         }
     }
 }
@@ -108,7 +306,16 @@ struct MicrocontrollerSection: View {
 struct SerialMonitor: View {
     @ObservedObject var simulation: SimulationController
     let index: Int
+    /// The chip's board, for what to say before it has sent anything (when not given: an STM32 running is told apart
+    /// by its chip)
+    var board: Board? = nil
     @State private var input = ""
+
+    private var placeholder: String {
+        if let board { return board.serialMonitorPlaceholder }
+        return simulation.stm32(index) != nil ? Board.stm32f405.serialMonitorPlaceholder
+                                              : "Nothing yet. What the chip sends on its serial port appears here."
+    }
 
     var body: some View {
         DockColumn("Serial Monitor") {
@@ -116,7 +323,7 @@ struct SerialMonitor: View {
                 let text = simulation.serialOutput(index)
                 ScrollViewReader { proxy in
                     ScrollView {
-                        Text(text.isEmpty ? "Nothing yet. Serial.begin(9600) and Serial.println() write here." : text)
+                        Text(text.isEmpty ? placeholder : text)
                             .font(.caption.monospaced())
                             .foregroundStyle(text.isEmpty ? .secondary : .primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -281,7 +488,21 @@ struct SketchEditorSheet: View {
     @State private var code = ""
     @State private var loaded = false
 
+    @ObservedObject private var chipSupport = ChipSupportModel.shared
+
+    init(editor: EditorState, elementID: UUID) {
+        _editor = ObservedObject(wrappedValue: editor)
+        self.elementID = elementID
+    }
+
     private var board: Board? { editor.circuit[elementID]?.kind.board }
+    private var status: SketchStatus? { editor.sketchStatus[elementID] }
+    private var isBuilding: Bool { status?.isBuilding == true }
+    private var isInstalled: Bool {
+        guard let family = board?.sketchFamily else { return false }
+        if case .installed = chipSupport.state(family) { return true }
+        return false
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -289,10 +510,13 @@ struct SketchEditorSheet: View {
                 Text(editor.circuit[elementID]?.name ?? "Sketch").font(.headline)
                 Text(board.map { $0.title == $0.chip ? $0.chip : "\($0.chip) · \($0.title)" } ?? "").foregroundStyle(.secondary)
                 Spacer()
-                if editor.sketchStatus[elementID] == .building { ProgressView().controlSize(.small) }
-                Button("Upload") { upload() }
-                    .keyboardShortcut("u", modifiers: .command)
-                    .disabled(editor.sketchStatus[elementID] == .building)
+                if isBuilding {
+                    ProgressView().controlSize(.small)
+                    Button("Cancel") { editor.cancelUpload(elementID) }
+                } else {
+                    Button("Upload") { upload() }
+                        .keyboardShortcut("u", modifiers: .command)
+                }
                 Button("Done") { close() }
                     .keyboardShortcut(.defaultAction)
             }
@@ -307,7 +531,7 @@ struct SketchEditorSheet: View {
             messages
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
-                .frame(height: 110)
+                .frame(height: 150)
         }
         .frame(minWidth: 640, minHeight: 520)
         .onAppear {
@@ -321,34 +545,58 @@ struct SketchEditorSheet: View {
     private var messages: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
-                switch editor.sketchStatus[elementID] {
-                case .building?:
-                    Text("Compiling…").foregroundStyle(.secondary)
-                case .uploaded(let bytes)?:
-                    Label("Uploaded: \(bytes.formatted()) of \((board?.flashSize ?? 32_256).formatted()) bytes. The chip restarted with the new sketch.",
+                switch status {
+                case .building(let step, _)?:
+                    Text(step + "…").foregroundStyle(.secondary)
+                    SketchStatusDetails(status: status)
+                case .uploaded(let bytes, _)?:
+                    let room = editor.circuit[elementID].flatMap { element in board?.flashSize(for: element) } ?? board?.flashSize ?? 32_256
+                    Label("Uploaded: \(bytes.formatted()) of \(room.formatted()) bytes. The chip restarted with the new sketch.",
                           systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
-                case .failed(let errors, let log)?:
-                    if errors.isEmpty {
-                        Text(log).font(.caption.monospaced()).foregroundStyle(.red)
-                    }
-                    ForEach(Array(errors.enumerated()), id: \.offset) { _, error in
-                        Text("Line \(error.line):\(error.column): \(error.message)")
-                            .font(.caption.monospaced())
-                            .foregroundStyle(error.isError ? .red : .orange)
-                    }
+                    SketchStatusDetails(status: status)
+                case .failed(let failure)?:
+                    Text(failure.headline).font(.callout.weight(.semibold)).foregroundStyle(.red)
+                    SketchStatusDetails(status: status)
+                case .cancelled?:
+                    Text("Compiling was cancelled.").foregroundStyle(.secondary)
                 case nil:
-                    if ChipSupport.isAvailable(board?.family ?? .avr) {
+                    if board?.compilesSketches == false {
+                        Text("The \(board?.chip ?? "chip") runs firmware built with its maker's tools: load it with Load Firmware….")
+                            .foregroundStyle(.secondary)
+                    } else if isInstalled {
                         Text("Write a sketch as in the Arduino IDE, then Upload (⌘U).").foregroundStyle(.secondary)
-                    } else {
+                    }
+                }
+                // chip support, installed from here (a second sheet cannot open over this one)
+                if let family = board?.sketchFamily {
+                    switch chipSupport.state(family) {
+                    case .installed:
+                        EmptyView()
+                    case .downloading(let fraction, let message):
                         HStack {
-                            Text("Compiling needs chip support for the \(board?.chip ?? "chip").").foregroundStyle(.secondary)
-                            Button("Install…") { editor.showChipSupport = true }
+                            ProgressView(value: fraction) { Text("Installing chip support for the \(board?.chip ?? "chip")") }
+                                currentValueLabel: { Text(message) }
+                            Button("Cancel") { chipSupport.cancel(family) }
+                        }
+                    case .unpacking(let message):
+                        HStack {
+                            ProgressView { Text(message) }
+                            Button("Cancel") { chipSupport.cancel(family) }
+                        }
+                    case .notInstalled, .failed:
+                        if case .failed(let message) = chipSupport.state(family) {
+                            Text(message).font(.caption).foregroundStyle(.red)
+                        }
+                        HStack {
+                            Text("Compiling needs chip support for the \(board?.chip ?? "chip"): \(family.summary).")
+                                .foregroundStyle(.secondary)
+                            Button("Install") { chipSupport.install(family) }
                         }
                     }
                 }
             }
-            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -365,12 +613,67 @@ struct SketchEditorSheet: View {
 
 // MARK: - Chip support
 
-/// Installs and removes what compiling for each chip family takes, like the Arduino IDE's boards manager
+/// Each chip family's chip support, to install, cancel or remove, like the Arduino IDE's boards manager. It needs no
+/// circuit window: its installs belong to `ChipSupportModel`, and go on when the list is closed.
+struct ChipSupportList: View {
+    @ObservedObject private var model = ChipSupportModel.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(ChipFamily.allCases) { family in
+                row(family)
+            }
+        }
+        .onAppear { model.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in model.refresh() }
+    }
+
+    @ViewBuilder
+    private func row(_ family: ChipFamily) -> some View {
+        let state = model.state(family)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "cpu").font(.title2).foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(family.title).font(.headline)
+                Text(family.summary).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                switch state {
+                case .notInstalled:
+                    Text("Not installed").font(.caption).foregroundStyle(.secondary)
+                case .downloading(let fraction, let message):
+                    ProgressView(value: fraction)
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                case .unpacking(let message):
+                    ProgressView().progressViewStyle(.linear)
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                case .installed(let description):
+                    Text(description).font(.caption)
+                case .failed(let message):
+                    Text(message).font(.caption).foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+            }
+            Spacer()
+            if state.isBusy {
+                Button("Cancel") { model.cancel(family) }
+            } else if ChipSupport.installedVersions(family) != nil {
+                Button("Remove") { model.remove(family) }
+            } else if case .installed = state {
+                // (an Arduino IDE's toolchain: JSpice has nothing of its own to remove)
+                EmptyView()
+            } else if case .failed = state {
+                Button("Try Again") { model.install(family) }
+            } else {
+                Button("Install") { model.install(family) }
+            }
+        }
+    }
+}
+
+/// Chip Support in a circuit window: the list, and Done
 struct ChipSupportSheet: View {
     @ObservedObject var editor: EditorState
-    @State private var progress: [ChipFamily: ChipSupport.Progress] = [:]
-    @State private var failure: [ChipFamily: String] = [:]
-    @State private var refresh = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -383,66 +686,15 @@ struct ChipSupportSheet: View {
             .padding(20)
             Divider()
             VStack(alignment: .leading, spacing: 16) {
-                Text("Microcontrollers run real firmware compiled from your sketch. The compiler and the Arduino core come from their makers' package indexes (Arduino's, and arduino-pico's for the Pico); JSpice downloads them once and keeps them in its Application Support folder.")
+                Text("Microcontrollers run real firmware compiled from your sketch. The compiler and the Arduino core come from their makers' package indexes (Arduino's, and arduino-pico's for the Pico); JSpice downloads them once and keeps them in its Application Support folder. An install goes on if this sheet is closed.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(ChipFamily.allCases) { family in
-                    row(family)
-                }
+                ChipSupportList()
             }
             .padding(20)
-            .id(refresh)
             Spacer(minLength: 0)
         }
         .frame(width: 560, height: 420)
-    }
-
-    @ViewBuilder
-    private func row(_ family: ChipFamily) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "cpu").font(.title2).foregroundStyle(Color.accentColor)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(family.title).font(.headline)
-                Text(family.summary).font(.caption).foregroundStyle(.secondary)
-                if let current = progress[family] {
-                    ProgressView(value: current.fraction)
-                    Text(current.message).font(.caption).foregroundStyle(.secondary)
-                } else if let message = failure[family] {
-                    Text(message).font(.caption).foregroundStyle(.red)
-                } else if let versions = ChipSupport.installedVersions(family) {
-                    Text("Installed: \(family.compilerFolder) \(versions.compiler), \(family.coreName) \(versions.core)").font(.caption)
-                } else if ChipSupport.isAvailable(family) {
-                    Text("Using the toolchain of an Arduino IDE installed on this Mac").font(.caption)
-                }
-            }
-            Spacer()
-            if progress[family] == nil {
-                if ChipSupport.installedVersions(family) != nil {
-                    Button("Remove") {
-                        try? ChipSupport.uninstall(family)
-                        refresh += 1
-                    }
-                } else {
-                    Button("Install") { install(family) }
-                }
-            }
-        }
-    }
-
-    private func install(_ family: ChipFamily) {
-        failure[family] = nil
-        progress[family] = ChipSupport.Progress(fraction: 0, message: "Starting…")
-        Task {
-            do {
-                try await ChipSupport.install(family) { update in
-                    Task { @MainActor in progress[family] = update }
-                }
-            } catch {
-                failure[family] = "\(error)"
-            }
-            progress[family] = nil
-            refresh += 1
-        }
     }
 }

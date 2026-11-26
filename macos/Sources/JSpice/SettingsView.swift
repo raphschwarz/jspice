@@ -167,60 +167,22 @@ struct APIKeySettings: View {
 
 // MARK: - Chip Support
 
-/// What each chip family's compiler is, as Chip Support shows it. Installing and removing stay in the Chip Support
-/// sheet, which belongs to a circuit window (its Done button closes the window's sheet), so this opens it there.
+/// Each chip family's compiler and core, to install, cancel or remove here as in a circuit window's Chip Support
+/// sheet: both show `ChipSupportList`, whose installs go on when either is closed
 struct ChipSupportSettings: View {
-    @State private var refresh = 0
-
     var body: some View {
         Form {
             Section {
-                ForEach(ChipFamily.allCases) { family in
-                    LabeledContent {
-                        Text(status(family))
-                            .multilineTextAlignment(.trailing)
-                    } label: {
-                        Text(family.title)
-                        Text(family.summary)
-                    }
-                }
+                ChipSupportList()
+                    .padding(.vertical, 4)
             } header: {
                 Text("Compilers")
             } footer: {
                 Text("Microcontrollers run real firmware compiled from your sketch. JSpice downloads each family's compiler and Arduino core once, from their makers' package indexes, into its Application Support folder. STM32 chips run firmware built elsewhere, and need none.")
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .id(refresh)
-            Section {
-                HStack {
-                    Text(EditorRegistry.active == nil ? "Open a circuit window to install or remove chip support."
-                                                      : "Install and remove chip support in the circuit window.")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Open Chip Support…", action: openSheet)
-                        .disabled(EditorRegistry.active == nil)
-                }
-            }
         }
         .formStyle(.grouped)
         .frame(width: 560, height: 380)
-        .onAppear { refresh += 1 }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in refresh += 1 }
-    }
-
-    private func status(_ family: ChipFamily) -> String {
-        if let versions = ChipSupport.installedVersions(family) {
-            return "Installed: \(family.compilerFolder) \(versions.compiler), \(family.coreName) \(versions.core)"
-        }
-        if ChipSupport.isAvailable(family) { return "Using an Arduino IDE's toolchain" }
-        return "Not installed"
-    }
-
-    /// Shows the Chip Support sheet in the circuit window used last, and closes Settings so that it can be seen
-    private func openSheet() {
-        guard let editor = EditorRegistry.active else { return }
-        let settingsWindow = NSApp.keyWindow
-        editor.showChipSupport = true
-        settingsWindow?.close()
     }
 }

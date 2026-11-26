@@ -932,31 +932,63 @@ final class EditorState: ObservableObject {
         edit("Edit Sketch") { $0.update(id) { $0.code = code } }
     }
 
-    /// Compiles the sketch off the main thread and, if it builds, loads it into the chip, which restarts
+    /// The sketch builds running, by part: each one's monitor (to cancel it), and an id that tells its reports and
+    /// result from those of a build started later
+    private var sketchBuilds: [UUID: (id: UUID, monitor: SketchBuilder.BuildMonitor)] = [:]
+
+    /// Compiles the sketch off the main thread and, if it builds, loads it into the chip, which restarts. The status
+    /// follows the build's steps; `cancelUpload` stops it.
     func uploadSketch(_ id: UUID, code: String) {
         let board = circuit[id]?.kind.board ?? .uno
         // (an STM32 compiles nothing here: its firmware is built elsewhere, and loaded)
-        guard board.compilesSketches else {
+        guard let family = board.sketchFamily else {
             loadFirmware(id)
             return
         }
-        guard ChipSupport.isAvailable(board.family) else {
-            showChipSupport = true
+        // (one build at a time for each part: ⌘U while one runs does nothing)
+        guard sketchBuilds[id] == nil else { return }
+        guard ChipSupport.isAvailable(family) else {
+            let problem = ChipSupportModel.shared.isBusy(family)
+                ? "Chip support for the \(board.chip) is still installing: Upload again once it is done."
+                : SketchBuilder.missingToolchainMessage(board)
+            sketchStatus[id] = .failed(SketchFailure(problem: problem))
+            if circuit[id]?.code != code { setSketchCode(id, code) }
+            // (the sketch editor installs it itself: a second sheet cannot open over it)
+            if editingSketch == nil { showChipSupport = true }
             return
         }
         let chip = circuit[id].flatMap { board.avrVariant(for: $0) }
-        sketchStatus[id] = .building
+        let build = UUID()
+        let monitor = SketchBuilder.BuildMonitor { [weak self] step in
+            Task { @MainActor in self?.sketchBuildProgressed(id, build, step) }
+        }
+        sketchBuilds[id] = (build, monitor)
+        sketchStatus[id] = .building(step: "Starting", fraction: nil)
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                SketchBuilder.build(code, board: board, chip: chip)
+                SketchBuilder.build(code, board: board, chip: chip, monitor: monitor)
             }.value
-            self?.finishUpload(id, code: code, result: result)
+            self?.finishUpload(id, build: build, code: code, result: result)
         }
     }
 
-    private func finishUpload(_ id: UUID, code: String, result: SketchBuilder.Result) {
+    /// Stops the part's sketch build, if one is running
+    func cancelUpload(_ id: UUID) {
+        sketchBuilds[id]?.monitor.cancel()
+    }
+
+    private func sketchBuildProgressed(_ id: UUID, _ build: UUID, _ step: SketchBuilder.BuildProgress) {
+        guard sketchBuilds[id]?.id == build else { return }
+        sketchStatus[id] = .building(step: step.message, fraction: step.fraction)
+    }
+
+    private func finishUpload(_ id: UUID, build: UUID, code: String, result: SketchBuilder.Result) {
+        guard sketchBuilds[id]?.id == build else { return }
+        sketchBuilds[id] = nil
         guard let firmware = result.firmware else {
-            sketchStatus[id] = .failed(errors: result.errors, log: result.log)
+            let status: SketchStatus = result.wasCancelled ? .cancelled
+                : .failed(SketchFailure(errors: result.errors, warnings: result.warnings, problem: result.problem, log: result.log))
+            sketchStatus[id] = status
             if circuit[id]?.code != code { setSketchCode(id, code) }
             return
         }
@@ -967,7 +999,7 @@ final class EditorState: ObservableObject {
         } }
         // the same firmware again: restart the chip, as uploading to a board does
         if unchanged, let index = circuit.index(of: id) { simulation.resetChip(index) }
-        sketchStatus[id] = .uploaded(bytes: firmware.count)
+        sketchStatus[id] = .uploaded(bytes: firmware.count, warnings: result.warnings)
     }
 
     /// Loads a firmware file a toolchain built (Intel HEX, or a raw image) into a microcontroller part, which restarts
@@ -977,26 +1009,41 @@ final class EditorState: ObservableObject {
         panel.message = "Choose firmware: an Intel HEX file (.hex) or a raw flash image (.bin)"
         guard panel.runModal() == .OK, let url = panel.url, let element = circuit[id] else { return }
         do {
+            // (the decoder refuses a file that is not Intel HEX it can read, or whose records span far more than any
+            // flash, before making an image of it)
             let firmware = try FirmwareFile.decode(try Data(contentsOf: url))
             let room = element.kind.board?.flashSize(for: element) ?? firmware.count
             guard firmware.count <= room else {
-                throw FirmwareTooLarge(bytes: firmware.count, room: room)
+                throw FirmwareTooLarge(bytes: firmware.count, room: room, chip: element.kind.board?.chip ?? "chip")
             }
             let unchanged = element.firmware == firmware
             edit("Load Firmware") { $0.update(id) { $0.firmware = firmware } }
             if unchanged, let index = circuit.index(of: id) { simulation.resetChip(index) }
-            sketchStatus[id] = .uploaded(bytes: firmware.count)
+            sketchStatus[id] = .uploaded(bytes: firmware.count, warnings: [])
         } catch {
             let alert = NSAlert()
-            alert.messageText = "That firmware can't be loaded"
-            alert.informativeText = "\(error)"
+            alert.messageText = "\(url.lastPathComponent) can't be loaded"
+            alert.informativeText = Self.firmwareProblem(error)
             alert.runModal()
         }
     }
 
+    /// What went wrong loading a firmware file, as a sentence
+    private static func firmwareProblem(_ error: Error) -> String {
+        let text: String
+        switch error {
+        case let error as FirmwareFile.DecodeError: text = error.description
+        case let error as FirmwareTooLarge: text = error.description
+        default: text = error.localizedDescription
+        }
+        guard let first = text.first else { return "" }
+        let sentence = first.uppercased() + text.dropFirst()
+        return sentence.hasSuffix(".") ? sentence : sentence + "."
+    }
+
     private struct FirmwareTooLarge: Error, CustomStringConvertible {
-        let bytes: Int, room: Int
-        var description: String { "It takes \(bytes) bytes; the chip has room for \(room)." }
+        let bytes: Int, room: Int, chip: String
+        var description: String { "It takes \(bytes) bytes; the \(chip)'s flash has room for \(room)." }
     }
 
     /// The selected part, if it is a microcontroller
