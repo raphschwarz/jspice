@@ -830,6 +830,55 @@ public enum SpiceNetlist {
 
     static func format(_ v: Double) -> String { String(format: "%.6g", v) }
 
+    /// How a part is written in an exported deck
+    public enum ExportForm: Sendable, Equatable {
+        /// As SPICE's own elements: R, C, L, V, I, D, Q, M, J, B (a pot as two resistors, a switch as a resistance)
+        case device
+        /// JSpice's own equations written as behavioural sources and coupled inductors: an op-amp, a tube, a transformer
+        case equations
+        /// As the parts it is simulated as (`PartExpansion`), or a block's parts, in a subcircuit
+        case subcircuit
+        /// A 0 V source in its place: what it plays (a sound, a keyboard) has no SPICE equivalent
+        case placeholder
+        /// Nothing to write: a wire, a label, an instrument that only reads its nets
+        case nothing
+        /// Left out, with a comment saying so
+        case noEquivalent
+    }
+
+    /// How each kind is exported. Every kind is listed, so a new part is decided on: one that `export` cannot write
+    /// is `noEquivalent`, and says why here.
+    public static func exportForm(_ kind: ElementKind) -> ExportForm {
+        switch kind {
+        case .resistor, .lamp, .potentiometer, .capacitor, .inductor, .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage,
+             .currentSource, .toggleSwitch, .pushButton, .footswitch, .jack, .ammeter, .loopProbe, .diode, .led, .zener, .npn, .pnp,
+             .nmos, .pmos, .njfet, .pjfet, .behavioralSource:
+            return .device
+        case .opAmp, .triode, .pentode, .transformer:
+            return .equations
+        case .block, .microphone, .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
+             .toneControl, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator, .tappedTransformer,
+             .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .reverbBrick, .analogEngine, .regulator:
+            return .subcircuit
+        case .audioInput, .keyboardPitch, .keyboardGate:
+            return .placeholder
+        case .wire, .ground, .netLabel, .port, .probe, .speaker, .vuMeter:
+            return .nothing
+        // behavioural blocks JSpice steps itself (a phase, a stage, a held sample, a delay line's buckets)
+        case .ota, .multiplier, .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .delayLine, .digitalDelay,
+             .vactrol, .memristor, .levelDetector, .springReverb, .agcPreamp, .unbufferedInverter, .analogSwitch:
+            return .noEquivalent
+        // digital: logic states, counters, registers, the 555's flip-flop
+        case .timer555, .schmittInverter, .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll,
+             .shiftRegister, .shiftIn:
+            return .noEquivalent
+        // bus parts and processors: words over SPI, I²C and I²S, firmware
+        case .dac, .ledDriver, .ledSink, .i2cEeprom, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor,
+             .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103:
+            return .noEquivalent
+        }
+    }
+
     private struct Deck {
         var lines: [String] = []
         var models: [String] = []
@@ -891,6 +940,18 @@ public enum SpiceNetlist {
                 lines.append("\(device("I", name)) \(n("minus")) \(n("plus")) DC \(f(p("current")))")
             case .toggleSwitch, .pushButton:
                 lines.append("\(device("R", name)) \(n("a")) \(n("b")) \(part.closed ? "1m" : "1e12")  ; \(part.closed ? "closed" : "open") switch")
+            case .footswitch:
+                // each pole's common to its bypass throw, or pressed in to its effect throw (see `Element.joinedTerminals`)
+                for pole in 1...3 {
+                    lines.append("\(device("R", name))_\(pole)a \(n("c\(pole)")) \(n("a\(pole)")) \(part.closed ? "1e12" : "1m")")
+                    lines.append("\(device("R", name))_\(pole)b \(n("c\(pole)")) \(n("b\(pole)")) \(part.closed ? "1m" : "1e12")")
+                }
+                lines.append("* \(name): a 3PDT footswitch, \(part.closed ? "pressed in (effect)" : "out (bypass)")")
+            case .jack:
+                // its tip on the plug's tip when a cable is plugged in, else on its normal lug
+                lines.append("\(device("R", name))_normal \(n("tip")) \(n("normal")) \(part.closed ? "1e12" : "1m")")
+                lines.append("\(device("R", name))_plug \(n("tip")) \(n("plug")) \(part.closed ? "1m" : "1e12")")
+                lines.append("* \(name): a switched jack, \(part.closed ? "plugged in" : "unplugged")")
             case .ammeter:
                 lines.append("\(device("V", name)) \(n("in")) \(n("out")) DC 0  ; ammeter")
             case .loopProbe:
@@ -997,6 +1058,7 @@ public enum SpiceNetlist {
             case .wire, .ground, .netLabel, .port, .probe, .speaker, .vuMeter:
                 break
             default:
+                // (`exportForm` says which kinds these are: a test checks every other kind has its case above)
                 lines.append("* \(name): a \(part.kind.displayName) has no SPICE equivalent here, left out")
             }
         }

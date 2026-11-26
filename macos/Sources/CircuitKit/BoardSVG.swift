@@ -95,7 +95,7 @@ public enum BoardSVG {
         case .led: fill = "#f2d24b"
         case .transistor: fill = "#444444"
         case .dip: fill = "#333333"
-        default: fill = "#9aa4ad"
+        case .inductor, .lamp, .pot, .vactrol, .toggle, .button: fill = "#9aa4ad"
         }
         if legs.count == 2 {
             let (a, b) = (legs[0].point, legs[1].point)

@@ -454,6 +454,54 @@ public enum Breadboard {
         }
     }
 
+    /// How a part goes on a breadboard, a stripboard or a perfboard (and so into the KiCad netlist)
+    public enum Mount: Sendable, Equatable {
+        /// Its two leads in two holes: drawn by `describe`
+        case twoLead
+        /// Its legs in a row: a transistor's by its pinout (`transistor`), a pot's lugs, a vactrol's leads (`inline`)
+        case inline
+        /// In a dual-in-line package by its model (`package`); a model without one is wired from off the board
+        case chip
+        /// Wired from off the board by leads or a header: a supply, a source, a module, a breakout board (`offBoardTitle`)
+        case offBoard
+        /// Not a part on the board: wires and labels are its strips; a probe only looks; a block's own parts are placed
+        case notAPart
+    }
+
+    /// How each kind goes on the board. Every kind is listed, so a new part is decided on (`package` is asked before
+    /// this, for every kind: a vactrol of the H11F1 model is a chip)
+    public static func mount(_ kind: ElementKind) -> Mount {
+        switch kind {
+        case .resistor, .capacitor, .inductor, .diode, .zener, .led, .lamp, .toggleSwitch, .pushButton:
+            return .twoLead
+        case .npn, .pnp, .njfet, .pjfet, .nmos, .pmos, .potentiometer, .vactrol:
+            return .inline
+        // (a loop probe is made a wire before the parts are placed)
+        case .wire, .ground, .netLabel, .port, .block, .probe, .loopProbe:
+            return .notAPart
+        case .opAmp, .comparator, .schmittInverter, .unbufferedInverter, .analogSwitch, .logicGate, .flipFlop, .analogSelector,
+             .ota, .timer555, .shiftRegister, .shiftIn, .decadeCounter, .binaryCounter, .analogMux, .pll, .i2cEeprom, .dac,
+             .dualDac, .spiAdc, .multiplier, .attiny85, .instrumentationAmp, .lineReceiver, .audioPowerAmp, .functionGenerator,
+             .nortonAmp, .balancedModulator, .mixerOscillator, .compander, .barGraphDriver:
+            return .chip
+        // supplies and sources: from the bench, or a jack
+        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate, .audioInput:
+            return .offBoard
+        // high voltage, or too big for a board: on a chassis, a panel, or leads
+        case .triode, .pentode, .transformer, .tappedTransformer, .speaker, .microphone, .electretMic, .pickup, .balancedCable,
+             .vuMeter, .springReverb, .reverbBrick, .footswitch, .jack, .regulator, .ammeter:
+            return .offBoard
+        // boards of their own: a microcontroller board, a breakout board, a surface-mount chip on an adapter
+        case .atmega328p, .atmega2560, .rp2040, .stm32f405, .stm32f373, .stm32f103, .ledDriver, .ledSink, .i2cDac, .i2sDac, .codec,
+             .cvDac, .effectsProcessor, .agcPreamp, .analogEngine, .lineDriver, .toneControl, .levelDetector, .bbdClock,
+             .multiTapDelay:
+            return .offBoard
+        // JSpice's own modules and parts with no real chip to put on a board: wired to it as a module
+        case .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .delayLine, .digitalDelay, .memristor, .behavioralSource:
+            return .offBoard
+        }
+    }
+
     /// A transistor's legs, left to right with its flat face towards you, and what to know about it
     static func transistor(_ part: NetlistPart) -> (title: String, pinout: String, note: String?) {
         let model = Element(kind: part.kind, a: .zero, b: GridPoint(1, 0), params: part.params).model?.name
@@ -724,15 +772,12 @@ public enum Breadboard {
                 }
                 continue
             }
-            switch part.kind {
-            case .resistor, .capacitor, .inductor, .diode, .zener, .led, .lamp, .toggleSwitch, .pushButton:
-                plan.twoLead.append(part)
-            case .npn, .pnp, .njfet, .pjfet, .nmos, .pmos, .potentiometer, .vactrol:
-                plan.inline.append(part)
-            case .wire, .ground, .netLabel, .port, .block, .probe:
-                break
-            default:
-                plan.off.append(part)
+            switch mount(part.kind) {
+            case .twoLead: plan.twoLead.append(part)
+            case .inline: plan.inline.append(part)
+            case .notAPart: break
+            // (a chip whose model has no package: a power amp on its heat sink, a surface-mount part)
+            case .chip, .offBoard: plan.off.append(part)
             }
         }
         // the supplies the chips need: one of the circuit's at that voltage, or one added for them

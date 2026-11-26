@@ -557,7 +557,13 @@ extension ElementKind {
         case .vuMeter: return ["plus", "minus"]
         case .levelDetector: return ["in", "ref", "out"]
         case .springReverb, .agcPreamp: return ["in", "gnd", "out"]
-        default: return audioChipPackage?.terminalNames ?? ["a", "b"]
+        case .wire, .resistor, .lamp, .capacitor, .inductor, .toggleSwitch, .pushButton, .memristor: return ["a", "b"]
+        // drawn as a box with its pins down its sides: the package's pins
+        case .behavioralSource, .microphone, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander,
+             .toneControl, .barGraphDriver, .balancedCable, .balancedModulator, .mixerOscillator, .tappedTransformer,
+             .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine,
+             .footswitch, .jack, .regulator:
+            return audioChipPackage?.terminalNames ?? ["a", "b"]
         }
     }
 

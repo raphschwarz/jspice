@@ -85,7 +85,15 @@ public enum Pacing {
             case .pll:
                 // its VCO at its fastest
                 scales.append(1 / max(element[param: "fMax"], 1))
+            case .levelDetector:
+                scales.append(contentsOf: [element[param: "attack"], element[param: "release"]])
+            case .springReverb:
+                // the springs' delay: their echoes (their decay of seconds would hold every reverb to real time)
+                scales.append(element[param: "delay"])
+            case .agcPreamp:
+                scales.append(element[param: "averaging"])
             default:
+                // (`role(of:)` says which kinds have a time of their own: a test checks this switch against it)
                 break
             }
         }
@@ -95,6 +103,55 @@ public enum Pacing {
             }
         }
         return scales.filter { $0 > 0 && $0.isFinite }
+    }
+
+    /// What a part adds to the circuit's time scales (`timeScales`)
+    public enum Role: Sendable, Equatable {
+        /// A resistance the capacitors and inductors may charge through
+        case resistance
+        /// A time constant or period of its own, read from its parameters
+        case own
+        /// Both: a memristor's two resistances and its switching time
+        case resistanceAndOwn
+        /// Through the parts it is simulated as (see `Circuit.flattened`): a tube's capacitances, a microphone's
+        case throughItsParts
+        /// None: it changes only as its inputs do, or as fast as it is driven
+        case none
+    }
+
+    /// What each kind adds to the time scales. Every kind is listed, so a new part is decided on: a part with a time
+    /// of its own (an oscillator, an envelope, a delay) that is left out runs at a pace that hides it.
+    public static func role(of kind: ElementKind) -> Role {
+        switch kind {
+        case .resistor, .lamp, .potentiometer:
+            return .resistance
+        case .memristor:
+            return .resistanceAndOwn
+        case .capacitor, .inductor, .acVoltage, .squareVoltage, .vactrol, .delayLine, .vco, .vcf, .envelope, .atmega328p,
+             .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103, .digitalDelay, .audioInput, .pll,
+             .levelDetector, .springReverb, .agcPreamp:
+            return .own
+        case .triode, .pentode, .transformer, .block, .speaker, .microphone, .electretMic, .pickup, .instrumentationAmp,
+             .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .barGraphDriver, .balancedCable,
+             .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock,
+             .multiTapDelay, .reverbBrick, .analogEngine, .regulator:
+            return .throughItsParts
+        // drawing parts and instruments
+        case .wire, .ground, .netLabel, .port, .probe, .ammeter, .loopProbe, .vuMeter:
+            return .none
+        // DC, noise and played sources, switches: a step or noise has no time of its own
+        case .dcVoltage, .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate, .toggleSwitch, .pushButton,
+             .footswitch, .jack, .behavioralSource:
+            return .none
+        // semiconductors and amplifiers: as fast as they are driven (their capacitances are far faster than anything shown)
+        case .diode, .zener, .led, .npn, .pnp, .nmos, .pmos, .njfet, .pjfet, .opAmp, .ota, .multiplier, .comparator, .vca:
+            return .none
+        // clocked and logic parts: paced by what clocks them (a 555 by its capacitor, a sketch by its microcontroller)
+        case .sampleHold, .divider, .timer555, .schmittInverter, .unbufferedInverter, .analogSwitch, .logicGate, .flipFlop,
+             .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .dac, .shiftRegister, .shiftIn, .ledDriver, .ledSink,
+             .i2cEeprom, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .effectsProcessor:
+            return .none
+        }
     }
 
     /// The slowest of the circuit's time constants and periods, or nil if it has none

@@ -145,7 +145,10 @@ enum SymbolRenderer {
         case .potentiometer:
             drawTwoTerminal(element, at: a, b, unit: u, style: style, in: ctx)
             if posts.count == 3 { drawWiper(from: posts[2], toward: CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2), unit: u, style: style, in: ctx) }
-        default:
+        // two-terminal symbols, drawn along the line from a to b (each one's body in `drawTwoTerminal`)
+        case .wire, .resistor, .lamp, .capacitor, .inductor, .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .currentSource,
+             .keyboardPitch, .keyboardGate, .audioInput, .toggleSwitch, .pushButton, .diode, .zener, .led, .schmittInverter,
+             .unbufferedInverter, .memristor, .probe, .ammeter, .loopProbe, .speaker, .electretMic, .pickup, .vuMeter:
             drawTwoTerminal(element, at: a, b, unit: u, style: style, in: ctx)
         }
     }
@@ -1460,7 +1463,11 @@ enum SymbolRenderer {
         case .potentiometer, .analogSwitch:
             let middle = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
             return posts.count == 3 ? [(a, b), (middle, posts[2])] : [(a, b)]
-        default:
+        // the line from a to b
+        case .wire, .netLabel, .resistor, .lamp, .capacitor, .inductor, .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage,
+             .currentSource, .keyboardPitch, .keyboardGate, .audioInput, .toggleSwitch, .pushButton, .diode, .zener, .led,
+             .schmittInverter, .unbufferedInverter, .memristor, .behavioralSource, .probe, .ammeter, .loopProbe, .speaker,
+             .electretMic, .pickup, .vuMeter, .port:
             return [(a, b)]
         }
     }
@@ -1507,7 +1514,15 @@ enum SymbolRenderer {
             return (start, b, nil)
         case .wire:
             return (a, b, nil)
-        default:
+        // from a to b, hidden where the body is (as yet the audio chips, a block, and four chips the case returning nil
+        // above leaves out: the 74HC165, PCA9685, TLC5947 and 24LC EEPROM)
+        case .resistor, .potentiometer, .lamp, .capacitor, .inductor, .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage,
+             .currentSource, .keyboardPitch, .keyboardGate, .audioInput, .diode, .zener, .led, .analogSwitch, .shiftIn, .ledDriver,
+             .ledSink, .i2cEeprom, .memristor, .behavioralSource, .ammeter, .loopProbe, .speaker, .microphone, .electretMic,
+             .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .barGraphDriver,
+             .balancedCable, .vuMeter, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp,
+             .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick, .analogEngine, .footswitch, .jack, .regulator, .port,
+             .block:
             let length = hypot(b.x - a.x, b.y - a.y)
             let half = min(length, bodyLength(element.kind) * u) / 2 + 0.15 * u
             return (a, b, (length / 2 - half)...(length / 2 + half))

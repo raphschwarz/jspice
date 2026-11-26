@@ -263,6 +263,10 @@ public enum Stripboard {
         }
     }
 
+    /// The parts a breadboard takes that a stripboard (and a perfboard) leaves on the panel, wired to it: the controls
+    /// in the box's lid. The others go where `Breadboard.mount` says.
+    public static let onPanel: Set<ElementKind> = [.potentiometer, .toggleSwitch, .pushButton]
+
     /// Lays the circuit out on stripboard
     public static func layout(_ circuit: Circuit) -> Layout {
         let plan = Breadboard.plan(circuit)
@@ -330,7 +334,7 @@ public enum Stripboard {
         let topBus = b.busRow.first { $0.value == b.signalRows.first! - 1 }?.key
         let bottomBus = b.busRow.first { $0.value == b.signalRows.last! + 1 }?.key
         for part in plan.inline {
-            if part.kind == .potentiometer {
+            if onPanel.contains(part.kind) {
                 offParts.append(part)
                 continue
             }
@@ -403,7 +407,7 @@ public enum Stripboard {
             ordered.append(next)
         }
         for part in ordered {
-            if part.kind == .toggleSwitch || part.kind == .pushButton {
+            if onPanel.contains(part.kind) {
                 offParts.append(part)
                 continue
             }

@@ -116,8 +116,48 @@ public enum SchematicLayout {
         .shiftRegister: names(.shiftRegister, ElementKind.shiftRegister.logicOutputs), .shiftIn: ["qh", "qh_bar"], .ledDriver: (0...15).map { "led\($0)" }, .ledSink: (0...23).map { "out\($0)" } + ["sout"], .analogMux: ["x"], .analogSelector: ["x"],
         .pll: ["vco_out", "pc1", "pc2"], .dac: ["out"],
     ].merging(audioSides(second: false)) { $1 }
-    static let sources: Set<ElementKind> = [.dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .keyboardPitch,
-                                            .keyboardGate]
+    static let sources: Set<ElementKind> = Set(ElementKind.allCases.filter { flow($0) == .source })
+
+    /// How the layout places a part
+    public enum Flow: Sendable, Equatable {
+        /// Drawn by the router where the nets need it, not placed: a wire, a ground, a net label, a block's port
+        case drawn
+        /// A two-terminal source the signal starts from, or a supply (`sources`)
+        case source
+        /// Placed in the signal's flow, its inputs towards the source and its outputs away (`inputs`, `outputs`)
+        case directed
+        /// Placed in series or as a shunt by the nets at its two ends
+        case twoTerminal
+        /// A block: its ports' sides say which of its pins are inputs
+        case block
+    }
+
+    /// How each kind is placed. Every kind is listed, so a new part is decided on: a part of three or more pins that is
+    /// not `directed` (with its entries in `inputs` and `outputs`) is placed nowhere in particular
+    public static func flow(_ kind: ElementKind) -> Flow {
+        switch kind {
+        case .wire, .ground, .netLabel, .port:
+            return .drawn
+        case .block:
+            return .block
+        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .audioInput, .currentSource, .keyboardPitch, .keyboardGate:
+            return .source
+        case .resistor, .lamp, .capacitor, .inductor, .toggleSwitch, .pushButton, .diode, .zener, .led, .memristor, .probe, .ammeter,
+             .loopProbe, .speaker, .electretMic, .pickup, .vuMeter:
+            return .twoTerminal
+        // (a Schmitt or unbuffered inverter has two terminals, an input and an output)
+        case .potentiometer, .npn, .pnp, .nmos, .pmos, .njfet, .pjfet, .triode, .pentode, .transformer, .opAmp, .ota, .multiplier,
+             .comparator, .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .timer555, .schmittInverter, .unbufferedInverter,
+             .analogSwitch, .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .analogMux, .analogSelector, .pll, .dac,
+             .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cEeprom, .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405,
+             .stm32f373, .stm32f103, .delayLine, .digitalDelay, .vactrol, .behavioralSource, .microphone, .instrumentationAmp,
+             .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl, .levelDetector, .springReverb, .barGraphDriver,
+             .balancedCable, .balancedModulator, .mixerOscillator, .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock,
+             .multiTapDelay, .effectsProcessor, .reverbBrick, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .agcPreamp,
+             .analogEngine, .footswitch, .jack, .regulator:
+            return .directed
+        }
+    }
     static let amplifiers: Set<ElementKind> = [.opAmp, .ota, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf,
                                                .envelope, .vca,
                                                .sampleHold, .divider, .logicGate, .levelDetector, .springReverb, .agcPreamp]

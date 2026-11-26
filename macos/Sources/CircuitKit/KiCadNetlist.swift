@@ -56,6 +56,28 @@ public enum KiCadNetlist {
         "Connector_PinHeader_2.54mm:PinHeader_1x" + String(format: "%02d", max(1, pins)) + "_P2.54mm_Vertical"
     }
 
+    /// The footprint of a part by how it looks on the board; "" for the parts JSpice knows no footprint for, which are
+    /// left for KiCad's footprint assignment (and named in `Export.unassigned`). Every look is listed, so a new one is
+    /// decided on.
+    static func footprint(_ style: Breadboard.Style, _ part: NetlistPart, title: String) -> String {
+        switch style {
+        case .resistor: return resistor
+        case .ceramic: return ceramic
+        case .electrolytic: return electrolytic(part.params["capacitance"] ?? 0)
+        case .diode, .zener, .led:
+            return part.kind == .led ? led
+                : title.hasPrefix("1N40") || title.hasPrefix("1N54") || title.hasPrefix("1N58") || title.hasPrefix("1N47") ? rectifier
+                : signalDiode
+        case .transistor: return to92
+        case .pot: return pot
+        // on the panel, wired to the board
+        case .toggle, .button: return header(2)
+        case .dip(let pins): return dip(pins)
+        // an inductor's and a lamp's size, and a vactrol's, depend on the part chosen: KiCad's footprint assignment
+        case .inductor, .lamp, .vactrol: return ""
+        }
+    }
+
     public static func export(_ circuit: Circuit, title: String = "JSpice circuit", date: Date = Date()) -> Export {
         let plan = Breadboard.plan(circuit)
         var components: [Component] = []
@@ -79,12 +101,7 @@ public enum KiCadNetlist {
         // transistors, pots, vactrols: pads in the order of their legs
         for part in plan.inline {
             let (order, style, title, _) = Breadboard.inline(part, facing: "")
-            let footprint: String
-            switch style {
-            case .transistor: footprint = to92
-            case .pot: footprint = pot
-            default: footprint = ""
-            }
+            let footprint = self.footprint(style, part, title: title)
             let pins = order.enumerated().map { (pad: "\($0.offset + 1)", net: part.connections[$0.element] ?? "") }
             components.append(Component(ref: part.name, value: title, footprint: footprint, description: part.kind.displayName,
                                         pins: pins, id: id(part)))
@@ -95,26 +112,17 @@ public enum KiCadNetlist {
             let (style, title, _) = Breadboard.describe(part, plan.voltages)
             let net = { (terminal: String) in part.connections[terminal] ?? "" }
             var pins = [(pad: "1", net: net(terminals[0])), (pad: "2", net: net(terminals[1]))]
-            var footprint = ""
+            let footprint = self.footprint(style, part, title: title)
             switch style {
-            case .resistor: footprint = resistor
-            case .ceramic: footprint = ceramic
             case .electrolytic:
-                footprint = electrolytic(part.params["capacitance"] ?? 0)
                 // + (pad 1) on the higher voltage
                 let (a, b) = (plan.voltages[net(terminals[0])] ?? 0, plan.voltages[net(terminals[1])] ?? 0)
                 if b > a { pins = [(pad: "1", net: net(terminals[1])), (pad: "2", net: net(terminals[0]))] }
             case .diode, .zener, .led:
                 // KiCad's diodes and LEDs: pad 1 the cathode, pad 2 the anode
-                footprint = part.kind == .led ? led
-                    : title.hasPrefix("1N40") || title.hasPrefix("1N54") || title.hasPrefix("1N58") || title.hasPrefix("1N47") ? rectifier
-                    : signalDiode
                 pins = [(pad: "1", net: net("cathode")), (pad: "2", net: net("anode"))]
-            case .toggle, .button:
-                // on the panel, wired to the board
-                footprint = header(2)
-            default:
-                footprint = ""
+            case .resistor, .ceramic, .inductor, .lamp, .transistor, .pot, .vactrol, .toggle, .button, .dip:
+                break
             }
             components.append(Component(ref: part.name, value: title, footprint: footprint, description: part.kind.displayName,
                                         pins: pins, id: id(part)))

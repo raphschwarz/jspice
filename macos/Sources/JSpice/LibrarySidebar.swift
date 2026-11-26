@@ -66,7 +66,11 @@ enum SymbolIcons {
             // lower, to leave room for the wiper above
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0))
             (a, b, unit) = (CGPoint(x: 2, y: 15), CGPoint(x: 32, y: 15), 6.5)
-        default:
+        // two-terminal symbols across the icon (and a net label's, a port's and a behavioural source's, drawn the same way)
+        case .wire, .netLabel, .resistor, .lamp, .capacitor, .inductor, .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage,
+             .currentSource, .keyboardPitch, .keyboardGate, .audioInput, .toggleSwitch, .pushButton, .diode, .zener, .led,
+             .schmittInverter, .unbufferedInverter, .memristor, .behavioralSource, .probe, .ammeter, .loopProbe, .speaker,
+             .electretMic, .pickup, .vuMeter, .port:
             element = Element(kind: kind, a: .zero, b: GridPoint(4, 0), closed: false)
             (a, b, unit) = (CGPoint(x: 2, y: 13), CGPoint(x: 32, y: 13), 6.5)
         }
@@ -78,7 +82,16 @@ enum SymbolIcons {
              .analogSelector, .pll, .dac, .dualDac, .spiAdc, .i2cDac, .i2sDac, .codec, .cvDac, .block:
             // the element's own terminal layout, scaled into the icon
             posts = element.posts.map { CGPoint(x: a.x + CGFloat($0.x) * unit, y: a.y + CGFloat($0.y) * unit) }
-        default:
+        // no posts: the symbol is drawn from a and b alone (the audio chips among them, as yet)
+        case .wire, .ground, .netLabel, .resistor, .lamp, .capacitor, .inductor, .dcVoltage, .acVoltage, .squareVoltage,
+             .noiseVoltage, .currentSource, .keyboardPitch, .keyboardGate, .audioInput, .toggleSwitch, .pushButton, .diode, .zener,
+             .led, .npn, .pnp, .nmos, .pmos, .njfet, .pjfet, .triode, .pentode, .transformer, .opAmp, .multiplier, .comparator,
+             .vco, .vcf, .envelope, .vca, .sampleHold, .divider, .schmittInverter, .unbufferedInverter, .logicGate, .delayLine,
+             .digitalDelay, .vactrol, .memristor, .behavioralSource, .probe, .ammeter, .loopProbe, .speaker, .microphone,
+             .electretMic, .pickup, .instrumentationAmp, .lineReceiver, .lineDriver, .audioPowerAmp, .compander, .toneControl,
+             .levelDetector, .springReverb, .barGraphDriver, .balancedCable, .vuMeter, .balancedModulator, .mixerOscillator,
+             .tappedTransformer, .functionGenerator, .nortonAmp, .bbdClock, .multiTapDelay, .effectsProcessor, .reverbBrick,
+             .agcPreamp, .analogEngine, .footswitch, .jack, .regulator, .port:
             break
         }
         SymbolRenderer.draw(element, posts: posts, at: a, b, unit: unit, style: style, in: ctx)
