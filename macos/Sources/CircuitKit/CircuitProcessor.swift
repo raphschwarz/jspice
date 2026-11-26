@@ -374,7 +374,9 @@ public final class PluginEngine: @unchecked Sendable {
 
     // the render thread's own
     private var live: Prepared?
-    private var retiring: Prepared?
+    /// The one replaced, until the exchange takes it (as `AnyObject` so that it is moved, not copied, into the retire
+    /// list: see `ObjectExchange.tryRetire`)
+    private var retiring: AnyObject?
     private let pending = PendingParameters(capacity: PluginEngine.maximumControls)
     private var monitor = RenderLoadMonitor()
     private var wantsAfresh = false
@@ -521,7 +523,7 @@ public final class PluginEngine: @unchecked Sendable {
     /// At the top of each render call: takes a prepared processor if one is waiting, gives back the one it replaced,
     /// and passes on knob moves and requests. Never waits: whatever finds another thread in the way waits for the next call.
     public func beginRender() {
-        if let done = retiring, exchange.tryRetire(done) { retiring = nil }
+        _ = exchange.tryRetire(&retiring)
         if retiring == nil, let object = exchange.tryTake() {
             let next = unsafeDowncast(object, to: Prepared.self)
             if !next.continues {

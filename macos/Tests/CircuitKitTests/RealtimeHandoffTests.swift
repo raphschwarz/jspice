@@ -99,7 +99,7 @@ final class RealtimeHandoffTests: XCTestCase {
             var last = 0
             var swaps = 0
             while last < count {
-                if let done = retiring, exchange.tryRetire(done) { retiring = nil }
+                _ = exchange.tryRetire(&retiring)
                 if retiring == nil, let object = exchange.tryTake() {
                     let token = unsafeDowncast(object, to: Token.self)
                     // offered in order: each taken is newer than the last, none twice
@@ -116,9 +116,10 @@ final class RealtimeHandoffTests: XCTestCase {
                 }
             }
             // the render thread ends: what it holds is handed back, not freed here
-            while let done = retiring ?? live {
-                if exchange.tryRetire(done) {
-                    if retiring != nil { retiring = nil } else { live = nil }
+            while retiring != nil || live != nil {
+                if exchange.tryRetire(&retiring) && retiring == nil {
+                    retiring = live
+                    live = nil
                 }
             }
             if swaps < 10 { problem.set("only \(swaps) swaps") }

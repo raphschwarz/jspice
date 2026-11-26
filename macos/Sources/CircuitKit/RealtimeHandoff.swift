@@ -262,13 +262,20 @@ public final class ObjectExchange: @unchecked Sendable {
         return object
     }
 
-    /// The real-time thread: gives back an object it no longer uses. False (keep it, and try again later) when the
-    /// exchange was busy or the retire list is full; the object is then not touched.
-    public func tryRetire(_ object: AnyObject) -> Bool {
+    /// The real-time thread: gives back an object it no longer uses, *moving* the caller's reference into the retire
+    /// list (`object` is nil afterwards). True if it went (or there was nothing to give); false (keep it, and try again
+    /// later) when the exchange was busy or the list is full, and `object` is then untouched.
+    ///
+    /// The move happens under the lock on purpose: if the caller kept a reference of its own while handing over a copy
+    /// (`if let o = held, tryRetire(o) { held = nil }`), the collecting thread could take and drop the list's reference
+    /// before the caller dropped its own, and the object would then be freed on the real-time thread.
+    public func tryRetire(_ object: inout AnyObject?) -> Bool {
+        guard object != nil else { return true }
         guard lock.tryLock() else { return false }
         defer { lock.unlock() }
         guard retiredCount < retireCapacity else { return false }
         retired[retiredCount] = object
+        object = nil
         retiredCount += 1
         return true
     }
