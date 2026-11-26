@@ -64,6 +64,9 @@ struct AppCommands: Commands {
 /// JSpice ▸ AI Control (MCP), under Settings…: the choice Settings ▸ AI Control explains, one click away
 struct AppMenuCommands: Commands {
     var body: some Commands {
+        // About shows the version, build and commit; Check for Updates… asks GitHub, only when chosen
+        CommandGroup(replacing: .appInfo) { AboutJSpiceButton() }
+        CommandGroup(after: .appInfo) { CheckForUpdatesButton() }
         CommandGroup(after: .appSettings) {
             AIControlMenu()
         }
