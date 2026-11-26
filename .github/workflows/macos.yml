@@ -40,7 +40,13 @@ jobs:
         # optimised, as the app runs it: audio-rate tests take minutes in a debug build
         # (JSPICE_REQUIRE_TOOLCHAIN, JSPICE_MAKER_MODELS and the firmware's JSPICE_*_HEX are left unset here, so the
         # tests that need them skip: they run in macos-full.yml, after the steps that install and build what they need)
-        run: swift test -c release -Xswiftc -enable-testing
+        run: |
+          set -o pipefail
+          swift test -c release -Xswiftc -enable-testing 2>&1 | tee "$RUNNER_TEMP/test.log"
+      # (the test log runs to thousands of lines: the failures alone, where there are any)
+      - name: What failed
+        if: failure()
+        run: grep -E "error: |' failed \(" "$RUNNER_TEMP/test.log" | tail -120 || true
       - name: Build
         run: swift build
 

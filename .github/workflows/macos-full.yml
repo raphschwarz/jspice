@@ -142,7 +142,13 @@ jobs:
           JSPICE_REQUIRE_TOOLCHAIN: '1'
           # download the makers' models of MakerModelCatalog and check them against ngspice's figures
           JSPICE_MAKER_MODELS: '1'
-        run: swift test -c release -Xswiftc -enable-testing
+        run: |
+          set -o pipefail
+          swift test -c release -Xswiftc -enable-testing 2>&1 | tee "$RUNNER_TEMP/test.log"
+      # (the test log runs to thousands of lines: the failures alone, where there are any)
+      - name: What failed
+        if: failure()
+        run: grep -E "error: |' failed \(" "$RUNNER_TEMP/test.log" | tail -120 || true
 
   # log-only measurements: speed at audio rate, profiles and disassembly, and a build without Swift's checks
   benchmarks:
