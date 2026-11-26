@@ -331,7 +331,7 @@ private struct ScopesDock: View {
             .background(Color(nsColor: .controlBackgroundColor))
             .onChange(of: circuit.scopes.count) { old, new in
                 if new > old, let last = circuit.scopes.last?.id {
-                    withAnimation { proxy.scrollTo(last, anchor: .bottom) }
+                    withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .default) { proxy.scrollTo(last, anchor: .bottom) }
                 }
             }
         }

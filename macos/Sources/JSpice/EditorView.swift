@@ -73,7 +73,7 @@ struct EditorView: View {
                     CaptureBanner(editor: editor)
                 }
                 .padding(.top, 12)
-                .animation(.snappy(duration: 0.2), value: editor.tool)
+                .reduceMotionAnimation(.snappy(duration: 0.2), value: editor.tool)
             }
             .overlay(alignment: .bottomTrailing) {
                 if !document.circuit.elements.isEmpty {

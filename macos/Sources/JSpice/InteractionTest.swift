@@ -214,6 +214,8 @@ enum InteractionTest {
         await checkInspector(editor: editor, document: document)
         // drawing: wires with a corner and from free terminals, values typed on the canvas, paste at the pointer
         await checkEditing(editor: editor, document: document, window: window, canvas: canvas)
+        // what VoiceOver is told of the schematic, and its actions
+        await checkAccessibility(editor: editor, document: document, canvas: canvas)
 
         // (the editor holds the undo manager weakly: it is the test's to keep until the last check has run)
         withExtendedLifetime(undo) {}

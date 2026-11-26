@@ -678,6 +678,8 @@ struct ParameterRow: View {
                 }
             })
             .controlSize(.small)
+            .accessibilityLabel(spec.name)
+            .accessibilityValue(formatParameter(value, spec))
         }
     }
 
