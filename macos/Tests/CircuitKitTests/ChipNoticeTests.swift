@@ -165,6 +165,44 @@ final class ChipNoticeTests: XCTestCase {
         XCTAssertEqual(said, 2, "the reset cleared them")
     }
 
+    /// A watchdog enabled with nothing loaded has run out at once: it is noted, and the chip's run comes back (the
+    /// alarm on a counter standing at its target used to go off without end)
+    func testAPicoWatchdogEnabledWithNothingLoadedIsNotedAndDoesNotHang() {
+        let pico = Pico(firmware: [0xFE, 0xE7])
+        let chip = pico.rp2040
+        chip.writeUint32(0x4005_8004, 0)
+        chip.writeUint32(0x4005_8000, 1 << 30)
+        XCTAssertEqual(keys(pico), ["watchdog", "watchdog-expired"])
+        let done = expectation(description: "the run returns")
+        DispatchQueue.global().async {
+            pico.run(cycles: 10_000)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 20)
+        XCTAssertEqual(chip.readUint32(0x4005_8008), 1, "the reason it would have reset: the timer")
+    }
+
+    /// A watchdog that runs out while the sketch runs is noted once and the run goes on; fed again, it counts again
+    func testAPicoWatchdogRunningOutIsNotedAndTheRunGoesOn() {
+        let pico = Pico(firmware: [0xFE, 0xE7])
+        let chip = pico.rp2040
+        // 2000 counts at the watchdog's 2 MHz: a millisecond, 125,000 cycles of the chip's clock
+        chip.writeUint32(0x4005_8004, 2000)
+        chip.writeUint32(0x4005_8000, 1 << 30)
+        XCTAssertEqual(keys(pico), ["watchdog"])
+        let done = expectation(description: "the runs return")
+        DispatchQueue.global().async {
+            pico.run(cycles: 400_000)
+            // fed, it runs out again a millisecond later, and that too comes back
+            chip.writeUint32(0x4005_8004, 2000)
+            pico.run(cycles: 400_000)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 30)
+        XCTAssertEqual(keys(pico), ["watchdog", "watchdog-expired"])
+        XCTAssertEqual(chip.readUint32(0x4005_8008), 1)
+    }
+
     // MARK: - The built-in examples
 
     private static let stm32Kinds: Set<ElementKind> = [.stm32f405, .stm32f373, .stm32f103]

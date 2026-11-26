@@ -126,6 +126,9 @@ final class RPWatchdog: RPPeripheral {
             self.reason = 1
             // (it would reset the chip: the model does not)
             self.chip.note(.watchdogExpired)
+            // Run out, it stays run out until it is loaded again. (Left armed, its alarm, on a counter standing at its
+            // target, went off again at the same instant without end: the chip's run never came back.)
+            self.alarm.enable = false
         }
         alarm.target = 0
         alarm.enable = false
@@ -152,19 +155,37 @@ final class RPWatchdog: RPPeripheral {
             }
             enable = value & (1 << 30) != 0
             if enable { chip.note(.watchdog) }
+            // (enabled with nothing loaded, it has run out already: the chip would reset at once)
+            let ranOut = enable && tickEnable && timer.counter == 0
+            if ranOut {
+                reason = 1
+                chip.note(.watchdogExpired)
+            }
             timer.enable = enable && tickEnable
-            alarm.enable = enable && tickEnable
+            alarm.enable = enable && tickEnable && !ranOut
             pauseDbg0 = value & (1 << 25) != 0
             pauseDbg1 = value & (1 << 26) != 0
             pauseJtag = value & (1 << 24) != 0
         case 0x04:
-            timer.set(Double(value & 0xFF_FFFF))
+            let load = value & 0xFF_FFFF
+            if load == 0 {
+                // (loaded with nothing while it runs: run out, as above)
+                alarm.enable = false
+                timer.set(0)
+                if enable && tickEnable {
+                    reason = 1
+                    chip.note(.watchdogExpired)
+                }
+            } else {
+                timer.set(Double(load))
+                alarm.enable = enable && tickEnable
+            }
         case 0x0C...0x28 where offset & 3 == 0:
             scratch[Int(offset - 0x0C) >> 2] = value
         case 0x2C:
             tickEnable = value & (1 << 9) != 0
             timer.enable = enable && tickEnable
-            alarm.enable = enable && tickEnable
+            alarm.enable = enable && tickEnable && timer.counter != 0
         default:
             super.writeUint32(offset, value)
         }
