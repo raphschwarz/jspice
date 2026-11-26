@@ -103,6 +103,12 @@ final class EditorState: ObservableObject {
     init(document: CircuitDocument) {
         self.document = document
         simulation = SimulationController(circuit: document.circuit)
+        let problems = BlockLibrary.load().problems
+        if !problems.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.reportBlockLibraryProblems(problems) }
+            }
+        }
     }
 
     var circuit: Circuit { document.circuit }
@@ -254,7 +260,23 @@ final class EditorState: ObservableObject {
     // MARK: - Blocks
 
     func reloadBlockLibrary() {
-        libraryBlocks = BlockLibrary.all()
+        let loaded = BlockLibrary.load()
+        libraryBlocks = loaded.blocks
+        reportBlockLibraryProblems(loaded.problems)
+    }
+
+    /// The block files already reported as unreadable, so each is told once a run, not in every window
+    private static var reportedBlockProblems = Set<String>()
+
+    /// Tells the user about block files the library could not read (the other blocks are there all the same)
+    private func reportBlockLibraryProblems(_ problems: [String]) {
+        let fresh = problems.filter { !Self.reportedBlockProblems.contains($0) }
+        guard !fresh.isEmpty else { return }
+        Self.reportedBlockProblems.formUnion(fresh)
+        let one = fresh.count == 1
+        notify(.warning, one ? "A block in the library can't be read" : "\(fresh.count) blocks in the library can't be read",
+               detail: "\(one ? "It is" : "They are") left out of the library; the other blocks are there. The files are in \(BlockLibrary.folder.path).",
+               report: NoticeReport([NoticeReport.Section(heading: "Files left out", lines: fresh)]))
     }
 
     /// Saves the circuit in the block library as a block named `name` (replacing one of the same name); its ports are
@@ -1197,7 +1219,11 @@ final class EditorState: ObservableObject {
 
     /// Redraws the circuit as a tidy schematic, keeping every connection
     func tidyUp() {
-        guard let next = try? SchematicLayout.tidy(circuit) else { return }
+        guard var next = try? SchematicLayout.tidy(circuit) else { return }
+        // the layout builds a circuit of its own: what it does not redraw (MIDI mappings, and what a newer JSpice's
+        // file held that this build cannot read) is carried over
+        next.midiMappings = circuit.midiMappings.filter { next[$0.part] != nil }
+        next = next.carryingPreserved(from: circuit)
         edit("Tidy Up") { $0 = next }
         selection = []
         requestFit()
@@ -1206,9 +1232,13 @@ final class EditorState: ObservableObject {
     // MARK: - AI control
 
     /// A change made by an AI agent through the MCP bridge: one undoable step, shown running
-    func applyAutomation(_ next: Circuit, _ action: String) {
+    func applyAutomation(_ incoming: Circuit, _ action: String) {
         let wasEmpty = circuit.elements.isEmpty
-        let rebuilt = Set(next.elements.map(\.id)).isDisjoint(with: circuit.elements.map(\.id))
+        let rebuilt = Set(incoming.elements.map(\.id)).isDisjoint(with: circuit.elements.map(\.id))
+        var next = incoming
+        // a change to this circuit (not a new one) that was redrawn from its netlist keeps what a newer JSpice's file
+        // held that this build cannot read, which the agent never saw
+        if !rebuilt && next.preserved.isEmpty && !circuit.preserved.isEmpty { next = next.carryingPreserved(from: circuit) }
         edit(action) { $0 = next }
         selection = selection.filter { next[$0] != nil }
         if wasEmpty || rebuilt { requestFit() }
@@ -1278,7 +1308,21 @@ final class EditorState: ObservableObject {
     /// target, a little down and to the right of where they were copied from
     func paste(at target: GridPoint?) {
         guard let data = NSPasteboard.general.data(forType: Self.pasteboardType),
-              let copied = try? JSONDecoder().decode([Element].self, from: data), !copied.isEmpty else { return }
+              let read = try? Element.decodeList(from: data) else { return }
+        // parts are read one by one: one this build cannot read (copied from a newer JSpice) leaves the others
+        let copied = read.elements
+        if !read.leftOut.isEmpty {
+            let count = read.leftOut.count
+            let kinds = read.leftOut.compactMap { $0.raw["kind"]?.stringValue }
+            var seen = Set<String>()
+            let names = kinds.filter { seen.insert($0).inserted }
+            notify(.warning, count == 1 ? "1 part was left out of the paste" : "\(count) parts were left out of the paste",
+                   detail: (copied.isEmpty ? "None of the copied parts" : "\(count == 1 ? "It is" : "They are") of a kind")
+                       + (copied.isEmpty ? " could be read" : " this version of JSpice cannot read")
+                       + (names.isEmpty ? "." : " (\(names.joined(separator: ", "))).")
+                       + (copied.isEmpty ? "" : " The other \(copied.count == 1 ? "part was" : "\(copied.count) parts were") pasted."))
+        }
+        guard !copied.isEmpty else { return }
         var elements = copied
         if let target {
             elements = CanvasGeometry.placed(copied, centredAt: target)

@@ -40,7 +40,8 @@ public enum PluginLibrary {
         return circuit
     }
 
-    /// The presets for an effect or an instrument: the examples, then the circuits in `folder` (if given)
+    /// The presets for an effect or an instrument: the examples, then the circuits in `folder` (if given). A circuit
+    /// saved by a newer JSpice is read as far as this build can (its `loadNotes` say what was left out).
     public static func entries(instrument: Bool, folder: URL? = nil) -> [Entry] {
         let make: (Circuit) -> Circuit? = instrument ? Self.instrument : Self.effect
         var entries = Examples.all.compactMap { example in make(example.circuit).map { Entry(name: example.title, circuit: $0) } }
@@ -49,7 +50,7 @@ public enum PluginLibrary {
         entries = entries.filter { native.contains($0.name) } + entries.filter { !native.contains($0.name) }
         if let folder, let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) {
             for file in files.filter({ $0.pathExtension == "jspice" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-                guard let data = try? Data(contentsOf: file), let circuit = try? JSONDecoder().decode(Circuit.self, from: data),
+                guard let data = try? Data(contentsOf: file), let circuit = try? Circuit.decodeDocument(from: data),
                       let made = make(circuit) else { continue }
                 entries.append(Entry(name: file.deletingPathExtension().lastPathComponent, circuit: made))
             }

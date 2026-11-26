@@ -232,6 +232,10 @@ extension Circuit {
         inner.scopes = []
         inner.sequence = nil
         inner.midiMappings = []
+        // what the file held that this build could not read stays with the parts; the left-out lists' share goes too
+        inner.preserved.scopes = []
+        inner.preserved.midiMappings = []
+        inner.preserved.unreadableFields[CodingKeys.sequence.rawValue] = nil
         return BlockDefinition(name: name, circuit: inner)
     }
 }
@@ -265,12 +269,29 @@ public enum BlockLibrary {
 
     public static let fileExtension = "jspiceblock"
 
-    /// Every saved block, by name
+    /// Every saved block, by name (a file that cannot be read is left out: see `load`)
     public static func all(in folder: URL = folder) -> [BlockDefinition] {
+        load(in: folder).blocks
+    }
+
+    /// Every saved block, by name, and a line for each block file that could not be read (its file name and why), so
+    /// that one damaged file leaves the others in the library and can be reported. A block of a newer JSpice is read
+    /// as far as this build can (see `Circuit.loadNotes`).
+    public static func load(in folder: URL = folder) -> (blocks: [BlockDefinition], problems: [String]) {
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        return files.filter { $0.pathExtension == fileExtension }
-            .compactMap { try? JSONDecoder().decode(BlockDefinition.self, from: Data(contentsOf: $0)) }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        var blocks: [BlockDefinition] = []
+        var problems: [String] = []
+        for file in files.filter({ $0.pathExtension == fileExtension }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            do {
+                blocks.append(try JSONDecoder().decode(BlockDefinition.self, from: Data(contentsOf: file)))
+            } catch let error as DecodingError {
+                problems.append("\(file.lastPathComponent): \(CircuitFileError.describe(error))")
+            } catch {
+                problems.append("\(file.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        blocks.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        return (blocks, problems)
     }
 
     public static func block(named name: String, in folder: URL = folder) -> BlockDefinition? {

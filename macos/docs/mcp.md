@@ -57,11 +57,11 @@ Every tool the server offers, as defined in `Sources/JSpiceAutomation/CircuitSes
 | `set_model` | makes a part behave like a real part (an op-amp as "TL072" or "LM358") |
 | `set_switch` | opens or closes a switch or push button |
 | `set_temperature` | the temperature the circuit works at, in °C (27 by default) |
-| `describe_circuit` | every part with its kind, model, parameters and nodes, and any problems that keep it from being simulated |
+| `describe_circuit` | every part with its kind, model, parameters and nodes, any problems that keep it from being simulated, and `load_notes`: what this version left out of a file a newer JSpice saved (kept in the file) |
 | `define_block` | makes a netlist into a block, with `port` parts as its pins, used as `{"kind": "block", "block": "name", ...}` as often as needed |
 | `list_blocks` | the blocks that can be used, with their pins |
 | `save_circuit` | saves the circuit as a `.jspice` file |
-| `open_circuit` | opens a `.jspice` file |
+| `open_circuit` | opens a `.jspice` file and describes it as `describe_circuit` does; a newer JSpice's file opens with what this version can read, and `load_notes` says what was left out |
 
 ### Simulation and measurement
 
@@ -92,7 +92,7 @@ Every tool the server offers, as defined in `Sources/JSpiceAutomation/CircuitSes
 
 | Tool | What it does |
 | --- | --- |
-| `upload_sketch` | compiles an Arduino sketch into a microcontroller, returning the firmware size or the compiler's errors by line |
+| `upload_sketch` | compiles an Arduino sketch into a microcontroller, returning the firmware size or the compiler's errors by line (and a `problem` when no line of the sketch says what failed), with the compiler's warnings by line either way |
 | `load_firmware` | loads an Intel HEX file or raw image built elsewhere, as a programmer flashes it |
 | `read_serial` | what a microcontroller printed, and text to send it |
 | `read_bus_trace` | what went over an STM32's SPI, I²S, I²C and USART buses, decoded as a logic analyzer would |

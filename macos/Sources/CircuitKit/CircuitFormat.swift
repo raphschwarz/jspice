@@ -56,6 +56,29 @@ extension Circuit {
     }
 }
 
+extension Circuit {
+    /// This circuit with what `original`'s file held that this build could not read (`preserved`) and the version of
+    /// that file carried over: for a circuit rebuilt from `original` (Tidy Up, a change made by an AI agent), so that a
+    /// newer file's parts and fields still go back into it on saving
+    public func carryingPreserved(from original: Circuit) -> Circuit {
+        var result = self
+        result.preserved = original.preserved
+        if result.loadInfo.fileVersion == nil { result.loadInfo.fileVersion = original.loadInfo.fileVersion }
+        return result
+    }
+}
+
+extension Element {
+    /// Reads a list of parts (as copied to the pasteboard) one part at a time: the parts this build can read, and those
+    /// it cannot (a kind a newer JSpice added), as they were, with their places in the list. Throws only when the data
+    /// is not a list.
+    public static func decodeList(from data: Data) throws -> (elements: [Element], leftOut: [PreservedEntry]) {
+        let entries = try JSONDecoder().decode([Tolerant<Element>].self, from: data)
+        let split = Tolerant<Element>.split(entries)
+        return (split.values, split.preserved)
+    }
+}
+
 /// A file that could not be read as a circuit
 public enum CircuitFileError: LocalizedError, Equatable {
     case notACircuit(detail: String)

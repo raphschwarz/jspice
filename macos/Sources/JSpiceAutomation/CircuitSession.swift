@@ -141,7 +141,7 @@ public final class CircuitSession {
              ], required: ["steps"]),
              run: { session, arguments in try session.setSequence(arguments) }),
         Tool(name: "upload_sketch",
-             description: "Compiles an Arduino sketch (C++, as in the Arduino IDE: setup() and loop(), pinMode, digitalWrite, analogRead, analogWrite, delay, millis, Serial, tone…) for a microcontroller part (atmega328p: Arduino Uno, pins d0-d13 and a0-a5; atmega2560: Arduino Mega, d0-d53 and a0-a15; attiny85: pins pb0-pb5, numbered 0-5 in the sketch, no Serial; rp2040: Raspberry Pi Pico at 3.3 V, pins gp0-gp22 and gp26-gp28 (analog A0-A2), numbered as GPIOs in the sketch, LED_BUILTIN on GP25, Serial over USB) and loads the firmware into it; the chip runs it from reset in simulate. Returns the firmware size, or the compiler's errors with sketch line numbers.",
+             description: "Compiles an Arduino sketch (C++, as in the Arduino IDE: setup() and loop(), pinMode, digitalWrite, analogRead, analogWrite, delay, millis, Serial, tone…) for a microcontroller part (atmega328p: Arduino Uno, pins d0-d13 and a0-a5; atmega2560: Arduino Mega, d0-d53 and a0-a15; attiny85: pins pb0-pb5, numbered 0-5 in the sketch, no Serial; rp2040: Raspberry Pi Pico at 3.3 V, pins gp0-gp22 and gp26-gp28 (analog A0-A2), numbered as GPIOs in the sketch, LED_BUILTIN on GP25, Serial over USB) and loads the firmware into it; the chip runs it from reset in simulate. Returns the firmware size, or the compiler's errors with sketch line numbers (and a problem when no line of the sketch says what failed: a library, the linker, the size); either way, the compiler's warnings on the sketch's lines, when there are any.",
              inputSchema: schema(["part": string("Name of a microcontroller part"), "code": string("The sketch's source")],
                                  required: ["part", "code"]),
              run: { session, arguments in try session.uploadSketch(arguments) }),
@@ -177,7 +177,7 @@ public final class CircuitSession {
              inputSchema: schema(["family": string("avr (the default) or rp2040")]),
              run: { session, arguments in try session.installChipSupport(arguments) }),
         Tool(name: "describe_circuit",
-             description: "Describes the circuit: every part with its kind, model, parameters and the node (and net names) of each terminal, plus any problems that keep it from being simulated.",
+             description: "Describes the circuit: every part with its kind, model, parameters and the node (and net names) of each terminal, plus any problems that keep it from being simulated, and load_notes: what this version of JSpice left out of a file a newer one saved (kept in the file, but not drawn or simulated), when there is any.",
              inputSchema: schema([:]), run: { session, _ in session.describe() }),
         Tool(name: "simulate",
              description: "Runs a transient simulation from rest (or continues the last one) and returns the probed waveforms, each with min, max, mean, RMS, peak-to-peak, final value and estimated frequency.",
@@ -394,7 +394,7 @@ public final class CircuitSession {
              description: "Redraws the circuit as a tidy schematic, as a person would draw it: signal flowing left to right, parts to ground hanging below, feedback over op-amps, wires instead of labels. Connections, values and scopes are kept.",
              inputSchema: schema([:]), run: { session, _ in try session.tidyUp() }),
         Tool(name: "open_circuit",
-             description: "Opens a .jspice file.",
+             description: "Opens a .jspice file, and describes it as describe_circuit does. A file saved by a newer version of JSpice opens with what this version can read; load_notes says what was left out (it stays in the file when saved).",
              inputSchema: schema(["path": string("File path")], required: ["path"]),
              run: { session, arguments in try session.open(arguments) }),
     ]
@@ -820,18 +820,23 @@ public final class CircuitSession {
                             + "\(family.rawValue) first (or install it from JSpice's Chip Support window)")
         }
         let result = SketchBuilder.build(code, board: board, chip: board.avrVariant(for: circuit.elements[index]))
+        let warnings = result.warnings.map { ["line": $0.line, "column": $0.column, "message": $0.message] as [String: Any] }
         guard let firmware = result.firmware else {
             let errors = result.errors.map { ["line": $0.line, "column": $0.column, "message": $0.message] as [String: Any] }
             // (what went wrong when no line of the sketch says: a library, the linker, the size, a missing header)
             var failure: [String: Any] = ["uploaded": false, "errors": errors, "log": String(result.log.suffix(4000))]
             if let problem = result.problem { failure["problem"] = problem }
+            if !warnings.isEmpty { failure["warnings"] = warnings }
             return failure
         }
         change("Upload Sketch") { circuit in
             circuit.elements[index].code = code
             circuit.elements[index].firmware = firmware
         }
-        return ["uploaded": true, "part": circuit.elements[index].name, "bytes": firmware.count, "flash": board.flashSize(for: circuit.elements[index])]
+        var uploaded: [String: Any] = ["uploaded": true, "part": circuit.elements[index].name, "bytes": firmware.count,
+                                       "flash": board.flashSize(for: circuit.elements[index])]
+        if !warnings.isEmpty { uploaded["warnings"] = warnings }
+        return uploaded
     }
 
     func readSerial(_ arguments: [String: Any]) throws -> Any {
@@ -1034,6 +1039,9 @@ public final class CircuitSession {
             "temperature": circuit.settings.temperature,
         ]
         if let sequence = circuit.sequence { result["sequence"] = Self.describe(sequence) }
+        // what this build left out of a newer JSpice's file (kept in it)
+        let notes = circuit.loadNotes
+        if !notes.isEmpty { result["load_notes"] = notes }
         return result
     }
 
@@ -2316,7 +2324,14 @@ public final class CircuitSession {
     func open(_ arguments: [String: Any]) throws -> Any {
         let path = (try Self.text(arguments, "path") as NSString).expandingTildeInPath
         let data = try Data(contentsOf: URL(fileURLWithPath: path))
-        replace(try JSONDecoder().decode(Circuit.self, from: data), "Open")
+        // a newer JSpice's file opens with what this build can read (describe() gives its load_notes)
+        let opened: Circuit
+        do {
+            opened = try Circuit.decodeDocument(from: data)
+        } catch let error as CircuitFileError {
+            throw ToolError("\(path): \(error.errorDescription ?? "") \(error.failureReason ?? "")")
+        }
+        replace(opened, "Open")
         return describe()
     }
 }
