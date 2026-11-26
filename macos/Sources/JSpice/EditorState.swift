@@ -763,6 +763,24 @@ final class EditorState: ObservableObject {
         }
     }
 
+    /// Gives each of several parts `model` (those of a kind that has it), as one undo step, as `applyModel(_:_:)` does
+    /// for one
+    func applyModel(_ ids: Set<UUID>, _ model: PartModel) {
+        let targets = MultiEdit.parts(ids, in: circuit).filter { part in part.kind.models.contains { $0.name == model.name } }
+        guard !targets.isEmpty else { return }
+        edit(targets.count == 1 ? "Use \(model.name)" : "Use \(model.name) for \(targets.count) Parts") { circuit in
+            for target in targets {
+                circuit.update(target.id) { element in
+                    for (key, value) in model.values { element[param: key] = value }
+                    if element.kind == .opAmp && element.block != nil {
+                        element.params["makerModel"] = nil
+                        element.block = nil
+                    }
+                }
+            }
+        }
+    }
+
     /// Runs an op-amp on its maker's model (`MakerModelCatalog`, downloaded from the maker once), or back on JSpice's own
     func useMakerModel(_ id: UUID, _ on: Bool) {
         guard let element = circuit.elements.first(where: { $0.id == id }), element.kind == .opAmp else { return }
@@ -1053,6 +1071,12 @@ final class EditorState: ObservableObject {
 
     func setParameter(_ id: UUID, _ spec: ParamSpec, to value: Double) {
         edit("Change \(spec.name)") { $0.update(id) { $0[param: spec.key] = value } }
+    }
+
+    /// Sets one parameter of several parts at once (those of a kind that has it: the inspector's multi-selection), as
+    /// one undo step, named as for one part (`restore` reads "Wiper position" at the end of the name)
+    func setParameter(_ ids: Set<UUID>, _ spec: ParamSpec, to value: Double) {
+        edit("Change \(spec.name)") { MultiEdit.set(spec.key, to: value, of: ids, in: &$0) }
     }
 
     func rename(_ id: UUID, to name: String) {

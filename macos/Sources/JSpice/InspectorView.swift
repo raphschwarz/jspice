@@ -10,17 +10,9 @@ struct InspectorView: View {
             ElementInspector(editor: editor, element: element)
                 .id(element.id)
         } else if editor.selection.count > 1 {
-            Form {
-                Section {
-                    Text("\(editor.selection.count) parts selected")
-                    Button("Rotate", systemImage: "rotate.right") { editor.rotateSelection() }
-                    if editor.canFlipSelection {
-                        Button("Flip", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.flipSelection() }
-                    }
-                    Button("Delete", systemImage: "trash", role: .destructive) { editor.deleteSelection() }
-                }
-            }
-            .formStyle(.grouped)
+            // (a new selection starts with fresh fields)
+            MultiSelectionInspector(editor: editor, ids: editor.selection, circuit: document.circuit)
+                .id(editor.selection)
         } else {
             CircuitInspector(editor: editor, simulation: editor.simulation, settings: document.circuit.settings,
                              partCount: document.circuit.elements.count)
@@ -30,7 +22,7 @@ struct InspectorView: View {
 
 /// Parameter values are shown with SI prefixes in plain SI units, and as plain numbers otherwise (a duty cycle, an
 /// angle, a slew rate in V/µs)
-private func formatParameter(_ value: Double, _ spec: ParamSpec) -> String {
+func formatParameter(_ value: Double, _ spec: ParamSpec) -> String {
     let siUnits: Set<String> = ["V", "A", "Ω", "F", "H", "Hz", "s", "W", "A/V²"]
     guard siUnits.contains(spec.unit) else {
         let number = SI.trimmed(value, digits: 3)
@@ -71,177 +63,318 @@ struct ElementInspector: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    Spacer(minLength: 4)
+                    PartActions(editor: editor, canFlip: element.kind.canFlip)
                 }
             }
 
-            if !element.kind.models.isEmpty {
-                Section {
-                    Picker("Model", selection: Binding(
-                        get: { element.model?.name ?? "" },
-                        set: { name in
-                            if let model = element.kind.models.first(where: { $0.name == name }) { editor.applyModel(element.id, model) }
-                        }
-                    )) {
-                        ForEach(element.kind.models, id: \.name) { model in
-                            Text(model.title).tag(model.name)
-                        }
-                        if element.model == nil {
-                            Text("Custom").tag("")
-                        }
-                    }
-                } footer: {
-                    Text(element.model?.summary ?? "Values changed from the chosen model.")
-                }
-            }
-
-            if element.kind == .opAmp, let name = element.model?.name, let maker = MakerModelCatalog.model(forBuiltIn: name) {
-                MakerModelSection(editor: editor, element: element, model: maker)
-            }
-
-            if element.kind == .led {
-                Section("Properties") {
-                    Picker("Color", selection: Binding(
-                        get: { Int(element[param: "color"]) },
-                        set: { editor.setParameter(element.id, element.kind.params[0], to: Double($0)) }
-                    )) {
-                        ForEach(LEDColor.allCases, id: \.rawValue) { color in
-                            Text(color.name).tag(color.rawValue)
-                        }
-                    }
-                }
-            } else if !element.kind.params.isEmpty {
-                Section("Properties") {
-                    ForEach(element.kind.params.filter { !$0.advanced }, id: \.key) { spec in
-                        if spec.choices.isEmpty {
-                            ParameterRow(editor: editor, elementID: element.id, spec: spec, value: element[param: spec.key])
-                        } else {
-                            Picker(spec.name, selection: Binding(
-                                get: { element[param: spec.key] },
-                                set: { editor.setParameter(element.id, spec, to: $0) }
-                            )) {
-                                ForEach(spec.choices, id: \.value) { choice in
-                                    Text(choice.name).tag(choice.value)
-                                }
-                                if !spec.choices.contains(where: { $0.value == element[param: spec.key] }) {
-                                    Text(formatParameter(element[param: spec.key], spec)).tag(element[param: spec.key])
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if element.kind.params.contains(where: \.advanced) {
-                // the rest of the part's SPICE model card, which a manufacturer's model sets
-                Section {
-                    DisclosureGroup("SPICE Model Parameters") {
-                        ForEach(element.kind.params.filter(\.advanced), id: \.key) { spec in
-                            ParameterRow(editor: editor, elementID: element.id, spec: spec, value: element[param: spec.key])
-                        }
-                    }
-                }
-            }
-
-            if element.kind.isKeyboard {
-                SequencerSection(editor: editor, sequence: editor.sequence)
-            }
-
-            if element.kind.isMicrocontroller {
-                MicrocontrollerSection(editor: editor, element: element)
-            }
-
-            if element.kind == .block {
-                BlockSection(editor: editor, element: element)
-            }
-
-            if MIDIMapping.mappable.contains(element.kind) {
-                Section("MIDI") {
-                    let learning = editor.midiLearning == EditorState.MIDITarget(part: element.id, inner: nil)
-                    if let mapping = editor.circuit.midiMapping(part: element.id) {
-                        LabeledContent("Controller", value: mapping.label)
-                    }
-                    HStack {
-                        Button(learning ? "Move a MIDI Control…" : "MIDI Learn", systemImage: "pianokeys") {
-                            editor.learnMIDI(part: element.id)
-                        }
-                        .foregroundStyle(learning ? Color.orange : Color.primary)
-                        if editor.circuit.midiMapping(part: element.id) != nil {
-                            Button("Forget") { editor.forgetMIDI(part: element.id) }
-                        }
-                    }
-                }
-            }
-
-            if element.kind == .potentiometer {
-                KnobMotionSection(editor: editor, knob: KnobID(part: element.id))
-            }
-
-            if element.kind.playsClip && element[param: "input"] < 0.5 {
-                // microphones play a voice unless given a sound; the audio input and the pickup, the guitar riff
-                let voice = element.kind == .microphone || element.kind == .electretMic
-                Section("Sound") {
-                    let clip = element.audio ?? (voice ? AudioClip.speech : AudioClip.guitarRiff)
-                    LabeledContent(clip.name, value: String(format: "%.1f s", clip.duration))
-                    Button("Choose Sound File…", systemImage: "waveform") { editor.chooseSound(for: element.id) }
-                    if element.audio != nil {
-                        Button(voice ? "Use the Voice" : "Use the Guitar Riff", systemImage: voice ? "mouth" : "guitars") {
-                            editor.useGuitarRiff(for: element.id)
-                        }
-                    }
-                }
-            }
-
-            if element.kind.isSwitch {
-                Section {
-                    Toggle(element.kind == .footswitch ? "Effect on (pressed)" : element.kind == .jack ? "Cable plugged in" : "Closed",
-                           isOn: Binding(get: { element.closed }, set: { _ in editor.toggleSwitch(element.id) }))
-                } footer: {
-                    Text("You can also click the switch on the canvas.")
-                }
-            }
-
+            // the order: what the part is, its values, playing it, what it reads (and plotting that), what only some
+            // kinds have, and last the groups few need, folded
+            ModelSections(editor: editor, element: element)
+            PropertiesSection(editor: editor, element: element)
+            PlayingSections(editor: editor, element: element)
             if element.kind != .ground {
-                Section("Measurements") {
-                    LiveReadings(simulation: editor.simulation, elementID: element.id)
-                }
+                MeasurementsSection(editor: editor, element: element)
             }
-
-            Section {
-                let quantities = scopeQuantities(for: element.kind)
-                if !quantities.isEmpty {
-                    Menu {
-                        ForEach(quantities) { quantity in
-                            Button(quantity.name) { editor.addScope(element.id, quantity) }
-                        }
-                    } label: {
-                        Label("Add to Scope", systemImage: "waveform.path.ecg")
-                    }
-                }
-                if canPlotCurve(element.kind) {
-                    Button("Add I–V Curve Scope", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
-                        editor.addScope(element.id, .current, plot: .currentVersusVoltage)
-                    }
-                }
-                if canPlotResponse(element.kind) {
-                    Button(element.kind == .loopProbe ? "Add Loop Gain" : "Add Frequency Response", systemImage: "chart.line.downtrend.xyaxis") {
-                        editor.addScope(element.id, .voltage, plot: .frequencyResponse)
-                    }
-                }
-                if let quantity = quantities.first, canPlotSpectrum(element.kind) {
-                    Button("Add Spectrum", systemImage: "chart.bar.xaxis") {
-                        editor.addScope(element.id, quantity, plot: .spectrum)
-                    }
-                }
-                Button("Rotate", systemImage: "rotate.right") { editor.rotateSelection() }
-                if element.kind.canFlip {
-                    Button("Flip", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { editor.flipSelection() }
-                }
-                Button("Delete", systemImage: "trash", role: .destructive) { editor.deleteSelection() }
-            }
+            KindSections(editor: editor, element: element)
+            FoldedSections(editor: editor, element: element)
         }
         .formStyle(.grouped)
         .onAppear { name = element.name }
         .onChange(of: element.name) { _, newName in name = newName }
+    }
+}
+
+/// Rotate, Flip and Delete as a row of small buttons, beside the part's name (or the selection's count)
+struct PartActions: View {
+    let editor: EditorState
+    let canFlip: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button { editor.rotateSelection() } label: { Label("Rotate", systemImage: "rotate.right") }
+                .help("Rotate a quarter turn")
+            if canFlip {
+                Button { editor.flipSelection() } label: {
+                    Label("Flip", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                }
+                .help("Flip across its axis")
+            }
+            Button(role: .destructive) { editor.deleteSelection() } label: { Label("Delete", systemImage: "trash") }
+                .help("Delete")
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .fixedSize()
+    }
+}
+
+/// The real part a generic symbol behaves as, and an op-amp's maker's model
+private struct ModelSections: View {
+    @ObservedObject var editor: EditorState
+    let element: Element
+
+    var body: some View {
+        if !element.kind.models.isEmpty {
+            Section {
+                Picker("Model", selection: Binding(
+                    get: { element.model?.name ?? "" },
+                    set: { name in
+                        if let model = element.kind.models.first(where: { $0.name == name }) { editor.applyModel(element.id, model) }
+                    }
+                )) {
+                    ForEach(element.kind.models, id: \.name) { model in
+                        Text(model.title).tag(model.name)
+                    }
+                    if element.model == nil {
+                        Text("Custom").tag("")
+                    }
+                }
+            } footer: {
+                Text(element.model?.summary ?? "Values changed from the chosen model.")
+            }
+        }
+
+        if element.kind == .opAmp, let name = element.model?.name, let maker = MakerModelCatalog.model(forBuiltIn: name) {
+            MakerModelSection(editor: editor, element: element, model: maker)
+        }
+    }
+}
+
+/// The part's values (not the rest of its SPICE model card, which `FoldedSections` keeps out of the way)
+private struct PropertiesSection: View {
+    @ObservedObject var editor: EditorState
+    let element: Element
+
+    var body: some View {
+        if element.kind == .led {
+            Section("Properties") {
+                Picker("Color", selection: Binding(
+                    get: { Int(element[param: "color"]) },
+                    set: { editor.setParameter(element.id, element.kind.params[0], to: Double($0)) }
+                )) {
+                    ForEach(LEDColor.allCases, id: \.rawValue) { color in
+                        Text(color.name).tag(color.rawValue)
+                    }
+                }
+            }
+        } else if !element.kind.params.isEmpty {
+            Section("Properties") {
+                ForEach(element.kind.params.filter { !$0.advanced }, id: \.key) { spec in
+                    if spec.choices.isEmpty {
+                        ParameterRow(editor: editor, elementID: element.id, spec: spec, value: element[param: spec.key])
+                    } else {
+                        ChoiceRow(editor: editor, element: element, spec: spec)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A parameter that picks one of a few settings
+private struct ChoiceRow: View {
+    @ObservedObject var editor: EditorState
+    let element: Element
+    let spec: ParamSpec
+
+    var body: some View {
+        let value = element[param: spec.key]
+        Picker(spec.name, selection: Binding(
+            get: { value },
+            set: { editor.setParameter(element.id, spec, to: $0) }
+        )) {
+            ForEach(spec.choices, id: \.value) { choice in
+                Text(choice.name).tag(choice.value)
+            }
+            if !spec.choices.contains(where: { $0.value == value }) {
+                Text(formatParameter(value, spec)).tag(value)
+            }
+        }
+    }
+}
+
+/// What is played rather than edited: a switch's state, and the sound a microphone or audio input plays
+private struct PlayingSections: View {
+    @ObservedObject var editor: EditorState
+    let element: Element
+
+    var body: some View {
+        if element.kind.isSwitch {
+            Section {
+                Toggle(element.kind == .footswitch ? "Effect on (pressed)" : element.kind == .jack ? "Cable plugged in" : "Closed",
+                       isOn: Binding(get: { element.closed }, set: { _ in editor.toggleSwitch(element.id) }))
+            } footer: {
+                Text("You can also click the switch on the canvas.")
+            }
+        }
+
+        if element.kind.playsClip && element[param: "input"] < 0.5 {
+            // microphones play a voice unless given a sound; the audio input and the pickup, the guitar riff
+            let voice = element.kind == .microphone || element.kind == .electretMic
+            Section("Sound") {
+                let clip = element.audio ?? (voice ? AudioClip.speech : AudioClip.guitarRiff)
+                LabeledContent(clip.name, value: String(format: "%.1f s", clip.duration))
+                Button("Choose Sound File…", systemImage: "waveform") { editor.chooseSound(for: element.id) }
+                if element.audio != nil {
+                    Button(voice ? "Use the Voice" : "Use the Guitar Riff", systemImage: voice ? "mouth" : "guitars") {
+                        editor.useGuitarRiff(for: element.id)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The part's live readings, with the ways to plot them in the section's header. (The readings redraw on their own
+/// timeline; nothing here follows the simulation.)
+private struct MeasurementsSection: View {
+    let editor: EditorState
+    let element: Element
+
+    var body: some View {
+        Section {
+            LiveReadings(simulation: editor.simulation, elementID: element.id)
+        } header: {
+            HStack(spacing: 6) {
+                Text("Measurements")
+                Spacer(minLength: 4)
+                MeasurementActions(editor: editor, elementID: element.id, kind: element.kind)
+            }
+        }
+    }
+}
+
+/// Add to Scope ▸ (each quantity), and the I–V curve, frequency response and spectrum scopes, as small buttons
+struct MeasurementActions: View {
+    let editor: EditorState
+    let elementID: UUID
+    let kind: ElementKind
+
+    var body: some View {
+        let quantities = scopeQuantities(for: kind)
+        HStack(spacing: 10) {
+            if !quantities.isEmpty {
+                Menu {
+                    ForEach(quantities) { quantity in
+                        Button(quantity.name) { editor.addScope(elementID, quantity) }
+                    }
+                } label: {
+                    Label("Add to Scope", systemImage: "waveform.path.ecg")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.visible)
+                .help("Add to Scope: plot this part's " + quantities.map { $0.name.lowercased() }.joined(separator: ", ") + " over time")
+            }
+            if canPlotCurve(kind) {
+                Button { editor.addScope(elementID, .current, plot: .currentVersusVoltage) } label: {
+                    Label("Add I–V Curve Scope", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                }
+                .help("Add I–V Curve Scope: its current against its voltage")
+            }
+            if canPlotResponse(kind) {
+                let title = kind == .loopProbe ? "Add Loop Gain" : "Add Frequency Response"
+                Button { editor.addScope(elementID, .voltage, plot: .frequencyResponse) } label: {
+                    Label(title, systemImage: "chart.line.downtrend.xyaxis")
+                }
+                .help(title)
+            }
+            if let quantity = quantities.first, canPlotSpectrum(kind) {
+                Button { editor.addScope(elementID, quantity, plot: .spectrum) } label: {
+                    Label("Add Spectrum", systemImage: "chart.bar.xaxis")
+                }
+                .help("Add Spectrum: the frequencies in its " + quantity.name.lowercased())
+            }
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .fixedSize()
+    }
+}
+
+/// What only some kinds have: the sequencer of the keyboard sources, a microcontroller's program, a block's insides
+private struct KindSections: View {
+    @ObservedObject var editor: EditorState
+    let element: Element
+
+    var body: some View {
+        if element.kind.isKeyboard {
+            SequencerSection(editor: editor, sequence: editor.sequence)
+        }
+
+        if element.kind.isMicrocontroller {
+            MicrocontrollerSection(editor: editor, element: element)
+        }
+
+        if element.kind == .block {
+            BlockSection(editor: editor, element: element)
+        }
+    }
+}
+
+/// The groups few parts need edited, folded until opened (and kept open or folded, across parts and launches): the rest
+/// of the SPICE model card, MIDI learn, and a knob's movement
+private struct FoldedSections: View {
+    @ObservedObject var editor: EditorState
+    let element: Element
+    @AppStorage("InspectorSPICEParametersExpanded") private var spiceExpanded = false
+
+    var body: some View {
+        if element.kind.params.contains(where: \.advanced) {
+            // the rest of the part's SPICE model card, which a manufacturer's model sets
+            Section {
+                DisclosureGroup("SPICE Model Parameters", isExpanded: $spiceExpanded) {
+                    ForEach(element.kind.params.filter(\.advanced), id: \.key) { spec in
+                        ParameterRow(editor: editor, elementID: element.id, spec: spec, value: element[param: spec.key])
+                    }
+                }
+            }
+        }
+
+        if MIDIMapping.mappable.contains(element.kind) {
+            MIDISection(editor: editor, element: element)
+        }
+
+        if element.kind == .potentiometer {
+            KnobMotionSection(editor: editor, knob: KnobID(part: element.id))
+        }
+    }
+}
+
+/// A knob or switch played from a MIDI controller: learn it by moving the control, or forget it
+private struct MIDISection: View {
+    @ObservedObject var editor: EditorState
+    let element: Element
+    @AppStorage("InspectorMIDIExpanded") private var expanded = false
+
+    var body: some View {
+        let learning = editor.midiLearning == EditorState.MIDITarget(part: element.id, inner: nil)
+        let mapping = editor.circuit.midiMapping(part: element.id)
+        Section {
+            DisclosureGroup(isExpanded: $expanded) {
+                if let mapping {
+                    LabeledContent("Controller", value: mapping.label)
+                }
+                HStack {
+                    Button(learning ? "Move a MIDI Control…" : "MIDI Learn", systemImage: "pianokeys") {
+                        editor.learnMIDI(part: element.id)
+                    }
+                    .foregroundStyle(learning ? Color.orange : Color.primary)
+                    if mapping != nil {
+                        Button("Forget") { editor.forgetMIDI(part: element.id) }
+                    }
+                }
+            } label: {
+                // what it is set to, seen while folded
+                LabeledContent("MIDI") {
+                    if learning {
+                        Text("Learning…").foregroundStyle(.orange)
+                    } else if let mapping {
+                        Text(mapping.label).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -304,6 +437,7 @@ struct KnobMotionSection: View {
     @ObservedObject var editor: EditorState
     let knob: KnobID
     @AppStorage("knobMotionPeriod") private var period = 2.0
+    @AppStorage("InspectorMovementExpanded") private var expanded = false
     @State private var low = 0.0
     @State private var high = 1.0
 
@@ -312,23 +446,29 @@ struct KnobMotionSection: View {
     var body: some View {
         let moving = editor.motion(of: knob) != nil
         Section {
-            Toggle("Move back and forth", isOn: Binding(
-                get: { moving },
-                set: { on in
-                    if on { editor.startMoving(knob, period: period, low: min(low, high), high: max(low, high)) } else { editor.stopMoving(knob) }
+            // folded until opened, as few knobs are set moving; the label says when this one is
+            DisclosureGroup(isExpanded: $expanded) {
+                Toggle("Move back and forth", isOn: Binding(
+                    get: { moving },
+                    set: { on in
+                        if on { editor.startMoving(knob, period: period, low: min(low, high), high: max(low, high)) } else { editor.stopMoving(knob) }
+                    }
+                ))
+                Picker("Once every", selection: $period) {
+                    ForEach(Self.periods, id: \.self) { seconds in
+                        Text(seconds < 1 ? String(format: "%.0f ms", seconds * 1000) : String(format: "%.0f s", seconds)).tag(seconds)
+                    }
                 }
-            ))
-            Picker("Once every", selection: $period) {
-                ForEach(Self.periods, id: \.self) { seconds in
-                    Text(seconds < 1 ? String(format: "%.0f ms", seconds * 1000) : String(format: "%.0f s", seconds)).tag(seconds)
+                LabeledContent("From") { Slider(value: $low, in: 0...1, onEditingChanged: { editing in if !editing { restart() } }).controlSize(.small) }
+                LabeledContent("To") { Slider(value: $high, in: 0...1, onEditingChanged: { editing in if !editing { restart() } }).controlSize(.small) }
+                Text("Turns the knob from one position to the other and back by itself, slowing at each end, while you listen and watch the scopes. It goes back where it was when it stops; File ▸ Export Sound records it moving.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } label: {
+                LabeledContent("Movement") {
+                    if moving { Text("Moving").foregroundStyle(.secondary) }
                 }
             }
-            LabeledContent("From") { Slider(value: $low, in: 0...1, onEditingChanged: { editing in if !editing { restart() } }).controlSize(.small) }
-            LabeledContent("To") { Slider(value: $high, in: 0...1, onEditingChanged: { editing in if !editing { restart() } }).controlSize(.small) }
-        } header: {
-            Text("Movement")
-        } footer: {
-            Text("Turns the knob from one position to the other and back by itself, slowing at each end, while you listen and watch the scopes. It goes back where it was when it stops; File ▸ Export Sound records it moving.")
         }
         .onChange(of: period) { _, _ in restart() }
         .onAppear {
@@ -346,7 +486,6 @@ struct KnobMotionSection: View {
     }
 }
 
-/// A typed value plus a slider; dragging the slider changes the circuit live and becomes one undo step.
 /// The step sequencer that plays the keyboard sources: one note or rest per sixteenth note, repeating
 struct SequencerSection: View {
     @ObservedObject var editor: EditorState
@@ -482,24 +621,23 @@ struct MakerModelSection: View {
     }
 }
 
+/// A typed value plus a slider; dragging the slider changes the circuit live and becomes one undo step.
 struct ParameterRow: View {
     @ObservedObject var editor: EditorState
     let elementID: UUID
     let spec: ParamSpec
     let value: Double
     @State private var text = ""
-    @FocusState private var focused: Bool
+    @State private var invalid = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             LabeledContent(spec.name) {
-                TextField(spec.name, text: $text)
-                    .labelsHidden()
-                    .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 120)
-                    .focused($focused)
-                    .onSubmit(commit)
+                ParameterField(spec: spec, value: value, text: $text, invalid: $invalid) { parsed in
+                    editor.setParameter(elementID, spec, to: parsed)
+                }
             }
+            if invalid { InvalidValueNote() }
             Slider(value: Binding(get: { position(of: value) }, set: { slide(to: $0) }), in: 0...1, onEditingChanged: { editing in
                 if editing {
                     editor.beginInteraction()
@@ -509,22 +647,6 @@ struct ParameterRow: View {
             })
             .controlSize(.small)
         }
-        .onAppear { text = formatParameter(value, spec) }
-        .onChange(of: value) { _, newValue in
-            if !focused { text = formatParameter(newValue, spec) }
-        }
-        .onChange(of: focused) { _, isFocused in
-            if !isFocused { commit() }
-        }
-    }
-
-    private func commit() {
-        guard let parsed = SI.parse(text) else {
-            text = formatParameter(value, spec)
-            return
-        }
-        if parsed != value { editor.setParameter(elementID, spec, to: parsed) }
-        text = formatParameter(parsed, spec)
     }
 
     private func position(of value: Double) -> Double {
@@ -556,6 +678,103 @@ struct ParameterRow: View {
         next.update(elementID) { $0[param: spec.key] = newValue }
         editor.setDuringInteraction(next)
         text = formatParameter(newValue, spec)
+        invalid = false
+    }
+}
+
+/// A parameter's typed value, with SI prefixes ("4.7k", "100n", "2M2"). Return or leaving the field sets it; ↑ and ↓
+/// step it (`ParameterStepping`: the next E12 value of a resistance, capacitance or inductance, E24 with ⌥) and Esc
+/// puts back the value it has. Text that is not a value stays, marked, for correcting. `value` nil: the selected parts
+/// differ, and the field shows "Mixed" until a value is typed.
+struct ParameterField: View {
+    let spec: ParamSpec
+    let value: Double?
+    @Binding var text: String
+    @Binding var invalid: Bool
+    let commit: (Double) -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField(spec.name, text: $text, prompt: value == nil ? Text("Mixed") : nil)
+            .labelsHidden()
+            .multilineTextAlignment(.trailing)
+            .frame(maxWidth: 120)
+            .focused($focused)
+            .onSubmit(save)
+            .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                step(up: press.key == .upArrow, finer: press.modifiers.contains(.option)) ? .handled : .ignored
+            }
+            .onExitCommand(perform: revert)
+            .overlay {
+                if invalid {
+                    RoundedRectangle(cornerRadius: 5).strokeBorder(Color.red, lineWidth: 1.5).allowsHitTesting(false)
+                }
+            }
+            .help(helpText)
+            .onAppear { text = shown(value) }
+            .onChange(of: value) { _, newValue in
+                if !focused {
+                    text = shown(newValue)
+                    invalid = false
+                }
+            }
+            .onChange(of: focused) { _, isFocused in
+                if !isFocused { save() }
+            }
+    }
+
+    private func shown(_ value: Double?) -> String {
+        value.map { formatParameter($0, spec) } ?? ""
+    }
+
+    /// What the field's help tag says: its usual range, and its keys
+    private var helpText: String {
+        let range = "\(formatParameter(spec.range.lowerBound, spec)) to \(formatParameter(spec.range.upperBound, spec))"
+        return "\(spec.name): usually \(range) (the slider's range); other values can be typed, with SI prefixes such as 4.7k, 10u or 2M2. "
+            + ParameterStepping.hint(spec) + "; Esc puts the value back."
+    }
+
+    private func save() {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        // a mixed field left empty changes nothing
+        if value == nil && trimmed.isEmpty {
+            invalid = false
+            return
+        }
+        guard let parsed = SI.parse(trimmed) else {
+            // kept, and marked, rather than put back without a word
+            invalid = true
+            return
+        }
+        invalid = false
+        if parsed != value { commit(parsed) }
+        text = formatParameter(parsed, spec)
+    }
+
+    private func revert() {
+        text = shown(value)
+        invalid = false
+    }
+
+    /// One step from the value typed (or the part's, when what is typed is not a value); false when there is none
+    /// (a mixed field), so the key goes on to the field
+    private func step(up: Bool, finer: Bool) -> Bool {
+        guard let base = SI.parse(text) ?? value else { return false }
+        let next = ParameterStepping.step(base, spec, up: up, finer: finer)
+        invalid = false
+        text = formatParameter(next, spec)
+        if next != value { commit(next) }
+        return true
+    }
+}
+
+/// Under a field whose text is not a value: what it takes
+struct InvalidValueNote: View {
+    var body: some View {
+        Text(ParameterStepping.parseHint)
+            .font(.caption)
+            .foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
