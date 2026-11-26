@@ -75,6 +75,32 @@ final class PCBEditing: ObservableObject {
     @Published var sizeChoice = BoardEditing.SizeChoice() {
         didSet { if sizeChoice != oldValue { sizeChoiceChanged() } }
     }
+    /// The Magnetic Points preferences (KiCad's PCB editor's: pads and tracks snapped to while routing, or always, or
+    /// never; graphics; the items of every layer or the one worked on), kept in the app's defaults as KiCad keeps
+    /// them in its own; the router and the drawing tools snap by them
+    @Published var magnetic = PCBEditing.savedMagnetic() {
+        didSet { if magnetic != oldValue { magneticChanged() } }
+    }
+
+    static func savedMagnetic() -> MagneticSettings {
+        var m = MagneticSettings()
+        let d = UserDefaults.standard
+        if let v = d.object(forKey: "pcbMagneticPads") as? Int, let o = MagneticOption(rawValue: v) { m.pads = o }
+        if let v = d.object(forKey: "pcbMagneticTracks") as? Int, let o = MagneticOption(rawValue: v) { m.tracks = o }
+        if let v = d.object(forKey: "pcbMagneticGraphics") as? Bool { m.graphics = v }
+        if let v = d.object(forKey: "pcbMagneticAllLayers") as? Bool { m.allLayers = v }
+        return m
+    }
+
+    private func magneticChanged() {
+        let d = UserDefaults.standard, m = magnetic
+        d.set(m.pads.rawValue, forKey: "pcbMagneticPads")
+        d.set(m.tracks.rawValue, forKey: "pcbMagneticTracks")
+        d.set(m.graphics, forKey: "pcbMagneticGraphics")
+        d.set(m.allLayers, forKey: "pcbMagneticAllLayers")
+        Task { _ = await engine.run { session -> Bool? in session.magnetic = m; return true } }
+    }
+
     /// A copper layer count asked for that removes layers with items on them, waiting for the user's word, as KiCad's
     /// Board Setup waits for it: the count, and how many items it lists as on the layers removed
     @Published var copperLayersToConfirm: (count: Int, items: Int)?
@@ -231,10 +257,12 @@ final class PCBEditing: ObservableObject {
         if let chosen = patternSelection, !patterns.contains(where: { $0.uuid == chosen }) { patternSelection = nil }
         let refills = !(controller?.isLive ?? false) && !(controller?.isOpenInKiCad ?? false)
         let choice = sizeChoice, overrides = overridesLocks
+        let magnetic = magnetic
         _ = await engine.run { session -> Bool? in
             session.refillsZones = refills
             session.sizeChoice = choice
             session.overridesLocks = overrides
+            session.magnetic = magnetic
             return true
         }
         await check()

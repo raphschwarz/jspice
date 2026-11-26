@@ -135,9 +135,18 @@ public final class BoardEditing {
     public var sizeChoice = SizeChoice()
 
     public private(set) var router: BoardRouter {
-        didSet { router.patternMemory = patternMemory }
+        didSet {
+            router.patternMemory = patternMemory
+            router.magnetic = magnetic
+        }
+    }
+    /// The Magnetic Points preferences the router snaps the track's end by (TOOL_BASE::checkSnap)
+    public var magnetic = MagneticSettings() {
+        didSet { router.magnetic = magnetic }
     }
     var project: [String: Any]?
+    /// The project's settings the session goes by (its .kicad_pro's JSON)
+    public var projectSettings: [String: Any]? { project }
     /// The rules of the board's .kicad_dru (its design rules file), which the router, the zone filler and the design
     /// rules check follow as KiCad's do
     var designRules: String?

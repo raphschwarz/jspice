@@ -9,8 +9,8 @@ import KiCadRouter
 /// tool): lines (chains of them), arcs, rectangles, circles and polygons drawn on any layer (Edge.Cuts drawing the
 /// board's outline), each as one change; dimensions of each kind; a graphic selected shows its edit points, each
 /// dragged as KiCad's point editor drags it; the ruler shows a distance, its x and y and its angle, and changes
-/// nothing. The pointer goes to a graphic's end, corner or centre near it, else to the 0.05 mm grid (KiCad's magnetic
-/// snapping is not ported: this is the view's own).
+/// nothing. The pointer goes where KiCad's grid helper puts it (PCBGridHelper: the magnetic points of the items near
+/// it, the snap lines, the 0.05 mm grid).
 @MainActor
 final class PCBGraphicsEditing: ObservableObject {
     /// What the draw tool draws (KiCad's Draw Lines, Draw Arcs, Draw Rectangles, Draw Circles, Draw Polygons)
@@ -125,6 +125,7 @@ final class PCBGraphicsEditing: ObservableObject {
     private func restart() {
         tool = nil
         dimensionTool = nil
+        gridHelper = nil
         switch currentTool {
         case .draw:
             tool = GraphicTool(kind.tool, layer: layer, widths: widths, angleSnap: angleSnap)
@@ -137,24 +138,45 @@ final class PCBGraphicsEditing: ObservableObject {
         }
     }
 
-    /// Where the pointer goes: to a graphic's point near it (not with Shift, as KiCad's magnetic snapping), else to the
-    /// grid (not with Ctrl, as KiCad 10's, nor for an aligned dimension's height off x and y)
+    /// The board's items as KiCad's grid helper snaps to them (SnapBoard), made again as the board changes
+    private var snapBoard: SnapBoard?
+    /// The grid helper of the tool drawing (PCB_GRID_HELPER: one for each graphic, or each line of a chain, as each
+    /// of KiCad's drawShape makes its own)
+    private var gridHelper: PCBGridHelper?
+
+    /// A new grid helper for what is drawn next, the point it starts at not snapped to by a snap line
+    private func restartGridHelper(skipping start: IPoint? = nil) {
+        guard let snapBoard else {
+            gridHelper = nil
+            return
+        }
+        var g = PCBGridHelper(board: snapBoard, magnetic: editing?.magnetic ?? MagneticSettings())
+        g.skipPoint = start
+        gridHelper = g
+    }
+
+    /// Where the pointer goes, as KiCad's drawing tools put it (PCB_GRID_HELPER::BestSnapAnchor): to the magnetic
+    /// points of the items on the layer drawn on (the active layer, measuring) near it, as the Magnetic Points
+    /// preferences say, or to a snap line through the point last snapped to (not with Shift), else to the 0.05 mm
+    /// grid (not with Ctrl, as KiCad 10's, nor for an aligned dimension's height off x and y); and whether it went to
+    /// a graphic
     private func snapped(_ p: KiCadPoint) -> (point: KiCadPoint, onGraphic: Bool) {
         let flags = NSEvent.modifierFlags
-        if !flags.contains(.shift), let picture {
-            let reach = 6 / max(scale, 0.01)
-            var best: (KiCadPoint, Double)?
-            for g in picture.graphics where g.line.layer == layer || currentTool == .measure {
-                let pts = g.line.closed ? g.line.points : [g.line.points.first, g.line.points.last].compactMap { $0 }
-                for q in pts {
-                    let d = q.distance(to: p)
-                    if d < reach && d < (best?.1 ?? .infinity) { best = (q, d) }
-                }
-            }
-            if let (q, _) = best { return (q, true) }
-        }
         let grid = !flags.contains(.control) && (currentTool != .dimension || dimensionTool?.snapsToGrid ?? true)
-        return (grid ? PCBEditing.onGrid(p) : p, false)
+        if gridHelper == nil { restartGridHelper() }
+        guard var g = gridHelper, let snapBoard, let appearance = editing?.controller?.appearance else {
+            return (grid ? PCBEditing.onGrid(p) : p, false)
+        }
+        g.magnetic = editing?.magnetic ?? g.magnetic
+        g.enableSnap = !flags.contains(.shift)
+        g.enableGrid = grid
+        let view = SnapView(appearance: appearance.board, enabledLayers: appearance.controls.boardLayers,
+                            worldPerPixel: 1e6 / max(scale, 0.01), grid: IPoint(50_000, 50_000))
+        let layers: Set<Int> = currentTool == .measure ? [appearance.board.activeLayer] : KiCadLayers.ids[layer].map { Set([$0]) } ?? Set<Int>()
+        let q = g.bestSnapAnchor(Self.nm(p), layers: layers, view: view)
+        let onGraphic = g.snapped.map { snapBoard.items[$0].kind == .shape } ?? false
+        gridHelper = g
+        return (Self.mm(q), onGraphic)
     }
 
     /// The pointer at `p` (mm): what is being drawn follows it; whether a tool of these took it
@@ -195,6 +217,9 @@ final class PCBGraphicsEditing: ObservableObject {
             if double { made += t.click(at: at, double: true, ctrl: ctrl) }
             tool = t
             commit(made)
+            // (the next graphic, or the chain's next line, snapped by a grid helper of its own, which no snap line
+            // takes back to where it starts)
+            restartGridHelper(skipping: at)
         case .dimension:
             guard var t = dimensionTool else { return }
             t.leaderText = leaderText
@@ -263,6 +288,10 @@ final class PCBGraphicsEditing: ObservableObject {
 
     /// The board changed: the graphic being edited as it now is
     func boardTaken() {
+        Task {
+            snapBoard = await editing?.withSession { SnapBoard(board: $0.board, project: $0.projectSettings) }
+            gridHelper = nil
+        }
         guard let uuid = editor?.uuid, draggedHandle == nil else { return }
         Task {
             if let shape = await editing?.withSession({ $0.shape(uuid) }) {
@@ -497,6 +526,13 @@ struct PCBGraphicsBar: View {
     @ObservedObject var editing: PCBEditing
     @ObservedObject var graphics: PCBGraphicsEditing
 
+    /// MAGNETIC_OPTIONS, as KiCad's preferences name them
+    @ViewBuilder private var magneticOptions: some View {
+        Text("Never").tag(MagneticOption.noEffect)
+        Text("When creating tracks").tag(MagneticOption.captureCursorInTrackTool)
+        Text("Always").tag(MagneticOption.captureAlways)
+    }
+
     static func layerTitle(_ layer: String) -> String {
         switch layer {
         case "F.CrtYd": return "Top Courtyard"
@@ -550,6 +586,16 @@ struct PCBGraphicsBar: View {
             .labelsHidden()
             .fixedSize()
             .help("Lines, polygons and dimensions held to 45° or 90° (KiCad's angle snap mode); ⌃ lets them go free, and holds a rectangle square")
+        }
+        if editing.tool == .draw || editing.tool == .dimension || editing.tool == .measure || editing.tool == .route {
+            Menu("Magnetic") {
+                Picker("Snap to pads", selection: $editing.magnetic.pads) { magneticOptions }
+                Picker("Snap to tracks", selection: $editing.magnetic.tracks) { magneticOptions }
+                Toggle("Snap to graphics", isOn: $editing.magnetic.graphics)
+                Toggle("Snap to items on all layers", isOn: $editing.magnetic.allLayers)
+            }
+            .fixedSize()
+            .help("KiCad's Magnetic Points: what the pointer snaps to (⇧ snaps to nothing)")
         }
         if editing.tool == .draw, let width = graphics.tool?.width {
             Text(String(format: "%.2f mm", Double(width) / 1e6)).monospacedDigit().foregroundStyle(.secondary)

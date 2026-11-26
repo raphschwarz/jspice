@@ -454,6 +454,20 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   graphic and dimension the port makes is KiCad's, to the nanometre, and every graphic its point editor leaves.
   (No Ctrl: in KiCad 10 it takes the grid away as well as the angle, and the pointer's place is then known only to
   a pixel.)
+- `snapping.py`: where KiCad's grid helper snaps the pointer to the board's items (`PCB_GRID_HELPER::BestSnapAnchor`,
+  its magnetic points), for checking the port's (`BoardSnapping.swift`: `PCBGridHelper` on a `SnapBoard`). With
+  `drawing.py`'s action plugin it runs pcbnew under Xvfb, its configuration's grid a micrometre, its Magnetic Points
+  snapping to pads, tracks and graphics always, its angle snap off and KiCad 10's extension snaps off
+  (`kicad_advanced`'s `EnableExtensionSnaps=0`: the construction geometry it activates after the pointer rests half
+  a second, which goes by the clock). `snapping.py boards OUTDIR BOARD.kicad_pcb...` copies boards with graphics of
+  their own added on F.Cu (crossing lines, a circle, an arc, a rectangle) and writes each a plan: lines from near an
+  anchor (a pad, a track's end, a via, a footprint, a zone's corner, a graphic's point) to near another, level with it
+  or anywhere, some boards opened on local settings that dim the inactive layers or hide objects. `snapping.py draw
+  BOARD.kicad_pcb...` draws them with Place ▸ Draw Lines, the pointer moved to pixels as `drawing.py` moves it, and
+  writes `BOARD.snapped`: every event, the lines each step drew and their ends. `SnappingTests` gives the port the
+  same pointer positions in the same order, a grid helper of its own for each line, the board as it then was, and
+  checks each line's ends against KiCad's, to the nanometre (`Tests/KiCadRouterTests/Fixtures/snapping`;
+  `KICAD_SNAPPING_REFERENCE` names a folder of more).
 - `rules.py`: random design rules for boards (`rules.py [--fills] [--all] [--seed SEED] BOARD.kicad_pcb...`): a
   rules file beside each board (`BOARD.kicad_dru`, where KiCad's DRC engine finds it, and the port's `BoardDRC`,
   `ZoneFiller` and `BoardRouter` with it), of one to six rules of random conditions on what the board has: its net

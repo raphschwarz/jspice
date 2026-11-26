@@ -155,6 +155,10 @@ public final class BoardRouter {
 
     /// The grid the pointer goes to where there is nothing to snap to, in nm (the editor's grid, its origin at 0)
     public var grid = 50_000
+    /// The Magnetic Points preferences (whether the end of the track snaps to pads and to tracks and vias), and
+    /// whether snapping is on at all (Shift turns it off: the grid helper's GetSnap)
+    public var magnetic = MagneticSettings()
+    public var snapEnabled = true
     /// What the track being routed started on (which it does not end on), or what is being dragged
     private var startItem: Item?
     /// The layer chosen when the drag started (the view's top layer, for KiCad's router tool), and whether what it
@@ -189,18 +193,23 @@ public final class BoardRouter {
             item = pickSingleItem(p, net: net, layer: layer, topLayer: top, avoid: startItem.map { [$0] } ?? [])
             if item != nil { break }
         }
-        guard let item, checkSnap(item) else { return (align(p), nil) }
+        guard let item, snapEnabled, checkSnap(item) else { return (align(p), nil) }
         return (snapToItem(item, p), item)
     }
 
-    /// Whether the pointer snaps to `item` (TOOL_BASE::checkSnap): pads and tracks both, as KiCad's magnetic items
-    /// are by default in the router tool; not, dragging, a segment of the line dragged
+    /// Whether the pointer snaps to `item` (TOOL_BASE::checkSnap): a pad if the Magnetic Points snap to pads while
+    /// routing or always, a track, arc or via if they snap to tracks so (both, by default); not, dragging, a segment
+    /// of the line dragged
     private func checkSnap(_ item: Item) -> Bool {
         if startItem != nil, router.state == .dragSegment, let dragger = router.dragger, let li = item as? LinkedItem,
            dragger.originalLine.containsLink(li) {
             return false
         }
-        return true
+        switch item.kind {
+        case .via, .segment, .arc: return magnetic.routerSnapsToTracks
+        case .solid: return magnetic.routerSnapsToPads
+        default: return false
+        }
     }
 
     /// The item under the pointer to start or end a track on (TOOL_BASE::pickSingleItem): pads and vias first, then
