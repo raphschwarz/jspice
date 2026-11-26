@@ -150,18 +150,7 @@ struct APIKeySettings: View {
     }
 
     private func refresh() {
-        stored = Self.keychainHasKey
-    }
-
-    /// Whether the login keychain holds APIKeyStore's item. Only its attributes are asked for, so that looking never
-    /// brings up a keychain prompt for the key itself. (The service name is APIKeyStore's, which keeps it private.)
-    private static var keychainHasKey: Bool {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: "org.knowm.jspice.anthropic-api-key",
-                                    kSecReturnAttributes as String: true,
-                                    kSecMatchLimit as String: kSecMatchLimitOne]
-        var item: CFTypeRef?
-        return SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
+        stored = APIKeyStore.hasStoredKey
     }
 }
 

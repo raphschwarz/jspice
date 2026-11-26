@@ -18,6 +18,15 @@ enum APIKeyStore {
         return String(data: data, encoding: .utf8)
     }
 
+    /// Whether the login keychain holds a stored key (the ANTHROPIC_API_KEY variable aside). Only the item's attributes
+    /// are asked for, never its data, so that looking brings up no keychain prompt.
+    static var hasStoredKey: Bool {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                    kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var item: CFTypeRef?
+        return SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
+    }
+
     static func save(_ key: String) {
         remove()
         let item: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
