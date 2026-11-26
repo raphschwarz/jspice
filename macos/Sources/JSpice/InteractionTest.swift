@@ -223,6 +223,8 @@ enum InteractionTest {
         await checkEditing(editor: editor, document: document, window: window, canvas: liveCanvas)
         // what VoiceOver is told of the schematic, and its actions
         await checkAccessibility(editor: editor, document: document, canvas: liveCanvas)
+        // pasting past a part this build cannot read, the menu's and the keyboard's way to what was mouse-only
+        await checkFollowUps(editor: editor, document: document, window: window, canvas: liveCanvas)
 
         // (the editor holds the undo manager weakly: it is the test's to keep until the last check has run)
         withExtendedLifetime(undo) {}
