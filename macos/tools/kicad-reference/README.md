@@ -377,6 +377,22 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   `AppearanceTests` opens each board on the same settings, makes the same steps with the port and checks its settings
   against both files, and that every file KiCad wrote comes out byte for byte as it was when the port reads
   and writes it. The boards of `Tests/KiCadRouterTests/Fixtures/nets` have theirs.
+- `netdisplay.py`: the nets' and net classes' colours and the nets whose ratsnest is hidden, as KiCad keeps them (the
+  project's `net_settings`: each net's colour in `net_colors`, each class's `pcb_color`; the local settings' `board`:
+  `hidden_nets`, `hidden_netclasses`, `net_color_mode`), changed in the Nets tab of KiCad's Appearance panel, for
+  checking the port's (`NetDisplay.swift`, KiCadKit's `NetColors.swift` and `KiCadAppearanceControls`). As
+  `appearance.py` does, it runs pcbnew under Xvfb with an action plugin of its own. `netdisplay.py BOARD.kicad_pcb...`
+  writes `BOARD.netdisplay` (JSON) beside each board: two runs of KiCad, the first on the board's project with no
+  local settings, the second on what the first left, each doing random steps through the tab's own controls (a net's
+  swatch double clicked and the colour picker given a colour as `#RRGGBB`, or its Clear Color, then OK; the same of a
+  net class's swatch; a net's or a net class's eye; All, Ratsnest or None), then File ▸ Save twice and the editor
+  closed: the `.kicad_pro` and `.kicad_prl` each left (File ▸ Save writes the project before the view's nets' colours
+  and hidden nets are copied into the settings, so it has those as opened; closing the editor copies them,
+  `SaveProjectLocalSettings`). `NetDisplayTests` opens each board on the same files, makes the same steps with the
+  port and checks its project colours and local settings against all three, and that each `.kicad_prl` comes out
+  byte for byte as KiCad wrote it. The boards of `Tests/KiCadRouterTests/Fixtures/nets` have theirs. (KiCad's
+  configuration must have been through its first-run wizard and have its library tables, else the wizard stops the
+  board opening; `KICAD_CONFIG_HOME` names another one.)
 - `nets.py`: KiCad's Net Inspector and its Highlight Net on boards, for checking the port's (`NetInspector.swift`,
   with `LengthCalculation`, and `NetHighlight.swift`). Neither the panel nor the highlight tool reaches KiCad's Python
   module, so, as `boardsetup.py` and `tuning.py` do, it runs pcbnew under Xvfb with an action plugin of its own and

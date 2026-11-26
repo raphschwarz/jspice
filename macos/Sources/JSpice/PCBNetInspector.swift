@@ -137,5 +137,12 @@ struct PCBNetInspector: View {
             }
         }
         .fontWeight(row.isGroup ? .semibold : .regular)
+        .contextMenu {
+            // (KiCad's Net Inspection Tools: Show Net in Ratsnest and Hide Net in Ratsnest, of this net)
+            if let net = row.net {
+                Button("Show Net in Ratsnest") { appearance.hideNetInRatsnest(net.name, hide: false) }
+                Button("Hide Net in Ratsnest") { appearance.hideNetInRatsnest(net.name, hide: true) }
+            }
+        }
     }
 }

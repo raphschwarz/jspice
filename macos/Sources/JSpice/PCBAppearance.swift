@@ -1,7 +1,8 @@
 // After KiCad 10.0.8: pcbnew/tools/pcb_selection_tool.cpp (Selectable and isOnVisibleFootprintSide: what the
 // display's visibility leaves the pointer), pcbnew/pcb_painter.cpp (PCB_RENDER_SETTINGS::GetColor: highlighted
-// nets, the high contrast mode's dimming) and pcbnew/widgets/appearance_controls.cpp (the Appearance panel's rows,
-// objects and presets).
+// nets, the high contrast mode's dimming, the nets' colours on copper), pcbnew/widgets/appearance_controls.cpp (the
+// Appearance panel's rows, objects and presets, its Nets tab) and pcbnew/ratsnest/ratsnest_view_item.cpp (which nets'
+// ratsnest is drawn, and in which colour).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -36,6 +37,9 @@ final class PCBAppearance: ObservableObject {
     @Published private(set) var zoomCount = 0
     /// The highlight tool chosen: a click highlights the net there (KiCad's Highlight Net tool)
     @Published var highlightTool = false
+    /// The board's nets as the Appearance panel's Nets tab has them (NetDisplay): their colours and the net classes',
+    /// and which nets' ratsnest is hidden
+    @Published private(set) var nets: NetDisplay?
 
     weak var controller: BoardController?
     /// The local settings file as read (the rest of it kept as it was), which the board's are written into
@@ -43,6 +47,7 @@ final class PCBAppearance: ObservableObject {
     private var picker: NetHighlight?
     private var generation = 0
     private var saving: Task<Void, Never>?
+    private var savingColors: Task<Void, Never>?
     /// The board file whose local settings were read
     private var readFor: URL??
 
@@ -50,7 +55,7 @@ final class PCBAppearance: ObservableObject {
 
     /// What the display shows and how, for drawing the board and picking from it
     var display: PCBDisplay {
-        PCBDisplay(appearance: controls.appearance, enabled: controls.boardLayers, highlighted: highlighted)
+        PCBDisplay(appearance: controls.appearance, enabled: controls.boardLayers, highlighted: highlighted, nets: nets)
     }
 
     // MARK: - Following the board
@@ -64,7 +69,8 @@ final class PCBAppearance: ObservableObject {
             guard let controller, let (board, project) = await controller.boardForEditing() else { return }
             let enabled = KiCadLayers.enabled(board)
             let ids = Set(enabled.map(\.id))
-            if readFor != .some(controller.boardFile) {
+            let opening = readFor != .some(controller.boardFile)
+            if opening {
                 readFor = .some(controller.boardFile)
                 original = KiCadLocalSettings(text: await controller.localSettingsText())
                 controls = KiCadAppearanceControls(opening: original.board, boardLayers: ids)
@@ -75,12 +81,19 @@ final class PCBAppearance: ObservableObject {
             let names = Dictionary(enabled.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
             layers = KiCadLayers.appearanceOrder(enabled.map(\.id)).map { ($0.id, names[$0.id] ?? "", $0.tooltip) }
             syncEditingLayer()
-            let (made, picked) = await Task.detached { () -> (NetInspector, NetHighlight) in
-                (NetInspector(board: board, project: project), NetHighlight(board: board, project: project))
+            let local = original.board
+            let (made, picked, shown) = await Task.detached { () -> (NetInspector, NetHighlight, NetDisplay) in
+                (NetInspector(board: board, project: project), NetHighlight(board: board, project: project),
+                 NetDisplay(board: board, project: project, appearance: local))
             }.value
             guard mine == generation else { return }
             inspector = made
             picker = picked
+            // (the nets' colours and hidden ratsnest taken from the project's settings as the board is opened, as KiCad
+            // takes them; kept, by the nets' names, as it changes)
+            var display = shown
+            if !opening, let old = nets { display.keep(old) }
+            nets = display
         }
     }
 
@@ -89,6 +102,7 @@ final class PCBAppearance: ObservableObject {
         readFor = nil
         inspector = nil
         picker = nil
+        nets = nil
         highlighted = []
     }
 
@@ -167,12 +181,93 @@ final class PCBAppearance: ObservableObject {
         saving?.cancel()
         var settings = original
         settings.board = controls.closed
+        // (the hidden nets as saveProjectSettings takes them from the view's, the hidden classes as the panel keeps them)
+        if let nets {
+            settings.board.hiddenNets = nets.hiddenNetNames
+            settings.board.hiddenNetclasses = nets.hiddenNetclassNames
+        }
         inspectorSettings.write(into: &settings.original)
         let target = controller
         saving = Task { [weak target] in
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
             await target?.saveLocalSettings(settings)
+        }
+    }
+
+    // MARK: - The Nets tab (KiCad's APPEARANCE_CONTROLS, through NetDisplay)
+
+    /// The net colour mode (NET_COLOR_MODE): the nets' and classes' colours on all copper, the ratsnest only, or none
+    var netColorMode: NetDisplay.ColorMode { NetDisplay.ColorMode(rawValue: board.netColorMode) ?? .ratsnest }
+
+    func setNetColorMode(_ mode: NetDisplay.ColorMode) {
+        controls.setNetColorMode(mode.rawValue)
+        save()
+    }
+
+    /// A net's colour set with its swatch, or taken off (UNSPECIFIED)
+    func setNetColor(_ code: Int, _ color: KiCadColor) {
+        nets?.setNetColor(code, color)
+        saveColors()
+    }
+
+    /// A net's eye clicked: its ratsnest shown or hidden
+    func toggleNet(_ code: Int) {
+        nets?.toggleNet(code)
+        save()
+    }
+
+    /// Hide Net in Ratsnest or Show Net in Ratsnest, of a net by its name
+    func hideNetInRatsnest(_ name: String, hide: Bool) {
+        guard let code = nets?.netCodes[name], code > 0 else { return }
+        nets?.hideNetInRatsnest(code, hide: hide)
+        save()
+    }
+
+    func showAllNets() {
+        nets?.showAllNets()
+        save()
+    }
+
+    func hideOtherNets(_ code: Int) {
+        nets?.hideOtherNets(code)
+        save()
+    }
+
+    /// A net class's eye clicked: the ratsnest of its nets shown or hidden, the class kept hidden or not
+    func showNetclass(_ name: String, _ show: Bool) {
+        nets?.showNetclass(name, show)
+        controls.setNetclassHidden(name, !show)
+        save()
+    }
+
+    func showAllNetclasses() {
+        nets?.showAllNetclasses()
+        for row in nets?.classRows ?? [] { controls.setNetclassHidden(row.name, false) }
+        save()
+    }
+
+    func hideOtherNetclasses(_ name: String) {
+        nets?.hideOtherNetclasses(name)
+        for row in nets?.classRows ?? [] { controls.setNetclassHidden(row.name, row.name != name) }
+        save()
+    }
+
+    /// A net class's colour set with its swatch, or taken off (UNSPECIFIED)
+    func setNetclassColor(_ name: String, _ color: KiCadColor) {
+        nets?.setNetclassColor(name, color)
+        saveColors()
+    }
+
+    /// The project's colours written as KiCad writes them as the board closes, a moment after the last change
+    private func saveColors() {
+        savingColors?.cancel()
+        guard let colors = nets?.closedColors else { return }
+        let target = controller
+        savingColors = Task { [weak target] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            target?.setNetColors(colors)
         }
     }
 
@@ -233,6 +328,33 @@ struct PCBDisplay {
     /// The board's layers, by id (none: every one)
     var enabled: Set<Int> = []
     var highlighted: Set<String> = []
+    /// The nets' colours and hidden ratsnest (the Nets tab's)
+    var nets: NetDisplay?
+
+    private var colorMode: NetDisplay.ColorMode { NetDisplay.ColorMode(rawValue: appearance.netColorMode) ?? .ratsnest }
+
+    /// The colour a net's copper is drawn in instead of its layer's (PCB_RENDER_SETTINGS::GetColor: in the net colour
+    /// mode All, the net's own colour, else its class's), if any
+    func copperColor(_ net: String?) -> Color? {
+        guard let net, let nets, let code = nets.netCodes[net], let c = nets.copperColor(code, mode: colorMode) else { return nil }
+        return Color(red: c.r, green: c.g, blue: c.b, opacity: c.a)
+    }
+
+    /// Whether a net's ratsnest is drawn (RATSNEST_VIEW_ITEM::ViewDraw: not a net hidden in the ratsnest)
+    func showsRatsnest(_ net: String) -> Bool {
+        guard let nets, let code = nets.netCodes[net] else { return true }
+        return nets.showsRatsnest(code)
+    }
+
+    /// The colour a net's ratsnest is drawn in (ViewDraw: in the net colour modes but None, the net's colour, else its
+    /// class's, else the theme's ratsnest colour; halved with nets highlighted, a highlighted net's brightened)
+    func ratsnestColor(_ net: String) -> Color {
+        let base = KiCadColor(KiCadColorTheme.ratsnest)
+        let c = nets.flatMap { n in n.netCodes[net].map { code in
+            n.ratsnestColor(code, mode: colorMode, base: base, highlighted: highlighted.contains(net), dimmed: !highlighted.isEmpty)
+        } } ?? base
+        return Color(red: c.r, green: c.g, blue: c.b, opacity: c.a)
+    }
 
     /// BOARD::IsLayerVisible of a layer by its name
     func layerVisible(_ name: String) -> Bool {
@@ -286,7 +408,8 @@ struct PCBDisplay {
             if !references || !shown(f.isOnBack ? "B.SilkS" : "F.SilkS") { f.label = nil }
             return f
         }
-        p.airwires = isVisible(.ratsnest) ? picture.airwires : []
+        // (the ratsnest of a net hidden in it neither drawn nor picked)
+        p.airwires = isVisible(.ratsnest) ? picture.airwires.filter { showsRatsnest($0.net) } : []
         return p
     }
 
@@ -407,16 +530,21 @@ struct PCBAppearancePanel: View {
             Picker("", selection: $tab) {
                 Text("Layers").tag(0)
                 Text("Objects").tag(1)
+                Text("Nets").tag(2)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .padding(8)
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
-                    if tab == 0 { layerRows } else { objectRows }
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    if tab == 0 { layerRows } else if tab == 1 { objectRows } else { netRows }
                 }
                 .padding(.vertical, 4)
+            }
+            if tab == 2 {
+                Divider()
+                netOptions.padding(8)
             }
             Divider()
             options.padding(8)
@@ -488,6 +616,96 @@ struct PCBAppearancePanel: View {
             } else {
                 Divider().padding(.vertical, 3)
             }
+        }
+    }
+
+    /// The Nets tab (rebuildNets): the board's nets, each with its colour swatch, its ratsnest's eye and its name, then
+    /// its net classes the same (the default class with no colour of its own)
+    @ViewBuilder private var netRows: some View {
+        if let nets = appearance.nets {
+            Text("Nets").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
+            ForEach(nets.rows) { row in
+                HStack(spacing: 6) {
+                    swatch(row.color, opacity: false) { appearance.setNetColor(row.code, $0) }
+                    Button { appearance.toggleNet(row.code) } label: {
+                        Image(systemName: row.visible ? "eye" : "eye.slash").frame(width: 18)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(row.visible ? "Click to hide ratsnest for \(row.name)" : "Click to show ratsnest for \(row.name)")
+                    Text(row.name).font(.callout).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 1)
+                .contextMenu {
+                    Button("Clear Net Color") { appearance.setNetColor(row.code, .unspecified) }
+                    Divider()
+                    Button("Highlight \(row.name)") { appearance.highlight(row.name) }
+                    Divider()
+                    Button("Show All Nets") { appearance.showAllNets() }
+                    Button("Hide All Other Nets") { appearance.hideOtherNets(row.code) }
+                }
+            }
+            Divider().padding(.vertical, 3)
+            Text("Net Classes").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
+            ForEach(nets.classRows) { row in
+                HStack(spacing: 6) {
+                    if row.isDefault {
+                        Color.clear.frame(width: 14, height: 12)
+                    } else {
+                        swatch(row.color, opacity: true) { appearance.setNetclassColor(row.name, $0) }
+                    }
+                    Button { appearance.showNetclass(row.name, !row.visible) } label: {
+                        Image(systemName: row.visible ? "eye" : "eye.slash").frame(width: 18)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Show or hide ratsnest for nets in \(row.name)")
+                    Text(row.name).font(.callout).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 1)
+                .contextMenu {
+                    if !row.isDefault {
+                        Button("Clear Netclass Color") { appearance.setNetclassColor(row.name, .unspecified) }
+                        Divider()
+                    }
+                    Button("Show All Netclasses") { appearance.showAllNetclasses() }
+                    Button("Hide All Other Netclasses") { appearance.hideOtherNetclasses(row.name) }
+                }
+            }
+        } else {
+            ProgressView().frame(maxWidth: .infinity).padding()
+        }
+    }
+
+    /// A colour swatch: none shown as an empty square; the system's colour panel to choose one (KiCad's colour picker),
+    /// with opacity or not
+    private func swatch(_ color: KiCadColor, opacity: Bool, set: @escaping (KiCadColor) -> Void) -> some View {
+        ColorPicker("", selection: Binding(get: {
+            color.isUnspecified ? Color.clear : Color(red: color.r, green: color.g, blue: color.b, opacity: color.a)
+        }, set: { new in
+            guard let c = NSColor(new).usingColorSpace(.sRGB) else { return }
+            set(KiCadColor(r: Double(c.redComponent), g: Double(c.greenComponent), b: Double(c.blueComponent),
+                           a: opacity ? Double(c.alphaComponent) : 1))
+        }), supportsOpacity: opacity)
+        .labelsHidden()
+        .frame(width: 22, height: 14)
+        .help("Click for colour change, right click for menu")
+    }
+
+    /// The Nets tab's display options: where the colours are shown (onNetColorMode)
+    private var netOptions: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Net colors").font(.caption).foregroundStyle(.secondary)
+            Picker("Net colors", selection: Binding(get: { appearance.netColorMode }, set: { appearance.setNetColorMode($0) })) {
+                Text("All").tag(NetDisplay.ColorMode.all)
+                Text("Ratsnest").tag(NetDisplay.ColorMode.ratsnest)
+                Text("None").tag(NetDisplay.ColorMode.off)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .help("Net and netclass colors shown on all copper items, on the ratsnest only, or not at all (KiCad's net color mode)")
         }
     }
 

@@ -726,6 +726,27 @@ final class BoardController: ObservableObject {
         }
     }
 
+    /// The nets' and net classes' colours (the Appearance panel's Nets tab) written into the board's project as KiCad
+    /// writes them as it closes the board: refused, as a net class is, while KiCad has the project open
+    func setNetColors(_ colors: KiCadNetColors) {
+        if shownBoard != nil {
+            var project = shownProject ?? [:]
+            colors.write(into: &project)
+            shownProject = project
+            return
+        }
+        Task {
+            do {
+                _ = try await worker.run { w -> [String: Any] in
+                    guard let link = w.link else { throw BoardLink.Failure.noBoard }
+                    return try link.setNetColors(colors)
+                }
+            } catch {
+                failure = "\(error)"
+            }
+        }
+    }
+
     /// The board's zones filled as KiCad fills them: in its open editor by KiCad, else in the board's file by the
     /// port of KiCad's zone filler (or KiCad's command line, for what the port does not fill yet). The board as it
     /// then is, or nil if they could not be (a board only shown).

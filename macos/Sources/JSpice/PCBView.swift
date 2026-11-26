@@ -285,7 +285,9 @@ struct PCBPainter {
                 } else {
                     var fill = Path()
                     for polygon in zone.fills { fill.addPath(view.path(polygon, closed: true)) }
-                    context.fill(fill, with: .color(color(layer).opacity((dim ? 0.25 : 0.5) * (display?.alpha(layer) ?? 1) * a.zoneOpacity / 0.6)))
+                    // (a net's own colour, or its class's, in the net colour mode All: PCB_RENDER_SETTINGS::GetColor)
+                    let zoneColor = display?.copperColor(zone.net) ?? color(layer)
+                    context.fill(fill, with: .color(zoneColor.opacity((dim ? 0.25 : 0.5) * (display?.alpha(layer) ?? 1) * a.zoneOpacity / 0.6)))
                 }
             }
             // rule areas (keepouts) on the layer: outlined, as KiCad draws them, in red
@@ -295,23 +297,38 @@ struct PCBPainter {
                 context.stroke(outline, with: .color(Color.red.opacity(dim ? 0.4 : 0.8)), style: StrokeStyle(lineWidth: 1, dash: [6, 3]))
             }
             for track in picture.tracks where track.layer == layer && !hidden.contains(track.uuid) {
-                context.stroke(view.path(track.points, closed: false), with: .color(tint.opacity(a.trackOpacity)),
+                let trackColor = display?.copperColor(track.net).map { $0.opacity((dim ? 0.45 : 0.9) * (display?.alpha(layer) ?? 1)) } ?? tint
+                context.stroke(view.path(track.points, closed: false), with: .color(trackColor.opacity(a.trackOpacity)),
                                style: StrokeStyle(lineWidth: max(0.5, track.width * s), lineCap: .round, lineJoin: .round))
             }
             let padSide = layer == "F.Cu" ? "F" : layer == "B.Cu" ? "B" : nil
             if let padSide {
                 var pads = Path()
-                for pad in picture.pads where pad.sides == padSide { pads.addPath(view.path(pad.outline, closed: true)) }
+                for pad in picture.pads where pad.sides == padSide {
+                    if let c = display?.copperColor(pad.net) {
+                        context.fill(view.path(pad.outline, closed: true),
+                                     with: .color(c.opacity((dim ? 0.45 : 0.9) * (display?.alpha(layer) ?? 1) * a.padOpacity)))
+                    } else {
+                        pads.addPath(view.path(pad.outline, closed: true))
+                    }
+                }
                 context.fill(pads, with: .color(tint.opacity(a.padOpacity)))
             }
         }
         // plated through the board
         var plated = Path()
-        for pad in picture.pads where pad.sides == "FB" { plated.addPath(view.path(pad.outline, closed: true)) }
+        for pad in picture.pads where pad.sides == "FB" {
+            if let c = display?.copperColor(pad.net) {
+                context.fill(view.path(pad.outline, closed: true), with: .color(c.opacity(a.padOpacity)))
+            } else {
+                plated.addPath(view.path(pad.outline, closed: true))
+            }
+        }
         context.fill(plated, with: .color(Self.plated.opacity(a.padOpacity)))
         for via in picture.vias where !hidden.contains(via.uuid) {
             let c = view.point(via.center), r = via.size * s / 2
-            context.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: .color(Self.via.opacity(a.viaOpacity)))
+            context.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
+                         with: .color((display?.copperColor(via.net) ?? Self.via).opacity(a.viaOpacity)))
         }
         // holes
         var holes = Path()
@@ -379,13 +396,16 @@ struct PCBPainter {
             context.stroke(Path(roundedRect: rect, cornerRadius: 3), with: .color(Color.accentColor), lineWidth: 1.5)
         }
 
-        // the connections still to route
-        var airwires = Path()
+        // the connections still to route, each net's in its colour where the Nets tab gives it one (RATSNEST_VIEW_ITEM)
+        var byNet: [String: Path] = [:]
         for wire in picture.airwires {
-            airwires.move(to: view.point(wire.from))
-            airwires.addLine(to: view.point(wire.to))
+            byNet[wire.net, default: Path()].move(to: view.point(wire.from))
+            byNet[wire.net, default: Path()].addLine(to: view.point(wire.to))
         }
-        context.stroke(airwires, with: .color(Color.white.opacity(0.7)), lineWidth: 0.8)
+        for (net, airwires) in byNet {
+            let wireColor = display?.ratsnestColor(net) ?? Color.white.opacity(0.7)
+            context.stroke(airwires, with: .color(wireColor), lineWidth: 0.8)
+        }
 
         // the nets highlighted (the rest darkened)
         display?.drawHighlight(context, picture, view)

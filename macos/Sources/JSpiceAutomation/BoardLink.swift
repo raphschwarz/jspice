@@ -26,6 +26,8 @@ public final class BoardLink {
         case sizesProjectOpen
         /// The same, of the project's teardrop settings
         case teardropsProjectOpen
+        /// The same, of the nets' and net classes' colours
+        case colorsProjectOpen
 
         public var description: String {
             switch self {
@@ -34,6 +36,8 @@ public final class BoardLink {
                 return "KiCad has the board open: change its net classes in KiCad's Board Setup (Net Classes), or close the board in KiCad and change them here."
             case .teardropsProjectOpen:
                 return "KiCad has the board open: its teardrops were made, but their settings stay as KiCad's Set Teardrops dialog last left them in its project."
+            case .colorsProjectOpen:
+                return "KiCad has the board open: set the nets' and net classes' colours in the Nets tab of KiCad's Appearance panel, or close the board in KiCad and set them here."
             case .sizesProjectOpen:
                 return "KiCad has the board open: change its pre-defined sizes in KiCad's Board Setup (Pre-defined Sizes), or close the board in KiCad and change them here."
             case .openUnreachable:
@@ -258,6 +262,19 @@ public final class BoardLink {
         if isOpenInKiCad { throw Failure.sizesProjectOpen }
         var project = projectSettings() ?? [:]
         KiCadProject.setPredefinedSizes(sizes, in: &project)
+        let data = try JSONSerialization.data(withJSONObject: project, options: [.prettyPrinted, .sortedKeys])
+        try (String(decoding: data, as: UTF8.self) + "\n").write(to: projectFile, atomically: true, encoding: .utf8)
+        return project
+    }
+
+    /// The nets' and net classes' colours written into the board's project file as KiCad writes them as it closes the
+    /// board (NET_SETTINGS' net_colors and its classes' pcb_color: KiCadNetColors), refused while KiCad has the
+    /// project open (it keeps its own, and writes them as it closes the board). The project's settings as they then are.
+    @discardableResult
+    public func setNetColors(_ colors: KiCadNetColors) throws -> [String: Any] {
+        if isOpenInKiCad { throw Failure.colorsProjectOpen }
+        var project = projectSettings() ?? [:]
+        colors.write(into: &project)
         let data = try JSONSerialization.data(withJSONObject: project, options: [.prettyPrinted, .sortedKeys])
         try (String(decoding: data, as: UTF8.self) + "\n").write(to: projectFile, atomically: true, encoding: .utf8)
         return project

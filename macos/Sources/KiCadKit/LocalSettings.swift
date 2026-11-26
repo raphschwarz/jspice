@@ -733,6 +733,27 @@ public struct KiCadAppearanceControls: Sendable {
         appearance.highContrast = mode
     }
 
+    /// The Nets tab's net colour mode chosen (onNetColorMode: All, Ratsnest or None; a display option, which the
+    /// local settings take as the board closes)
+    public mutating func setNetColorMode(_ mode: Int) {
+        guard (0...2).contains(mode) else { return }
+        appearance.netColorMode = mode
+    }
+
+    /// A net class's ratsnest shown or hidden (APPEARANCE_CONTROLS::showNetclass: the local settings'
+    /// m_HiddenNetclasses, a set, changed at once)
+    public mutating func setNetclassHidden(_ name: String, _ hidden: Bool) {
+        var set = Set(appearance.hiddenNetclasses)
+        if hidden { set.insert(name) } else { set.remove(name) }
+        appearance.hiddenNetclasses = set.sorted { $0.unicodeScalars.lexicographicallyPrecedes($1.unicodeScalars) }
+    }
+
+    /// The nets whose ratsnest is hidden, by name, as saveProjectSettings takes them from the view's (the render
+    /// settings' hidden nets, in the order of their net codes) as the board closes
+    public mutating func setHiddenNets(_ names: [String]) {
+        appearance.hiddenNets = names
+    }
+
     /// A layer's name clicked (onLayerLeftClick): it made the active layer, if the board has it
     public mutating func setActiveLayer(_ id: Int) {
         guard boardLayers.contains(id) else { return }
@@ -764,11 +785,13 @@ public struct KiCadAppearanceControls: Sendable {
         return a
     }
 
-    /// The same as KiCad's File > Save writes them: the layers and objects as they are, the rest as opened
+    /// The same as KiCad's File > Save writes them: the layers and objects as they are, and the net classes whose
+    /// ratsnest is hidden (which the panel changes in the local settings themselves), the rest as opened
     public var saved: KiCadBoardAppearance {
         var a = opened
         a.visibleLayers = appearance.visibleLayers
         a.visibleItems = appearance.visibleItems
+        a.hiddenNetclasses = appearance.hiddenNetclasses
         return a
     }
 }
