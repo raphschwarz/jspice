@@ -1,6 +1,6 @@
 import Foundation
 
-private struct UnionFind {
+struct UnionFind {
     var parent: [Int]
 
     init(count: Int) { parent = Array(0..<count) }
@@ -53,8 +53,21 @@ struct Topology {
     var matrixSize = 0
     var flowOrder: [FlowStep] = []
     var isGroundPoint: [Bool] = []
-    var problems: [String] = []
+    /// What keeps parts from working as drawn, found while building it: a source shorted out, an output wired straight
+    /// to ground (see `Diagnostics`)
+    var issues: [Issue] = []
     var shorted: Set<Int> = []
+    /// Whether the circuit has a ground (a ground symbol or a net label named for it); without one, `reference` is the
+    /// point taken as 0 V
+    var hasGround = true
+    var reference: Int?
+
+    struct Issue {
+        enum Kind: String { case shorted, outputGrounded }
+        var kind: Kind
+        var element: Int
+        var message: String
+    }
 
     init() {}
 
@@ -95,11 +108,13 @@ struct Topology {
                 }
             }
         }
+        self.hasGround = hasGround
         if !hasGround, !points.isEmpty {
             // no ground symbol: use the negative terminal of the first source, or else any terminal, as the reference
             let reference = elements.firstIndex { $0.kind.isVoltageSource }
                 .map { elementPoints[$0][0] } ?? 0
             nodes.union(groundSentinel, reference)
+            self.reference = reference
         }
 
         let groundRoot = nodes.find(groundSentinel)
@@ -139,12 +154,12 @@ struct Topology {
             } else if element.kind.drivesOutput {
                 if elementNodes[i][2] == 0 {
                     shorted.insert(i)
-                    problems.append("The output of \(name) is connected straight to ground.")
+                    issues.append(Issue(kind: .outputGrounded, element: i, message: "The output of \(name) is connected straight to ground."))
                     continue
                 }
             } else if elementNodes[i][0] == elementNodes[i][1] {
                 shorted.insert(i)
-                problems.append("\(name) is short-circuited.")
+                issues.append(Issue(kind: .shorted, element: i, message: "\(name) is short-circuited."))
                 continue
             }
             sourceRow[i] = row

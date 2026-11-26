@@ -21,8 +21,29 @@ public final class Simulator {
     private(set) var flat: Circuit
     public private(set) var time: Double = 0
     public private(set) var timeStep: Double
-    /// Problems that keep the circuit from being simulated, or parts of it from working
+    /// What the simulator has to say about the circuit (see `Diagnostic`): errors first, then warnings, then notes.
+    /// Put together in one place, `assembleDiagnostics`, from what the load found, the behavioural sources, the chips,
+    /// a failure and steps that did not converge.
+    public private(set) var diagnostics: [Diagnostic] = []
+    /// Problems that keep the circuit from being simulated, or parts of it from working, or make its results doubtful:
+    /// the messages of the errors and warnings among `diagnostics`, in their order
     public private(set) var problems: [String] = []
+    /// What the load found: shorted sources, outputs on ground, no ground, parts with no DC path or terminals
+    /// connected to nothing (see `ConnectivityCheck`)
+    private var loadDiagnostics: [Diagnostic] = []
+    /// Why the simulation failed, while it has
+    private var failure: Diagnostic?
+    /// Steps that did not converge, said once they come often (see `noteUnconverged`); kept until the circuit is
+    /// loaded again or reset, so that it does not come and go from frame to frame
+    private var unconverged: Diagnostic?
+    /// Circuit time the present count of unconverged steps started at, and their number since
+    private var unconvergedSince = 0.0
+    private var unconvergedInWindow = 0
+    /// The unknown that moved most between the two last tries of a step that did not converge (-1: none known)
+    var unsettledUnknown = -1
+    /// For the parts of the flattened circuit that are not the drawing's own (a block's, a model's), the drawn part
+    /// they come from, by id
+    private var drawnOwner: [UUID: UUID] = [:]
     /// True when the equations cannot be solved; stepping stops until the circuit changes
     public private(set) var isFailed = false
     /// Steps at which Newton-Raphson did not converge, even with gmin stepping and the finest substeps (the step is
@@ -343,12 +364,11 @@ public final class Simulator {
     private var busIssues: [String?] = []
     private var busIssuesPending: [Bool] = []
     /// What `busIssues` has said, among the circuit's problems
-    private var busProblems: [String] = []
+    private var busProblems: [Diagnostic] = []
     /// What each STM32 says of itself (`notices`: what its firmware reached that the model does not run, how often it
     /// reset itself), among the circuit's problems; looked at when their number changes
-    private var chipNotices: [[String]] = []
+    private var chipNotices: [[Diagnostic]] = []
     private var chipNoticeCounts: [Int] = []
-    private var chipProblems: [String] { busProblems + chipNotices.flatMap { $0 } }
     /// For each STM32, the codecs on its I²S ports and I²C buses: its frames go to them and theirs come back, its writes
     /// to their control port are answered
     private var codecLinks: [[(port: Int, codec: Int)]] = []
@@ -586,7 +606,7 @@ public final class Simulator {
     private var behaviorRates = UnsafeMutablePointer<Double>.allocate(capacity: 1)
     private var behaviorRegisterRoom = 1
     /// What reading the behavioural sources' expressions found wrong
-    private var behaviorProblems: [String] = []
+    private var behaviorProblems: [Diagnostic] = []
     /// A behavioural source's inputs at the present solution (room for `behaviorInputRoom`)
     private var behaviorValues = UnsafeMutablePointer<Double>.allocate(capacity: 1)
     private var behaviorInputRoom = 1
@@ -1038,6 +1058,7 @@ public final class Simulator {
         }
         circuit = newCircuit
         flat = newCircuit.flattened()
+        findDrawnOwners()
         setTemperature(newCircuit.settings.temperature)
         topology = Topology(circuit: flat)
         nodeLists = NodeLists(topology.elementNodes)
@@ -1238,7 +1259,11 @@ public final class Simulator {
         valuesVersion = -1
         matrixIsCurrent = false
         isFailed = false
-        problems = topology.problems + behaviorProblems + chipProblems
+        loadDiagnostics = findLoadDiagnostics()
+        failure = nil
+        unconverged = nil
+        (unconvergedSince, unconvergedInWindow, unsettledUnknown) = (0, 0, -1)
+        assembleDiagnostics()
         configureScopes(window: traces.values.first?.window ?? 1)
         currentsAreStale = true
     }
@@ -1415,6 +1440,8 @@ public final class Simulator {
         Self.adopt(&noiseState, other.noiseState)
         convergenceFailures = other.convergenceFailures
         isFailed = other.isFailed
+        // (the other's lists are only ever replaced, not changed in place: taking them shares their storage)
+        diagnostics = other.diagnostics
         problems = other.problems
         stepCarry = 0
         currentsAreStale = true
@@ -1436,7 +1463,10 @@ public final class Simulator {
         busProblems = []
         for i in chipNotices.indices { (chipNotices[i], chipNoticeCounts[i]) = ([], 0) }
         for i in busIssuesPending.indices where !busWirings[i].isEmpty { busIssuesPending[i] = true }
-        problems = topology.problems + behaviorProblems + chipProblems
+        failure = nil
+        unconverged = nil
+        (unconvergedSince, unconvergedInWindow, unsettledUnknown) = (0, 0, -1)
+        assembleDiagnostics()
         for trace in traces.values { trace.clear() }
         delayHistory = [:]
         springTanks = [:]
@@ -1495,9 +1525,11 @@ public final class Simulator {
         // a simulation that failed tries again with the new values (from where it was, unless that was not finite)
         if isFailed {
             isFailed = false
-            problems = topology.problems + behaviorProblems + chipProblems
+            failure = nil
             if x.contains(where: { !$0.isFinite }) { x = [Double](repeating: 0, count: topology.matrixSize) }
         }
+        // (the behavioural sources' expressions were read again)
+        assembleDiagnostics()
         return true
     }
 
@@ -1592,7 +1624,7 @@ public final class Simulator {
         var position = 0
         while position < whole {
             if stopRequested {
-                fail()
+                fail(.stopped)
                 return
             }
             let level = substepLevel
@@ -1650,7 +1682,10 @@ public final class Simulator {
                 substepLevel = min(Self.finestLevel, level + halvings)
                 continue
             }
-            if !converged { convergenceFailures += 1 }
+            if !converged {
+                convergenceFailures += 1
+                noteUnconverged()
+            }
             // which of the predictor's two guesses came nearer, by unknown, for the next substep to take
             if guessesMade {
                 guessesMade = false
@@ -1770,7 +1805,7 @@ public final class Simulator {
                     }
                 }
             }
-            if change.isNaN { fail(); return false }
+            if change.isNaN { fail(.numerical(Self.firstNonFinite(workVector))); return false }
             Self.copy(workVector, into: &x)
             return true
         }
@@ -1942,6 +1977,8 @@ public final class Simulator {
         junctionConductance = 0
         // if that failed too, the first try is the better guess to carry on from
         if !converged && !isFailed {
+            // (what the two tries disagree on most is what would not settle)
+            if unconverged == nil { unsettledUnknown = Self.farthestApart(x, firstTry.0) }
             x = firstTry.0
             Self.assign(&limitedVoltage, firstTry.1)
             Self.assign(&limitedVoltage2, firstTry.2)
@@ -2112,7 +2149,7 @@ public final class Simulator {
         while iteration < iterations {
             if stopRequested {
                 restoreSolveStart()
-                fail()
+                fail(.stopped)
                 return false
             }
             if needsPlan {
@@ -2299,8 +2336,9 @@ public final class Simulator {
                     startAgain()
                     continue
                 }
+                let blownUp = Self.firstNonFinite(x)
                 restoreSolveStart()
-                fail()
+                fail(.numerical(blownUp))
                 return false
             }
             if !fromKept && (!hasNonlinear || (onlyQuasiLinear && predictedSolve) || (change < Self.newtonTolerance && !limiting)) {
@@ -2339,8 +2377,9 @@ public final class Simulator {
             }
         }
         if !finite {
+            let blownUp = Self.firstNonFinite(x)
             restoreSolveStart()
-            fail()
+            fail(.numerical(blownUp))
             return false
         }
         return converged
@@ -2915,9 +2954,246 @@ public final class Simulator {
         for (trace, index) in recordedTraces { record(trace, index) }
     }
 
-    private func fail() {
+    func fail(_ cause: FailureCause = .singular) {
         isFailed = true
-        problems = topology.problems + behaviorProblems + chipProblems + ["The circuit can't be solved. Look for voltage sources in parallel, a loop of sources and wires, or a current source with nowhere to go."]
+        failure = failureDiagnostic(cause)
+        assembleDiagnostics()
+    }
+
+    // MARK: - Diagnostics
+
+    /// Why a solve gave up
+    enum FailureCause {
+        /// The equations have no single solution (no pivot could be found): a fault in the wiring
+        case singular
+        /// A voltage or current became infinite or not a number, first at this unknown (if it is known)
+        case numerical(Int?)
+        /// `stopRequested`: the analysis was taking too long
+        case stopped
+    }
+
+    /// The one place the diagnostics are put together: what the load found, the behavioural sources, the chips' buses
+    /// and notices, a failure and unconverged steps; errors first. Called when one of them changes, never at every step.
+    private func assembleDiagnostics() {
+        var all = loadDiagnostics + behaviorProblems + busProblems
+        for notices in chipNotices { all += notices }
+        if let failure { all.append(failure) }
+        if let unconverged { all.append(unconverged) }
+        diagnostics = Diagnostic.ordered(all)
+        problems = diagnostics.compactMap { $0.severity == .note ? nil : $0.message }
+    }
+
+    /// For each part of the flattened circuit that is not the drawing's own, the drawn part it is in: found by
+    /// flattening each drawn part alone (a part's parts get their ids from its id and their own, wherever it is)
+    private func findDrawnOwners() {
+        drawnOwner = [:]
+        guard flat.elements.count > circuit.elements.count else { return }
+        for element in circuit.elements {
+            let alone = Circuit(elements: [element]).flattened()
+            for inner in alone.elements.dropFirst() { drawnOwner[inner.id] = element.id }
+        }
+    }
+
+    /// The drawn parts that parts of the flattened circuit are, or are in: each once, in order
+    private func drawnIDs(_ parts: [Int]) -> [UUID] {
+        var ids: [UUID] = []
+        for i in parts where i >= 0 && i < flat.elements.count {
+            let id = i < circuit.elements.count ? circuit.elements[i].id : drawnOwner[flat.elements[i].id]
+            if let id, !ids.contains(id) { ids.append(id) }
+        }
+        return ids
+    }
+
+    /// A part as messages name it: its name ("X1.R2" inside a block), or else its kind
+    private func partName(_ i: Int) -> String {
+        guard i < flat.elements.count else { return "a part" }
+        let element = flat.elements[i]
+        let name = element.name.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? element.kind.displayName : name
+    }
+
+    /// What the load can tell of the circuit: its topology's problems and how its parts hang together
+    private func findLoadDiagnostics() -> [Diagnostic] {
+        var found: [Diagnostic] = []
+        for issue in topology.issues {
+            switch issue.kind {
+            case .shorted:
+                found.append(Diagnostic(.error, "shorted", issue.message,
+                                        hint: "A wire or closed switch joins its two terminals, so it is left out: remove that connection.",
+                                        elements: drawnIDs([issue.element])))
+            case .outputGrounded:
+                found.append(Diagnostic(.error, "output-grounded", issue.message,
+                                        hint: "Its output is left out of the simulation: connect it to ground through a load resistor, not directly.",
+                                        elements: drawnIDs([issue.element])))
+            }
+        }
+        let check = ConnectivityCheck(flat: flat, kinds: kinds, topology: topology, drawn: circuit.elements.count)
+        strandedSources = check.strandedCurrentSources
+        for finding in check.findings {
+            let names = finding.parts.prefix(4).map(partName)
+            let more = finding.parts.count > 4 ? " and \(finding.parts.count - 4) more" : ""
+            let ids = drawnIDs(finding.parts)
+            let first = finding.parts[0]
+            switch finding.kind {
+            case .noGround:
+                let post = finding.terminals.first ?? 0
+                found.append(Diagnostic(.warning, "no-ground",
+                                        "The circuit has no ground: voltages are shown relative to "
+                                            + ConnectivityCheck.terminalPhrase(flat.elements[first], post) + " of \(names[0]).",
+                                        hint: "Add a ground symbol where 0 V should be.", elements: ids))
+            case .floating:
+                let who = names.count == 1 ? names[0] : Array(names).listed + more
+                found.append(Diagnostic(.warning, "floating",
+                                        "\(who) \(names.count == 1 ? "is" : "are") not connected to ground or to the rest of the circuit.",
+                                        hint: "Wire \(names.count == 1 ? "it" : "them") into the circuit: until then the voltages there are held only by a tiny leak to ground and mean nothing.",
+                                        elements: ids))
+            case .coupledOnly:
+                let who = names.count == 1 ? names[0] : Array(names).listed + more
+                found.append(Diagnostic(.warning, "no-dc-path",
+                                        "\(who) \(names.count == 1 ? "has" : "have") no DC path to ground: \(names.count == 1 ? "it is" : "they are") reached only through capacitors or a current source.",
+                                        hint: "Give the node a DC path to ground, such as a high-value resistor (1 MΩ): otherwise its voltage drifts on a tiny leak and the DC levels there mean nothing.",
+                                        elements: ids))
+            case .unconnected:
+                found.append(Diagnostic(.warning, "unconnected", "\(names[0]) is not connected to anything.",
+                                        hint: "Wire it into the circuit, or delete it.", elements: ids))
+            case .dangling:
+                let element = flat.elements[first]
+                let terminals = finding.terminals.map { ConnectivityCheck.terminalPhrase(element, $0) }
+                let what = terminals.count == 1 && terminals[0] == "one end" ? "One end" : terminals.listed.prefix(1).uppercased() + terminals.listed.dropFirst()
+                found.append(Diagnostic(.warning, "dangling", "\(what) of \(names[0]) \(terminals.count == 1 ? "is" : "are") connected to nothing.",
+                                        hint: "A terminal left open carries no current, so the part does nothing there: wire it to where it should go.",
+                                        elements: ids))
+            }
+        }
+        return found
+    }
+
+    /// Current sources with no DC path for their current (found at load, for a failure's message)
+    private var strandedSources: [Int] = []
+
+    /// A behavioural source's problem with its expression
+    private func behaviorDiagnostic(_ i: Int, _ kind: String, _ message: String, hint: String) -> Diagnostic {
+        Diagnostic(.error, "expression-" + kind, message, hint: hint, elements: drawnIDs([i]))
+    }
+
+    /// What an STM32 says of itself: that its firmware reached what the model does not run, or that its watchdog reset
+    /// it, is a warning (the firmware does not run here as on the chip); that its firmware reset it on purpose, a note
+    static func chipNotice(_ text: String, chip: [UUID], index: Int) -> Diagnostic {
+        if text.contains("SYSRESETREQ") {
+            return Diagnostic(.note, "chip-reset", text, elements: chip)
+        }
+        let watchdog = text.contains("watchdog")
+        let hint = watchdog ? "Look at where the firmware reloads its watchdog: on the chip it would reset there too."
+            : "The firmware does not run here as it would on the chip: what it does with that peripheral has no effect."
+        return Diagnostic(.warning, watchdog ? "chip-watchdog" : "chip-unmodelled-\(index)", text, hint: hint, elements: chip)
+    }
+
+    /// An unknown, as a message names it: the node and the parts on it, or the part whose current it is
+    private func describeForUser(_ u: Int) -> (phrase: String, parts: [Int]) {
+        let node = u + 1
+        if u >= 0 && node < topology.nodeCount {
+            var parts: [Int] = []
+            var inside: Int?
+            for i in topology.elementNodes.indices where i < kinds.count && ConnectivityCheck.isPart(kinds[i]) && kinds[i] != .block {
+                let nodes = topology.elementNodes[i]
+                let posts = min(flat.elements[i].posts.count, nodes.count)
+                if nodes[..<posts].contains(node) {
+                    parts.append(i)
+                } else if nodes[posts...].contains(node) {
+                    inside = i
+                }
+            }
+            if parts.isEmpty, let inside { return ("the voltage inside \(partName(inside))", [inside]) }
+            guard !parts.isEmpty else { return ("", []) }
+            let names = parts.prefix(3).map(partName) + (parts.count > 3 ? ["\(parts.count - 3) more"] : [])
+            return (parts.count == 1 ? "the voltage at a terminal of \(names[0])" : "the voltage at the node joining " + names.listed,
+                    Array(parts.prefix(8)))
+        }
+        if u >= 0, let i = topology.sourceRow.firstIndex(of: u) { return ("the current through \(partName(i))", [i]) }
+        return ("", [])
+    }
+
+    /// Why the simulation failed, for the user
+    private func failureDiagnostic(_ cause: FailureCause) -> Diagnostic {
+        switch cause {
+        case .stopped:
+            return Diagnostic(.error, "stopped",
+                              "The analysis took too long and was stopped at " + SI.format(time, unit: "s")
+                                  + " of circuit time: the rest of it was not simulated.",
+                              hint: "This is not a fault in the circuit. Analyse a shorter stretch of time or use a longer time step, so that it finishes in the time allowed.",
+                              elements: [])
+        case .numerical(let unknown):
+            let (phrase, parts) = unknown.map(describeForUser) ?? ("", [])
+            return Diagnostic(.error, "blew-up",
+                              "The simulation broke down: " + (phrase.isEmpty ? "a voltage or current" : phrase)
+                                  + " became infinite or not a number.",
+                              hint: "Look for positive feedback with nothing to limit it, or a value far out of range (a huge gain, a tiny resistance or capacitance) on the parts named.",
+                              elements: drawnIDs(parts))
+        case .singular:
+            let loops = ConnectivityCheck.sourceLoops(kinds: kinds, topology: topology)
+            if let loop = loops.first {
+                let names = loop.map(partName)
+                if loop.count == 2 {
+                    return Diagnostic(.error, "parallel-sources",
+                                      "The circuit can't be solved: \(names[0]) and \(names[1]) are voltage sources in parallel.",
+                                      hint: "Two sources across the same two points each insist on their own voltage: remove one, or put a resistor in series with it.",
+                                      elements: drawnIDs(loops.flatMap { $0 }))
+                }
+                return Diagnostic(.error, "source-loop",
+                                  "The circuit can't be solved: \(names.listed) make a loop of voltage sources and wires.",
+                                  hint: "The voltages around the loop must add up to zero and nothing sets its current: break the loop, or put a resistor in it.",
+                                  elements: drawnIDs(loops.flatMap { $0 }))
+            }
+            if let source = strandedSources.first {
+                return Diagnostic(.error, "stranded-current",
+                                  "The circuit can't be solved: \(partName(source)) has nowhere to send its current.",
+                                  hint: "A current source needs a DC path from one terminal round to the other: put a resistor across it, or wire it into the circuit.",
+                                  elements: drawnIDs(strandedSources))
+            }
+            return Diagnostic(.error, "unsolvable",
+                              "The circuit can't be solved. Look for voltage sources in parallel, a loop of sources and wires, or a current source with nowhere to go.",
+                              elements: [])
+        }
+    }
+
+    /// The first entry that is not finite
+    static func firstNonFinite(_ values: [Double]) -> Int? {
+        values.firstIndex { !$0.isFinite }
+    }
+
+    /// Where two solutions differ most (a non-finite difference counting as the most), or -1
+    static func farthestApart(_ a: [Double], _ b: [Double]) -> Int {
+        var found = -1, most = -1.0
+        for k in 0..<min(a.count, b.count) {
+            var apart = abs(a[k] - b[k])
+            if !apart.isFinite { apart = .infinity }
+            if apart > most { (most, found) = (apart, k) }
+        }
+        return most > 0 ? found : -1
+    }
+
+    /// Unconverged steps counted over this many steps…
+    static let unconvergedWindow = 1000
+    /// …are said once there are this many in one count
+    static let unconvergedLimit = 50
+
+    /// A step was accepted without converging: once they come often (`unconvergedLimit` within `unconvergedWindow`
+    /// steps), a warning naming what would not settle, kept until the circuit is loaded again or reset. Only on that
+    /// step (no work on steps that converge), and nothing allocated once it has been said.
+    func noteUnconverged() {
+        guard unconverged == nil else { return }
+        if time - unconvergedSince > Double(Self.unconvergedWindow) * timeStep {
+            (unconvergedSince, unconvergedInWindow) = (time, 0)
+        }
+        unconvergedInWindow += 1
+        guard unconvergedInWindow >= Self.unconvergedLimit else { return }
+        let (phrase, parts) = unsettledUnknown >= 0 ? describeForUser(unsettledUnknown) : ("", [])
+        unconverged = Diagnostic(.warning, "unconverged",
+                                 "The simulation did not settle at many steps" + (phrase.isEmpty ? "" : ", at " + phrase)
+                                     + ": the waveforms may be wrong there.",
+                                 hint: "Often a part switching faster than the time step, or a value far out of range: try a shorter time step, or check the values of the parts named.",
+                                 elements: drawnIDs(parts))
+        assembleDiagnostics()
     }
 
     // MARK: - Equations
@@ -4486,7 +4762,8 @@ public final class Simulator {
                     compiledExpressions[text] = (expression, made)
                     program = made
                 } catch {
-                    behaviorProblems.append("\(name): can't read its expression \(text): \(error)")
+                    behaviorProblems.append(behaviorDiagnostic(i, "expression", "\(name): can't read its expression \(text): \(error)",
+                                                               hint: "Check the expression against SPICE's syntax, as in V(in1)*2 or I(V1)."))
                 }
             }
             let nodes = topology.elementNodes[i]
@@ -4504,7 +4781,8 @@ public final class Simulator {
                 case let .voltage(a, b):
                     let minus: Int? = b.map { node($0) } ?? 0
                     guard let plus = node(a), let minus else {
-                        behaviorProblems.append("\(name): its expression reads \(a)\(b.map { "," + $0 } ?? ""), not one of its pins")
+                        behaviorProblems.append(behaviorDiagnostic(i, "pin", "\(name): its expression reads \(a)\(b.map { "," + $0 } ?? ""), not one of its pins",
+                                                                   hint: "It reads voltages at its own pins (\(pins.joined(separator: ", "))) or ground (0)."))
                         inputs.append(BehaviorInput())
                         continue
                     }
@@ -4515,7 +4793,8 @@ public final class Simulator {
                         self.flat.elements.indices.first { self.flat.elements[$0].name.lowercased() == w && self.topology.sourceRow[$0] >= 0 }
                     }.first
                     guard let j = found else {
-                        behaviorProblems.append("\(name): no voltage source \(source) for its expression to read the current of")
+                        behaviorProblems.append(behaviorDiagnostic(i, "current", "\(name): no voltage source \(source) for its expression to read the current of",
+                                                                   hint: "Name a voltage source of the circuit, or put a 0 V source named \(source) where the current flows."))
                         inputs.append(BehaviorInput())
                         continue
                     }
@@ -6385,17 +6664,17 @@ public final class Simulator {
             }
             if busIssues[j] != issue {
                 // (what it said before, no longer so, is taken back)
-                if let old = busIssues[j], busProblems.contains(old) {
-                    busProblems.removeAll { $0 == old }
+                if let old = busIssues[j], busProblems.contains(where: { $0.message == old }) {
+                    busProblems.removeAll { $0.message == old }
                     settled = true
                 }
                 busIssues[j] = issue
             }
-            if let issue, !busProblems.contains(issue) { pending = true }
+            if let issue, !busProblems.contains(where: { $0.message == issue }) { pending = true }
         }
         for port in 1...3 { stm32.sampleMISO(port: port, sampled.contains(port)) }
         busIssuesPending[i] = pending
-        if settled { problems = topology.problems + behaviorProblems + chipProblems }
+        if settled { assembleDiagnostics() }
     }
 
     /// The firmware set an STM32's pins or ports up anew (as it runs): which of them reach what
@@ -6411,17 +6690,22 @@ public final class Simulator {
         chipNoticeCounts[i] = count
         let element = flat.elements[i]
         let who = "\(element.name.isEmpty ? kinds[i].displayName : element.name) (\(kinds[i].displayName))"
-        chipNotices[i] = stm32.notices.map { "\(who): \($0)" }
-        problems = topology.problems + behaviorProblems + chipProblems
+        let chip = drawnIDs([i])
+        chipNotices[i] = stm32.notices.enumerated().map { k, notice in Self.chipNotice(who + ": " + notice, chip: chip, index: k) }
+        assembleDiagnostics()
     }
 
     /// Frames flow on an STM32's ports: what does not reach the parts wired to it is said now
     private func reportBusIssues(_ i: Int) {
         busIssuesPending[i] = false
         for (j, _) in busWirings[i] {
-            if let issue = busIssues[j], !busProblems.contains(issue) { busProblems.append(issue) }
+            if let issue = busIssues[j], !busProblems.contains(where: { $0.message == issue }) {
+                busProblems.append(Diagnostic(.warning, "bus", issue,
+                                              hint: "Wire the part to the chip's pins the firmware sets up for that bus, or change the firmware.",
+                                              elements: drawnIDs([j, i])))
+            }
         }
-        problems = topology.problems + behaviorProblems + chipProblems
+        assembleDiagnostics()
     }
 
     /// A frame an STM32 sends on an I²S port: the codecs (and PCM5102s) on it take it for their outputs, both kept
