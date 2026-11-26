@@ -29,9 +29,17 @@ final class CircuitCanvasView: NSView {
     private var mouseLocation: CGPoint?
     /// For a click on a switch: toggle it on mouse up if the mouse did not move
     private var pendingToggle: UUID?
+    /// The free terminal under the pointer (in select mode), where a drag starts a wire
+    private var hoveredTerminal: GridPoint?
+    /// The part whose value is being typed in place (see CanvasInlineEdit.swift)
+    var inlineEdit: InlineEdit?
 
     private enum Drag {
         case placing(Element)
+        /// A wire being drawn from `start`: an elbow leaving it horizontally or vertically as the drag first went
+        /// (`horizontalFirst`, nil until it moves), or one straight segment with ⇧. `from` is the part whose free
+        /// terminal it started on, nil for the Wire tool.
+        case wiring(start: GridPoint, end: GridPoint, horizontalFirst: Bool?, straight: Bool, from: UUID?)
         case moving(start: GridPoint, original: Circuit, ids: Set<UUID>, moved: Bool)
         case endpoint(id: UUID, isA: Bool)
         case rubberBand(start: CGPoint, current: CGPoint, initial: Set<UUID>)
@@ -534,6 +542,17 @@ final class CircuitCanvasView: NSView {
             let style = SymbolStyle(lineWidth: lineWidth, terminalColors: Array(repeating: accent, count: posts.count),
                                     fill: accent, accent: accent)
             SymbolRenderer.draw(element, posts: posts, at: screen(element.a), screen(element.b), unit: unit, style: style, in: ctx)
+        case .wiring(let start, let end, let horizontalFirst, let straight, _)?:
+            // the wire as it would be drawn: an elbow, or one straight segment with ⇧
+            let style = SymbolStyle(lineWidth: lineWidth, terminalColors: [accent, accent], fill: accent, accent: accent)
+            for segment in CanvasGeometry.elbow(from: start, to: end, horizontalFirst: horizontalFirst ?? true, straight: straight) {
+                let wire = Element(kind: .wire, a: segment.a, b: segment.b)
+                SymbolRenderer.draw(wire, posts: [screen(segment.a), screen(segment.b)], at: screen(segment.a), screen(segment.b),
+                                    unit: unit, style: style, in: ctx)
+            }
+            let p = screen(start)
+            ctx.setFillColor(accent.withAlpha(0.9).cgColor)
+            ctx.fillEllipse(in: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6))
         case .rubberBand(let start, let current, _)?:
             let rect = CGRect(x: min(start.x, current.x), y: min(start.y, current.y),
                               width: abs(current.x - start.x), height: abs(current.y - start.y))
@@ -557,6 +576,17 @@ final class CircuitCanvasView: NSView {
             let p = screen(start)
             ctx.setFillColor(accent.withAlpha(0.9).cgColor)
             ctx.fillEllipse(in: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6))
+        }
+        // a free terminal under the pointer: a drag from it draws a wire
+        if editor.tool == nil, drag == nil, let terminal = hoveredTerminal, editor.circuit.isFreeTerminal(terminal) {
+            let p = screen(terminal)
+            let r = max(4.5, unit * 0.3)
+            let ring = CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)
+            ctx.setFillColor(accent.withAlpha(0.25).cgColor)
+            ctx.fillEllipse(in: ring)
+            ctx.setStrokeColor(accent.cgColor)
+            ctx.setLineWidth(1.5)
+            ctx.strokeEllipse(in: ring)
         }
     }
 
@@ -592,6 +622,19 @@ final class CircuitCanvasView: NSView {
         if hypot(point.x - screen(element.b).x, point.y - screen(element.b).y) < tolerance { return (element.id, false) }
         if hypot(point.x - screen(element.a).x, point.y - screen(element.a).y) < tolerance { return (element.id, true) }
         return nil
+    }
+
+    /// The free terminal (one no other terminal shares: see `Circuit.freeTerminals`) nearest to `point`, within a few
+    /// points, and the part it belongs to
+    private func freeTerminal(at point: CGPoint) -> (point: GridPoint, owner: UUID)? {
+        let tolerance = max(6, unit * 0.35)
+        var best: (point: GridPoint, owner: UUID, distance: CGFloat)?
+        for (terminal, owner) in editor.circuit.freeTerminals {
+            let p = screen(terminal)
+            let d = hypot(point.x - p.x, point.y - p.y)
+            if d < tolerance && d < (best?.distance ?? .infinity) { best = (terminal, owner, d) }
+        }
+        return best.map { ($0.point, $0.owner) }
     }
 
     /// Transistors, op-amps and potentiometers stay horizontal or vertical (transistors two grid units long); grounds
@@ -643,17 +686,29 @@ final class CircuitCanvasView: NSView {
             return
         }
         if let kind = editor.tool {
-            drag = .placing(newElement(kind, at: gridPoint, placed: false))
+            if kind == .wire {
+                drag = .wiring(start: gridPoint, end: gridPoint, horizontalFirst: nil, straight: event.modifierFlags.contains(.shift), from: nil)
+            } else {
+                drag = .placing(newElement(kind, at: gridPoint, placed: false))
+            }
             needsDisplay = true
             return
         }
-        if event.clickCount == 2, element(at: point) != nil {
-            editor.showInspector = true
+        if event.clickCount == 2, let hit = element(at: point) {
+            // the part's value typed in place, or the inspector for a part without one
+            if !beginInlineEdit(hit.id) { editor.showInspector = true }
             return
         }
         if let end = endpoint(at: point) {
             editor.beginInteraction()
             drag = .endpoint(id: end.id, isA: end.isA)
+            return
+        }
+        // a drag from a terminal nothing connects to draws a wire from it (⇧-click there still adds to the selection)
+        if !event.modifierFlags.contains(.shift), let terminal = freeTerminal(at: point) {
+            drag = .wiring(start: terminal.point, end: terminal.point, horizontalFirst: nil, straight: false, from: terminal.owner)
+            hoveredTerminal = nil
+            needsDisplay = true
             return
         }
         if let hit = element(at: point) {
@@ -685,6 +740,15 @@ final class CircuitCanvasView: NSView {
         case .placing(var element)?:
             element.b = grid(point)
             drag = .placing(constrained(element))
+        case .wiring(let start, _, var horizontalFirst, _, let from)?:
+            let end = grid(point)
+            // the elbow turns the way the drag first went; back at the start, the next move chooses again
+            if end == start {
+                horizontalFirst = nil
+            } else if horizontalFirst == nil {
+                horizontalFirst = CanvasGeometry.startsHorizontally(end - start)
+            }
+            drag = .wiring(start: start, end: end, horizontalFirst: horizontalFirst, straight: event.modifierFlags.contains(.shift), from: from)
         case .moving(let start, var original, let ids, let moved)?:
             let delta = grid(point) - start
             if delta != .zero || moved {
@@ -752,6 +816,25 @@ final class CircuitCanvasView: NSView {
                 let id = editor.add(element)
                 editor.selection = [id]
             }
+        case .wiring(let start, let end, let horizontalFirst, _, let from)?:
+            let straight = event.modifierFlags.contains(.shift)
+            if end != start {
+                let ids = editor.addWire(CanvasGeometry.elbow(from: start, to: end, horizontalFirst: horizontalFirst ?? true, straight: straight))
+                // the Wire tool selects what it drew, as every tool does; a wire drawn from a terminal is left
+                // unselected, so a drag from its free end goes on wiring rather than stretching it
+                editor.selection = from == nil ? Set(ids) : []
+            } else if let from {
+                // a click on a free terminal, not a drag: it selects the part (and operates a switch), as a click on
+                // the part does
+                editor.selection = [from]
+                if let kind = editor.circuit[from]?.kind, kind == .toggleSwitch || kind == .footswitch || kind == .jack {
+                    editor.toggleSwitch(from)
+                }
+            } else {
+                // a click with the Wire tool: a wire of the default length, as before
+                let id = editor.add(newElement(.wire, at: start, placed: true))
+                editor.selection = [id]
+            }
         case .moving(_, _, let ids, let moved)?:
             movedCircuit = nil
             if moved {
@@ -771,7 +854,14 @@ final class CircuitCanvasView: NSView {
         }
         drag = nil
         pendingToggle = nil
+        updateHoveredTerminal(at: location(event))
         needsDisplay = true
+    }
+
+    /// The free terminal under the pointer in select mode, where a drag would start a wire (not a selected part's
+    /// handle, which stretches the part)
+    private func updateHoveredTerminal(at point: CGPoint) {
+        hoveredTerminal = editor.tool == nil && endpoint(at: point) == nil ? freeTerminal(at: point)?.point : nil
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -779,7 +869,10 @@ final class CircuitCanvasView: NSView {
         mouseLocation = point
         let hovered = editor.tool == nil ? element(at: point)?.id : nil
         if hovered != editor.hovered { editor.hovered = hovered }
-        if let id = hovered, let kind = editor.circuit[id]?.kind, kind.isSwitch || kind == .potentiometer {
+        updateHoveredTerminal(at: point)
+        if hoveredTerminal != nil {
+            NSCursor.crosshair.set()
+        } else if let id = hovered, let kind = editor.circuit[id]?.kind, kind.isSwitch || kind == .potentiometer {
             NSCursor.pointingHand.set()
         } else if editor.tool != nil {
             NSCursor.crosshair.set()
@@ -791,11 +884,14 @@ final class CircuitCanvasView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         mouseLocation = nil
+        hoveredTerminal = nil
         if editor.hovered != nil { editor.hovered = nil }
         needsDisplay = true
     }
 
     override func scrollWheel(with event: NSEvent) {
+        // the value field stays over its part only while the view stays put
+        if inlineEdit != nil { finishInlineEdit() }
         // scrolling over a potentiometer turns it, like a knob
         // (not the momentum after a flick to pan, which would turn whatever pot slides under the pointer)
         if !event.modifierFlags.contains(.command), editor.tool == nil, event.momentumPhase.isEmpty,
@@ -816,13 +912,14 @@ final class CircuitCanvasView: NSView {
     }
 
     override func magnify(with event: NSEvent) {
+        if inlineEdit != nil { finishInlineEdit() }
         editor.changeZoom(by: 1 + event.magnification, around: location(event))
         needsDisplay = true
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = location(event)
-        guard let hit = element(at: point) else { return nil }
+        guard let hit = element(at: point) else { return emptyCanvasMenu(at: point) }
         if !editor.selection.contains(hit.id) { editor.selection = [hit.id] }
         let menu = NSMenu()
         if hit.kind == .toggleSwitch {
@@ -873,6 +970,29 @@ final class CircuitCanvasView: NSView {
         }
         menu.addItem(item("Delete") { [weak self] in self?.editor.deleteSelection() })
         return menu
+    }
+
+    /// The menu of a right-click on the empty canvas: what to put there and how to see the whole circuit
+    private func emptyCanvasMenu(at point: CGPoint) -> NSMenu {
+        let menu = NSMenu()
+        if editor.canPaste {
+            let target = grid(point)
+            menu.addItem(item("Paste") { [weak self] in self?.editor.paste(at: target) })
+        }
+        menu.addItem(item("Add Part…") { [weak self] in self?.editor.showQuickAdd = true })
+        if !editor.circuit.elements.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(item("Select All") { [weak self] in self?.editor.selectAll() })
+            menu.addItem(item("Zoom to Fit") { [weak self] in self?.editor.requestFit() })
+            menu.addItem(item("Tidy Up") { [weak self] in self?.editor.tidyUp() })
+        }
+        return menu
+    }
+
+    /// Where a paste lands: under the pointer while it is over the canvas, else the middle of what the canvas shows
+    var pasteTarget: GridPoint {
+        if let mouse = mouseLocation, bounds.contains(mouse) { return grid(mouse) }
+        return grid(CGPoint(x: bounds.midX, y: bounds.midY))
     }
 
     private func item(_ title: String, _ action: @escaping () -> Void) -> NSMenuItem {
@@ -944,7 +1064,7 @@ final class CircuitCanvasView: NSView {
                 editor.cancelInteraction()
             case .rubberBand(_, _, let initial):
                 editor.selection = initial
-            case .placing, .panning:
+            case .placing, .wiring, .panning:
                 break
             }
             drag = nil
@@ -957,11 +1077,23 @@ final class CircuitCanvasView: NSView {
             editor.deleteSelection()
             return
         case 53:
-            drag = nil
-            editor.midiLearning = nil
-            editor.tool = nil
-            editor.selection = []
+            // one step back at a time (a drag in progress was abandoned above, a value being typed by its field):
+            // a MIDI Learn waiting for a controller, then the tool being placed, then the selection
+            if inlineEdit != nil {
+                cancelInlineEdit()
+            } else if editor.midiLearning != nil {
+                editor.midiLearning = nil
+            } else if editor.tool != nil {
+                editor.tool = nil
+            } else {
+                editor.selection = []
+            }
             needsDisplay = true
+            return
+        case 36, 76:
+            // Return (or Enter) with one part selected: type its value in place, or show the inspector for a part without one
+            guard modifiers.isEmpty, !event.modifierFlags.contains(.shift), let id = editor.selectedElement?.id else { break }
+            if !beginInlineEdit(id) { editor.showInspector = true }
             return
         case 49:
             // held down, Space would run and pause at the key-repeat rate

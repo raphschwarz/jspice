@@ -1238,21 +1238,65 @@ final class EditorState: ObservableObject {
         deleteSelection()
     }
 
+    /// True when the pasteboard holds parts copied from a circuit
+    var canPaste: Bool {
+        NSPasteboard.general.availableType(from: [Self.pasteboardType]) != nil
+    }
+
+    /// Pastes under the pointer when it is over the canvas, else in the middle of what the canvas shows
     func paste() {
+        paste(at: (canvas as? CircuitCanvasView)?.pasteTarget)
+    }
+
+    /// Pastes the copied parts centred on `target` (a grid point), keeping their places relative to each other; with no
+    /// target, a little down and to the right of where they were copied from
+    func paste(at target: GridPoint?) {
         guard let data = NSPasteboard.general.data(forType: Self.pasteboardType),
-              let elements = try? JSONDecoder().decode([Element].self, from: data) else { return }
+              let copied = try? JSONDecoder().decode([Element].self, from: data), !copied.isEmpty else { return }
+        var elements = copied
+        if let target {
+            elements = CanvasGeometry.placed(copied, centredAt: target)
+        } else {
+            for i in elements.indices {
+                elements[i].a = elements[i].a + GridPoint(2, 2)
+                elements[i].b = elements[i].b + GridPoint(2, 2)
+            }
+        }
         var ids = Set<UUID>()
         edit("Paste") { circuit in
             for var element in elements {
                 element.id = UUID()
-                element.a = element.a + GridPoint(2, 2)
-                element.b = element.b + GridPoint(2, 2)
                 // a net label's name is its connection, so it keeps it
                 if element.kind != .netLabel && circuit.elements.contains(where: { $0.name == element.name }) { element.name = "" }
                 ids.insert(circuit.add(element))
             }
         }
         selection = ids
+    }
+
+    // MARK: - Wiring and values on the canvas
+
+    /// Draws a wire of one or two segments (an elbow) as one undo step, joining its ends to wires they land on
+    @discardableResult
+    func addWire(_ segments: [WireSegment]) -> [UUID] {
+        var ids: [UUID] = []
+        edit("Add Wire") { ids = $0.addWire(segments) }
+        if !ids.isEmpty { RecentParts.shared.record(.wire) }
+        return ids
+    }
+
+    /// The value a part shows on the canvas and can have typed in place there, if it has one
+    func inlineValueSpec(of id: UUID) -> ParamSpec? {
+        circuit[id]?.kind.inlineValueParam
+    }
+
+    /// Sets a part's in-place value from typed text, as the inspector reads it ("4k7", "10u", "2.2 MΩ"): one undo step.
+    /// False when the text is not a value.
+    @discardableResult
+    func setInlineValue(_ id: UUID, from text: String) -> Bool {
+        guard let spec = inlineValueSpec(of: id), let value = SI.parse(text) else { return false }
+        if circuit[id]?[param: spec.key] != value { setParameter(id, spec, to: value) }
+        return true
     }
 
     // MARK: - Zoom

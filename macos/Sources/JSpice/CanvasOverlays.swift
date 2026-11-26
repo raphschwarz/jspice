@@ -402,8 +402,10 @@ struct ShortcutsSheet: View {
     private let general: [(String, [(String, String)])] = [
         ("Drawing", [
             ("⌘K  or  /", "Add a part by name"),
-            ("Esc", "Back to selecting (or stop drawing)"),
+            ("Esc", "Step back: stop drawing, put the tool away, then clear the selection"),
             ("Click / drag", "Place the chosen part / set its length and direction"),
+            ("Drag with the wire tool", "Draw a wire with a corner (⇧: one straight piece)"),
+            ("Drag from a free end", "Draw a wire from a terminal nothing connects to"),
             ("Drag a part", "Move it; wires attached to it stretch"),
             ("Drag an end", "Resize or turn the selected part"),
         ]),
@@ -414,7 +416,8 @@ struct ShortcutsSheet: View {
             ("← → ↑ ↓", "Nudge the selection (⇧: five units)"),
             ("⌘R  F", "Rotate, flip"),
             ("Tab  ⇧Tab", "Select the next or previous part"),
-            ("⌘A  ⌘C  ⌘X  ⌘V", "Select all, copy, cut, paste"),
+            ("Double-click  ↩", "Type the part's value in place"),
+            ("⌘A  ⌘C  ⌘X  ⌘V", "Select all, copy, cut, paste (under the pointer)"),
             ("⌥⌘T", "Tidy up the drawing"),
         ]),
         ("View and simulation", [
