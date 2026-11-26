@@ -122,7 +122,11 @@ final class RPWatchdog: RPPeripheral {
         super.init(chip: chip, name: name)
         timer.mode = .decrement
         timer.enable = false
-        alarm = RPTimer32PeriodicAlarm(timer: timer) { [unowned self] in self.reason = 1 }
+        alarm = RPTimer32PeriodicAlarm(timer: timer) { [unowned self] in
+            self.reason = 1
+            // (it would reset the chip: the model does not)
+            self.chip.note(.watchdogExpired)
+        }
         alarm.target = 0
         alarm.enable = false
     }
@@ -142,8 +146,12 @@ final class RPWatchdog: RPPeripheral {
     override func writeUint32(_ offset: UInt32, _ value: UInt32) {
         switch offset {
         case 0x00:
-            if value & (1 << 31) != 0 { reason = 1 << 1 }
+            if value & (1 << 31) != 0 {
+                reason = 1 << 1
+                chip.note(.reboot)
+            }
             enable = value & (1 << 30) != 0
+            if enable { chip.note(.watchdog) }
             timer.enable = enable && tickEnable
             alarm.enable = enable && tickEnable
             pauseDbg0 = value & (1 << 25) != 0
@@ -175,6 +183,8 @@ final class RPSSI: RPPeripheral {
     private var spiCtrlr0: UInt32 = 0
     private var rxSampleDelay: UInt32 = 0
     private var txdDriveEdge: UInt32 = 0
+    /// The byte last written to DR0
+    private var lastCommand: UInt32 = 0
 
     override func readUint32(_ offset: UInt32) -> UInt32 {
         switch offset {
@@ -206,7 +216,12 @@ final class RPSSI: RPPeripheral {
         case 0xF0: rxSampleDelay = value & 0xFF
         case 0xF8: txdDriveEdge = value & 0xFF
         case 0xF4: spiCtrlr0 = value
-        case 0x60: if value == 0x05 { dr0 = 0 }
+        case 0x60:
+            if value == 0x05 { dr0 = 0 }
+            // a write enable, then a page program or an erase: the boot ROM's flash_range_program/erase (the boot stage
+            // 2 follows its write enable with a status write, 0x01)
+            if lastCommand == 0x06 && [0x02, 0x20, 0x52, 0xD8, 0x60, 0xC7].contains(value) { chip.note(.flashWrite) }
+            lastCommand = value
         default: super.writeUint32(offset, value)
         }
     }

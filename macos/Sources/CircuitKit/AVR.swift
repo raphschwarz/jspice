@@ -135,6 +135,8 @@ public final class AVR: Microcontroller {
         case eepromControl
         case spiControl, spiStatus, spiData
         case twiControl, twiStatus, twiData
+        /// A register of a feature the model does not run, kept as written (as `plain`) and its setting up noted
+        case unmodelled(AVRVariant.UnmodelledFeature)
     }
     private var handlers: [Handler] = []
     /// The pin each port bit is bonded to (-1: none), by port
@@ -146,6 +148,21 @@ public final class AVR: Microcontroller {
     var transmitDoubleBuffered = true
     var flagsClearOnWrite = true
     var pwmDoubleBuffered = true
+
+    // What the firmware did that the model does not run (see `unsupportedNotices`): noted where it is done (the rare
+    // instructions' own code, the writes to those registers), never at every instruction
+    /// Each `AVRNotice` seen, as a bit, and the byte address in flash of the instruction that first did it
+    private var noticeBits = 0
+    private var noticeAddresses = [Int](repeating: 0, count: AVRNotice.allCases.count)
+    /// A notice new since the end of the last run
+    private var noticesChanged = false
+    /// The watchdog as the firmware set it up: on (WDE, which would reset the chip), the WDRs run while it was on, the
+    /// cycle of the last (or of its start), and its timeout in cycles
+    private var watchdogOn = false
+    private var watchdogKicks = 0
+    private var watchdogKickedAt = 0
+    private var watchdogTimeout = 0
+    public var onNoticesChanged: (() -> Void)?
 
     public init(firmware: [UInt8], variant: AVRVariant = .atmega328p) {
         self.variant = variant
@@ -287,6 +304,9 @@ public final class AVR: Microcontroller {
             h[spec.status] = .twiStatus
             h[spec.dataRegister] = .twiData
         }
+        for (address, feature) in variant.unmodelled where address < ioEnd {
+            if case .plain = h[address] { h[address] = .unmodelled(feature) }
+        }
         return h
     }
 
@@ -319,6 +339,12 @@ public final class AVR: Microcontroller {
         timersEventAt = 0
         nextService = 0
         pinStatesStale = true
+        let hadNotices = noticeBits != 0
+        noticeBits = 0
+        noticeAddresses = [Int](repeating: 0, count: AVRNotice.allCases.count)
+        noticesChanged = false
+        (watchdogOn, watchdogKicks, watchdogKickedAt, watchdogTimeout) = (false, 0, 0, 0)
+        if hadNotices { onNoticesChanged?() }
     }
 
     /// Behaves as simavr does where it differs from the chip, to compare with it instruction by instruction
@@ -358,6 +384,11 @@ public final class AVR: Microcontroller {
         pinHigh = other.pinHigh
         pinVoltages = other.pinVoltages
         interruptsChanged = true
+        noticeBits = other.noticeBits
+        noticeAddresses = other.noticeAddresses
+        noticesChanged = false
+        (watchdogOn, watchdogKicks, watchdogKickedAt, watchdogTimeout) =
+            (other.watchdogOn, other.watchdogKicks, other.watchdogKickedAt, other.watchdogTimeout)
     }
 
     // MARK: - Running
@@ -386,6 +417,8 @@ public final class AVR: Microcontroller {
                 logWatchedPins(at: cycles)
             }
         }
+        // (once a run: what the firmware did that the model does not run, said when new)
+        if watchdogOn || noticesChanged { lookAtNotices() }
     }
 
     /// Set by a write to a register that can change what a pin does (a port, or a timer's, USART's, SPI's or TWI's
@@ -999,6 +1032,8 @@ public final class AVR: Microcontroller {
         case .eepromControl:
             eepromControlWrite(value)
         case .spiControl:
+            // SPE without MSTR: a slave
+            if value & 0x50 == 0x40 { note(.spiSlave) }
             spi?.writeControl(value)
         case .spiStatus:
             spi?.writeStatus(value)
@@ -1010,6 +1045,9 @@ public final class AVR: Microcontroller {
             twi?.writeStatus(value)
         case .twiData:
             twi?.writeData(value)
+        case .unmodelled(let feature):
+            d[address] = value
+            unmodelledWritten(feature, value)
         }
     }
 
@@ -1620,7 +1658,9 @@ public final class AVR: Microcontroller {
                 pc = (pointer(30) | (threeBytePC ? Int(d[AVR.EIND]) << 16 : 0)) & pcMask
                 return threeBytePC ? 4 : 3
             default:
-                return 1  // SLEEP, WDR, BREAK, SPM
+                // SLEEP, WDR, SPM: nothing but their cycle, and noted (BREAK and the opcodes these chips lack: nothing)
+                if op & 0xFF8F == 0x9588 { special(op) }
+                return 1
             }
         }
         if op & 0xFE00 == 0x9600 {  // ADIW / SBIW
@@ -1673,7 +1713,7 @@ public final class AVR: Microcontroller {
 
     /// What an opcode is, worked out once for all 65536 of them (see `decodeTable`): the cases of `executeDecoded`
     enum Decoded: UInt8 {
-        /// Nothing but its cycle: NOP, the opcodes these chips lack, and SLEEP, WDR, BREAK and SPM
+        /// Nothing but its cycle: NOP, BREAK and the opcodes these chips lack
         case nop
         case add, sbc, cpc, movw, muls, mulsu, fmul, fmuls, fmulsu
         case adc, sub, cp, cpse, and, eor, or, mov
@@ -1682,6 +1722,8 @@ public final class AVR: Microcontroller {
         case mul, ldsSts, lpmZ, elpmZ, pushPop, ldSt
         case com, neg, swap, inc, asr, lsr, ror, dec, jmp, call, bset, bclr
         case ret, reti, lpmR0, elpmR0, ijmp, eijmp, icall, eicall, adiwSbiw, ioBit
+        /// SLEEP, WDR, SPM (and SPM Z+): nothing but their cycle, as the model runs them, and noted (see `special`)
+        case special
     }
 
     /// Each opcode's case, as `execute` and `execute9` would decode it
@@ -1791,6 +1833,7 @@ public final class AVR: Microcontroller {
             case 0x9419: return .eijmp
             case 0x9509: return .icall
             case 0x9519: return .eicall
+            case 0x9588, 0x95A8, 0x95E8, 0x95F8: return .special
             default: return .nop
             }
         }
@@ -1813,6 +1856,9 @@ public final class AVR: Microcontroller {
 
         switch decoded[op] {
         case .nop:
+            return 1
+        case .special:
+            special(op)
             return 1
         case .add:
             let a = Int(d[rd]), b = Int(d[rr])
@@ -2126,6 +2172,165 @@ public final class AVR: Microcontroller {
     public var registers: [UInt8] { (0..<32).map { data[$0] } }
     public var statusRegister: UInt8 { data[AVR.SREG] }
     public var stackPointer: Int { Int(data[AVR.SPL]) | Int(data[AVR.SPH]) << 8 }
+}
+
+// MARK: - What the model does not run
+
+/// What a firmware can do on an AVR that the model does not run, as `AVR` notes it
+enum AVRNotice: Int, CaseIterable {
+    case sleep, watchdog, watchdogExpired, watchdogInterrupt, spm, comparator, spiSlave, twiSlave, clockPrescaler
+    case powerReduction, timer2Async, externalMemory, usi, pll
+}
+
+extension AVR {
+    /// The byte address in flash of the instruction running (an I/O write's: about, its second word for STS)
+    private var instructionAddress: Int { ((pc &- 1) & (variant.flashWords - 1)) * 2 }
+
+    /// Notes what the firmware did, the first time
+    private func note(_ notice: AVRNotice) {
+        let bit = 1 << notice.rawValue
+        guard noticeBits & bit == 0 else { return }
+        noticeBits |= bit
+        noticeAddresses[notice.rawValue] = instructionAddress
+        noticesChanged = true
+    }
+
+    /// SLEEP (which sleeps only with SE set), WDR and SPM, which the model runs as nothing but their cycle
+    @inline(never) func special(_ op: Int) {
+        switch op {
+        case 0x9588:
+            let enable = variant.sleepEnable
+            if data[enable.address] & enable.bit != 0 { note(.sleep) }
+        case 0x95A8:
+            guard watchdogOn else { return }
+            // the watchdog would have reset the chip before this WDR came
+            if cycles - watchdogKickedAt > watchdogTimeout { note(.watchdogExpired) }
+            watchdogKickedAt = cycles
+            watchdogKicks += 1
+        case 0x95E8, 0x95F8:
+            note(.spm)
+        default:
+            break
+        }
+    }
+
+    /// A register of a feature the model does not run written (kept as written): noted where the firmware sets the
+    /// feature up
+    @inline(never) func unmodelledWritten(_ feature: AVRVariant.UnmodelledFeature, _ value: UInt8) {
+        switch feature {
+        case .watchdog:
+            // WDCE opens a timed change: the value written after it is what holds
+            guard value & 0x10 == 0 else { return }
+            let reset = value & 0x08 != 0
+            if reset {
+                if !watchdogOn { watchdogKickedAt = cycles }
+                // 2048 << WDP periods of its 128 kHz oscillator: 16 ms << WDP
+                let prescale = min(Int(value & 0x07) | Int(value & 0x20) >> 2, 9)
+                watchdogTimeout = Int(clock * 0.016) << prescale
+                note(.watchdog)
+            }
+            watchdogOn = reset
+            if value & 0x40 != 0 { note(.watchdogInterrupt) }
+        case .comparator:
+            if value & 0x80 == 0 { note(.comparator) }
+        case .clockPrescaler:
+            if value & 0x80 == 0 && value & 0x0F != 0 { note(.clockPrescaler) }
+        case .powerReduction:
+            if value != 0 { note(.powerReduction) }
+        case .timer2Async:
+            if value & 0x20 != 0 { note(.timer2Async) }
+        case .twiAddress:
+            if value != 0 { note(.twiSlave) }
+        case .externalMemory:
+            if value & 0x80 != 0 { note(.externalMemory) }
+        case .usi:
+            if value != 0 { note(.usi) }
+        case .pll:
+            if value & 0x04 != 0 { note(.pll) }
+        }
+    }
+
+    /// At the end of a run (while the watchdog is on, or a notice is new): the watchdog's running out, and the new
+    /// notices said
+    @inline(never) func lookAtNotices() {
+        if watchdogOn && cycles - watchdogKickedAt > watchdogTimeout { note(.watchdogExpired) }
+        if noticesChanged {
+            noticesChanged = false
+            onNoticesChanged?()
+        }
+    }
+
+    public var unsupportedNotices: [ChipNotice] {
+        guard noticeBits != 0 else { return [] }
+        return AVRNotice.allCases.compactMap { notice in
+            guard noticeBits & 1 << notice.rawValue != 0 else { return nil }
+            var said = AVR.describe(notice, watchdogMilliseconds: Int((Double(watchdogTimeout) / clock * 1000).rounded()))
+            let address = noticeAddresses[notice.rawValue]
+            said.address = address
+            said.hint = (said.hint.map { $0 + " " } ?? "") + String(format: "First at 0x%04X in the program.", address)
+            return said
+        }
+    }
+
+    static func describe(_ notice: AVRNotice, watchdogMilliseconds: Int) -> ChipNotice {
+        switch notice {
+        case .sleep:
+            return ChipNotice(key: "sleep",
+                              message: "The sketch puts the chip to sleep (sleep_mode(), LowPower): JSpice does not model sleep modes, so the chip runs straight on instead of waiting for an interrupt to wake it.",
+                              hint: "What the sketch does after waking runs at once, as often as its loop comes round; the rest of it runs as written.")
+        case .watchdog:
+            return ChipNotice(key: "watchdog",
+                              message: "The sketch turns the watchdog on (wdt_enable()): JSpice does not model the watchdog, so it never resets the chip.",
+                              hint: "A sketch that relies on the watchdog to restart it after a hang, or to reset on purpose, keeps running here instead; its wdt_reset() calls do nothing.")
+        case .watchdogExpired:
+            return ChipNotice(key: "watchdog-expired",
+                              message: "The watchdog would have reset the chip: \(watchdogMilliseconds) ms passed without wdt_reset(), but JSpice does not model the watchdog, so the sketch kept running.",
+                              hint: "On the chip it would start over from setup() there: call wdt_reset() more often, or give the watchdog a longer timeout.")
+        case .watchdogInterrupt:
+            return ChipNotice(key: "watchdog-interrupt",
+                              message: "The sketch turns on the watchdog's interrupt (WDT_vect, as sleep libraries use to wake up): JSpice does not model the watchdog, so that interrupt never comes.",
+                              hint: "Code in ISR(WDT_vect) never runs here.")
+        case .spm:
+            return ChipNotice(key: "spm",
+                              message: "The sketch writes its own flash (SPM, as a boot loader or a flash-storage library does): JSpice does not model self-programming, so nothing is written.",
+                              hint: "Keep settings in EEPROM (EEPROM.put() and EEPROM.get()), which JSpice does model.")
+        case .comparator:
+            return ChipNotice(key: "comparator",
+                              message: "The sketch sets up the analog comparator (ACSR): JSpice does not model it, so its output (ACO) never changes and its interrupt (ANALOG_COMP_vect) never comes.",
+                              hint: "Compare voltages with analogRead() instead, or with a comparator part in the circuit.")
+        case .spiSlave:
+            return ChipNotice(key: "spi-slave",
+                              message: "The sketch sets the SPI port up as a slave (SPCR without MSTR): JSpice runs the SPI only as a master, so nothing another device clocks in reaches the sketch.",
+                              hint: "Make this chip the master (SPI.begin()) and the other part the slave.")
+        case .twiSlave:
+            return ChipNotice(key: "i2c-slave",
+                              message: "The sketch gives its I²C port an address of its own (Wire.begin(address)): JSpice runs I²C only as a master, so onReceive() and onRequest() are never called.",
+                              hint: "Make this chip the master (Wire.begin()) talking to the I²C parts in the circuit.")
+        case .clockPrescaler:
+            return ChipNotice(key: "clock-prescaler",
+                              message: "The sketch divides the chip's clock (CLKPR, clock_prescale_set()): JSpice keeps it at full speed, so the sketch, its timers and its baud rates run faster than on the chip.",
+                              hint: "Leave the clock undivided, or build the sketch for the slower clock (F_CPU).")
+        case .powerReduction:
+            return ChipNotice(key: "power-reduction",
+                              message: "The sketch powers peripherals down (PRR, power_..._disable()): JSpice keeps them running.",
+                              hint: "On the chip a peripheral powered down stops (Timer0 and millis(), the USART and Serial); here it carries on.",
+                              severity: .note)
+        case .timer2Async:
+            return ChipNotice(key: "timer2-async",
+                              message: "The sketch clocks Timer2 from a watch crystal (ASSR): JSpice clocks it from the system clock, so it counts at the wrong rate.",
+                              hint: "Time with millis() or Timer1 instead.")
+        case .externalMemory:
+            return ChipNotice(key: "external-memory",
+                              message: "The sketch turns on the external memory interface (XMCRA): JSpice does not model it, so there is no memory beyond the chip's own and its ports stay as the sketch set them.")
+        case .usi:
+            return ChipNotice(key: "usi",
+                              message: "The sketch uses the ATtiny85's USI (USICR: TinyWireM, tinySPI): JSpice does not model the USI, so nothing is sent or received through it.",
+                              hint: "Serial, SPI or I²C bit-banged on ordinary pins (shiftOut(), SoftwareSerial) runs here.")
+        case .pll:
+            return ChipNotice(key: "pll",
+                              message: "The sketch clocks Timer1 from the 64 MHz PLL (PLLCSR): JSpice clocks Timer1 from the system clock, so its PWM and interrupts run slower than on the chip.")
+        }
+    }
 }
 
 /// One of the chip's timer/counters (8 or 16 bits), each with two or three compare units that can drive a pin; or the

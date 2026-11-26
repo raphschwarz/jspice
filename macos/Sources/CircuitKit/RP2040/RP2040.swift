@@ -222,6 +222,7 @@ final class RP2040 {
             return sioRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.readUint32(address - RP2040.sioStart) }
         }
         if let peripheral = findPeripheral(address) { return peripheral._withUnsafeGuaranteedRef { $0.readUint32(address & 0x3FFF) } }
+        noteUnmapped(address)
         return 0xFFFF_FFFF
     }
 
@@ -262,6 +263,8 @@ final class RP2040 {
             sioRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.writeUint32(address - RP2040.sioStart, value) }
         } else if address >> 12 == 0xE000E {
             ppbRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.writeUint32(address & 0xFFF, value) }
+        } else {
+            noteUnmapped(address)
         }
     }
 
@@ -328,6 +331,41 @@ final class RP2040 {
     @inline(__always) var pwmPinDirections: UInt32 { pwmRef.unsafelyUnwrapped._withUnsafeGuaranteedRef { $0.gpioDirection } }
 
     func setInterrupt(_ irq: Int, _ value: Bool) { core.setInterrupt(irq, value) }
+
+    // MARK: - What the model does not run
+
+    /// What the firmware did that the model does not run, each once, in the order first done (see
+    /// `Pico.unsupportedNotices`), and a count that changes when one is new
+    private(set) var notices: [RPNotice] = []
+    private(set) var noticeGeneration = 0
+    /// The kinds noted (`RPNotice.Kind.bit`), and the blocks
+    private var noticeBits: UInt32 = 0
+    private var noticedBlocks: Set<String> = []
+
+    /// Notes what the firmware did, the first time (where in it: the core's PC, about)
+    @inline(never) func note(_ kind: RPNotice.Kind, address: UInt32 = 0) {
+        if case .block(let name) = kind {
+            guard noticedBlocks.insert(name).inserted else { return }
+        } else {
+            guard noticeBits & kind.bit == 0 else { return }
+            noticeBits |= kind.bit
+        }
+        notices.append(RPNotice(kind: kind, pc: core.PC, address: address))
+        noticeGeneration += 1
+    }
+
+    /// An address where no block answers was read or written
+    @inline(never) func noteUnmapped(_ address: UInt32) {
+        switch address >> 24 {
+        // XIP_CTRL: the flash routines flush the cache there (as they read the flash's id at boot), to no effect here;
+        // and a write to the flash's own addresses (beyond the image's 16 MB, or its aliases), dropped as on the chip
+        case 0x10...0x14: return
+        case 0x15: note(.block("XIP_SRAM"), address: address)
+        case 0x21: note(.block("SRAM_ALIAS"), address: address)
+        case 0x50 where address >> 20 == 0x504: note(.block("XIP_AUX"), address: address)
+        default: note(.unmapped, address: address)
+        }
+    }
 
     /// The level on the pin given to a peripheral's input (SPI: instance (GPIO >> 3) & 1, role GPIO & 3, 0 being RX;
     /// I²C: instance (GPIO >> 1) & 1, role GPIO & 1, 0 being SDA), high if no pin is (as a pulled-up bus would be)

@@ -12,6 +12,7 @@ The dock's **Chip** tab shows the selected chip's serial monitor (with a field t
 - [STM32F405, STM32F373, STM32F103](#stm32f405-stm32f373-stm32f103)
 - [Converters and bus parts on the STM32s](#converters-and-bus-parts-on-the-stm32s)
 - [Watchdog, bus trace, pins and debugger](#watchdog-bus-trace-pins-and-debugger)
+- [What the chips do not run](#what-the-chips-do-not-run)
 - [Chip support](#chip-support)
 - [Logic parts on a chip's pins](#logic-parts-on-a-chips-pins)
 
@@ -75,6 +76,14 @@ What the firmware reaches that the model does not run is said too (a peripheral 
 - **Bus Trace** (in the dock's Chip tab) shows what goes over the chip's buses as a logic analyzer would decode it (each SPI and I²S frame, I²C address, byte and stop with its acknowledge, USART byte, with its time). Agents read it with `read_bus_trace`.
 - **Pins** (in the Chip tab too) shows what each pin carries as the firmware has set it up. Agents read it with `read_chip_state`.
 - **Debugger** (in the inspector: **Start GDB Server**) starts a GDB server for the chip, as a debug probe's server: `arm-none-eabi-gdb firmware.elf -ex "target extended-remote localhost:3333"` (or an IDE's debugger) then sets breakpoints, steps, reads and writes registers (the FPU's too) and memory, loads firmware into flash and resets the chip (`monitor reset`), while the firmware runs in the circuit. Halted, the core runs no instructions, but the chip's clock and peripherals run on with the circuit, as on a chip whose debug freeze bits are clear. Agents start it with `gdb_server`.
+
+## What the chips do not run
+
+A sketch that does something a chip's model does not run gets a problem on the chip's part (the dock's Problems tab), once, saying what it did and what happens here instead, with where in the firmware it first did; a reset or new firmware clears it.
+
+- **AVR:** sleeping (SLEEP with sleep enabled: the chip runs straight on); the watchdog turned on (it never resets the chip, and the problem says when it would have), or its interrupt; writing its own flash (SPM); the analog comparator set up; SPI or I²C set up as a slave; the clock divided (CLKPR); peripherals powered down (PRR, a note); Timer2 on a watch crystal (ASSR); the Mega's external memory; the ATtiny85's USI, and Timer1 on its PLL.
+- **Pico:** starting the second core (`setup1()` and `loop1()`: an error, as core 1's code never runs and core 0 stops waiting for it); writing to flash (`EEPROM.commit()`, LittleFS); the watchdog turned on or run out, and a reboot asked for (none restarts the chip); the BOOTSEL button read; a block the model leaves out (the ring oscillator, the voltage regulator), each once, and an address where the chip has nothing.
+- **STM32:** see [Converters and bus parts](#converters-and-bus-parts-on-the-stm32s) and [Watchdog](#watchdog-bus-trace-pins-and-debugger).
 
 ## Chip support
 

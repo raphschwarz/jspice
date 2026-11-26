@@ -259,14 +259,81 @@ public final class Pico: Microcontroller {
         let end = chip.clock.nanos + Double(count) * RP2040.cycleNanos
         chip.run(until: end)
         publish()
+        if chip.noticeGeneration != seenNotices {
+            seenNotices = chip.noticeGeneration
+            onNoticesChanged?()
+        }
     }
 
     public func reset() {
         let voltages = pinVoltages
+        let hadNotices = !system.chip.notices.isEmpty
         system = System(firmware: firmware)
+        seenNotices = 0
         serial = []
         pinVoltages = voltages
         publish()
+        if hadNotices { onNoticesChanged?() }
+    }
+
+    public var onNoticesChanged: (() -> Void)?
+    /// The chip's `noticeGeneration` last said (its notices are the shared chip's: see `adopt`)
+    private var seenNotices = 0
+
+    public var unsupportedNotices: [ChipNotice] {
+        system.chip.notices.map { notice in
+            var said = Pico.describe(notice)
+            said.address = Int(notice.pc)
+            said.hint = (said.hint.map { $0 + " " } ?? "") + String(format: "First at about 0x%08X in the firmware.", notice.pc)
+            return said
+        }
+    }
+
+    /// The blocks the model leaves out, as the user knows them
+    private static let blockDescriptions = [
+        "ROSC": "the ring oscillator (ROSC: its random bit, its dormant mode)",
+        "VREG_AND_CHIP_RESET": "the voltage regulator and reset block (VREG_AND_CHIP_RESET: the core voltage, the brown-out detector)",
+        "XIP_SRAM": "the flash cache used as memory (XIP_SRAM)",
+        "XIP_AUX": "the flash streaming port (XIP_AUX)",
+        "SRAM_ALIAS": "the SRAM's unstriped alias (0x21000000)",
+    ]
+
+    static func describe(_ notice: RPNotice) -> ChipNotice {
+        switch notice.kind {
+        case .block(let name):
+            return ChipNotice(key: "block-" + name,
+                              message: "The firmware reaches \(blockDescriptions[name] ?? name), which JSpice does not model: it reads all ones there, and what it writes is lost.",
+                              hint: "The rest of the sketch runs as written; what it asks of that block does not happen.")
+        case .unmapped:
+            return ChipNotice(key: "unmapped",
+                              message: String(format: "The firmware reaches 0x%08X, where the RP2040 has nothing (a bus fault on the chip): it reads all ones there, and what it writes is lost.", notice.address),
+                              hint: "Often a stray pointer in the sketch.")
+        case .bootsel:
+            return ChipNotice(key: "bootsel",
+                              message: "The sketch reads the BOOTSEL button (BOOTSEL, get_bootsel_button()): JSpice has no BOOTSEL button, so what it reads means nothing.",
+                              hint: "Wire a push button to a GPIO pin and read that instead.")
+        case .core1:
+            return ChipNotice(key: "core1",
+                              message: "The sketch starts the second core (setup1() and loop1(), multicore_launch_core1()): JSpice runs only core 0, so the code for core 1 never runs, and core 0 stops there, waiting for core 1 to answer.",
+                              hint: "Move the work of setup1() and loop1() into setup() and loop() to run the sketch here.",
+                              severity: .error)
+        case .flashWrite:
+            return ChipNotice(key: "flash-write",
+                              message: "The sketch writes to its flash (EEPROM.commit(), LittleFS, flash_range_program()): JSpice does not model writing the flash, so nothing is written.",
+                              hint: "What it saves is not there after a reset; the rest of the sketch runs as written.")
+        case .watchdog:
+            return ChipNotice(key: "watchdog",
+                              message: "The sketch turns the watchdog on (rp2040.wdt_begin(), watchdog_enable()): JSpice does not reset the chip when the watchdog runs out.",
+                              hint: "A sketch that relies on the watchdog to restart it after a hang keeps running here instead.")
+        case .watchdogExpired:
+            return ChipNotice(key: "watchdog-expired",
+                              message: "The watchdog ran out, which would have reset the chip: JSpice does not reset it, so the sketch kept running.",
+                              hint: "On the chip it would start over there: feed the watchdog (rp2040.wdt_reset(), watchdog_update()) more often.")
+        case .reboot:
+            return ChipNotice(key: "reboot",
+                              message: "The sketch asks the chip to reboot (rp2040.reboot(), watchdog_reboot()): JSpice does not restart it, so it carries on past the request.",
+                              hint: "Reset the chip in JSpice to start it over.")
+        }
     }
 
     /// Takes on the other Pico's chip itself, not a copy of it: the two then share it, and whichever runs it next
@@ -276,6 +343,8 @@ public final class Pico: Microcontroller {
     public func adopt(_ other: Microcontroller) {
         guard let other = other as? Pico, other !== self else { return }
         system = other.system
+        // (its notices are the shared chip's, as the other said them)
+        seenNotices = system.chip.noticeGeneration
         shownStates = other.shownStates
         shownLED = other.shownLED
         shownCycles = other.shownCycles

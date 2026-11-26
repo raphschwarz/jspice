@@ -127,6 +127,32 @@ public struct AVRVariant: Sendable {
     /// The SPI and the two-wire interface, on chips that have them
     var spi: SPI? = nil
     var twi: TWI? = nil
+    /// Registers of features the model does not run (the watchdog, the analog comparator, the clock prescaler...), by
+    /// data address: real registers of this chip, kept as written, whose setting up `AVR` notes (`unsupportedNotices`)
+    var unmodelled: [(address: Int, feature: UnmodelledFeature)] = []
+    /// The register and bit that let SLEEP sleep (SMCR's SE; MCUCR's on the ATtiny85)
+    var sleepEnable: (address: Int, bit: UInt8) = (0x53, 0x01)
+
+    enum UnmodelledFeature: Sendable {
+        /// WDTCSR (WDTCR): WDE, WDIE and the prescaler
+        case watchdog
+        /// ACSR: ACD off powers the comparator
+        case comparator
+        /// CLKPR: the system clock divided
+        case clockPrescaler
+        /// PRR (PRR0, PRR1): peripherals powered down
+        case powerReduction
+        /// ASSR: AS2 clocks Timer2 from a watch crystal
+        case timer2Async
+        /// TWAR: the two-wire interface's own address, as a slave
+        case twiAddress
+        /// XMCRA: SRE enables the external memory interface
+        case externalMemory
+        /// USICR: the ATtiny85's universal serial interface
+        case usi
+        /// PLLCSR: PCKE clocks Timer1 from the PLL
+        case pll
+    }
 
     public var pinCount: Int { pins.count }
     public var flashBytes: Int { flashWords * 2 }
@@ -196,7 +222,9 @@ public struct AVRVariant: Sendable {
             clearOnWrite: [0x35, 0x36, 0x37, 0x3B, 0x3C],
             maskRegisters: [0x6E, 0x6F, 0x70, 0x3D, 0x68],
             spi: SPI(control: 0x4C, vector: 17, sck: 13, mosi: 11, miso: 12, ss: 10),
-            twi: TWI(rate: 0xB8, vector: 24, sda: 18, scl: 19))
+            twi: TWI(rate: 0xB8, vector: 24, sda: 18, scl: 19),
+            unmodelled: [(0x60, .watchdog), (0x50, .comparator), (0x61, .clockPrescaler), (0x64, .powerReduction),
+                         (0xB6, .timer2Async), (0xBA, .twiAddress)])
     }()
 
     /// The ATmega168: the ATmega328P with half its flash, 1 KB of SRAM and 512 bytes of EEPROM (the 4ms Rotating Clock
@@ -291,7 +319,9 @@ public struct AVRVariant: Sendable {
             clearOnWrite: [0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C],
             maskRegisters: [0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x3D, 0x68],
             spi: SPI(control: 0x4C, vector: 24, sck: pin("B1"), mosi: pin("B2"), miso: pin("B3"), ss: pin("B0")),
-            twi: TWI(rate: 0xB8, vector: 39, sda: pin("D1"), scl: pin("D0")))
+            twi: TWI(rate: 0xB8, vector: 39, sda: pin("D1"), scl: pin("D0")),
+            unmodelled: [(0x60, .watchdog), (0x50, .comparator), (0x61, .clockPrescaler), (0x64, .powerReduction),
+                         (0x65, .powerReduction), (0xB6, .timer2Async), (0xBA, .twiAddress), (0x74, .externalMemory)])
     }()
 
     /// The ATtiny85 at 8 MHz (its internal oscillator): D0-D5 are PB0-PB5; no USART
@@ -323,6 +353,9 @@ public struct AVRVariant: Sendable {
             ],
             eepromRegisters: (0x3C, 0x3D, 0x3E, 0x3F),
             clearOnWrite: [0x58, 0x5A],
-            maskRegisters: [0x59, 0x5B])
+            maskRegisters: [0x59, 0x5B],
+            unmodelled: [(0x41, .watchdog), (0x28, .comparator), (0x46, .clockPrescaler), (0x40, .powerReduction),
+                         (0x2D, .usi), (0x47, .pll)],
+            sleepEnable: (0x55, 0x20))
     }()
 }

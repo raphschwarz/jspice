@@ -29,8 +29,69 @@ class RPPeripheral {
     }
 }
 
-/// A block JSpice does not model (reads give all ones, writes are dropped)
-final class RPUnimplemented: RPPeripheral {}
+/// A block JSpice does not model (reads give all ones, writes are dropped), its use noted. IO_QSPI's is not: the
+/// flash routines set its chip select there (as they read the flash's id at boot), to no effect here; only the BOOTSEL
+/// button's reading is noted.
+final class RPUnimplemented: RPPeripheral {
+    private let isQSPI: Bool
+
+    override init(chip: RP2040, name: String) {
+        isQSPI = name == "IO_QSPI_BASE"
+        super.init(chip: chip, name: name)
+    }
+
+    private var blockName: String { name.hasSuffix("_BASE") ? String(name.dropLast(5)) : name }
+
+    override func readUint32(_ offset: UInt32) -> UInt32 {
+        if !isQSPI { chip.note(.block(blockName)) }
+        return 0xFFFF_FFFF
+    }
+
+    override func writeUint32(_ offset: UInt32, _ value: UInt32) {
+        if !isQSPI {
+            chip.note(.block(blockName))
+        } else if offset == 0x0C && (value >> 12) & 3 == 2 {
+            // GPIO_QSPI_SS_CTRL's OEOVER set to disable the output: get_bootsel_button() reading the button on CS
+            chip.note(.bootsel)
+        }
+    }
+}
+
+/// What the firmware did that the model does not run (see `RP2040.note`)
+struct RPNotice {
+    enum Kind: Equatable {
+        /// A block the model leaves out (by its name in the datasheet, "ROSC"), read or written
+        case block(String)
+        /// An address where the chip has nothing
+        case unmapped
+        /// The BOOTSEL button read
+        case bootsel
+        /// Core 1 reset or spoken to through the FIFO: launched (the model runs only core 0)
+        case core1
+        /// The flash erased or programmed through the SSI (the boot ROM's flash_range_erase/program)
+        case flashWrite
+        /// The watchdog enabled, run out, or triggered (a reboot asked for)
+        case watchdog, watchdogExpired, reboot
+
+        var bit: UInt32 {
+            switch self {
+            case .block: return 0
+            case .unmapped: return 1
+            case .bootsel: return 2
+            case .core1: return 4
+            case .flashWrite: return 8
+            case .watchdog: return 16
+            case .watchdogExpired: return 32
+            case .reboot: return 64
+            }
+        }
+    }
+
+    let kind: Kind
+    /// The core's PC then (about: the instruction after), and the address reached, where it says more
+    let pc: UInt32
+    let address: UInt32
+}
 
 final class RPReset: RPPeripheral {
     private var reset: UInt32 = 0
@@ -74,7 +135,10 @@ final class RPPSM: RPPeripheral {
     override func writeUint32(_ offset: UInt32, _ value: UInt32) {
         switch offset {
         case 0x0: forceOn = value & RPPSM.mask
-        case 0x4: forceOff = value & RPPSM.mask
+        case 0x4:
+            // PROC1 forced off: multicore_reset_core1(), as multicore_launch_core1() starts
+            if value & 0x1_0000 != 0 && forceOff & 0x1_0000 == 0 { chip.note(.core1) }
+            forceOff = value & RPPSM.mask
         case 0x8: wdsel = value & RPPSM.mask
         default: super.writeUint32(offset, value)
         }

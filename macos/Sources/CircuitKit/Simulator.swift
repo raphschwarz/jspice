@@ -2977,6 +2977,15 @@ public final class Simulator {
     private func assembleDiagnostics() {
         var all = loadDiagnostics + behaviorProblems + busProblems
         for notices in chipNotices { all += notices }
+        // what the other chips say they do not run (said again when it changes: an STM32's come through `noteChip`)
+        for (i, chip) in chips.sorted(by: { $0.key < $1.key }) where !(chip is STM32Microcontroller) && i < flat.elements.count {
+            if chip.onNoticesChanged == nil { chip.onNoticesChanged = { [weak self] in self?.assembleDiagnostics() } }
+            let name = flat.elements[i].name, ids = drawnIDs([i])
+            for notice in chip.unsupportedNotices {
+                all.append(Diagnostic(notice.severity, "chip-" + notice.key, (name.isEmpty ? kinds[i].displayName : name) + ": " + notice.message,
+                                      hint: notice.hint, elements: ids))
+            }
+        }
         if let failure { all.append(failure) }
         if let unconverged { all.append(unconverged) }
         diagnostics = Diagnostic.ordered(all)

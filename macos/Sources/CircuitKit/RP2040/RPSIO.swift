@@ -355,6 +355,10 @@ final class RPSIO {
             return divQuotient
         case 0x074: return divRemainder
         case 0x078: return divCSR
+        case 0x050, 0x058:
+            // FIFO_ST, FIFO_RD: the inter-core FIFO, which only a second core answers (multicore_launch_core1())
+            chip.note(.core1)
+            return 0xFFFF_FFFF
         case 0x080...0x0FC:
             let interp = interpolator(offset)
             switch offset & 0x3F {
@@ -432,6 +436,9 @@ final class RPSIO {
         case 0x074:
             divRemainder = value
             divCSR = 0b11
+        case 0x054:
+            // FIFO_WR (see FIFO_ST)
+            chip.note(.core1)
         case 0x080...0x0FC:
             let interp = interpolator(offset)
             switch offset & 0x3F {

@@ -271,6 +271,16 @@ public final class STM32Microcontroller: Microcontroller {
     /// (a 74HC165) drives it
     func sampleMISO(port: Int, _ on: Bool) { stm32_spi_sample_miso(system.chip, Int32(port), on) }
 
+    /// `notices`, as the other chips give theirs (the simulator takes the STM32's from `notices` itself, as it runs)
+    public var unsupportedNotices: [ChipNotice] {
+        let unmodelled = Int(stm32_unmodelled_count(system.chip))
+        return notices.enumerated().map { k, text in
+            let key = k < unmodelled ? "unmodelled-\(k)" : text.hasPrefix("its watchdog") ? "watchdog-reset" : "software-reset"
+            return ChipNotice(key: key, message: text.prefix(1).uppercased() + text.dropFirst(),
+                              severity: key == "software-reset" ? .note : .warning)
+        }
+    }
+
     /// Changes whenever `notices` gains one (not as their counts grow)
     var noticeCount: Int {
         let chip = system.chip

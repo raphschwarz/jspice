@@ -64,9 +64,46 @@ public protocol Microcontroller: AnyObject {
     func reset()
     /// Takes on another chip's whole state (the sound thread's chip, for the window's simulator to show)
     func adopt(_ other: Microcontroller)
+
+    /// What the firmware has done that the model does not run (sleeping, the watchdog, a peripheral left out, the
+    /// second core), each once, in the order first seen: kept through runs and `adopt`, cleared by `reset` (and by new
+    /// firmware, which is a new chip)
+    var unsupportedNotices: [ChipNotice] { get }
+    /// Called when `unsupportedNotices` changes: after the run in which the firmware first did something new, and
+    /// after a reset that cleared some (not after `adopt`, which takes the other chip's as they are)
+    var onNoticesChanged: (() -> Void)? { get set }
+}
+
+/// Something a firmware did that the chip's model does not run, for the user: the sketch does not behave here as on
+/// the chip
+public struct ChipNotice: Equatable, Sendable {
+    /// Short and stable ("sleep", "watchdog", "block-ROSC"): with the chip's part, a diagnostic's id
+    public var key: String
+    /// One sentence naming the feature as a sketch author knows it, and what happens here instead
+    public var message: String
+    /// What to do instead, or what of the sketch still runs as written
+    public var hint: String?
+    /// A warning for most; an error where the sketch cannot work as written (code for a core that never runs)
+    public var severity: Diagnostic.Severity
+    /// Where in the firmware it first happened (a byte address in flash), where known
+    public var address: Int?
+
+    public init(key: String, message: String, hint: String? = nil, severity: Diagnostic.Severity = .warning, address: Int? = nil) {
+        self.key = key
+        self.message = message
+        self.hint = hint
+        self.severity = severity
+        self.address = address
+    }
 }
 
 extension Microcontroller {
+    public var unsupportedNotices: [ChipNotice] { [] }
+    public var onNoticesChanged: (() -> Void)? {
+        get { nil }
+        set {}  // swiftlint:disable:this unused_setter_value
+    }
+
     public func pinVoltage(_ pin: Int) -> Double { pin >= 0 && pin < pinVoltages.count ? pinVoltages[pin] : 0 }
     public func setPinVoltage(_ pin: Int, _ volts: Double) {
         if pin >= 0 && pin < pinVoltages.count { pinVoltages[pin] = volts }
