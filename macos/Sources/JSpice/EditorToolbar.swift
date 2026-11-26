@@ -17,6 +17,7 @@ struct EditorToolbar: ToolbarContent {
                 Label(simulation.isRunning ? "Pause" : "Run", systemImage: simulation.isRunning ? "pause.fill" : "play.fill")
             }
             .help(simulation.isRunning ? "Pause the simulation (Space)" : "Run the simulation (Space)")
+            .accessibilityHint("Space")
             Button {
                 simulation.reset()
             } label: {
@@ -41,6 +42,7 @@ struct EditorToolbar: ToolbarContent {
                     .labelStyle(.titleAndIcon)
             }
             .help("How fast circuit time runs compared with real time")
+            .speedMenuAccessibility(simulation.status)
         }
         ToolbarItemGroup(placement: .primaryAction) {
             Toggle(isOn: Binding(get: { simulation.soundOn }, set: { simulation.setSound($0) })) {
@@ -49,6 +51,7 @@ struct EditorToolbar: ToolbarContent {
             .disabled(!simulation.hasSpeaker)
             .help(simulation.hasSpeaker ? "Listen to the speaker: runs the circuit in real time at audio rate"
                                         : "Add a speaker to the circuit to listen to it")
+            .soundToggleAccessibility(hasSpeaker: simulation.hasSpeaker, problem: simulation.soundProblem)
             Picker("View", selection: $editor.board) {
                 Label("Schematic", systemImage: "point.3.connected.trianglepath.dotted").tag(BoardKind.schematic)
                 Label("Breadboard", systemImage: "circle.grid.3x3").tag(BoardKind.breadboard)
@@ -71,6 +74,7 @@ struct EditorToolbar: ToolbarContent {
                 Label("Inspector", systemImage: "sidebar.trailing")
             }
             .help("Show or hide the inspector")
+            .inspectorButtonAccessibility(shown: editor.showInspector)
         }
     }
 }

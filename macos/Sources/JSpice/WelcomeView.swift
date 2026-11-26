@@ -31,8 +31,10 @@ struct WelcomeView: View {
             Image(systemName: "bolt.horizontal.circle.fill")
                 .font(.system(size: 36))
                 .foregroundStyle(.tint)
+                .accessibilityHidden(true)
             Text("Draw a circuit")
                 .font(.title2.weight(.semibold))
+                .headingAccessibility()
             Text("Pick a part in the library, then click or drag on the canvas to place it. Join parts with wires (W). The circuit simulates live as you draw.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -47,6 +49,7 @@ struct WelcomeView: View {
                         Label(group.title, systemImage: group.symbol)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
+                            .headingAccessibility()
                         // (as many to a row as the canvas has room for)
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
                             ForEach(group.examples) { example in
@@ -94,5 +97,6 @@ struct WelcomeView: View {
         }
         .buttonStyle(.bordered)
         .help(example.summary)
+        .welcomeExampleAccessibility(example)
     }
 }

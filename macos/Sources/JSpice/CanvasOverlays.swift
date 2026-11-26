@@ -26,7 +26,7 @@ struct ToolHUD: View {
             .background(.regularMaterial, in: Capsule())
             .overlay(Capsule().strokeBorder(.separator, lineWidth: 0.5))
             .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .reduceMotionTransition(.move(edge: .top).combined(with: .opacity))
         }
     }
 }
@@ -61,6 +61,7 @@ struct ZoomControl: View {
                 Image(systemName: "minus").frame(width: 26, height: 24)
             }
             .help("Zoom out (⌘−)")
+            .accessibilityLabel("Zoom out")
             Divider().frame(height: 14)
             Button { editor.requestFit() } label: {
                 Text("\(Int((editor.zoom * 100).rounded())) %")
@@ -68,11 +69,13 @@ struct ZoomControl: View {
                     .frame(width: 52, height: 24)
             }
             .help("Zoom to fit (⌘0)")
+            .accessibilityLabel("Zoom \(Int((editor.zoom * 100).rounded())) percent, zoom to fit")
             Divider().frame(height: 14)
             Button { editor.changeZoom(by: 1.25) } label: {
                 Image(systemName: "plus").frame(width: 26, height: 24)
             }
             .help("Zoom in (⌘=)")
+            .accessibilityLabel("Zoom in")
         }
         .buttonStyle(.plain)
         .font(.callout)
@@ -281,6 +284,7 @@ struct QuickAddPalette: View {
                                 .id(index)
                                 .onTapGesture { choose(item) }
                                 .onHover { inside in if inside { highlighted = index } }
+                                .paletteRowAccessibility(highlighted: index == highlighted) { choose(item) }
                         }
                         if items.isEmpty {
                             Text("Nothing matches “\(query)”")
@@ -300,6 +304,7 @@ struct QuickAddPalette: View {
         .shadow(color: .black.opacity(0.25), radius: 24, y: 10)
         .onAppear { focused = true }
         .onChange(of: query) { _, _ in highlighted = 0 }
+        .paletteHighlightAnnouncements(items.indices.contains(highlighted) ? Self.spokenName(items[highlighted], editor: editor) : nil)
     }
 
     @ViewBuilder

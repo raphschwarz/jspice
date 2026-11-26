@@ -64,6 +64,7 @@ private struct ScopeRow: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Remove this scope")
+                    .accessibilityLabel("Remove scope")
                 }
                 Picker("Quantity", selection: Binding(get: { selection }, set: choose)) {
                     ForEach(scopeQuantities(for: element.kind)) { quantity in
@@ -200,8 +201,10 @@ private struct ScopeRow: View {
                              spread: showSpread && element.kind != .loopProbe, knob: sweptKnob,
                              knobName: sweptKnob.flatMap { knob in editor.circuit.knobs.first { $0.id == knob }?.name },
                              gainColor: voltageColor, phaseColor: phaseColor)
+                    .plotAccessibility(element.kind == .loopProbe ? "Loop gain plot" : "Frequency response plot")
             } else if spec.plot == .spectrum {
                 SpectrumPlot(editor: editor, cache: spectrum, scopeID: spec.id, unit: spec.quantity.unit, color: color)
+                    .plotAccessibility("Spectrum plot")
             } else {
                 TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
                     Canvas { context, size in
@@ -211,6 +214,7 @@ private struct ScopeRow: View {
                             draw(context, size)
                         }
                     }
+                    .scopePlotAccessibility(editor.simulation.simulator.trace(spec.id), spec: spec, partName: element.name.isEmpty ? element.kind.displayName : element.name)
                 }
             }
         }

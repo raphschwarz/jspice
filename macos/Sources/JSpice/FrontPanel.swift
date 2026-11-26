@@ -61,6 +61,7 @@ struct FrontPanel: View {
                     let mapping = circuit.midiMapping(part: target.part, inner: target.inner)
                     VStack(spacing: 6) {
                         self.control(for: control)
+                            .panelControlAccessibility(control, editor: editor)
                             .frame(height: 74)
                             .overlay {
                                 if learning {
@@ -349,7 +350,7 @@ private struct ToggleSwitch: View {
                     .frame(width: 7, height: 26)
                     .offset(y: on ? -12 : 12)
                     .shadow(color: .black.opacity(0.6), radius: 2, y: on ? 3 : -1)
-                    .animation(.spring(response: 0.18, dampingFraction: 0.6), value: on)
+                    .reduceMotionAnimation(.spring(response: 0.18, dampingFraction: 0.6), value: on)
             }
             .frame(width: 44, height: 50)
             .contentShape(Rectangle())
@@ -412,6 +413,7 @@ private struct PanelLamp: View {
                     .offset(x: -3, y: -3)
             }
             .frame(width: 64, height: 64)
+            .readingAccessibility(brightness > 0.02 ? "on" : "off")
         }
     }
 
@@ -448,6 +450,7 @@ private struct LevelMeter: View {
             .padding(5)
             .background(RoundedRectangle(cornerRadius: 3).fill(Color(white: 0.07)))
             .frame(width: 64, height: 74)
+            .readingAccessibility(PanelAccessibility.level(level))
         }
         .help("Output level: red means the sound clips")
     }
@@ -511,6 +514,7 @@ private struct PanelVUMeter: View {
                              at: CGPoint(x: size.width / 2, y: size.height * 0.55))
             }
             .frame(width: 96, height: 60)
+            .readingAccessibility(String(format: "%+.1f dB", reading))
         }
     }
 }

@@ -194,6 +194,7 @@ struct BottomDock: View {
             }
             .buttonStyle(.borderless)
             .help(editor.dockCollapsed ? "Show the dock" : "Fold the dock down to its tabs")
+            .accessibilityLabel(editor.dockCollapsed ? "Show the dock" : "Fold the dock")
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
@@ -274,6 +275,7 @@ private struct DockTabButton: View {
         }
         .buttonStyle(.plain)
         .help(selected ? "Fold the dock down" : "Show \(tab.title.lowercased()) in the dock")
+        .dockTabAccessibility(tab, selected: selected, count: count)
     }
 }
 
@@ -312,6 +314,7 @@ private struct DockResizeHandle: View {
                 .onEnded { _ in startHeight = nil }
         )
         .help("Drag to resize the dock")
+        .dockResizeAccessibility(editor)
     }
 }
 

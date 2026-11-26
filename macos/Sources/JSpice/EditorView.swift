@@ -110,9 +110,11 @@ struct StatusBar: View {
                     .frame(width: 8, height: 8)
                 Text(status.failed ? "Stopped" : simulation.isRunning ? "Running" : "Paused")
             }
+            .simulationStatusAccessibility(status, running: simulation.isRunning)
             Text("t = \(SI.format(status.time, unit: "s", digits: 4))")
                 .monospacedDigit()
                 .frame(minWidth: 90, alignment: .leading)
+                .accessibilityHidden(true)
             Text(status.audio ? "Real time, sound on" : Pacing.describe(speed: status.speed) + (status.automatic ? " (automatic)" : ""))
                 .foregroundStyle(.secondary)
             if let problem = simulation.soundProblem {

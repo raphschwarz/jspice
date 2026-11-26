@@ -131,6 +131,7 @@ private struct GalleryHeader: View {
             Spacer()
         }
         .padding(.top, 8)
+        .headingAccessibility()
     }
 }
 
@@ -178,6 +179,7 @@ private struct ExampleCard: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help("\(example.summary)\n\nOpens in a new window.")
+        .exampleCardAccessibility(example, features: example.quickFeatures.union(thumbnail?.features ?? []))
         .task(id: example.id) {
             thumbnail = await ExampleThumbnails.shared.entry(for: example)
         }

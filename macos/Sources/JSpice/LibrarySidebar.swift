@@ -260,5 +260,6 @@ private struct ToolRow<Icon: View>: View {
         }
         .buttonStyle(.plain)
         .help(shortcut.map { "\(title) (\($0))" } ?? title)
+        .toolRowAccessibility(title: title, shortcut: shortcut, isActive: isActive)
     }
 }
