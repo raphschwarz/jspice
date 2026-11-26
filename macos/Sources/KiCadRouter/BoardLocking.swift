@@ -1,8 +1,10 @@
 // Items locked and unlocked as KiCad's Lock and Unlock lock them (KiCad 10.0.8: pcbnew/tools/board_editor_control.cpp,
 // BOARD_EDITOR_CONTROL::modifyLockSelected), and a locked one known as KiCad knows it (BOARD_ITEM::IsLocked, PAD::IsLocked,
 // pcbnew/tools/pcb_selection_tool.cpp, HasLockedDescendant), written as pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp
-// writes it. Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License version 3 or later, as
-// KiCad (see KICAD-NOTICE.md).
+// writes it; what locks stop (pcbnew/tools/pcb_selection_tool.cpp, RequestSelection, FilterCollectorForLockedItems and
+// ReportFilteredLockedItems; pcbnew/tools/edit_tool.cpp and edit_tool_move_fct.cpp, the actions that ask for them;
+// common/eda_draw_frame.cpp, GetOverrideLocks). Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General
+// Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
 import Foundation
 import KiCadKit
@@ -30,9 +32,22 @@ extension BoardEditing {
         return BoardItems.descendants(node, in: router.board).contains { $0.value("uuid").map(isLocked) ?? false }
     }
 
-    /// The ids of those KiCad's selection for a move, turn, flip or deletion keeps (FilterCollectorForLockedItems: the
-    /// locked left out, unless overridesLocks)
-    func unlocked(_ uuids: [String]) -> [String] { overridesLocks ? uuids : uuids.filter { !isLocked($0) } }
+    /// What KiCad's editor says in its infobar when locks stop an action (PCB_SELECTION_TOOL::ReportFilteredLockedItems)
+    public static let lockedItemsWarning = "Selection contains locked items. Enable 'Override locks' to operate on them."
+
+    /// Whether locks stop an action on the items of those ids, as KiCad 10.0.8's PCB_SELECTION_TOOL::RequestSelection
+    /// has it for an action whose client filter calls FilterCollectorForLockedItems (EDIT_TOOL's Move, Drag, Rotate,
+    /// Flip, Remove, Duplicate's move of the copies and copyToClipboard; ALIGN_DISTRIBUTE_TOOL::DistributeItems): any
+    /// of them locked, or a group or tuning pattern holding a locked item (HasLockedDescendant), unless overridesLocks
+    /// (EDA_DRAW_FRAME::GetOverrideLocks); then RequestSelection keeps the selection as it is and gives the action an
+    /// empty one (m_blockedSelection), so it does nothing at all to any of them, the unlocked included, and the editor
+    /// says lockedItemsWarning. Noted in lockedItemsFiltered. (KiCad's own selection holds a locked item only where its
+    /// Selection Filter's Locked items is on, as it is not by default: a box or a click then leaves locked items out,
+    /// PCB_SELECTION_TOOL::itemPassesFilter, and the action goes on with the rest.)
+    func locksStop<S: Sequence>(_ uuids: S) -> Bool where S.Element == String {
+        lockedItemsFiltered = !overridesLocks && uuids.contains { isLocked($0) || hasLockedDescendant($0) }
+        return lockedItemsFiltered
+    }
 
     /// Items locked (or, `locked` false, unlocked), as KiCad's Lock and Unlock do them: footprints, tracks, arcs, vias,
     /// zones and the board's own drawings and texts (pads left as they are, which KiCad does not lock alone), the

@@ -81,7 +81,7 @@ extension BoardEditing {
     /// tracks), the pointer at `p` on `layer`: their segments moved together, each as far as the one under the pointer,
     /// those running its way, or their ends. Nil if fewer than two of them are there.
     public func startMultiDrag(_ uuids: [String], at p: KiCadPoint, layer: String = "F.Cu") -> DragPreview? {
-        guard !isRouting, let l = router.layer(layer) else { return nil }
+        guard !isRouting, let l = router.layer(layer), !locksStop(uuids) else { return nil }
         router.mode = mode
         router.cornerMode = cornerMode
         guard router.startMultiDrag(uuids, at: Self.nm(p), layer: l) else { return nil }

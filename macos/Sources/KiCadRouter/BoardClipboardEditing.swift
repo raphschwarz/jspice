@@ -33,8 +33,7 @@ extension BoardEditing {
     /// copied or taken away, when any of them is locked or holds a locked item (unless overridesLocks), as KiCad's
     /// copyToClipboard stops when its selection tool filtered locked items (ReportFilteredLockedItems)
     public func cut(_ uuids: [String], reference: KiCadPoint) -> (text: String, edit: Edit?)? {
-        guard !isRouting, overridesLocks || !uuids.contains(where: { isLocked($0) || hasLockedDescendant($0) }),
-              let text = copy(uuids, reference: reference) else { return nil }
+        guard !isRouting, !locksStop(uuids), let text = copy(uuids, reference: reference) else { return nil }
         return (text, removeItems(Set(uuids), name: "Cut"))
     }
 
@@ -249,12 +248,16 @@ extension BoardEditing {
     /// editor increments no pad numbers: a pad is not duplicated on its own there), the copies moved by `delta` (mm,
     /// where KiCad's move after it takes them), as one change ("Duplicate"): each a copy with ids of its own, of
     /// the same nets, reference and link to its symbol, in the group its original is in; a group's or tuning
-    /// pattern's members duplicated with it. Nil for a tuning pattern alone, as KiCad's.
+    /// pattern's members duplicated with it. Nil for a tuning pattern alone, as KiCad's; and nil where any of them is
+    /// locked or holds a locked item (unless overridesLocks): the copies are locked as their originals are
+    /// (BOARD_ITEM::Duplicate, a clone), and EDIT_TOOL::Duplicate's move of them (doMoveSelection) is stopped by locks
+    /// (locksStop), so it reverts the copies (BOARD_COMMIT::Revert).
     public func duplicate(_ uuids: [String], by delta: KiCadPoint = .zero) -> Edit? {
         guard !isRouting else { return nil }
         let board = router.board
         let originals = uuids.compactMap { BoardItems.item(board, $0) }
         guard !originals.isEmpty, !(originals.count == 1 && originals[0].head == "generated") else { return nil }
+        guard !locksStop(uuids) else { return nil }
         let d = Self.nm(delta)
         var made: [SExpr] = []
         var joins: [(group: SExpr, member: String)] = []

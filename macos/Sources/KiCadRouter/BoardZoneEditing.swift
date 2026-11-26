@@ -564,15 +564,15 @@ extension BoardEditing {
     // MARK: - Zones moved
 
     /// Zones (and rule areas) moved by `delta` (mm), as KiCad's Move moves them (ZONE::Move: the outline and the fills
-    /// with it), the locked ones left where they are as KiCad's selection for a move leaves them (unless
-    /// overridesLocks), as one change, the zones then filled again (refillsZones); nil if none is moved
+    /// with it), as one change, the zones then filled again (refillsZones); nil if none is moved, or if any of them is
+    /// locked (unless overridesLocks), as KiCad's Move does nothing then (locksStop)
     public func moveZones(_ uuids: [String], by delta: KiCadPoint) -> Edit? {
-        guard !isRouting, delta != .zero else { return nil }
+        guard !isRouting, delta != .zero, !locksStop(uuids) else { return nil }
         let wanted = Set(uuids)
         let d = Self.nm(delta)
         var moved: [String] = []
         for node in router.board.root.all("zone") where wanted.contains(node.value("uuid") ?? "") {
-            guard overridesLocks || !isLockedNode(node), let uuid = node.value("uuid") else { continue }
+            guard let uuid = node.value("uuid") else { continue }
             // (its outline as KiCad read it, moved; one with arcs, moved in place)
             let contours = Self.contours(of: node)
             if let contours {

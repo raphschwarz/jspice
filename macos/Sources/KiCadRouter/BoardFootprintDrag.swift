@@ -138,16 +138,14 @@ extension BoardEditing {
     /// footprint (its drag, D, on a footprint): the pointer at `p`, `layer` the one chosen; one footprint from its
     /// origin, where the move warps the pointer there (`warpsCursor`, KiCad's default), else from the pointer. The
     /// tracks from one of its pads to another move whole with it; the lines out of its pads have their ends dragged
-    /// with them, on the 45° directions. Nil if there is nothing of them to drag (a locked one is not dragged, unless
-    /// overridesLocks).
+    /// with them, on the 45° directions. Nil if there is nothing of them to drag, or if any of them is locked (unless
+    /// overridesLocks), as KiCad's drag (EDIT_TOOL::Drag) does nothing then (locksStop).
     public func startFootprintDrag(_ uuids: [String], at p: KiCadPoint, layer: String = "F.Cu",
                                    warpsCursor: Bool = true) -> FootprintDragPreview? {
         guard !isRouting else { return nil }
         router.mode = mode
         router.cornerMode = cornerMode
-        // (a locked one left out, as the selection tool's drag leaves it: selectPoint on a drag takes no locked item)
-        let uuids = unlocked(uuids)
-        guard !uuids.isEmpty,
+        guard !locksStop(uuids), !uuids.isEmpty,
               router.startFootprintDrag(uuids, at: Self.nm(p), layer: router.layer(layer) ?? 0, warpsCursor: warpsCursor) else { return nil }
         return footprintDragPreview(uuids)
     }

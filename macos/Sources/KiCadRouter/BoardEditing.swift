@@ -419,9 +419,15 @@ public final class BoardEditing {
     /// Starts dragging the track or via at `p` on `layer` (the one a track is on is taken first), as KiCad's drag (D)
     /// drags it, or its free angle drag (G) with `freeAngle`: a track's segment, its two neighbours stretched to
     /// follow on the 45° directions, or its corner if `p` is at one of its ends, or a via with the tracks on it.
-    /// Nil if there is nothing there to drag.
+    /// Nil if there is nothing there to drag, or if it is locked (unless overridesLocks), as the selection tool's
+    /// drag (EDIT_TOOL::Drag) does not drag it then (locksStop); the router tool's own (ROUTER_TOOL::performDragging)
+    /// asks first, and drags it, "Drag Anyway", as BoardRouter.startDrag does.
     public func startDrag(at p: KiCadPoint, layer: String, freeAngle: Bool = false) -> DragPreview? {
         guard !isRouting, let l = router.layer(layer) else { return nil }
+        // (the item the drag would start on, picked as the router picks it)
+        let picked = router.dragStartPoint(at: Self.nm(p), layer: l).item
+            .flatMap { router.iface.resolver.info[ObjectIdentifier($0)]?.source }
+        guard !locksStop(picked.map { [$0] } ?? []) else { return nil }
         router.mode = mode
         router.cornerMode = cornerMode
         guard router.startDrag(at: Self.nm(p), layer: l, freeAngle: freeAngle) else { return nil }
@@ -473,9 +479,14 @@ public final class BoardEditing {
     /// The corner or edge of a zone being dragged, as KiCad's point editor holds it
     var zoneDrag: ZoneDrag?
 
-    /// Whether locked items are moved, dragged and edited as others are (KiCad's Override Locks); off, as KiCad's
-    /// default, a move, turn, flip or deletion leaves them alone, and the point editor does not edit them
+    /// Whether locked items are moved, dragged and edited as others are (KiCad's Override locks); off, as KiCad's
+    /// default, a move, turn, flip, drag, deletion, cut or duplicate of a selection holding one does nothing, and the
+    /// point editor does not edit one (BoardLocking.swift)
     public var overridesLocks = false
+
+    /// Whether locks stopped the last action they can stop (PCB_SELECTION_TOOL's m_lockedItemsFiltered), for which
+    /// KiCad's editor says `lockedItemsWarning` in its infobar (ReportFilteredLockedItems)
+    public var lockedItemsFiltered = false
 
     // MARK: - Routing every connection
 
@@ -593,11 +604,10 @@ public final class BoardEditing {
     }
 
     /// Tracks and vias taken away, by id (and the board's own texts, graphics, its outline's too, and dimensions of
-    /// those ids), the locked left alone as KiCad's Delete leaves them (unless overridesLocks)
+    /// those ids); nothing taken away where any of them is locked (unless overridesLocks), as KiCad's Delete
+    /// (EDIT_TOOL::Remove: its RequestSelection stopped by locks, it returns, having had a selection)
     public func remove(_ uuids: Set<String>) -> Edit? {
-        // (the locked left alone, as KiCad's Delete leaves them)
-        let uuids = Set(unlocked(Array(uuids)))
-        guard !uuids.isEmpty else { return nil }
+        guard !locksStop(uuids), !uuids.isEmpty else { return nil }
         let drawings = drawingNodes(uuids)
         if !drawings.isEmpty {
             for node in drawings { router.board.root.remove(node) }
@@ -746,10 +756,10 @@ public final class BoardEditing {
         return change("Add Rule Area", zones: [uuid])
     }
 
-    /// Zones taken away, by id
+    /// Zones taken away, by id; none where any of them is locked (unless overridesLocks), as KiCad's Delete
     public func removeZones(_ uuids: Set<String>) -> Edit? {
-        let gone = router.board.zones.filter { uuids.contains($0.uuid) && (overridesLocks || !isLockedNode($0.node)) }
-        guard !isRouting, !gone.isEmpty else { return nil }
+        let gone = router.board.zones.filter { uuids.contains($0.uuid) }
+        guard !isRouting, !locksStop(gone.map(\.uuid)), !gone.isEmpty else { return nil }
         for zone in gone { router.board.root.remove(zone.node) }
         router.boardChanged()
         return change(gone.count == 1 ? "Delete Pour" : "Delete Pours", zones: gone.map(\.uuid))
@@ -970,9 +980,10 @@ public final class BoardEditing {
 
     /// A footprint moved to `point` (its origin, in mm) and turned to `rotation` degrees (nil: as it is turned), as
     /// KiCad moves one: its pads, drawings and texts with it, the tracks left where they are; a locked one not moved
-    /// (KiCad's move leaves it out of what it moves, unless overridesLocks), as the others below
+    /// (unless overridesLocks), and, as the others below, nothing moved, turned or turned over where any of those
+    /// asked for is locked, as KiCad's Move, Rotate and Flip do nothing then (locksStop)
     public func moveFootprint(_ uuid: String, to point: KiCadPoint, rotation: Double? = nil) -> Edit? {
-        guard !isRouting, !unlocked([uuid]).isEmpty, let footprint = router.board.footprint(uuid: uuid) else { return nil }
+        guard !isRouting, !locksStop([uuid]), let footprint = router.board.footprint(uuid: uuid) else { return nil }
         let turn = rotation ?? footprint.rotation
         guard point != footprint.position || turn != footprint.rotation else { return nil }
         footprint.move(to: point, rotation: turn)
@@ -981,16 +992,18 @@ public final class BoardEditing {
 
     /// Footprints moved by `delta` (mm), together
     public func moveFootprints(_ uuids: [String], by delta: KiCadPoint) -> Edit? {
-        let footprints = unlocked(uuids).compactMap { router.board.footprint(uuid: $0) }
-        guard !isRouting, !footprints.isEmpty, delta != .zero else { return nil }
+        guard !isRouting, !locksStop(uuids) else { return nil }
+        let footprints = uuids.compactMap { router.board.footprint(uuid: $0) }
+        guard !footprints.isEmpty, delta != .zero else { return nil }
         for f in footprints { f.move(to: KiCadPoint(f.position.x + delta.x, f.position.y + delta.y), rotation: f.rotation) }
         return placed(footprints, "Move")
     }
 
     /// Footprints turned, each about its origin, by `degrees` (KiCad's R: 90° counterclockwise)
     public func rotateFootprints(_ uuids: [String], by degrees: Double = 90) -> Edit? {
-        let footprints = unlocked(uuids).compactMap { router.board.footprint(uuid: $0) }
-        guard !isRouting, !footprints.isEmpty else { return nil }
+        guard !isRouting, !locksStop(uuids) else { return nil }
+        let footprints = uuids.compactMap { router.board.footprint(uuid: $0) }
+        guard !footprints.isEmpty else { return nil }
         for f in footprints {
             var turn = (f.rotation + degrees).truncatingRemainder(dividingBy: 360)
             if turn > 180 { turn -= 360 } else if turn <= -180 { turn += 360 }
@@ -1001,8 +1014,9 @@ public final class BoardEditing {
 
     /// Footprints turned over to the other side of the board (KiCad's F)
     public func flipFootprints(_ uuids: [String]) -> Edit? {
-        let footprints = unlocked(uuids).compactMap { router.board.footprint(uuid: $0) }
-        guard !isRouting, !footprints.isEmpty else { return nil }
+        guard !isRouting, !locksStop(uuids) else { return nil }
+        let footprints = uuids.compactMap { router.board.footprint(uuid: $0) }
+        guard !footprints.isEmpty else { return nil }
         for f in footprints { f.flip() }
         return placed(footprints, "Flip")
     }

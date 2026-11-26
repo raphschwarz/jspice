@@ -1012,6 +1012,9 @@ struct PCBEditBar: View {
                 }
                 .fixedSize()
                 .help("The width of new tracks (W, ⇧W) and the size of their vias: their net class's, one of the project's pre-defined sizes (Board Setup), or a width chosen here")
+                Toggle("Override locks", isOn: $editing.overridesLocks)
+                    .fixedSize()
+                    .help("Locked items moved, turned, dragged and deleted as the others are (KiCad's Override locks); off, an action on a selection holding a locked item does nothing")
                 Picker("Obstacles", selection: $editing.shove) {
                     Text("Walk Around").tag(false)
                     Text("Shove").tag(true)

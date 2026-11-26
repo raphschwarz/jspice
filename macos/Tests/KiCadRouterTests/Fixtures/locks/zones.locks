@@ -1,0 +1,1415 @@
+{
+ "runs": [
+  {
+   "case": "unlocked",
+   "action": "move",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-0.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     24,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": [
+    23.75,
+    17.75
+   ],
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "unlocked",
+   "action": "rotate",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-1.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     24,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "unlocked",
+   "action": "flip",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-2.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     24,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "unlocked",
+   "action": "delete",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-3.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     24,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "unlocked",
+   "action": "duplicate",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-4.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     24,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": [
+    23.75,
+    17.75
+   ],
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [],
+   "added": 1
+  },
+  {
+   "case": "unlocked",
+   "action": "cut",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-5.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     24,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "move",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-6.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": [
+    23.75,
+    17.75
+   ],
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "rotate",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-7.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "flip",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-8.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "delete",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-9.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "duplicate",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-10.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": [
+    23.75,
+    17.75
+   ],
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [],
+   "added": 1
+  },
+  {
+   "case": "footprints",
+   "action": "cut",
+   "lockedItems": false,
+   "override": false,
+   "board": "zones-locks-11.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "move",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-12.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": [
+    23.75,
+    17.75
+   ],
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "rotate",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-13.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "flip",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-14.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "delete",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-15.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "duplicate",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-16.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": [
+    23.75,
+    17.75
+   ],
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "cut",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-17.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "move",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-18.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": [
+    23.75,
+    17.75
+   ],
+   "selection": [
+    "f1b24fde-6e08-486e-ae11-17186266c0d6",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "rotate",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-19.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "flip",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-20.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "delete",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-21.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "footprints",
+   "action": "duplicate",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-22.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": [
+    23.75,
+    17.75
+   ],
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [],
+   "added": 2
+  },
+  {
+   "case": "footprints",
+   "action": "cut",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-23.kicad_pcb",
+   "box": [
+    [
+     17,
+     11
+    ],
+    [
+     44,
+     18
+    ]
+   ],
+   "at": [
+    20.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "f1b24fde-6e08-486e-ae11-17186266c0d6"
+   ],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "move",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-24.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": [
+    43.75,
+    17.75
+   ],
+   "selection": [
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "rotate",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-25.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044",
+    "78133294-8f05-43e5-84e8-88d60d009f73"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "flip",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-26.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "delete",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-27.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "duplicate",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-28.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": [
+    43.75,
+    17.75
+   ],
+   "selection": [
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "cut",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-29.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "move",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-30.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": [
+    43.75,
+    17.75
+   ],
+   "selection": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044",
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9"
+   ],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "rotate",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-31.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044",
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9"
+   ],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "flip",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-32.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044",
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9"
+   ],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "delete",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-33.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044",
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9"
+   ],
+   "added": 0
+  },
+  {
+   "case": "tracks",
+   "action": "duplicate",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-34.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": [
+    43.75,
+    17.75
+   ],
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044",
+    "78133294-8f05-43e5-84e8-88d60d009f73"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [],
+   "added": 4
+  },
+  {
+   "case": "tracks",
+   "action": "cut",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-35.kicad_pcb",
+   "box": [
+    [
+     29,
+     13
+    ],
+    [
+     61,
+     31
+    ]
+   ],
+   "at": [
+    40.5,
+    15.25
+   ],
+   "to": null,
+   "selection": [
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9",
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044",
+    "78133294-8f05-43e5-84e8-88d60d009f73",
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a1852635-e01d-4a79-b6f9-fee25a9bd8b9"
+   ],
+   "added": 0
+  },
+  {
+   "case": "track",
+   "action": "move",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-36.kicad_pcb",
+   "box": [
+    [
+     29.2,
+     30.35
+    ],
+    [
+     55.3,
+     29.2
+    ]
+   ],
+   "at": [
+    42.5,
+    30
+   ],
+   "to": [
+    45.75,
+    32.5
+   ],
+   "selection": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "track",
+   "action": "delete",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-37.kicad_pcb",
+   "box": [
+    [
+     29.2,
+     30.35
+    ],
+    [
+     55.3,
+     29.2
+    ]
+   ],
+   "at": [
+    42.5,
+    30
+   ],
+   "to": null,
+   "selection": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "track",
+   "action": "drag",
+   "lockedItems": true,
+   "override": false,
+   "board": "zones-locks-38.kicad_pcb",
+   "box": [
+    [
+     29.2,
+     30.35
+    ],
+    [
+     55.3,
+     29.2
+    ]
+   ],
+   "at": [
+    42.5,
+    30
+   ],
+   "to": [
+    45.75,
+    32.5
+   ],
+   "selection": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c"
+   ],
+   "infobar": [
+    "Selection contains locked items. Enable 'Override locks' to operate on them."
+   ],
+   "dialogs": [],
+   "changed": [],
+   "added": 0
+  },
+  {
+   "case": "track",
+   "action": "move",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-39.kicad_pcb",
+   "box": [
+    [
+     29.2,
+     30.35
+    ],
+    [
+     55.3,
+     29.2
+    ]
+   ],
+   "at": [
+    42.5,
+    30
+   ],
+   "to": [
+    45.75,
+    32.5
+   ],
+   "selection": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c"
+   ],
+   "added": 0
+  },
+  {
+   "case": "track",
+   "action": "delete",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-40.kicad_pcb",
+   "box": [
+    [
+     29.2,
+     30.35
+    ],
+    [
+     55.3,
+     29.2
+    ]
+   ],
+   "at": [
+    42.5,
+    30
+   ],
+   "to": null,
+   "selection": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c"
+   ],
+   "added": 0
+  },
+  {
+   "case": "track",
+   "action": "drag",
+   "lockedItems": true,
+   "override": true,
+   "board": "zones-locks-41.kicad_pcb",
+   "box": [
+    [
+     29.2,
+     30.35
+    ],
+    [
+     55.3,
+     29.2
+    ]
+   ],
+   "at": [
+    42.5,
+    30
+   ],
+   "to": [
+    45.75,
+    32.5
+   ],
+   "selection": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c"
+   ],
+   "infobar": [],
+   "dialogs": [],
+   "changed": [
+    "832de695-f2aa-4444-a9ce-a0c9531c867c",
+    "a6e0886f-67b4-47d9-aaec-9c49590fa1a8"
+   ],
+   "added": 3
+  }
+ ]
+}

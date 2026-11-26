@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""KiCad's copy, cut, paste, duplicate, Create Array and align and distribute, done by KiCad's own PCB editor, for
-checking the port's (KiCadRouter's BoardClipboard.swift, BoardClipboardEditing.swift, BoardArray.swift and
-BoardAlign.swift) against.
+"""KiCad's copy, cut, paste, duplicate, Create Array and align and distribute, and what locks stop, done by KiCad's own
+PCB editor, for checking the port's (KiCadRouter's BoardClipboard.swift, BoardClipboardEditing.swift, BoardArray.swift,
+BoardAlign.swift and BoardLocking.swift) against.
 
 KiCad's Python module reaches none of these (they are the editor's tools, and the clipboard's text is CLIPBOARD_IO's),
 so, as tuning.py does, this runs KiCad's PCB editor itself under Xvfb with an action plugin of its own (in a folder of
@@ -36,6 +36,13 @@ was (pcbnew.GetCurrentSelection, in its order) and where the status bar said the
         the box copy's items selected, each of KiCad's align and distribute actions with the pointer over one of them or
         not, one after another, the board saved after each (pcbnew.SaveBoard of the editor's board):
         BOARD-align-N.kicad_pcb, and BOARD.aligns (the action, selection and cursor of each).
+    editing.py locks BOARD.kicad_pcb
+        on Fixtures/zoneedits/zones (ZONES_LOCK_CASES): boxes drawn round items locked and not, the Selection Filter's
+        Locked items off (KiCad's default: no locked item selected) or on, and each of Move, Rotate, Flip, Delete,
+        Duplicate, Cut and Drag done on what they select, the toolbar's Override locks off or on, each in an editor of
+        its own, the board saved after it (BOARD-locks-N.kicad_pcb); BOARD.locks: each run's selection, what the
+        infobar said, and what it changed (the items moved, turned, turned over or taken away, and how many it added:
+        locks-changes, which the pcbnew module reads from the boards saved).
 
 KiCad 10's pcbnew, Xvfb (xvfb-run) and a KiCad configuration made by running KiCad once (it is copied).
 """
@@ -337,6 +344,27 @@ def tick():
             state["wait"] = 12
         elif kind == "snapshot":
             pcbnew.SaveBoard(s[1], pcbnew.GetBoard())
+        elif kind == "override":
+            # (the toolbar's Override locks box, which EDA_DRAW_FRAME::GetOverrideLocks reads)
+            box = next(w for w in walk(f) if isinstance(w, wx.CheckBox) and w.GetLabel() == "Override locks")
+            box.SetValue(s[1])
+            out["steps"].append({"override": box.GetValue()})
+        elif kind == "filter":
+            # (a box of the Selection Filter panel, by its label, set as a click sets it: PANEL_SELECTION_FILTER takes
+            # its event)
+            box = next(w for w in walk(f) if isinstance(w, wx.CheckBox) and w.GetLabel() == s[1])
+            box.SetValue(s[2])
+            evt = wx.CommandEvent(wx.wxEVT_CHECKBOX, box.GetId())
+            evt.SetEventObject(box)
+            evt.SetInt(1 if s[2] else 0)
+            box.GetEventHandler().ProcessEvent(evt)
+            out["steps"].append({"filter": s[1], "value": box.GetValue()})
+        elif kind == "infobar":
+            # (what the editor's infobar says, if it is shown: KiCad's WX_INFOBAR, a wxInfoBarGeneric the module does
+            # not cast, by the texts shown in the frame that are not the panels' own)
+            said = [t.GetLabel() for t in walk(f) if isinstance(t, wx.StaticText) and t.IsShownOnScreen()
+                    and "lock" in t.GetLabel().lower() and t.GetLabel().strip() != "Locked items"]
+            out["steps"].append({"infobar": said, "tag": s[1]})
         elif kind == "wait":
             state["wait"] = s[1]
         state["step"] += 1
@@ -675,6 +703,101 @@ def align(board):
     print(board, len(actions), file=sys.stderr)
 
 
+# (the actions locks may stop: each key, and whether the pointer is then moved and clicked to place what it moves)
+LOCK_ACTIONS = [("move", "m", [], True), ("rotate", "r", [], False), ("flip", "f", [], False), ("delete", "delete", [], False),
+                ("duplicate", "d", ["ctrl"], True), ("cut", "x", ["ctrl"], False), ("drag", "d", [], True)]
+
+
+def locks(board, cases):
+    """Each case's box drawn and its items selected (the Selection Filter's Locked items on or off: off, KiCad's
+    default, a box or a click selects no locked item), and each of its LOCK_ACTIONS done on them with Override locks
+    off or on, each in an editor of its own on a copy of the board (BOARD-locks-N/), the board saved after it
+    (BOARD-locks-N.kicad_pcb); BOARD.locks: each run's case, action, filter, override, selection and what the infobar
+    said, and what it changed (locks_changes)"""
+    from concurrent.futures import ThreadPoolExecutor
+    runs = []
+    for case in cases:
+        a, b = case["box"]
+        for locked_items, override in case["settings"]:
+            for name, key, mods, places in LOCK_ACTIONS:
+                if name not in case["actions"]:
+                    continue
+                n = len(runs)
+                at = case["at"]
+                to = [round(at[0] + 3.25, 3), round(at[1] + 2.5, 3)]
+                steps = [["menu", "View", "Zoom to Fit", 10], ["calibrate"], ["filter", "Locked items", locked_items],
+                         ["override", override]] + drag(a, b) + [["selection", "s"], ["move", at], ["key", key, mods, 10],
+                                                                 ["infobar", "i"]]
+                if places:
+                    steps += [["move", [(at[0] + to[0]) / 2, (at[1] + to[1]) / 2], 4], ["move", to, 6], ["click", 10]]
+                runs.append({"case": case["name"], "action": name, "lockedItems": locked_items, "override": override,
+                             "board": os.path.basename(board[:-len(".kicad_pcb")] + f"-locks-{n}.kicad_pcb"),
+                             "box": case["box"], "at": at, "to": to if places else None, "steps": steps})
+
+    def one(n):
+        r = runs[n]
+        folder = board[:-len(".kicad_pcb")] + f"-locks-{n}"
+        os.makedirs(folder, exist_ok=True)
+        copy = os.path.join(folder, os.path.basename(board))
+        copy_board(board, copy)
+        out = os.path.join(os.path.dirname(board), r["board"])
+        # (the infobar read as the action starts: a click to place what it moves may take it away)
+        done = drive(copy, r.pop("steps") + [["snapshot", os.path.abspath(out)]])
+        r.update(selection=tagged(done, "selection")["s"], infobar=tagged(done, "infobar")["i"],
+                 dialogs=[s for s in done["steps"] if "dialog" in s])
+        print(r["board"], r["case"], r["action"], file=sys.stderr)
+
+    with ThreadPoolExecutor(3) as pool:
+        list(pool.map(one, range(len(runs))))
+    with open(board[:-len(".kicad_pcb")] + ".locks", "w") as f:
+        json.dump({"runs": runs}, f, indent=1)
+    locks_changes(board)
+    print(board, len(runs), file=sys.stderr)
+
+
+def locks_changes(board):
+    """What each run of BOARD.locks changed, from the board KiCad saved after it (read by the pcbnew module): the items
+    moved, turned, turned over or taken away (their ids), and how many items it added; written into BOARD.locks"""
+    import pcbnew
+    path = board[:-len(".kicad_pcb")] + ".locks"
+    record = json.load(open(path))
+
+    def items(b):
+        out = {}
+        for i in list(b.GetFootprints()) + list(b.GetTracks()) + list(b.Zones()) + list(b.GetDrawings()):
+            key = [i.GetPosition().x, i.GetPosition().y, i.GetLayer()]
+            if isinstance(i, pcbnew.FOOTPRINT):
+                key.append(i.GetOrientation().AsDegrees())
+            if isinstance(i, pcbnew.PCB_TRACK):
+                key += [i.GetStart().x, i.GetStart().y, i.GetEnd().x, i.GetEnd().y]
+            if isinstance(i, pcbnew.ZONE):
+                key += [(c.x, c.y) for c in i.Outline().COutline(0).CPoints()]
+            out[i.m_Uuid.AsString()] = key
+        return out
+
+    before = items(pcbnew.LoadBoard(board))
+    for r in record["runs"]:
+        after = items(pcbnew.LoadBoard(os.path.join(os.path.dirname(board), r["board"])))
+        r["changed"] = sorted(u for u, k in before.items() if after.get(u) != k)
+        r["added"] = len([u for u in after if u not in before])
+    with open(path, "w") as f:
+        json.dump(record, f, indent=1)
+
+
+# (Fixtures/zoneedits/zones' items: R1 alone; R1 with R2, which is locked; R2 with the locked track and via and the
+# track that is not; the locked track alone)
+ZONES_LOCK_CASES = [
+    {"name": "unlocked", "box": [[17, 11], [24, 18]], "at": [20.5, 15.25], "settings": [[False, False]],
+     "actions": ["move", "rotate", "flip", "delete", "duplicate", "cut"]},
+    {"name": "footprints", "box": [[17, 11], [44, 18]], "at": [20.5, 15.25], "settings": [[False, False], [True, False], [True, True]],
+     "actions": ["move", "rotate", "flip", "delete", "duplicate", "cut"]},
+    {"name": "tracks", "box": [[29, 13], [61, 31]], "at": [40.5, 15.25], "settings": [[True, False], [True, True]],
+     "actions": ["move", "rotate", "flip", "delete", "duplicate", "cut"]},
+    {"name": "track", "box": [[29.2, 30.35], [55.3, 29.2]], "at": [42.5, 30], "settings": [[True, False], [True, True]],
+     "actions": ["move", "delete", "drag"]},
+]
+
+
 if __name__ == "__main__":
     mode, args = sys.argv[1], sys.argv[2:]
     if mode == "copy":
@@ -689,5 +812,9 @@ if __name__ == "__main__":
         array(args[0])
     elif mode == "align":
         align(args[0])
+    elif mode == "locks":
+        locks(args[0], ZONES_LOCK_CASES)
+    elif mode == "locks-changes":
+        locks_changes(args[0])
     else:
         sys.exit(__doc__)

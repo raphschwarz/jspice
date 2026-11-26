@@ -80,7 +80,8 @@ extension BoardEditing {
         if how.distributes {
             // (FilterCollectorForHierarchy: a footprint's text left out where its footprint is selected)
             items = items.filter { moves($0.node) }
-            guard items.count >= 3, !items.contains(where: { BoardItems.isLocked($0.node) }) else { return nil }
+            // (DistributeItems: nothing where locks stop it, unless overridesLocks; then the locked too)
+            guard !locksStop(items.compactMap { $0.node.value("uuid") }), items.count >= 3 else { return nil }
             let horizontal = how == .distributeHorizontallyCenters || how == .distributeHorizontallyGaps
             let deltas: [Int]
             if how == .distributeHorizontallyGaps || how == .distributeVerticallyGaps {

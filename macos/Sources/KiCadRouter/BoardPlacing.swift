@@ -132,11 +132,12 @@ extension BoardEditing {
 
     /// The board's texts, graphics (its outline's too) and dimensions moved by `delta` (mm), each as KiCad moves it
     /// (EDA_SHAPE::move, PCB_DIMENSION_BASE::Move: its text placed again), as one change (Edit.outline set where an
-    /// outline's graphic moved); the locked left where they are, as KiCad's move leaves them (unless overridesLocks)
+    /// outline's graphic moved); none moved where any of them is locked (unless overridesLocks), as KiCad's Move
+    /// does nothing then (locksStop)
     public func moveDrawings(_ uuids: [String], by delta: KiCadPoint) -> Edit? {
-        guard !isRouting, delta != .zero else { return nil }
+        guard !isRouting, delta != .zero, !locksStop(uuids) else { return nil }
         let d = Self.nm(delta)
-        let nodes = drawingNodes(Set(unlocked(uuids)))
+        let nodes = drawingNodes(Set(uuids))
         guard !nodes.isEmpty else { return nil }
         for node in nodes { Self.move(node, by: d) }
         router.boardChanged()
@@ -147,16 +148,19 @@ extension BoardEditing {
     /// The board's texts, graphics and dimensions turned by `degrees` counterclockwise, each as KiCad's Rotate turns
     /// it selected alone (a text about its position, a rectangle or polygon about its centre, a line about its start,
     /// a circle or arc about its centre, a dimension about its start), as one change; nil where one cannot be turned
-    /// so (a rectangle turned off square, which KiCad makes a polygon; a polygon with arcs); the locked left as they are
+    /// so (a rectangle turned off square, which KiCad makes a polygon; a polygon with arcs), or where any of them is
+    /// locked (unless overridesLocks), as KiCad's Rotate does nothing then (locksStop)
     public func rotateTexts(_ uuids: [String], by degrees: Double = 90) -> Edit? {
-        rotate(drawingNodes(Set(unlocked(uuids))), by: degrees, about: nil)
+        guard !isRouting, !locksStop(uuids) else { return nil }
+        return rotate(drawingNodes(Set(uuids)), by: degrees, about: nil)
     }
 
     /// The board's texts, graphics and dimensions turned together by `degrees` counterclockwise about `center` (mm;
     /// KiCad's is the middle of the box round them all, on its grid), as KiCad's Rotate turns a selection of several,
-    /// as one change; one alone is turned as rotateTexts turns it (the locked left as they are)
+    /// as one change; one alone is turned as rotateTexts turns it (none where any is locked, unless overridesLocks)
     public func rotateDrawings(_ uuids: [String], by degrees: Double = 90, about center: KiCadPoint) -> Edit? {
-        let nodes = drawingNodes(Set(unlocked(uuids)))
+        guard !isRouting, !locksStop(uuids) else { return nil }
+        let nodes = drawingNodes(Set(uuids))
         return rotate(nodes, by: degrees, about: nodes.count == 1 ? nil : Self.nm(center))
     }
 
@@ -188,11 +192,11 @@ extension BoardEditing {
         return change("Rotate", outline: nodes.contains { $0.value("layer") == "Edge.Cuts" }, drawings: nodes.compactMap { $0.value("uuid") })
     }
 
-    /// The board's texts, graphics (its outline's too) and dimensions taken away, by id, as one change (the locked
-    /// left alone)
+    /// The board's texts, graphics (its outline's too) and dimensions taken away, by id, as one change; none where
+    /// any of them is locked (unless overridesLocks), as KiCad's Delete (locksStop)
     public func removeDrawings(_ uuids: Set<String>) -> Edit? {
-        guard !isRouting else { return nil }
-        let gone = drawingNodes(Set(unlocked(Array(uuids))))
+        guard !isRouting, !locksStop(uuids) else { return nil }
+        let gone = drawingNodes(uuids)
         guard !gone.isEmpty else { return nil }
         for node in gone { router.board.root.remove(node) }
         router.boardChanged()

@@ -8,10 +8,11 @@ import KiCadKit
 /// (setLocked), each as one change, on boards (Fixtures/zoneedits, footprints on both sides at several angles with pads
 /// of every shape, and Fixtures/boards' random ones; KICAD_BOARD_REFERENCE's too, where it names some): KiCad's pcbnew
 /// reads every property back as set (tools/kicad-reference/properties.py), and writes each footprint changed as the
-/// port wrote it (read and saved again by KiCad); and kicad-cli's DRC finds on the boards what BoardDRC finds
-/// (drc.py, DRCTests.compare). Locked items left alone as KiCad leaves them: not moved, turned, turned over, dragged
-/// or deleted, their zones' outlines not edited, unless locks are overridden; a locked track still dragged, as KiCad's
-/// router's "Drag Anyway" drags it, and its tuning pattern locked with it.
+/// port wrote it (read and saved again by KiCad), the nets of the tracks, vias and copper drawings as KiCad's
+/// connectivity gives them; and kicad-cli's DRC finds on the boards what BoardDRC finds (drc.py, DRCTests.compare).
+/// Locked items left alone as KiCad 10.0.8 leaves them: a move, turn, flip, drag, deletion, cut or duplicate of a
+/// selection holding one doing nothing at all, its zones' outlines not edited, unless locks are overridden, as KiCad's
+/// own editor does them (editing.py locks, Fixtures/locks); a locked track's tuning pattern locked with it.
 final class PropertiesTests: XCTestCase {
     typealias Rand = ZoneEditingTests.Rand
 
@@ -40,12 +41,14 @@ final class PropertiesTests: XCTestCase {
         (chamfered.shape, chamfered.chamferRatio, chamfered.chamferedCorners) = (.chamferedRect, 0.2, [])
         XCTAssertNotNil(apertures.setPadProperties(r1Pad.uuid, chamfered))
         XCTAssertEqual(apertures.padProperties(r1Pad.uuid)?.shape, .chamferedRect)
-        // a locked footprint is not moved, turned, turned over or dragged; the others with it are
+        // a locked footprint is not moved, turned, turned over or dragged; nor the others with it (KiCad 10.0.8's
+        // RequestSelection stops the whole action: testLocksStopTheWholeActionAsKiCadDoes)
         XCTAssertNil(session.moveFootprint(r2, to: KiCadPoint(1, 1)))
         XCTAssertNil(session.rotateFootprints([r2]))
         XCTAssertNil(session.flipFootprints([r2]))
         XCTAssertNil(session.startFootprintDrag([r2], at: KiCadPoint(40, 15)))
-        let moved = try XCTUnwrap(session.moveFootprints([r1, r2], by: KiCadPoint(1, 0)))
+        XCTAssertNil(session.moveFootprints([r1, r2], by: KiCadPoint(1, 0)))
+        let moved = try XCTUnwrap(session.moveFootprints([r1], by: KiCadPoint(1, 0)))
         XCTAssertEqual(moved.footprints, [r1])
         // its pads are locked with it
         let pad = try XCTUnwrap(session.board.footprint(uuid: r2)?.pads.first).uuid
@@ -75,7 +78,7 @@ final class PropertiesTests: XCTestCase {
         XCTAssertNil(session.setLocked(Set(lockedTracks), true), "already locked: nothing changes")
         let via = try XCTUnwrap(session.board.root.all("via").first)
         XCTAssertEqual(via.items.firstIndex { $0.head == "locked" }, (via.items.firstIndex { $0.head == "layers" } ?? -9) + 1)
-        // a locked track is dragged ("Drag Anyway"), and stays locked in the router after
+        // with Override locks, a locked footprint is moved
         session.overridesLocks = true
         XCTAssertNotNil(session.moveFootprint(r2, to: KiCadPoint(40, 15)))
         session.overridesLocks = false
@@ -84,7 +87,141 @@ final class PropertiesTests: XCTestCase {
         XCTAssertEqual(session.toggleLocked(Set([r1, r2]))?.name, "Lock")
     }
 
+    /// KiCad 10.0.8's PCB_SELECTION_TOOL::RequestSelection: where an action's selection holds a locked item (or a group
+    /// holding one), locks stop the whole action, the unlocked items in it left as they are too, and the infobar says
+    /// so, unless Override locks is on; an action on unlocked items alone goes on
+    func testLocksStopTheWholeActionAsKiCadDoes() throws {
+        let file = try XCTUnwrap(Bundle.module.url(forResource: "zoneedits/zones", withExtension: "kicad_pcb", subdirectory: "Fixtures"))
+        func session(overriding: Bool = false) throws -> BoardEditing {
+            let s = BoardEditing(board: try KiCadBoard.read(file))
+            s.overridesLocks = overriding
+            return s
+        }
+        let probe = try session()
+        let r1 = try XCTUnwrap(probe.board.footprints.first { $0.reference == "R1" }).uuid
+        let r2 = try XCTUnwrap(probe.board.footprints.first { $0.reference == "R2" }).uuid
+        let lockedTrack = "832de695-f2aa-4444-a9ce-a0c9531c867c", lockedVia = "78133294-8f05-43e5-84e8-88d60d009f73"
+        let freeTrack = "13e4691f-4b6b-4d6d-ac0c-2ebbdc78e044"
+        let lockedZone = "9c7aaa5a-e7b9-45a2-a278-141f8307f61a", freeZone = "312f79a6-385d-40b1-ada1-a1c2a889114f"
+        XCTAssertTrue(probe.isLocked(r2) && probe.isLocked(lockedTrack) && probe.isLocked(lockedVia) && probe.isLocked(lockedZone))
+        XCTAssertFalse(probe.isLocked(r1) || probe.isLocked(freeTrack) || probe.isLocked(freeZone))
+        let edges = probe.board.root.all("gr_line").compactMap { $0.value("uuid") }
+        XCTAssertEqual(edges.count, 4)
+
+        // each action on a selection holding locked and unlocked items: nothing done, locks noted; done on the unlocked
+        // alone; done on both with Override locks
+        typealias Action = (BoardEditing, [String]) -> Any?
+        let actions: [(name: String, action: Action, locked: [String], free: [String])] = [
+            ("move footprints", { $0.moveFootprints($1, by: KiCadPoint(1, 0.5)) }, [r2], [r1]),
+            ("move a footprint", { $0.moveFootprint($1[$1.count - 1], to: KiCadPoint(30, 40)) }, [r2], [r1]),
+            ("rotate footprints", { $0.rotateFootprints($1) }, [r2], [r1]),
+            ("flip footprints", { $0.flipFootprints($1) }, [r2], [r1]),
+            ("drag footprints", { $0.startFootprintDrag($1, at: KiCadPoint(40, 15)) }, [r2], [r1]),
+            ("delete tracks", { $0.remove(Set($1)) }, [lockedTrack, lockedVia], [freeTrack]),
+            ("drag tracks", { $0.startMultiDrag($1, at: KiCadPoint(57.5, 22.5)) }, [lockedTrack], [freeTrack, "a6e0886f-67b4-47d9-aaec-9c49590fa1a8"]),
+            ("move zones", { $0.moveZones($1, by: KiCadPoint(1, 1)) }, [lockedZone], [freeZone]),
+            ("delete zones", { $0.removeZones(Set($1)) }, [lockedZone], [freeZone]),
+            ("duplicate", { $0.duplicate($1, by: KiCadPoint(5, 5)) }, [r2, lockedTrack], [r1, freeTrack]),
+            ("cut", { $0.cut($1, reference: .zero) }, [r2, lockedVia], [r1, freeTrack]),
+        ]
+        for (name, action, locked, free) in actions {
+            let mixed = try session()
+            let before = mixed.board.text
+            XCTAssertNil(action(mixed, free + locked), "\(name): locks stop it")
+            XCTAssertTrue(mixed.lockedItemsFiltered, name)
+            XCTAssertEqual(mixed.board.text, before, "\(name): nothing of the selection changed, the unlocked included")
+            let unlocked = try session()
+            XCTAssertNotNil(action(unlocked, free), "\(name): the unlocked alone")
+            XCTAssertFalse(unlocked.lockedItemsFiltered, name)
+            let overriding = try session(overriding: true)
+            XCTAssertNotNil(action(overriding, free + locked), "\(name): Override locks")
+            XCTAssertFalse(overriding.lockedItemsFiltered, name)
+        }
+        // the board's own drawings, one of them locked
+        for (name, action) in [("move drawings", { (s: BoardEditing, ids: [String]) -> Any? in s.moveDrawings(ids, by: KiCadPoint(0, 1)) }),
+                               ("rotate drawings", { $0.rotateDrawings($1, about: KiCadPoint(55, 40)) }),
+                               ("delete drawings", { $0.removeDrawings(Set($1)) })] {
+            let s = try session()
+            XCTAssertNotNil(s.setLocked([edges[0]], true))
+            let before = s.board.text
+            XCTAssertNil(action(s, edges), name)
+            XCTAssertTrue(s.lockedItemsFiltered, name)
+            XCTAssertEqual(s.board.text, before, name)
+            XCTAssertNotNil(action(s, Array(edges.dropFirst())), "\(name): the unlocked alone")
+        }
+        // a locked track is not dragged by the selection tool's drag; with Override locks it is
+        let dragging = try session()
+        XCTAssertNil(dragging.startDrag(at: KiCadPoint(42.5, 30), layer: "F.Cu"))
+        XCTAssertTrue(dragging.lockedItemsFiltered)
+        XCTAssertNotNil(dragging.startDrag(at: KiCadPoint(57.5, 22.5), layer: "F.Cu"), "an unlocked track is")
+        dragging.cancelDrag()
+        let overridden = try session(overriding: true)
+        XCTAssertNotNil(overridden.startDrag(at: KiCadPoint(42.5, 30), layer: "F.Cu"))
+        overridden.cancelDrag()
+        // distributing three or more with one locked: stopped (aligning to a locked item is not: it stays where it is)
+        let aligning = try session()
+        let footprints = aligning.board.footprints.filter { ["R1", "R2", "R3", "R4"].contains($0.reference) }.map(\.uuid)
+        XCTAssertNil(aligning.align(footprints, .distributeHorizontallyGaps, cursor: .zero))
+        XCTAssertTrue(aligning.lockedItemsFiltered)
+        XCTAssertNotNil(aligning.align(footprints, .top, cursor: .zero))
+        XCTAssertEqual(BoardEditing.lockedItemsWarning, "Selection contains locked items. Enable 'Override locks' to operate on them.")
+    }
+
     // MARK: - Against KiCad
+
+    /// What KiCad 10.0.8's own editor did on Fixtures/zoneedits/zones (editing.py locks, Fixtures/locks/zones.locks):
+    /// for each box's selection (its Selection Filter's Locked items off, KiCad's default, so that no locked item is
+    /// selected, or on), each action with Override locks off and on, whether its infobar said locks stopped it, and
+    /// what it changed; the port's locks stop the same (locksStop, its warning KiCad's words), and its action, where
+    /// it has one for what is selected, does something exactly where KiCad's did
+    func testLocksStopWhatKiCadsEditorStops() throws {
+        let file = try XCTUnwrap(Bundle.module.url(forResource: "zoneedits/zones", withExtension: "kicad_pcb", subdirectory: "Fixtures"))
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "locks/zones", withExtension: "locks", subdirectory: "Fixtures"))
+        let record = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let runs = try XCTUnwrap(record["runs"] as? [[String: Any]])
+        var stopped = 0, compared = 0
+        for run in runs {
+            let action = try XCTUnwrap(run["action"] as? String), override = try XCTUnwrap(run["override"] as? Bool)
+            let selection = try XCTUnwrap(run["selection"] as? [String])
+            let said = run["infobar"] as? [String] ?? []
+            let didSomething = !(run["changed"] as? [String] ?? []).isEmpty || (run["added"] as? Int ?? 0) > 0
+            let filter = run["lockedItems"] as? Bool ?? false
+            let what = "\(run["case"] ?? "") \(action)\(filter ? " (locked items selectable)" : "")\(override ? " (Override locks)" : "")"
+            XCTAssertFalse(selection.isEmpty, what)
+            let session = BoardEditing(board: try KiCadBoard.read(file))
+            session.overridesLocks = override
+            // the infobar's warning where locks stopped it, and KiCad then did nothing at all
+            let warned = said.contains(BoardEditing.lockedItemsWarning)
+            XCTAssertTrue(said.allSatisfy { $0 == BoardEditing.lockedItemsWarning }, "\(what): \(said)")
+            XCTAssertEqual(session.locksStop(selection), warned, what)
+            if warned {
+                stopped += 1
+                XCTAssertFalse(didSomething, "\(what): KiCad stopped it whole")
+            }
+            // the port's action on the same selection
+            let at = try XCTUnwrap(run["at"] as? [Double]), to = run["to"] as? [Double] ?? at
+            let delta = KiCadPoint(to[0] - at[0], to[1] - at[1])
+            let footprints = selection.filter { session.board.footprint(uuid: $0) != nil }
+            let result: Any??
+            switch action {
+            case "move" where footprints.count == selection.count: result = .some(session.moveFootprints(selection, by: delta))
+            case "rotate" where footprints.count == selection.count: result = .some(session.rotateFootprints(selection))
+            case "flip" where footprints.count == selection.count: result = .some(session.flipFootprints(selection))
+            case "delete" where footprints.isEmpty: result = .some(session.remove(Set(selection)))
+            case "duplicate": result = .some(session.duplicate(selection, by: delta))
+            case "cut": result = .some(session.cut(selection, reference: KiCadPoint(at[0], at[1])))
+            case "drag": result = .some(session.startDrag(at: KiCadPoint(at[0], at[1]), layer: "F.Cu"))
+            default: result = nil
+            }
+            guard let result else { continue }
+            compared += 1
+            XCTAssertEqual(result != nil, didSomething, "\(what): the port's \(result == nil ? "did nothing" : "did it"), KiCad's \(didSomething ? "did it" : "did nothing")")
+            XCTAssertEqual(session.lockedItemsFiltered, warned, what)
+        }
+        print("PropertiesTests: KiCad's editor: \(runs.count) actions, \(stopped) stopped by locks; \(compared) done by the port as KiCad's did them")
+        XCTAssertGreaterThan(stopped, 0)
+        XCTAssertGreaterThan(compared, 0)
+    }
 
     static func boards() throws -> [URL] {
         var files = ["zoneedits/zones"].compactMap { Bundle.module.url(forResource: $0, withExtension: "kicad_pcb", subdirectory: "Fixtures") }

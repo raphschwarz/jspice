@@ -129,6 +129,14 @@ final class PCBEditing: ObservableObject {
     @Published private(set) var isDragging = false
     /// What the last action could not do, or how to go on
     @Published private(set) var message: String?
+    /// KiCad's Override locks (its toolbar's box): locked items moved, turned, dragged and deleted as the others are;
+    /// off, as KiCad's default, an action on a selection holding a locked item does nothing at all, and says so
+    @Published var overridesLocks = false {
+        didSet {
+            let on = overridesLocks
+            Task { _ = await engine.run { session -> Bool? in session.overridesLocks = on; return true } }
+        }
+    }
     @Published private(set) var undoName: String?
     @Published private(set) var redoName: String?
     @Published private(set) var isReady = false
@@ -222,10 +230,11 @@ final class PCBEditing: ObservableObject {
         patterns = await engine.run { $0.tuningPatterns } ?? []
         if let chosen = patternSelection, !patterns.contains(where: { $0.uuid == chosen }) { patternSelection = nil }
         let refills = !(controller?.isLive ?? false) && !(controller?.isOpenInKiCad ?? false)
-        let choice = sizeChoice
+        let choice = sizeChoice, overrides = overridesLocks
         _ = await engine.run { session -> Bool? in
             session.refillsZones = refills
             session.sizeChoice = choice
+            session.overridesLocks = overrides
             return true
         }
         await check()
@@ -612,12 +621,15 @@ final class PCBEditing: ObservableObject {
         let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround, corners = self.corners
         await applying?.value
         if !isReady { await prepareNow() }
-        let started = await engine.run { session -> (preview: BoardEditing.DragPreview, several: Bool)? in
+        let started = await runNotingLocks { session -> (preview: BoardEditing.DragPreview, several: Bool)? in
             session.mode = mode
             session.cornerMode = corners
             // (several tracks selected, one of them under the pointer: all of them dragged together, KiCad's
             // MULTI_DRAGGER; else the one there)
-            if !several.isEmpty, let together = session.startMultiDrag(several, at: p, layer: layer) { return (together, true) }
+            if !several.isEmpty {
+                if let together = session.startMultiDrag(several, at: p, layer: layer) { return (together, true) }
+                if session.lockedItemsFiltered { return nil }
+            }
             return session.startDrag(at: p, layer: layer, freeAngle: freeAngle).map { ($0, false) }
         }
         guard let started else { return false }
@@ -638,7 +650,7 @@ final class PCBEditing: ObservableObject {
             let started = await startDrag(at: p, freeAngle: freeAngle, follow: true)
             if !started {
                 NSSound.beep()
-                message = "Put the pointer on a track or via to drag it."
+                if !locksStopped { message = "Put the pointer on a track or via to drag it." }
             }
         }
     }
@@ -736,7 +748,7 @@ final class PCBEditing: ObservableObject {
         selection = []
         await applying?.value
         if !isReady { await prepareNow() }
-        guard let made = await engine.run({ $0.remove(uuids) }) else { return }
+        guard let made = await runNotingLocks({ $0.remove(uuids) }) else { return }
         take(made)
     }
 
@@ -1262,7 +1274,7 @@ final class PCBEditing: ObservableObject {
         let layer = self.layer, mode: RouterMode = shove ? .shove : .walkaround, corners = self.corners
         await applying?.value
         if !isReady { await prepareNow() }
-        let shown = await engine.run { session -> BoardEditing.FootprintDragPreview? in
+        let shown = await runNotingLocks { session -> BoardEditing.FootprintDragPreview? in
             session.mode = mode
             session.cornerMode = corners
             return session.startFootprintDrag(uuids, at: p, layer: layer, warpsCursor: false)
@@ -1271,6 +1283,11 @@ final class PCBEditing: ObservableObject {
         if let shown {
             footprintDragPreview = shown
             dragging?.delta = shown.offset
+        } else if locksStopped {
+            // (locks stopped the drag: nothing of it moved, as KiCad moves nothing then)
+            draggingWithTracks = false
+            dragging = nil
+            dropsUntilLetGo = true
         } else {
             draggingWithTracks = false
         }
@@ -1475,10 +1492,27 @@ final class PCBEditing: ObservableObject {
         guard !isRouting, !isDragging else { return false }
         await applying?.value
         if !isReady { await prepareNow() }
-        guard let made = await engine.run(body) else { return false }
+        guard let made = await runNotingLocks(body) else { return false }
         take(made)
         return true
     }
+
+    /// `body` run on the session, as engine.run runs it; where it did nothing because locks stopped it
+    /// (BoardEditing.lockedItemsFiltered), what KiCad's infobar says then said (PCB_SELECTION_TOOL::
+    /// ReportFilteredLockedItems)
+    func runNotingLocks<T>(_ body: @escaping (BoardEditing) -> T?) async -> T? {
+        let out = await engine.run { session -> (result: T?, locked: Bool)? in
+            session.lockedItemsFiltered = false
+            let result = body(session)
+            return (result, session.lockedItemsFiltered)
+        }
+        locksStopped = out.map { $0.result == nil && $0.locked } ?? false
+        if locksStopped { message = BoardEditing.lockedItemsWarning }
+        return out?.result ?? nil
+    }
+
+    /// Whether locks stopped the last action run by runNotingLocks
+    private(set) var locksStopped = false
 
     /// Mounting holes for `screw` (M2, M2.5, M3, M4: KiCad's library's) in the corners of the board's outline
     func addMountingHoles(screw: String) {

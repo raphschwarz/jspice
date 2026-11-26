@@ -330,7 +330,17 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   circle, either way round, the items turned or not; the selection arranged; references kept or made unique), each a
   run of its own, `BOARD-array-N.kicad_pcb` and `BOARD.arrays` with the dialog's fields as KiCad read them;
   `editing.py align BOARD.kicad_pcb` runs each of the ten align and distribute actions on the box's items, the pointer
-  over one of them or not, the board saved after each (`BOARD-align-N.kicad_pcb`, `BOARD.aligns`). `ClipboardTests`
+  over one of them or not, the board saved after each (`BOARD-align-N.kicad_pcb`, `BOARD.aligns`);
+  `editing.py locks BOARD.kicad_pcb` (on `Fixtures/zoneedits/zones`: `ZONES_LOCK_CASES`) draws boxes round items locked
+  and not (R1 alone; R1 and R2, which is locked; R2, a locked track and via and a track that is not; the locked track
+  alone), the Selection Filter's Locked items off (KiCad's default, under which a box or a click selects no locked
+  item) or on, and does each of Move (M, the pointer moved and clicked), Rotate, Flip, Delete, Duplicate (Ctrl+D,
+  moved and clicked), Cut and Drag (D) on what is selected, the toolbar's Override locks off or on, each in an editor
+  of its own, the board saved after it (`BOARD-locks-N.kicad_pcb`); `BOARD.locks`: each run's selection, what the
+  infobar said as the action started, and what it changed (the items moved, turned, turned over or taken away, and
+  how many it added, as the pcbnew module reads the boards saved: `editing.py locks-changes BOARD.kicad_pcb`).
+  `PropertiesTests` checks the port's locks stop each as KiCad's did, and its actions do what KiCad's did
+  (`Fixtures/locks/zones.locks`). `ClipboardTests`
   and `ArrayAlignTests` make the same with the port and check its texts against KiCad's, character for character, and
   its boards against KiCad's, item for item (ids aside; and the nets of the tracks, vias and drawings of a cluster of
   no pads, which, where a copy joins two nets there, KiCad takes from the first item with a net its search comes to,
