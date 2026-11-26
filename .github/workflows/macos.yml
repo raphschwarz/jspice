@@ -46,7 +46,8 @@ jobs:
       # (the test log runs to thousands of lines: the failures alone, where there are any)
       - name: What failed
         if: failure()
-        run: grep -E "error: |' failed \(" "$RUNNER_TEMP/test.log" | tail -120 || true
+        run: |
+          grep -E "error: |' failed \(" "$RUNNER_TEMP/test.log" | tail -120 || true
       - name: Build
         run: swift build
 

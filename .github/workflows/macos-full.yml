@@ -148,7 +148,8 @@ jobs:
       # (the test log runs to thousands of lines: the failures alone, where there are any)
       - name: What failed
         if: failure()
-        run: grep -E "error: |' failed \(" "$RUNNER_TEMP/test.log" | tail -120 || true
+        run: |
+          grep -E "error: |' failed \(" "$RUNNER_TEMP/test.log" | tail -120 || true
 
   # log-only measurements: speed at audio rate, profiles and disassembly, and a build without Swift's checks
   benchmarks:
