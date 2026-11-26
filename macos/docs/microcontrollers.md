@@ -6,6 +6,7 @@ Put a microcontroller in a circuit, write a sketch as in the Arduino IDE (`setup
 
 The dock's **Chip** tab shows the selected chip's serial monitor (with a field to send it text), and for an STM32 its bus trace and pins; the inspector's **Show Serial Monitor** (or **Show Serial, Bus Trace and Pins**) opens it. The examples come with their firmware built in, so they run without Chip Support. What the chips leave out is listed in [limitations.md](limitations.md#microcontrollers).
 
+- [Building a sketch](#building-a-sketch)
 - [AVR: ATmega328P, ATmega2560, ATtiny85](#avr-atmega328p-atmega2560-attiny85)
 - [RP2040: Raspberry Pi Pico](#rp2040-raspberry-pi-pico)
 - [STM32F405, STM32F373, STM32F103](#stm32f405-stm32f373-stm32f103)
@@ -13,6 +14,18 @@ The dock's **Chip** tab shows the selected chip's serial monitor (with a field t
 - [Watchdog, bus trace, pins and debugger](#watchdog-bus-trace-pins-and-debugger)
 - [Chip support](#chip-support)
 - [Logic parts on a chip's pins](#logic-parts-on-a-chips-pins)
+
+## Building a sketch
+
+**Upload** (in the inspector's Program section or the sketch editor, or ⌘U) compiles the sketch and loads it into the chip, which restarts with it; a chip with no sketch yet is given its board's blink. The build goes in steps, each shown with a progress bar: the Arduino core (compiled once for each board, so only the first build takes long, and says so), the libraries the sketch includes, the sketch, then linking. **Cancel** stops it, and leaves the chip running what it had and nothing half built.
+
+What the compiler says is made plain:
+
+- **Errors and warnings on the sketch's own lines** are listed by line ("Line 12:5: 'ledPin' was not declared in this scope"), errors in red and warnings in orange. The sketch is compiled with its warnings on (`-Wall`); the core's and the libraries' own warnings are left out. A sketch that builds with warnings is still uploaded, and its warnings stay listed. The inspector shows the first four; the sketch editor (**Microcontroller ▸ Edit Sketch…**) shows them all.
+- **A problem no line of the sketch explains** is said in one sentence: a function used but never defined, or defined twice; a sketch that does not fit (how many bytes more flash or RAM it needs than the chip has); the core or a library that did not compile (reinstalling it in Chip Support may help). When a build fails, the compiler's whole output opens under **Compiler Output**, to read and copy.
+- **Libraries.** A sketch can include the libraries that come with the board's core (EEPROM, SPI, Wire, SoftwareSerial… on the AVR boards; arduino-pico's on the Pico), and the libraries those include in turn. A third-party library (`#include <Adafruit_NeoPixel.h>`) is not there and cannot be added: the build stops with a message that names the header and lists the libraries that are available, and the way round is to paste the code needed into the sketch.
+
+The STM32s compile nothing: the Microcontroller menu's sketch items are disabled for them, and the inspector offers **Load Firmware…** for the HEX file built with their maker's tools. Chip support is never asked of them.
 
 ## AVR: ATmega328P, ATmega2560, ATtiny85
 
@@ -65,7 +78,9 @@ What the firmware reaches that the model does not run is said too (a peripheral 
 
 ## Chip support
 
-**Microcontroller ▸ Chip Support…** (and **JSpice ▸ Settings ▸ Chip Support**, which shows what is installed) installs the compiler and the core the first time, downloaded and checked against their checksums into JSpice's Application Support folder; nothing else to install. For the AVR chips, avr-gcc and the Arduino AVR core from Arduino's package index (about 40 MB); for the Pico, arm-none-eabi-gcc and Earle Philhower's [arduino-pico](https://github.com/earlephilhower/arduino-pico) 6.2.0 from its package index (about 240 MB). An Arduino IDE already on the Mac is used too. STM32 chips run firmware built elsewhere, and need none. Agents install it with `install_chip_support`.
+**Microcontroller ▸ Chip Support…** (and **JSpice ▸ Settings ▸ Chip Support**, which shows what is installed) installs the compiler and the core the first time, downloaded over HTTPS and checked against the SHA-256 checksums of the makers' package indexes into JSpice's Application Support folder; nothing else to install, and an archive whose checksum is not a SHA-256 or does not match is not installed. For the AVR chips, avr-gcc and the Arduino AVR core from Arduino's package index (about 40 MB); for the Pico, arm-none-eabi-gcc and Earle Philhower's [arduino-pico](https://github.com/earlephilhower/arduino-pico) 6.2.0 from its package index (about 240 MB). An Arduino IDE already on the Mac is used too. STM32 chips run firmware built elsewhere, and need none. Agents install it with `install_chip_support`.
+
+An install shows its progress and can be cancelled. It goes on in the background when the sheet or the Settings window is closed, the same install shown wherever Chip Support is open (and in the inspector and the sketch editor, which can cancel it too; the sketch editor can start one itself); a failed one says why and offers **Try Again**, and an installed family can be removed. Uploading a sketch before its chip support is there opens Chip Support, or, while it is still installing, says to upload again once it is done.
 
 ## Logic parts on a chip's pins
 

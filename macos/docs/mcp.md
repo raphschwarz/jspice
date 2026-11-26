@@ -38,6 +38,8 @@ When JSpice is not running or not listening (set to Don't Allow, or a second cop
 
 Every tool the server offers, as defined in `Sources/JSpiceAutomation/CircuitSession.swift`. `list_parts` gives each part kind's terminals, parameters and models; probes are written like `V(out)`, `I(R1)`, `V(U1.out)`.
 
+`describe_circuit` (always) and `simulate` (when there are any) return a `diagnostics` array: what the app's Problems tab lists ([guide.md](guide.md#problems)), each entry with its `severity` (`error`, `warning` or `note`), `message`, a `hint` when there is something to do, and the names of the `parts` it is about, for example `{"severity": "warning", "message": "R2 is not connected to anything.", "hint": "Wire it into the circuit, or delete it.", "parts": ["R2"]}`. Their `problems` array is the errors' and warnings' messages alone.
+
 ### Circuits
 
 | Tool | What it does |
@@ -65,7 +67,7 @@ Every tool the server offers, as defined in `Sources/JSpiceAutomation/CircuitSes
 
 | Tool | What it does |
 | --- | --- |
-| `simulate` | a transient run from rest (or continuing the last one): waveforms with min, max, mean, RMS, peak-to-peak, final value and frequency for each probe; it can also play timed notes on the keyboard sources, such as `[{"at": 0, "note": "C4"}, {"at": 0.5, "off": true}]`, and move knobs back and forth by themselves |
+| `simulate` | a transient run from rest (or continuing the last one): waveforms with min, max, mean, RMS, peak-to-peak, final value and frequency for each probe, and the circuit's diagnostics; it can also play timed notes on the keyboard sources, such as `[{"at": 0, "note": "C4"}, {"at": 0.5, "off": true}]`, and move knobs back and forth by themselves |
 | `measure` | every net voltage and every part's voltage, current and power at the end of the last simulation |
 | `frequency_response` | gain and phase from a source to a probe, with the peak and the −3 dB points: by default a small-signal analysis around the operating point the circuit settles to, exact and instant; or `"method": "transient"`, which measures each frequency with the source's own amplitude, clipping and all |
 | `spectrum` | fundamental, THD, each harmonic's level and the strongest other peaks of a probe's signal |

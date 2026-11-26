@@ -18,8 +18,8 @@ Until the first release is published, the same zip is the `JSpice-macOS` artifac
 
 1. **Open JSpice.** A new window says *Draw a circuit* and offers a few examples by interest; click one to see it run, or start drawing. The part library is on the left, the inspector on the right.
 2. **Place parts.** Press `V` and click on the canvas for a DC voltage source, `G` for a ground under it, then `R` (resistor), `E` (LED) and `S` (switch), dragging each to set its length and direction. Every part has a key, shown next to it in the library; or click a part there, or press ⌘K and type its name ("TL072" works too). `Esc` goes back to selecting.
-3. **Connect them.** Parts connect where their ends meet. Press `W` and drag a wire between ends that do not touch yet, back to the source's other end.
-4. **Watch it run.** The circuit simulates as you draw: the LED glows, wires turn green for positive voltage, and dots show the current. Click the switch to turn the LED off and on. Right-click the LED ▸ **Add Voltage Scope** to plot it in the dock under the canvas.
+3. **Connect them.** Parts connect where their ends meet. Drag from an end that touches nothing (it is ringed as the pointer passes) to draw a wire back to the source's other end. Double-click a part to type its value (`4k7`).
+4. **Watch it run.** The circuit simulates as you draw: the LED glows, wires turn green for positive voltage, and dots show the current. Click the switch to turn the LED off and on. Right-click the LED ▸ **Add Voltage Scope** to plot it in the dock under the canvas. If something is wrong, a banner names it: click it for the **Problems** tab.
 5. **Keep it.** ⌘S saves it as a `.jspice` file. Every edit can be undone, and **Help ▸ Keyboard Shortcuts** (⌘/) lists the keys.
 
 ## What you can do
@@ -33,6 +33,7 @@ Until the first release is published, the same zip is the `JSpice-macOS` artifac
 - **Build it**: breadboard, stripboard and perfboard layouts checked against the schematic, printable sheets and a KiCad netlist ([guide](docs/guide.md#breadboard-stripboard-and-perfboard)).
 - **Exchange it**: SPICE netlists in and out, makers' op-amp models, schematics read from a photo or PDF, an Audio Unit for music apps ([SPICE](docs/spice.md), [guide](docs/guide.md#files-import-and-export)).
 - **Start from an example**: 94 circuits by category ([examples](docs/examples.md)).
+- **Find what is wrong**: problems that name their parts and say what to do ([guide](docs/guide.md#problems)).
 
 ## AI control
 
@@ -57,4 +58,4 @@ Transient and small-signal analysis only (no DC sweep), device models that are a
 
 ## More
 
-[Using the app](docs/guide.md) · [Parts](docs/parts.md) · [Examples](docs/examples.md) · [Microcontrollers](docs/microcontrollers.md) · [SPICE](docs/spice.md) · [AI control](docs/mcp.md) · [How it works](docs/how-it-works.md) · [Limitations](docs/limitations.md) · [Shortcuts](docs/shortcuts.md) · [Audio Unit checklist](docs/audio-unit-checklist.md)
+[Using the app](docs/guide.md) · [Parts](docs/parts.md) · [Examples](docs/examples.md) · [Microcontrollers](docs/microcontrollers.md) · [SPICE](docs/spice.md) · [AI control](docs/mcp.md) · [How it works](docs/how-it-works.md) · [Limitations](docs/limitations.md) · [Shortcuts](docs/shortcuts.md) · [Accessibility](docs/accessibility.md) · [Audio Unit checklist](docs/audio-unit-checklist.md)

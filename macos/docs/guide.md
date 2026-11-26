@@ -1,10 +1,12 @@
 # Using JSpice for Mac
 
-How to draw, run, hear and measure a circuit, build it on a board and keep it in a file. The parts themselves are in [parts.md](parts.md), the examples in [examples.md](examples.md), microcontrollers in [microcontrollers.md](microcontrollers.md) and SPICE import and export in [spice.md](spice.md). Every shortcut is in [shortcuts.md](shortcuts.md).
+How to draw, run, hear and measure a circuit, build it on a board and keep it in a file. The parts themselves are in [parts.md](parts.md), the examples in [examples.md](examples.md), microcontrollers in [microcontrollers.md](microcontrollers.md) and SPICE import and export in [spice.md](spice.md). Every shortcut is in [shortcuts.md](shortcuts.md), and what VoiceOver and the keyboard can and cannot do is in [accessibility.md](accessibility.md).
 
 - [The window](#the-window)
 - [Drawing](#drawing)
+- [The inspector](#the-inspector)
 - [Simulating](#simulating)
+- [Problems](#problems)
 - [Sound](#sound)
 - [Front panel, MIDI and moving knobs](#front-panel-midi-and-moving-knobs)
 - [Scopes and analyses](#scopes-and-analyses)
@@ -24,23 +26,48 @@ A circuit window has the part library on the left, the canvas in the middle, the
 - **Scopes**: the circuit's scopes, frequency responses and spectra.
 - **Panel**: the [front panel](#front-panel-midi-and-moving-knobs) of knobs, switches and buttons.
 - **Chip**: a microcontroller's serial monitor, and for an STM32 its bus trace and pins (see [microcontrollers.md](microcontrollers.md)).
-- **Problems**: what keeps the circuit from simulating as drawn, and what was left out when its file was read.
+- **Problems**: what keeps the circuit from simulating as drawn, and what was left out when its file was read ([below](#problems)).
 
-A tab is there only when it has something to show. Drag the dock's top edge to resize it, or all the way down to fold it to its tabs.
+A tab is there only when it has something to show (Problems also comes with any other tab, to say there are none). Drag the dock's top edge to resize it, or all the way down to fold it to its tabs.
 
 The toolbar has Run or Pause and Reset, the speed, **Sound**, the view (Schematic, Breadboard, Stripboard or Perfboard), **Current** (the moving dots), **Values** (part names and values) and the inspector. The status bar says whether the circuit is running, its time and how fast it runs.
 
 An empty window shows how to start, with a few examples by interest (pedals and effects, synth, microcontrollers, basics); clicking one opens it in that window. **Browse All Examples…**, the library's **Examples** row, **File ▸ New from Example…** and **Help ▸ Example Gallery** open the Examples window, where every example is filed by category with a drawing of its schematic and can be searched; an example opened from there gets a new window, so nothing open is replaced.
 
-What an operation did (an import, an export, a model downloaded) is told in a toast over the canvas rather than a dialog: successes and notes fade by themselves, warnings and failures stay until dismissed, and a longer account opens in a sheet with **Show Report**, to read and copy.
+What an operation did (an import, an export, a model downloaded, a block saved) is told in a toast over the canvas rather than a dialog. Successes and notes fade after six seconds, and stay while the pointer is over them; warnings and failures stay until dismissed with their ×. At most three are shown, a new one pushing out the oldest. A toast can carry buttons: **Show Report** opens a longer account in a sheet, to read and **Copy** (what an import left out, what went wrong and what to try); **Show in Finder** shows a file just exported; **Undo** takes back a SPICE netlist or schematic imported, as long as nothing has changed since (otherwise use **Edit ▸ Undo**); **Try Again** repeats a maker's model download that failed. VoiceOver reads each toast as it appears.
+
+![Three toasts over the canvas: a sound exported, a netlist imported with something left out, and a model download that failed](notices.png)
 
 ## Drawing
 
 - **Pick a part and place it.** Pick a part in the library (or press its key: `R` resistor, `C` capacitor, `W` wire, …), then click to place it or drag to set its length and direction. While placing, a ghost of the part follows the pointer and a pill says what you are placing; `Esc` goes back to selecting.
 - **Connections.** Parts connect where their ends meet, and a part dropped onto the middle of a wire joins it with a T-junction (wires that merely cross stay apart). Wires stretch when you move the parts they connect. A net label (`H`) connects every label with the same name; `GND` is ground.
+- **Wires.** With the Wire tool (`W`), drag from one point to another: a slanting drag draws an elbow, a horizontal and a vertical piece, leaving the start the way the drag first went; hold ⇧ for one straight piece at any angle. (A click with the tool places a wire of the default length.) Without a tool, a terminal nothing connects to is ringed as the pointer passes over it, and a drag from it draws a wire from there, an elbow too; a click on it selects its part, and ⇧-click adds the part to the selection as usual. A wire's ends join a wire they land on the middle of, with a T-junction; the corner of an elbow joins nothing it passes over.
+- **Values in place.** Double-click a part, or select it and press Return, to type the value its label shows in a field over it, written as in the inspector (`4k7`, `10u`, `2.2 MΩ`). Return or a click elsewhere sets it, as one undo step; Esc leaves the value as it was; text that is not a value beeps and stays to be corrected. This works for resistors, potentiometers and lamps (resistance), capacitors, inductors, Zener diodes (breakdown voltage), speakers (full scale), and DC, AC, noise, square-wave, keyboard-gate and current sources; any other part opens the inspector instead.
+- **Copy and paste.** ⌘V pastes under the pointer when it is over the canvas, otherwise in the middle of what the canvas shows, the parts keeping their places relative to each other. Right-click the empty canvas for **Paste** there (when something is copied), **Add Part…** and, once there are parts, **Select All**, **Zoom to Fit** and **Tidy Up**.
+- **Esc** steps back one thing at a time: a drag under way goes back to where it started, then a value being typed is put away, then a MIDI Learn waiting for a controller is cancelled, then the tool being placed is put away, and last the selection is cleared.
 - **Keyboard first.** Every part has a shortcut (a letter for the common ones, ⇧ and a letter for the rest; they are shown in the library and in **Help ▸ Keyboard Shortcuts**, ⌘/). ⌘K or / opens a palette: type a part's name, its category or a real part it models ("TL072", "LM13700", "vactrol") and press Return. The palette also finds examples and commands (Tidy Up, Show Front Panel, Open Example Gallery…). Arrow keys nudge the selection (⇧ for five units), ⌘D duplicates it, Tab steps through the parts, and the library can be searched; recently used parts are listed at its top.
 - **Rotate and flip.** ⌘R rotates the selection. Transistors, op-amps, OTAs, chips and potentiometers can be flipped as well as rotated (`F` or ⇧⌘R).
 - **Tidy Up.** **Circuit ▸ Tidy Up** (⌥⌘T) redraws any circuit, hand-drawn ones included, as a person would draw it, keeping every connection: the signal flows from left to right with the main path on straight lines, sources on the left, parts to ground hanging below the line with ground symbols, pull-ups standing above it, feedback arching over its op-amp, an oscillator's loop returning along the bottom, supply rails as flags (`+12V`, `VCC`), and real wires routed around the parts, with junction dots and few bends or crossings. Circuits an AI agent builds are drawn the same way ([mcp.md](mcp.md)).
+
+## The inspector
+
+With nothing selected, the inspector shows the simulation's settings (speed, time step, temperature) and counts the circuit's parts and nodes. With one part selected it shows, from the top:
+
+- the problems that name the part, with what to do about them ([Problems](#problems));
+- its name, with **Rotate**, **Flip** (where the part flips) and **Delete** beside it;
+- **Model**, the real part it behaves like, where it has a choice;
+- **Properties**, its values;
+- a switch's state, or the sound a sound source plays;
+- **Measurements**, its live readings, with buttons in the header to add a scope of it, an I–V curve, a frequency response or a spectrum;
+- what only some parts have: a keyboard source's step sequencer, a microcontroller's program, a block's contents;
+- last, folded until opened: **SPICE Model Parameters** (the rest of the model card), **MIDI** and, for a potentiometer, **Movement**. Each stays open or folded, across parts and launches.
+
+**Typing values.** A field takes SI prefixes (`4.7k`, `10u`, `2M2`); Return or leaving the field sets it, and Esc puts back the value it had. ↑ and ↓ step a resistance, capacitance or inductance to the next E12 value (with ⌥, E24), other logarithmic values through 1, 2, 5, 10… (with ⌥, the E12 values), and the rest by a round hundredth of their slider's range (with ⌥, a thousandth). Text that is not a value is kept, outlined in red, with what the field takes under it ("Not a value: try 4.7k, 10u, 2M2 or 100n"), until it is corrected. A field's help tag gives its usual range, which is the slider's: values beyond it can be typed.
+
+![Four resistors selected: the inspector shows Mixed where their resistances differ](multi-edit.png)
+
+**Several parts at once.** Select several parts (⇧-click, drag a box round them, ⌘A) and the inspector counts them by kind ("4 resistors", "6 resistors, 2 capacitors") and offers what they have in common: the parameters every one of their kinds has, with the same unit (the SPICE model card's left out), and, when they are all of one kind, the **Model**. A field shows the value they share, or **Mixed** where they differ; a value typed or a model chosen there is given to all of them as one undo step. Wires, grounds and net labels go along with the selection but have nothing to edit. **Rotate**, **Flip** and **Delete** act on the whole selection.
 
 ## Simulating
 
@@ -49,6 +76,23 @@ What an operation did (an import, an export, a model downloaded) is told in a to
 - **Interact while it runs.** Click switches, hold push buttons, scroll over a potentiometer to turn it, and drag sliders in the inspector to change values live.
 - **Temperature.** With nothing selected, the inspector sets the circuit's temperature (or `set_temperature` for an agent): diodes, LEDs, transistors, JFETs and MOSFETs work at the circuit's temperature, from −40 to 125 °C, their saturation currents scaled as in SPICE (kT/q is 25.865 mV at 27 °C, with ngspice's constants, as a manufacturer's card assumes), so a junction drops about 2 mV less per degree hotter and a bias point drifts as it would on the bench.
 - **Run, pause, reset.** Space or ⌘↩ (**Simulation ▸ Run or Pause**) runs and pauses; ⇧⌘↩ (**Simulation ▸ Reset**) restarts from time zero, with capacitors discharged.
+
+## Problems
+
+![Two shorted sources: the banner, a badge on each, and the Problems tab with V1's row clicked and V1 selected](problems.png)
+
+When something in the circuit is wrong, or probably not what was meant, JSpice says so and names the parts it is about. Each problem is an **error** (the simulation failed, or a part is left out of it), a **warning** (it runs, but the results there may mean nothing) or a **note** (worth knowing, not a fault), and most come with a hint of what to do.
+
+- **The banner** over the canvas shows the most severe error or warning, red or orange, with how many more there are; click it to open the Problems tab.
+- **The Problems tab** lists them all under Errors, Warnings and Notes, each with its hint and the parts it names; its badge counts the errors and warnings. What was left out when the circuit's file was read is listed with the notes. Click a problem to select its parts and show them: the view switches to the schematic, and pans or zooms out only if they are off screen.
+- **On the canvas**, each part an error or warning names carries a red or orange badge at its top right; hovering over the part says why in the status bar, and selecting it shows its problems at the top of the inspector.
+
+What it checks:
+
+- **When the circuit is built** (as it opens, and after each change to its parts or wiring): a voltage source shorted by a wire or closed switch, or the output of an op-amp, comparator or synth chip wired straight to ground, is left out (errors); and, as warnings, a circuit with no ground (voltages are then shown against one of its terminals), parts not connected to ground or to the rest of the circuit, parts reached only through capacitors or a current source (no DC path to ground), a part connected to nothing, and a resistor, capacitor, diode, transistor or the like with a terminal connected to nothing. A behavioural source whose expression cannot be read is an error.
+- **While it runs**: why a solve failed, in so many words (two voltage sources in parallel, a loop of voltage sources and wires, a current source with nowhere to send its current, a voltage or current that became infinite, an analysis stopped for taking too long), and a simulation that keeps failing to settle at its steps, naming where (the waveforms may be wrong there). A microcontroller's own reports are here too ([microcontrollers.md](microcontrollers.md)).
+
+These checks are careful not to cry wolf: an open switch counts as closed, a chip or op-amp counts as taking its own supply, a potentiometer's spare end or a chip's spare pin is not a mistake, and the insides of blocks are left to whoever made them (a problem inside a block names the block). An agent gets the same list from `describe_circuit` and `simulate` ([mcp.md](mcp.md)). How they are found is in [how-it-works.md](how-it-works.md#diagnostics).
 
 ## Sound
 
@@ -90,7 +134,7 @@ Right-click a block and choose **Open Block** to open it as a circuit, change it
 
 ## Breadboard, stripboard and perfboard
 
-![The Fuzz Face on a full-size breadboard](breadboard.png)
+![The Fuzz Face on a full-size breadboard, its fuzz and volume knobs in the dock's Panel tab](breadboard.png)
 
 Choose a view in the toolbar:
 
@@ -119,6 +163,8 @@ How well it reads is measured on drawings of the examples: CI renders them (`JSp
 ## Files, import and export
 
 JSpice is a Mac document app: one window per circuit, open and save as `.jspice` files, autosave, undo and redo for every edit, copy and paste, light and dark mode.
+
+A circuit file records the version of its format. A file saved by a newer JSpice still opens: parts, scope traces and MIDI mappings this version cannot read are left out of the drawing and the simulation, and the Problems tab's notes say what was left out (inside blocks too). They are kept, and written back unchanged when the circuit is saved, as are settings this version does not know.
 
 | Menu | What it does | More |
 | --- | --- | --- |
