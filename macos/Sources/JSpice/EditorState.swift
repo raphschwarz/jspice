@@ -150,12 +150,19 @@ final class EditorState: ObservableObject {
 
     private func registerUndo(restoring previous: Circuit, actionName: String) {
         guard let undoManager else { return }
+        // An undo manager that does not group by event (the self-test's) raises when an undo is registered outside a
+        // group: there, an edit made outside one is a step of its own. (The app's groups by event; while undoing or
+        // redoing, the manager has a group open itself.)
+        let ownGroup = !undoManager.groupsByEvent && undoManager.groupingLevel == 0
+            && !undoManager.isUndoing && !undoManager.isRedoing
+        if ownGroup { undoManager.beginUndoGrouping() }
         undoManager.registerUndo(withTarget: self) { target in
             MainActor.assumeIsolated {
                 target.restore(previous, actionName: actionName)
             }
         }
         undoManager.setActionName(actionName)
+        if ownGroup { undoManager.endUndoGrouping() }
     }
 
     private func restore(_ circuit: Circuit, actionName: String) {

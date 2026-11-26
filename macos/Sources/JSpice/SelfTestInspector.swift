@@ -5,15 +5,16 @@ import CircuitKit
 extension InteractionTest {
     /// The inspector with several parts selected: a value set for all of them is one undo step, choosing a model gives
     /// it to all, parts of different kinds offer only what they have in common; and the arrow keys' E-series steps.
-    /// (Run with an undo manager that groups by event, as the app's: each edit here is followed by a pause, which ends
-    /// its group.)
+    /// (Each edit here is an undo step of its own.)
     static func checkInspector(editor: EditorState, document: CircuitDocument) async {
-        // the editor holds its undo manager weakly: this keeps it (one that groups by event, as the app's, if it has none)
+        // the editor holds its undo manager weakly: this keeps it. The self-test's does not group by event, so each
+        // edit here is an undo step of its own (see `EditorState.registerUndo`).
         let undo: UndoManager
-        if let existing = editor.undoManager, existing.groupsByEvent {
+        if let existing = editor.undoManager {
             undo = existing
         } else {
             undo = UndoManager()
+            undo.groupsByEvent = false
             editor.undoManager = undo
         }
         // (whichever the editor registers with, should the window hand it its own meanwhile)

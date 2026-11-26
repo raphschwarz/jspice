@@ -215,6 +215,8 @@ enum InteractionTest {
         // drawing: wires with a corner and from free terminals, values typed on the canvas, paste at the pointer
         await checkEditing(editor: editor, document: document, window: window, canvas: canvas)
 
+        // (the editor holds the undo manager weakly: it is the test's to keep until the last check has run)
+        withExtendedLifetime(undo) {}
         return finish(window)
     }
 
