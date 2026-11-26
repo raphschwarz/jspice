@@ -322,7 +322,8 @@ private struct Knob: View {
             .help("Drag up or down to turn; double-click to centre")
             Text(String(format: "%.1f", 10 * position))
                 .font(.system(size: 9, weight: .medium).monospacedDigit())
-                .foregroundStyle(Color(white: 0.6))
+                // 0.66 grey: 4.6:1 on the top of the faceplate, the least a number needs (WCAG AA)
+                .foregroundStyle(Color(white: 0.66))
         }
     }
 }
@@ -334,7 +335,8 @@ private struct ToggleSwitch: View {
 
     var body: some View {
         VStack(spacing: 3) {
-            Text("ON").font(.system(size: 8, weight: .bold)).foregroundStyle(Color(white: on ? 0.85 : 0.45))
+            // the legend not in force is dimmed only as far as it can still be read (4.6:1 on the faceplate's top)
+            Text("ON").font(.system(size: 8, weight: .bold)).foregroundStyle(Color(white: on ? 0.85 : 0.66))
             ZStack {
                 // the nut
                 RegularPolygon(sides: 6)
@@ -355,7 +357,7 @@ private struct ToggleSwitch: View {
             .frame(width: 44, height: 50)
             .contentShape(Rectangle())
             .onTapGesture(perform: toggle)
-            Text("OFF").font(.system(size: 8, weight: .bold)).foregroundStyle(Color(white: on ? 0.45 : 0.85))
+            Text("OFF").font(.system(size: 8, weight: .bold)).foregroundStyle(Color(white: on ? 0.66 : 0.85))
         }
         .help("Click to flip")
     }

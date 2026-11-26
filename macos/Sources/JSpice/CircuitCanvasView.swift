@@ -329,7 +329,7 @@ final class CircuitCanvasView: NSView {
     private func drawCurrentDots(_ ctx: CGContext, _ circuit: Circuit, _ palette: CanvasPalette) {
         let spacing = unit
         let radius = max(1.6, unit * 0.13)
-        ctx.setFillColor(palette.dot.cgColor)
+        ctx.setFillColor(palette.currentDot.cgColor)
         for element in circuit.elements {
             guard let phase = editor.simulation.dotPhase[element.id], phase != 0 else { continue }
             let posts = element.posts.map(screen)
@@ -1272,4 +1272,12 @@ final class ClosureTarget: NSObject {
     private let action: () -> Void
     init(_ action: @escaping () -> Void) { self.action = action }
     @objc func invoke() { action() }
+}
+
+extension CanvasPalette {
+    /// The colour of the dots that show current flowing. In light mode the palette's orange is darkened (same hue) to
+    /// 3.2:1 on the canvas, the least a graphic needs to be seen (WCAG AA); dark mode's yellow has 12.7:1 already.
+    var currentDot: RGBA {
+        isDark ? dot : RGBA(0.80, 0.48, 0.0)
+    }
 }
