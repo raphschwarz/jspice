@@ -68,8 +68,40 @@ twenty minutes. Note anything that fails, with the step number, and what you saw
 4. Change the project's sample rate (44.1 kHz ↔ 48 kHz) and play: the pitch of the instrument and the character of
    the effect stay the same.
 
+## 6. On the real-time thread
+
+The plugin's render thread takes no lock the window can hold and rebuilds nothing: a knob, a switch or a preset is
+prepared in the background and swapped in at the next buffer, a few milliseconds later. These checks are best done at
+the smallest buffer the host offers (Logic: **Settings ▸ Audio ▸ I/O Buffer Size**, 32 or 64 samples), with the CPU
+meter open. A dropout is a click or a gap; the CPU meter's overload marker (Logic: a red "System Overload" alert) counts too.
+
+1. **Automation while playing.** At 64 samples, play the guitar loop through **Fuzz Face on a guitar riff**, draw a
+   fast automation ramp for **FUZZ** (up and down several times a second) and play it back. The sound follows within
+   a few milliseconds, with no clicks, dropouts or overloads. Do the same moving the slider in the plug-in window by
+   hand while playing.
+2. **Echo through knob moves.** Choose **PT2399 echo**, play a short phrase and, while the repeats are still sounding,
+   move **TIME** and **REPEATS** in the window: the repeats carry on (changed) rather than being cut off.
+3. **A switch.** Choose **3PDT true bypass** and flip **SW1** while playing. The sound switches after a short moment;
+   a switch that joins or parts parts of the circuit starts it again from rest, so a brief change in the sound is
+   expected, but no dropout and no thump.
+4. **Preset change while playing.** At 64 samples, step through the circuits in the Circuit menu (and in the host's
+   own preset menu) while the transport runs. The old circuit keeps playing until the new one is ready (heavier ones
+   take up to a second or so to settle), then the new one takes over: no gap of silence, no overload, the window
+   stays responsive.
+5. **Instrument notes through knob moves.** On the instrument with **Synth voice: VCO, VCF, VCA**, hold a note and move
+   **FRES**: the note keeps sounding, with no retrigger. Play notes while automating **FRES**.
+6. **A circuit too heavy for the buffer.** At 64 (or 32) samples, put **Bode frequency shifter** or **LM13700 filter**
+   on several tracks until the CPU meter is near full. Within about a second the plug-in window shows an orange
+   message ("Running 1 step per sample to keep up…", or "Too heavy for this buffer…") and the sound carries on, a
+   little less precise, instead of dropping out. There may be one short jump in the sound when it changes down. Raise
+   the buffer to 256 and choose the circuit again: the message goes.
+7. **Sample rate and buffer changes.** Change the project's sample rate and the buffer size while the plug-in is
+   inserted: playback resumes with the circuit at the right pitch, without a crash.
+8. **Nothing logged.** In **Console.app**, filtered on `JSpiceAudioUnit`, none of the above prints anything while
+   playing.
+
 ## What to report
 
 - Each step that failed: its number, what happened, and the host and its version.
-- The CPU figures from step 2.7.
+- The CPU figures from step 2.7, and for step 6 how many instances it took before the message appeared.
 - Anything printed under **JSpice** in **Console.app** while it misbehaved (filter on `JSpiceAudioUnit`).

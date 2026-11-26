@@ -18,6 +18,8 @@ public final class CircuitAudioUnit: AUAudioUnit {
     private(set) var circuitName = ""
     /// Called on the main thread when another circuit is loaded
     var onLoad: (() -> Void)?
+    /// How the render thread is keeping up (the window polls it)
+    var renderStatus: PluginEngine.Status { kernel.status }
 
     /// Where the app exports circuits: ~/Music/JSpice/Audio Units in the user's own home folder (the extension is
     /// sandboxed, with an exception to read there)
@@ -158,92 +160,88 @@ public final class CircuitAudioUnit: AUAudioUnit {
     public override var supportsUserPresets: Bool { false }
 }
 
-/// What the render thread uses: the circuit's processor and buffers, behind a lock the other threads take only to
-/// swap the circuit or move a knob
+/// What the render thread uses. It takes no lock that another thread can hold, allocates and frees nothing, and never
+/// rebuilds the circuit: `PluginEngine` prepares processors on a background queue and the render thread swaps them in
+/// at the top of a call (see there). The buffers here are made in `allocate`, before the host starts rendering, and
+/// only replaced when it has stopped.
 final class CircuitKernel: @unchecked Sendable {
-    private let lock = NSLock()
+    let engine = PluginEngine()
     private let effect: Bool
-    private var processor: CircuitProcessor?
-    private var pending: Circuit?
-    private var sampleRate: Double?
+    // render resources (set up while the host is not rendering)
+    private var sampleRate = 48_000.0
     private var maximumFrames = 0
     private var inputBuffer: AVAudioPCMBuffer?
     private var outputBuffer: AVAudioPCMBuffer?
-    private var mono: [Float] = []
-    private var out: [Float] = []
-    /// Knob positions before there is a processor
-    private var values: [Double] = []
+    private var mono: UnsafeMutablePointer<Float>?
+    private var out: UnsafeMutablePointer<Float>?
+    private var capacity = 0
+    /// Seconds per tick of `mach_absolute_time`
+    private let secondsPerTick: Double
 
     init(effect: Bool) {
         self.effect = effect
+        var timebase = mach_timebase_info_data_t()
+        mach_timebase_info(&timebase)
+        secondsPerTick = timebase.denom == 0 ? 1e-9 : Double(timebase.numer) / Double(timebase.denom) * 1e-9
+    }
+
+    deinit {
+        mono?.deallocate()
+        out?.deallocate()
     }
 
     /// The circuit playing, its knobs where they are now
-    var circuit: Circuit? { lock.withLock { processor?.circuit ?? pending } }
+    var circuit: Circuit? { engine.circuit }
 
+    /// What the window shows about the render thread: its load, whether it is keeping up, the steps per sample
+    var status: PluginEngine.Status { engine.status }
+
+    /// Plays another circuit: made in the background, the one playing goes on until it is ready
     func load(_ circuit: Circuit) {
-        let rate = lock.withLock { () -> Double? in
-            pending = circuit
-            values = CircuitProcessor.controls(of: circuit).map(\.value)
-            return sampleRate
-        }
-        // made off the render thread: settling the circuit takes a moment
-        let made = rate.flatMap { CircuitProcessor(circuit: circuit, sampleRate: $0) }
-        lock.withLock {
-            guard pending == circuit else { return }
-            processor = made
-            if made != nil { pending = nil }
-        }
+        engine.load(circuit)
     }
 
     func allocate(sampleRate: Double, inputFormat: AVAudioFormat?, maximumFrames: Int) {
-        let circuit = lock.withLock { processor?.circuit ?? pending }
-        let made = circuit.flatMap { CircuitProcessor(circuit: $0, sampleRate: sampleRate) }
-        let input = inputFormat.flatMap { AVAudioPCMBuffer(pcmFormat: $0, frameCapacity: AVAudioFrameCount(maximumFrames)) }
-        let output = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)
-            .flatMap { AVAudioPCMBuffer(pcmFormat: $0, frameCapacity: AVAudioFrameCount(maximumFrames)) }
-        lock.withLock {
-            self.sampleRate = sampleRate
-            self.maximumFrames = maximumFrames
-            processor = made
-            pending = made == nil ? circuit : nil
-            inputBuffer = input
-            outputBuffer = output
-            mono = [Float](repeating: 0, count: maximumFrames)
-            out = [Float](repeating: 0, count: maximumFrames)
-            for (k, value) in values.enumerated() { made?.set(k, to: value) }
+        let frames = max(maximumFrames, 1)
+        self.sampleRate = sampleRate
+        self.maximumFrames = frames
+        inputBuffer = inputFormat.flatMap { AVAudioPCMBuffer(pcmFormat: $0, frameCapacity: AVAudioFrameCount(frames)) }
+        outputBuffer = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)
+            .flatMap { AVAudioPCMBuffer(pcmFormat: $0, frameCapacity: AVAudioFrameCount(frames)) }
+        if capacity < frames {
+            mono?.deallocate()
+            out?.deallocate()
+            mono = .allocate(capacity: frames)
+            out = .allocate(capacity: frames)
+            capacity = frames
         }
+        mono?.initialize(repeating: 0, count: capacity)
+        out?.initialize(repeating: 0, count: capacity)
+        // the first processor is made before this returns, so the first render call plays the circuit
+        engine.allocate(sampleRate: sampleRate, maximumFrames: frames)
     }
 
     func deallocate() {
-        lock.withLock {
-            if let processor { pending = processor.circuit }
-            processor = nil
-            sampleRate = nil
-            inputBuffer = nil
-            outputBuffer = nil
-        }
+        engine.deallocate()
     }
 
+    /// From the parameter tree (the plugin's window, or the host from its own threads)
     func set(_ index: Int, to value: Double) {
-        lock.withLock {
-            if values.indices.contains(index) { values[index] = value }
-            processor?.set(index, to: value)
-        }
+        engine.setControl(index, value)
     }
 
     func value(_ index: Int) -> Double {
-        lock.withLock { processor?.controls[safe: index]?.value ?? values[safe: index] ?? 0 }
+        engine.controlValue(index)
     }
 
     /// Takes one note or parameter change; true for a note pressed (which should sound for a sample before the next event)
+    @inline(__always)
     private func handle(_ e: UnsafePointer<AURenderEvent>, _ processor: CircuitProcessor) -> Bool {
         switch e.pointee.head.eventType {
         case .parameter, .parameterRamp:
+            // a knob moved by the host's automation: handed to the background, which prepares a processor for it
             let parameter = e.pointee.parameter
-            let index = Int(parameter.parameterAddress)
-            if values.indices.contains(index) { values[index] = Double(parameter.value) }
-            processor.set(index, to: Double(parameter.value))
+            engine.requestControl(Int(parameter.parameterAddress), Double(parameter.value))
         case .MIDI:
             let midi = e.pointee.MIDI
             let status = midi.data.0 & 0xF0
@@ -261,13 +259,15 @@ final class CircuitKernel: @unchecked Sendable {
         return false
     }
 
+    /// The render callback, on the host's real-time thread
     func render(flags: UnsafeMutablePointer<AudioUnitRenderActionFlags>, timestamp: UnsafePointer<AudioTimeStamp>,
                 frames: AUAudioFrameCount, output: UnsafeMutablePointer<AudioBufferList>,
                 events: UnsafePointer<AURenderEvent>?, pull: AURenderPullInputBlock?) -> AUAudioUnitStatus {
-        lock.lock()
-        defer { lock.unlock() }
+        let started = mach_absolute_time()
         let count = Int(frames)
-        guard count <= maximumFrames else { return kAudioUnitErr_TooManyFramesToProcess }
+        guard count <= maximumFrames, let mono, let out else { return kAudioUnitErr_TooManyFramesToProcess }
+        // a prepared processor swapped in, the one it replaces handed back, knob moves passed on: all without waiting
+        engine.beginRender()
         let buffers = UnsafeMutableAudioBufferListPointer(output)
         // a host that gives no buffers renders into ours
         if let channels = outputBuffer?.floatChannelData {
@@ -276,9 +276,10 @@ final class CircuitKernel: @unchecked Sendable {
             }
         }
         for k in 0..<buffers.count { buffers[k].mDataByteSize = UInt32(count * MemoryLayout<Float>.size) }
-        guard let processor else {
-            for buffer in buffers { if let data = buffer.mData { memset(data, 0, count * MemoryLayout<Float>.size) } }
+        guard let processor = engine.processor else {
+            for k in 0..<buffers.count { if let data = buffers[k].mData { memset(data, 0, count * MemoryLayout<Float>.size) } }
             flags.pointee.insert(.unitRenderAction_OutputIsSilence)
+            finish(started, count)
             return noErr
         }
 
@@ -287,62 +288,62 @@ final class CircuitKernel: @unchecked Sendable {
         if effect, let pull, let inputBuffer {
             // the buffer list as allocated: the host may have pointed it elsewhere last time
             let list = UnsafeMutableAudioBufferListPointer(inputBuffer.mutableAudioBufferList)
+            let channels = inputBuffer.floatChannelData
             for k in 0..<list.count {
-                list[k].mData = inputBuffer.floatChannelData.map { UnsafeMutableRawPointer($0[k]) }
+                list[k].mData = channels.map { UnsafeMutableRawPointer($0[k]) }
                 list[k].mDataByteSize = UInt32(count * MemoryLayout<Float>.size)
             }
             var pullFlags = AudioUnitRenderActionFlags()
             if pull(&pullFlags, timestamp, frames, 0, inputBuffer.mutableAudioBufferList) == noErr, list.count > 0 {
-                mono.withUnsafeMutableBufferPointer { mono in
-                    for n in 0..<count { mono[n] = 0 }
-                    for buffer in list {
-                        guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-                        for n in 0..<count { mono[n] += data[n] }
-                    }
-                    let scale = 1 / Float(list.count)
-                    for n in 0..<count { mono[n] *= scale }
+                for n in 0..<count { mono[n] = 0 }
+                for k in 0..<list.count {
+                    guard let data = list[k].mData?.assumingMemoryBound(to: Float.self) else { continue }
+                    for n in 0..<count { mono[n] += data[n] }
                 }
+                let scale = 1 / Float(list.count)
+                for n in 0..<count { mono[n] *= scale }
                 input = true
             }
         }
-        // notes and parameter changes at their own sample: the block is rendered in pieces between them, so a note that
-        // starts and ends within one block still sounds, and a quick release and press retriggers
+        // notes at their own sample: the block is rendered in pieces between them, so a note that starts and ends
+        // within one block still sounds, and a quick release and press retriggers
         let start = AUEventSampleTime(timestamp.pointee.mSampleTime)
-        func offset(_ e: UnsafePointer<AURenderEvent>) -> Int {
-            Int(max(0, min(AUEventSampleTime(count), e.pointee.head.eventSampleTime - start)))
-        }
         var event = events
         var done = 0
-        mono.withUnsafeBufferPointer { mono in
-            out.withUnsafeMutableBufferPointer { out in
-                while done < count {
-                    while let e = event, offset(e) <= done {
-                        event = UnsafePointer(e.pointee.head.next)
-                        if handle(e, processor) { break }
-                    }
-                    // at least one sample before the next event, so a note pressed is heard before its release
-                    let next = event.map { min(count, max(done + 1, offset($0))) } ?? count
-                    processor.process(input: input ? mono.baseAddress! + done : nil, output: out.baseAddress! + done,
-                                      frames: next - done)
-                    done = next
-                }
+        while done < count {
+            while let e = event, Self.offset(e, start, count) <= done {
+                event = UnsafePointer(e.pointee.head.next)
+                if handle(e, processor) { break }
             }
+            // at least one sample before the next event, so a note pressed is heard before its release
+            let next = event.map { min(count, max(done + 1, Self.offset($0, start, count))) } ?? count
+            processor.process(input: input ? UnsafePointer(mono + done) : nil, output: out + done, frames: next - done)
+            done = next
         }
         // events past the end of the block (a host should not send them): taken now rather than lost
         while let e = event {
             event = UnsafePointer(e.pointee.head.next)
             _ = handle(e, processor)
         }
-        out.withUnsafeBufferPointer { out in
-            for buffer in buffers {
-                guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-                for n in 0..<count { data[n] = out[n] }
-            }
+        for k in 0..<buffers.count {
+            guard let data = buffers[k].mData?.assumingMemoryBound(to: Float.self) else { continue }
+            data.update(from: out, count: count)
         }
+        finish(started, count)
         return noErr
     }
-}
 
-extension Array {
-    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+    /// Where an event falls in the block
+    @inline(__always)
+    private static func offset(_ e: UnsafePointer<AURenderEvent>, _ start: AUEventSampleTime, _ count: Int) -> Int {
+        Int(max(0, min(AUEventSampleTime(count), e.pointee.head.eventSampleTime - start)))
+    }
+
+    /// The time this call took against the time its buffer lasts: the engine lowers the steps per sample when the
+    /// circuit cannot keep up, and the window shows it (nothing is logged here)
+    @inline(__always)
+    private func finish(_ started: UInt64, _ count: Int) {
+        let elapsed = mach_absolute_time() &- started
+        engine.endRender(busy: Double(elapsed) * secondsPerTick, budget: Double(count) / sampleRate)
+    }
 }

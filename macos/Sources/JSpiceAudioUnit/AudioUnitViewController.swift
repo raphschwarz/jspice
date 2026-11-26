@@ -51,12 +51,38 @@ final class PluginModel: ObservableObject {
     @Published var selected = 0
     @Published var circuitName = ""
     @Published var knobs: [Knob] = []
+    /// How the render thread is keeping up, read twice a second (the render thread itself reports without waiting, and
+    /// never logs)
+    @Published var status = PluginEngine.Status()
     private var token: AUParameterObserverToken?
 
     init(_ unit: CircuitAudioUnit) {
         self.unit = unit
         unit.onLoad = { [weak self] in self?.refresh() }
         refresh()
+        _ = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
+                let status = self.unit.renderStatus
+                if status != self.status { self.status = status }
+            }
+        }
+    }
+
+    /// What the window says about the render thread, if anything needs saying
+    var statusText: String? {
+        if status.failed { return "The circuit stopped converging: move a knob or choose the circuit again." }
+        let lowered = status.stepsPerSample > 0 && status.stepsPerSample < PluginEngine.oversampling
+        let steps = status.stepsPerSample == 1 ? "1 step" : "\(status.stepsPerSample) steps"
+        if status.overloaded && lowered {
+            return "Too heavy for this buffer: lowered to \(steps) per sample. A larger buffer size gives it more time."
+        }
+        if status.overloaded { return "Too heavy for this buffer: try a larger buffer size." }
+        if lowered { return "Running \(steps) per sample to keep up with the host's buffer." }
+        return nil
     }
 
     func refresh() {
@@ -129,6 +155,11 @@ struct PluginPanel: View {
                 }
             }
             Spacer(minLength: 0)
+            if let text = model.statusText {
+                Label(text, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             Text("Design a circuit in JSpice, then File ▸ Export ▸ Audio Unit… to play it here.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
