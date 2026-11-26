@@ -437,6 +437,7 @@ private struct ProblemsList: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .padding(.top, severity == firstShown ? 0 : 8)
+                .headingAccessibility()
             ForEach(items) { diagnostic in
                 row(diagnostic)
             }

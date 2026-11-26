@@ -372,7 +372,9 @@ final class CircuitCanvasView: NSView {
         }
     }
 
-    private func valueLabel(_ element: Element, index: Int, live: Bool) -> String? {
+    /// The text drawn beside a part: its value, or its reading while the simulation runs (VoiceOver hears it too, see
+    /// `accessibilityValueText`)
+    func valueLabel(_ element: Element, index: Int, live: Bool) -> String? {
         let simulator = editor.simulation.simulator
         switch element.kind {
         case .probe:

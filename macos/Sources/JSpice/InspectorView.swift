@@ -442,6 +442,8 @@ struct BlockSection: View {
                                     if editing { editor.beginInteraction() } else { editor.endInteraction("Turn \(inner.name)") }
                                 })
                                 .controlSize(.small)
+                                .accessibilityLabel(inner.name)
+                                .accessibilityValue("\(Int((inner[param: "position"] * 100).rounded())) %")
                             }
                         } else {
                             Toggle(inner.name, isOn: Binding(
@@ -491,8 +493,18 @@ struct KnobMotionSection: View {
                         Text(seconds < 1 ? String(format: "%.0f ms", seconds * 1000) : String(format: "%.0f s", seconds)).tag(seconds)
                     }
                 }
-                LabeledContent("From") { Slider(value: $low, in: 0...1, onEditingChanged: { editing in if !editing { restart() } }).controlSize(.small) }
-                LabeledContent("To") { Slider(value: $high, in: 0...1, onEditingChanged: { editing in if !editing { restart() } }).controlSize(.small) }
+                LabeledContent("From") {
+                    Slider(value: $low, in: 0...1, onEditingChanged: { editing in if !editing { restart() } })
+                        .controlSize(.small)
+                        .accessibilityLabel("From")
+                        .accessibilityValue("\(Int((low * 100).rounded())) %")
+                }
+                LabeledContent("To") {
+                    Slider(value: $high, in: 0...1, onEditingChanged: { editing in if !editing { restart() } })
+                        .controlSize(.small)
+                        .accessibilityLabel("To")
+                        .accessibilityValue("\(Int((high * 100).rounded())) %")
+                }
                 Text("Turns the knob from one position to the other and back by itself, slowing at each end, while you listen and watch the scopes. It goes back where it was when it stops; File ▸ Export Sound records it moving.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -536,6 +548,8 @@ struct SequencerSection: View {
                         if !editing { editor.endInteraction("Change Tempo") }
                     })
                     .controlSize(.small)
+                    .accessibilityLabel("Tempo")
+                    .accessibilityValue("\(Int(sequence.tempo)) BPM")
                     Text("\(Int(sequence.tempo)) BPM").monospacedDigit().frame(width: 64, alignment: .trailing)
                 }
             }
@@ -547,6 +561,8 @@ struct SequencerSection: View {
                         if !editing { editor.endInteraction("Change Gate Length") }
                     })
                     .controlSize(.small)
+                    .accessibilityLabel("Gate length")
+                    .accessibilityValue("\(Int((sequence.gateLength * 100).rounded())) %")
                     Text("\(Int((sequence.gateLength * 100).rounded())) %").monospacedDigit().frame(width: 64, alignment: .trailing)
                 }
             }
@@ -1040,6 +1056,8 @@ struct CircuitInspector: View {
                             if !editing { editor.endInteraction("Change Temperature") }
                         })
                         .frame(maxWidth: 110)
+                        .accessibilityLabel("Temperature")
+                        .accessibilityValue(String(format: "%.0f °C", settings.temperature))
                         Text(String(format: "%.0f °C", settings.temperature))
                             .monospacedDigit()
                             .frame(width: 48, alignment: .trailing)

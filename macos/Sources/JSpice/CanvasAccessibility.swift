@@ -337,60 +337,12 @@ extension CircuitCanvasView {
         return [voltage + " across", current + " through"]
     }
 
-    /// The text the canvas draws beside a part (see `valueLabel` in CircuitCanvasView.swift, which is private: this is
-    /// a copy, to be replaced by a call to it if it is made internal)
+    /// The text the canvas draws beside a part (`valueLabel`), as it is spoken: a reading not made yet ("— V") and the
+    /// loop probe's letter say nothing, and the canvas's dots are pauses
     private func accessibilityValueLabel(_ element: Element, index: Int, live: Bool) -> String? {
-        let simulator = editor.simulation.simulator
-        switch element.kind {
-        case .probe:
-            return live ? SI.format(simulator.voltageAcross(index), unit: "V") : nil
-        case .ammeter:
-            return live ? SI.format(simulator.current(index), unit: "A") : nil
-        case .resistor: return SI.format(element[param: "resistance"], unit: "Ω")
-        case .potentiometer:
-            return "\(Int((element[param: "position"] * 100).rounded())) %, \(SI.format(element[param: "resistance"], unit: "Ω"))"
-        case .zener: return SI.format(element[param: "breakdown"], unit: "V")
-        case .speaker: return "±" + SI.format(element[param: "fullScale"], unit: "V")
-        case .lamp: return SI.format(element[param: "resistance"], unit: "Ω")
-        case .capacitor: return SI.format(element[param: "capacitance"], unit: "F")
-        case .inductor: return SI.format(element[param: "inductance"], unit: "H")
-        case .dcVoltage: return SI.format(element[param: "voltage"], unit: "V")
-        case .acVoltage:
-            return "\(SI.format(element[param: "amplitude"], unit: "V")) \(SI.format(element[param: "frequency"], unit: "Hz"))"
-        case .squareVoltage:
-            return "\(SI.format(element[param: "high"], unit: "V")) \(SI.format(element[param: "frequency"], unit: "Hz"))"
-        case .currentSource: return SI.format(element[param: "current"], unit: "A")
-        case .keyboardPitch:
-            return live ? SI.format(simulator.voltageAcross(index), unit: "V") : "1 V/oct"
-        case .keyboardGate: return "Gate " + SI.format(element[param: "high"], unit: "V")
-        case .noiseVoltage: return "Noise " + SI.format(element[param: "amplitude"], unit: "V")
-        case .audioInput:
-            return element[param: "input"] >= 0.5 ? "Live in" : (element.audio?.name ?? AudioClip.guitarRiff.name)
-        case .microphone, .electretMic, .pickup:
-            let sound = element[param: "input"] >= 0.5 ? "live in"
-                : (element.audio?.name ?? (element.kind == .pickup ? AudioClip.guitarRiff : AudioClip.speech).name).lowercased()
-            return (element.model?.name ?? element.kind.displayName) + ", " + sound
-        case .vuMeter:
-            return live ? String(format: "%+.1f dB", simulator.meterReading(index)) : element.model?.name
-        case .footswitch:
-            return element.closed ? "Effect on" : "Bypassed"
-        case .jack:
-            return element.closed ? "Plugged in" : "Normalled"
-        case .memristor:
-            return live ? SI.format(simulator.value(.resistance, of: index), unit: "Ω") : SI.format(element[param: "roff"], unit: "Ω")
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103:
-            return element.firmware == nil ? "no sketch" : nil
-        case .vco:
-            let waveform = element.kind.params[0].choices.first { $0.value == element[param: "waveform"].rounded() }?.name ?? ""
-            return [element.model?.name ?? "VCO", waveform.lowercased()].joined(separator: " ")
-        case .divider:
-            return element.model?.name ?? "÷\(Int(element[param: "division"].rounded()))"
-        case .wire, .ground, .netLabel, .port, .loopProbe:
-            return nil
-        default:
-            // the real part a generic symbol behaves like
-            return element.model?.name
-        }
+        guard let text = valueLabel(element, index: index, live: live), !text.hasPrefix("\u{2014} "),
+              element.kind != .loopProbe else { return nil }
+        return text.replacingOccurrences(of: " \u{00B7} ", with: ", ")
     }
 
     // MARK: - Notifications
