@@ -159,6 +159,13 @@ struct CircuitCommands: Commands {
             Button("Delete") { editor?.deleteSelection() }
                 .disabled(editor?.selection.isEmpty ?? true)
             Divider()
+            // what a right-click on a part offers, for the selected part, so the keyboard and VoiceOver reach it
+            if let editor {
+                PartMenuItems(editor: editor, document: editor.document)
+            } else {
+                PartMenuItems.disabled
+            }
+            Divider()
             Button("Tidy Up") { editor?.tidyUp() }
                 .keyboardShortcut("t", modifiers: [.command, .option])
                 .disabled(editor?.circuit.elements.isEmpty ?? true)
@@ -166,6 +173,53 @@ struct CircuitCommands: Commands {
                 .keyboardShortcut("b", modifiers: [.command, .shift])
                 .disabled(editor?.circuit.elements.isEmpty ?? true)
         }
+    }
+}
+
+/// Circuit ▸ Measure, MIDI Learn and Forget, Open Block and Update from Library for the one part selected, offered as
+/// a right-click on the part offers them (`PartMeasure`, `PartCommands`). It watches the document too, so that a
+/// mapping learned or a block saved shows at once.
+struct PartMenuItems: View {
+    @ObservedObject var editor: EditorState
+    @ObservedObject var document: CircuitDocument
+
+    var body: some View {
+        let part = editor.selectedElement
+        let measures = part.map { PartMeasure.all(for: $0.kind) } ?? []
+        Menu("Measure") {
+            ForEach(Array(measures.enumerated()), id: \.offset) { _, measure in
+                Button(measure.title) {
+                    if let part { editor.addMeasure(measure, to: part.id) }
+                }
+            }
+        }
+        .disabled(measures.isEmpty)
+        Button(part.map { PartCommands.learnTitle($0, editor) } ?? "MIDI Learn") {
+            if let part { editor.learnMIDI(part: part.id) }
+        }
+        .disabled(!(part.map(PartCommands.canLearnMIDI) ?? false))
+        Button(part.flatMap { PartCommands.forgetTitle($0, editor) } ?? "Forget MIDI Controller") {
+            if let part { editor.forgetMIDI(part: part.id) }
+        }
+        .disabled(part.flatMap { PartCommands.forgetTitle($0, editor) } == nil)
+        Button("Open Block") {
+            if let part { editor.openBlock(part.id) }
+        }
+        .disabled(!(part.map(PartCommands.canOpenBlock) ?? false))
+        Button("Update from Library") {
+            if let part { editor.updateBlockFromLibrary(part.id) }
+        }
+        .disabled(!(part.map(PartCommands.canUpdateFromLibrary) ?? false))
+    }
+
+    /// The same items, disabled, while no circuit window is in front
+    @ViewBuilder
+    static var disabled: some View {
+        Menu("Measure") { EmptyView() }.disabled(true)
+        Button("MIDI Learn") {}.disabled(true)
+        Button("Forget MIDI Controller") {}.disabled(true)
+        Button("Open Block") {}.disabled(true)
+        Button("Update from Library") {}.disabled(true)
     }
 }
 

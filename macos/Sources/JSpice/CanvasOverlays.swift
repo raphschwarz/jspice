@@ -431,6 +431,8 @@ struct ShortcutsSheet: View {
             ("Space  ⌘↩", "Run or pause"),
             ("⇧⌘↩", "Reset to time zero"),
             ("Scroll over a pot", "Turn it"),
+            (".", "Flip the selected switch, footswitch or jack; hold the selected push button down"),
+            ("[  ]", "Turn the selected pot down, up 5 % (⇧: 1 %)"),
             ("⇧⌘E", "Export an image"),
         ]),
         ("Playing (sound on, with a keyboard source)", [

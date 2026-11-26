@@ -29,6 +29,11 @@ final class CircuitCanvasView: NSView {
     private var mouseLocation: CGPoint?
     /// For a click on a switch: toggle it on mouse up if the mouse did not move
     private var pendingToggle: UUID?
+    /// A push button pressed by the mouse going down on its free terminal: held until the drag leaves the terminal (and
+    /// becomes a wire) or the mouse goes up, so that a click there presses the button as a click on its body does
+    private var terminalPress: UUID?
+    /// A push button held down from the keyboard, and the key holding it (see `operateSelection`)
+    private var keyPress: (id: UUID, keyCode: UInt16)?
     /// The free terminal under the pointer (in select mode), where a drag starts a wire
     private var hoveredTerminal: GridPoint?
     /// The part whose value is being typed in place (see CanvasInlineEdit.swift)
@@ -781,6 +786,10 @@ final class CircuitCanvasView: NSView {
         if !event.modifierFlags.contains(.shift), let terminal = freeTerminal(at: point) {
             drag = .wiring(start: terminal.point, end: terminal.point, horizontalFirst: nil, straight: false, from: terminal.owner)
             hoveredTerminal = nil
+            if editor.circuit[terminal.owner]?.kind == .pushButton {
+                editor.setPressed(terminal.owner, true)
+                terminalPress = terminal.owner
+            }
             needsDisplay = true
             return
         }
@@ -822,6 +831,8 @@ final class CircuitCanvasView: NSView {
                 horizontalFirst = CanvasGeometry.startsHorizontally(end - start)
             }
             drag = .wiring(start: start, end: end, horizontalFirst: horizontalFirst, straight: event.modifierFlags.contains(.shift), from: from)
+            // a drag that leaves a push button's terminal draws a wire: the button lets go
+            if end != start { releaseTerminalPress() }
         case .moving(let start, var original, let ids, let moved)?:
             let delta = grid(point) - start
             if delta != .zero || moved {
@@ -925,6 +936,7 @@ final class CircuitCanvasView: NSView {
         default:
             break
         }
+        releaseTerminalPress()
         drag = nil
         pendingToggle = nil
         updateHoveredTerminal(at: location(event))
@@ -1007,32 +1019,21 @@ final class CircuitCanvasView: NSView {
             menu.addItem(item(hit.closed ? "Unplug the Cable" : "Plug a Cable In") { [weak self] in self?.editor.toggleSwitch(hit.id) })
             menu.addItem(.separator())
         }
-        for quantity in scopeQuantities(for: hit.kind) {
-            menu.addItem(item("Add \(quantity.name) Scope") { [weak self] in self?.editor.addScope(hit.id, quantity) })
+        // (the same measurements and part commands as the Circuit menu's, see `PartMeasure` and `PartCommands`)
+        for measure in PartMeasure.all(for: hit.kind) {
+            menu.addItem(item(measure.title) { [weak self] in self?.editor.addMeasure(measure, to: hit.id) })
         }
-        if canPlotCurve(hit.kind) {
-            menu.addItem(item("Add I–V Curve Scope") { [weak self] in self?.editor.addScope(hit.id, .current, plot: .currentVersusVoltage) })
-        }
-        if canPlotResponse(hit.kind) {
-            menu.addItem(item(hit.kind == .loopProbe ? "Add Loop Gain" : "Add Frequency Response") { [weak self] in
-                self?.editor.addScope(hit.id, .voltage, plot: .frequencyResponse)
-            })
-        }
-        if let quantity = scopeQuantities(for: hit.kind).first, canPlotSpectrum(hit.kind) {
-            menu.addItem(item("Add Spectrum") { [weak self] in self?.editor.addScope(hit.id, quantity, plot: .spectrum) })
-        }
-        if MIDIMapping.mappable.contains(hit.kind) {
+        if PartCommands.canLearnMIDI(hit) {
             menu.addItem(.separator())
-            let learning = editor.midiLearning == EditorState.MIDITarget(part: hit.id, inner: nil)
-            menu.addItem(item(learning ? "Cancel MIDI Learn" : "MIDI Learn") { [weak self] in self?.editor.learnMIDI(part: hit.id) })
-            if let mapping = editor.circuit.midiMapping(part: hit.id) {
-                menu.addItem(item("Forget \(mapping.label)") { [weak self] in self?.editor.forgetMIDI(part: hit.id) })
+            menu.addItem(item(PartCommands.learnTitle(hit, editor)) { [weak self] in self?.editor.learnMIDI(part: hit.id) })
+            if let title = PartCommands.forgetTitle(hit, editor) {
+                menu.addItem(item(title) { [weak self] in self?.editor.forgetMIDI(part: hit.id) })
             }
         }
-        if hit.kind == .block {
+        if PartCommands.canOpenBlock(hit) {
             menu.addItem(.separator())
             menu.addItem(item("Open Block") { [weak self] in self?.editor.openBlock(hit.id) })
-            if let name = hit.block?.name, BlockLibrary.block(named: name) != nil {
+            if PartCommands.canUpdateFromLibrary(hit) {
                 menu.addItem(item("Update from Library") { [weak self] in self?.editor.updateBlockFromLibrary(hit.id) })
             }
         }
@@ -1116,13 +1117,71 @@ final class CircuitCanvasView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
+        if let press = keyPress, press.keyCode == event.keyCode {
+            keyPress = nil
+            editor.setPressed(press.id, false)
+            return
+        }
         if playKey(event, down: false) { return }
         super.keyUp(with: event)
     }
 
     override func resignFirstResponder() -> Bool {
         releaseSoundingKeys()
+        if let press = keyPress {
+            keyPress = nil
+            editor.setPressed(press.id, false)
+        }
+        releaseTerminalPress()
         return super.resignFirstResponder()
+    }
+
+    private func releaseTerminalPress() {
+        guard let id = terminalPress else { return }
+        terminalPress = nil
+        editor.setPressed(id, false)
+    }
+
+    /// The keys that operate the selected part, as the mouse does: `.` flips a switch, footswitch or jack and holds a
+    /// push button down while it is held; `[` and `]` turn a potentiometer down and up 5 % (with ⇧, 1 %). (No part, tool,
+    /// musical-typing key or menu uses them.) True when the key did something.
+    static let operateKey = "."
+    static let turnDownKeys: Set<String> = ["[", "{"]
+    static let turnUpKeys: Set<String> = ["]", "}"]
+
+    private func operateSelection(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              let part = editor.selectedElement, let key = event.charactersIgnoringModifiers else { return false }
+        switch part.kind {
+        case .toggleSwitch, .footswitch, .jack:
+            guard key == Self.operateKey else { return false }
+            if !event.isARepeat {
+                editor.toggleSwitch(part.id)
+                let closed = editor.circuit[part.id]?.closed ?? false
+                switch part.kind {
+                case .footswitch: Self.announce(closed ? "Effect on" : "Bypassed")
+                case .jack: Self.announce(closed ? "Plugged in" : "Normalled")
+                default: Self.announce(closed ? "Closed" : "Open")
+                }
+            }
+        case .pushButton:
+            guard key == Self.operateKey else { return false }
+            if !event.isARepeat && keyPress == nil {
+                editor.setPressed(part.id, true)
+                keyPress = (part.id, event.keyCode)
+            }
+        case .potentiometer:
+            let down = Self.turnDownKeys.contains(key)
+            guard down || Self.turnUpKeys.contains(key) else { return false }
+            let step = event.modifierFlags.contains(.shift) ? 0.01 : 0.05
+            editor.turnPotentiometer(part.id, by: down ? -step : step)
+            let position = editor.circuit[part.id]?[param: "position"] ?? 0
+            Self.announce("\(Int((position * 100).rounded())) %")
+        default:
+            return false
+        }
+        needsDisplay = true
+        return true
     }
 
     override func keyDown(with event: NSEvent) {
@@ -1140,6 +1199,7 @@ final class CircuitCanvasView: NSView {
             case .placing, .wiring, .panning:
                 break
             }
+            releaseTerminalPress()
             drag = nil
             needsDisplay = true
             return
@@ -1175,6 +1235,7 @@ final class CircuitCanvasView: NSView {
         default:
             break
         }
+        if operateSelection(event) { return }
         let shift = event.modifierFlags.contains(.shift)
         if modifiers.isEmpty {
             switch event.keyCode {
@@ -1256,15 +1317,71 @@ func canPlotCurve(_ kind: ElementKind) -> Bool {
     }
 }
 
-/// Parts whose voltage can be plotted against frequency: anything with a voltage, apart from the sources that drive it
 /// Parts with a voltage or current whose spectrum means something: everything a scope can show over time
 func canPlotSpectrum(_ kind: ElementKind) -> Bool {
     !scopeQuantities(for: kind).isEmpty
 }
 
+/// Parts whose voltage can be plotted against frequency: anything with a voltage, apart from the sources that drive it
 func canPlotResponse(_ kind: ElementKind) -> Bool {
     // (a loop probe's response is its loop's gain)
     kind == .loopProbe || (scopeQuantities(for: kind).contains(.voltage) && !kind.isVoltageSource && kind != .currentSource)
+}
+
+/// A scope or plot that can be added for a part: what a right-click on it offers and Circuit ▸ Measure offers for the
+/// selected part, in the same order
+struct PartMeasure {
+    let title: String
+    let quantity: Quantity
+    let plot: ScopePlot
+
+    static func all(for kind: ElementKind) -> [PartMeasure] {
+        let quantities = scopeQuantities(for: kind)
+        var measures = quantities.map { PartMeasure(title: "Add \($0.name) Scope", quantity: $0, plot: .time) }
+        if canPlotCurve(kind) {
+            measures.append(PartMeasure(title: "Add I\u{2013}V Curve Scope", quantity: .current, plot: .currentVersusVoltage))
+        }
+        if canPlotResponse(kind) {
+            measures.append(PartMeasure(title: kind == .loopProbe ? "Add Loop Gain" : "Add Frequency Response", quantity: .voltage,
+                                        plot: .frequencyResponse))
+        }
+        if let quantity = quantities.first, canPlotSpectrum(kind) {
+            measures.append(PartMeasure(title: "Add Spectrum", quantity: quantity, plot: .spectrum))
+        }
+        return measures
+    }
+}
+
+/// When the part commands a right-click offers (MIDI Learn and Forget, Open Block, Update from Library) apply, for the
+/// canvas's menu and the Circuit menu alike
+enum PartCommands {
+    static func canLearnMIDI(_ part: Element) -> Bool { MIDIMapping.mappable.contains(part.kind) }
+
+    @MainActor
+    static func learnTitle(_ part: Element, _ editor: EditorState) -> String {
+        editor.midiLearning == EditorState.MIDITarget(part: part.id, inner: nil) ? "Cancel MIDI Learn" : "MIDI Learn"
+    }
+
+    /// "Forget CC 7" when a controller is mapped to the part, else nil
+    @MainActor
+    static func forgetTitle(_ part: Element, _ editor: EditorState) -> String? {
+        guard canLearnMIDI(part), let mapping = editor.circuit.midiMapping(part: part.id) else { return nil }
+        return "Forget \(mapping.label)"
+    }
+
+    static func canOpenBlock(_ part: Element) -> Bool { part.kind == .block }
+
+    /// A block part whose block is (still) in the block library
+    static func canUpdateFromLibrary(_ part: Element) -> Bool {
+        guard part.kind == .block, let name = part.block?.name else { return false }
+        return BlockLibrary.block(named: name) != nil
+    }
+}
+
+extension EditorState {
+    func addMeasure(_ measure: PartMeasure, to id: UUID) {
+        addScope(id, measure.quantity, plot: measure.plot)
+    }
 }
 
 /// Lets a menu item run a closure

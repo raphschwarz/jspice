@@ -8,7 +8,7 @@ The app lists these in **Help ▸ Keyboard Shortcuts** (⌘/, or `?` on the canv
 | --- | --- |
 | letter keys | choose a part (a letter for the common ones, ⇧ and a letter for the rest) |
 | `⌘K` or `/` | add a part, example or command by name: the palette (Circuit ▸ Add Part…) |
-| `Esc` | back to selecting (or stop drawing) |
+| `Esc` | step back one level at a time: abandon a drag, close the value being typed, cancel a MIDI Learn, put the tool away, then clear the selection |
 | click / drag | place the chosen part / set its length and direction |
 | drag a part | move it; wires attached to it stretch |
 | drag an end | resize or turn the selected part |
@@ -41,7 +41,9 @@ The app lists these in **Help ▸ Keyboard Shortcuts** (⌘/, or `?` on the canv
 | scroll, `⌘` + scroll, pinch | pan, zoom, zoom |
 | `⌥` + drag on empty canvas | pan |
 | scroll over a potentiometer | turn it |
-| right-click a part | add a scope, I–V curve, frequency response or spectrum; MIDI Learn; rotate, flip, delete |
+| `.` | flip the selected switch, footswitch or jack; hold the selected push button down while the key is held |
+| `[` / `]` | turn the selected potentiometer down, up 5 % (⇧: 1 %) |
+| right-click a part | add a scope, I–V curve, frequency response or spectrum; MIDI Learn; rotate, flip, delete (the same for the selected part: Circuit ▸ Measure, MIDI Learn, Forget, Open Block, Update from Library) |
 | `⇧⌘E` | export the schematic as an image (File ▸ Export ▸ Image…) |
 | `⌘U` | upload the selected microcontroller's sketch (Microcontroller ▸ Upload Sketch) |
 | `⌘/` or `?` | show the keyboard shortcuts (Help ▸ Keyboard Shortcuts) |

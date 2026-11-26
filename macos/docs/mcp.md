@@ -57,7 +57,7 @@ Every tool the server offers, as defined in `Sources/JSpiceAutomation/CircuitSes
 | `set_model` | makes a part behave like a real part (an op-amp as "TL072" or "LM358") |
 | `set_switch` | opens or closes a switch or push button |
 | `set_temperature` | the temperature the circuit works at, in °C (27 by default) |
-| `describe_circuit` | every part with its kind, model, parameters and nodes, any problems that keep it from being simulated, and `load_notes`: what this version left out of a file a newer JSpice saved (kept in the file) |
+| `describe_circuit` | every part with its kind, model, parameters and nodes, and the circuit's diagnostics: each problem's severity, message, hint and the parts it names; with `load_notes`, what this version left out of a file a newer JSpice saved (kept in the file) |
 | `define_block` | makes a netlist into a block, with `port` parts as its pins, used as `{"kind": "block", "block": "name", ...}` as often as needed |
 | `list_blocks` | the blocks that can be used, with their pins |
 | `save_circuit` | saves the circuit as a `.jspice` file |
