@@ -43,6 +43,12 @@ public struct BoardWorld {
     /// tracks of its tuning patterns locked, as KiCad's router has them (syncTrack, syncArc, syncVia), but those of
     /// the pattern being edited (`editing`, its uuid)
     public init(board: KiCadBoard, project: [String: Any]? = nil, editing: String? = nil) {
+        self.init(board: board, project: project, editing: editing, conditionalFlashing: true)
+    }
+
+    /// The same; `conditionalFlashing` false, the pads and vias that flash only where something connects to them
+    /// taken as flashed on all their layers (the design rules check's own world, which asks its connectivity itself)
+    init(board: KiCadBoard, project: [String: Any]?, editing: String?, conditionalFlashing: Bool) {
         netClasses = NetClasses(project: project)
         readLayers(board)
         stackupHeights = Stackup.heights(board, project: project, layerIndex: layerIndex, copperLayers: copperLayers)
@@ -50,6 +56,25 @@ public struct BoardWorld {
         readRules(board, project: project)
         lockedMembers = Self.lockedMembers(board, editing: editing)
         sync(board)
+        if conditionalFlashing { flashConditionally(board, project: project) }
+    }
+
+    /// The pads and vias of the world (their indices) flashed on a layer only where something connects to them there
+    private var conditionallyFlashed: [Int] = []
+
+    /// Where the pads and vias that flash only where something connects to them are flashed, as KiCad's router asks
+    /// their board items (PNS_KICAD_IFACE_BASE::IsFlashedOnLayer: PAD::FlashLayer, PCB_VIA::FlashLayer): by the
+    /// board's connectivity as KiCad builds it reading the board, and its zone layer connections as read
+    private mutating func flashConditionally(_ board: KiCadBoard, project: [String: Any]?) {
+        guard !conditionallyFlashed.isEmpty else { return }
+        let drc = BoardDRC(board: board, project: project)
+        let copper = drc.makeCopper()
+        var byUUID: [String: BoardDRC.CopperItem] = [:]
+        for it in copper.items where (it.kind == .pad || it.kind == .via) && byUUID[it.uuid] == nil { byUUID[it.uuid] = it }
+        for i in conditionallyFlashed {
+            guard let uuid = items[i].source, let it = byUUID[uuid] else { continue }
+            items[i].flashed = (0..<copperLayers).map { it.flashed.contains($0) }
+        }
     }
 
     /// The tracks and vias KiCad's router takes as locked for the groups they are in (their uuids): those of a
@@ -295,7 +320,6 @@ public struct BoardWorld {
         var chamfers = 0
         var layers: [String]
         var anchorRect = false
-        var removeUnconnected = false
 
         /// Its shape's centre on the board (PAD::ShapePos)
         var shapePos: IPoint { offset == .zero ? pos : pos + KiMath.rotate(offset, orientation) }
@@ -369,7 +393,6 @@ public struct BoardWorld {
             if bits != 0 && (pad.kind == .roundrect || pad.kind == .chamferedRect) { pad.kind = .chamferedRect }
         }
         pad.anchorRect = node["options"]?["anchor"]?.text(at: 0) == "rect"
-        pad.removeUnconnected = node["remove_unused_layers"].map { $0.text(at: 0) != "no" } ?? false
         return pad
     }
 
@@ -490,7 +513,6 @@ public struct BoardWorld {
             layers = LayerRange(front, front)
         }
         if node["padstack"] != nil { unsupported.insert("pad padstack") }
-        if p.removeUnconnected && p.attribute == .pth { unsupported.insert("pad without unconnected layers") }
         if node["property"]?.arguments.contains(where: { $0.text == "pad_prop_castellated" }) == true { unsupported.insert("castellated pad") }
 
         var w = WorldItem(kind: .pad)
@@ -530,6 +552,7 @@ public struct BoardWorld {
         } else {
             return
         }
+        if p.attribute == .pth && BoardDRC.UnconnectedLayerMode(pad: node) != .keepAll { conditionallyFlashed.append(items.count) }
         items.append(w)
     }
 
@@ -1103,7 +1126,8 @@ public struct BoardWorld {
             default: break
             }
         }
-        if node["remove_unused_layers"].map({ $0.text(at: 0) != "no" }) == true { unsupported.insert("via without unconnected layers") }
+        w.unconnectedLayers = BoardDRC.UnconnectedLayerMode(via: node)
+        if w.unconnectedLayers != .keepAll { conditionallyFlashed.append(items.count) }
         if node["padstack"] != nil { unsupported.insert("via padstack") }
         items.append(w)
     }

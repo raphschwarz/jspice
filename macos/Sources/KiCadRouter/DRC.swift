@@ -131,19 +131,16 @@ public struct BoardDRC {
 
     /// What of the user's design rules the port's checks do not follow as KiCad's do, by name (the checks then may
     /// not find what KiCad's find)
-    public var unsupported: Set<String> { ruleState.board.unsupported.union(unsupportedRules).union(unsupportedItems) }
+    public var unsupported: Set<String> { ruleState.board.unsupported.union(unsupportedRules) }
     private var unsupportedRules: Set<String> = []
-    /// The board's items the checks do not see as KiCad's do: a plated pad or a via kept only on the layers connected
-    /// to it (KiCad's PAD::FlashLayer and PCB_VIA::FlashLayer then ask the connectivity which; the checks here take
-    /// it on all its layers)
-    private var unsupportedItems: Set<String> = []
 
     /// The design rules check of `board`, its project's JSON in `project` (nil for KiCad's defaults) and the rules of
     /// its .kicad_dru in `designRules`
     public init(board: KiCadBoard, project: [String: Any]? = nil, designRules: String? = nil) {
         self.board = board
         settings = Settings(project: project)
-        world = BoardWorld(board: board, project: project)
+        // (its world's pads and vias taken as flashed on all their layers: makeCopper asks the connectivity where)
+        world = BoardWorld(board: board, project: project, editing: nil, conditionalFlashing: false)
         netClasses = NetClasses(project: project)
         read()
         ruleState = makeRuleState(project: project, rulesText: designRules)
@@ -195,32 +192,12 @@ public struct BoardDRC {
         var viaType = Via.ViaType.through
         /// The copper layers it spans, as router layers
         var layers = LayerRange(0, 0)
-        /// Its padstack's unconnected layer mode
+        /// Its padstack's unconnected layer mode, and what the zone filler last found of the layers it flashes only
+        /// where something connects to it (its zone layer connections as read)
         var unconnectedLayers = UnconnectedLayerMode.keepAll
+        var zoneLayerOverrides: [Int: ZoneLayerOverride] = [:]
         /// A free via (PCB_VIA::GetIsFree: one whose net the connectivity does not change)
         var free = false
-    }
-
-    /// PADSTACK::UNCONNECTED_LAYER_MODE: which copper layers a pad or via is kept on where nothing connects to it
-    enum UnconnectedLayerMode {
-        case keepAll, removeAll, removeExceptStartAndEnd
-
-        init(_ node: SExpr) {
-            if node.value("remove_unused_layers") != "yes" {
-                self = .keepAll
-            } else {
-                self = node.value("keep_end_layers") == "yes" ? .removeExceptStartAndEnd : .removeAll
-            }
-        }
-
-        /// ConditionallyFlashed: whether it is flashed on a layer only where something connects to it there
-        func conditionallyFlashed(_ layer: Int, start: Int, end: Int) -> Bool {
-            switch self {
-            case .keepAll: return false
-            case .removeAll: return true
-            case .removeExceptStartAndEnd: return layer != start && layer != end
-            }
-        }
     }
 
     struct Footprint {
@@ -242,6 +219,7 @@ public struct BoardDRC {
         var primitives: [SExpr] = []
         var pinType = ""
         var unconnectedLayers = UnconnectedLayerMode.keepAll
+        var zoneLayerOverrides: [Int: ZoneLayerOverride] = [:]
         var hasHole: Bool { pad.drill.x > 0 && pad.drill.y > 0 }
         /// PAD::HasDrilledHole: a hole of one diameter
         var hasDrilledHole: Bool { hasHole && pad.drill.x == pad.drill.y }
@@ -281,8 +259,8 @@ public struct BoardDRC {
                     default: break
                     }
                 }
-                t.unconnectedLayers = UnconnectedLayerMode(node)
-                if t.unconnectedLayers != .keepAll { unsupportedItems.insert("via without unconnected layers") }
+                t.unconnectedLayers = UnconnectedLayerMode(via: node)
+                t.zoneLayerOverrides = zoneLayerOverrides(node, layers: Array(t.layers.start...t.layers.end))
                 t.free = node.value("free") == "yes"
                 tracks.append(t)
             default:
@@ -292,13 +270,11 @@ public struct BoardDRC {
         for fp in board.root.all("footprint") {
             let placement = BoardWorld.FootprintPlacement(fp)
             let pads = fp.all("pad").map { node in
-                Pad(uuid: node.value("uuid") ?? "", number: node.text(at: 0) ?? "", net: Self.netName(node),
-                    pad: world.readPad(node, placement),
-                    primitives: (node["primitives"]?.arguments ?? []).filter { $0.head != "gr_bbox" && $0.head != "gr_vector" },
-                    pinType: node.value("pintype") ?? "", unconnectedLayers: UnconnectedLayerMode(node))
-            }
-            if pads.contains(where: { $0.pad.attribute == .pth && $0.unconnectedLayers != .keepAll }) {
-                unsupportedItems.insert("pad without unconnected layers")
+                let p = world.readPad(node, placement)
+                return Pad(uuid: node.value("uuid") ?? "", number: node.text(at: 0) ?? "", net: Self.netName(node), pad: p,
+                           primitives: (node["primitives"]?.arguments ?? []).filter { $0.head != "gr_bbox" && $0.head != "gr_vector" },
+                           pinType: node.value("pintype") ?? "", unconnectedLayers: UnconnectedLayerMode(pad: node),
+                           zoneLayerOverrides: zoneLayerOverrides(node, layers: world.copper(p.layers)))
             }
             var footprint = Footprint(reference: placement.reference, pads: pads)
             footprint.duplicatePadNumbersAreJumpers = fp.value("duplicate_pad_numbers_are_jumpers") == "yes"

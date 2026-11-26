@@ -190,11 +190,23 @@ extension BoardDRC {
     }
 
     func buildConnectivity(_ c: Copper) -> Connectivity {
+        // (searched already where makeCopper asked it where pads and vias are flashed: the same items, searched and
+        // their nets propagated as here, once)
+        if let cn = c.searched.connectivity {
+            c.searched.connectivity = nil
+            ratsnest(cn)
+            return cn
+        }
         let cn = connectivityItems(c)
         searchConnections(cn)
         propagateNets(cn)
         ratsnest(cn)
         return cn
+    }
+
+    /// The connectivity makeCopper searched, until buildConnectivity takes it
+    final class SearchedConnectivity {
+        var connectivity: Connectivity?
     }
 
     /// The connectivity's items of the board's copper (CN_CONNECTIVITY_ALGO::Build's Add of each), not yet joined
@@ -227,7 +239,8 @@ extension BoardDRC {
         }
         // the tracks, arcs and vias
         for t in c.tracks {
-            let shapes = t.layers.compactMap { t.shapes[$0] }.flatMap { $0 }
+            // (a via's box its copper's round, flashed or not: PCB_VIA::GetBoundingBox)
+            let shapes = t.via.map { v in [Shape.circle(center: v.start, radius: v.diameter / 2)] } ?? t.layers.compactMap { t.shapes[$0] }.flatMap { $0 }
             let it = CNItem(serial: cn.items.count, parent: t, canChangeNet: t.kind != .via || !(t.via?.free ?? false), bbox: box(shapes))
             switch t.kind {
             case .via:
@@ -290,10 +303,7 @@ extension BoardDRC {
     /// Whether a pad or via is always flashed on a layer (not ConditionallyFlashed)
     func alwaysFlashed(_ it: CopperItem, _ layer: Int) -> Bool {
         switch it.kind {
-        case .pad: return !(it.pad?.unconnectedLayers.conditionallyFlashed(layer, start: 0, end: world.copperLayers - 1) ?? false)
-        case .via:
-            let v = it.via!
-            return !v.unconnectedLayers.conditionallyFlashed(layer, start: v.layers.start, end: v.layers.end)
+        case .pad, .via: return !conditionallyFlashed(it, layer)
         default: return false
         }
     }
@@ -309,6 +319,10 @@ extension BoardDRC {
         var deferredNetCodes: [(CNItem, Int)] = []
         func zoneItem(_ z: CNItem, _ item: CNItem) {
             guard let layer = z.zoneLayer, item.parent.layers.contains(layer) else { return }
+            // (a pad or via flashed there only where connected, which the zone filler found no zone of its net to
+            // join it to)
+            if item.parent.kind == .pad || item.parent.kind == .via,
+               conditionallyFlashed(item.parent, layer), item.parent.zoneLayerOverrides[layer] == .forceNoZoneConnection { return }
             func connect() {
                 if item.parent.kind == .via && item.canChangeNet { deferredNetCodes.append((item, z.net)) }
                 z.connect(item)
@@ -786,7 +800,8 @@ extension BoardDRC {
                 let shapes: [Shape]
                 switch other.kind {
                 case .pad: shapes = other.shapes[layer] ?? other.outline
-                case .via: shapes = [.circle(center: other.via!.start, radius: other.via!.diameter / 2)]
+                // (its copper's round where it is flashed, else its hole's: GetEffectiveShape)
+                case .via: shapes = other.shapes[layer] ?? [.circle(center: other.via!.start, radius: other.via!.drill / 2)]
                 default: shapes = other.shapes[layer] ?? []
                 }
                 // (a pad's and a drawing's shapes a compound; a track's, an arc's and a via's one shape)

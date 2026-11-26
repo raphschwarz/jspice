@@ -598,8 +598,11 @@ public class Via: LinkedItem {
     public private(set) var diameter: Int
     public private(set) var drill: Int
     public var viaType: ViaType = .through
+    /// Which copper layers it is kept on where nothing connects to it (KiCad's m_unconnectedLayerMode, its board
+    /// via's padstack's, which a commit gives the board via made of it)
+    var unconnectedLayerMode = BoardDRC.UnconnectedLayerMode.keepAll
     /// Whether its rings are only on its end layers (KiCad's UNCONNECTED_LAYER_MODE::START_END_ONLY)
-    public var startEndOnly = false
+    public var startEndOnly: Bool { unconnectedLayerMode == .startEndOnly }
     public var isFree = false
     public private(set) var holeLayers = LayerRange()
     private var _hole: Hole?
@@ -626,7 +629,7 @@ public class Via: LinkedItem {
         holeLayers = v.holeLayers
         setHole(.circular(pos, radius: drill / 2, layers: LayerRange()))
         viaType = v.viaType
-        startEndOnly = v.startEndOnly
+        unconnectedLayerMode = v.unconnectedLayerMode
         isFree = v.isFree
     }
 

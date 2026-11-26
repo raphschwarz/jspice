@@ -15,8 +15,9 @@ import KiCadKit
 /// KiCad's zone filler of a board (ZONE_FILLER::Fill of its zones, as `pcbnew.ZONE_FILLER(board).Fill(board.Zones())`
 /// fills them): each of the board's zones' fill on each of its layers, its islands, by the board's design rules (its
 /// implicit ones and those of its .kicad_dru: the clearances, physical clearances, thermal relief gaps, spoke widths
-/// and zone connections they set). What the port does not make yet (padstacks, pads and vias kept only on layers where
-/// something joins them, a barcode or dimension on copper, a rule's condition the port cannot evaluate...) is named in
+/// and zone connections they set), with the pads and vias kept only on the layers connected to them flashed as KiCad's
+/// filler finds them (their zone layer connections, `zoneLayerConnections`). What the port does not make yet
+/// (padstacks, a barcode or dimension on copper, a rule's condition the port cannot evaluate...) is named in
 /// `unsupported`, and a fill made where it matters may not be KiCad's.
 public final class ZoneFiller {
     /// The fills: by zone (its uuid; a teardrop, which KiCad writes with none, by "zone #N", N its place among the
@@ -28,6 +29,10 @@ public final class ZoneFiller {
     public private(set) var islands: [String: [String: Set<Int>]] = [:]
     /// What the board has that the port's filler does not make, by name
     public internal(set) var unsupported: Set<String> = []
+    /// Each plated pad's and via's zone layer connections once filled (by its uuid), of those that flash only where
+    /// something connects to them: the copper layers the filler found a zone of its net reaching it on, where it is
+    /// flashed whatever connects (ZLO_FORCE_FLASHED), top to bottom, as KiCad writes them
+    public internal(set) var zoneLayerConnections: [String: [String]] = [:]
 
     let drc: BoardDRC
     var world: BoardWorld { drc.world }
@@ -305,10 +310,6 @@ public final class ZoneFiller {
         let root = drc.board.root
         if root.all("footprint").contains(where: { fp in fp.all("pad").contains { $0["padstack"] != nil } }) { unsupported.insert("pad padstack") }
         if root.all("via").contains(where: { $0["padstack"] != nil }) { unsupported.insert("via padstack") }
-        let removes = root.all("via") + root.all("footprint").flatMap { $0.all("pad") }
-        if removes.contains(where: { $0.value("remove_unused_layers") == "yes" || $0.flag("remove_unused_layers") }) {
-            unsupported.insert("pad or via without unconnected layers")
-        }
         // (items the filler knocks out of copper and of the board's edges and margin: those the port does not make)
         func knockedOut(_ node: SExpr) -> Bool {
             let names = node["layers"]?.arguments.map(\.text) ?? node.value("layer").map { [$0] } ?? []
@@ -359,6 +360,8 @@ public final class ZoneFiller {
 
     private func fill() {
         buildBoardOutline()
+        // the state of conditional via and pad flashing, determined before filling (from the zones' outlines)
+        determineConditionalFlashing()
         // the zones filled, each on each of its layers, those whose knockouts read others' fills after them: by
         // priority, the highest first (a zone waits only for a higher one of another net)
         let toFill = boardZones.filter { !$0.ruleArea && $0.numCorners > 2 }
@@ -443,6 +446,9 @@ public final class ZoneFiller {
                 z.fills[l] = poly
             }
         }
+
+        // the second pass of conditional flashing, by the fills as made
+        reevaluateConditionalFlashing()
 
         // the results
         for z in boardZones where !z.ruleArea {
@@ -622,11 +628,16 @@ public final class ZoneFiller {
     // MARK: - Writing the fills back
 
     /// The board with each of its zones' fills replaced by the filler's, as KiCad writes them (its filled polygons
-    /// layer by layer, an island marked, the zone marked filled), and with the nets KiCad's connectivity gave its
-    /// tracks, vias and drawings on copper as it read the board (BOARD::BuildConnectivity), which KiCad writes with them
+    /// layer by layer, an island marked, the zone marked filled), its pads' and vias' zone layer connections, and
+    /// the nets KiCad's connectivity gave its tracks, vias and drawings on copper as it read the board
+    /// (BOARD::BuildConnectivity), which KiCad writes with them
     public func refilledBoard(_ board: KiCadBoard) -> KiCadBoard {
         let out = board.copy()
         BoardDRC.writeNets(of: copper, into: out)
+        for node in out.root.all("via") + out.root.all("footprint").flatMap({ $0.all("pad") }) {
+            guard let uuid = node.value("uuid"), let layers = zoneLayerConnections[uuid] else { continue }
+            Self.setZoneLayerConnections(node, layers)
+        }
         for (n, node) in out.root.all("zone").enumerated() {
             let uuid = Self.zoneKey(node, n)
             guard let layers = fills[uuid] else { continue }

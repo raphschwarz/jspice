@@ -42,6 +42,9 @@ extension BoardDRC {
         var copper = true
         /// A pad's or via's PAD::FlashLayer / PCB_VIA::FlashLayer, by layer
         var flashed: Set<Int> = []
+        /// A pad's or via's zone layer overrides (ZONE_LAYER_OVERRIDE, by layer): as read, or as the zone filler
+        /// finds them
+        var zoneLayerOverrides: [Int: ZoneLayerOverride] = [:]
         var pad: Pad?
         var via: Track?
         /// BOARD_CONNECTED_ITEM::GetClearanceOverrides: a pad's own clearance or its footprint's, and its source
@@ -104,6 +107,9 @@ extension BoardDRC {
         var netTieGroups: [[String: Int]] = []
         /// The nets each of a net tie footprint's pads and copper drawings ties (BuildNetTieCache)
         var netTies: [ObjectIdentifier: Set<Int>] = [:]
+        /// The connectivity searched to tell where pads and vias are flashed (on a board with some that flash only
+        /// where connected), which buildConnectivity goes on with rather than search it again
+        let searched = SearchedConnectivity()
 
         func isNetTie(_ footprint: Int?) -> Bool { footprint.map { !netTieGroups[$0].isEmpty } ?? false }
 
@@ -183,7 +189,9 @@ extension BoardDRC {
             case .via:
                 item.via = t
                 item.layers = ordered(Array(t.layers.start...t.layers.end))
+                // (flashed on every layer, but where the connectivity decides it: applyFlashing)
                 item.flashed = Set(item.layers)
+                item.zoneLayerOverrides = t.zoneLayerOverrides
                 // (PCB_VIA::GetEffectiveHoleShape: a segment of no length, the drill wide)
                 item.hole = .segment(Seg(t.start, t.start), width: t.drill)
                 for l in item.layers { item.shapes[l] = [.circle(center: t.start, radius: t.diameter / 2)] }
@@ -223,6 +231,18 @@ extension BoardDRC {
                 }
             }
             c.footprintDrawings.append(drawings)
+        }
+        // where the pads and vias that flash only where something connects to them are flashed: the connectivity,
+        // as KiCad builds it reading the board, asked (FlashLayer)
+        if hasConditionalFlashing(c) {
+            let cn = connectivityItems(c)
+            searchConnections(cn)
+            propagateNets(cn)
+            applyFlashing(c, cn)
+            c.searched.connectivity = cn
+        }
+        for (i, fp) in fps.enumerated() {
+            let pads = c.footprintPads[i], drawings = c.footprintDrawings[i]
             // its net ties: pads of a group tie the group's nets, and its copper drawings touching them those nets
             let groups = Self.netTieGroups(fp, footprints[i].pads)
             c.netTieGroups.append(groups)
@@ -278,7 +298,10 @@ extension BoardDRC {
         }
         item.copper = world.isOnCopper(p.pad, lmsk)
         item.castellated = node["property"]?.arguments.contains { $0.text == "pad_prop_castellated" } == true
+        // (a plated pad that flashes only where connected flashed on every layer it is on until the connectivity says
+        // where: applyFlashing)
         item.flashed = Set(item.layers.filter { world.flash(p.pad, lmsk, $0) })
+        item.zoneLayerOverrides = p.zoneLayerOverrides
         if p.hasHole { item.hole = world.holeShape(p.pad) }
         if let o = world.clearanceOverride(node, fp) {
             item.clearanceOverride = (o, node["clearance"] != nil ? "pad" : "footprint \(BoardWorld.FootprintPlacement(fp).reference)")
@@ -292,13 +315,8 @@ extension BoardDRC {
             }
         }
         item.outline = flashedShapes
-        let layersWithShapes = p.hasHole ? kicadLayerOrder : item.layers
-        for l in layersWithShapes {
-            // (a plated pad where it is not flashed: its hole)
-            let shapes = p.pad.attribute == .pth && !item.flashed.contains(l) ? item.hole.map { [$0] } ?? [] : flashedShapes
-            item.shapes[l] = shapes
-            item.indexed[l] = shapes + (item.hole.map { [$0] } ?? [])
-        }
+        // (a plated pad where it is not flashed: its hole)
+        setPadShapes(item)
         var box = flashedShapes.first?.bbox ?? IBox(p.pad.pos, p.pad.pos)
         for s in flashedShapes.dropFirst() { box.merge(s.bbox) }
         if let h = item.hole { box.merge(h.bbox) }

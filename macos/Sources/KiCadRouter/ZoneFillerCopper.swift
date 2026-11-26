@@ -86,10 +86,24 @@ extension ZoneFiller {
 
     func padOnLayer(_ pad: FillPad, _ layer: Int) -> Bool { pad.layers.contains(layer) }
 
-    /// PAD::FlashLayer on a copper layer
+    /// PAD::FlashLayer on a copper layer, as the pad is flashed while the zones are filled (where it flashes only
+    /// where connected, by the overrides the filler found before filling)
     func padFlashLayer(_ pad: FillPad, _ layer: Int) -> Bool {
         guard let rl = routerLayer(layer) else { return false }
+        if pad.p.attribute == .pth && pad.pad.unconnectedLayers != .keepAll { return pad.item.flashed.contains(rl) }
         return world.flash(pad.p, world.copper(pad.p.layers), rl)
+    }
+
+    /// PAD::CanFlashLayer: FlashLayer( layer, true ), a plated pad that flashes only where connected flashed wherever
+    /// it may be
+    func padCanFlashLayer(_ pad: FillPad, _ layer: Int) -> Bool {
+        guard let rl = routerLayer(layer) else { return false }
+        return drc.padFlashLayer(pad.item, rl, nil, onlyCheckIfPermitted: true)
+    }
+
+    /// A pad's or via's zone layer override on a copper layer (KiCad's layer id)
+    func zoneLayerOverride(_ item: BoardDRC.CopperItem, _ layer: Int) -> BoardDRC.ZoneLayerOverride {
+        routerLayer(layer).flatMap { item.zoneLayerOverrides[$0] } ?? .none
     }
 
     /// The pad's polygon on a layer grown by a clearance, the error outside (PAD::TransformShapeToPolygon)
@@ -474,14 +488,14 @@ extension ZoneFiller {
             if !pad.item.bbox.inflated(worstClearance).intersects(z.bbox) { continue }
             if let key = padKey(pad), !processed.insert(key).inserted { continue }
             var noConnection = pad.item.net != z.net
-            if !z.isTeardrop && z.net == 0 { noConnection = true }
+            if !z.isTeardrop && (z.net == 0 || zoneLayerOverride(pad.item, layer) == .forceNoZoneConnection) { noConnection = true }
             if noConnection {
                 noConnectionPads.append(pad)
                 continue
             }
             if z.hatched {
                 var connection = zoneConnection(pad.item, z, layer)
-                if connection == .thermal && !padFlashLayer(pad, layer) { connection = .none }
+                if connection == .thermal && !padCanFlashLayer(pad, layer) { connection = .none }
                 switch connection {
                 case .thermal:
                     if fillCollides(pad.item.outline) {
@@ -496,7 +510,7 @@ extension ZoneFiller {
                 continue
             }
             var connection = z.isTeardrop ? .full : zoneConnection(pad.item, z, layer)
-            if connection == .thermal && !padFlashLayer(pad, layer) { connection = .none }
+            if connection == .thermal && !padCanFlashLayer(pad, layer) { connection = .none }
             switch connection {
             case .thermal:
                 if fillCollides(pad.item.outline) {
@@ -523,10 +537,8 @@ extension ZoneFiller {
                 guard let v = t.via, let rl = routerLayer(layer), t.layers.contains(rl) else { continue }
                 if !viaBox(v).inflated(worstClearance).intersects(z.bbox) { continue }
                 if !processedVias.insert([v.start.x, v.start.y, max(v.drill, v.diameter), t.net]).inserted { continue }
-                var noConnection = t.net != z.net
-                if v.unconnectedLayers == .removeExceptStartAndEnd, let rl = routerLayer(layer), rl != v.layers.start && rl != v.layers.end {
-                    noConnection = true
-                }
+                var noConnection = t.net != z.net || (v.unconnectedLayers == .startEndOnly && rl != v.layers.start && rl != v.layers.end)
+                if zoneLayerOverride(t, layer) == .forceNoZoneConnection { noConnection = true }
                 if noConnection { continue }
                 switch zoneConnection(t, z, layer) {
                 case .thermal:
@@ -607,9 +619,11 @@ extension ZoneFiller {
             var sameNet = t.net == z.net
             if !z.isTeardrop && z.net == 0 { sameNet = false }
             var gap = evalRules(.physicalClearance, z, t, layer)
+            if t.kind == .via && zoneLayerOverride(t, layer) == .forceNoZoneConnection { sameNet = false }
             if !sameNet { gap = max(gap, evalRules(.clearance, z, t, layer)) }
             if let v = t.via {
-                if gap > 0 {
+                // (its copper where it is flashed: PCB_VIA::FlashLayer)
+                if t.flashed.contains(rl) && gap > 0 {
                     holes.addOutline(PadPolygon.circle(center: v.start, radius: v.diameter / 2 + gap + extraMargin, maxError: maxError,
                                                        errorLocation: .outside))
                 }
@@ -1060,7 +1074,9 @@ extension ZoneFiller {
             }
         }
         var holes = PolySet()
-        if drc.board.root["setup"]?["zone_defaults"] != nil { unsupported.insert("the board's default hatch offsets") }
+        // (the board's default zone settings' layer properties, which parseZoneDefaults reads; an empty
+        // (zone_defaults), as pcbnew saves a board, has none)
+        if drc.board.root["setup"]?["zone_defaults"]?.arguments.isEmpty == false { unsupported.insert("the board's default hatch offsets") }
         let offset = z.hatchOffsets[layer] ?? .zero
         let xOffset = bbox.minX - bbox.minX % gridsize - gridsize
         let yOffset = bbox.minY - bbox.minY % gridsize - gridsize

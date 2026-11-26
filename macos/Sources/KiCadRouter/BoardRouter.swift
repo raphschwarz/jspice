@@ -809,8 +809,20 @@ public final class BoardRouter {
         let uuid = KiCadBoard.newUUID()
         let node = SExpr("via", SExpr("at", Self.mm(v.pos.x), Self.mm(v.pos.y)), SExpr("size", Self.mm(v.diameter)), SExpr("drill", Self.mm(v.drill)),
                          SExpr("layers", layerName(v.layers.start), layerName(v.layers.end)), netList(v.net), SExpr("uuid", uuid))
-        // (KiCad writes a free via's flag after its layers, and a via's type, but a through via's, after "via")
-        if free { node.items.insert(SExpr("free", Keyword("yes")), at: 5) }
+        // (KiCad writes, after its layers, its unconnected layer mode, which createBoardItem gives the board via from the
+        // router's, then a free via's flag, then the zone layer connections of a via that does not keep all its layers:
+        // none of a new one's forced flashed)
+        var after: [SExpr] = []
+        switch v.unconnectedLayerMode {
+        case .keepAll: break
+        case .removeAll: after += [SExpr("remove_unused_layers", Keyword("yes")), SExpr("keep_end_layers", Keyword("no"))]
+        case .removeExceptStartAndEnd: after += [SExpr("remove_unused_layers", Keyword("yes")), SExpr("keep_end_layers", Keyword("yes"))]
+        case .startEndOnly: after.append(SExpr("start_end_only", Keyword("yes")))
+        }
+        if free { after.append(SExpr("free", Keyword("yes"))) }
+        if v.unconnectedLayerMode != .keepAll { after.append(SExpr(list: [SExpr(symbol: "zone_layer_connections")])) }
+        node.items.insert(contentsOf: after, at: 5)
+        // (and a via's type, but a through via's, after "via")
         switch v.viaType {
         case .blind: node.items.insert(SExpr(symbol: "blind"), at: 1)
         case .buried: node.items.insert(SExpr(symbol: "buried"), at: 1)

@@ -424,13 +424,13 @@ extension BoardDRC {
             r.hasDrilledHole = true
             r.holeShape = c.hole
             r.bbox = RuleItem.viaBox(v.start, diameter: v.diameter)
-            let flashed = c.flashed
             let toRouter = { (l: Int) in self.routerLayer(l) }
             r.effectiveShape = { l in
-                // (PCB_VIA::GetEffectiveShape: its copper where it is flashed, else its hole)
+                // (PCB_VIA::GetEffectiveShape: its copper where it is flashed, else its hole; where it is flashed as
+                // the item has it when asked, the zone filler's overrides while it fills)
                 if l == KiLayer.undefined { return [.circle(center: v.start, radius: v.diameter / 2)] }
                 if let rl = toRouter(l) {
-                    return [.circle(center: v.start, radius: (flashed.contains(rl) ? v.diameter : v.drill) / 2)]
+                    return [.circle(center: v.start, radius: (c.flashed.contains(rl) ? v.diameter : v.drill) / 2)]
                 }
                 return KiLayer.isCopper(l) ? [.circle(center: v.start, radius: v.drill / 2)] : [.circle(center: v.start, radius: v.diameter / 2)]
             }
@@ -463,12 +463,19 @@ extension BoardDRC {
             if !c.hasHole { box.merge(p.pad.pos) }
             r.bbox = box
             r.compoundShape = true
-            let toRouter = { (l: Int) in self.routerLayer(l) }
+            let toRouter = { (l: Int) in self.routerLayer(l) }, worldLayers = world.copperLayers
             r.effectiveShape = { l in
                 if l == KiLayer.edgeCuts { return c.hole.map { [$0] } ?? [] }
                 if let rl = toRouter(l) { return c.anyLayerShapes(rl) }
-                // (off copper: a plated hole's pad where it is not flashed, its hole)
-                if p.pad.attribute == .pth && !r.layerSet.contains(l) { return c.hole.map { [$0] } ?? [] }
+                // (off copper: a plated hole's pad where it is not flashed, its hole: PAD::FlashLayer, not on a layer
+                // it is not on, flashed on either mask, on the other layers of a side's board technology (silkscreen,
+                // paste, adhesive) where it is on that side's copper)
+                if p.pad.attribute == .pth {
+                    if !r.layerSet.contains(l) { return c.hole.map { [$0] } ?? [] }
+                    let side = [KiLayer.fSilkS, KiLayer.fAdhes, KiLayer.fPaste].contains(l) ? 0
+                        : [KiLayer.bSilkS, KiLayer.bAdhes, KiLayer.bPaste].contains(l) ? worldLayers - 1 : nil
+                    if let side, !c.flashed.contains(side) { return c.hole.map { [$0] } ?? [] }
+                }
                 return c.outline
             }
             let world = self.world

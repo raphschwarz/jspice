@@ -51,6 +51,8 @@ public struct WorldItem: Sendable {
     public var locked = false
     /// A via's PCB_VIA::GetIsFree
     public var free = false
+    /// A via's padstack's unconnected layer mode (PADSTACK::UNCONNECTED_LAYER_MODE)
+    var unconnectedLayers = BoardDRC.UnconnectedLayerMode.keepAll
     /// A via's PCB_VIA::GetViaType
     public var viaType = Via.ViaType.through
     // a track's, an arc's, a via's
@@ -504,6 +506,7 @@ public final class WorldInterface: RouterInterface {
                 via.setDiameter(w.diameter)
                 if w.locked { via.mark(.locked) }
                 via.isFree = w.free
+                via.unconnectedLayerMode = w.unconnectedLayers
                 via.setHole(.circular(w.a, radius: w.drill / 2, layers: w.layers))
                 via.setHoleLayers(w.layers)
                 item = via
@@ -548,9 +551,13 @@ public final class WorldInterface: RouterInterface {
     public func worldItem(_ item: Item) -> WorldItem? { resolver.info[ObjectIdentifier(item)] }
     public func commit() {}
 
-    /// Which layers a pad or via of the board is flashed on, as KiCad's PAD::FlashLayer and PCB_VIA::FlashLayer say
+    /// Which layers a pad or via of the board is flashed on, as KiCad's PAD::FlashLayer and PCB_VIA::FlashLayer say:
+    /// those of the board item behind it (PNS_KICAD_IFACE_BASE::IsFlashedOnLayer asks its Parent(), which a copy the
+    /// router makes of it keeps: a via the shove or a drag moved is flashed as the board's via it was made of is)
     private func flashed(_ item: Item) -> [Bool]? {
-        guard item.kind != .hole, let f = resolver.infoOf(item)?.flashed, !f.isEmpty else { return nil }
+        guard item.kind != .hole else { return nil }
+        let f = (item.boardItem as? WorldItemRef)?.item.flashed ?? resolver.infoOf(item)?.flashed
+        guard let f, !f.isEmpty else { return nil }
         return f
     }
 
