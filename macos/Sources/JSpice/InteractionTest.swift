@@ -210,6 +210,8 @@ enum InteractionTest {
         await checkMenus()
         // notices: what stays, what fades, and their reports
         await checkNotices(editor: editor)
+        // the inspector: several parts edited at once, and stepping through standard values
+        await checkInspector(editor: editor, document: document)
 
         return finish(window)
     }

@@ -17,6 +17,8 @@ enum ScreenshotRunner {
         var closeSwitches = false
         /// Sample notices over the canvas: a success, a warning with a report and a failure
         var notices = false
+        /// Every part of these kinds selected (the inspector edits them together)
+        var selectKinds: [ElementKind] = []
         /// Redraw the example with Tidy Up first
         var tidy = false
         /// A part being placed (shows the tool HUD)
@@ -66,6 +68,8 @@ enum ScreenshotRunner {
         Shot(name: "34-ringmod-dark", example: "ringmod", dark: true, seconds: 0.3, select: .multiplier),
         Shot(name: "35-quickadd-light", example: "overdrive", dark: false, seconds: 0.5, quickAdd: true),
         Shot(name: "35b-notices-light", example: "rc", dark: false, seconds: 1, notices: true),
+        Shot(name: "35c-multi-edit-light", example: "blinker", dark: false, seconds: 1, selectKinds: [.resistor]),
+        Shot(name: "35d-multi-edit-mixed-dark", example: "blinker", dark: true, seconds: 1, selectKinds: [.resistor, .capacitor]),
         Shot(name: "36-tool-dark", example: "opamp", dark: true, seconds: 0.5, tool: .resistor),
         Shot(name: "37-chipvoice-dark", example: "chipvoice", dark: true, seconds: 1, select: .vcf),
         Shot(name: "38-random-light", example: "random", dark: false, seconds: 1.5, select: .sampleHold),
@@ -228,6 +232,9 @@ enum ScreenshotRunner {
                 editor.selection = [element.id]
             }
             if shot.notices { EditorState.postSampleNotices(on: editor) }
+            if !shot.selectKinds.isEmpty {
+                editor.selection = Set(circuit.elements.filter { shot.selectKinds.contains($0.kind) }.map(\.id))
+            }
             editor.tool = shot.tool
             editor.board = shot.board
             if let tab = shot.dock { editor.showDock(tab) }
