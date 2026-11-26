@@ -12,7 +12,21 @@ struct WelcomeView: View {
         example.title.replacingOccurrences(of: " (sound)", with: "")
     }
 
+    /// The card in the middle of the canvas, or, in a window too short for it, scrolling
     var body: some View {
+        ViewThatFits(in: .vertical) {
+            card
+                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ScrollView {
+                card
+                    .padding(16)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private var card: some View {
         VStack(spacing: 12) {
             Image(systemName: "bolt.horizontal.circle.fill")
                 .font(.system(size: 36))
@@ -33,7 +47,8 @@ struct WelcomeView: View {
                         Label(group.title, systemImage: group.symbol)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
-                        HStack(spacing: 8) {
+                        // (as many to a row as the canvas has room for)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], alignment: .leading, spacing: 8) {
                             ForEach(group.examples) { example in
                                 exampleButton(example)
                             }
@@ -53,7 +68,6 @@ struct WelcomeView: View {
         .frame(maxWidth: 600)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
         .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func exampleButton(_ example: Example) -> some View {
@@ -76,7 +90,7 @@ struct WelcomeView: View {
                         .help("Makes sound: turn on sound in the toolbar")
                 }
             }
-            .frame(width: 156, height: 40, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
         }
         .buttonStyle(.bordered)
         .help(example.summary)

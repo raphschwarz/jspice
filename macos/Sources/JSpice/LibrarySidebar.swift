@@ -176,7 +176,7 @@ struct LibrarySidebar: View {
                             .foregroundStyle(.tint)
                             .frame(width: 34, height: 22)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Example Circuits")
+                            Text("Examples")
                             Text("Pedals, synths, amps, Arduino…")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
