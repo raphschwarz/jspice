@@ -72,14 +72,20 @@ extension EditorState {
                 guard let self, !Task.isCancelled else { return }
                 self.captureStatus = nil
                 self.captureTask = nil
-                let alert = NSAlert()
-                alert.messageText = "The schematic couldn't be read"
-                alert.informativeText = "\(error)"
+                var advice = ["Check that the drawing is legible: a sharp, straight scan or the PDF itself reads best. Then choose File ▸ Import ▸ Schematic from Image or PDF… again."]
+                var detail = "\(url.lastPathComponent): \(error)"
                 if let failure = error as? SchematicCapture.CaptureError, case .api(let message) = failure, message.contains("401") {
-                    alert.informativeText += "\n\nThe API key was not accepted: it has been forgotten, so you can enter another."
+                    let forgotten = "The API key was not accepted: it has been forgotten, so you can enter another."
+                    detail += " " + forgotten
+                    advice = [forgotten, "Paste a key from console.anthropic.com when JSpice asks for one."]
                     APIKeyStore.remove()
                 }
-                alert.runModal()
+                self.notify(.failure, "The schematic couldn't be read", detail: detail,
+                            report: NoticeReport([
+                                NoticeReport.Section(heading: "What went wrong", lines: ["\(error)"]),
+                                NoticeReport.Section(heading: "What to try", lines: advice),
+                            ]),
+                            actions: [Notice.Action("Try Again") { [weak self] in self?.importSchematic() }])
             }
         }
     }
@@ -97,17 +103,20 @@ extension EditorState {
         selection = []
         requestFit()
         let parts = capture.circuit.elements.filter { ![.wire, .ground, .netLabel].contains($0.kind) }.count
-        let alert = NSAlert()
-        alert.messageText = "Read \(parts) parts from \(url.lastPathComponent)"
-        var text = "Check the circuit against the drawing before trusting a simulation of it."
+        let check = "Check the circuit against the drawing before trusting a simulation of it."
+        var sections = [NoticeReport.Section(heading: nil, lines: [check])]
         if !capture.uncertain.isEmpty {
-            text += "\n\nRead with doubt:\n" + capture.uncertain.prefix(10).map { "• " + $0 }.joined(separator: "\n")
+            sections.append(NoticeReport.Section(heading: "Read with doubt:", lines: capture.uncertain.map { "• " + $0 }))
         }
         if !capture.notes.isEmpty {
-            text += "\n\nNotes:\n" + capture.notes.prefix(10).map { "• " + $0 }.joined(separator: "\n")
+            sections.append(NoticeReport.Section(heading: "Notes:", lines: capture.notes.map { "• " + $0 }))
         }
-        alert.informativeText = text
-        alert.runModal()
+        let doubts = capture.uncertain.count
+        // values read with doubt, or notes on the drawing, keep the notice until it is dismissed
+        notify(doubts > 0 || !capture.notes.isEmpty ? .warning : .success, "Read \(parts) parts from \(url.lastPathComponent)",
+               detail: doubts > 0 ? "\(doubts == 1 ? "One value was" : "\(doubts) values were") read with doubt. " + check : check,
+               report: sections.count > 1 ? NoticeReport(sections) : nil,
+               actions: [undoAction("Import Schematic", leaving: circuit)])
     }
 }
 

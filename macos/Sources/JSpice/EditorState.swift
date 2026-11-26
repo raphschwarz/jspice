@@ -83,6 +83,14 @@ final class EditorState: ObservableObject {
     var captureTask: Task<Void, Never>?
     /// Incremented to ask the canvas to fit the circuit in view
     @Published private(set) var fitRequest = 1
+    /// What operations told the user, shown as toasts over the canvas, oldest first (see Notices.swift)
+    @Published var notices: [Notice] = []
+    /// The notice whose report is open in a sheet
+    @Published var noticeReport: Notice?
+    /// Each fading notice's timer
+    var noticeTimers: [UUID: Task<Void, Never>] = [:]
+    /// The pointer is over the toasts, so none fades
+    var noticesHeld = false
 
     var viewSize: CGSize = .zero
     /// True once the user has zoomed or scrolled; until then the canvas keeps the circuit fitted as it resizes
@@ -274,12 +282,25 @@ final class EditorState: ObservableObject {
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        if let problem = saveCircuitAsBlock(named: field.stringValue) {
-            let failure = NSAlert()
-            failure.messageText = "The block wasn't saved"
-            failure.informativeText = problem
-            failure.runModal()
+        // a sheet on the window when there is one
+        if let window = canvas?.window {
+            alert.beginSheetModal(for: window) { [weak self] response in
+                MainActor.assumeIsolated {
+                    self?.finishSaveAsBlock(response, name: field.stringValue)
+                }
+            }
+        } else {
+            finishSaveAsBlock(alert.runModal(), name: field.stringValue)
+        }
+    }
+
+    private func finishSaveAsBlock(_ response: NSApplication.ModalResponse, name: String) {
+        guard response == .alertFirstButtonReturn else { return }
+        if let problem = saveCircuitAsBlock(named: name) {
+            notify(.failure, "The block wasn't saved", detail: problem)
+        } else {
+            notify(.success, "Saved “\(name.trimmingCharacters(in: .whitespaces))” as a block",
+                   detail: "It is in the library's Blocks, to be used as one part in other circuits.")
         }
     }
 
@@ -349,10 +370,14 @@ final class EditorState: ObservableObject {
             let clip = try Self.readSound(url)
             edit("Choose Sound") { $0.update(id) { $0.audio = clip } }
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "That sound can't be read"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+            notify(.failure, "That sound can't be read",
+                   detail: "\(url.lastPathComponent): \(error.localizedDescription)",
+                   report: NoticeReport([
+                       NoticeReport.Section(heading: "What went wrong", lines: [error.localizedDescription]),
+                       NoticeReport.Section(heading: "What to try", lines: [
+                           "Choose a sound file macOS can play, such as WAV, AIFF, MP3 or AAC (M4A).",
+                       ]),
+                   ]))
         }
     }
 
@@ -393,17 +418,27 @@ final class EditorState: ObservableObject {
             edit("Import SPICE Netlist") { $0 = imported }
             selection = []
             requestFit()
+            let undo = undoAction("Import SPICE Netlist", leaving: circuit)
             if !warnings.isEmpty {
-                let alert = NSAlert()
-                alert.messageText = "Some of the netlist was left out"
-                alert.informativeText = warnings.prefix(12).joined(separator: "\n") + (warnings.count > 12 ? "\n…" : "")
-                alert.runModal()
+                notify(.warning, "Some of the netlist was left out",
+                       detail: "\(url.lastPathComponent) was drawn without \(warnings.count == 1 ? "one thing" : "\(warnings.count) things") in it.",
+                       report: NoticeReport([NoticeReport.Section(heading: "Left out", lines: warnings)]),
+                       actions: [undo])
+            } else {
+                let parts = imported.elements.filter { ![.wire, .ground, .netLabel].contains($0.kind) }.count
+                notify(.success, "Imported \(url.lastPathComponent)",
+                       detail: "\(parts) \(parts == 1 ? "part" : "parts"), drawn as a schematic.", actions: [undo])
             }
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "That netlist can't be imported"
-            alert.informativeText = "\(error)"
-            alert.runModal()
+            notify(.failure, "That netlist can't be imported", detail: "\(url.lastPathComponent): \(error)",
+                   report: NoticeReport([
+                       NoticeReport.Section(heading: "What went wrong", lines: ["\(error)"]),
+                       NoticeReport.Section(heading: "What to try", lines: [
+                           "Check that the file is a SPICE netlist, one part or command per line, saved as plain text (UTF-8).",
+                           "Files it includes (.include, .lib) by a relative path are looked for in its folder: keep them beside it.",
+                           "A maker's model file on its own goes into the library with File ▸ Import ▸ Maker's Model….",
+                       ]),
+                   ]))
         }
     }
 
@@ -438,21 +473,28 @@ final class EditorState: ObservableObject {
                                                            include: SpiceNetlist.fileIncluder(deck: url))
             try BlockLibrary.save(block)
             reloadBlockLibrary()
-            var paragraphs = ["\(block.name) is in the library's Blocks, its pins \((block.source?.pins ?? []).joined(separator: ", "))."]
-            if let header = block.source?.header, !header.isEmpty { paragraphs.append(header.prefix(6).joined(separator: "\n")) }
-            if let pins = block.source?.pins, pins.count == 5, let figures = try? MakerModels.measureOpAmp(block, pins: pins) {
-                paragraphs.append("Measured as an op-amp at ±15 V, to set beside its datasheet:\n" + figures.lines.joined(separator: "\n"))
+            let summary = "\(block.name) is in the library's Blocks, its pins \((block.source?.pins ?? []).joined(separator: ", "))."
+            var sections = [NoticeReport.Section(heading: nil, lines: [summary])]
+            if let header = block.source?.header, !header.isEmpty {
+                sections.append(NoticeReport.Section(heading: "From the file's header", lines: Array(header.prefix(6)), tabular: true))
             }
-            if !warnings.isEmpty { paragraphs.append("Left out:\n" + warnings.prefix(8).joined(separator: "\n")) }
-            let alert = NSAlert()
-            alert.messageText = "Imported \(block.name)"
-            alert.informativeText = paragraphs.joined(separator: "\n\n")
-            alert.runModal()
+            if let pins = block.source?.pins, pins.count == 5, let figures = try? MakerModels.measureOpAmp(block, pins: pins) {
+                sections.append(NoticeReport.Section(heading: "Measured as an op-amp at ±15 V, to set beside its datasheet:",
+                                                     lines: figures.lines, tabular: true))
+            }
+            if !warnings.isEmpty { sections.append(NoticeReport.Section(heading: "Left out:", lines: warnings)) }
+            notify(warnings.isEmpty ? .success : .warning, "Imported \(block.name)",
+                   detail: summary + (warnings.isEmpty ? "" : " Some of the model was left out."),
+                   report: NoticeReport(sections))
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "That model can't be imported"
-            alert.informativeText = "\(error)"
-            alert.runModal()
+            notify(.failure, "That model can't be imported", detail: "\(url.lastPathComponent): \(error)",
+                   report: NoticeReport([
+                       NoticeReport.Section(heading: "What went wrong", lines: ["\(error)"]),
+                       NoticeReport.Section(heading: "What to try", lines: [
+                           "Choose the maker's SPICE model file itself (.lib, .mod, .cir, saved as text): it should define a subcircuit with .SUBCKT … .ENDS.",
+                           "Files it includes by a relative path are looked for in its folder: keep them beside it.",
+                       ]),
+                   ]))
         }
     }
 
@@ -460,31 +502,48 @@ final class EditorState: ObservableObject {
     /// its figures beside its datasheet's
     func downloadMakerModel(_ model: MakerModelCatalog.Model) {
         Task.detached(priority: .userInitiated) {
-            var paragraphs: [String] = []
+            var sections: [NoticeReport.Section] = []
+            var summary = ""
+            var leftOut = false
             var failure: String?
             do {
                 let (block, warnings) = try MakerModelCatalog.download(model)
                 try BlockLibrary.save(block)
-                paragraphs.append("\(model.part) from \(model.maker), \(model.revision), is in the library's Blocks, its pins \((block.source?.pins ?? []).joined(separator: ", ")).")
+                summary = "\(model.part) from \(model.maker), \(model.revision), is in the library's Blocks, its pins \((block.source?.pins ?? []).joined(separator: ", "))."
+                sections.append(NoticeReport.Section(heading: nil, lines: [summary]))
                 if let pins = block.source?.pins,
                    let figures = try? MakerModels.measureOpAmp(block, pins: pins, supply: model.supply, load: model.load,
                                                               slewGain: model.slewGain) {
-                    paragraphs.append("Measured at ±\(Int(model.supply)) V into \(SI.format(model.load, unit: "Ω")), beside \(model.datasheet):\n"
-                                      + MakerModelCatalog.comparison(model, figures).joined(separator: "\n"))
+                    sections.append(NoticeReport.Section(
+                        heading: "Measured at ±\(Int(model.supply)) V into \(SI.format(model.load, unit: "Ω")), beside \(model.datasheet):",
+                        lines: MakerModelCatalog.comparison(model, figures), tabular: true))
                 }
-                if !model.notes.isEmpty { paragraphs.append(model.notes.joined(separator: "\n")) }
-                if !warnings.isEmpty { paragraphs.append("Left out:\n" + warnings.prefix(8).joined(separator: "\n")) }
+                if !model.notes.isEmpty { sections.append(NoticeReport.Section(heading: nil, lines: model.notes)) }
+                if !warnings.isEmpty {
+                    sections.append(NoticeReport.Section(heading: "Left out:", lines: warnings))
+                    leftOut = true
+                }
             } catch {
                 failure = "\(error)"
             }
-            let title = failure == nil ? "Downloaded \(model.part)" : "\(model.part) can't be downloaded"
-            let text = failure ?? paragraphs.joined(separator: "\n\n")
+            // (the main actor gets copies: a closure run elsewhere can't read these variables)
+            let report = NoticeReport(sections)
+            let message = failure, done = summary, omitted = leftOut
             await MainActor.run {
                 self.reloadBlockLibrary()
-                let alert = NSAlert()
-                alert.messageText = title
-                alert.informativeText = text
-                alert.runModal()
+                if let failure = message {
+                    self.notify(.failure, "\(model.part) can't be downloaded", detail: failure,
+                                report: NoticeReport([
+                                    NoticeReport.Section(heading: "What went wrong", lines: [failure]),
+                                    NoticeReport.Section(heading: "What to try", lines: [
+                                        "The model is downloaded from \(model.maker)'s website: check the Internet connection and try again. Once downloaded it is kept, so this is needed only once.",
+                                    ]),
+                                ]),
+                                actions: [Notice.Action("Try Again") { [weak self] in self?.downloadMakerModel(model) }])
+                } else {
+                    self.notify(omitted ? .warning : .success, "Downloaded \(model.part)",
+                                detail: done + (omitted ? " Some of the model was left out." : ""), report: report)
+                }
             }
         }
     }
@@ -498,11 +557,10 @@ final class EditorState: ObservableObject {
         guard save.runModal() == .OK, let url = save.url else { return }
         do {
             try SpiceNetlist.export(circuit, title: title).write(to: url, atomically: true, encoding: .utf8)
+            notify(.success, "Exported \(url.lastPathComponent)", detail: "A SPICE netlist of the circuit.",
+                   actions: [.showInFinder(url)])
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "The netlist couldn't be written"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+            notify(.failure, "The netlist couldn't be written", detail: error.localizedDescription)
         }
     }
 
@@ -515,11 +573,10 @@ final class EditorState: ObservableObject {
         guard save.runModal() == .OK, let url = save.url else { return }
         do {
             try make(title).write(to: url, atomically: true, encoding: .utf8)
+            notify(.success, "Exported \(url.lastPathComponent)", detail: "The \(board) sheet, at true size to print.",
+                   actions: [.showInFinder(url)])
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "The sheet couldn't be written"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+            notify(.failure, "The sheet couldn't be written", detail: error.localizedDescription)
         }
     }
 
@@ -534,18 +591,19 @@ final class EditorState: ObservableObject {
         do {
             try export.text.write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "The netlist couldn't be written"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+            notify(.failure, "The netlist couldn't be written", detail: error.localizedDescription)
             return
         }
-        guard !export.unassigned.isEmpty || !export.notes.isEmpty else { return }
-        let alert = NSAlert()
-        alert.messageText = export.unassigned.isEmpty ? "Before laying out the board" : "Some parts need footprints"
-        alert.informativeText = ((export.unassigned.isEmpty ? [] : ["JSpice doesn't know a footprint for \(export.unassigned.joined(separator: ", ")). Assign them in KiCad's PCB editor after importing the netlist."])
-            + export.notes).joined(separator: "\n\n")
-        alert.runModal()
+        guard !export.unassigned.isEmpty || !export.notes.isEmpty else {
+            notify(.success, "Exported \(url.lastPathComponent)", detail: "A KiCad netlist, for a printed circuit board.",
+                   actions: [.showInFinder(url)])
+            return
+        }
+        let footprints = export.unassigned.isEmpty ? [] : ["JSpice doesn't know a footprint for \(export.unassigned.joined(separator: ", ")). Assign them in KiCad's PCB editor after importing the netlist."]
+        notify(.warning, export.unassigned.isEmpty ? "Before laying out the board" : "Some parts need footprints",
+               detail: "\(url.lastPathComponent) was written. " + (footprints.first ?? "Read the notes before laying out the board."),
+               report: NoticeReport((footprints + export.notes).map { NoticeReport.Section(heading: nil, lines: [$0]) }),
+               actions: [.showInFinder(url)])
     }
 
     /// Saves the circuit where the JSpice Audio Unit finds it, as a preset of its effect or instrument
@@ -553,10 +611,8 @@ final class EditorState: ObservableObject {
     func exportAudioUnit() {
         let effect = PluginLibrary.effect(circuit) != nil, instrument = PluginLibrary.instrument(circuit) != nil
         guard effect || instrument else {
-            let alert = NSAlert()
-            alert.messageText = "This circuit can't play in a music app yet"
-            alert.informativeText = "An Audio Unit needs a speaker to listen to, and an Audio In part (or one sine source) to take the track's sound as an effect, or keyboard sources to play notes as an instrument."
-            alert.runModal()
+            notify(.warning, "This circuit can't play in a music app yet",
+                   detail: "An Audio Unit needs a speaker to listen to, and an Audio In part (or one sine source) to take the track's sound as an effect, or keyboard sources to play notes as an instrument.")
             return
         }
         let ask = NSAlert()
@@ -582,25 +638,21 @@ final class EditorState: ObservableObject {
                 register.arguments = ["-a", plugIn.path]
                 try? register.run()
             }
-            let done = NSAlert()
-            done.messageText = "Exported “\(url.deletingPathExtension().lastPathComponent)”"
-            done.informativeText = "In your music app (Logic, GarageBand, Ableton Live, …), add the Audio Unit “JSpice: Circuit \(instrument ? "Instrument" : "Effect")” and choose this circuit from its presets or its window. Circuits are kept in ~/\(PluginLibrary.folder)."
-            done.runModal()
+            let plugin = "JSpice: Circuit \(instrument ? "Instrument" : "Effect")"
+            notify(.success, "Exported “\(url.deletingPathExtension().lastPathComponent)”",
+                   detail: "In your music app, add the Audio Unit “\(plugin)” and choose this circuit from its presets.",
+                   report: NoticeReport(text: "In your music app (Logic, GarageBand, Ableton Live, …), add the Audio Unit “\(plugin)” and choose this circuit from its presets or its window. Circuits are kept in ~/\(PluginLibrary.folder)."),
+                   actions: [.showInFinder(url)])
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "The circuit couldn't be exported"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+            notify(.failure, "The circuit couldn't be exported", detail: error.localizedDescription)
         }
     }
 
     /// Renders the circuit's speaker to a WAV file, offline, for as long as asked (File ▸ Export ▸ Sound…)
     func exportSound() {
         guard let speaker = circuit.elements.firstIndex(where: { $0.kind == .speaker }) else {
-            let alert = NSAlert()
-            alert.messageText = "There is no speaker to record"
-            alert.informativeText = "Put a speaker across the output you want to hear, then export again."
-            alert.runModal()
+            notify(.warning, "There is no speaker to record",
+                   detail: "Put a speaker across the output you want to hear, then export again.")
             return
         }
         let ask = NSAlert()
@@ -621,17 +673,24 @@ final class EditorState: ObservableObject {
         let knobs = knobMotionsFromHere
         Task.detached(priority: .userInitiated) {
             let result = AudioRender.render(circuit, output: speaker, duration: seconds, knobs: knobs)
-            let written = (try? WAV.encode(result.samples, sampleRate: result.sampleRate).write(to: url)) != nil
+            let problem: String?
+            do {
+                try WAV.encode(result.samples, sampleRate: result.sampleRate).write(to: url)
+                problem = nil
+            } catch {
+                problem = error.localizedDescription
+            }
+            let length = Double(result.samples.count) / result.sampleRate, clipped = result.clipped
             await MainActor.run {
-                let done = NSAlert()
-                if written {
-                    done.messageText = "Sound exported"
-                    let clipped = result.clipped > 0 ? String(format: " %.1f %% of it went over the speaker's full scale and was softly limited.", result.clipped * 100) : ""
-                    done.informativeText = String(format: "%.1f seconds written to %@.", Double(result.samples.count) / result.sampleRate, url.lastPathComponent) + clipped
+                if let problem {
+                    self.notify(.failure, "The sound couldn't be written",
+                                detail: "\(url.lastPathComponent): \(problem) Check that the folder can be written to and the disk has room, then export again.")
                 } else {
-                    done.messageText = "The sound couldn't be written"
+                    let limited = clipped > 0 ? String(format: " %.1f %% of it went over the speaker's full scale and was softly limited.", clipped * 100) : ""
+                    self.notify(clipped > 0 ? .warning : .success, "Sound exported",
+                                detail: String(format: "%.1f seconds written to %@.", length, url.lastPathComponent) + limited,
+                                actions: [.showInFinder(url)])
                 }
-                done.runModal()
             }
         }
     }
@@ -731,10 +790,14 @@ final class EditorState: ObservableObject {
                         }
                     }
                 case let .failure(error):
-                    let alert = NSAlert()
-                    alert.messageText = "\(model.part)'s model can't be downloaded from \(model.maker)"
-                    alert.informativeText = "\(error)"
-                    alert.runModal()
+                    self.notify(.failure, "\(model.part)'s model can't be downloaded from \(model.maker)", detail: "\(error)",
+                                report: NoticeReport([
+                                    NoticeReport.Section(heading: "What went wrong", lines: ["\(error)"]),
+                                    NoticeReport.Section(heading: "What to try", lines: [
+                                        "Check the Internet connection and try again: once downloaded the model is kept. Until then the op-amp runs on JSpice's own model.",
+                                    ]),
+                                ]),
+                                actions: [Notice.Action("Try Again") { [weak self] in self?.useMakerModel(id, true) }])
                 }
             }
         }
@@ -1079,8 +1142,11 @@ final class EditorState: ObservableObject {
                 do {
                     guard let data else { throw CocoaError(.fileWriteUnknown) }
                     try data.write(to: url)
+                    self.notify(.success, "Exported \(url.lastPathComponent)",
+                                detail: url.pathExtension.lowercased() == "pdf" ? "The schematic as a PDF drawing." : "The schematic as a PNG picture.",
+                                actions: [.showInFinder(url)])
                 } catch {
-                    NSAlert(error: error).beginSheetModal(for: window)
+                    self.notify(.failure, "The image couldn't be saved", detail: error.localizedDescription)
                 }
             }
         }
