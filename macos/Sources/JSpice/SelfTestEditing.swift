@@ -114,11 +114,14 @@ extension InteractionTest {
         // paste lands under the pointer, keeping its shape
         editor.selection = [rid]
         editor.copySelection()
-        canvas.mouseMoved(with: mouse(.mouseMoved, GridPoint(-6, 5)))
+        // (a place that is in view however the canvas is scrolled and zoomed: a pointer outside it pastes at the middle)
+        let pointer = canvas.grid(CGPoint(x: canvas.bounds.width * 0.3, y: canvas.bounds.height * 0.6))
+        canvas.mouseMoved(with: mouse(.mouseMoved, pointer))
         grouped { canvas.paste(nil) }
         await pause(0.05)
         let pasted = editor.selection.compactMap { document.circuit[$0] }
-        check(pasted.count == 1 && pasted.first?.kind == .resistor && pasted.first?.a == GridPoint(-8, 5) && pasted.first?.b == GridPoint(-4, 5),
+        check(pasted.count == 1 && pasted.first?.kind == .resistor && pasted.first?.a == pointer + GridPoint(-2, 0)
+                && pasted.first?.b == pointer + GridPoint(2, 0),
               "paste puts the copy centred under the pointer (got \(pasted.map { "\($0.a)→\($0.b)" }))")
         check(undo.undoActionName == "Paste", "the paste is one undo step")
         await undoLast()
