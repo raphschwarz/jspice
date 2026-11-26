@@ -84,7 +84,7 @@ extension InteractionTest {
             grouped { _ = pot.accessibilityPerformDecrement() }
             check(abs((document.circuit[pot.partID]?[param: "position"] ?? 0) - start) < 1e-9, "and decrementing turns it back")
             check((pot.accessibilityValue() as? NSNumber)?.intValue == Int((start * 100).rounded()), "its value is its position in percent")
-            check(child(.npn).flatMap { $0.accessibilityHelp() }?.contains("base to") == true,
+            check(child(.npn).flatMap { $0.accessibilityHelp() }?.lowercased().contains("base to") == true,
                   "a transistor's help names what its base connects to (\(child(.npn)?.accessibilityHelp() ?? "none"))")
         } else {
             check(false, "the dimmer's potentiometer has an element")

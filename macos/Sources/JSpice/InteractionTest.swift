@@ -215,9 +215,14 @@ enum InteractionTest {
         // the inspector: several parts edited at once, and stepping through standard values
         await checkInspector(editor: editor, document: document)
         // drawing: wires with a corner and from free terminals, values typed on the canvas, paste at the pointer
-        await checkEditing(editor: editor, document: document, window: window, canvas: canvas)
+        // (the checks above show a board and come back to the schematic, which makes the window a new canvas: the one
+        // found at the start is no longer in it)
+        await pause(0.4)
+        let liveCanvas = findCanvas(in: window.contentView) ?? canvas
+        check(liveCanvas.window != nil, "the schematic's canvas is in the window for the drawing checks")
+        await checkEditing(editor: editor, document: document, window: window, canvas: liveCanvas)
         // what VoiceOver is told of the schematic, and its actions
-        await checkAccessibility(editor: editor, document: document, canvas: canvas)
+        await checkAccessibility(editor: editor, document: document, canvas: liveCanvas)
 
         // (the editor holds the undo manager weakly: it is the test's to keep until the last check has run)
         withExtendedLifetime(undo) {}
