@@ -50,15 +50,58 @@ public enum ChipFamily: String, CaseIterable, Identifiable, Sendable {
 /// manager: from Arduino's package index (arduino-pico's for the RP2040), each archive checked against its SHA-256
 /// checksum, into JSpice's Application Support folder.
 public enum ChipSupport {
-    public struct Progress: Sendable {
+    public struct Progress: Sendable, Equatable {
+        public enum Stage: Sendable, Equatable {
+            case downloading
+            case unpacking
+            case installed
+        }
+
         /// 0 to 1
         public var fraction: Double
         public var message: String
+        public var stage: Stage
 
-        public init(fraction: Double, message: String) {
+        public init(fraction: Double, message: String, stage: Stage = .downloading) {
             self.fraction = fraction
             self.message = message
+            self.stage = stage
         }
+    }
+
+    /// Where a family's chip support is, for a list of families to show
+    public enum State: Sendable, Equatable {
+        case notInstalled
+        case downloading(fraction: Double, message: String)
+        case unpacking(message: String)
+        /// What is installed, in words: JSpice's install, or an Arduino IDE's toolchain
+        case installed(String)
+        case failed(String)
+
+        public var isBusy: Bool {
+            switch self {
+            case .downloading, .unpacking: return true
+            case .notInstalled, .installed, .failed: return false
+            }
+        }
+
+        /// The state a progress report puts an install in
+        public init(_ progress: Progress) {
+            switch progress.stage {
+            case .downloading: self = .downloading(fraction: progress.fraction, message: progress.message)
+            case .unpacking: self = .unpacking(message: progress.message)
+            case .installed: self = .installed(progress.message)
+            }
+        }
+    }
+
+    /// The family's state as it is on disk: installed by JSpice, available from an Arduino IDE, or not installed
+    public static func installedState(_ family: ChipFamily) -> State {
+        if let versions = installedVersions(family) {
+            return .installed("Installed: \(family.compilerFolder) \(versions.compiler), \(family.coreName) \(versions.core)")
+        }
+        if isAvailable(family) { return .installed("Using the toolchain of an Arduino IDE installed on this Mac") }
+        return .notInstalled
     }
 
     public enum InstallError: Error, CustomStringConvertible {
@@ -124,7 +167,9 @@ public enum ChipSupport {
         let size: Int
     }
 
-    /// Downloads and unpacks the family's compiler and core; `progress` is called along the way (on any thread)
+    /// Downloads and unpacks the family's compiler and core; `progress` is called along the way (on any thread).
+    /// Cancelling the task stops the download or the unpacking (it throws CancellationError) and leaves what was
+    /// installed before as it was; the partial files are deleted.
     public static func install(_ family: ChipFamily, progress: @escaping @Sendable (Progress) -> Void) async throws {
         progress(Progress(fraction: 0, message: "Reading the package index…"))
         let (indexData, response) = try await URLSession.shared.data(from: family.indexURL)
@@ -140,29 +185,44 @@ public enum ChipSupport {
         var done = 0.0
         var files: [URL] = []
         for archive in [compiler, core] {
+            try Task.checkCancellation()
             let file = staging.appendingPathComponent(archive.url.lastPathComponent)
             let start = done
             try await download(archive, to: file) { received in
-                let fraction = (start + Double(received)) / total * 0.9
-                progress(Progress(fraction: fraction, message: "Downloading \(archive.name) \(archive.version)…"))
+                let fraction = min((start + Double(received)) / total, 1) * 0.9
+                let megabytes = Double(received) / 1_048_576
+                let of = archive.size > 0 ? String(format: " of %.0f", Double(archive.size) / 1_048_576) : ""
+                progress(Progress(fraction: fraction,
+                                  message: "Downloading \(archive.name) \(archive.version): \(String(format: "%.0f", megabytes))\(of) MB"))
             }
             done += Double(archive.size)
             files.append(file)
         }
 
-        progress(Progress(fraction: 0.92, message: "Unpacking…"))
+        try Task.checkCancellation()
+        progress(Progress(fraction: 0.92, message: "Unpacking \(compiler.name)…", stage: .unpacking))
+        let compilerFolder = try await unpack(files[0], in: staging.appendingPathComponent("compiler"), containing: family.compilerMarker)
+        progress(Progress(fraction: 0.96, message: "Unpacking \(family.coreName)…", stage: .unpacking))
+        let coreFolder = try await unpack(files[1], in: staging.appendingPathComponent("core"), containing: family.coreMarker)
+        try Task.checkCancellation()
+
+        // put together beside the install folder, then swapped in, so that the old install stays whole until the new
+        // one is
         let destination = installFolder(for: family)
-        let compilerFolder = try unpack(files[0], in: staging.appendingPathComponent("compiler"), containing: family.compilerMarker)
-        let coreFolder = try unpack(files[1], in: staging.appendingPathComponent("core"), containing: family.coreMarker)
-        try? fileManager.removeItem(at: destination)
-        try fileManager.createDirectory(at: destination.appendingPathComponent(family.compilerFolder), withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: destination.appendingPathComponent("core"), withIntermediateDirectories: true)
+        let assembling = supportFolder.appendingPathComponent(".\(family.rawValue)-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: assembling) }
+        try fileManager.createDirectory(at: assembling.appendingPathComponent(family.compilerFolder), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: assembling.appendingPathComponent("core"), withIntermediateDirectories: true)
         try fileManager.moveItem(at: compilerFolder,
-                                 to: destination.appendingPathComponent("\(family.compilerFolder)/\(compiler.version)"))
-        try fileManager.moveItem(at: coreFolder, to: destination.appendingPathComponent("core/\(core.version)"))
+                                 to: assembling.appendingPathComponent("\(family.compilerFolder)/\(compiler.version)"))
+        try fileManager.moveItem(at: coreFolder, to: assembling.appendingPathComponent("core/\(core.version)"))
         let manifest = try JSONSerialization.data(withJSONObject: ["compiler": compiler.version, "core": core.version])
-        try manifest.write(to: destination.appendingPathComponent("installed.json"))
-        progress(Progress(fraction: 1, message: "Installed \(compiler.name) \(compiler.version) and \(family.coreName) \(core.version)"))
+        try manifest.write(to: assembling.appendingPathComponent("installed.json"))
+        try Task.checkCancellation()
+        try? fileManager.removeItem(at: destination)
+        try fileManager.moveItem(at: assembling, to: destination)
+        progress(Progress(fraction: 1, message: "Installed: \(family.compilerFolder) \(compiler.version), \(family.coreName) \(core.version)",
+                          stage: .installed))
     }
 
     /// The newest Arduino AVR core in the index, and the avr-gcc it was made with, for this computer
@@ -243,27 +303,52 @@ public enum ChipSupport {
         return nil
     }
 
-    private static func download(_ archive: Archive, to file: URL, received: @escaping (Int) -> Void) async throws {
+    /// Streams the archive to `file` (a megabyte at a time, so a 240 MB download is never held in memory), then checks
+    /// the file against the index's checksum; a file that does not match is deleted and refused
+    private static func download(_ archive: Archive, to file: URL, received: (Int) -> Void) async throws {
         let (bytes, response) = try await URLSession.shared.bytes(from: archive.url)
         if let status = (response as? HTTPURLResponse)?.statusCode, status >= 400 {
             throw InstallError.download("\(archive.url.lastPathComponent): HTTP \(status)")
         }
-        var data = Data()
-        data.reserveCapacity(archive.size)
-        var buffer = [UInt8]()
-        buffer.reserveCapacity(1 << 16)
-        for try await byte in bytes {
-            buffer.append(byte)
-            if buffer.count == 1 << 16 {
-                data.append(contentsOf: buffer)
-                buffer.removeAll(keepingCapacity: true)
-                received(data.count)
-            }
+        let fileManager = FileManager.default
+        guard fileManager.createFile(atPath: file.path, contents: nil) else {
+            throw InstallError.download("cannot write \(file.path)")
         }
-        data.append(contentsOf: buffer)
-        received(data.count)
-        try verify(data, archive)
-        try data.write(to: file)
+        var verified = false
+        defer { if !verified { try? fileManager.removeItem(at: file) } }
+        let handle = try FileHandle(forWritingTo: file)
+        // (an archive far larger than the index says is not what it lists)
+        let limit = archive.size > 0 ? archive.size * 2 + (16 << 20) : Int.max
+        var count = 0
+        var buffer = [UInt8]()
+        let chunk = 1 << 20
+        buffer.reserveCapacity(chunk)
+        do {
+            for try await byte in bytes {
+                buffer.append(byte)
+                if buffer.count == chunk {
+                    try Task.checkCancellation()
+                    try handle.write(contentsOf: buffer)
+                    count += buffer.count
+                    buffer.removeAll(keepingCapacity: true)
+                    guard count <= limit else {
+                        throw InstallError.download("\(archive.url.lastPathComponent) is larger than the package index says")
+                    }
+                    received(count)
+                }
+            }
+            try handle.write(contentsOf: buffer)
+            count += buffer.count
+            try handle.close()
+        } catch {
+            try? handle.close()
+            throw error
+        }
+        received(count)
+        try Task.checkCancellation()
+        // the file as written, mapped rather than read into memory
+        try verify(try Data(contentsOf: file, options: .alwaysMapped), archive)
+        verified = true
     }
 
     /// The archive's bytes against the index's checksum, "SHA-256:" and 64 hex digits (as both Arduino's and
@@ -286,7 +371,8 @@ public enum ChipSupport {
     }
 
     /// Unpacks an archive (.tar.bz2, .tar.gz, .zip) with the system's tar, and finds the folder holding `marker`
-    private static func unpack(_ file: URL, in folder: URL, containing marker: String) throws -> URL {
+    /// (cancelling the task stops tar)
+    private static func unpack(_ file: URL, in folder: URL, containing marker: String) async throws -> URL {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
         let process = Process()
@@ -294,9 +380,16 @@ public enum ChipSupport {
         process.arguments = ["-xf", file.path, "-C", folder.path]
         let pipe = Pipe()
         process.standardError = pipe
-        try process.run()
-        let errors = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        let run = CancellableProcess(process)
+        let errors = try await withTaskCancellationHandler {
+            try run.start()
+            let errors = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return errors
+        } onCancel: {
+            run.cancel()
+        }
+        try Task.checkCancellation()
         guard process.terminationStatus == 0 else {
             throw InstallError.unpack(file.lastPathComponent + ": " + String(decoding: errors, as: UTF8.self))
         }
@@ -311,5 +404,30 @@ public enum ChipSupport {
             queue = next
         }
         throw InstallError.unpack("\(file.lastPathComponent): no \(marker) inside")
+    }
+}
+
+/// A process that a task's cancellation can stop, whether it comes before the process starts or while it runs
+final class CancellableProcess: @unchecked Sendable {
+    private let lock = NSLock()
+    private let process: Process
+    private var cancelled = false
+    private var started = false
+
+    init(_ process: Process) { self.process = process }
+
+    func start() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cancelled else { throw CancellationError() }
+        try process.run()
+        started = true
+    }
+
+    func cancel() {
+        lock.lock()
+        defer { lock.unlock() }
+        cancelled = true
+        if started && process.isRunning { process.terminate() }
     }
 }

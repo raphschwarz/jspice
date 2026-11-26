@@ -75,13 +75,33 @@ public enum Board: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// What compiling for it takes (the STM32 compiles nothing here: its firmware is built elsewhere and loaded, see
-    /// `compilesSketches`)
-    public var family: ChipFamily { self == .pico || stm32Model != nil ? .rp2040 : .avr }
+    /// The chip support its sketches compile with; nil for an STM32, which compiles nothing here (its firmware is
+    /// built with its maker's tools and loaded from a file)
+    public var sketchFamily: ChipFamily? {
+        switch self {
+        case .uno, .mega, .attiny85: return .avr
+        case .pico: return .rp2040
+        case .stm32f405, .stm32f373, .stm32f103: return nil
+        }
+    }
+
+    /// What compiling for it takes, for a board that compiles sketches. Kept for callers that check
+    /// `compilesSketches` first; an STM32 has no family (use `sketchFamily`).
+    @available(*, deprecated, message: "use sketchFamily, which is nil for a board that compiles no sketches")
+    public var family: ChipFamily { sketchFamily ?? .avr }
 
     /// Whether JSpice compiles Arduino sketches for it; an STM32 runs firmware built with its maker's tools instead
     /// (Load Firmware…)
-    public var compilesSketches: Bool { stm32Model == nil }
+    public var compilesSketches: Bool { sketchFamily != nil }
+
+    /// What its program is called in messages: a sketch, or (an STM32's) firmware
+    public var programNoun: String { compilesSketches ? "sketch" : "firmware" }
+
+    /// What the serial monitor shows before the chip has sent anything
+    public var serialMonitorPlaceholder: String {
+        compilesSketches ? "Nothing yet. Serial.begin(9600) and Serial.println() write here."
+                         : "Nothing yet. What the firmware sends on its USART appears here."
+    }
 
     /// The AVR layout, for AVR boards
     public var avrVariant: AVRVariant? {

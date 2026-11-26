@@ -53,30 +53,37 @@ public struct PicoToolchain: Sendable, Equatable {
 extension SketchBuilder {
     /// Builds a sketch for `board` (an AVR one's part set to `chip`) with the toolchain installed for its family; without
     /// one the result says to install it
-    public static func build(_ source: String, board: Board, chip: AVRVariant? = nil) -> Result {
-        switch board.family {
-        case .avr:
+    public static func build(_ source: String, board: Board, chip: AVRVariant? = nil, monitor: BuildMonitor? = nil) -> Result {
+        switch board.sketchFamily {
+        case .avr?:
             guard let toolchain = AVRToolchain.find() else { return missingToolchain(board) }
-            return build(source, board: board, chip: chip, toolchain: toolchain)
-        case .rp2040:
+            return build(source, board: board, chip: chip, toolchain: toolchain, monitor: monitor)
+        case .rp2040?:
             guard let toolchain = PicoToolchain.find() else { return missingToolchain(board) }
-            return build(source, board: board, toolchain: toolchain)
+            return build(source, board: board, toolchain: toolchain, monitor: monitor)
+        case nil:
+            return missingToolchain(board)
         }
     }
 
+    /// What to say when the board's family has no compiler yet (or, for an STM32, that it compiles nothing here)
+    public static func missingToolchainMessage(_ board: Board) -> String {
+        guard let family = board.sketchFamily else {
+            return "The \(board.chip) compiles no sketches here: it runs firmware built with its maker's tools (Load Firmware…)"
+        }
+        return "No compiler for the \(board.chip) yet: install \(family.title) in Chip Support (Microcontroller ▸ Chip Support…)"
+    }
+
     private static func missingToolchain(_ board: Board) -> Result {
-        let message = "No compiler for the \(board.chip): install \(board.family.title) in Chip Support"
-        return Result(firmware: nil, diagnostics: [Diagnostic(line: 0, column: 0, isError: true, message: message)], log: message)
+        let message = missingToolchainMessage(board)
+        return Result(firmware: nil, diagnostics: [], log: message, problem: message)
     }
 
     /// Builds a sketch for the Raspberry Pi Pico as arduino-pico's platform.txt does (the rpipico board with its menu's
     /// defaults, but 125 MHz): a flash image from 0x10000000, boot stage 2 first
-    public static func build(_ source: String, board: Board = .pico, toolchain: PicoToolchain) -> Result {
-        do {
-            return try PicoBuild(toolchain: toolchain, board: board).run(source)
-        } catch {
-            return Result(firmware: nil, diagnostics: [], log: "\(error)")
-        }
+    public static func build(_ source: String, board: Board = .pico, toolchain: PicoToolchain,
+                             monitor: BuildMonitor? = nil) -> Result {
+        guarded { try PicoBuild(toolchain: toolchain, board: board, monitor: monitor).run(source) }
     }
 }
 
@@ -84,6 +91,7 @@ extension SketchBuilder {
 private struct PicoBuild {
     let toolchain: PicoToolchain
     let board: Board
+    let monitor: SketchBuilder.BuildMonitor?
     // the 2 MB flash with no file system: the sketch, then 4 KB for EEPROM emulation
     static let flashTotal = 2_097_152, flashLength = 2_093_056, eepromStart = 270_528_512
 
@@ -136,29 +144,20 @@ private struct PicoBuild {
 
     /// arduino-pico's core, compiled once into an archive kept in the caches folder
     func coreArchive() throws -> URL {
-        let fileManager = FileManager.default
         let key = String((toolchain.compiler.path + "|" + toolchain.core.path + "|" + defines.joined(separator: " ")
                           + PicoBuild.boardFlags.joined(separator: " ")).hashValueStable, radix: 16)
         let folder = SketchBuilder.cachesFolder().appendingPathComponent("pico-core-\(key)")
-        let archive = folder.appendingPathComponent("core.a")
-        if fileManager.fileExists(atPath: archive.path) { return archive }
-        try? fileManager.removeItem(at: folder)
-        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
-        var objects: [String] = []
-        for (k, file) in SketchBuilder.sources(in: toolchain.core.appendingPathComponent("cores/rp2040")).enumerated() {
-            let object = folder.appendingPathComponent("\(k)-\(file.lastPathComponent).o")
-            let (tool, arguments) = compileCommand(file, object, [])
-            let result = try SketchBuilder.run(tool, arguments, in: folder)
-            guard result.status == 0 else {
-                throw SketchBuilder.BuildError.toolFailed("compiling arduino-pico failed:\n" + result.output)
-            }
-            objects.append(object.path)
-        }
-        let partial = folder.appendingPathComponent("core.partial.a")
-        let ar = try SketchBuilder.run(toolchain.tool("ar"), ["rcs", partial.path] + objects, in: folder)
-        guard ar.status == 0 else { throw SketchBuilder.BuildError.toolFailed("archiving arduino-pico failed:\n" + ar.output) }
-        try fileManager.moveItem(at: partial, to: archive)
-        return archive
+        let monitor = self.monitor
+        return try SketchBuilder.buildCoreArchive(
+            sources: SketchBuilder.sources(in: toolchain.core.appendingPathComponent("cores/rp2040")), folder: folder,
+            coreName: ChipFamily.rp2040.coreName, monitor: monitor,
+            compile: { file, object, folder in
+                let (tool, arguments) = compileCommand(file, object, [])
+                return try SketchBuilder.run(tool, arguments, in: folder, monitor: monitor)
+            },
+            archive: { archive, objects, folder in
+                try SketchBuilder.run(toolchain.tool("ar"), ["rcs", archive.path] + objects, in: folder, monitor: monitor)
+            })
     }
 
     func run(_ source: String) throws -> SketchBuilder.Result {
@@ -168,6 +167,8 @@ private struct PicoBuild {
         try fileManager.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: work) }
 
+        let coreName = ChipFamily.rp2040.coreName
+        let available = SketchBuilder.libraryNames(in: toolchain.core.appendingPathComponent("libraries"))
         let core = try coreArchive()
         var extraIncludes: [String] = []
         var librarySources: [URL] = []
@@ -182,12 +183,17 @@ private struct PicoBuild {
         var diagnostics: [Diagnostic] = []
         var objects: [String] = []
         for (k, file) in ([cpp] + librarySources).enumerated() {
+            try monitor?.checkCancelled()
+            let phase: SketchBuilder.BuildProgress.Phase = k == 0 ? .sketch : .libraries(done: k - 1, total: librarySources.count)
+            monitor?.report(SketchBuilder.BuildProgress(phase, coreName: coreName))
             let object = work.appendingPathComponent("\(k).o")
-            let (tool, arguments) = compileCommand(file, object, extraIncludes)
-            let result = try SketchBuilder.run(tool, arguments, in: work)
+            var (tool, arguments) = compileCommand(file, object, extraIncludes)
+            // (the sketch's own file with gcc's warnings on, to show them on its lines)
+            if k == 0 { arguments.insert("-Wall", at: 1) }
+            let result = try SketchBuilder.run(tool, arguments, in: work, monitor: monitor)
             log += result.output
-            if k == 0 { diagnostics = SketchBuilder.parseDiagnostics(result.output) }
-            guard result.status == 0 else { return SketchBuilder.Result(firmware: nil, diagnostics: diagnostics, log: log) }
+            if k == 0 { diagnostics = SketchBuilder.parseDiagnostics(result.output, libraries: available) }
+            guard result.status == 0 else { return SketchBuilder.failed(diagnostics, log: log, libraries: available) }
             objects.append(object.path)
         }
 
@@ -207,9 +213,13 @@ private struct PicoBuild {
                                                            "-I" + corePath + "pico-sdk/src/rp2040/hardware_regs/include/",
                                                            "-I" + corePath + "pico-sdk/src/common/pico_binary_info/include",
                                                            "-o", boot2.path]
-        let boot = try SketchBuilder.run(toolchain.tool("gcc"), boot2Arguments, in: work)
+        try monitor?.checkCancelled()
+        monitor?.report(SketchBuilder.BuildProgress(.linking, coreName: coreName))
+        let boot = try SketchBuilder.run(toolchain.tool("gcc"), boot2Arguments, in: work, monitor: monitor)
         guard boot.status == 0 else {
-            return SketchBuilder.Result(firmware: nil, diagnostics: diagnostics, log: log + boot.output)
+            let first = SketchBuilder.firstError(in: boot.output) ?? "see the compiler's output"
+            return SketchBuilder.Result(firmware: nil, diagnostics: diagnostics, log: log + boot.output,
+                                        problem: "Boot stage 2 did not assemble: " + first)
         }
 
         let elf = work.appendingPathComponent("sketch.elf")
@@ -231,21 +241,18 @@ private struct PicoBuild {
         link += objects
         link += [core.path, boot2.path, lib + "ota.o", lib + "libpico.a", lib + "liblwip.a", lib + "libbearssl.a",
                  "-lm", "-lc", "-lstdc++", "-lc", "-Wl,--end-group"]
-        let linked = try SketchBuilder.run(toolchain.tool("g++"), link, in: work)
+        let linked = try SketchBuilder.run(toolchain.tool("g++"), link, in: work, monitor: monitor)
         log += linked.output
-        guard linked.status == 0 else {
-            return SketchBuilder.Result(firmware: nil, diagnostics: diagnostics + [Diagnostic(
-                line: 0, column: 0, isError: true, message: "linking failed: " + linked.output)], log: log)
-        }
+        guard linked.status == 0 else { return SketchBuilder.linkFailed(diagnostics, log: log, output: linked.output) }
         let image = work.appendingPathComponent("sketch.bin")
-        let copy = try SketchBuilder.run(toolchain.tool("objcopy"), ["-Obinary", elf.path, image.path], in: work)
+        let copy = try SketchBuilder.run(toolchain.tool("objcopy"), ["-Obinary", elf.path, image.path], in: work, monitor: monitor)
         guard copy.status == 0, let firmware = fileManager.contents(atPath: image.path) else {
-            return SketchBuilder.Result(firmware: nil, diagnostics: diagnostics, log: log + copy.output)
+            return SketchBuilder.Result(firmware: nil, diagnostics: diagnostics, log: log + copy.output,
+                                        problem: "objcopy could not make the flash image (see the compiler's output)")
         }
         guard firmware.count <= board.flashSize else {
-            return SketchBuilder.Result(firmware: nil, diagnostics: diagnostics + [Diagnostic(
-                line: 0, column: 0, isError: true,
-                message: "the sketch takes \(firmware.count) bytes; the \(board.title) has room for \(board.flashSize)")], log: log)
+            let problem = SketchBuilder.sizeProblem(bytes: firmware.count, room: board.flashSize, chip: board.chip)
+            return SketchBuilder.Result(firmware: nil, diagnostics: diagnostics, log: log + problem + "\n", problem: problem)
         }
         return SketchBuilder.Result(firmware: firmware, diagnostics: diagnostics, log: log)
     }
