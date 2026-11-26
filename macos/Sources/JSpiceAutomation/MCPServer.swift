@@ -1,4 +1,5 @@
 import Foundation
+import CircuitKit
 
 /// A Model Context Protocol server: JSON-RPC 2.0 messages, one per line, answered with the tools of a `CircuitSession`.
 ///
@@ -7,7 +8,7 @@ import Foundation
 public final class MCPServer {
     public let session: CircuitSession
     public var serverName = "jspice"
-    public var serverVersion = "1.0"
+    public var serverVersion = JSpiceVersion.version
     /// Runs each tool call, for example on the main thread when the session drives an open document
     public var perform: (@escaping () -> Any) -> Any = { $0() }
     /// Asked before each tool call: nil lets it run; otherwise the call is refused with this message, as a JSON-RPC

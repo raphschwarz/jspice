@@ -12,10 +12,15 @@
     <string>JSpice</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <!-- the version keys are placeholders: scripts/bundle.sh stamps them from macos/VERSION, the build number and the commit -->
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>JSpiceVersion</key>
+    <string>1.1.0</string>
+    <key>JSpiceCommit</key>
+    <string>unknown</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>

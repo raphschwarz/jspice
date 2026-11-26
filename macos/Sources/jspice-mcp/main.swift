@@ -11,9 +11,13 @@ import JSpiceAutomation
 // --app insists on the app. --benchmark [seconds] [example…] times the engine alone at the audio sample rate,
 // --benchmark-maker PART [seconds] a maker's op-amp model, --benchmark-switch NAME [seconds] [example…] the
 // examples with one of the engine's switches off and on, and --benchmark-scale [seconds] [example…] the examples drawn
-// several times over in one circuit.
+// several times over in one circuit. --version prints the version.
 
 let arguments = CommandLine.arguments
+if arguments.contains("--version") {
+    print("jspice-mcp " + JSpiceVersion.description)
+    exit(0)
+}
 let path = ProcessInfo.processInfo.environment["JSPICE_SOCKET"] ?? LocalSocket.defaultPath
 
 func log(_ message: String) {

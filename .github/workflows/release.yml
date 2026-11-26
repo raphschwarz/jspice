@@ -1,0 +1,321 @@
+name: release
+
+# Publishes a release of JSpice for Mac when a tag v<version> is pushed (by hand: no workflow creates tags). The tag
+# must match macos/VERSION, and macos/CHANGELOG.md must have a section for that version, which becomes the notes.
+# The fast lane's checks run first (tests, package, MCP smoke test, auval, self-test: repeated here rather than called
+# from macos.yml, whose concurrency group and screenshot publishing are not made for being called from a tag push).
+#
+# Signing: with the secrets below the app is signed with a Developer ID (hardened runtime, inside out) and, with the
+# notarization secrets too, notarized and stapled. Without them it is the ad-hoc-signed build bundle.sh makes, exactly
+# as the fast lane's, and the release notes say so.
+#   MACOS_CERTIFICATE           a "Developer ID Application" certificate with its private key, as a .p12, base64-encoded
+#   MACOS_CERTIFICATE_PASSWORD  the .p12's password
+#   APPLE_ID                    the Apple Account that notarizes (with the next two)
+#   APPLE_TEAM_ID               its team's ID
+#   APPLE_APP_PASSWORD          an app-specific password for that account (account.apple.com)
+#
+# Run by hand (Actions ▸ release ▸ Run workflow) with a tag such as v1.1.0 for a dry run: the same build and checks from
+# the chosen branch, ending in a DRAFT release, which creates no tag until someone publishes it. Without a changelog
+# section for the version yet, a dry run's notes are the Unreleased section.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The tag to rehearse, such as v1.1.0 (must match macos/VERSION; a draft release is made, no tag)'
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # the tag against macos/VERSION, and the changelog's notes for it
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      draft: ${{ steps.version.outputs.draft }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches macos/VERSION
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then tag="$INPUT_TAG"; draft=true; else tag="$GITHUB_REF_NAME"; draft=false; fi
+          version=$(tr -d ' \t\r\n' < macos/VERSION)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::macos/VERSION holds '$version', not a semantic version"; exit 1
+          fi
+          if [ "$tag" != "v$version" ]; then
+            echo "::error::the tag '$tag' does not match macos/VERSION ($version): it should be v$version"; exit 1
+          fi
+          prerelease=false
+          case "$version" in *-*) prerelease=true ;; esac
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "draft=$draft"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag (version $version, draft $draft, pre-release $prerelease)"
+      - name: The changelog's notes for this version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DRAFT: ${{ steps.version.outputs.draft }}
+        run: |
+          mkdir -p notes
+          if ! macos/scripts/release-notes.sh "$VERSION" > notes/changelog.md; then
+            if [ "$DRAFT" != true ]; then
+              echo "::error::macos/CHANGELOG.md has no section for $VERSION: rename Unreleased to it before tagging"; exit 1
+            fi
+            echo "::warning::macos/CHANGELOG.md has no section for $VERSION yet: the draft's notes are the Unreleased section"
+            macos/scripts/release-notes.sh Unreleased > notes/changelog.md
+          fi
+          cat notes/changelog.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: notes/changelog.md
+
+  # the engine's tests, as in the fast lane (macos.yml)
+  test:
+    needs: verify
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Test the simulation engine (the tests that need no downloaded toolchain, firmware or makers' models)
+        timeout-minutes: 25
+        run: swift test -c release -Xswiftc -enable-testing
+      - name: Build
+        run: swift build
+
+  # the app, checked as in the fast lane, then signed and notarized when the secrets are there
+  app:
+    needs: verify
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: macos
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      # (secrets cannot be tested in `if:`; these say whether they are set, without holding them)
+      HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' }}
+      HAS_NOTARIZATION: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+    outputs:
+      signing: ${{ steps.package.outputs.signing }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the whole history: bundle.sh numbers the build by the count of commits (a shallow clone gets a stand-in)
+          fetch-depth: 0
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Package JSpice.app
+        run: ./scripts/bundle.sh
+      - name: The app reports the release's version
+        run: |
+          test "$(/usr/libexec/PlistBuddy -c 'Print :JSpiceVersion' build/JSpice.app/Contents/Info.plist)" = "$VERSION"
+          ./build/JSpice.app/Contents/MacOS/jspice-mcp --version
+      - name: MCP server smoke test
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"load_example","arguments":{"id":"lfo"}}}' \
+            '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"simulate","arguments":{"duration":2,"probes":["V(U2)"],"points":5}}}' \
+            | ./build/JSpice.app/Contents/MacOS/jspice-mcp --headless | tee build/mcp.txt
+          test "$(wc -l < build/mcp.txt)" -eq 4
+          grep -q '"build_circuit"' build/mcp.txt
+          grep -q 'frequency' build/mcp.txt
+          grep -q "\"version\":\"$VERSION\"" build/mcp.txt
+      - name: Audio Unit validation (registers the extension, then Apple's auval checks the effect and the instrument)
+        timeout-minutes: 8
+        run: |
+          /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R "$PWD/build/JSpice.app"
+          pluginkit -a "$PWD/build/JSpice.app/Contents/PlugIns/JSpiceAudioUnit.appex"
+          pluginkit -m -v -i org.knowm.jspice.mac.audiounit || true
+          sleep 3
+          auval -a | grep -i jspc || true
+          auval -v aufx jsfx JSpc
+          auval -v aumu jsin JSpc
+      - name: Interaction test (draws a circuit with synthesized mouse events)
+        run: ./build/JSpice.app/Contents/MacOS/JSpice --self-test "$PWD/build/screenshots"
+
+      # --- Developer ID signing and notarization (only with the secrets; untested without Apple credentials) ---
+      - name: Import the Developer ID certificate into a temporary keychain
+        if: env.HAS_SIGNING == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -base64 24)
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # searched first, beside the login keychain
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+          if [ -z "$identity" ]; then echo "::error::MACOS_CERTIFICATE holds no Developer ID Application identity"; exit 1; fi
+          echo "SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+      - name: Sign with the Developer ID (hardened runtime, inside out)
+        if: env.HAS_SIGNING == 'true'
+        run: |
+          APP=build/JSpice.app
+          APPEX="$APP/Contents/PlugIns/JSpiceAudioUnit.appex"
+          # the app's entitlements under the hardened runtime: the Audio In part's live input needs the microphone
+          cat > "$RUNNER_TEMP/JSpice.entitlements" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.device.audio-input</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+          plutil -lint "$RUNNER_TEMP/JSpice.entitlements"
+          sign() { codesign --force --timestamp --options runtime --keychain "$SIGNING_KEYCHAIN" --sign "$SIGNING_IDENTITY" "$@"; }
+          # inside out, as bundle.sh does: the extension with its sandbox, the MCP server, then the app
+          sign --entitlements Resources/AudioUnit.entitlements "$APPEX"
+          sign "$APP/Contents/MacOS/jspice-mcp"
+          sign --entitlements "$RUNNER_TEMP/JSpice.entitlements" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --display --verbose=2 "$APP" 2>&1 | grep -E '^(Authority|TeamIdentifier|Runtime)'
+          # still runs under the hardened runtime
+          "$APP/Contents/MacOS/jspice-mcp" --version
+          rm -f build/JSpice-macOS.zip
+          (cd build && ditto -c -k --keepParent JSpice.app JSpice-macOS.zip)
+      - name: Notarize and staple
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARIZATION == 'true'
+        timeout-minutes: 40
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool submit build/JSpice-macOS.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait --timeout 30m --output-format json | tee build/notary.json
+          if [ "$(jq -r .status build/notary.json)" != Accepted ]; then
+            xcrun notarytool log "$(jq -r .id build/notary.json)" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_PASSWORD" || true
+            echo "::error::notarization was not accepted"; exit 1
+          fi
+          xcrun stapler staple build/JSpice.app
+          xcrun stapler validate build/JSpice.app
+          spctl --assess --type execute --verbose=2 build/JSpice.app
+          rm -f build/JSpice-macOS.zip
+          (cd build && ditto -c -k --keepParent JSpice.app JSpice-macOS.zip)
+      - name: Remove the temporary keychain
+        if: always() && env.HAS_SIGNING == 'true'
+        run: |
+          if [ -n "${SIGNING_KEYCHAIN:-}" ]; then security delete-keychain "$SIGNING_KEYCHAIN" || true; fi
+
+      - name: Name the zip and take its checksum
+        id: package
+        run: |
+          if [ "$HAS_SIGNING" = true ] && [ "$HAS_NOTARIZATION" = true ]; then signing=notarized
+          elif [ "$HAS_SIGNING" = true ]; then signing=developer-id
+          else signing=ad-hoc; fi
+          mkdir -p dist
+          name="JSpice-$VERSION-macOS.zip"
+          cp build/JSpice-macOS.zip "dist/$name"
+          (cd dist && shasum -a 256 "$name" > "$name.sha256")
+          cat "dist/$name.sha256"
+          echo "signing=$signing" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d ' ' -f 1 "dist/$name.sha256")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-app
+          path: macos/dist/
+          if-no-files-found: error
+
+  # the only job that writes: the GitHub Release (a draft for a run by hand)
+  release:
+    needs: [verify, test, app]
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.verify.outputs.tag }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      DRAFT: ${{ needs.verify.outputs.draft }}
+      PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+      SIGNING: ${{ needs.app.outputs.signing }}
+      SHA256: ${{ needs.app.outputs.sha256 }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-app
+          path: dist
+      - name: Write the notes
+        run: |
+          name="JSpice-$VERSION-macOS.zip"
+          {
+            cat notes/changelog.md
+            echo
+            echo "## Download"
+            echo
+            echo "**$name**: macOS 14 or later, Apple Silicon and Intel. Unzip it and move JSpice to Applications."
+            echo
+            echo "SHA-256: \`$SHA256\` (check with \`shasum -a 256 $name\`)"
+            echo
+            case "$SIGNING" in
+              notarized)
+                echo "Signed with a Developer ID and notarized by Apple: it opens like any other app." ;;
+              developer-id)
+                echo "Signed with a Developer ID but **not notarized**: the first time, macOS refuses to open it. Right-click JSpice and choose **Open**, or allow it under **System Settings → Privacy & Security → Open Anyway**." ;;
+              *)
+                echo "Signed ad hoc and **not notarized** by Apple (this release was built without signing credentials): the first time, macOS refuses to open it. Right-click JSpice and choose **Open**, or allow it under **System Settings → Privacy & Security → Open Anyway**, or run \`xattr -dr com.apple.quarantine /Applications/JSpice.app\`." ;;
+            esac
+            if [ "$DRAFT" = true ]; then
+              echo
+              echo "_A dry run, started by hand from ${GITHUB_REF_NAME} at ${GITHUB_SHA}: this draft is not published, and its tag does not exist until it is._"
+            fi
+          } > notes/release.md
+          cat notes/release.md
+      - name: Create the GitHub Release
+        run: |
+          flags=()
+          if [ "$DRAFT" = true ]; then flags+=(--draft --target "$GITHUB_SHA"); else flags+=(--verify-tag); fi
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "JSpice $VERSION" --notes-file notes/release.md \
+            "${flags[@]}" "dist/JSpice-$VERSION-macOS.zip" "dist/JSpice-$VERSION-macOS.zip.sha256"

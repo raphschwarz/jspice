@@ -12,10 +12,15 @@
     <string>JSpiceAudioUnit</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
+    <!-- the version keys are placeholders: scripts/bundle.sh stamps them from macos/VERSION, the build number and the commit -->
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>JSpiceVersion</key>
+    <string>1.1.0</string>
+    <key>JSpiceCommit</key>
+    <string>unknown</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>LSMinimumSystemVersion</key>
@@ -41,8 +46,9 @@
                     <string>aufx</string>
                     <key>subtype</key>
                     <string>jsfx</string>
+                    <!-- stamped by bundle.sh: 0xMMMMmmpp from macos/VERSION -->
                     <key>version</key>
-                    <integer>65536</integer>
+                    <integer>65792</integer>
                     <key>sandboxSafe</key>
                     <true/>
                     <key>tags</key>
@@ -62,8 +68,9 @@
                     <string>aumu</string>
                     <key>subtype</key>
                     <string>jsin</string>
+                    <!-- stamped by bundle.sh: 0xMMMMmmpp from macos/VERSION -->
                     <key>version</key>
-                    <integer>65536</integer>
+                    <integer>65792</integer>
                     <key>sandboxSafe</key>
                     <true/>
                     <key>tags</key>
