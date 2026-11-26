@@ -203,7 +203,7 @@ public final class Simulator {
     private var bucketBrigades: [Int: BucketBrigade] = [:]
     private var clockSources: [Int: Int] = [:]
     /// Effects processors' programs and their delay memories, by element index
-    private var effectsProcessors: [Int: EffectsProcessor] = [:]
+    var effectsProcessors: [Int: EffectsProcessor] = [:]
 
     /// A bucket brigade clocked from its clock pin: a sample of its input taken at each clock cycle and moved one bucket
     /// along at each (two stages: the delay is its stages over twice the clock), the sample reaching the end held until
@@ -293,15 +293,15 @@ public final class Simulator {
     }
     /// Microcontrollers' chips by element index (none until a part has firmware), the pin setup the matrix was built
     /// for, and the fraction of a clock cycle carried to the next step
-    private var chips: [Int: Microcontroller] = [:] {
+    var chips: [Int: Microcontroller] = [:] {
         didSet {
             chipAt = Array(repeating: nil, count: (chips.keys.max() ?? -1) + 1)
             for (i, chip) in chips { chipAt[i] = chip }
         }
     }
     /// The same by element index, without hashing (the bus devices look their chip up at every clock edge)
-    private var chipAt: [Microcontroller?] = []
-    private var chipPinStates: [Int: [PinState]] = [:] {
+    var chipAt: [Microcontroller?] = []
+    var chipPinStates: [Int: [PinState]] = [:] {
         didSet { pinStatesMoved = true }
     }
     /// Whether the chips' pins have changed since `followPinSwitch` last made their key (it is only made again then)
@@ -326,128 +326,68 @@ public final class Simulator {
     private var switchSolutions: [PinSwitch: SwitchSolution] = [:]
     /// Steps after a switch of the chips' pins that started from the solution after the same switch before
     public private(set) var switchesFollowed = 0
-    private var chipCycleCarry: [Double] = []
-    private var chipIndices: [Int] = []
+    var chipCycleCarry: [Double] = []
+    var chipIndices: [Int] = []
     /// For each chip (by its index among the parts), for each of its pins, the logic parts' inputs wired to it (the part
     /// and the input's bit), empty where there are none: what the chip does on these pins is replayed into the parts as
     /// it happened, change by change. (Arrays, not dictionaries: an I²S stream changes pins hundreds of times a step.)
-    private var chipWatches: [[[(element: Int, bit: Int)]]] = []
+    var chipWatches: [[[(element: Int, bit: Int)]]] = []
     /// Likewise for the converters that answer within a transfer (`isBusDevice`): they follow the chip's pins as it
     /// runs. And for each of those, the chips' pins on the line it drives back (an ADC's DOUT, an I²C target's SDA).
-    private var busWatches: [[[(element: Int, bit: Int)]]] = []
-    private var busLines: [[(chip: Int, pin: Int)]] = []
+    var busWatches: [[[(element: Int, bit: Int)]]] = []
+    var busLines: [[(chip: Int, pin: Int)]] = []
     /// For each chip with bus devices on its pins, what it calls as a watched pin changes while it runs
-    private var busHandlers: [BusHandler?] = []
+    var busHandlers: [BusHandler?] = []
     /// (in a class: a closure kept in an array comes out of it wrapped in two conversions, run at every event, the
     /// outer one made anew at every step)
-    private final class BusHandler {
+    final class BusHandler {
         let call: (PinEvent) -> Void
         init(_ call: @escaping (PinEvent) -> Void) { self.call = call }
     }
     /// For each STM32, the converters wired to its pins: each part, and the chip's pin on each of its terminals' nodes
     /// (-1: none). Which of its ports each one is on is found from how the firmware has set the chip up (`STM32BusCheck`),
     /// again whenever it changes that
-    private var busWirings: [[(part: Int, pins: [Int])]] = []
-    private var busChips: [STM32Microcontroller?] = []
-    private var busGenerations: [UInt32] = []
+    var busWirings: [[(part: Int, pins: [Int])]] = []
+    var busChips: [STM32Microcontroller?] = []
+    var busGenerations: [UInt32] = []
     /// For each part wired to an STM32, why its bus does not reach it (nil: it does, or nothing is wired); said once
     /// frames flow on the chip's ports, so that a firmware still setting up its pins is not taken for a wrong board
-    private var busIssues: [String?] = []
-    private var busIssuesPending: [Bool] = []
+    var busIssues: [String?] = []
+    var busIssuesPending: [Bool] = []
     /// What `busIssues` has said, among the circuit's problems
-    private var busProblems: [Diagnostic] = []
+    var busProblems: [Diagnostic] = []
     /// What each STM32 says of itself (`notices`: what its firmware reached that the model does not run, how often it
     /// reset itself), among the circuit's problems; looked at when their number changes
-    private var chipNotices: [[Diagnostic]] = []
-    private var chipNoticeCounts: [Int] = []
+    var chipNotices: [[Diagnostic]] = []
+    var chipNoticeCounts: [Int] = []
     /// For each STM32, the codecs on its I²S ports and I²C buses: its frames go to them and theirs come back, its writes
     /// to their control port are answered
-    private var codecLinks: [[(port: Int, codec: Int)]] = []
-    private var codecBuses: [[(bus: Int, codec: Int)]] = []
+    var codecLinks: [[(port: Int, codec: Int)]] = []
+    var codecBuses: [[(bus: Int, codec: Int)]] = []
     /// For each STM32, the MCP4725s on its I²C buses, and the one its transfer under way addresses (part, bytes since
     /// its address, the first data byte, a write command rather than fast mode); for the part, its code is `count`
-    private var i2cDevices: [[(bus: Int, part: Int)]] = []
-    private var i2cTransfer: [(part: Int, index: Int, data: UInt32, command: Bool)] = []
-    private var codecExchanges: [STM32Microcontroller.FrameExchange?] = []
-    private var codecTargets: [STM32Microcontroller.I2CTarget?] = []
-    /// What a part written over a bus holds (a CV DAC, a PCA9685, a TLC5947, an EEPROM), all in one, so that whatever
-    /// carries a part's state (`load`, `adoptState`, `initialiseState`, a thrown-away substep) carries all of it.
-    /// A part has only its own kind's fields filled; the rest stay empty.
-    struct BusPartState: Equatable {
-        struct Write: Equatable {
-            var address: Int
-            var byte: UInt8
-        }
-        /// A CV DAC's outputs' codes, then its input registers'
-        var cvDacCodes: [UInt16] = []
-        /// A PCA9685's registers, and the one its next byte written goes to
-        var pwmRegisters: [UInt8] = []
-        var pwmPointer = 0
-        /// A TLC5947's shift register's twenty-four 12-bit levels, then its latched ones; and when BLANK last fell
-        var sinkLevels: [UInt16] = []
-        var sinkStart = 0.0
-        /// An EEPROM's memory (made as it is first reached), its address pointer, the bytes of the page write under
-        /// way (written at its STOP), and when its write cycle ends
-        var eepromData: [UInt8] = []
-        var eepromPointer = 0
-        var eepromPending: [Write] = []
-        var eepromBusy = 0.0
-
-        /// A part of this kind as it comes from the box
-        init(_ kind: ElementKind) {
-            switch kind {
-            case .cvDac: cvDacCodes = [UInt16](repeating: 0, count: 16)
-            case .ledDriver: pwmRegisters = Logic.pwmReset()
-            case .ledSink: sinkLevels = [UInt16](repeating: 0, count: 48)
-            default: break
-            }
-        }
-
-        init() {}
-
-        /// Takes on `other`'s contents, copied into its own storage where the sizes allow: never sharing `other`'s
-        /// (which the simulator on the sound's thread would then have to copy as it next writes), and allocating
-        /// nothing once the sizes match
-        mutating func copy(from other: BusPartState) {
-            Self.copy(&cvDacCodes, other.cvDacCodes)
-            Self.copy(&pwmRegisters, other.pwmRegisters)
-            pwmPointer = other.pwmPointer
-            Self.copy(&sinkLevels, other.sinkLevels)
-            sinkStart = other.sinkStart
-            Self.copy(&eepromData, other.eepromData)
-            eepromPointer = other.eepromPointer
-            Self.copy(&eepromPending, other.eepromPending)
-            eepromBusy = other.eepromBusy
-        }
-
-        @inline(__always) private static func copy<T>(_ target: inout [T], _ source: [T]) {
-            if target.count == source.count {
-                guard !source.isEmpty else { return }
-                Simulator.adopt(&target, source)
-            } else {
-                target.removeAll(keepingCapacity: true)
-                target.append(contentsOf: source)
-            }
-        }
-    }
+    var i2cDevices: [[(bus: Int, part: Int)]] = []
+    var i2cTransfer: [(part: Int, index: Int, data: UInt32, command: Bool)] = []
+    var codecExchanges: [STM32Microcontroller.FrameExchange?] = []
+    var codecTargets: [STM32Microcontroller.I2CTarget?] = []
     /// Each element's bus-part state (empty for other parts)
-    private var busParts: [BusPartState] = []
+    var busParts: [BusPartState] = []
     /// The TLC5947s and PCA9685s, whose state can move within a substep (their pins followed by the circuit's logic),
     /// and what they held at the substep's start, for when it is thrown away
     private var substepBusParts: [Int] = []
     private var rejectBusParts: [BusPartState] = []
     /// For each STM32, the CV DACs on its SPI ports (their SCLK on the port's SCK pin) and the chip's pin wired to each
     /// one's SYNC (-1: none); the bits each DAC has taken since its SYNC fell (`bits` past its word: the word taken)
-    private var spiLinks: [[(port: Int, dac: Int, sync: Int)]] = []
-    private var spiExchanges: [STM32Microcontroller.SPIExchange?] = []
-    private var spiWords: [(shift: UInt64, bits: Int)] = []
+    var spiLinks: [[(port: Int, dac: Int, sync: Int)]] = []
+    var spiExchanges: [STM32Microcontroller.SPIExchange?] = []
+    var spiWords: [(shift: UInt64, bits: Int)] = []
     /// For each STM32, its pins nothing else in the circuit is wired to: the chip is told they float, and its pulls
     /// set them at once, as on the chip (a firmware reading a pin just after pulling it up)
-    private var floatingChipPins: [[Bool]] = []
+    var floatingChipPins: [[Bool]] = []
     /// An SPI ADC's conversion under way: where its start bit came (-1: not yet), its configuration bits, its result
-    private var spiAdcStates: [(start: Int, config: UInt32, code: Int)] = []
+    var spiAdcStates: [(start: Int, config: UInt32, code: Int)] = []
     /// The pin events of a step, from every chip, in the order they happened
-    private var stepPinEvents: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
+    var stepPinEvents: [(time: Double, order: Int, chip: Int, event: PinEvent)] = []
     /// On/off state of 555s (output high) and Schmitt inverters (output high)
     var digitalState: [Bool] = []
     /// What each logic part remembers: its inputs' levels, its count
@@ -461,14 +401,14 @@ public final class Simulator {
         return storedCurrents
     }
     /// Currents are only for showing, so they are worked out when asked for rather than at every step
-    private var storedCurrents: [Double] = []
-    private var currentsAreStale = true
+    var storedCurrents: [Double] = []
+    var currentsAreStale = true
 
     /// Each element's kind and parameter values, read once when the circuit is loaded
-    private var kinds: [ElementKind] = []
+    var kinds: [ElementKind] = []
     var constants: [Constants] = []
     /// Each bipolar transistor's Gummel-Poon card at the circuit's temperature (an empty one for other parts)
-    private var bipolar: [GummelPoon] = [] {
+    var bipolar: [GummelPoon] = [] {
         didSet {
             bipolarRefs.deallocate()
             bipolarRefs = .allocate(capacity: bipolar.count)
@@ -488,7 +428,7 @@ public final class Simulator {
     private var bipolarSlotsSerial: [Int] = []
     private var bipolarSlotsFit: [Bool] = []
     /// Each diode's, Zener diode's and LED's SPICE card at the circuit's temperature
-    private var diodes: [SpiceDiode] = [] {
+    var diodes: [SpiceDiode] = [] {
         didSet {
             diodeRefs.deallocate()
             diodeRefs = .allocate(capacity: diodes.count)
@@ -498,7 +438,7 @@ public final class Simulator {
     /// The same, unretained (the array keeps them): stamping reads one at every iteration without counting references
     private var diodeRefs = UnsafeMutableBufferPointer<Unmanaged<SpiceDiode>>(start: nil, count: 0)
     /// Each JFET's SPICE card at the circuit's temperature
-    private var jfets: [SpiceJFET] = [] {
+    var jfets: [SpiceJFET] = [] {
         didSet {
             jfetRefs.deallocate()
             jfetRefs = .allocate(capacity: jfets.count)
@@ -509,7 +449,7 @@ public final class Simulator {
     private var jfetRefs = UnsafeMutableBufferPointer<Unmanaged<SpiceJFET>>(start: nil, count: 0)
     /// Each MOSFET's SPICE card at the circuit's temperature, and its gate voltages and half Meyer capacitances at the
     /// last solution (SPICE integrates Meyer's capacitances over each step from both its ends)
-    private var mosfets: [SpiceMOSFET] = []
+    var mosfets: [SpiceMOSFET] = []
     struct MeyerHistory: Equatable {
         var vgs = 0.0, vgd = 0.0, vgb = 0.0
         var gs = 0.0, gd = 0.0, gb = 0.0
@@ -673,11 +613,11 @@ public final class Simulator {
     private var reactiveIndices: [Int] = []
     private var stepIndices: [Int] = []
     /// Scopes with the index of the element each one shows
-    private var recordedTraces: [(trace: ScopeTrace, index: Int)] = []
+    var recordedTraces: [(trace: ScopeTrace, index: Int)] = []
 
     /// How the equations are factored (see `SparsePlan`): made at the first solve after the circuit changes shape, and
     /// again whenever it no longer fits
-    private var plan: SparsePlan? { didSet { planSerial &+= 1 } }
+    var plan: SparsePlan? { didSet { planSerial &+= 1 } }
     /// Counts the plans set, so what is worked out for one (a source's slots) is known to be for the present one
     private var planSerial = 0
     /// Plans made since the start, and the seconds spent making them
@@ -871,7 +811,7 @@ public final class Simulator {
     private var chargeValuesFound = UnsafeMutablePointer<Double>.allocate(capacity: 1)
     private var chargeRoom = 1
 
-    private var matrixIsCurrent = false {
+    var matrixIsCurrent = false {
         didSet { if !matrixIsCurrent { switchedCaches.removeAll(keepingCapacity: true) } }
     }
     /// A chip's pin, an I²C target's acknowledge, an ADC's DOUT or a multiplexer's channel switched what the base matrix
@@ -920,7 +860,7 @@ public final class Simulator {
     /// not a converged one, however little the node voltages changed (a junction with a tiny saturation current barely
     /// conducts while it is held back, so the voltages can look settled while the junction is still catching up)
     private var limiting = false
-    private var traces: [UUID: ScopeTrace] = [:]
+    var traces: [UUID: ScopeTrace] = [:]
 
     /// The thermal voltage kT/q at the nominal temperature, 27 °C (300.15 K), which the parts' parameters are given at, with
     /// ngspice's constants (const.h): what a manufacturer's card was fitted with
@@ -3144,7 +3084,7 @@ public final class Simulator {
 
     // MARK: - Equations
 
-    @inline(__always) private func voltage(_ node: Int) -> Double {
+    @inline(__always) func voltage(_ node: Int) -> Double {
         // (without the subscript's bounds check, which the optimiser leaves a call in the larger stamps: a node is
         // within the unknowns by construction)
         node == 0 ? 0 : x.withUnsafeBufferPointer { $0[node - 1] }
@@ -3242,7 +3182,7 @@ public final class Simulator {
     }
 
     /// A part switched what the base matrix holds (see `switchedMoved`)
-    private func matrixSwitched() {
+    func matrixSwitched() {
         switchedMoved = true
     }
 
@@ -5136,7 +5076,7 @@ public final class Simulator {
     }
 
     /// The current through a behavioural source, from + to − (into + as SPICE has it), at the present solution
-    private func behaviorCurrent(_ i: Int, _ v: (Int) -> Double) -> Double {
+    func behaviorCurrent(_ i: Int, _ v: (Int) -> Double) -> Double {
         guard i < behaviors.count, let b = behaviors[i] else { return 0 }
         if b.voltage {
             let row = topology.sourceRow[i]
@@ -5838,7 +5778,7 @@ public final class Simulator {
     /// was at the last step), and a fresh matrix when what it switches into the base matrix changed (a multiplexer's
     /// channel, an ADC's DOUT driven or let go, an I²C target holding SDA)
     @discardableResult
-    private func advanceLogic(_ i: Int, _ old: LogicState, inputs: UInt32) -> LogicState {
+    func advanceLogic(_ i: Int, _ old: LogicState, inputs: UInt32) -> LogicState {
         let kind = kinds[i]
         var next = Logic.next(kind, old, inputs: inputs, function: Int(constants[i].value))
         switch kind {
@@ -5878,70 +5818,6 @@ public final class Simulator {
         }
         logicStates[i] = next
         return next
-    }
-
-    /// A TLC5947's grayscale counter now (nil while BLANK is high)
-    private func sinkCount(_ i: Int) -> Int? {
-        guard i < busParts.count, busParts[i].sinkLevels.count == 48 else { return nil }
-        return Logic.sinkCount(elapsed: time - busParts[i].sinkStart, frequency: constants[i].frequency,
-                               blank: logicStates[i].inputs & 8 != 0)
-    }
-
-    /// The current each of a TLC5947's outputs sinks now, with the circuit's voltages `v`
-    private func sinkCurrents(_ i: Int, _ v: (Int) -> Double) -> [Double] {
-        let nodes = topology.elementNodes[i]
-        let count = sinkCount(i)
-        return (0..<24).map { k in
-            guard 4 + k < nodes.count, let count, count < Int(busParts[i].sinkLevels[24 + k]) else { return 0 }
-            return Logic.sinkCurrent(v(nodes[4 + k]), full: constants[i].high).current
-        }
-    }
-
-    /// A byte written to a PCA9685 after its address: the first sets the register written next, the rest are written
-    /// there, one register on for each with MODE1's AI set. PRE_SCALE takes a write only while it sleeps; ALL_LED's
-    /// registers write every channel's
-    private func pwmByte(_ i: Int, index: Int, byte: UInt8) {
-        guard i < busParts.count, busParts[i].pwmRegisters.count == 256 else { return }
-        if index == 0 {
-            busParts[i].pwmPointer = Int(byte)
-            return
-        }
-        let register = busParts[i].pwmPointer
-        switch register {
-        case 0xFE:
-            if busParts[i].pwmRegisters[0] & 0x10 != 0 { busParts[i].pwmRegisters[0xFE] = byte }
-        case 0xFA...0xFD:
-            busParts[i].pwmRegisters[register] = byte
-            for k in 0..<16 { busParts[i].pwmRegisters[6 + 4 * k + register - 0xFA] = byte }
-        case 0:
-            busParts[i].pwmRegisters[0] = byte
-            // ALLCALL: whether it answers at 0x70
-            if byte & 1 != 0 { logicStates[i].latch |= Logic.i2cAllCall } else { logicStates[i].latch &= ~Logic.i2cAllCall }
-        default:
-            busParts[i].pwmRegisters[register] = byte
-        }
-        if busParts[i].pwmRegisters[0] & 0x20 != 0 { busParts[i].pwmPointer = (register + 1) & 0xFF }
-    }
-
-    /// A PCA9685's sixteen outputs now (all off while OE is high)
-    private func pwmOutputs(_ i: Int) -> [Bool] {
-        guard i < busParts.count else { return [] }
-        return Logic.pwmOutputs(busParts[i].pwmRegisters, time: time, enabled: logicStates[i].inputs & 4 == 0)
-    }
-
-    /// An MCP3008's conversion: SGL/DIFF and D2–D0 pick the input (single-ended against ground, or a pair: CH2k and
-    /// CH2k+1, either way round), read against VREF as 1024 steps
-    private func adcCode(_ i: Int, configuration: UInt32) -> UInt32 {
-        let nodes = topology.elementNodes[i]
-        guard nodes.count >= 13 else { return 0 }
-        let channel = Int(configuration & 0x7)
-        let reference = voltage(nodes[4])
-        let plus = voltage(nodes[5 + channel])
-        let minus = configuration & 0x8 != 0 ? 0 : voltage(nodes[5 + (channel ^ 1)])
-        guard reference > 1e-6 else { return 0 }
-        let levels = constants[i].value >= 12 ? 4096.0 : 1024.0
-        let code = ((plus - minus) / reference * levels).rounded(.down)
-        return UInt32(min(max(code, 0), levels - 1))
     }
 
     // MARK: - After each step
@@ -6239,353 +6115,9 @@ public final class Simulator {
         was ? v >= 1 : v > 1.5
     }
 
-    // MARK: Microcontrollers
-
-    /// The chip of the microcontroller at `index`, if it has firmware
-    public func chip(_ index: Int) -> Microcontroller? { chips[index] }
-
-    /// Restarts one chip from its reset vector, the rest of the circuit carrying on
-    public func resetChip(_ index: Int) {
-        guard let chip = chips[index] else { return }
-        chip.reset()
-        chipCycleCarry[index] = 0
-        chipPinStates[index] = chip.pinStates
-        watchChipPins()
-        matrixIsCurrent = false
-        currentsAreStale = true
-    }
-
-    /// Runs each chip for the coming step's clock cycles, its inputs at the voltages of the last step, and notes
-    /// whether its pins changed between input and output (which changes the matrix; levels only change currents)
-    private func runChips() {
-        for i in chipIndices {
-            // (by element in arrays: the dictionaries' hashing was a fortieth of an Arduino's step)
-            guard i < chipAt.count, i < chipCycleCarry.count, let chip = chipAt[i] else { continue }
-            let nodes = topology.elementNodes[i]
-            let reached = min(chip.pinCount, nodes.count)
-            if chip.pinVoltages.count == chip.pinCount {
-                // written in place, in one change the chip sees once (a new array at every step otherwise)
-                let floating = i < floatingChipPins.count ? floatingChipPins[i] : []
-                chip.pinVoltages.withUnsafeMutableBufferPointer { volts in
-                    for pin in volts.indices {
-                        volts[pin] = pin < floating.count && floating[pin] ? .nan : pin < reached ? voltage(nodes[pin]) : 0
-                    }
-                }
-            } else {
-                var volts = [Double](repeating: 0, count: chip.pinCount)
-                for pin in 0..<reached { volts[pin] = voltage(nodes[pin]) }
-                chip.pinVoltages = volts
-            }
-            let budget = timeStep * chip.clock + chipCycleCarry[i]
-            let whole = max(Int(budget), 0)
-            let start = chip.cycles
-            // the bus devices wired to it follow its pins as it runs, and answer within the run
-            if i < busHandlers.count, let handler = busHandlers[i] { chip.onPinEvent = handler.call }
-            // the codecs wired to an STM32 exchange frames with it as it runs
-            let linked = i < codecExchanges.count && (codecExchanges[i] != nil || codecTargets[i] != nil || spiExchanges[i] != nil)
-            let stm32 = linked ? chip as? STM32Microcontroller : nil
-            if let stm32 {
-                stm32.frameExchange = codecExchanges[i]
-                stm32.i2cTarget = codecTargets[i]
-                stm32.spiExchange = spiExchanges[i]
-            }
-            if whole > 0 { chip.run(cycles: whole) }
-            chip.onPinEvent = nil
-            if let stm32 {
-                stm32.frameExchange = nil
-                stm32.i2cTarget = nil
-                stm32.spiExchange = nil
-            }
-            if i < chipNoticeCounts.count, let stm32 = chip as? STM32Microcontroller { noteChip(i, stm32) }
-            // the last instruction may run past the budget: the next step has that much less
-            chipCycleCarry[i] = budget - Double(chip.cycles - start)
-            let states = chip.pinStates
-            let (switched, changed, sameCount): (Bool, Bool, Bool)
-            do {
-                // (the kept states let go before they are written over, below)
-                let kept = chipPinStates[i]
-                (switched, changed, sameCount) = (!Self.samePinSetup(states, kept), kept != states, kept?.count == states.count)
-            }
-            if switched { matrixSwitched() }
-            if changed {
-                // copied into the states kept, in place: holding the chip's own array would have it make a new one
-                // the next time its pins change (at every step while its SPI or two-wire interface clocks a byte)
-                if sameCount {
-                    chipPinStates[i]?.withUnsafeMutableBufferPointer { own in
-                        states.withUnsafeBufferPointer { now in
-                            for k in own.indices { own[k] = now[k] }
-                        }
-                    }
-                } else {
-                    chipPinStates[i] = states
-                }
-            }
-        }
-        replayPinEvents()
-    }
-
-    /// Finds the logic parts' inputs wired to chips' pins, and has the chips log those pins
-    private func watchChipPins() {
-        chipWatches = Array(repeating: [], count: kinds.count)
-        busWatches = Array(repeating: [], count: kinds.count)
-        busLines = Array(repeating: [], count: kinds.count)
-        busHandlers = Array(repeating: nil, count: kinds.count)
-        /// pin by pin, as an array long enough for the last pin that has any
-        func byPinArray(_ byPin: [Int: [(element: Int, bit: Int)]]) -> [[(element: Int, bit: Int)]] {
-            guard let last = byPin.keys.max() else { return [] }
-            var table = [[(element: Int, bit: Int)]](repeating: [], count: last + 1)
-            for (pin, targets) in byPin { table[pin] = targets }
-            return table
-        }
-        for i in chipIndices {
-            guard let chip = chips[i], i < topology.elementNodes.count else { continue }
-            let chipNodes = topology.elementNodes[i]
-            var byPin: [Int: [(element: Int, bit: Int)]] = [:]
-            var busByPin: [Int: [(element: Int, bit: Int)]] = [:]
-            for j in kinds.indices where kinds[j].isLogic && j < topology.elementNodes.count {
-                let nodes = topology.elementNodes[j]
-                let bus = kinds[j].isBusDevice
-                for (bit, terminal) in kinds[j].logicInputs.enumerated() where terminal < nodes.count && nodes[terminal] > 0 {
-                    for (pin, node) in chipNodes.enumerated() where node == nodes[terminal] {
-                        if bus { busByPin[pin, default: []].append((j, bit)) } else { byPin[pin, default: []].append((j, bit)) }
-                    }
-                }
-                // the line a bus device drives back: an ADC's DOUT, an I²C target's SDA
-                let line = kinds[j] == .spiAdc ? 3 : kinds[j] == .shiftIn ? 12 : 1
-                if bus, line < nodes.count, nodes[line] > 0 {
-                    for (pin, node) in chipNodes.enumerated() where node == nodes[line] { busLines[j].append((i, pin)) }
-                }
-            }
-            chip.watchedPins = Set(byPin.keys).union(busByPin.keys).sorted()
-            chipWatches[i] = byPinArray(byPin)
-            busWatches[i] = byPinArray(busByPin)
-            // (called only while the chip runs, within `runChips`: the simulator is there)
-            if !busByPin.isEmpty { busHandlers[i] = BusHandler { [unowned(unsafe) self] event in self.busEvent(i, event) } }
-        }
-        linkCodecs()
-    }
-
-    /// Finds the codecs wired to each STM32's I²S ports and I²C buses, and what the chip calls for them while it runs
-    private func linkCodecs() {
-        codecLinks = Array(repeating: [], count: kinds.count)
-        codecBuses = Array(repeating: [], count: kinds.count)
-        i2cDevices = Array(repeating: [], count: kinds.count)
-        i2cTransfer = Array(repeating: (-1, 0, 0, false), count: kinds.count)
-        codecExchanges = Array(repeating: nil, count: kinds.count)
-        codecTargets = Array(repeating: nil, count: kinds.count)
-        spiLinks = Array(repeating: [], count: kinds.count)
-        spiExchanges = Array(repeating: nil, count: kinds.count)
-        spiWords = Array(repeating: (0, 0), count: kinds.count)
-        spiAdcStates = Array(repeating: (-1, 0, 0), count: kinds.count)
-        floatingChipPins = Array(repeating: [], count: kinds.count)
-        // (how many terminals each node joins: an STM32's pin alone on its node floats)
-        var uses = [Int](repeating: 0, count: topology.nodeCount + 1)
-        for nodes in topology.elementNodes { for node in nodes where node < uses.count { uses[node] += 1 } }
-        busWirings = Array(repeating: [], count: kinds.count)
-        busChips = Array(repeating: nil, count: kinds.count)
-        busGenerations = Array(repeating: 0, count: kinds.count)
-        busIssues = Array(repeating: nil, count: kinds.count)
-        busIssuesPending = Array(repeating: false, count: kinds.count)
-        busProblems = []
-        // (a chip kept from before says its notices again)
-        chipNotices = Array(repeating: [], count: kinds.count)
-        chipNoticeCounts = Array(repeating: 0, count: kinds.count)
-        let stm32s: Set<ElementKind> = [.stm32f405, .stm32f373, .stm32f103]
-        for i in chipIndices where stm32s.contains(kinds[i]) && i < topology.elementNodes.count {
-            let chipNodes = topology.elementNodes[i]
-            floatingChipPins[i] = chipNodes.map { $0 > 0 && $0 < uses.count && uses[$0] == 1 }
-            let wired: Set<ElementKind> = [.codec, .i2sDac, .cvDac, .spiAdc, .dac, .dualDac, .shiftRegister, .shiftIn, .ledDriver, .ledSink, .i2cDac,
-                                           .i2cEeprom]
-            for j in kinds.indices where wired.contains(kinds[j]) && j < topology.elementNodes.count {
-                let pins = topology.elementNodes[j].map { node in node > 0 ? chipNodes.firstIndex(of: node) ?? -1 : -1 }
-                if pins.contains(where: { $0 >= 0 }) { busWirings[i].append((j, pins)) }
-            }
-            guard !busWirings[i].isEmpty else { continue }
-            busChips[i] = chips[i] as? STM32Microcontroller
-            busGenerations[i] = 0
-            if let stm32 = busChips[i] { resolveBuses(i, stm32) }
-            // the pins that frame SPI words (a DAC's SYNC, an ADC's CS), whichever port they turn out to be on
-            let syncs = busWirings[i].compactMap { wiring -> Int? in
-                let part = wiring.part
-                let terminal = kinds[part] == .spiAdc ? 0 : kinds[part] == .cvDac && constants[part].high >= 2 ? 2 : -1
-                return terminal >= 0 && terminal < wiring.pins.count && wiring.pins[terminal] >= 0 ? wiring.pins[terminal] : nil
-            }
-            // (called only while the chip runs, within `runChips`: the simulator is there)
-            spiExchanges[i] = { [unowned(unsafe) self] port, frame, bits in self.spiFrame(i, port, frame, bits) }
-            // its SYNC pins watched: a falling edge starts a word
-            if !syncs.isEmpty, let chip = chips[i] {
-                chip.watchedPins = Array(Set(chip.watchedPins).union(syncs)).sorted()
-                let previous = busHandlers[i]
-                busHandlers[i] = BusHandler { [unowned(unsafe) self] event in
-                    if !event.high {
-                        self.refreshBuses(i)
-                        for link in self.spiLinks[i] where link.sync == event.pin {
-                            self.spiWords[link.dac] = (0, 0)
-                            self.spiAdcStates[link.dac] = (-1, 0, 0)
-                        }
-                    }
-                    previous?.call(event)
-                }
-            }
-            codecExchanges[i] = { [unowned(unsafe) self] port, left, right in self.codecFrame(i, port, left, right) }
-            if busWirings[i].contains(where: { [.codec, .i2cDac, .ledDriver, .i2cEeprom].contains(kinds[$0.part]) }) {
-                codecTargets[i] = STM32Microcontroller.I2CTarget(
-                    start: { [unowned(unsafe) self] bus, address, read in self.i2cStart(i, bus, address, read) },
-                    write: { [unowned(unsafe) self] _, byte in self.i2cWrite(i, byte) },
-                    read: { [unowned(unsafe) self] _, _ in self.i2cRead(i) },
-                    stop: { [unowned(unsafe) self] _ in self.i2cStop(i) })
-            }
-        }
-    }
-
-    /// An STM32 addressing a target on one of its I²C buses: a codec at its address (a WM8731 at 0x1A), an MCP4725 at 0x60
-    /// or 0x61 (its A0 pin), a PCA9685, an EEPROM; whether one acknowledges
-    private func i2cStart(_ i: Int, _ bus: Int, _ address: UInt8, _ read: Bool) -> Bool {
-        refreshBuses(i)
-        i2cTransfer[i] = (-1, 0, 0, false)
-        // a codec at its address (the WM8731's 0x1A or 0x1B, a CS4270's 0x48...)
-        if codecBuses[i].contains(where: { $0.bus == bus && Int(constants[$0.codec].high) == Int(address) }) { return true }
-        for device in i2cDevices[i] where device.bus == bus {
-            let nodes = topology.elementNodes[device.part]
-            func high(_ terminal: Int) -> Bool { nodes.count > terminal && voltage(nodes[terminal]) > constants[device.part].supply / 2 }
-            if kinds[device.part] == .i2cEeprom {
-                // at 0x50 + A2-A0; a 24LC04 to 24LC16 takes the block of 256 bytes in those bits instead
-                let size = Int(constants[device.part].value)
-                let blockBits = size > 256 && size <= 2048 ? Int(log2(Double(size / 256))) : 0
-                let blocks = (1 << blockBits) - 1
-                let pins = (0...2).reduce(0) { $0 | (high(3 + $1) ? 1 << $1 : 0) }
-                guard Int(address) & ~blocks == (0x50 | pins) & ~blocks else { continue }
-                // in its write cycle it answers nothing: a firmware polls for its acknowledge until it does
-                if time < busParts[device.part].eepromBusy { return false }
-                if busParts[device.part].eepromData.count != size { busParts[device.part].eepromData = [UInt8](repeating: 0xFF, count: size) }
-                busParts[device.part].eepromPending = []
-                i2cTransfer[i].part = device.part
-                i2cTransfer[i].data = UInt32(Int(address) & blocks)
-                return true
-            }
-            if kinds[device.part] == .ledDriver {
-                // a PCA9685 at 0x40 + A5-A0, or 0x70 while its all-call is on
-                let pins = (0...5).reduce(0) { $0 | (high(3 + $1) ? 1 << $1 : 0) }
-                let allCall = logicStates[device.part].latch & Logic.i2cAllCall != 0
-                if Int(address) == 0x40 | pins || (allCall && address == 0x70) {
-                    i2cTransfer[i].part = device.part
-                    // (a read starts at the register written last)
-                    if read { i2cTransfer[i].index = 1 }
-                    return true
-                }
-            } else if address == 0x60 | (high(2) ? 1 : 0) {
-                if !read { i2cTransfer[i].part = device.part }
-                return true
-            }
-        }
-        return false
-    }
-
-    /// A byte the chip reads from the target it addressed: a PCA9685's register (the next one with MODE1's AI set), an
-    /// EEPROM's next byte (on through its whole memory, round to the start)
-    private func i2cRead(_ i: Int) -> UInt8 {
-        let part = i2cTransfer[i].part
-        if part >= 0, kinds[part] == .i2cEeprom, !busParts[part].eepromData.isEmpty {
-            let at = busParts[part].eepromPointer % busParts[part].eepromData.count
-            busParts[part].eepromPointer = (at + 1) % busParts[part].eepromData.count
-            return busParts[part].eepromData[at]
-        }
-        guard part >= 0, kinds[part] == .ledDriver, part < busParts.count, busParts[part].pwmRegisters.count == 256 else { return 0xFF }
-        let register = busParts[part].pwmPointer
-        let byte = busParts[part].pwmRegisters[register]
-        if busParts[part].pwmRegisters[0] & 0x20 != 0 { busParts[part].pwmPointer = (register + 1) & 0xFF }
-        return byte
-    }
-
-    /// A byte the chip writes to the target it addressed: an MCP4725 takes its code from them (fast mode: pairs of
-    /// bytes, PD1 PD0 and the code's top four bits, then its low eight; or a write command, then the code's top eight
-    /// bits, then its low four), as its bit-level model does
-    private func i2cWrite(_ i: Int, _ byte: UInt8) -> Bool {
-        var transfer = i2cTransfer[i]
-        guard transfer.part >= 0 else { return true }  // (a codec's register writes)
-        if kinds[transfer.part] == .ledDriver {
-            pwmByte(transfer.part, index: transfer.index, byte: byte)
-            i2cTransfer[i].index += 1
-            return true
-        }
-        if kinds[transfer.part] == .i2cEeprom {
-            eepromByte(transfer.part, index: transfer.index, block: Int(transfer.data), byte: byte)
-            i2cTransfer[i].index += 1
-            return true
-        }
-        let value = UInt32(byte)
-        if transfer.index == 0 {
-            transfer.command = value >> 6 != 0
-            transfer.data = value
-        } else if !transfer.command {
-            if transfer.index % 2 == 0 {
-                transfer.data = value
-            } else {
-                logicStates[transfer.part].count = Int((transfer.data >> 4 & 0x3) << 12 | (transfer.data & 0xF) << 8 | value)
-            }
-        } else if transfer.index == 1 {
-            transfer.data = transfer.data << 8 | value
-        } else if transfer.index == 2 {
-            let command = transfer.data >> 8
-            logicStates[transfer.part].count = Int((command >> 1 & 0x3) << 12 | (transfer.data & 0xFF) << 4 | value >> 4)
-        }
-        transfer.index += 1
-        i2cTransfer[i] = transfer
-        return true
-    }
-
-    /// A byte written to an EEPROM after its address: its memory address first (two bytes, high first; or one, with the
-    /// block from the device address), then the page write's data, the address wrapping round within its page
-    private func eepromByte(_ part: Int, index: Int, block: Int, byte: UInt8) {
-        let size = Int(constants[part].value), page = Int(constants[part].high)
-        let addressBytes = size > 2048 ? 2 : 1
-        if index < addressBytes {
-            if addressBytes == 2 && index == 0 {
-                busParts[part].eepromPointer = Int(byte) << 8
-            } else {
-                busParts[part].eepromPointer = ((addressBytes == 2 ? busParts[part].eepromPointer : block << 8) | Int(byte)) % size
-            }
-            return
-        }
-        let at = busParts[part].eepromPointer
-        busParts[part].eepromPending.append(BusPartState.Write(address: at, byte: byte))
-        busParts[part].eepromPointer = at / page * page + (at + 1) % page
-    }
-
-    /// A STOP on an STM32's I²C bus: an EEPROM written to starts its write cycle, its page written as it ends (unless
-    /// WP is high: then nothing is written, and it is ready at once)
-    private func i2cStop(_ i: Int) {
-        let part = i2cTransfer[i].part
-        i2cTransfer[i].part = -1
-        guard part >= 0, kinds[part] == .i2cEeprom, !busParts[part].eepromPending.isEmpty else { return }
-        let pending = busParts[part].eepromPending
-        busParts[part].eepromPending = []
-        let nodes = topology.elementNodes[part]
-        if nodes.count > 2 && voltage(nodes[2]) > constants[part].supply / 2 { return }
-        for write in pending where write.address < busParts[part].eepromData.count {
-            busParts[part].eepromData[write.address] = write.byte
-        }
-        busParts[part].eepromBusy = time + constants[part].frequency
-    }
-
-    /// What a bus part holds now, and putting something in it as its bus would (for tests)
-    func busPartState(_ i: Int) -> BusPartState {
-        busParts[i]
-    }
-
-    func setBusPartState(_ i: Int, _ state: BusPartState) {
-        busParts[i] = state
-    }
-
-    /// What an EEPROM holds (nil for another part, or one nothing has reached yet: every byte still 0xFF)
-    public func eepromContents(_ index: Int) -> [UInt8]? {
-        guard index < busParts.count, index < kinds.count, kinds[index] == .i2cEeprom, !busParts[index].eepromData.isEmpty else { return nil }
-        return busParts[index].eepromData
-    }
-
     /// Which of an STM32's ports reach the parts wired to it, as its firmware has set it up now; why not, for those they
     /// do not
-    private func resolveBuses(_ i: Int, _ stm32: STM32Microcontroller) {
+    func resolveBuses(_ i: Int, _ stm32: STM32Microcontroller) {
         busGenerations[i] = stm32.configGeneration
         codecLinks[i] = []
         codecBuses[i] = []
@@ -6624,13 +6156,13 @@ public final class Simulator {
     }
 
     /// The firmware set an STM32's pins or ports up anew (as it runs): which of them reach what
-    @inline(__always) private func refreshBuses(_ i: Int) {
+    @inline(__always) func refreshBuses(_ i: Int) {
         guard let stm32 = busChips[i], stm32.configGeneration != busGenerations[i] else { return }
         resolveBuses(i, stm32)
     }
 
     /// What an STM32 says of itself, among the circuit's problems when it has something new to say
-    private func noteChip(_ i: Int, _ stm32: STM32Microcontroller) {
+    func noteChip(_ i: Int, _ stm32: STM32Microcontroller) {
         let count = stm32.noticeCount
         guard count != chipNoticeCounts[i] else { return }
         chipNoticeCounts[i] = count
@@ -6642,7 +6174,7 @@ public final class Simulator {
     }
 
     /// Frames flow on an STM32's ports: what does not reach the parts wired to it is said now
-    private func reportBusIssues(_ i: Int) {
+    func reportBusIssues(_ i: Int) {
         busIssuesPending[i] = false
         for (j, _) in busWirings[i] {
             if let issue = busIssues[j], !busProblems.contains(where: { $0.message == issue }) {
@@ -6652,198 +6184,6 @@ public final class Simulator {
             }
         }
         assembleDiagnostics()
-    }
-
-    /// A frame an STM32 sends on an I²S port: the codecs (and PCM5102s) on it take it for their outputs, both kept
-    /// left-justified (the left in `latch`, the right in `count`), and the first codec gives back what its line inputs
-    /// read
-    private func codecFrame(_ chip: Int, _ port: Int, _ left: Int32, _ right: Int32) -> (left: Int32, right: Int32) {
-        refreshBuses(chip)
-        if busIssuesPending[chip] { reportBusIssues(chip) }
-        var input: (left: Int32, right: Int32) = (0, 0)
-        var first = true
-        for link in codecLinks[chip] where link.port == port {
-            let j = link.codec
-            if kinds[j] == .cvDac {
-                // a DAC8568's SYNC is the frame's left half: a word each frame; a DAC8564's, each PCM word
-                let format = Int(constants[j].high)
-                guard format < 2 else { continue }
-                Logic.cvDacWord(UInt32(bitPattern: left), format: format, codes: &busParts[j].cvDacCodes)
-                if format == 1 { Logic.cvDacWord(UInt32(bitPattern: right), format: 1, codes: &busParts[j].cvDacCodes) }
-                continue
-            }
-            logicStates[j].latch = UInt32(bitPattern: left)
-            logicStates[j].count = Int(right)
-            if first && kinds[j] == .codec {
-                first = false
-                let nodes = topology.elementNodes[j]
-                input = (codecSample(j, nodes, 10), codecSample(j, nodes, 11))
-            }
-        }
-        return input
-    }
-
-    /// A frame an STM32 shifts out on an SPI port: each CV DAC on it takes its bits, a word when it has them all since
-    /// its SYNC fell (without a SYNC wired, a word each time it has them); it shifts nothing back
-    private func spiFrame(_ chip: Int, _ port: Int, _ frame: UInt32, _ bits: Int) -> UInt32 {
-        refreshBuses(chip)
-        if busIssuesPending[chip] { reportBusIssues(chip) }
-        guard spiLinks[chip].contains(where: { $0.port == port }) else { return 0xFFFF }
-        var reply: UInt32 = 0
-        for link in spiLinks[chip] where link.port == port {
-            let j = link.dac
-            if kinds[j] == .spiAdc {
-                reply |= spiAdcFrame(j, frame, bits)
-                continue
-            }
-            let format = Int(constants[j].high), wordBits = Logic.cvDacWordBits(format: format)
-            var (shift, count) = spiWords[j]
-            guard count < wordBits else { continue }
-            shift = (shift << UInt64(bits)) | UInt64(frame & (bits >= 32 ? 0xFFFF_FFFF : (1 << UInt32(bits)) - 1))
-            count += bits
-            if count >= wordBits {
-                let word = UInt32(truncatingIfNeeded: (shift >> UInt64(count - wordBits)) & ((1 << UInt64(wordBits)) - 1))
-                Logic.cvDacWord(word, format: format, codes: &busParts[j].cvDacCodes)
-                // the bits past it wait for the next SYNC; with none wired, they start the next word
-                if link.sync < 0 {
-                    count -= wordBits
-                    shift &= (1 << UInt64(count)) - 1
-                } else {
-                    count = wordBits
-                }
-            }
-            spiWords[j] = (shift, count)
-        }
-        return reply
-    }
-
-    /// An SPI ADC (the MCP3008, MCP3204, MCP3208) answering a frame an STM32 shifts out, bit by bit since its CS fell:
-    /// a start bit, SGL and D2-D0 (the channel), then a clock for the sample and the null bit, then its result MSB
-    /// first (10 or 12 bits), the input's voltage against VREF's
-    private func spiAdcFrame(_ j: Int, _ frame: UInt32, _ bits: Int) -> UInt32 {
-        let resolution = Int(constants[j].value) >= 12 ? 12 : 10
-        var state = spiAdcStates[j]
-        var count = spiWords[j].bits
-        var out: UInt32 = 0
-        for k in 0..<bits {
-            let bit = (frame >> UInt32(bits - 1 - k)) & 1
-            var outBit: UInt32 = 0
-            if state.start < 0 {
-                if bit == 1 { state.start = count }
-            } else {
-                let at = count - state.start
-                if at >= 1 && at <= 4 {
-                    state.config = state.config << 1 | bit
-                    if at == 4 { state.code = spiAdcCode(j, channel: Int(state.config & 7), resolution: resolution) }
-                }
-                if at >= 7 && at < 7 + resolution { outBit = UInt32((state.code >> (resolution - 1 - (at - 7))) & 1) }
-                if at >= 6 + resolution { state = (-1, 0, 0) }
-            }
-            out = out << 1 | outBit
-            count += 1
-        }
-        spiAdcStates[j] = state
-        spiWords[j].bits = count
-        return out
-    }
-
-    /// An SPI ADC's result for a channel: 2^bits × its input / VREF, kept within its range
-    private func spiAdcCode(_ j: Int, channel: Int, resolution: Int) -> Int {
-        let nodes = topology.elementNodes[j]
-        guard nodes.count > 5 + channel else { return 0 }
-        let reference = max(voltage(nodes[4]), 1e-3)
-        let code = (voltage(nodes[5 + channel]) / reference * Double(1 << resolution)).rounded(.down)
-        return Int(min(max(code, 0), Double((1 << resolution) - 1)))
-    }
-
-    /// A codec's line input as its ADC reads it: about half its supply, full scale at its line level's peak,
-    /// left-justified in 32 bits
-    private func codecSample(_ j: Int, _ nodes: [Int], _ terminal: Int) -> Int32 {
-        guard terminal < nodes.count else { return 0 }
-        let c = constants[j]
-        let x = (voltage(nodes[terminal]) - c.supply / 2) / (c.value * 2.squareRoot())
-        let clamped = min(max(x, -1), 1 - 1 / 2_147_483_648)
-        return Int32((clamped * 2_147_483_648).rounded(.down))
-    }
-
-    /// A watched pin changing as a chip runs, for the bus devices that follow it: they move on at once, and what they
-    /// drive back on the chip's pins (an ADC's DOUT bit, an I²C target's acknowledge) is what the chip reads from then
-    private func busEvent(_ chipIndex: Int, _ event: PinEvent) {
-        guard chipIndex < busWatches.count, event.pin >= 0, event.pin < busWatches[chipIndex].count else { return }
-        for target in busWatches[chipIndex][event.pin] {
-            let old = logicStates[target.element]
-            let mask = UInt32(1) << UInt32(target.bit)
-            let inputs = event.high ? old.inputs | mask : old.inputs & ~mask
-            guard inputs != old.inputs else { continue }
-            let next = advanceLogic(target.element, old, inputs: inputs)
-            for line in busLines[target.element] {
-                guard line.chip < chipAt.count, let chip = chipAt[line.chip], line.pin < chip.pinCount else { continue }
-                let volts: Double
-                switch kinds[target.element] {
-                case .spiAdc:
-                    // DOUT while CS is low; let go, it stays as the circuit last had it
-                    guard next.inputs & 1 == 0 else { continue }
-                    volts = next.count != 0 ? chip.supply : 0
-                case .shiftIn:
-                    // QH, the last stage, always driven
-                    volts = next.shift & 0x80 != 0 ? chip.supply : 0
-                default:
-                    // SDA held low while it acknowledges, else pulled up
-                    volts = Logic.acknowledging(next) ? 0 : chip.supply
-                }
-                // (that pin alone: setting the chip's voltages would look at every pin again)
-                if chip.pinVoltage(line.pin) != volts { chip.setPinVoltage(line.pin, volts) }
-            }
-        }
-    }
-
-    /// Plays what the chips did on the watched pins during their run into the logic parts wired to them, in the order
-    /// it happened: an SPI word clocked out within one step reaches a DAC bit by bit
-    private func replayPinEvents() {
-        stepPinEvents.removeAll(keepingCapacity: true)
-        var sources = 0
-        // (one chip's events are in order already, and are replayed as they are: an I²S stream's are hundreds a step)
-        var first: (chip: Int, clock: Double, events: [PinEvent]) = (-1, 0, [])
-        for i in chipIndices where i < chipWatches.count && (!chipWatches[i].isEmpty || !busWatches[i].isEmpty) {
-            guard let chip = chips[i] else { continue }
-            // (the bus devices had theirs as the chip ran)
-            let taken = chip.takePinEvents()
-            guard !chipWatches[i].isEmpty, !taken.isEmpty else { continue }
-            sources += 1
-            if sources == 1 {
-                first = (i, chip.clock, taken)
-                continue
-            }
-            if sources == 2 {
-                for event in first.events {
-                    stepPinEvents.append((Double(event.cycle) / first.clock, stepPinEvents.count, first.chip, event))
-                }
-            }
-            for event in taken {
-                stepPinEvents.append((Double(event.cycle) / chip.clock, stepPinEvents.count, i, event))
-            }
-        }
-        if sources == 1 {
-            let watches = chipWatches[first.chip]
-            for event in first.events where event.pin >= 0 && event.pin < watches.count {
-                for target in watches[event.pin] { replayPinEvent(target, high: event.high) }
-            }
-            return
-        }
-        guard sources > 1 else { return }
-        stepPinEvents.sort { ($0.time, $0.order) < ($1.time, $1.order) }
-        for (_, _, i, event) in stepPinEvents where event.pin >= 0 && event.pin < chipWatches[i].count {
-            for target in chipWatches[i][event.pin] { replayPinEvent(target, high: event.high) }
-        }
-    }
-
-    /// A chip's pin going high or low, into a logic part's input wired to it
-    @inline(__always) private func replayPinEvent(_ target: (element: Int, bit: Int), high: Bool) {
-        let old = logicStates[target.element]
-        let mask = UInt32(1) << UInt32(target.bit)
-        let inputs = high ? old.inputs | mask : old.inputs & ~mask
-        guard inputs != old.inputs else { return }
-        advanceLogic(target.element, old, inputs: inputs)
     }
 
     /// Whether two pin states need the same matrix: each pin an output, an input with pull-up or pull-down, or a bare input
@@ -6906,7 +6246,7 @@ public final class Simulator {
             limited3: limitingIndices.map { limitedVoltage3[$0] })
     }
 
-    private static func samePinSetup(_ a: [PinState], _ b: [PinState]?) -> Bool {
+    static func samePinSetup(_ a: [PinState], _ b: [PinState]?) -> Bool {
         guard let b, a.count == b.count else { return false }
         for (x, y) in zip(a, b) {
             switch (x, y) {
@@ -7094,678 +6434,11 @@ public final class Simulator {
         }
     }
 
-    /// The element's main current and the current flowing out of it into each of its terminals
-    private func elementCurrents(_ i: Int, _ element: Element, _ v: (Int) -> Double) -> (main: Double, out: [Double]) {
-        let nodes = topology.elementNodes[i]
-        func twoTerminal(_ current: Double) -> (Double, [Double]) { (current, [-current, current]) }
-        switch element.kind {
-        case .resistor, .lamp:
-            return twoTerminal((v(nodes[0]) - v(nodes[1])) / max(element[param: "resistance"], 1e-9))
-        case .potentiometer:
-            let (upper, lower) = potentiometerResistances(element)
-            let first = (v(nodes[0]) - v(nodes[2])) / upper
-            let second = (v(nodes[2]) - v(nodes[1])) / lower
-            return (first, [-first, second, first - second])
-        case .capacitor:
-            return twoTerminal(capacitorCurrent[i])
-        case .inductor:
-            let saturating = element.saturates && i < constants.count
-            return twoTerminal(inductorCurrent[i] + (saturating ? coreCurrent(i, flux: constants[i].value * inductorCurrent[i]).current : 0))
-        case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
-            let row = topology.sourceRow[i]
-            return twoTerminal(row >= 0 && row < x.count ? x[row] : 0)
-        case .currentSource:
-            return twoTerminal(constants[i].value)
-        case .diode, .led, .zener:
-            let d = diodes[i]
-            let anode = d.hasSeriesNode ? nodes[2] : nodes[0]
-            return twoTerminal(d.current(v(anode) - v(nodes[1]), gmin: Self.junctionGmin).current + junctionCurrent[Self.chargeSlots * i])
-        case .memristor:
-            return twoTerminal((v(nodes[0]) - v(nodes[1])) * memristorConductance(i, state: memristorStates[i]))
-        case .behavioralSource:
-            let current = behaviorCurrent(i, v)
-            var out = [Double](repeating: 0, count: nodes.count)
-            if out.count >= 2 { (out[0], out[1]) = (-current, current) }
-            return (current, out)
-        case .njfet, .pjfet:
-            let j = jfets[i]
-            let n = Self.jfetNodes({ nodes[$0] }, j)
-            let p = j.polarity
-            let r = j.currents(vgs: p * (v(n.g) - v(n.sp)), vgd: p * (v(n.g) - v(n.dp)), gmin: Self.junctionGmin)
-            // with the gate charges' charging currents, gate to source and gate to drain
-            let k = Self.chargeSlots * i
-            let (gs, gd) = (p * (r.cg - r.cgd + junctionCurrent[k]), p * (r.cgd + junctionCurrent[k + 1]))
-            let drain = p * r.cdrain - gd
-            return (drain, [-(gs + gd), -drain, gs + gd + drain])
-        case .nmos, .pmos:
-            let f = mosfets[i]
-            let n = Self.fetNodes({ nodes[$0] }, drain: f.hasDrainNode, source: f.hasSourceNode)
-            let t = f.type
-            let r = f.currents(vgs: t * (v(n.g) - v(n.sp)), vds: t * (v(n.dp) - v(n.sp)), vbs: t * (v(n.s) - v(n.sp)),
-                               gmin: Self.junctionGmin)
-            // with the stored charges' charging currents: bulk to drain and to source, gate to source, drain and bulk
-            let k = Self.chargeSlots * i
-            let cbd = r.cbd + junctionCurrent[k]
-            let (igs, igd, igb) = (junctionCurrent[k + 2], junctionCurrent[k + 3], junctionCurrent[k + 4])
-            // into the gate, the drain, and the source with the bulk
-            let gate = t * (igs + igd + igb)
-            let drain = t * (r.mode * r.cdrain - cbd - igd)
-            return (drain, [-gate, -drain, gate + drain])
-        case .npn, .pnp:
-            let p: Double = element.kind == .npn ? 1 : -1
-            let g = bipolar[i]
-            let n = Self.bipolarNodes({ nodes[$0] }, g)
-            let r = g.currents(vbe: p * (v(n.bp) - v(n.ep)), vbc: p * (v(n.bp) - v(n.cp)), gmin: Self.junctionGmin)
-            // with the stored charges' charging currents: base to emitter, base to collector inside and outside the
-            // base resistance
-            let k = Self.chargeSlots * i
-            let (be, bc, bx) = (p * junctionCurrent[k], p * junctionCurrent[k + 1], p * junctionCurrent[k + 2])
-            let (ic, ib) = (p * r.cc - bc - bx, p * r.cb + be + bc + bx)
-            return (ic, [-ib, -ic, ic + ib])
-        case .opAmp, .multiplier, .comparator, .delayLine, .digitalDelay, .vco, .vcf, .envelope, .vca, .sampleHold, .divider,
-             .levelDetector:
-            let row = topology.sourceRow[i]
-            let current = row >= 0 && row < x.count ? x[row] : 0
-            return (current, [0, 0, current])
-        case .springReverb:
-            let row = topology.sourceRow[i]
-            let current = row >= 0 && row < x.count ? x[row] : 0
-            let coil = (v(nodes[0]) - v(nodes[1])) * constants[i].onConductance
-            return (current, [-coil, coil, current])
-        case .triode, .pentode:
-            let tube = constants[i].tube
-            let vgk = v(nodes[0]) - v(nodes[2])
-            let vpk = v(nodes[1]) - v(nodes[2])
-            let ig = tube.grid(vgk: vgk).current
-            if element.kind == .pentode, nodes.count > 3 {
-                let t = tube.pentode(vgk: vgk, vsk: v(nodes[3]) - v(nodes[2]), vpk: vpk)
-                return (t.plate, [-ig, -t.plate, t.plate + t.screen + ig, -t.screen])
-            }
-            let ip = tube.triode(vgk: vgk, vpk: vpk).current
-            return (ip, [-ig, -ip, ip + ig])
-        case .transformer:
-            // the part itself; its core carries the currents (see `Circuit.expandModels`)
-            let row = topology.sourceRow[i]
-            let current = row >= 0 && row < x.count ? x[row] : 0
-            let r = constants[i].value
-            // out of the core: the secondary's current at s1, back in at s2; the primary's comes in at p1
-            return (current, [-r * current, r * current, current, -current])
-        case .vactrol:
-            let c = constants[i]
-            let led = diodeCurrent(v(nodes[0]) - v(nodes[1]), saturation: c.saturation, nvt: c.nvt).current
-            let ldr = (v(nodes[2]) - v(nodes[3])) * vactrolConductance(i)
-            return (led, [-led, led, -ldr, ldr])
-        case .ota:
-            let supply = constants[i].supply
-            let bias = otaBias(i, junction: v(nodes[3]) + supply).current
-            let level = constants[i].clampLevel
-            let vt = self.vt
-            let clampUp = diodeCurrent(v(nodes[2]) - level, saturation: 1e-14, nvt: vt).current
-            let clampDown = diodeCurrent(-level - v(nodes[2]), saturation: 1e-14, nvt: vt).current
-            let output = bias * tanh((v(nodes[1]) - v(nodes[0])) / (2 * vt)) - clampUp + clampDown
-            return (output, [0, 0, output, -bias])
-        case .analogSwitch:
-            let g = analogSwitchConductance(i, control: v(nodes[2])).conductance
-            let current = g * (v(nodes[0]) - v(nodes[1]))
-            return (current, [-current, current, 0])
-        case .schmittInverter:
-            let target = digitalState[i] ? constants[i].supply : 0
-            let current = (target - v(nodes[1])) * constants[i].outputConductance
-            return (current, [0, current])
-        case .unbufferedInverter:
-            let current = inverterCurrent(i, vin: v(nodes[0]), vout: v(nodes[1])).current
-            return (current, [0, current])
-        case .logicGate, .flipFlop, .decadeCounter, .binaryCounter, .shiftRegister, .shiftIn, .ledSink, .pll:
-            // the main current: what the outputs supply (for a gate, what its output puts out; for a TLC5947, what its
-            // outputs sink)
-            let c = constants[i]
-            let kind = element.kind
-            var flows = [Double](repeating: 0, count: nodes.count)
-            var total = 0.0
-            for (k, high) in zip(kind.logicOutputs, Logic.outputs(kind, logicStates[i], function: Int(c.value))) where k < nodes.count {
-                flows[k] = ((high ? c.supply : 0) - v(nodes[k])) * c.outputConductance
-                total += kind == .logicGate ? flows[k] : max(flows[k], 0)
-            }
-            if kind == .ledSink {
-                total = 0
-                for (k, sunk) in sinkCurrents(i, v).enumerated() where 4 + k < nodes.count {
-                    flows[4 + k] = -sunk
-                    total += sunk
-                }
-            }
-            return (total, flows)
-        case .dualDac, .i2sDac, .i2cDac, .codec, .cvDac, .ledDriver:
-            // into each analog output from its source behind the output resistance
-            var flows = [Double](repeating: 0, count: nodes.count)
-            let c = constants[i]
-            let state = logicStates[i]
-            let outputs: [(Int, Double)]
-            switch element.kind {
-            case .dualDac:
-                outputs = (0...1).map { (4 + $0, Logic.dualDacOutput(state.count, channel: $0, supply: c.supply)) }
-            case .i2sDac:
-                outputs = [(3, Logic.i2sOutput(Int32(bitPattern: state.latch))), (4, Logic.i2sOutput(Int32(truncatingIfNeeded: state.count)))]
-            case .codec:
-                outputs = [(8, Logic.codecOutput(Int32(bitPattern: state.latch), c.supply, c.value)),
-                           (9, Logic.codecOutput(Int32(truncatingIfNeeded: state.count), c.supply, c.value))]
-            case .cvDac:
-                outputs = (0..<8).map { (3 + $0, busParts[i].cvDacCodes.count >= 8 ? Double(busParts[i].cvDacCodes[$0]) / 65536 * c.value : 0) }
-            case .ledDriver:
-                outputs = pwmOutputs(i).enumerated().map { (9 + $0.offset, $0.element ? c.supply : 0) }
-            default:
-                outputs = [(3, Logic.i2cDacOutput(state.count, supply: c.supply))]
-            }
-            for (k, target) in outputs where k < nodes.count { flows[k] = (target - v(nodes[k])) * c.outputConductance }
-            return (outputs.first.map { flows[$0.0] } ?? 0, flows)
-        case .effectsProcessor:
-            var flows = [Double](repeating: 0, count: nodes.count)
-            guard nodes.count > 5, let processor = effectsProcessors[i] else { return (0, flows) }
-            let g = constants[i].outputConductance
-            flows[4] = (processor.left - v(nodes[4])) * g
-            flows[5] = (processor.right - v(nodes[5])) * g
-            return (flows[4], flows)
-        case .dac:
-            var flows = [Double](repeating: 0, count: nodes.count)
-            guard nodes.count > 5 else { return (0, flows) }
-            let c = constants[i]
-            let target = Logic.dacOutput(logicStates[i].count, reference: v(nodes[4]), supply: c.supply)
-            flows[5] = (target - v(nodes[5])) * c.outputConductance
-            return (flows[5], flows)
-        case .analogMux, .analogSelector:
-            // through the channel that is on, into the common terminal
-            var flows = [Double](repeating: 0, count: nodes.count)
-            guard let channel = Logic.channel(element.kind, logicStates[i]), channel < nodes.count - 1 else { return (0, flows) }
-            let current = (v(nodes[channel]) - v(nodes[nodes.count - 1])) * constants[i].onConductance
-            flows[channel] = -current
-            flows[nodes.count - 1] = current
-            return (current, flows)
-        case .atmega328p, .atmega2560, .attiny85, .rp2040, .stm32f405, .stm32f373, .stm32f103:
-            let c = constants[i]
-            var flows = [Double](repeating: 0, count: nodes.count)
-            var total = 0.0
-            if let states = chipPinStates[i] {
-                for (pin, state) in states.enumerated() where pin < nodes.count {
-                    switch state {
-                    case .output(let high): flows[pin] = ((high ? c.supply : 0) - v(nodes[pin])) * c.outputConductance
-                    case .input(pullUp: true): flows[pin] = (c.supply - v(nodes[pin])) * c.onConductance
-                    case .inputPullDown: flows[pin] = -v(nodes[pin]) * c.onConductance
-                    case .input: break
-                    }
-                    total += max(flows[pin], 0)
-                }
-            }
-            // the main current: what the chip supplies through its pins
-            return (total, flows)
-        case .timer555:
-            let (ground, output, control, discharge, supply) = (nodes[0], nodes[2], nodes[4], nodes[6], nodes[7])
-            let high = digitalState[i]
-            let upper = (v(supply) - v(control)) / 5000
-            let lower = (v(control) - v(ground)) / 10_000
-            let target = high ? v(supply) - constants[i].highDrop : v(ground) + 0.1
-            let out = (target - v(output)) * constants[i].outputConductance
-            let dischargeIn = (v(discharge) - v(ground)) * (high ? 1e-9 : constants[i].dischargeConductance)
-            var flows = [Double](repeating: 0, count: 8)
-            flows[2] = out
-            flows[6] = -dischargeIn
-            flows[4] = upper - lower
-            flows[7] = -upper - (high ? out : 0)
-            flows[0] = lower + dischargeIn - (high ? 0 : out)
-            return (out, flows)
-        default:
-            return (0, Array(repeating: 0, count: nodes.count))
-        }
-    }
-
-    private func refreshCurrents() {
-        guard currentsAreStale else { return }
-        currentsAreStale = false
-        computeCurrents()
-    }
-
-    private func computeCurrents() {
-        let elements = flat.elements
-        guard storedCurrents.count == elements.count else { return }
-        let hasSolution = x.count == topology.matrixSize
-        func v(_ node: Int) -> Double { hasSolution ? voltage(node) : 0 }
-
-        var injection = [Double](repeating: 0, count: topology.points.count)
-        for (i, element) in elements.enumerated() {
-            if element.isConductor {
-                storedCurrents[i] = 0
-                continue
-            }
-            let (main, out) = elementCurrents(i, element, v)
-            storedCurrents[i] = main
-            for (point, current) in zip(topology.elementPoints[i], out) {
-                injection[point] += current
-            }
-        }
-        // wires and other conductors carry what flows into them from the leaves of the wire network inwards
-        for step in topology.flowOrder {
-            let flow = injection[step.from]
-            injection[step.to] += flow
-            storedCurrents[step.element] = topology.elementPoints[step.element][0] == step.from ? flow : -flow
-        }
-    }
-
-    // MARK: - Readings
-
-    public func voltage(at point: GridPoint) -> Double {
-        guard let p = topology.pointIndex[point], x.count == topology.matrixSize else { return 0 }
-        return voltage(topology.nodeOfPoint[p])
-    }
-
-    /// Voltage of each terminal of the element at `index`
-    /// Voltage of one terminal of the element at `index`, without building the list of all of them
-    public func terminalVoltage(_ index: Int, _ terminal: Int) -> Double {
-        guard index < topology.elementNodes.count, x.count == topology.matrixSize else { return 0 }
-        let nodes = topology.elementNodes[index]
-        return terminal >= 0 && terminal < nodes.count ? voltage(nodes[terminal]) : 0
-    }
-
-    public func terminalVoltages(_ index: Int) -> [Double] {
-        guard index < topology.elementNodes.count, x.count == topology.matrixSize else { return [] }
-        return topology.elementNodes[index].map { voltage($0) }
-    }
-
-    /// Voltage across the element: a minus b; for voltage sources + (b) minus - (a), so a 5 V source reads 5 V;
-    /// drain minus source (collector minus emitter) for transistors; the output voltage for op-amps
-    public func voltageAcross(_ index: Int) -> Double {
-        guard index < across.count, x.count == topology.matrixSize else { return 0 }
-        switch across[index] {
-        case let .nodes(plus, minus): return voltage(plus) - voltage(minus)
-        case .supply: return constants[index].supply
-        case .nothing: return 0
-        }
-    }
-
     /// What `voltageAcross` reads of a part: two nodes, or (a chip) its supply, or nothing
-    private enum Across {
+    enum Across {
         case nodes(Int, Int), supply, nothing
     }
     /// Per part, worked out as the circuit is loaded: the sound reads a part's voltage at every sample, and the checks
     /// of its kind (whether it is drawn as a chip) hash the kind's name
-    private var across: [Across] = []
-
-    private func findAcross() {
-        across = kinds.indices.map { i -> Across in
-            let kind = kinds[i]
-            if kind != .behavioralSource && (kind.isMicrocontroller || kind.hasChipPackage) { return .supply }
-            guard let (plus, minus) = acrossNodes(i) else { return .nothing }
-            return .nodes(plus, minus)
-        }
-    }
-
-    /// The nodes `voltageAcross` reads, plus then minus (0 is ground); nil for parts it reads no nodes of
-    public func acrossNodes(_ index: Int) -> (plus: Int, minus: Int)? {
-        guard index < topology.elementNodes.count, index < kinds.count else { return nil }
-        let nodes = topology.elementNodes[index]
-        if nodes.count == 1 { return (nodes[0], 0) }
-        guard nodes.count >= 2 else { return nil }
-        let kind = kinds[index]
-        if kind.isTransistor || kind.isTube { return (nodes[1], nodes[2]) }
-        if kind == .transformer { return nodes.count == 4 ? (nodes[2], nodes[3]) : nil }
-        if kind == .ota || kind.drivesOutput { return (nodes[2], 0) }
-        if kind == .timer555 { return (nodes[2], nodes[0]) }
-        if kind == .behavioralSource { return (nodes[0], nodes[1]) }
-        if kind.isMicrocontroller || kind.hasChipPackage || kind == .block { return nil }
-        if kind == .schmittInverter || kind == .unbufferedInverter { return (nodes[1], 0) }
-        if kind == .logicGate { return (nodes[2], 0) }
-        return kind.isVoltageSource ? (nodes[1], nodes[0]) : (nodes[0], nodes[1])
-    }
-
-    public func current(_ index: Int) -> Double {
-        refreshCurrents()
-        return index < storedCurrents.count ? storedCurrents[index] : 0
-    }
-
-    public func value(_ quantity: Quantity, of index: Int) -> Double {
-        switch quantity {
-        case .voltage: return voltageAcross(index)
-        case .current: return current(index)
-        case .power: return voltageAcross(index) * current(index)
-        case .resistance:
-            let element = flat.elements[index]
-            if element.kind == .memristor { return 1 / memristorConductance(index, state: memristorStates[index]) }
-            if element.kind == .resistor || element.kind == .lamp || element.kind == .potentiometer {
-                return element[param: "resistance"]
-            }
-            let i = current(index)
-            return abs(i) > 1e-15 ? voltageAcross(index) / i : .infinity
-        }
-    }
-
-    /// 0 (dark) to 1 (full brightness) for LEDs and lamps (and the Pico's LED)
-    public func brightness(_ index: Int) -> Double {
-        let element = flat.elements[index]
-        switch element.kind {
-        case .led:
-            return min(1, max(0, current(index) / 0.015))
-        case .lamp:
-            let power = abs(voltageAcross(index) * current(index))
-            return min(1, power / max(element[param: "ratedPower"], 1e-9))
-        case .rp2040:
-            // the Pico's own LED
-            return (chips[index] as? Pico)?.ledOn == true ? 1 : 0
-        default:
-            return 0
-        }
-    }
-
-    /// True while a 555's, Schmitt inverter's or logic gate's output is high
-    public func isHigh(_ index: Int) -> Bool {
-        if index < kinds.count, kinds[index] == .logicGate { return logicOutputs(index).first ?? false }
-        return index < digitalState.count ? digitalState[index] : false
-    }
-
-    /// Whether each output of a logic part is high, in the order of its output terminals
-    public func logicOutputs(_ index: Int) -> [Bool] {
-        guard index < kinds.count, index < logicStates.count else { return [] }
-        return Logic.outputs(kinds[index], logicStates[index], function: Int(constants[index].value))
-    }
-
-    /// A counter's count, a flip-flop's Q (1 or 0), or the channel a multiplexer has on (-1 while inhibited)
-    public func logicCount(_ index: Int) -> Int {
-        guard index < kinds.count, index < logicStates.count else { return 0 }
-        if kinds[index] == .analogMux || kinds[index] == .analogSelector { return Logic.channel(kinds[index], logicStates[index]) ?? -1 }
-        return logicStates[index].count
-    }
-
-    /// An SPI ADC's last conversion (0 to 1023)
-    public func adcReading(_ index: Int) -> Int {
-        guard index < kinds.count, index < logicStates.count, kinds[index] == .spiAdc else { return 0 }
-        return Int(logicStates[index].latch)
-    }
-
-    /// 0 (open) to 1 (closed) for analog switches
-    public func switchConduction(_ index: Int) -> Double {
-        guard index < flat.elements.count, flat.elements[index].kind == .analogSwitch else { return 0 }
-        let v = terminalVoltages(index)
-        guard v.count == 3 else { return 0 }
-        let g = analogSwitchConductance(index, control: v[2]).conductance
-        return min(1, g / constants[index].onConductance)
-    }
-
-    /// 0 (fully off) to 1 (fully on)
-    public func memristorState(_ index: Int) -> Double {
-        index < memristorStates.count ? memristorStates[index] : 0
-    }
-
-    public var nodeCount: Int { topology.nodeCount }
-
-    /// The equations' size: unknowns, entries that can be non-zero, entries of the factors (fill-in included), and the
-    /// unknowns in the nonlinear block, which Newton-Raphson refactors
-    public var equationStatistics: (unknowns: Int, nonzeros: Int, factorEntries: Int, nonlinearUnknowns: Int) {
-        let m = topology.matrixSize
-        guard let plan else { return (m, 0, 0, 0) }
-        let nonzeros = plan.structure.reduce(0) { $1 ? $0 + 1 : $0 }
-        return (m, nonzeros, plan.entryCount, plan.n - plan.leading)
-    }
-
-    /// The nonlinear block's factors as last factored: entries of L and U, and the multiply-adds of factoring
-    public var blockFactorSize: (lower: Int, upper: Int, operations: Int) {
-        plan?.blockFactorSize ?? (0, 0, 0)
-    }
-
-    /// The levels back substitution goes through in the nonlinear and the linear block, and their steps: how long the
-    /// chain of rows each waits on is
-    public var substitutionLevels: (block: Int, blockSteps: Int, linear: Int, linearSteps: Int) {
-        plan?.substitutionLevels ?? (0, 0, 0, 0)
-    }
-
-    /// Pivot orders the plan has for its nonlinear block (one for each state its parts have been seen in, up to a few)
-    public var pivotOrders: Int {
-        plan?.orderCount ?? 0
-    }
-
-    /// The index of a part of the circuit as it is simulated: one of the circuit's own, or one inside a block (by its
-    /// id there, `UUID.inBlock`)
-    public func flatIndex(of id: UUID) -> Int? {
-        flat.elements.firstIndex { $0.id == id }
-    }
-
-    /// Node number of each terminal of the element at `index` (0 is ground)
-    public func nodes(of index: Int) -> [Int] {
-        index < topology.elementNodes.count ? topology.elementNodes[index] : []
-    }
-
-    /// The voltage of node `node` (0 is ground)
-    public func nodeVoltage(_ node: Int) -> Double {
-        node > 0 && node - 1 < x.count && x.count == topology.matrixSize ? x[node - 1] : 0
-    }
-
-    /// The largest node voltage magnitude, for scaling voltage colours
-    public var maxNodeVoltage: Double {
-        guard x.count == topology.matrixSize else { return 0 }
-        var result = 0.0
-        for node in 1..<max(1, topology.nodeCount) { result = max(result, abs(x[node - 1])) }
-        return result
-    }
-
-    // MARK: - Scopes
-
-    /// Keeps a trace for every scope of the circuit, each showing the last `window` seconds of circuit time
-    public func configureScopes(window: Double) {
-        var next: [UUID: ScopeTrace] = [:]
-        for spec in circuit.scopes {
-            if let existing = traces[spec.id], existing.spec == spec, existing.window == window {
-                next[spec.id] = existing
-            } else {
-                next[spec.id] = ScopeTrace(spec: spec, window: window)
-            }
-        }
-        traces = next
-        recordedTraces = circuit.scopes.compactMap { spec in
-            // a frequency response is worked out when shown, not recorded
-            guard spec.plot != .frequencyResponse, let trace = next[spec.id], let index = circuit.index(of: spec.elementID) else { return nil }
-            return (trace, index)
-        }
-    }
-
-    public func trace(_ id: UUID) -> ScopeTrace? { traces[id] }
-
-    private func record(_ trace: ScopeTrace, _ index: Int) {
-        func scoped() -> Double {
-            switch trace.spec.quantity {
-            case .current: return scopedCurrent(index)
-            case .power: return voltageAcross(index) * scopedCurrent(index)
-            default: return value(trace.spec.quantity, of: index)
-            }
-        }
-        switch trace.spec.plot {
-        case .time:
-            trace.add(scoped(), at: time)
-        case .spectrum:
-            trace.addSample(scoped(), at: time)
-        case .currentVersusVoltage:
-            trace.addPoint(voltage: voltageAcross(index), current: scopedCurrent(index), at: time)
-        case .frequencyResponse:
-            break
-        }
-    }
-
-    /// One element's current for a scope at every step, without working out the whole circuit's: only wires and
-    /// other conductors need the walk through the wire network
-    private func scopedCurrent(_ index: Int) -> Double {
-        // the commonest parts on a scope read straight from the solution, as `elementCurrents` reads them, without
-        // copying the part or making the array of its terminals' currents at every step
-        if index < kinds.count, index < topology.elementNodes.count {
-            switch kinds[index] {
-            case .capacitor:
-                return capacitorCurrent[index]
-            case .diode, .led, .zener:
-                let nodes = topology.elementNodes[index]
-                let anode = diodes[index].hasSeriesNode ? nodes[2] : nodes[0]
-                return diodes[index].current(voltage(anode) - voltage(nodes[1]), gmin: Self.junctionGmin).current
-                    + junctionCurrent[Self.chargeSlots * index]
-            case .dcVoltage, .acVoltage, .squareVoltage, .noiseVoltage, .keyboardPitch, .keyboardGate, .audioInput:
-                let row = topology.sourceRow[index]
-                return row >= 0 && row < x.count ? x[row] : 0
-            case .currentSource:
-                return constants[index].value
-            default:
-                break
-            }
-        }
-        let element = flat.elements[index]
-        if element.isConductor { return current(index) }
-        return elementCurrents(index, element) { self.voltage($0) }.main
-    }
-}
-
-/// Recent history of one scope: min/max buckets of a quantity over time (so fast signals still show their envelope),
-/// or voltage-current points for an I–V curve.
-public final class ScopeTrace {
-    public let spec: ScopeSpec
-    public let window: Double
-    public static let capacity = 600
-
-    public private(set) var minimums: [Double] = []
-    public private(set) var maximums: [Double] = []
-    public private(set) var lastValue: Double = 0
-    /// I–V curve points, oldest first
-    public private(set) var voltages: [Double] = []
-    public private(set) var currents: [Double] = []
-    public private(set) var lastVoltage: Double = 0
-    private var bucketStart = 0.0
-    private var bucketMin = Double.infinity
-    private var bucketMax = -Double.infinity
-    /// For a spectrum: the newest `spectrumLength` values at even intervals (between steps, on the line joining them)
-    private var ring: [Double] = []
-    private var ringNext = 0
-    private var ringCount = 0
-    private var nextTick = 0.0
-    private var previousTime = 0.0
-    private var previousValue = 0.0
-    private var sampling = false
-    /// The simulation's recent step, on average: the spectrum shows nothing faster than it can follow
-    private var averageStep = 0.0
-
-    /// Samples a spectrum is worked out from: eight windows' worth, 2048 a window
-    public static let spectrumLength = 16_384
-
-    init(spec: ScopeSpec, window: Double) {
-        self.spec = spec
-        self.window = max(window, 1e-12)
-        if spec.plot == .spectrum { ring = [Double](repeating: 0, count: Self.spectrumLength) }
-    }
-
-    /// Seconds between a spectrum's samples
-    public var sampleInterval: Double { window / 2048 }
-
-    var interval: Double { window / Double(Self.capacity) }
-
-    /// Copies another trace's history
-    func adopt(_ other: ScopeTrace) {
-        Simulator.adopt(&minimums, other.minimums)
-        Simulator.adopt(&maximums, other.maximums)
-        lastValue = other.lastValue
-        Simulator.adopt(&voltages, other.voltages)
-        Simulator.adopt(&currents, other.currents)
-        lastVoltage = other.lastVoltage
-        bucketStart = other.bucketStart
-        bucketMin = other.bucketMin
-        bucketMax = other.bucketMax
-        Simulator.adopt(&ring, other.ring)
-        ringNext = other.ringNext
-        ringCount = other.ringCount
-        nextTick = other.nextTick
-        previousTime = other.previousTime
-        previousValue = other.previousValue
-        sampling = other.sampling
-        averageStep = other.averageStep
-    }
-
-    func clear() {
-        minimums.removeAll()
-        maximums.removeAll()
-        voltages.removeAll()
-        currents.removeAll()
-        lastValue = 0
-        lastVoltage = 0
-        bucketStart = 0
-        bucketMin = .infinity
-        bucketMax = -.infinity
-        ringNext = 0
-        ringCount = 0
-        sampling = false
-        averageStep = 0
-    }
-
-    /// Records a value for a spectrum: one sample at each tick of `sampleInterval` passed since the last value,
-    /// on the line from it
-    func addSample(_ value: Double, at time: Double) {
-        guard value.isFinite, !ring.isEmpty else { return }
-        lastValue = value
-        let interval = sampleInterval
-        if !sampling || time < previousTime {
-            sampling = true
-            ringNext = 0
-            ringCount = 0
-            averageStep = 0
-            nextTick = time
-        } else {
-            let step = time - previousTime
-            if step > 0 { averageStep = averageStep == 0 ? step : averageStep * 0.98 + step * 0.02 }
-        }
-        // after a long gap only the newest ring's worth matters
-        if (time - nextTick) / interval > Double(ring.count) { nextTick = time - Double(ring.count - 1) * interval }
-        let span = time - previousTime
-        while nextTick <= time {
-            let f = span > 0 ? min(max((nextTick - previousTime) / span, 0), 1) : 1
-            ring[ringNext] = previousValue + (value - previousValue) * f
-            ringNext = (ringNext + 1) % ring.count
-            ringCount = min(ringCount + 1, ring.count)
-            nextTick += interval
-        }
-        previousTime = time
-        previousValue = value
-    }
-
-    /// The spectrum's samples, oldest first
-    public var evenSamples: [Double] {
-        guard ringCount > 0 else { return [] }
-        let start = (ringNext - ringCount + ring.count) % ring.count
-        return (0..<ringCount).map { ring[(start + $0) % ring.count] }
-    }
-
-    /// The spectrum of the recent samples, up to the highest frequency both the sampling and the simulation's steps
-    /// show; nil until there are enough
-    public func spectrum() -> Spectrum? {
-        let top = averageStep > 0 ? 0.5 / averageStep : .infinity
-        return Spectrum.analyze(evenSamples, interval: sampleInterval, maxFrequency: top)
-    }
-
-    func add(_ value: Double, at time: Double) {
-        guard value.isFinite else { return }
-        lastValue = value
-        bucketMin = min(bucketMin, value)
-        bucketMax = max(bucketMax, value)
-        if time - bucketStart >= interval {
-            minimums.append(bucketMin)
-            maximums.append(bucketMax)
-            if minimums.count > Self.capacity {
-                minimums.removeFirst(minimums.count - Self.capacity)
-                maximums.removeFirst(maximums.count - Self.capacity)
-            }
-            bucketStart = time
-            bucketMin = .infinity
-            bucketMax = -.infinity
-        }
-    }
-
-    func addPoint(voltage: Double, current: Double, at time: Double) {
-        guard voltage.isFinite, current.isFinite else { return }
-        lastValue = current
-        lastVoltage = voltage
-        if time - bucketStart >= interval {
-            voltages.append(voltage)
-            currents.append(current)
-            if voltages.count > Self.capacity {
-                voltages.removeFirst(voltages.count - Self.capacity)
-                currents.removeFirst(currents.count - Self.capacity)
-            }
-            bucketStart = time
-        }
-    }
+    var across: [Across] = []
 }
