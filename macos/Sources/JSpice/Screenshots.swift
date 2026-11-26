@@ -15,6 +15,8 @@ enum ScreenshotRunner {
         let seconds: Double
         var select: ElementKind?
         var closeSwitches = false
+        /// Sample notices over the canvas: a success, a warning with a report and a failure
+        var notices = false
         /// Redraw the example with Tidy Up first
         var tidy = false
         /// A part being placed (shows the tool HUD)
@@ -63,6 +65,7 @@ enum ScreenshotRunner {
         Shot(name: "33-lpg-light", example: "lpg", dark: false, seconds: 0.6, select: .vactrol),
         Shot(name: "34-ringmod-dark", example: "ringmod", dark: true, seconds: 0.3, select: .multiplier),
         Shot(name: "35-quickadd-light", example: "overdrive", dark: false, seconds: 0.5, quickAdd: true),
+        Shot(name: "35b-notices-light", example: "rc", dark: false, seconds: 1, notices: true),
         Shot(name: "36-tool-dark", example: "opamp", dark: true, seconds: 0.5, tool: .resistor),
         Shot(name: "37-chipvoice-dark", example: "chipvoice", dark: true, seconds: 1, select: .vcf),
         Shot(name: "38-random-light", example: "random", dark: false, seconds: 1.5, select: .sampleHold),
@@ -224,6 +227,7 @@ enum ScreenshotRunner {
             if let kind = shot.select, let element = circuit.elements.first(where: { $0.kind == kind }) {
                 editor.selection = [element.id]
             }
+            if shot.notices { EditorState.postSampleNotices(on: editor) }
             editor.tool = shot.tool
             editor.board = shot.board
             if let tab = shot.dock { editor.showDock(tab) }

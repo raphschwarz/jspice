@@ -208,6 +208,8 @@ enum InteractionTest {
         await checkDiscovery(editor: editor, document: document)
         // the menus (skipped where the app's own are not installed, as in this run)
         await checkMenus()
+        // notices: what stays, what fades, and their reports
+        await checkNotices(editor: editor)
 
         return finish(window)
     }

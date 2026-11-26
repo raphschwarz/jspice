@@ -80,6 +80,8 @@ struct EditorView: View {
                     ZoomControl(editor: editor).padding(12)
                 }
             }
+            // what the app has to say about what it just did: toasts, out of the way of the drawing
+            .overlay(alignment: .topTrailing) { NoticeOverlay(editor: editor) }
             .overlay(alignment: .top) {
                 if editor.showQuickAdd {
                     ZStack(alignment: .top) {
