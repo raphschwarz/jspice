@@ -1029,6 +1029,7 @@ public final class CircuitSession {
             "parts": parts,
             "nets": nets.sorted(),
             "problems": simulator.problems,
+            "diagnostics": Self.diagnostics(of: simulator),
             "suggested_time_step": Pacing.suggest(for: circuit).timeStep,
             "temperature": circuit.settings.temperature,
         ]
@@ -1155,6 +1156,7 @@ public final class CircuitSession {
             "truncated": truncated,
         ]
         if simulator.isFailed || !simulator.problems.isEmpty { result["problems"] = simulator.problems }
+        if !simulator.diagnostics.isEmpty { result["diagnostics"] = Self.diagnostics(of: simulator) }
         if !knobs.isEmpty {
             result["knobs"] = knobs.map { knob -> [String: Any] in
                 ["part": knob.name, "end_position": simulator.circuit.position(of: knob.motion.knob) ?? 0]
@@ -2149,6 +2151,18 @@ public final class CircuitSession {
     public var apiKey: () -> String? = { ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] }
     /// How the agent's user can give capture_schematic a key, for its error when there is none
     public var apiKeySource = "set ANTHROPIC_API_KEY in the environment of the MCP server (jspice-mcp)"
+
+    /// The simulator's diagnostics for a tool's result: each with its severity, what to do about it where there is
+    /// something to say, and the names of the parts it is about
+    static func diagnostics(of simulator: Simulator) -> [[String: Any]] {
+        simulator.diagnostics.map { diagnostic in
+            var entry: [String: Any] = ["severity": diagnostic.severity.rawValue, "message": diagnostic.message]
+            if let hint = diagnostic.hint { entry["hint"] = hint }
+            let names = diagnostic.elements.compactMap { simulator.circuit[$0]?.name }.filter { !$0.isEmpty }
+            if !names.isEmpty { entry["parts"] = names }
+            return entry
+        }
+    }
 
     func captureSchematic(_ arguments: [String: Any]) throws -> Any {
         let path = (try Self.text(arguments, "path") as NSString).expandingTildeInPath

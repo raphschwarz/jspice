@@ -457,7 +457,7 @@ private struct ProblemsList: View {
         Label {
             VStack(alignment: .leading, spacing: 2) {
                 Text(note).fixedSize(horizontal: false, vertical: true)
-                Text("Opening the file").font(.caption).foregroundStyle(.secondary)
+                Text("Opening the file").font(.caption).foregroundStyle(.secondary).headingAccessibility()
             }
         } icon: {
             Image(systemName: "doc.badge.ellipsis").foregroundStyle(.blue)

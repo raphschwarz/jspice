@@ -204,6 +204,8 @@ enum InteractionTest {
 
         // the window's layout: the dock, its tabs and what it remembers
         await checkLayout(editor: editor, document: document, window: window)
+        // problems that name their parts: clicking one selects and shows them
+        await checkProblems(editor: editor, document: document)
         // finding parts, commands and examples
         await checkDiscovery(editor: editor, document: document)
         // the menus (skipped where the app's own are not installed, as in this run)
