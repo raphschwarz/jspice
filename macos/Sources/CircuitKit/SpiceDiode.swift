@@ -11,7 +11,7 @@ final class SpiceDiode {
     // what they give; its parameters are never changed once made)
 
     /// The last evaluation, for the simulator to bypass the next where the junction has not moved (see
-    /// `Simulator.bypassesDevices`): the junction voltage (nan: none yet), its current and slope, and its charge and
+    /// `Simulator.stampDiode`): the junction voltage (nan: none yet), its current and slope, and its charge and
     /// capacitance
     var lastVoltage = Double.nan, lastCurrent = 0.0, lastConductance = 0.0, lastCharge = 0.0, lastCapacitance = 0.0
 
