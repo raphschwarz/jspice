@@ -65,6 +65,8 @@ struct PCBView: View {
                 Toggle(isOn: $showsNetInspector) { Image(systemName: "list.bullet.rectangle") }
                     .toggleStyle(.button)
                     .help("Show the Net Inspector: the board's nets and their lengths")
+                Button { board.editing.open3DView(boardFile: board.boardFile, title: board.boardName) } label: { Image(systemName: "cube") }
+                    .help("3D View: the board as KiCad's 3D viewer builds it, with its footprints' VRML models, in a window of its own")
             }
             if let busy = board.busy {
                 ProgressView().controlSize(.small)
