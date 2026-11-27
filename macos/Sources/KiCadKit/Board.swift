@@ -449,7 +449,7 @@ public struct KiCadFootprint {
         let (old, new) = (placement, KiCadPlacement(position: point, rotation: degrees))
         KiCadFootprint.transformAbsolute(node) { new.apply(old.local($0)) }
         var at = [point.x, point.y] as [SExprConvertible]
-        let normalized = KiCadFootprint.normalize(degrees)
+        let normalized = KiCadFootprint.normalize((degrees * 1e6).rounded() / 1e6)
         if normalized != 0 { at.append(normalized) }
         node.set(SExpr("at", at))
         guard turn != 0 else { return }
@@ -469,7 +469,8 @@ public struct KiCadFootprint {
         }
         for child in node.items where child.head == "pad" || child.head == "property" || child.head == "fp_text" {
             guard let a = child["at"] else { continue }
-            let angle = KiCadFootprint.normalize360((a.number(at: 2) ?? 0) + turn)
+            let angle = child.head == "pad" ? KiCadFootprint.writtenAngle((a.number(at: 2) ?? 0) + turn)
+                : KiCadFootprint.normalize360((a.number(at: 2) ?? 0) + turn)
             var values = [a.number(at: 0) ?? 0, a.number(at: 1) ?? 0] as [SExprConvertible]
             // a text keeps its angle written even when 0; a pad drops it
             if angle != 0 || child.head != "pad" { values.append(angle) }
@@ -533,7 +534,7 @@ public struct KiCadFootprint {
                 if let a = child["at"], let x = a.number(at: 0), let y = a.number(at: 1) {
                     let local = (a.number(at: 2) ?? 0) - theta
                     // (top to bottom: its angle negated, the footprint's set to 0 while its pads turn over)
-                    let angle = KiCadFootprint.normalize360(leftRight ? turned - local : -(a.number(at: 2) ?? 0))
+                    let angle = KiCadFootprint.writtenAngle(leftRight ? turned - local : -(a.number(at: 2) ?? 0))
                     var values = [x, -y] as [SExprConvertible]
                     if angle != 0 { values.append(angle) }
                     child.set(SExpr("at", values))
@@ -638,6 +639,13 @@ public struct KiCadFootprint {
         var d = degrees.truncatingRemainder(dividingBy: 360)
         if d < 0 { d += 360 }
         return d == 360 ? 0 : d
+    }
+
+    /// An angle as it is written (to the millionth of a degree KiCadNumber writes) and read back, in [0°, 360°): what
+    /// KiCad has of a pad's angle once it has read it, so 0 (and left out of its `at`, as KiCad leaves it out) where
+    /// what is written would be 0 or 360
+    public static func writtenAngle(_ degrees: Double) -> Double {
+        normalize360((degrees * 1e6).rounded() / 1e6)
     }
 
     /// A footprint's angle as KiCad writes it: above -180, up to 180

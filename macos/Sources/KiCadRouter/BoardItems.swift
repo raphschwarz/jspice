@@ -334,7 +334,7 @@ enum BoardItems {
             switch child.head ?? "" {
             case "pad":
                 guard let a = child["at"] else { continue }
-                let angle = BoardItems.normalize360((a.number(at: 2) ?? 0) + change.degrees)
+                let angle = KiCadFootprint.writtenAngle((a.number(at: 2) ?? 0) + change.degrees)
                 turnRelative(a)
                 var values = Array(a.items.prefix(3))
                 if angle != 0 { values.append(angle.sexpr) }

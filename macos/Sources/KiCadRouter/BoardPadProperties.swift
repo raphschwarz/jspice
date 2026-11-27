@@ -303,7 +303,7 @@ extension BoardEditing {
         // its place: on the board, as the dialog has it, then on the footprint (GetFPRelativePosition); its angle to the
         // footprint's (on the back, negated as the pad turns over)
         let relative = KiMath.rotate(Self.nm(p.position) - Self.nm(fp.position), EDAAngle(degrees: -fp.rotation))
-        let angle = KiCadFootprint.normalize360((flipped ? -p.orientation : p.orientation) + fp.rotation)
+        let angle = KiCadFootprint.writtenAngle((flipped ? -p.orientation : p.orientation) + fp.rotation)
         // the pad, as KiCad writes one
         // (its number none where it can have none, PAD::CanHaveNumber: an unplated hole's, or an aperture's, a pad on no
         // copper, which the dialog's number is greyed out for and KiCad's parser clears as it reads it)
