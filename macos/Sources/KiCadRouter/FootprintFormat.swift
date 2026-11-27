@@ -105,6 +105,10 @@ public enum FootprintFormat {
         for field in fields where seen.insert(field.text(at: 0) ?? "").inserted { head.append(field) }
         for field in head where field.head == "property" { ensureUUID(field) }
         if let filters = fp.all("property").first(where: { $0.text(at: 0) == "ki_fp_filters" }) { head.append(filters) }
+        // (the solder paste's ratio by the name KiCad's parser also reads it by)
+        if let ratio = fp["solder_paste_ratio"], fp["solder_paste_margin_ratio"] == nil {
+            ratio.items[0] = SExpr(symbol: "solder_paste_margin_ratio")
+        }
         for name in headerOrder {
             if library && name == "path" { continue }
             if name == "duplicate_pad_numbers_are_jumpers" {
@@ -148,9 +152,19 @@ public enum FootprintFormat {
             body += pads.sorted { padBefore($0, $1, placement: placement) }
             body += zones.sorted(by: zoneBefore)
             // (BOARD_ITEM::ptr_cmp: a group's layers, its members' all, then its id)
-            func layers(_ group: SExpr) -> [Int] {
+            // (PCB_GROUP::GetLayerSet: its members', a group's its own members' in turn)
+            func layers(_ group: SExpr, _ seen: Set<String> = []) -> [Int] {
                 let ids = Set(BoardItems.members(group))
-                return Array(Set(fp.items.filter { ids.contains($0.value("uuid") ?? "") }.flatMap(layerSeq))).sorted()
+                var out = Set<Int>()
+                for item in fp.items where ids.contains(item.value("uuid") ?? "") {
+                    if item.head == "group" {
+                        let id = item.value("uuid") ?? ""
+                        if !seen.contains(id) { out.formUnion(layers(item, seen.union([id]))) }
+                    } else {
+                        out.formUnion(layerSeq(item))
+                    }
+                }
+                return out.sorted()
             }
             body += kept.sorted { a, b in lexicographic(layers(a), layers(b)) ?? ((a.value("uuid") ?? "") < (b.value("uuid") ?? "")) }
         } else {
@@ -270,6 +284,12 @@ public enum FootprintFormat {
         return ids.sorted()
     }
 
+    /// An outline's points as its SHAPE_LINE_CHAIN holds them (its arcs' points those KiCad makes them of)
+    static func outlinePoints(_ pts: SExpr) -> [IPoint] {
+        guard pts.items.contains(where: { $0.head == "arc" }) else { return pts.items.filter { $0.head == "xy" }.map(BoardWorld.point) }
+        return TuningPattern.chain(pts).points
+    }
+
     /// A layer's name by its id (LSET::Name)
     static func layerName(_ id: Int) -> String? {
         let fixed = [0: "F.Cu", 2: "B.Cu", 1: "F.Mask", 3: "B.Mask", 5: "F.SilkS", 7: "B.SilkS", 9: "F.Adhes", 11: "B.Adhes",
@@ -336,7 +356,7 @@ public enum FootprintFormat {
         if pa != pb { return pa < pb }
         if let o = lexicographic(layerSeq(a), layerSeq(b)) { return o }
         func corners(_ z: SExpr) -> [IPoint] {
-            z.all("polygon").flatMap { $0["pts"]?.items.filter { $0.head == "xy" }.map(BoardWorld.point) ?? [] }
+            z.all("polygon").flatMap { $0["pts"].map(outlinePoints) ?? [] }
         }
         let ca = corners(a), cb = corners(b)
         if ca.count != cb.count { return ca.count < cb.count }

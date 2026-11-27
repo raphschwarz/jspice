@@ -685,6 +685,44 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   font does not have, empty and blank texts; footprints turned and flipped, their texts kept upright or not, showing
   `${REFERENCE}` and the like, some hidden; a knockout text and one in another font, which the port does not make).
   `Tests/KiCadRouterTests/Fixtures/texts` holds `drawn` (`--draw`).
+- `footprints.py`: KiCad's footprint editor's saving, checks and updates, for `FootprintEditorTests` (the port's
+  `FootprintFormat.swift`, `FootprintEditor.swift`, `FootprintChecks.swift`, `FootprintExchange.swift`), on
+  `Tests/KiCadRouterTests/Fixtures/footprints`. `roundtrip`: footprints of KiCad's libraries (two of each kind of item,
+  pad and property the footprints of KiCad 10's libraries have, and thirty at random; not those with dimensions,
+  whose texts KiCad works out again as it reads them) read and saved again by KiCad's own plugin
+  (`PCB_IO_KICAD_SEXPR::FootprintLoad` keeping their ids, `FootprintSave`), which the port must write the same, byte
+  for byte, the ids KiCad makes anew aside (the mandatory fields', which `FOOTPRINT`'s copy gives ids of their own,
+  and those of items their files give none); `all` saves every footprint of KiCad's libraries so, for
+  `KICAD_FOOTPRINT_ROUNDTRIP` (all 15468 of KiCad 10.0.8's but `Symbol:Smolhaj_Scale_0.1`, the one with a
+  dimension, come out the same). `edits`: footprints edited through KiCad's own model as the footprint editor's
+  tools edit them (items moved, turned and deleted; pads placed from the master pad and numbered by
+  `GetNextPadNumber`; pads' size, shape and hole; shapes and texts drawn; the description, keywords, value,
+  attributes, net tie pad groups; Save As's name) and saved, which the port's editor must make the same with its
+  own (FootprintEditor's, and BoardEditing's pad and footprint properties). `boardsave`: the footprints of two of the
+  fixtures' boards saved into a library as `FootprintSave` saves a board's (turned to 0°, onto the front, on no
+  net), the same; one footprint of one of them keeps an angle KiCad's arithmetic leaves 2.8e-14° off 0° (180° less
+  180.00000000000003°), which the port, keeping angles to a millionth of a degree, writes 0. `readback OURS KICAD`
+  reads each of the port's footprints (written with `KICAD_FOOTPRINT_DUMP`) and KiCad's with `FootprintLoad` and
+  compares them field by field (properties, fields, pads, drawings, texts, zones, models), and has KiCad save the
+  port's again: of the roundtrip's 83, the edits' 6 and the boardsave's 28, none differs but by that angle.
+  `checks`: footprints made faulty (pads without holes or outer copper, holes outside or larger than their pads, SMD
+  pads on both sides, masks on the other side, negative margins, the wrong attributes, overlapping and co-located
+  pads, net tie groups naming unknown or repeated pads, open and missing courtyards, an unplated fiducial), each on a
+  board of its own, and kicad-cli's DRC of each, its footprint checks made errors: the footprint checker's markers
+  where the DRC's footprint checks make the same checks (`CheckFootprintAttributes`, `CheckPads`,
+  `CheckNetTiePadGroups`, a net tie's `CheckNetTies`, the courtyards': the checker reports a malformed courtyard both
+  malformed and missing, the DRC malformed only); `CheckShortingPads`, which only the checker runs, is not checked
+  against KiCad. `update`: a board of footprints of KiCad's libraries (turned, on the back, locked, on nets, their
+  texts moved and restyled, fields and texts added, attributes and clearances overridden) and changed copies of their
+  libraries in its project's fp-lib-table, and KiCad's own PCB editor under Xvfb (an action plugin of its own, as
+  `editing.py`'s) running Tools ▸ Update Footprints from Library... with its own options, with every text kept but
+  clearances and models, and with every reset on: the port's `FootprintExchange.updateFromLibrary` of the same board
+  from the same libraries leaves it the same, byte for byte, the ids each makes anew aside, and reports what the dialog
+  reported, line for line (its "no changes" the port's where the exchange changed nothing, a stand-in for KiCad's
+  `FootprintNeedsUpdate`, which the port does not weigh as KiCad does). `editboard`: the same
+  board's footprints each opened in KiCad's footprint editor from the board (clicked, Ctrl+E) and saved straight back
+  onto it (File ▸ Save), which the port's `FootprintEditor(board:footprint:)` and `saveToBoard` must leave the same
+  (R2, small and on the back, which the plugin's click does not select, is left out).
 - `newstroke.py`: writes `Sources/KiCadRouter/StrokeFontData.swift`, the KiCad font's glyphs, from KiCad's
   `common/newstroke_font.cpp` (`newstroke.py KICAD/common/newstroke_font.cpp OUT.swift`).
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and

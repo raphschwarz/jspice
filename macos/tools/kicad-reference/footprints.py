@@ -29,6 +29,12 @@
         net tie pads, malformed or missing courtyards), each on a board of its own (OUTDIR/CASE.kicad_pcb, its project
         reporting a missing courtyard), and kicad-cli's design rules check of each (OUTDIR/CASE.drc), whose footprint
         checks (DRC_TEST_PROVIDER_FOOTPRINT_CHECKS' and the courtyards') are the footprint checker's.
+    footprints.py editboard OUTDIR
+        a board like update's (its footprints unlocked) and each of its footprints opened in KiCad's own footprint
+        editor from the board (the PCB editor under Xvfb: the footprint clicked, Ctrl+E, LoadFootprintFromBoard) and
+        saved straight back onto it (the footprint editor's File > Save: SaveFootprintToBoard), each in a run of its
+        own: OUTDIR/board.kicad_pcb, OUTDIR/edited-REF.kicad_pcb and edited-REF.json (the selection). A footprint the
+        click does not select is left out (R2, small and on the back).
     footprints.py update OUTDIR
         a board of footprints of KiCad's libraries (turned, on the back, locked, on nets, their texts moved and
         restyled, fields added) and copies of those libraries changed (pads moved and resized, pads added and taken
@@ -810,6 +816,7 @@ def update_board(folder):
 
 
 def update(outdir):
+    outdir = os.path.abspath(outdir)
     home = os.environ.get("KICAD_CONFIG_HOME") or os.path.expanduser("~/.config/kicad")
     for n, options in enumerate(UPDATE_CASES):
         folder = os.path.join(outdir, f"update-{n}")
@@ -844,6 +851,256 @@ def update(outdir):
         print(folder, done.get("report", "")[:400])
 
 
+# MARK: - Edit Footprint, Update Footprint on Board
+
+EDITBOARD_PLUGIN = r'''
+import json, os, re, traceback
+import wx
+import pcbnew
+
+JOB = json.load(open(os.environ["JSPICE_EDITBOARD_JOB"]))
+state = {"phase": "load", "quiet": 0, "ticks": 0, "wait": 0, "tries": 0}
+sim = wx.UIActionSimulator()
+out = {"dialogs": []}
+
+
+def walk(w):
+    yield w
+    for c in w.GetChildren():
+        yield from walk(c)
+
+
+def frame(name="PcbFrame"):
+    return next((w for w in wx.GetTopLevelWindows() if w.GetName() == name and w.IsShown()), None)
+
+
+def editor_frame():
+    """The footprint editor's frame (FOOTPRINT_EDIT_FRAME), by its name or its title"""
+    return next((w for w in wx.GetTopLevelWindows() if w.IsShown() and w.GetName() != "PcbFrame"
+                 and ("ootprint" in w.GetName() or "Footprint Editor" in w.GetTitle())), None)
+
+
+def canvas(f):
+    cands = [w for w in walk(f) if w.IsShown() and w.GetClassName() == "wxGLCanvas"]
+    return max(cands, key=lambda w: w.GetSize().x * w.GetSize().y)
+
+
+def cursor():
+    sb = frame().GetStatusBar()
+    for i in range(sb.GetFieldsCount()):
+        m = re.match(r"X (-?[0-9.]+)\s+Y (-?[0-9.]+)", sb.GetStatusText(i))
+        if m:
+            return float(m.group(1)), float(m.group(2))
+    return None
+
+
+def finish(code):
+    with open(JOB["out"], "w") as f:
+        json.dump(out, f)
+    os._exit(code)
+
+
+def menu(f, title, command):
+    bar = f.GetMenuBar()
+    m = bar.GetMenu(next(i for i in range(bar.GetMenuCount()) if bar.GetMenuLabelText(i) == title))
+    item = next(i for i in m.GetMenuItems() if i.GetItemLabelText() == command)
+    evt = wx.CommandEvent(wx.wxEVT_MENU, item.GetId())
+    evt.SetEventObject(m)
+    wx.CallAfter(m.ProcessEvent, evt)
+
+
+def tick():
+    try:
+        state["ticks"] += 1
+        if state["ticks"] > 3000:
+            out["error"] = "timeout in " + state["phase"]
+            finish(3)
+        if state["wait"] > 0:
+            state["wait"] -= 1
+            return
+        # (a message KiCad shows: said, and closed)
+        for w in wx.GetTopLevelWindows():
+            if isinstance(w, wx.Dialog) and w.IsShown() and w.IsModal():
+                out["dialogs"].append({"title": w.GetTitle(), "said": [t.GetLabel() for t in walk(w) if isinstance(t, wx.StaticText)]})
+                w.EndModal(wx.ID_OK)
+                state["wait"] = 4
+                return
+        f = frame()
+        if state["phase"] == "load":
+            state["quiet"] += 1
+            if f is not None and pcbnew.GetBoard() is not None and state["quiet"] > 8:
+                f.SetSize(0, 0, 2560, 1600)
+                state["phase"] = "fit"
+                state["wait"] = 8
+            return
+        if state["phase"] == "fit":
+            menu(f, "View", "Zoom to Fit")
+            # (the Selection Filter's Locked items on, as a click on it sets it: a locked footprint selected too)
+            box = next(w for w in walk(f) if isinstance(w, wx.CheckBox) and w.GetLabel() == "Locked items")
+            box.SetValue(True)
+            evt = wx.CommandEvent(wx.wxEVT_CHECKBOX, box.GetId())
+            evt.SetEventObject(box)
+            evt.SetInt(1)
+            box.GetEventHandler().ProcessEvent(evt)
+            state["phase"] = "calibrate"
+            state["wait"] = 10
+            return
+        if state["phase"] == "calibrate":
+            c = canvas(f)
+            r = c.GetScreenRect()
+            pts = [(r.x + r.width // 5, r.y + r.height // 5), (r.x + 4 * r.width // 5, r.y + 4 * r.height // 5)]
+            cal = state.setdefault("cal", {"readings": [], "moved": False, "last": None})
+            k = len(cal["readings"])
+            if k < 2:
+                target = pts[k]
+                if not cal["moved"]:
+                    sim.MouseMove(target[0] + 3, target[1] + 3)
+                    sim.MouseMove(*target)
+                    cal["moved"] = True
+                    cal["last"] = None
+                    state["wait"] = 4
+                    return
+                now = cursor()
+                if now is not None and now == cal["last"]:
+                    cal["readings"].append((target, now))
+                    cal["moved"] = False
+                else:
+                    cal["last"] = now
+                    sim.MouseMove(*target)
+                    state["wait"] = 3
+                return
+            (p1, w1), (p2, w2) = cal["readings"]
+            state["t"] = (p1, w1, ((w2[0] - w1[0]) / (p2[0] - p1[0]), (w2[1] - w1[1]) / (p2[1] - p1[1])))
+            state["phase"] = "select"
+            return
+        if state["phase"] == "select":
+            p1, w1, s = state["t"]
+            x, y = JOB["at"]
+            q = (round(p1[0] + (x - w1[0]) / s[0]), round(p1[1] + (y - w1[1]) / s[1]))
+            sim.MouseMove(q[0] + 1, q[1])
+            sim.MouseMove(*q)
+            state["phase"] = "click"
+            state["wait"] = 6
+            return
+        if state["phase"] == "click":
+            sim.MouseClick(wx.MOUSE_BTN_LEFT)
+            state["phase"] = "open"
+            state["wait"] = 10
+            return
+        if state["phase"] == "open":
+            sel = pcbnew.GetCurrentSelection()
+            out["selection"] = [sel[k].m_Uuid.AsString() + " " + sel[k].GetClass() for k in range(len(sel))]
+            canvas(f).SetFocus()
+            sim.Char(ord(JOB.get("key", "e")), wx.MOD_CONTROL if JOB.get("ctrl", True) else 0)
+            state["phase"] = "editor"
+            state["wait"] = 20
+            return
+        if state["phase"] == "editor":
+            fe = editor_frame()
+            if fe is None:
+                state["tries"] += 1
+                if state["tries"] > 100:
+                    out["error"] = "no footprint editor: " + str([(w.GetName(), w.GetTitle(), w.IsShown()) for w in wx.GetTopLevelWindows()])
+                    finish(4)
+                state["wait"] = 3
+                return
+            state["phase"] = "save"
+            state["wait"] = 30
+            return
+        if state["phase"] == "save":
+            menu(editor_frame(), "File", "Save")
+            state["phase"] = "write"
+            state["wait"] = 30
+            return
+        if state["phase"] == "write":
+            pcbnew.SaveBoard(JOB["save"], pcbnew.GetBoard())
+            finish(0)
+    except Exception:
+        out["error"] = traceback.format_exc()
+        finish(2)
+
+
+timer = wx.Timer()
+timer.Bind(wx.EVT_TIMER, lambda e: tick())
+timer.Start(150)
+'''
+
+
+def editboard(outdir):
+    """Each of a board's footprints opened in KiCad's footprint editor from the board (Ctrl+E: LoadFootprintFromBoard)
+    and saved straight back onto it (File > Save: SaveFootprintToBoard), each in a run of its own:
+    OUTDIR/board.kicad_pcb (before), OUTDIR/edited-REF.kicad_pcb and edited-REF.json (the selection and messages)"""
+    outdir = os.path.abspath(outdir)
+    home = os.environ.get("KICAD_CONFIG_HOME") or os.path.expanduser("~/.config/kicad")
+    update_board(outdir)
+    for f in ("fp-lib-table",):
+        os.remove(os.path.join(outdir, f))
+    shutil.rmtree(os.path.join(outdir, "libs"))
+    board = pcbnew.LoadBoard(os.path.join(outdir, "board.kicad_pcb"))
+    # (none locked: a click selects a locked footprint only where the selection filter lets it, which the plugin
+    # cannot be sure it has set)
+    for fp in board.Footprints():
+        fp.SetLocked(False)
+    pcbnew.SaveBoard(os.path.join(outdir, "board.kicad_pcb"), board)
+
+    def free_point(fp):
+        """A point of the footprint's box on none of its pads, texts or drawings, where a click selects it whole"""
+        box = fp.GetBoundingBox(False)
+        others = list(fp.Pads()) + list(fp.GraphicalItems()) + list(fp.GetFields())
+        # (the box's points nearest its middle first: a turned footprint's box's corners are off it)
+        points = [pcbnew.VECTOR2I(box.GetX() + box.GetWidth() * fx // 20, box.GetY() + box.GetHeight() * fy // 20)
+                  for fx in range(1, 20) for fy in range(1, 20)]
+        c = box.GetCenter()
+        points.sort(key=lambda p: (p.x - c.x) ** 2 + (p.y - c.y) ** 2)
+        for p in points:
+            if fp.HitTest(p, 0) and not any(i.HitTest(p, iu(0.15)) for i in others):
+                return p
+        return fp.GetPosition()
+
+    targets = [(fp.GetReference(), free_point(fp)) for fp in board.Footprints()]
+    for ref, pos in targets:
+        with tempfile.TemporaryDirectory() as tmp:
+            share = os.path.join(tmp, "share")
+            plugins = os.path.join(share, "kicad", "10.0", "scripting", "plugins")
+            os.makedirs(plugins)
+            with open(os.path.join(plugins, "jspice_editboard.py"), "w") as f:
+                f.write(EDITBOARD_PLUGIN)
+            config = os.path.join(tmp, "config")
+            shutil.copytree(home, config, ignore=shutil.ignore_patterns("*.lck"))
+            # (a micrometre grid, nothing magnetic: the pointer goes where it is put)
+            pj = os.path.join(config, "10.0", "pcbnew.json")
+            cfg = json.load(open(pj))
+            grid = cfg.setdefault("window", {}).setdefault("grid", {})
+            grid["sizes"] = [{"name": "", "x": "0.001 mm", "y": "0.001 mm"}]
+            grid["last_size"] = 0
+            editing = cfg.setdefault("editing", {})
+            editing["magnetic_graphics"] = False
+            editing["magnetic_pads"] = 0
+            editing["magnetic_tracks"] = 0
+            json.dump(cfg, open(pj, "w"))
+            job = {"at": [pos.x / MM, pos.y / MM], "out": os.path.join(tmp, "out.json"), "ctrl": os.environ.get("JSPICE_CTRL", "1") == "1",
+                   "save": os.path.join(outdir, f"edited-{ref}.kicad_pcb")}
+            with open(os.path.join(tmp, "job.json"), "w") as f:
+                json.dump(job, f)
+            env = dict(os.environ, XDG_DATA_HOME=share, KICAD_CONFIG_HOME=config,
+                       JSPICE_EDITBOARD_JOB=os.path.join(tmp, "job.json"))
+            run = subprocess.run(["xvfb-run", "-a", "-s", "-screen 0 2560x1600x24", "pcbnew", "board.kicad_pcb"],
+                                 cwd=outdir, env=env, capture_output=True, text=True, timeout=900)
+            done = json.load(open(job["out"])) if os.path.exists(job["out"]) else {"error": run.stderr[-2000:]}
+        for f in os.listdir(outdir):
+            if f.endswith(".lck") or f.endswith(".kicad_prl") or (f.startswith("edited-") and f.endswith(".kicad_pro")):
+                os.remove(os.path.join(outdir, f))
+        # (a footprint a click did not select is left out: R2, small and on the back, which the editor's click
+        # selects nothing of)
+        if "error" in done:
+            print(f"{ref} left out: {done['error']} (selection {done.get('selection')}, dialogs {done.get('dialogs')})")
+            continue
+        done["reference"] = ref
+        with open(os.path.join(outdir, f"edited-{ref}.json"), "w") as f:
+            json.dump(done, f, indent=1, sort_keys=True)
+        print(ref, done.get("selection"), done.get("dialogs"))
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "roundtrip":
@@ -858,6 +1115,8 @@ if __name__ == "__main__":
         readback(sys.argv[2], sys.argv[3])
     elif cmd == "checks":
         checks(sys.argv[2])
+    elif cmd == "editboard":
+        editboard(sys.argv[2])
     elif cmd == "update":
         update(sys.argv[2])
     else:

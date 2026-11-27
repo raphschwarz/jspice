@@ -141,9 +141,30 @@ private final class RefillMark: @unchecked Sendable {
 /// The select tool's buttons for the zone or footprint selected: its properties, and its lock; the sheets they open
 struct PCBPropertiesBar: View {
     @ObservedObject var editing: PCBEditing
+    /// The footprint editor open (PCBFootprintEditor.swift)
+    @State private var footprintEditor: PCBFootprintEditorModel?
 
     var body: some View {
         HStack(spacing: 8) {
+            if editing.tool == .select && editing.footprintSelection.count == 1, let uuid = editing.footprintSelection.first {
+                Button("Edit Footprint…") {
+                    Task { footprintEditor = await editing.footprintEditor(for: uuid) }
+                }
+                .help("The footprint in the footprint editor (Ctrl+E in KiCad): its changes saved back onto the board, as KiCad's Update Footprint on Board saves them")
+            }
+            if editing.tool == .select {
+                Menu("Footprints") {
+                    Button("Footprint Editor…") { Task { footprintEditor = await editing.footprintEditor() } }
+                    Button(editing.footprintSelection.isEmpty ? "Update All from Library" : "Update Selected from Library") {
+                        let chosen = editing.footprintSelection
+                        Task { _ = await editing.updateFootprintsFromLibrary(chosen) }
+                    }
+                    .help("The footprints made their libraries' again, as KiCad's Update Footprints from Library makes them: their texts, attributes and nets kept")
+                }
+                .fixedSize()
+            }
+            Color.clear.frame(width: 0, height: 0)
+                .sheet(item: $footprintEditor) { model in PCBFootprintEditorSheet(model: model) }
             if editing.tool == .select && (editing.zoneSelection != nil || editing.footprintSelection.count == 1) {
                 Button("Properties…") { editing.editProperties(footprints: editing.footprintSelection, atPointer: false) }
                     .help(editing.zoneSelection != nil

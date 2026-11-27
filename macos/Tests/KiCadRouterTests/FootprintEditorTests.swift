@@ -278,6 +278,33 @@ final class FootprintEditorTests: XCTestCase {
         XCTAssertGreaterThan(found, 0)
     }
 
+    // MARK: - Editing a board's footprint
+
+    /// Footprints of a board (turned to 0°, 180°, 45°, on the back at 270°) opened in the footprint editor from the
+    /// board and saved straight back onto it (footprints.py editboard: KiCad's own PCB editor, Ctrl+E, then the
+    /// footprint editor's File > Save, LoadFootprintFromBoard and SaveFootprintToBoard): the port's editor
+    /// (FootprintEditor(board:footprint:), saveToBoard) leaves the board as KiCad's does, byte for byte, the ids each
+    /// made anew aside
+    func testBoardFootprintEditedAndSavedBackAsKiCadDoesIt() throws {
+        let folder = try Self.folder().appendingPathComponent("editboard")
+        let before = try String(contentsOf: folder.appendingPathComponent("board.kicad_pcb"), encoding: .utf8)
+        let runs = try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.hasPrefix("edited-") && $0.hasSuffix(".json") }.sorted()
+        XCTAssertFalse(runs.isEmpty)
+        for run in runs {
+            let job = try Self.json(folder.appendingPathComponent(run))
+            let reference = try XCTUnwrap(job["reference"] as? String)
+            let board = try KiCadBoard(text: before)
+            let fp = try XCTUnwrap(board.footprints.first { $0.reference == reference })
+            let editor = try XCTUnwrap(FootprintEditor(board: board, footprint: fp.uuid))
+            XCTAssertEqual(editor.footprint["at"]?.compact, "(at 0 0)", reference)
+            let after = try XCTUnwrap(editor.saveToBoard(board))
+            let theirs = try String(contentsOf: folder.appendingPathComponent("edited-\(reference).kicad_pcb"), encoding: .utf8)
+            let (same, why) = Self.same(after.text, theirs, source: before)
+            XCTAssertTrue(same, "\(reference): \(why)")
+            Self.dump(after.text, "editboard/edited-\(reference).kicad_pcb")
+        }
+    }
+
     // MARK: - Updating from the library
 
     /// A board's footprints updated from their libraries (footprints.py update: KiCad's own PCB editor's Update
@@ -315,7 +342,9 @@ final class FootprintEditorTests: XCTestCase {
             // (the ids the libraries' files hold are not kept: the footprints are loaded with new ones)
             let (same, why) = Self.same(board.text, theirs, source: before)
             XCTAssertTrue(same, "\(name): \(why)")
-            XCTAssertEqual(report.lines.count, board.footprints.count, name)
+            // (what the dialog reported, footprint by footprint from the last)
+            let said = (job["report"] as? String ?? "").split(separator: "\n").map(String.init)
+            XCTAssertEqual(report.lines, said, name)
             Self.dump(board.text, "update/\(name).kicad_pcb")
         }
     }

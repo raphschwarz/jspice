@@ -5,8 +5,9 @@
 // RevertFootprint; pcbnew/tools/pad_tool.cpp, PAD_TOOL::PlacePad and EnumeratePads, with pcbnew/footprint.cpp,
 // FOOTPRINT::GetNextPadNumber, and pcbnew/pad.cpp, PAD's constructor (the master pad) and ImportSettingsFrom; the
 // footprint's items moved, turned and taken away as pcbnew/pcb_shape.cpp, pad.cpp, pcb_text.cpp and zone.cpp's Move and
-// Rotate move and turn them). Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public License
-// version 3 or later, as KiCad (see KICAD-NOTICE.md).
+// Rotate move and turn them, and copied as pcbnew/tools/edit_tool.cpp's EDIT_TOOL::Duplicate and pcbnew/footprint.cpp's
+// FOOTPRINT::DuplicateItem copy them). Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public
+// License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
 import Foundation
 import KiCadKit
@@ -203,6 +204,40 @@ public final class FootprintEditor {
         footprint.items.first { $0.kind == .list && $0.head != "uuid" && $0.value("uuid") == uuid }
     }
 
+    /// The footprint's item at `p` (mm), within `slop` of it: a pad whose shape holds it (the smallest), else a
+    /// drawing it is on (its pen's width and the slop about its lines, or inside it, filled), else a text or field
+    /// whose place it is near; its id
+    public func item(at p: KiCadPoint, slop: Double) -> String? {
+        let view = KiCadFootprint(footprint, board: board)
+        let pads = view.pads.filter { KiCadPolygon.contains($0.outline, p) }
+        if let pad = pads.min(by: { BoardEditing.ringArea($0.outline) < BoardEditing.ringArea($1.outline) }) { return pad.uuid }
+        for drawing in view.drawings.reversed() {
+            let pts = drawing.points
+            guard pts.count >= 2 else { continue }
+            let closed = ["rect", "circle", "poly"].contains(drawing.kind)
+            if closed && drawing.isFilled && KiCadPolygon.contains(pts, p) { return drawing.node.value("uuid") }
+            let edges = zip(pts, pts.dropFirst() + (closed ? [pts[0]] : []))
+            if edges.contains(where: { KiCadPolygon.distance(p, toSegment: $0.0, $0.1) <= drawing.width / 2 + slop }) {
+                return drawing.node.value("uuid")
+            }
+        }
+        for text in footprint.items.reversed() where text.head == "fp_text" || text.head == "property" {
+            guard !(text.head == "property" && text.flag("hide")), let at = text["at"] else { continue }
+            let size = text["effects"]?["font"]?["size"]?.number(at: 0) ?? 1
+            let q = KiCadPoint(at.number(at: 0) ?? 0, at.number(at: 1) ?? 0)
+            if q.distance(to: p) <= max(size, slop) { return text.value("uuid") }
+        }
+        return nil
+    }
+
+    /// The footprint's pads, each by its id: its number
+    public var padNumbers: [String: String] {
+        Dictionary(footprint.all("pad").compactMap { pad in pad.value("uuid").map { ($0, pad.text(at: 0) ?? "") } }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// FootprintChecks.run of the footprint, as the footprint checker runs them
+    public func check() -> [FootprintChecks.Violation] { FootprintChecks.run(board) }
+
     // MARK: - Moving, turning, deleting
 
     /// The board-level head the port's BoardItems moves and turns a footprint's drawing by (the footprint at 0, 0 and
@@ -291,10 +326,11 @@ public final class FootprintEditor {
     }
 
     /// Copies of the items, moved by `delta` (mm), each a new id, put after the footprint's items of their kind
-    /// (EDIT_TOOL::Duplicate's copies, added to the footprint); a pad's copy given the footprint's next pad number
-    /// (FOOTPRINT::DuplicateItem: GetNextPadNumber of the last pad number); their ids
+    /// (EDIT_TOOL::Duplicate's copies, FOOTPRINT::DuplicateItem: a pad's keeps its number); with `increment`
+    /// (Duplicate and Increment), a pad's copy that can have a number given the footprint's next one after the last
+    /// pad number (GetNextPadNumber); their ids
     @discardableResult
-    public func duplicate(_ uuids: [String], by delta: KiCadPoint) -> [String] {
+    public func duplicate(_ uuids: [String], by delta: KiCadPoint, increment: Bool = false) -> [String] {
         var made: [String] = []
         change("Duplicate") { fp in
             let d = BoardEditing.nm(delta)
@@ -303,7 +339,7 @@ public final class FootprintEditor {
                 let copy = node.copy()
                 let new = KiCadBoard.newUUID()
                 copy.set(SExpr("uuid", new))
-                if copy.head == "pad" && Self.canHaveNumber(copy) {
+                if increment && copy.head == "pad" && Self.canHaveNumber(copy) {
                     let number = Self.nextPadNumber(fp, after: lastPadNumber)
                     copy.items[1] = SExpr(string: number)
                     lastPadNumber = number
@@ -596,9 +632,17 @@ public final class FootprintEditor {
 
     /// FOOTPRINT_EDIT_FRAME::SaveFootprintToBoard: the board's footprint this one was loaded from exchanged for it
     /// (PCB_EDIT_FRAME::ExchangeFootprint, every reset on: FootprintExchange), its items given back the ids they had on
-    /// the board (new ones for those that are new); the board as it then is, nil where the footprint is not on it
+    /// the board (new ones for those that are new); a copy of `target` as it then is, nil where the footprint is not
+    /// on it
     public func saveToBoard(_ target: KiCadBoard, flipLeftRight: Bool = false) -> KiCadBoard? {
-        guard let link, let existing = target.root.all("footprint").first(where: { $0.value("uuid") == link }) else { return nil }
+        let out = target.copy()
+        return exchange(onto: out, flipLeftRight: flipLeftRight) ? out : nil
+    }
+
+    /// SaveFootprintToBoard on `target` itself: whether its footprint was there to exchange
+    @discardableResult
+    public func exchange(onto target: KiCadBoard, flipLeftRight: Bool = false) -> Bool {
+        guard let link, let existing = target.root.all("footprint").first(where: { $0.value("uuid") == link }) else { return false }
         let fp = footprint.copy()
         func fix(_ item: SExpr) {
             guard let id = item.value("uuid") else { return }
@@ -615,11 +659,34 @@ public final class FootprintEditor {
             guard let members = group["members"] else { continue }
             for i in 1..<members.items.count { members.items[i] = SExpr(string: renamed[members.items[i].text] ?? members.items[i].text) }
         }
-        let out = target.copy()
-        guard let old = out.root.all("footprint").first(where: { $0 === existing } ) ?? out.root.all("footprint").first(where: { $0.value("uuid") == link }) else { return nil }
-        FootprintExchange.exchange(old, for: fp, on: out, options: .init(), flipLeftRight: flipLeftRight)
+        FootprintExchange.exchange(existing, for: fp, on: target, options: .init(), flipLeftRight: flipLeftRight)
         original = footprint.copy()
         isModified = false
-        return out
+        return true
+    }
+}
+
+extension BoardEditing {
+    /// The board's footprint `editor` was loaded from exchanged for the editor's (its Save: Update Footprint on
+    /// Board, FOOTPRINT_EDIT_FRAME::SaveFootprintToBoard), as one change ("Update Footprint"); nil where it is no
+    /// longer on the board
+    public func updateFootprint(from editor: FootprintEditor) -> Edit? {
+        guard !isRouting, let uuid = editor.link, editor.exchange(onto: router.board) else { return nil }
+        router.boardChanged()
+        return change("Update Footprint", footprints: [uuid])
+    }
+
+    /// The board's footprints `uuids` (all of them, nil) updated from their libraries as Update Footprints from
+    /// Library updates them (FootprintExchange.updateFromLibrary), as one change ("Update Footprint"), and what its
+    /// dialog would report
+    public func updateFootprintsFromLibrary(_ library: KiCadFootprintSource, options: FootprintExchange.Options = .updateDialog,
+                                            uuids: Set<String>? = nil) -> (edit: Edit?, report: FootprintExchange.Report) {
+        guard !isRouting else { return (nil, FootprintExchange.Report()) }
+        let report = FootprintExchange.updateFromLibrary(router.board, library: library, options: options) { fp in
+            uuids?.contains(fp.uuid) ?? true
+        }
+        router.boardChanged()
+        let changed = router.board.footprints.map(\.uuid).filter { uuids?.contains($0) ?? true }
+        return (change("Update Footprint", footprints: changed), report)
     }
 }

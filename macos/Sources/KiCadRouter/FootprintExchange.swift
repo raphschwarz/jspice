@@ -423,8 +423,7 @@ public enum FootprintExchange {
         }
         func steps(_ x: SExpr) -> [IPoint] {
             var last = IPoint(0, 0)
-            return x.all("polygon").flatMap { $0["pts"]?.items.filter { $0.head == "xy" } ?? [] }.map { xy in
-                let p = BoardWorld.point(xy)
+            return x.all("polygon").flatMap { $0["pts"].map(FootprintFormat.outlinePoints) ?? [] }.map { p in
                 defer { last = p }
                 return last - p
             }
@@ -549,10 +548,20 @@ public enum FootprintExchange {
                 report.lines.append(msg)
                 continue
             }
+            // ("no changes" where the exchange left the footprint as it was, its new items' ids aside: the port's
+            // stand-in for FOOTPRINT::FootprintNeedsUpdate, which it does not weigh as KiCad does)
+            let before = withoutIDs(node)
             exchange(node, for: loaded(lib, libID: fp.libID), on: board, options: options, flipLeftRight: flipLeftRight)
-            report.lines.append(msg + ": OK")
+            report.lines.append(msg + (withoutIDs(node) == before ? ": (no changes)" : ": OK"))
         }
         return report
+    }
+
+    /// A footprint's text without its items' ids
+    static func withoutIDs(_ node: SExpr) -> String {
+        let copy = node.copy()
+        copy.walk { $0.items.removeAll { $0.head == "uuid" } }
+        return copy.compact
     }
 
     /// PCB_BASE_FRAME::loadFootprint in the PCB editor: the library's footprint, a copy of it every item of which
