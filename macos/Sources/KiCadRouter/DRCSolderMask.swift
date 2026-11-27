@@ -2,11 +2,13 @@
 // different nets: each aperture against the others on its mask layer, each copper item against the apertures over it,
 // each aperture against the copper zones under it, and apertures with no copper of their own (mask drawings, free pads)
 // bridging by the nets they expose; and, where the board asks a minimum web width, buildRTrees' whole mask and
-// testSilkToMaskClearance: silkscreen against it), pcbnew/pad.cpp (GetSolderMaskExpansion, IsNPTHWithNoCopper,
-// IsFreePad, SameLogicalPadAs, SharesNetTieGroup, TransformShapeToPolygon), pcbnew/pcb_track.cpp (a via's tenting and
-// mask layers, its and a track's mask expansion, TransformShapeToPolygon), pcbnew/pcb_shape.cpp and common/eda_shape.cpp
-// (a drawing's mask expansion and mask layers, TransformShapeToPolygon), pcbnew/pcb_text.cpp (TransformTextToPolySet)
-// and pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp (how these are read).
+// testSilkToMaskClearance: silkscreen against it; Run's largest clearance, the one pcbnew/drc/drc_rtree.h's
+// QueryColliding searches with and tries each pair's shapes at before testItemAgainstItems does), pcbnew/pad.cpp
+// (GetSolderMaskExpansion, IsNPTHWithNoCopper, IsFreePad, SameLogicalPadAs, SharesNetTieGroup, TransformShapeToPolygon,
+// GetBoundingBox), pcbnew/pcb_track.cpp (a via's tenting and mask layers, its and a track's mask expansion,
+// TransformShapeToPolygon), pcbnew/pcb_shape.cpp and common/eda_shape.cpp (a drawing's mask expansion and mask layers,
+// TransformShapeToPolygon), pcbnew/pcb_text.cpp (TransformTextToPolySet) and
+// pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp (how these are read).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -38,6 +40,9 @@ extension BoardDRC {
         var copperItem: CopperItem?
 
         init(kind: Kind, uuid: String) { (self.kind, self.uuid) = (kind, uuid) }
+
+        /// A pad's hole (DRC_RTREE::Insert puts it in the tree beside the pad's shape)
+        var hole: Shape? { kind == .pad ? copperItem?.hole : nil }
 
         func isOnLayer(_ l: String) -> Bool { layers.contains(l) }
 
@@ -80,7 +85,10 @@ extension BoardDRC {
         var out: [MaskItem] = []
         func finish(_ m: MaskItem) {
             var box: IBox?
-            for s in m.maskShapes + m.copperShapes.values.flatMap({ $0 }) { if box == nil { box = s.bbox } else { box!.merge(s.bbox) } }
+            // (GetBoundingBox: a pad's takes in its hole)
+            for s in m.maskShapes + m.copperShapes.values.flatMap({ $0 }) + [m.hole].compactMap({ $0 }) {
+                if box == nil { box = s.bbox } else { box!.merge(s.bbox) }
+            }
             if let box { m.bbox = box }
             out.append(m)
         }
@@ -190,6 +198,39 @@ extension BoardDRC {
         return out
     }
 
+    /// DRC_TEST_PROVIDER_SOLDER_MASK::Run's m_largestClearance, the clearance its R-tree is searched with: the largest
+    /// mask expansion of the footprints' pads (GetSolderMaskExpansion of ALL_LAYERS: none for a pad on no copper) and
+    /// drawings, the tracks and vias and the board's drawings (none less than 0), twice over and the minimum web
+    /// width with it; no less than the mask-to-copper clearance, nor than the worst silkscreen clearance
+    /// (QueryWorstConstraint)
+    func largestMaskClearance(webWidth: Int, maskToCopper: Int) -> Int {
+        let boardMargin = board.root["setup"]?["pad_to_mask_clearance"].map { BoardWorld.iu($0, 0) } ?? 0
+        let copperNames = Set(world.layerIndex.keys)
+        var largest = 0
+        func margin(_ node: SExpr) -> Int { node["solder_mask_margin"].map { BoardWorld.iu($0, 0) } ?? boardMargin }
+        let shapeHeads: Set<String> = ["line", "rect", "arc", "circle", "poly", "curve"]
+        for fp in board.root.all("footprint") {
+            let fpMargin = fp["solder_mask_margin"].map { BoardWorld.iu($0, 0) }
+            for node in fp.all("pad") where !layerSet(node).isDisjoint(with: copperNames) {
+                largest = max(largest, node["solder_mask_margin"].map { BoardWorld.iu($0, 0) } ?? fpMargin ?? boardMargin)
+            }
+            for node in fp.items where (node.head ?? "").hasPrefix("fp_") && shapeHeads.contains(String((node.head ?? "").dropFirst(3))) {
+                largest = max(largest, margin(node))
+            }
+        }
+        for node in board.root.items {
+            switch node.head ?? "" {
+            case "segment", "arc": largest = max(largest, margin(node))
+            case "via": largest = max(largest, boardMargin)
+            case let h where h.hasPrefix("gr_") && shapeHeads.contains(String(h.dropFirst(3))): largest = max(largest, margin(node))
+            default: break
+            }
+        }
+        largest += largest + webWidth
+        largest = max(largest, maskToCopper)
+        return max(largest, ruleState.engine.worstConstraint(.silkClearance)?.value.min ?? 0)
+    }
+
     // MARK: - The check (DRC_TEST_PROVIDER_SOLDER_MASK's testMaskBridges)
 
     func checkSolderMask(_ out: inout Report, _ c: Copper) {
@@ -199,6 +240,7 @@ extension BoardDRC {
         let setup = board.root["setup"]
         let webWidth = setup?["solder_mask_min_width"].map { BoardWorld.iu($0, 0) } ?? 0
         let maskToCopper = settings.solderMaskToCopperClearance
+        let largest = largestMaskClearance(webWidth: webWidth, maskToCopper: maskToCopper)
         let allowInFootprints = setup?.value("allow_soldermask_bridges_in_footprints") == "yes"
         let copperNames = Set(world.layerIndex.keys)
         let fps = board.root.all("footprint")
@@ -270,12 +312,28 @@ extension BoardDRC {
                   : "Rear solder mask aperture bridges items with different nets"
         }
 
+        /// DRC_RTREE::QueryColliding of `ref` (its shape on the layer it is tested on) in the tree of a mask layer, as
+        /// far as `other`: nil where none of the pieces `other` is in the tree by (its shape's on the mask layer, and a
+        /// pad's hole), their boxes grown by the largest clearance, meets ref's box grown by it, so the filter is not
+        /// asked; else whether ref's shape collides with one of those pieces at the largest clearance, the visitor
+        /// asked only if so. (A full circle's SHAPE_ARC::Collide( SEG ) at a clearance more than none takes it for a
+        /// disc of its radius, its width left out: what lies across a ring's inner or outer edge without reaching
+        /// past its middle the visitor never sees, though it would collide)
+        func reaches(_ ref: MaskItem, _ refShapes: [Shape], _ other: MaskItem) -> Bool? {
+            let box = ref.bbox.inflated(largest)
+            let pieces = (other.maskShapes + [other.hole].compactMap { $0 }).filter { $0.bbox.inflated(largest).intersects(box) }
+            if pieces.isEmpty { return nil }
+            return pieces.contains { Self.collide(refShapes, [$0], largest) != nil }
+        }
+
         /// testItemAgainstItems: the item on `refLayer` against the apertures on `target`
         func testAgainstItems(_ item: MaskItem, refLayer: String, target: String) {
             let front = target == "F.Mask"
             let itemShapes = refLayer.hasSuffix("Mask") ? item.maskShapes : item.copperShapes[refLayer] ?? []
             for other in front ? onMask.front : onMask.back where other !== item {
                 guard !out.exceeded(type) else { return }
+                // (the R-tree's search: no piece of the other near enough, the pair not yet looked at)
+                guard let reached = reaches(item, itemShapes, other) else { continue }
                 // (the filter)
                 if other.net > 0 && other.net == item.net { continue }
                 if other.npthWithNoCopper { continue }
@@ -290,12 +348,21 @@ extension BoardDRC {
                 if other.kind == .pad || other.kind == .shape || (other.kind == .via && !(front ? other.tentedFront : other.tentedBack)) {
                     clearance += other.expansion(front: front)
                 }
-                // (each pair once on each layer; boxes too far apart for any clearance asked are not met)
-                guard item.bbox.inflated(max(clearance, 0)).intersects(other.bbox) else { continue }
+                // (each pair once on each layer, taken by the filter before QueryColliding tries the shapes: where
+                // they do not collide at the largest clearance, the pair is not tested the other way round either)
                 let pairKey: Set<String> = [item.uuid, other.uuid]
                 if checkedPairs[pairKey]?.contains(target) == true { continue }
                 checkedPairs[pairKey, default: []].insert(target)
-                guard Self.collide(itemShapes, other.maskShapes, clearance) != nil else { continue }
+                // (an item on the mask may be met the other way round first, the other's shape against its pieces and
+                // its hole; where that would decide otherwise, the finding is unsure)
+                let otherWay = refLayer == target && item.isOnLayer(target) ? reaches(other, other.maskShapes, item) : nil
+                let collides = Self.collide(itemShapes, other.maskShapes, clearance) != nil
+                if let otherWay, otherWay != reached, collides {
+                    if item.isMaskAperture(copperNames) { out.addUnsure("solder_mask_bridge", [item.uuid]) }
+                    if other.isMaskAperture(copperNames) { out.addUnsure("solder_mask_bridge", [other.uuid]) }
+                    out.addUnsure("solder_mask_bridge", pairKey)
+                }
+                guard reached, collides else { continue }
                 // (KiCad's threads try a pair one way round or the other, whichever meets it first: where the other
                 // way would find otherwise, or an aperture takes the first net it meets, its finding is unsure)
                 if item.isMaskAperture(copperNames) {

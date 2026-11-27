@@ -17,7 +17,8 @@ import KiCadKit
 /// hasExactNetclass of, a footprint's edge near copper under a rule of a wider edge clearance than the board's, a footprint's
 /// outline of chained lines across the board's, a net tie footprint whose pad was renumbered out of its pad groups,
 /// pads on no layer under a rule's assertion, a pad on its own with an arc of a zone's cluster starting at it, the
-/// missing connections to it either's) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
+/// missing connections to it either's, a custom pad's ring on the mask over pads across its edges that do not reach its
+/// middle) and Fixtures/rules (boards with rules files: one of every kind of check the port follows, one
 /// KiCad cannot compile, whose rules before the one it cannot it keeps, one it cannot read, one of the filler's
 /// constraints, and three of rules.py's), Fixtures/zoneedits (zones with holes and rule areas, footprints of every
 /// pad shape on both sides, locked items: properties.py --draw) and Fixtures/flashing (plated pads and vias kept only
