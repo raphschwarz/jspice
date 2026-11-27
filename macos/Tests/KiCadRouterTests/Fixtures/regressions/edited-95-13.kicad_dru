@@ -1,0 +1,12 @@
+(version 1)
+
+(rule r0
+  (layer 'F.Cu')
+  (condition "B.intersectsCourtyard('U5')")
+  (constraint clearance (min 0.41mm))
+)
+
+(rule r1
+  (constraint clearance (min 0.42mm))
+  (severity ignore)
+)

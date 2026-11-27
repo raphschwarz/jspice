@@ -1,5 +1,7 @@
 // Ported from KiCad 10.0.8: pcbnew/drc/drc_test_provider_disallow.cpp (items in keepout areas: tracks against the
-// areas keeping tracks out, each crossing, and every other item by the implicit keepout rules), pcbnew/drc/drc_engine.cpp
+// areas keeping tracks out, each crossing, found by DRC_RTREE::QueryColliding of the areas' outlines' triangles
+// (ZONE::GetEffectiveShape of a rule area) at drc_cache_generator.cpp's largest physical clearance, and every other
+// item by the implicit keepout rules), pcbnew/drc/drc_engine.cpp
 // (loadImplicitRules' keepout area rules and EvalRules of DISALLOW_CONSTRAINT: what each item's type is kept out by,
 // its layers, the last rule that applies), pcbnew/pcbexpr_functions.cpp (intersectsKeepout: collidesWithArea, an
 // area's outline shrunk by the DRC's epsilon), libs/kimath/src/geometry/shape_poly_set.cpp (SHAPE_POLY_SET::Collide:
@@ -236,6 +238,38 @@ extension BoardDRC {
         return box
     }
 
+    /// m_DRCMaxPhysicalClearance as DRC_CACHE_GENERATOR sets it: the worst unconditional physical clearance or physical
+    /// hole clearance; where that is none, the worst conditional one where the user has a conditional physical rule
+    /// (the implicit barcode rule's only on a board with barcodes, which the port reads none of)
+    var maxPhysicalClearance: Int {
+        let engine = ruleState.engine
+        var largest = engine.worstConstraint(.physicalClearance, unconditionalOnly: true)?.value.min ?? 0
+        largest = max(largest, engine.worstConstraint(.physicalHoleClearance, unconditionalOnly: true)?.value.min ?? 0)
+        if largest <= 0, engine.hasUserDefinedPhysicalConstraint {
+            largest = max(engine.worstConstraint(.physicalClearance)?.value.min ?? 0,
+                          engine.worstConstraint(.physicalHoleClearance)?.value.min ?? 0)
+        }
+        return largest
+    }
+
+    /// antiTrackKeepouts' QueryColliding of a track with an area kept out of its layer: the area in the tree as the
+    /// triangles of its outline (ZONE::GetEffectiveShape of a rule area, indexed by its triangles), the track's box
+    /// grown by the clearance meeting a triangle's and its shape colliding with the triangle at the clearance; only
+    /// then is the track tried against the area's outline itself
+    static func trackReachesArea(_ outline: PolySet, _ shapes: [Shape], _ box: IBox, _ clearance: Int) -> Bool {
+        let grown = box.inflated(clearance)
+        for tpoly in outline.triangulatedPolygons {
+            for i in tpoly.triangles.indices {
+                let (a, b, c) = tpoly.triangle(i)
+                let tri = LineChain([a, b, c], closed: true)
+                let tb = tri.bbox
+                guard max(grown.minX, tb.minX) <= min(grown.maxX, tb.maxX) && max(grown.minY, tb.minY) <= min(grown.maxY, tb.maxY) else { continue }
+                if shapes.contains(where: { $0.collide(.simple(tri), clearance: clearance) }) { return true }
+            }
+        }
+        return false
+    }
+
     // MARK: - The check (DRC_TEST_PROVIDER_DISALLOW)
 
     func checkKeepouts(_ out: inout Report, _ c: Copper) {
@@ -243,6 +277,7 @@ extension BoardDRC {
         guard !areas.isEmpty else { return }
         let fps = board.root.all("footprint")
         let names = Dictionary(uniqueKeysWithValues: world.layerIndex.map { ($0.value, $0.key) })
+        let physical = maxPhysicalClearance
         // (the board's layers, those its layer table names)
         let enabled = Set((board.root["layers"]?.items ?? []).compactMap { $0.text(at: 0) })
         var zoneNodes: [String: SExpr] = [:]
@@ -341,6 +376,7 @@ extension BoardDRC {
             let shapes = t.shapes[l] ?? []
             for i in areas.indices where areas[i].tracks && areas[i].layers.contains(layer) {
                 guard !out.exceeded("items_not_allowed") else { break }
+                guard Self.trackReachesArea(triangulated(i), shapes, t.bbox, physical) else { continue }
                 if Self.polySetCollide(triangulated(i), shapes, compound: false, wantActual: true) {
                     out.add("items_not_allowed", nil, [t.uuid])
                 }
@@ -402,6 +438,7 @@ extension BoardDRC {
         let engine = ruleState.engine
         let areas = keepouts()
         let names = Dictionary(uniqueKeysWithValues: world.layerIndex.map { ($0.value, $0.key) })
+        let physical = maxPhysicalClearance
         var outlines: [Int: PolySet] = [:]
         func triangulated(_ i: Int) -> PolySet {
             if let o = outlines[i] { return o }
@@ -419,6 +456,7 @@ extension BoardDRC {
                 let shapes = cu.shapes[l] ?? []
                 for i in areas.indices where areas[i].tracks && areas[i].layers.contains(layer) {
                     guard !out.exceeded("items_not_allowed") else { break }
+                    guard Self.trackReachesArea(triangulated(i), shapes, cu.bbox, physical) else { continue }
                     if Self.polySetCollide(triangulated(i), shapes, compound: false, wantActual: true) {
                         out.add("items_not_allowed", nil, [item.uuid])
                     }
