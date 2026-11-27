@@ -327,6 +327,8 @@ extension BoardDRC {
             var colliding = Set<ObjectIdentifier>()
             _ = tree.search(item.bbox.inflated(largest)) { entry in
                 let id = ObjectIdentifier(entry.edge)
+                // (not the item against itself: an unplated pad on a silk layer and its own slot)
+                if entry.edge.uuid == item.uuid { return true }
                 if colliding.contains(id) { return true }
                 guard Self.collide(shapes, [entry.shape], largest) != nil else { return true }
                 colliding.insert(id)
