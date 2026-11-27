@@ -320,6 +320,8 @@ final class PCBEditing: ObservableObject {
         message = nil
         zoneCorners = []
         zonePointer = nil
+        // (each of KiCad's tools has a grid helper of its own while it runs)
+        gridHelpersLetGo()
         if tuning != nil { cancelTuning() }
         if isRouting { stop() }
         if tool != .select { patternSelection = nil }
@@ -393,7 +395,11 @@ final class PCBEditing: ObservableObject {
     func pointerMoved(_ p: KiCadPoint) {
         pointer = p
         if graphics.pointerMoved(p) { return }
-        if tool == .zone && !zoneCorners.isEmpty { zonePointer = Self.onGrid(p) }
+        if tool == .zone {
+            let q = zoneSnapped(p)
+            if !zoneCorners.isEmpty { zonePointer = q }
+        }
+        if tool == .text { _ = textSnapped(p) }
         if tool == .tune && tuning != nil { return tuneMoved(to: p) }
         if isDragging && followsPointer { return dragMoved(to: p) }
         guard isRouting else { return }
@@ -1136,17 +1142,57 @@ final class PCBEditing: ObservableObject {
         return KiCadPoint((p.x / grid).rounded() * grid, (p.y / grid).rounded() * grid)
     }
 
-    /// A click with the zone tool at `p`: a corner of the zone being drawn (on the grid); `double`: its last, the zone
-    /// (or rule area) then made on the layer chosen, filled as it is made
+    /// The grid helper of a tool that snaps the pointer (PCB_GRID_HELPER: the zone tool's, the text tool's), made on
+    /// the board as it now is when the tool needs one
+    private func gridHelper(_ helper: inout PCBGridHelper?) -> (PCBGridHelper, SnapView)? {
+        guard let board = graphics.snapBoard, let view = graphics.snapView() else { return nil }
+        if helper == nil { helper = PCBGridHelper(board: board, magnetic: magnetic) }
+        guard var h = helper else { return nil }
+        let flags = NSEvent.modifierFlags
+        h.magnetic = magnetic
+        h.enableSnap = !flags.contains(.shift)
+        h.enableGrid = !flags.contains(.control)
+        return (h, view)
+    }
+
+    /// The zone tool's grid helper (DRAWING_TOOL::DrawZone's, one for each zone drawn)
+    private var zoneGridHelper: PCBGridHelper?
+
+    /// The tools' grid helpers let go: the tool changed, or the board (whose items they snap to)
+    func gridHelpersLetGo() {
+        zoneGridHelper = nil
+        textGridHelper = nil
+    }
+
+    /// Where the zone tool puts the pointer at `p` (mm), as DrawZone does: BestSnapAnchor of the items on the zone's
+    /// layer, the graphics' grid (Shift snapping to no items, Ctrl to no grid); on the 0.05 mm grid where the board's
+    /// items are not yet known
+    private func zoneSnapped(_ p: KiCadPoint) -> KiCadPoint {
+        guard var (h, view) = gridHelper(&zoneGridHelper) else { return Self.onGrid(p) }
+        let layers: Set<Int> = KiCadLayers.ids[layer].map { Set([$0]) } ?? Set<Int>()
+        let q = h.bestSnapAnchor(PCBGraphicsEditing.nm(p), layers: layers, view: view, grid: .graphics)
+        zoneGridHelper = h
+        return PCBGraphicsEditing.mm(q)
+    }
+
+    /// A click with the zone tool at `p`: a corner of the zone being drawn where the zone tool puts the pointer
+    /// (POLYGON_GEOM_MANAGER, no corner where it is the last again); a click on the first corner, or a double click,
+    /// finishes it: the zone (or rule area) then made on the layer chosen, filled as it is made
     func zoneClick(at p: KiCadPoint, double: Bool) {
         guard tool == .zone, !isRouting else { return }
-        let corner = Self.onGrid(p)
-        if zoneCorners.last != corner { zoneCorners.append(corner) }
+        let corner = zoneSnapped(p)
+        let closes = double || (zoneCorners.count > 0 && zoneCorners.first.map(PCBGraphicsEditing.nm) == PCBGraphicsEditing.nm(corner))
+        if !closes && zoneCorners.last != corner { zoneCorners.append(corner) }
         zonePointer = corner
-        guard double else { return }
-        let outline = zoneCorners
+        guard closes else { return }
+        // (ZONE_CREATE_HELPER::OnComplete's outline: simplified, as KiCad makes it)
+        var drawn = PolygonDrawing()
+        for c in zoneCorners { _ = drawn.click(PCBGraphicsEditing.nm(c)) }
+        let outline = (drawn.outline ?? []).map(PCBGraphicsEditing.mm)
         zoneCorners = []
         zonePointer = nil
+        // (the tool done: the next zone drawn with a grid helper of its own)
+        zoneGridHelper = nil
         guard outline.count >= 3 else {
             NSSound.beep()
             message = "A zone needs three corners or more: click them, then double-click the last."
@@ -1177,6 +1223,7 @@ final class PCBEditing: ObservableObject {
     func undoZoneCorner() -> Bool {
         guard tool == .zone, !zoneCorners.isEmpty else { return false }
         zoneCorners.removeLast()
+        zoneGridHelper?.fullReset()
         if zoneCorners.isEmpty { zonePointer = nil }
         return true
     }
@@ -1185,6 +1232,7 @@ final class PCBEditing: ObservableObject {
     @discardableResult
     func cancelZone() -> Bool {
         guard !zoneCorners.isEmpty else { return false }
+        zoneGridHelper?.fullReset()
         zoneCorners = []
         zonePointer = nil
         return true
@@ -1198,7 +1246,10 @@ final class PCBEditing: ObservableObject {
     /// From where there is nothing to drag, a box is drawn to select with (`leftward`: drawn right to left on the
     /// screen, taking what it touches).
     /// A footprint is dragged with the tracks on its pads, as KiCad's router drags one (its D on a footprint, the
-    /// port of COMPONENT_DRAGGER), unless `moveOnly` (⌥, KiCad's move): then the tracks stay where they are.
+    /// port of COMPONENT_DRAGGER), unless `moveOnly` (⌥, KiCad's move): then the tracks stay where they are, and the
+    /// footprints go as KiCad's Move puts them (SelectionMove: picked up by their point nearest the pointer, which
+    /// snaps to the items on the active layer near it, the Magnetic Points', or to the grid; Shift snapping to no
+    /// items, Ctrl to no grid).
     func dragChanged(from start: KiCadPoint, to now: KiCadPoint, in picture: KiCadBoardPicture, selected: Set<String>, leftward: Bool,
                      moveOnly: Bool = false) {
         guard tool == .select, !isRouting, !dropsUntilLetGo else { return }
@@ -1250,6 +1301,23 @@ final class PCBEditing: ObservableObject {
                 footprintDragMoved(to: now)
                 return
             }
+            // (KiCad's Move: picked up by their point nearest the pointer, where the move began)
+            if let board = graphics.snapBoard, let view = graphics.snapView() {
+                let mouse = PCBGraphicsEditing.nm(now)
+                selectionMove = (SelectionMove(board: board, items: uuids, mouse: mouse, view: view, magnetic: magnetic,
+                                               angleSnap: graphics.angleSnap), mouse)
+            }
+        }
+        if var (move, mouse) = selectionMove, !draggingTexts, let view = graphics.snapView() {
+            // (KiCad warps the pointer to where the footprints were picked up, and it moves on from there: the pointer
+            // taken there here, and as far from it as the pointer has gone since)
+            let flags = NSEvent.modifierFlags
+            let layers: Set<Int> = graphics.activeLayer.map { Set([$0]) } ?? Set([0])
+            move.moved(to: move.dragOrigin + (PCBGraphicsEditing.nm(now) - mouse), layers: layers, view: view,
+                       shift: flags.contains(.shift), ctrl: flags.contains(.control))
+            selectionMove = (move, mouse)
+            dragging?.delta = PCBGraphicsEditing.mm(move.offset)
+            return
         }
         let grid = 0.05
         dragging?.delta = KiCadPoint(((now.x - start.x) / grid).rounded() * grid, ((now.y - start.y) / grid).rounded() * grid)
@@ -1270,6 +1338,7 @@ final class PCBEditing: ObservableObject {
             Task { await fixFootprintDrag(at: p, force: force) }
             return
         }
+        selectionMove = nil
         guard let (uuids, delta) = dragging else { return }
         dragging = nil
         let texts = draggingTexts
@@ -1279,6 +1348,10 @@ final class PCBEditing: ObservableObject {
     }
 
     // MARK: - Dragging footprints with their tracks
+
+    /// The footprints moved with KiCad's Move (⌥ drag), as it snaps them (SelectionMove), and where the pointer was
+    /// when the move began
+    private var selectionMove: (move: SelectionMove, mouse: IPoint)?
 
     /// Whether the footprints being dragged take the tracks on their pads with them (the router's footprint drag)
     @Published private(set) var draggingWithTracks = false
@@ -1438,13 +1511,28 @@ final class PCBEditing: ObservableObject {
 
     // MARK: - Texts and footprints placed on their own
 
-    /// A click with the text tool at `p`: the words typed in placed there (on the grid), on the text tool's layer,
-    /// as KiCad's Add Text places them (of the layer's text style, the project's)
+    /// The text tool's grid helper (DRAWING_TOOL::PlaceText's)
+    private var textGridHelper: PCBGridHelper?
+
+    /// Where the text tool puts the pointer at `p` (mm), as PlaceText does: BestSnapAnchor of the items on the text's
+    /// layer, the texts' grid (Shift snapping to no items, Ctrl to no grid); on the 0.05 mm grid where the board's
+    /// items are not yet known
+    private func textSnapped(_ p: KiCadPoint) -> KiCadPoint {
+        guard var (h, view) = gridHelper(&textGridHelper) else { return Self.onGrid(p) }
+        let layers: Set<Int> = KiCadLayers.ids[textLayer].map { Set([$0]) } ?? Set<Int>()
+        let q = h.bestSnapAnchor(PCBGraphicsEditing.nm(p), layers: layers, view: view, grid: .text)
+        textGridHelper = h
+        return PCBGraphicsEditing.mm(q)
+    }
+
+    /// A click with the text tool at `p`: the words typed in placed where the text tool puts the pointer, on the text
+    /// tool's layer, as KiCad's Add Text places them (of the layer's text style, the project's)
     func textClick(at p: KiCadPoint) {
         guard tool == .text, !isRouting else { return }
         let words = textToPlace, layer = textLayer
+        let at = textSnapped(p)
         Task {
-            if await place({ $0.addText(words, at: Self.onGrid(p), layer: layer) }) {
+            if await place({ $0.addText(words, at: at, layer: layer) }) {
                 message = nil
             } else {
                 NSSound.beep()
@@ -1462,10 +1550,20 @@ final class PCBEditing: ObservableObject {
         }
     }
 
-    /// A click with the footprint tool at `p`: the footprint chosen placed there (on the grid), as KiCad's Place
-    /// Footprint places one: on the front, its pads on no net, its reference the library's; a part of the board alone
+    /// A click with the footprint tool at `p`: the footprint chosen placed there, as KiCad's Place Footprint places
+    /// one: on the front, its pads on no net, its reference the library's; a part of the board alone. Where it goes is
+    /// the cursor's, as BOARD_EDITOR_CONTROL::PlaceFootprint takes it with no grid helper: the grid's point under the
+    /// pointer (GAL::GetGridPoint), with Ctrl the pointer itself; no item is snapped to.
     func footprintClick(at p: KiCadPoint) {
         guard tool == .footprint, !isRouting else { return }
+        let at: KiCadPoint
+        if NSEvent.modifierFlags.contains(.control) {
+            at = PCBGraphicsEditing.mm(PCBGraphicsEditing.nm(p))
+        } else if let view = graphics.snapView() {
+            at = PCBGraphicsEditing.mm(PCBGridHelper.gridPoint(DPoint(p.x * 1e6, p.y * 1e6), view: view))
+        } else {
+            at = Self.onGrid(p)
+        }
         guard let libID = footprintToPlace else {
             NSSound.beep()
             message = "Look for a footprint beside the tool first, and choose one."
@@ -1477,7 +1575,7 @@ final class PCBEditing: ObservableObject {
                 message = "KiCad's footprint libraries have no \(libID)."
                 return
             }
-            if await place({ $0.addFootprint(footprint, libID: libID, at: Self.onGrid(p)) }) { message = nil }
+            if await place({ $0.addFootprint(footprint, libID: libID, at: at) }) { message = nil }
         }
     }
 

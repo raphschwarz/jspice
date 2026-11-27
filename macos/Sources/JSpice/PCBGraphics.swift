@@ -139,7 +139,7 @@ final class PCBGraphicsEditing: ObservableObject {
     }
 
     /// The board's items as KiCad's grid helper snaps to them (SnapBoard), made again as the board changes
-    private var snapBoard: SnapBoard?
+    private(set) var snapBoard: SnapBoard?
     /// The grid helper of the tool drawing (PCB_GRID_HELPER: one for each graphic, or each line of a chain, as each
     /// of KiCad's drawShape makes its own)
     private var gridHelper: PCBGridHelper?
@@ -155,6 +155,16 @@ final class PCBGraphicsEditing: ObservableObject {
         gridHelper = g
     }
 
+    /// The view as KiCad's grid helper snaps in it: the board's appearance, the view's scale, the 0.05 mm grid
+    func snapView() -> SnapView? {
+        guard let appearance = editing?.controller?.appearance else { return nil }
+        return SnapView(appearance: appearance.board, enabledLayers: appearance.controls.boardLayers,
+                        worldPerPixel: 1e6 / max(scale, 0.01), grid: IPoint(50_000, 50_000))
+    }
+
+    /// The layer the tools work on (the frame's active layer, KiCad's GetActiveLayer)
+    var activeLayer: Int? { editing?.controller?.appearance.board.activeLayer }
+
     /// Where the pointer goes, as KiCad's drawing tools put it (PCB_GRID_HELPER::BestSnapAnchor): to the magnetic
     /// points of the items on the layer drawn on (the active layer, measuring) near it, as the Magnetic Points
     /// preferences say, or to a snap line through the point last snapped to (not with Shift), else to the 0.05 mm
@@ -164,16 +174,15 @@ final class PCBGraphicsEditing: ObservableObject {
         let flags = NSEvent.modifierFlags
         let grid = !flags.contains(.control) && (currentTool != .dimension || dimensionTool?.snapsToGrid ?? true)
         if gridHelper == nil { restartGridHelper() }
-        guard var g = gridHelper, let snapBoard, let appearance = editing?.controller?.appearance else {
+        guard var g = gridHelper, let snapBoard, let view = snapView(), let active = activeLayer else {
             return (grid ? PCBEditing.onGrid(p) : p, false)
         }
         g.magnetic = editing?.magnetic ?? g.magnetic
         g.enableSnap = !flags.contains(.shift)
         g.enableGrid = grid
-        let view = SnapView(appearance: appearance.board, enabledLayers: appearance.controls.boardLayers,
-                            worldPerPixel: 1e6 / max(scale, 0.01), grid: IPoint(50_000, 50_000))
-        let layers: Set<Int> = currentTool == .measure ? [appearance.board.activeLayer] : KiCadLayers.ids[layer].map { Set([$0]) } ?? Set<Int>()
-        let q = g.bestSnapAnchor(Self.nm(p), layers: layers, view: view)
+        let layers: Set<Int> = currentTool == .measure ? [active] : KiCadLayers.ids[layer].map { Set([$0]) } ?? Set<Int>()
+        // (the graphics' grid, as drawShape and DrawDimension ask for it)
+        let q = g.bestSnapAnchor(Self.nm(p), layers: layers, view: view, grid: currentTool == .measure ? .current : .graphics)
         let onGraphic = g.snapped.map { snapBoard.items[$0].kind == .shape } ?? false
         gridHelper = g
         return (Self.mm(q), onGraphic)
@@ -291,6 +300,7 @@ final class PCBGraphicsEditing: ObservableObject {
         Task {
             snapBoard = await editing?.withSession { SnapBoard(board: $0.board, project: $0.projectSettings) }
             gridHelper = nil
+            editing?.gridHelpersLetGo()
         }
         guard let uuid = editor?.uuid, draggedHandle == nil else { return }
         Task {
@@ -313,18 +323,34 @@ final class PCBGraphicsEditing: ObservableObject {
         editor?.editor.handle(at: Self.nm(p), size: Int((8 / max(scale, 0.01) * 1e6).rounded()))
     }
 
-    /// A drag with the select tool from `start` to `now`: an edit point under `start` dragged; whether one is
+    /// The point editor's grid helper for the drag of an edit point (PCB_POINT_EDITOR's: the graphic skipped, its
+    /// layers', the graphics' grid)
+    private var pointSnap: PointEditorSnap?
+
+    /// A drag with the select tool from `start` to `now`: an edit point under `start` dragged; whether one is. The
+    /// point goes where KiCad's point editor puts it with its grid helper (the anchors of the items on the graphic's
+    /// layer near it, as the Magnetic Points say; else the grid; Shift snapping to no items, Ctrl to no grid).
     func dragChanged(from start: KiCadPoint, to now: KiCadPoint) -> Bool {
         guard currentTool == .select, var e = editor else { return false }
         if draggedHandle == nil {
             guard let h = handle(at: start) else { return false }
             draggedHandle = h
             e.editor.beginDrag(h)
+            pointSnap = snapBoard.flatMap { b in
+                snapView().map { PointEditorSnap(board: b, item: e.uuid, magnetic: editing?.magnetic ?? MagneticSettings(), view: $0) }
+            }
         }
         guard let h = draggedHandle else { return false }
         let flags = NSEvent.modifierFlags
-        e.editor.drag(h, to: Self.nm(now), grid: PointGrid(size: IPoint(50_000, 50_000)), stickyLimit: Int(5 / max(scale, 0.01) * 1e6),
-                      free: flags.contains(.shift), ctrl: flags.contains(.control))
+        let sticky = Int(5 / max(scale, 0.01) * 1e6)
+        if var snap = pointSnap {
+            if let view = snapView() { snap.view = view }
+            e.editor.drag(h, to: Self.nm(now), snap: &snap, stickyLimit: sticky, free: flags.contains(.shift), ctrl: flags.contains(.control))
+            pointSnap = snap
+        } else {
+            e.editor.drag(h, to: Self.nm(now), grid: flags.contains(.control) ? nil : PointGrid(size: IPoint(50_000, 50_000)),
+                          stickyLimit: sticky, free: flags.contains(.shift), ctrl: flags.contains(.control))
+        }
         editor = e
         return true
     }
@@ -333,6 +359,7 @@ final class PCBGraphicsEditing: ObservableObject {
     func dragEnded() -> Bool {
         guard draggedHandle != nil, var e = editor else { return false }
         draggedHandle = nil
+        pointSnap = nil
         e.editor.endDrag()
         editor = e
         let (uuid, shape) = (e.uuid, e.editor.shape)
@@ -587,7 +614,7 @@ struct PCBGraphicsBar: View {
             .fixedSize()
             .help("Lines, polygons and dimensions held to 45° or 90° (KiCad's angle snap mode); ⌃ lets them go free, and holds a rectangle square")
         }
-        if editing.tool == .draw || editing.tool == .dimension || editing.tool == .measure || editing.tool == .route {
+        if ([.draw, .dimension, .measure, .route, .zone, .text, .select] as [PCBEditing.Tool]).contains(editing.tool) {
             Menu("Magnetic") {
                 Picker("Snap to pads", selection: $editing.magnetic.pads) { magneticOptions }
                 Picker("Snap to tracks", selection: $editing.magnetic.tracks) { magneticOptions }

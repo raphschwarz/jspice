@@ -10,7 +10,8 @@ enum PCBZoneDrag {
     case whole(from: KiCadPoint, delta: KiCadPoint)
 }
 
-/// Where the select tool's drags of a zone's corners go: onto the 0.05 mm grid, as the zone tool draws them
+/// Where the select tool's drags of a zone's corners go where the point editor's grid helper is not to be had (the
+/// board's items not yet known): onto the 0.05 mm grid
 private func zoneGrid(_ p: KiCadPoint) -> KiCadPoint {
     let grid = 0.05
     return KiCadPoint((p.x / grid).rounded() * grid, (p.y / grid).rounded() * grid)
@@ -92,8 +93,10 @@ extension PCBEditing {
         case nil:
             if let handle = zoneHandle(at: start, slop: slop) {
                 zoneDrag = .handle(handle, step: 0)
+                // (snapped as KiCad's point editor snaps it with its grid helper, in the view as it is)
+                let view = graphics.snapView()
                 Task {
-                    _ = await engine.run { $0.startZoneDrag(uuid, handle: handle) }
+                    _ = await engine.run { $0.startZoneDrag(uuid, handle: handle, view: view) }
                     zoneHandleMoved(to: now, pixel: pixel, fixedLength: fixedLength, free: free)
                 }
                 return true
@@ -115,7 +118,8 @@ extension PCBEditing {
     }
 
     /// The handle dragged on to `p`: the outline shown as the session's point editor makes it (a later move's outline
-    /// not overtaken by an earlier's)
+    /// not overtaken by an earlier's), the handle snapped as KiCad's point editor snaps it (the anchors of the items
+    /// on the zone's layer, by the Magnetic Points; the grid; Shift snapping to no items, KiCad's Ctrl to no grid)
     private func zoneHandleMoved(to p: KiCadPoint, pixel: Double, fixedLength: Bool, free: Bool) {
         guard case .handle(let handle, let step)? = zoneDrag else { return }
         zoneDrag = .handle(handle, step: step + 1)
