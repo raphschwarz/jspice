@@ -217,6 +217,8 @@ extension BoardEditing {
         // and turned over
         if p.onBack != (fp.layer == "B.Cu") { fp.flip(leftRight: false) }
         guard node.compact != was else { return nil }
+        // (its pads as KiCad writes them, having read them)
+        for pad in node.all("pad") { Self.normalizePrimitiveRectangles(pad) }
         router.boardChanged()
         return change("Edit Footprint Properties", footprints: [uuid])
     }

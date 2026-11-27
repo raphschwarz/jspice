@@ -2,7 +2,8 @@
 // dialog_pad_properties.cpp, DIALOG_PAD_PROPERTIES's initValues, updatePadLayersList, onPadShapeSelection,
 // transferDataToPad and TransferDataFromWindow; pcbnew/pad.cpp, PAD::Flip, SetAttribute and CanHaveNumber;
 // pcbnew/pad_utils.cpp, GetDefaultIpcRoundingRatio), written as pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr.cpp
-// writes a pad (format( PAD ), formatLayers). Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General
+// writes a pad (format( PAD ), formatLayers), its rectangle primitives as pcb_io_kicad_sexpr_parser.cpp's parsePCB_SHAPE
+// reads them (normalized). Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General
 // Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
 import Foundation
@@ -357,8 +358,21 @@ extension BoardEditing {
         let fresh = SExpr("pad", items)
         guard fresh.compact != was else { return nil }
         pad.items = fresh.items
+        Self.normalizePrimitiveRectangles(pad)
         router.boardChanged()
         return change("Edit Pad Properties", footprints: [fp.uuid])
+    }
+
+    /// A pad's rectangle primitives as KiCad has them once it has read them (parsePCB_SHAPE with no parent footprint
+    /// calls PCB_SHAPE::Normalize: the start the top left corner, the end the bottom right), so as it writes them
+    static func normalizePrimitiveRectangles(_ pad: SExpr) {
+        let lists = [pad["primitives"]].compactMap { $0 } + (pad["padstack"]?.all("layer").compactMap { $0["primitives"] } ?? [])
+        for rect in lists.flatMap({ $0.all("gr_rect") }) {
+            guard let s = rect["start"], let e = rect["end"], let sx = s.number(at: 0), let sy = s.number(at: 1),
+                  let ex = e.number(at: 0), let ey = e.number(at: 1), sx > ex || sy > ey else { continue }
+            rect.set(SExpr("start", min(sx, ex), min(sy, ey)))
+            rect.set(SExpr("end", max(sx, ex), max(sy, ey)))
+        }
     }
 
     /// A pad's layers as formatLayers writes them (not enumerated): "*.Cu" for every copper layer of the board, or for
