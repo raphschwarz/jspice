@@ -1,0 +1,171 @@
+(footprint "L_Radial_D24.4mm_P23.70mm_Murata_1400series"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Inductor, Radial series, Radial, pin pitch=23.70mm, diameter=24.4mm, height=10.5mm, Murata, 1400series, http://www.murata-ps.com/data/magnetics/kmp_1400.pdf")
+	(tags "Inductor Radial series Radial pin pitch 23.70mm  diameter 24.4mm height 10.5mm Murata 1400series")
+	(property "Reference" "REF**"
+		(at 11.85 -13.45 0)
+		(layer "F.SilkS")
+		(uuid "1fa5a9b2-24fe-49e1-a239-177d0c4d3f3b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "L_Radial_D24.4mm_P23.70mm_Murata_1400series"
+		(at 11.85 13.45 0)
+		(layer "F.Fab")
+		(uuid "2897d804-ac16-4e9c-b51d-88fcd57b33eb")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "8ac593ba-da86-4fc8-8078-f50eddaa687c")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "90297076-7c27-4f8b-bdd5-85b90bf254c2")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "KiLib_Generator" "choke_THT"
+		(at 0 0 0)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "3898e8c0-3b42-4886-b302-1eb80d5f993b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_arc
+		(start -0.241848 -2.36)
+		(mid 11.85 -12.32)
+		(end 23.941848 -2.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "254166b3-57ba-4795-912b-72bd585bdcbc")
+	)
+	(fp_arc
+		(start 23.941848 2.36)
+		(mid 11.85 12.32)
+		(end -0.241848 2.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "87a58d93-9136-495a-a2e3-6bc4d762cf19")
+	)
+	(fp_circle
+		(center 11.85 0)
+		(end 14.48 0)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "b96e3b6a-e196-4906-83d1-079c2842bb43")
+	)
+	(fp_rect
+		(start -2.35 -12.45)
+		(end 26.05 12.45)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "350544dc-5c1e-4f59-8b08-e130dec0a70c")
+	)
+	(fp_circle
+		(center 11.85 0)
+		(end 14.6 0)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "793f7a0f-02c7-4983-a395-4bce1d2029f1")
+	)
+	(fp_circle
+		(center 11.85 0)
+		(end 24.05 0)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "6284b11c-7d65-40e3-b981-56da5ea4a2ba")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 11.85 0 0)
+		(layer "F.Fab")
+		(uuid "c7064653-1352-4218-838d-78b7fe5ac180")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "1" thru_hole circle
+		(at 0 0)
+		(size 4.2 4.2)
+		(drill 2.1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "10f81c06-3a03-461e-b05f-12b88d7c7177")
+	)
+	(pad "2" thru_hole circle
+		(at 23.7 0)
+		(size 4.2 4.2)
+		(drill 2.1)
+		(layers "*.Cu" "*.Mask")
+		(remove_unused_layers no)
+		(uuid "53915510-7d88-451f-ac08-5f0cb786fdaf")
+	)
+	(embedded_fonts no)
+	(model "${KICAD10_3DMODEL_DIR}/Inductor_THT.3dshapes/L_Radial_D24.4mm_P23.70mm_Murata_1400series.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

@@ -1,0 +1,158 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.8",
+ "schematic_parity": [],
+ "source": "check-12-same_place.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Rear solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "PTH pad 3 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "e63778ac-59b8-4232-a301-b9824fdaaf6e"
+    },
+    {
+     "description": "PTH pad 2 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "30a6b9d0-0d29-486b-b77f-9f4283843bdb"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Front solder mask aperture bridges items with different nets",
+   "items": [
+    {
+     "description": "PTH pad 2 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "30a6b9d0-0d29-486b-b77f-9f4283843bdb"
+    },
+    {
+     "description": "PTH pad 3 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "e63778ac-59b8-4232-a301-b9824fdaaf6e"
+    }
+   ],
+   "severity": "error",
+   "type": "solder_mask_bridge"
+  },
+  {
+   "description": "Board has malformed outline (no edges found on Edge.Cuts layer)",
+   "items": [
+    {
+     "description": "PCB",
+     "pos": {
+      "x": 0.0,
+      "y": 0.0
+     },
+     "uuid": "11ef4380-776b-4b5f-8646-4ee7e32689c0"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Clearance violation ( clearance 0.2000 mm; actual 0.0000 mm)",
+   "items": [
+    {
+     "description": "PTH pad 2 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "30a6b9d0-0d29-486b-b77f-9f4283843bdb"
+    },
+    {
+     "description": "PTH pad 3 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "e63778ac-59b8-4232-a301-b9824fdaaf6e"
+    }
+   ],
+   "severity": "error",
+   "type": "clearance"
+  },
+  {
+   "description": "Clearance violation ( clearance 0.2000 mm; actual 0.0000 mm)",
+   "items": [
+    {
+     "description": "PTH pad 2 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "30a6b9d0-0d29-486b-b77f-9f4283843bdb"
+    },
+    {
+     "description": "PTH pad 3 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "e63778ac-59b8-4232-a301-b9824fdaaf6e"
+    }
+   ],
+   "severity": "error",
+   "type": "clearance"
+  },
+  {
+   "description": "Drilled holes co-located",
+   "items": [
+    {
+     "description": "PTH pad 2 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "30a6b9d0-0d29-486b-b77f-9f4283843bdb"
+    },
+    {
+     "description": "PTH pad 3 [<no net>] of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 102.54
+     },
+     "uuid": "e63778ac-59b8-4232-a301-b9824fdaaf6e"
+    }
+   ],
+   "severity": "warning",
+   "type": "holes_co_located"
+  }
+ ]
+}

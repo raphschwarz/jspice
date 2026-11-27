@@ -1,0 +1,319 @@
+[
+ {
+  "case": "edit-0",
+  "library": "Resistor_SMD",
+  "footprint": "R_0805_2012Metric",
+  "edits": [
+   {
+    "op": "move",
+    "items": [
+     "pad:0",
+     "pad:1"
+    ],
+    "by": [
+     0.25,
+     -0.1
+    ]
+   },
+   {
+    "op": "placePad",
+    "at": [
+     0,
+     2
+    ]
+   },
+   {
+    "op": "placePad",
+    "at": [
+     1.27,
+     2
+    ]
+   }
+  ],
+  "saved": "R_0805_2012Metric.kicad_mod"
+ },
+ {
+  "case": "edit-1",
+  "library": "Package_SO",
+  "footprint": "SOIC-8_3.9x4.9mm_P1.27mm",
+  "edits": [
+   {
+    "op": "rotate",
+    "items": [
+     "pad:0",
+     "pad:7",
+     "drawing:0"
+    ],
+    "about": [
+     0,
+     0
+    ],
+    "degrees": 90
+   },
+   {
+    "op": "delete",
+    "items": [
+     "pad:3",
+     "drawing:2"
+    ]
+   },
+   {
+    "op": "pad",
+    "item": "pad:1",
+    "shape": "roundrect",
+    "size": [
+     1.9,
+     0.7
+    ],
+    "ratio": 0.25
+   }
+  ],
+  "saved": "SOIC-8_3.9x4.9mm_P1.27mm.kicad_mod"
+ },
+ {
+  "case": "edit-2",
+  "library": "Connector_PinHeader_2.54mm",
+  "footprint": "PinHeader_1x04_P2.54mm_Vertical",
+  "edits": [
+   {
+    "op": "shape",
+    "kind": "segment",
+    "layer": "F.SilkS",
+    "width": 0.12,
+    "points": [
+     [
+      -2,
+      -2
+     ],
+     [
+      2,
+      -2
+     ]
+    ]
+   },
+   {
+    "op": "shape",
+    "kind": "rectangle",
+    "layer": "F.Fab",
+    "width": 0.1,
+    "points": [
+     [
+      -1,
+      -1
+     ],
+     [
+      1,
+      9
+     ]
+    ]
+   },
+   {
+    "op": "shape",
+    "kind": "circle",
+    "layer": "F.SilkS",
+    "width": 0.12,
+    "points": [
+     [
+      0,
+      0
+     ],
+     [
+      0.5,
+      0
+     ]
+    ]
+   },
+   {
+    "op": "shape",
+    "kind": "arc",
+    "layer": "F.CrtYd",
+    "width": 0.05,
+    "points": [
+     [
+      -2,
+      10
+     ],
+     [
+      0,
+      12
+     ],
+     [
+      2,
+      10
+     ]
+    ]
+   },
+   {
+    "op": "shape",
+    "kind": "polygon",
+    "layer": "F.Cu",
+    "width": 0.2,
+    "filled": true,
+    "points": [
+     [
+      3,
+      0
+     ],
+     [
+      4,
+      0
+     ],
+     [
+      4,
+      1
+     ]
+    ]
+   },
+   {
+    "op": "text",
+    "text": "${REFERENCE}",
+    "at": [
+     0,
+     11
+    ],
+    "layer": "F.Fab",
+    "style": {
+     "width": 1.0,
+     "height": 1.0,
+     "thickness": 0.15,
+     "upright": false
+    }
+   },
+   {
+    "op": "text",
+    "text": "back",
+    "at": [
+     0,
+     -3
+    ],
+    "layer": "B.SilkS",
+    "style": {
+     "width": 1.0,
+     "height": 1.0,
+     "thickness": 0.1,
+     "upright": false
+    }
+   }
+  ],
+  "saved": "PinHeader_1x04_P2.54mm_Vertical.kicad_mod"
+ },
+ {
+  "case": "edit-3",
+  "library": "Package_QFP",
+  "footprint": "LQFP-32_7x7mm_P0.8mm",
+  "edits": [
+   {
+    "op": "describe",
+    "description": "An LQFP edited in JSpice",
+    "keywords": "LQFP JSpice"
+   },
+   {
+    "op": "value",
+    "text": "MCU"
+   },
+   {
+    "op": "attributes",
+    "flags": [
+     "smd",
+     "exclude_from_bom"
+    ]
+   },
+   {
+    "op": "move",
+    "items": [
+     "field:Reference"
+    ],
+    "by": [
+     1,
+     0.5
+    ]
+   },
+   {
+    "op": "rotate",
+    "items": [
+     "field:Value"
+    ],
+    "about": [
+     0,
+     0
+    ],
+    "degrees": 90
+   }
+  ],
+  "saved": "LQFP-32_7x7mm_P0.8mm.kicad_mod"
+ },
+ {
+  "case": "edit-4",
+  "library": "Capacitor_THT",
+  "footprint": "C_Disc_D5.0mm_W2.5mm_P5.00mm",
+  "edits": [
+   {
+    "op": "pad",
+    "item": "pad:0",
+    "size": [
+     2,
+     2
+    ],
+    "drill": 1.0
+   },
+   {
+    "op": "pad",
+    "item": "pad:1",
+    "shape": "oval",
+    "size": [
+     2.4,
+     1.6
+    ]
+   },
+   {
+    "op": "netTie",
+    "groups": [
+     "1, 2"
+    ]
+   },
+   {
+    "op": "saveAs",
+    "name": "C_Disc_Tie"
+   }
+  ],
+  "saved": "C_Disc_Tie.kicad_mod"
+ },
+ {
+  "case": "edit-5",
+  "library": "Diode_SMD",
+  "footprint": "D_SOD-123",
+  "edits": [
+   {
+    "op": "rotate",
+    "items": [
+     "pad:0",
+     "pad:1",
+     "drawing:0",
+     "drawing:1",
+     "drawing:2"
+    ],
+    "about": [
+     0.5,
+     0.25
+    ],
+    "degrees": 45
+   },
+   {
+    "op": "move",
+    "items": [
+     "drawing:3",
+     "drawing:4"
+    ],
+    "by": [
+     -0.05,
+     0.05
+    ]
+   },
+   {
+    "op": "saveAs",
+    "name": "D_SOD-123_turned"
+   }
+  ],
+  "saved": "D_SOD-123_turned.kicad_mod"
+ }
+]

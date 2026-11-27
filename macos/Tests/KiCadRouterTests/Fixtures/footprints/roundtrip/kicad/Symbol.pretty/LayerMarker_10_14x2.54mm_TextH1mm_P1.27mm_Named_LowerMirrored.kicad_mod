@@ -1,0 +1,219 @@
+(footprint "LayerMarker_10_14x2.54mm_TextH1mm_P1.27mm_Named_LowerMirrored"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Layer marker, 10 layers, layer names, text size 1mm, pitch 1.27mm, margin 1.27mm")
+	(tags "layer order identification numbering")
+	(property "Reference" "REF**"
+		(at 0 1.27 0)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "9d6588d5-feaf-44fa-8b05-da9d3ccd1437")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "LayerMarker_10_14x2.54mm_TextH1mm_P1.27mm_Named_LowerMirrored"
+		(at 0 2.54 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "68865c42-6327-4dee-8640-db2cb42135ca")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "313673ec-140b-4cd5-9987-5da5a3b565bb")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "e1ec50e3-dd1c-459c-b345-ec2b5abba144")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "KiLib_Generator" "layer_maker"
+		(at 0 0 0)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "175bb6b7-46db-4caf-9a62-5c10339f9b34")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr board_only exclude_from_pos_files exclude_from_bom allow_missing_courtyard)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_text user "T"
+		(at 0 -1.27 0)
+		(layer "F.Cu")
+		(uuid "139dc6b9-04ab-4f2d-8042-984a2baccb8e")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "B"
+		(at 11.43 -1.27 0)
+		(layer "B.Cu")
+		(uuid "ff8ad23b-e395-4851-ab6b-4d1d65f79da2")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+			(justify mirror)
+		)
+	)
+	(fp_text user "1"
+		(at 1.27 -1.27 0)
+		(layer "In1.Cu")
+		(uuid "df53a5b3-87fa-4a20-b91b-a61f10f4f596")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "2"
+		(at 2.54 -1.27 0)
+		(layer "In2.Cu")
+		(uuid "530ec35f-7ba0-437c-aa55-2a8434f6b435")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "3"
+		(at 3.81 -1.27 0)
+		(layer "In3.Cu")
+		(uuid "1b3f7c77-d062-476e-9842-53e31e42231d")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "4"
+		(at 5.08 -1.27 0)
+		(layer "In4.Cu")
+		(uuid "eea1db34-eeda-426b-959a-567cb7a73c89")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "5"
+		(at 6.35 -1.27 0)
+		(layer "In5.Cu")
+		(uuid "92864f9a-661d-4240-91a1-bfd1a0172d4d")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+			(justify mirror)
+		)
+	)
+	(fp_text user "6"
+		(at 7.62 -1.27 0)
+		(layer "In6.Cu")
+		(uuid "73687c37-661b-4368-b7af-bcdf80ff1748")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+			(justify mirror)
+		)
+	)
+	(fp_text user "7"
+		(at 8.89 -1.27 0)
+		(layer "In7.Cu")
+		(uuid "18ef5920-1392-49e9-b75d-5497c14492a3")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+			(justify mirror)
+		)
+	)
+	(fp_text user "8"
+		(at 10.16 -1.27 0)
+		(layer "In8.Cu")
+		(uuid "ff1ccbda-b2b4-4066-a5c2-994e8755a904")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+			(justify mirror)
+		)
+	)
+	(zone
+		(layers "F.Cu" "B.Cu" "In1.Cu" "In2.Cu" "In3.Cu" "In4.Cu" "In5.Cu" "In6.Cu"
+			"In7.Cu" "In8.Cu" "In9.Cu" "In10.Cu" "In11.Cu" "In12.Cu" "In13.Cu" "In14.Cu"
+			"In15.Cu" "In16.Cu" "In17.Cu" "In18.Cu" "In19.Cu" "In20.Cu" "In21.Cu"
+			"In22.Cu" "In23.Cu" "In24.Cu" "In25.Cu" "In26.Cu" "In27.Cu" "In28.Cu"
+			"In29.Cu" "In30.Cu"
+		)
+		(uuid "c2da78bb-a11a-407b-8c5b-a5514373c330")
+		(hatch edge 0.5)
+		(connect_pads
+			(clearance 0)
+		)
+		(min_thickness 0.25)
+		(keepout
+			(tracks not_allowed)
+			(vias not_allowed)
+			(pads not_allowed)
+			(copperpour not_allowed)
+			(footprints allowed)
+		)
+		(placement
+			(enabled no)
+			(sheetname "")
+		)
+		(fill
+			(thermal_gap 0.5)
+			(thermal_bridge_width 0.5)
+			(island_removal_mode 0)
+		)
+		(polygon
+			(pts
+				(xy -1.27 -2.54) (xy 12.7 -2.54) (xy 12.7 0) (xy -1.27 0)
+			)
+		)
+	)
+	(embedded_fonts no)
+)

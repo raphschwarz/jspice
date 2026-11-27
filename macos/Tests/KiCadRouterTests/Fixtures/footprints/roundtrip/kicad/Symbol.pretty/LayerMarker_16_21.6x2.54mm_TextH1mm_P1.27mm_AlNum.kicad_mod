@@ -1,0 +1,280 @@
+(footprint "LayerMarker_16_21.6x2.54mm_TextH1mm_P1.27mm_AlNum"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Layer marker, 16 layers, alphanumeric ordinals, text size 1mm, pitch 1.27mm, margin 1.27mm")
+	(tags "layer order identification numbering")
+	(property "Reference" "REF**"
+		(at 0 1.27 0)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "a4701ded-3573-42b9-908a-e52f297f0732")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "LayerMarker_16_21.6x2.54mm_TextH1mm_P1.27mm_AlNum"
+		(at 0 2.54 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "5119f70c-50ec-41e7-beab-ba22c24542d0")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "bc7e0cd2-e3c7-45da-88d6-9243e218f7a0")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "043c4d4c-d725-47fd-bddd-6ccc59314fa2")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "KiLib_Generator" "layer_maker"
+		(at 0 0 0)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "52c2b5f0-4c18-43d0-9c6c-0ab6f533a9d0")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr board_only exclude_from_pos_files exclude_from_bom allow_missing_courtyard)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_text user "1"
+		(at 0 -1.27 0)
+		(layer "F.Cu")
+		(uuid "ca9d4e1e-e9c7-4584-afdd-2cd9cab45316")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "G"
+		(at 19.05 -1.27 0)
+		(layer "B.Cu")
+		(uuid "f54af600-5b11-4516-8196-049e070838fe")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "2"
+		(at 1.27 -1.27 0)
+		(layer "In1.Cu")
+		(uuid "fecd5793-5417-4413-a494-74e3928d9fb5")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "3"
+		(at 2.54 -1.27 0)
+		(layer "In2.Cu")
+		(uuid "16770020-d351-43d7-81f8-461f489b1a1f")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "4"
+		(at 3.81 -1.27 0)
+		(layer "In3.Cu")
+		(uuid "366bad02-1506-407f-9b48-7af33401f5a8")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "5"
+		(at 5.08 -1.27 0)
+		(layer "In4.Cu")
+		(uuid "112a9978-da80-4393-9090-925386f99d99")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "6"
+		(at 6.35 -1.27 0)
+		(layer "In5.Cu")
+		(uuid "7926a598-3cfe-4935-94f9-24450ced901b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "7"
+		(at 7.62 -1.27 0)
+		(layer "In6.Cu")
+		(uuid "36584e0b-9902-4771-9b0b-3c1c84ef0bd6")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "8"
+		(at 8.89 -1.27 0)
+		(layer "In7.Cu")
+		(uuid "ade8e2d0-06ac-4d44-81f9-dcc7ea15d1c8")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "9"
+		(at 10.16 -1.27 0)
+		(layer "In8.Cu")
+		(uuid "f28fd623-9c07-4463-997a-9f47654b1e1a")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "A"
+		(at 11.43 -1.27 0)
+		(layer "In9.Cu")
+		(uuid "70ac3855-9d7e-4f61-86dc-05af90a90aa1")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "B"
+		(at 12.7 -1.27 0)
+		(layer "In10.Cu")
+		(uuid "e5af5c68-0bff-4783-8b11-327ed10dee6a")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "C"
+		(at 13.97 -1.27 0)
+		(layer "In11.Cu")
+		(uuid "8bf224b5-a9bd-42e3-886f-b5e84cc7e200")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "D"
+		(at 15.24 -1.27 0)
+		(layer "In12.Cu")
+		(uuid "5ec02785-014f-499d-a461-875552b3a8c3")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "E"
+		(at 16.51 -1.27 0)
+		(layer "In13.Cu")
+		(uuid "a5594b53-846e-4edd-8016-f1ab6a1f55b4")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(fp_text user "F"
+		(at 17.78 -1.27 0)
+		(layer "In14.Cu")
+		(uuid "48d3eef8-bb7d-4804-b028-f3cca98d60bd")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.2)
+			)
+		)
+	)
+	(zone
+		(layers "F.Cu" "B.Cu" "In1.Cu" "In2.Cu" "In3.Cu" "In4.Cu" "In5.Cu" "In6.Cu"
+			"In7.Cu" "In8.Cu" "In9.Cu" "In10.Cu" "In11.Cu" "In12.Cu" "In13.Cu" "In14.Cu"
+			"In15.Cu" "In16.Cu" "In17.Cu" "In18.Cu" "In19.Cu" "In20.Cu" "In21.Cu"
+			"In22.Cu" "In23.Cu" "In24.Cu" "In25.Cu" "In26.Cu" "In27.Cu" "In28.Cu"
+			"In29.Cu" "In30.Cu"
+		)
+		(uuid "78769f6d-40ec-4cb5-87d4-07ac6d5ca135")
+		(hatch edge 0.5)
+		(connect_pads
+			(clearance 0)
+		)
+		(min_thickness 0.25)
+		(keepout
+			(tracks not_allowed)
+			(vias not_allowed)
+			(pads not_allowed)
+			(copperpour not_allowed)
+			(footprints allowed)
+		)
+		(placement
+			(enabled no)
+			(sheetname "")
+		)
+		(fill
+			(thermal_gap 0.5)
+			(thermal_bridge_width 0.5)
+			(island_removal_mode 0)
+		)
+		(polygon
+			(pts
+				(xy -1.27 -2.54) (xy 20.32 -2.54) (xy 20.32 0) (xy -1.27 0)
+			)
+		)
+	)
+	(embedded_fonts no)
+)

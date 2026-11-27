@@ -1,0 +1,89 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.8",
+ "schematic_parity": [],
+ "source": "check-14-tie_repeated_pad.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (no edges found on Edge.Cuts layer)",
+   "items": [
+    {
+     "description": "PCB",
+     "pos": {
+      "x": 0.0,
+      "y": 0.0
+     },
+     "uuid": "5b193660-7ef4-40e3-a6c7-1e000ae69e9a"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Items shorting two nets",
+   "items": [
+    {
+     "description": "Polygon [<no net>] of REF** on F.Cu",
+     "pos": {
+      "x": 99.0,
+      "y": 99.75
+     },
+     "uuid": "8e076138-d247-4128-a92f-d835a5188de0"
+    },
+    {
+     "description": "Pad 1 [<no net>] of REF** on F.Cu",
+     "pos": {
+      "x": 99.0,
+      "y": 100.0
+     },
+     "uuid": "4f34f6da-3657-4203-9b98-517d9d95b15e"
+    }
+   ],
+   "severity": "error",
+   "type": "shorting_items"
+  },
+  {
+   "description": "Items shorting two nets",
+   "items": [
+    {
+     "description": "Polygon [<no net>] of REF** on F.Cu",
+     "pos": {
+      "x": 99.0,
+      "y": 99.75
+     },
+     "uuid": "8e076138-d247-4128-a92f-d835a5188de0"
+    },
+    {
+     "description": "Pad 1 [<no net>] of REF** on F.Cu",
+     "pos": {
+      "x": 99.0,
+      "y": 100.0
+     },
+     "uuid": "4f34f6da-3657-4203-9b98-517d9d95b15e"
+    }
+   ],
+   "severity": "error",
+   "type": "shorting_items"
+  }
+ ]
+}

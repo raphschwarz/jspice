@@ -296,7 +296,10 @@ enum BoardItems {
     /// back relative to the footprint as the formatter writes it, RotatePoint( point - position, -orientation ), so
     /// that each can come back a nanometre off; its texts then kept upright, PCB_TEXT::KeepUpright: one turned to
     /// 180° or more turned half round, its justification the other way round, unless it is not kept upright)
-    static func rotateFootprint(_ node: SExpr, about c: IPoint, degrees: Double) {
+    /// `keepUpright` the heads of the items KeepUpright is asked of after (FOOTPRINT::Rotate's fields and texts;
+    /// none for FOOTPRINT::SetOrientation alone)
+    static func rotateFootprint(_ node: SExpr, about c: IPoint, degrees: Double,
+                                keepUpright: Set<String> = ["property", "fp_text"]) {
         let at = node["at"]
         let p0 = BoardWorld.point(at)
         let theta0 = at?.number(at: 2) ?? 0
@@ -340,7 +343,7 @@ enum BoardItems {
                 guard let a = child["at"] else { continue }
                 var angle = BoardItems.normalize360((a.number(at: 2) ?? 0) + change.degrees)
                 turnRelative(a)
-                if !child.flag("unlocked") && angle >= 180 {
+                if keepUpright.contains(child.head ?? "") && !child.flag("unlocked") && angle >= 180 {
                     angle = BoardItems.normalize360(angle + 180)
                     flipJustification(child)
                 }
@@ -409,12 +412,23 @@ enum BoardItems {
         func before(_ a: SExpr, _ b: SExpr) -> Bool {
             let ha = a.head ?? "", hb = b.head ?? ""
             if let o = order(footprintDrawings[ha] ?? 0, footprintDrawings[hb] ?? 0) { return o }
+            // (a dimension's kind is a KICAD_T of its own: PCB_DIM_ALIGNED_T, LEADER, CENTER, RADIAL, ORTHOGONAL)
+            if ha == "dimension", hb == "dimension" {
+                let kinds = ["aligned": 0, "leader": 1, "center": 2, "radial": 3, "orthogonal": 4]
+                if let o = order(kinds[a.value("type") ?? ""] ?? 0, kinds[b.value("type") ?? ""] ?? 0) { return o }
+            }
             let la = BoardDRC.layerID(a.value("layer") ?? "") ?? -1, lb = BoardDRC.layerID(b.value("layer") ?? "") ?? -1
             if let o = order(la, lb) { return o }
             if let sa = shapes[ha], let sb = shapes[hb] {
                 if let o = order(sa, sb) { return o }
                 if ha == "fp_poly" || ha == "fp_curve" {
-                    let pa = a["pts"]?.items.filter { $0.head == "xy" } ?? [], pb = b["pts"]?.items.filter { $0.head == "xy" } ?? []
+                    // (a polygon's outline as its SHAPE_LINE_CHAIN holds it: an arc's points those it is made of)
+                    func outline(_ n: SExpr) -> [SExpr] {
+                        guard let pts = n["pts"] else { return [] }
+                        guard pts.items.contains(where: { $0.head == "arc" }) else { return pts.items.filter { $0.head == "xy" } }
+                        return TuningPattern.chain(pts).points.map { SExpr("xy", mm($0.x), mm($0.y)) }
+                    }
+                    let pa = outline(a), pb = outline(b)
                     if ha == "fp_poly", let o = order(pa.count, pb.count) { return o }
                     if ha == "fp_curve" {
                         // (a bezier's start and end, then its controls)

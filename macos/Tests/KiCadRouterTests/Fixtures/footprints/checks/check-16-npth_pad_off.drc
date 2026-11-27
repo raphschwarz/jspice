@@ -1,0 +1,58 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.8",
+ "schematic_parity": [],
+ "source": "check-16-npth_pad_off.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (no edges found on Edge.Cuts layer)",
+   "items": [
+    {
+     "description": "PCB",
+     "pos": {
+      "x": 0.0,
+      "y": 0.0
+     },
+     "uuid": "66a58210-4370-4b6b-8a19-d9cb9293f18a"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Padstack is questionable (pad hole not inside pad shape)",
+   "items": [
+    {
+     "description": "NPTH pad of REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 100.0
+     },
+     "uuid": "ac6244a8-5d5d-4360-ba4b-762cc0d90f8b"
+    }
+   ],
+   "severity": "error",
+   "type": "padstack"
+  }
+ ]
+}

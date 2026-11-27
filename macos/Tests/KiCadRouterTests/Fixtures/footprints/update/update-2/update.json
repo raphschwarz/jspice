@@ -1,0 +1,18 @@
+{
+ "options": {
+  "Actions": true,
+  "All": true,
+  "Errors": true,
+  "Infos": true,
+  "Remove text items if not in library footprint": true,
+  "Update/reset 3D models": true,
+  "Update/reset clearance overrides": true,
+  "Update/reset fabrication attributes": true,
+  "Update/reset text content": true,
+  "Update/reset text layers and visibilities": true,
+  "Update/reset text positions": true,
+  "Update/reset text sizes and styles": true,
+  "Warnings": true
+ },
+ "report": "Updated footprint C1 (Capacitor_THT:C_Disc_D5.0mm_W2.5mm_P5.00mm): : (no changes)\nUpdated footprint R2 (Resistor_SMD:R_0805_2012Metric): : OK\nUpdated footprint U1 (Package_SO:SOIC-8_3.9x4.9mm_P1.27mm): : OK\nUpdated footprint R1 (Resistor_SMD:R_0805_2012Metric): : OK\nUpdated footprint J1 (Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical): : OK"
+}

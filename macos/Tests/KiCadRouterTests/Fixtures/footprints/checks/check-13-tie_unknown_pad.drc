@@ -1,0 +1,104 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.8",
+ "schematic_parity": [],
+ "source": "check-13-tie_unknown_pad.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (no edges found on Edge.Cuts layer)",
+   "items": [
+    {
+     "description": "PCB",
+     "pos": {
+      "x": 0.0,
+      "y": 0.0
+     },
+     "uuid": "b8e809ca-a82f-4a27-9783-d5af783285d1"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Items shorting two nets",
+   "items": [
+    {
+     "description": "Polygon [<no net>] of REF** on F.Cu",
+     "pos": {
+      "x": 99.5,
+      "y": 99.75
+     },
+     "uuid": "57e9362e-2bf6-47b6-b551-ea4fdbbaca82"
+    },
+    {
+     "description": "Pad 1 [<no net>] of REF** on F.Cu",
+     "pos": {
+      "x": 99.5,
+      "y": 100.0
+     },
+     "uuid": "5d531613-8678-4eef-a40d-cd5b92db7f06"
+    }
+   ],
+   "severity": "error",
+   "type": "shorting_items"
+  },
+  {
+   "description": "Footprint is not valid (net-tie pad group contains unknown pad number 7)",
+   "items": [
+    {
+     "description": "Footprint REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 100.0
+     },
+     "uuid": "e375eeea-12c4-44de-a87b-b00325cba7fe"
+    }
+   ],
+   "severity": "error",
+   "type": "footprint"
+  },
+  {
+   "description": "Clearance violation ( clearance 0.2000 mm; actual 0.0000 mm)",
+   "items": [
+    {
+     "description": "Pad 2 [<no net>] of REF** on F.Cu",
+     "pos": {
+      "x": 100.5,
+      "y": 100.0
+     },
+     "uuid": "26608362-2aff-4b4a-a344-a3f5b0507b38"
+    },
+    {
+     "description": "Polygon [<no net>] of REF** on F.Cu",
+     "pos": {
+      "x": 99.5,
+      "y": 99.75
+     },
+     "uuid": "57e9362e-2bf6-47b6-b551-ea4fdbbaca82"
+    }
+   ],
+   "severity": "error",
+   "type": "clearance"
+  }
+ ]
+}

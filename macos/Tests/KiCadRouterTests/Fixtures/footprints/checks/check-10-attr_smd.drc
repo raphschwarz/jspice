@@ -1,0 +1,58 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.8",
+ "schematic_parity": [],
+ "source": "check-10-attr_smd.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (no edges found on Edge.Cuts layer)",
+   "items": [
+    {
+     "description": "PCB",
+     "pos": {
+      "x": 0.0,
+      "y": 0.0
+     },
+     "uuid": "121756b6-9224-4bdc-af3e-70d351ad2efa"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Footprint component type doesn't match footprint pads (expected 'Through hole'; actual 'SMD')",
+   "items": [
+    {
+     "description": "Footprint REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 100.0
+     },
+     "uuid": "5b4839a4-f972-43e9-b03d-0e9eef2d0cac"
+    }
+   ],
+   "severity": "error",
+   "type": "footprint_type_mismatch"
+  }
+ ]
+}

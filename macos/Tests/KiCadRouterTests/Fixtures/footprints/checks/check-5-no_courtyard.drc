@@ -1,0 +1,58 @@
+{
+ "$schema": "https://schemas.kicad.org/drc.v1.json",
+ "coordinate_units": "mm",
+ "ignored_checks": [
+  {
+   "description": "Track endpoint not centered on via",
+   "key": "track_not_centered_on_via"
+  },
+  {
+   "description": "Tuning profile track geometries",
+   "key": "tuning_profile_track_geometries"
+  },
+  {
+   "description": "Footprint doesn't match symbol's footprint filters",
+   "key": "footprint_filters_mismatch"
+  }
+ ],
+ "included_severities": [
+  "error",
+  "warning"
+ ],
+ "kicad_version": "10.0.8",
+ "schematic_parity": [],
+ "source": "check-5-no_courtyard.kicad_pcb",
+ "unconnected_items": [],
+ "violations": [
+  {
+   "description": "Board has malformed outline (no edges found on Edge.Cuts layer)",
+   "items": [
+    {
+     "description": "PCB",
+     "pos": {
+      "x": 0.0,
+      "y": 0.0
+     },
+     "uuid": "f92c4460-5148-491e-a1c4-9d01f76d2e68"
+    }
+   ],
+   "severity": "error",
+   "type": "invalid_outline"
+  },
+  {
+   "description": "Footprint has no courtyard defined",
+   "items": [
+    {
+     "description": "Footprint REF**",
+     "pos": {
+      "x": 100.0,
+      "y": 100.0
+     },
+     "uuid": "b3bae6c7-85b1-48cc-b510-31a983c06db7"
+    }
+   ],
+   "severity": "error",
+   "type": "missing_courtyard"
+  }
+ ]
+}

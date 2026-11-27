@@ -1,0 +1,482 @@
+(footprint "Mounting_Wuerth_WA-SMSI-M3_H14mm_9774140360"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Mounting Hardware, inside through hole M3, height 14, Wuerth electronics 9774140360 (https://www.we-online.com/components/products/datasheet/9774140360R.pdf)")
+	(tags "Mounting M3 9774140360")
+	(property "Reference" "REF**"
+		(at 0 -4.65 0)
+		(layer "F.SilkS")
+		(uuid "7f836a24-c8ea-4ac8-8c20-1f737a1f96d2")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "Mounting_Wuerth_WA-SMSI-M3_H14mm_9774140360"
+		(at 0 4.65 0)
+		(layer "F.Fab")
+		(uuid "e9f1bc4e-883c-422a-9ee0-00b63d7f0b26")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "aa32fa6a-3d0d-4856-8936-fb6b86a3d302")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "cb7642ba-a86c-44cc-8070-e2e0a7f4ee0b")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "KiLib_Generator" "mounting_hardware/Wuerth_SMT_spacer"
+		(at 0 0 0)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "4eb6db8f-0848-40a9-89d0-ec082703f33a")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd allow_soldermask_bridges)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_circle
+		(center 0 0)
+		(end 3.95 0)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "bc68e831-b854-4636-bc4f-3faf9ef1dfd0")
+	)
+	(fp_circle
+		(center 0 0)
+		(end 3 0)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "5e8bdfad-dfdd-4f3e-91b3-441d49f21b46")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "b080efd9-620b-4bc8-8dc1-ba54d7ddbda0")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "" smd custom
+		(at -2.057681 -2.057681)
+		(size 0.55 0.55)
+		(layers "F.Paste")
+		(options
+			(clearance outline)
+			(anchor circle)
+		)
+		(primitives
+			(gr_arc
+				(start -0.377294 1.707681)
+				(mid 0.318198 0.318198)
+				(end 1.707681 -0.377294)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -0.478281 1.707681)
+				(mid 0.247487 0.247487)
+				(end 1.707681 -0.478281)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -0.579192 1.707681)
+				(mid 0.176777 0.176777)
+				(end 1.707681 -0.579192)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -0.680037 1.707681)
+				(mid 0.106066 0.106066)
+				(end 1.707681 -0.680037)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -0.780822 1.707681)
+				(mid 0.035355 0.035355)
+				(end 1.707681 -0.780822)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -0.881554 1.707681)
+				(mid -0.035355 -0.035355)
+				(end 1.707681 -0.881554)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -0.982237 1.707681)
+				(mid -0.106066 -0.106066)
+				(end 1.707681 -0.982237)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.082877 1.707681)
+				(mid -0.176777 -0.176777)
+				(end 1.707681 -1.082877)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.183476 1.707681)
+				(mid -0.247487 -0.247487)
+				(end 1.707681 -1.183476)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.28404 1.707681)
+				(mid -0.318198 -0.318198)
+				(end 1.707681 -1.28404)
+				(width 0.2)
+			)
+			(gr_line
+				(start 1.707681 -0.377294)
+				(end 1.707681 -1.28404)
+				(width 0.2)
+			)
+			(gr_line
+				(start -0.377294 1.707681)
+				(end -1.28404 1.707681)
+				(width 0.2)
+			)
+		)
+		(uuid "273de9e5-881e-4630-aecd-21369a5f54bc")
+	)
+	(pad "" smd custom
+		(at -2.057681 2.057681)
+		(size 0.55 0.55)
+		(layers "F.Paste")
+		(options
+			(clearance outline)
+			(anchor circle)
+		)
+		(primitives
+			(gr_arc
+				(start 1.707681 0.377294)
+				(mid 0.318198 -0.318198)
+				(end -0.377294 -1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.707681 0.478281)
+				(mid 0.247487 -0.247487)
+				(end -0.478281 -1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.707681 0.579192)
+				(mid 0.176777 -0.176777)
+				(end -0.579192 -1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.707681 0.680037)
+				(mid 0.106066 -0.106066)
+				(end -0.680037 -1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.707681 0.780822)
+				(mid 0.035355 -0.035355)
+				(end -0.780822 -1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.707681 0.881554)
+				(mid -0.035355 0.035355)
+				(end -0.881554 -1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.707681 0.982237)
+				(mid -0.106066 0.106066)
+				(end -0.982237 -1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.707681 1.082877)
+				(mid -0.176777 0.176777)
+				(end -1.082877 -1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.707681 1.183476)
+				(mid -0.247487 0.247487)
+				(end -1.183476 -1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.707681 1.28404)
+				(mid -0.318198 0.318198)
+				(end -1.28404 -1.707681)
+				(width 0.2)
+			)
+			(gr_line
+				(start -0.377294 -1.707681)
+				(end -1.28404 -1.707681)
+				(width 0.2)
+			)
+			(gr_line
+				(start 1.707681 0.377294)
+				(end 1.707681 1.28404)
+				(width 0.2)
+			)
+		)
+		(uuid "ddf14265-ec66-4a30-82c2-dab12802051a")
+	)
+	(pad "" np_thru_hole circle
+		(at 0 0)
+		(size 4.4 4.4)
+		(drill 4.4)
+		(layers "*.Cu" "*.Mask")
+		(uuid "917cea29-0881-4005-a0d9-c20de3fa9dd1")
+	)
+	(pad "" smd custom
+		(at 2.057681 -2.057681)
+		(size 0.55 0.55)
+		(layers "F.Paste")
+		(options
+			(clearance outline)
+			(anchor circle)
+		)
+		(primitives
+			(gr_arc
+				(start -1.707681 -0.377294)
+				(mid -0.318198 0.318198)
+				(end 0.377294 1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.707681 -0.478281)
+				(mid -0.247487 0.247487)
+				(end 0.478281 1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.707681 -0.579192)
+				(mid -0.176777 0.176777)
+				(end 0.579192 1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.707681 -0.680037)
+				(mid -0.106066 0.106066)
+				(end 0.680037 1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.707681 -0.780822)
+				(mid -0.035355 0.035355)
+				(end 0.780822 1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.707681 -0.881554)
+				(mid 0.035355 -0.035355)
+				(end 0.881554 1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.707681 -0.982237)
+				(mid 0.106066 -0.106066)
+				(end 0.982237 1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.707681 -1.082877)
+				(mid 0.176777 -0.176777)
+				(end 1.082877 1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.707681 -1.183476)
+				(mid 0.247487 -0.247487)
+				(end 1.183476 1.707681)
+				(width 0.2)
+			)
+			(gr_arc
+				(start -1.707681 -1.28404)
+				(mid 0.318198 -0.318198)
+				(end 1.28404 1.707681)
+				(width 0.2)
+			)
+			(gr_line
+				(start 0.377294 1.707681)
+				(end 1.28404 1.707681)
+				(width 0.2)
+			)
+			(gr_line
+				(start -1.707681 -0.377294)
+				(end -1.707681 -1.28404)
+				(width 0.2)
+			)
+		)
+		(uuid "38f4a528-6e22-484d-bac9-51be6656ae5d")
+	)
+	(pad "" smd custom
+		(at 2.057681 2.057681)
+		(size 0.55 0.55)
+		(layers "F.Paste")
+		(options
+			(clearance outline)
+			(anchor circle)
+		)
+		(primitives
+			(gr_arc
+				(start 0.377294 -1.707681)
+				(mid -0.318198 -0.318198)
+				(end -1.707681 0.377294)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 0.478281 -1.707681)
+				(mid -0.247487 -0.247487)
+				(end -1.707681 0.478281)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 0.579192 -1.707681)
+				(mid -0.176777 -0.176777)
+				(end -1.707681 0.579192)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 0.680037 -1.707681)
+				(mid -0.106066 -0.106066)
+				(end -1.707681 0.680037)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 0.780822 -1.707681)
+				(mid -0.035355 -0.035355)
+				(end -1.707681 0.780822)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 0.881554 -1.707681)
+				(mid 0.035355 0.035355)
+				(end -1.707681 0.881554)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 0.982237 -1.707681)
+				(mid 0.106066 0.106066)
+				(end -1.707681 0.982237)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.082877 -1.707681)
+				(mid 0.176777 0.176777)
+				(end -1.707681 1.082877)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.183476 -1.707681)
+				(mid 0.247487 0.247487)
+				(end -1.707681 1.183476)
+				(width 0.2)
+			)
+			(gr_arc
+				(start 1.28404 -1.707681)
+				(mid 0.318198 0.318198)
+				(end -1.707681 1.28404)
+				(width 0.2)
+			)
+			(gr_line
+				(start -1.707681 0.377294)
+				(end -1.707681 1.28404)
+				(width 0.2)
+			)
+			(gr_line
+				(start 0.377294 -1.707681)
+				(end 1.28404 -1.707681)
+				(width 0.2)
+			)
+		)
+		(uuid "7078caad-a59c-41e0-aa47-c03e7f5b285d")
+	)
+	(pad "1" smd circle
+		(at -2.95 0)
+		(size 0.992 0.992)
+		(layers "F.Cu")
+		(uuid "b92cd6c6-3cbb-4b49-b384-5cfa70a168a6")
+	)
+	(pad "1" smd circle
+		(at 0 -2.95)
+		(size 0.992 0.992)
+		(layers "F.Cu")
+		(uuid "bd3ad722-0b0c-43a8-882a-2bd2fea8f99b")
+	)
+	(pad "1" smd circle
+		(at 0 2.95)
+		(size 0.992 0.992)
+		(layers "F.Cu")
+		(uuid "256ecf10-d98f-4ae5-8137-d9d5156a638d")
+	)
+	(pad "1" smd custom
+		(at 2.95 0)
+		(size 1.5 1.5)
+		(layers "F.Cu" "F.Mask")
+		(options
+			(clearance outline)
+			(anchor circle)
+		)
+		(primitives
+			(gr_circle
+				(center -2.95 0)
+				(end 0 0)
+				(width 1.5)
+				(fill no)
+			)
+		)
+		(uuid "ddf11e31-99fd-4a7b-bf9b-a122661a1b0b")
+	)
+	(embedded_fonts no)
+	(model "${KICAD10_3DMODEL_DIR}/Mounting_Wuerth.3dshapes/Mounting_Wuerth_WA-SMSI-M3_H14mm_9774140360.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

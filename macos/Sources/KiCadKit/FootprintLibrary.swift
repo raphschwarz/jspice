@@ -122,6 +122,15 @@ public final class KiCadFootprintLibrary: @unchecked Sendable {
         return node.copy()
     }
 
+    /// What was read of a library let go of (its footprints read again from its folder next time), as KiCad's
+    /// footprint cache is validated after a footprint is saved into it
+    public func forget(library: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        cache = cache.filter { KiCadFootprintLibrary.split($0.key)?.library != library }
+        index = nil
+    }
+
     /// Whether the footprint can be found
     public func has(_ libID: String) -> Bool {
         guard let (lib, name) = KiCadFootprintLibrary.split(libID), let library = libraries[lib] else { return false }
