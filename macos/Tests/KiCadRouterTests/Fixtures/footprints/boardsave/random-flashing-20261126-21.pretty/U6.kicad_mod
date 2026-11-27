@@ -1,0 +1,327 @@
+(footprint "U6"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "Molex MMCX Horizontal Coaxial https://www.molex.com/pdm_docs/sd/734150961_sd.pdf")
+	(tags "Molex MMCX Horizontal Coaxial")
+	(property "Reference" "U6"
+		(at 0 -3.5 0)
+		(layer "F.SilkS")
+		(uuid "98482ee6-d57c-463c-a9f6-00e89871e61b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "MMCX_Molex_73415-0961_Horizontal_0.8mm-PCB"
+		(at 0 3.5 0)
+		(layer "F.Fab")
+		(uuid "5aea2eca-41f0-45bd-bd6c-8a26a49c6bdf")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "b62f2981-c6c9-4e83-a053-83c376ccdbc2")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "4f6d3f8a-ec17-472f-be24-a38f1107f8ed")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -3.690001 2.56)
+		(end 4.01 2.56)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "c05d970b-afc7-458e-a565-7450a3273e24")
+	)
+	(fp_line
+		(start -3.69 -2.56)
+		(end 4.01 -2.56)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "3fc45e3a-3e2c-47c3-9f95-60c32733274d")
+	)
+	(fp_line
+		(start 4.01 2.56)
+		(end 4.01 -2.56)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "fd280902-572e-4e58-bdf0-57e7649bf0ab")
+	)
+	(fp_line
+		(start 4.21 -0.55)
+		(end 4.21 0.55)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "8780441e-4597-45c8-bcdf-124003abb4a8")
+	)
+	(fp_line
+		(start -3.75 1.75)
+		(end -3.75 -1.75)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "Dwgs.User")
+		(uuid "fe4db157-1926-4259-b9e7-46503b42e1f5")
+	)
+	(fp_line
+		(start -3.75 1.75)
+		(end 0.75 1.75)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "Edge.Cuts")
+		(uuid "51b2fc78-fd72-4cac-96ff-04bb7d3fb6d8")
+	)
+	(fp_line
+		(start 0.75 -1.75)
+		(end -3.75 -1.75)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "Edge.Cuts")
+		(uuid "e4944b17-6050-48e1-9db5-d450f051066f")
+	)
+	(fp_line
+		(start 0.75 1.75)
+		(end 0.75 -1.75)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "Edge.Cuts")
+		(uuid "36deaf03-4fe5-4b6f-be6b-4306f1c3beec")
+	)
+	(fp_line
+		(start -4.25 -2.8)
+		(end -4.25 2.8)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "17ada26b-19bc-458f-a989-299d48938f73")
+	)
+	(fp_line
+		(start -4.25 -2.8)
+		(end 4.25 -2.8)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "0ea95c83-8cd8-49b9-9799-090ad773fae0")
+	)
+	(fp_line
+		(start -4.25 2.8)
+		(end 4.25 2.8)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "f702d33b-37c0-4283-956e-2d9c3affe8ea")
+	)
+	(fp_line
+		(start 4.25 -2.8)
+		(end 4.25 2.8)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "F.CrtYd")
+		(uuid "ded0c1ce-ed27-4c37-aecf-9f6a03ce2748")
+	)
+	(fp_line
+		(start -3.75 -2.25)
+		(end -3.75 2.25)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "c1f53905-ff38-445f-a5f0-23e885ed700e")
+	)
+	(fp_line
+		(start -3.75 -2.25)
+		(end 3.68 -2.25)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "ea97baac-20d9-4e14-9b01-59b063f7953f")
+	)
+	(fp_line
+		(start -3.75 2.25)
+		(end 3.68 2.25)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "ce6393b4-2f14-4315-a8d8-adbb1f25cb5f")
+	)
+	(fp_line
+		(start 3.18 0.000001)
+		(end 3.68 -0.5)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "a362d356-086e-497a-b6f4-a619e8b87880")
+	)
+	(fp_line
+		(start 3.18 0.000001)
+		(end 3.68 0.5)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "a20f70ec-b0a6-4ba3-a8cb-a57107e452a2")
+	)
+	(fp_line
+		(start 3.68 -0.5)
+		(end 3.68 -2.25)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "c7b48a60-de91-4864-b951-78f5a7562b61")
+	)
+	(fp_line
+		(start 3.68 2.25)
+		(end 3.68 0.5)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "c73b03b2-3f2d-4524-95cf-f4f831b1b072")
+	)
+	(fp_text user "PCB edge"
+		(at -3.35 0 90)
+		(layer "Dwgs.User")
+		(uuid "fd1b353a-2bc4-46da-a52e-e2eeffa94ae7")
+		(effects
+			(font
+				(size 0.4 0.4)
+				(thickness 0.06)
+			)
+		)
+	)
+	(fp_text user "${REFERENCE}"
+		(at -1.55 0 0)
+		(layer "F.Fab")
+		(uuid "60def583-4dbe-47f7-b2fc-0e7ed0c02b9e")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "1" smd rect
+		(at 2.75 0)
+		(size 2 1.1)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(clearance 0.1)
+		(uuid "89900c3d-3485-418f-bf40-c9adeddfa8d7")
+	)
+	(pad "2" smd custom
+		(at 2.25 -1.6)
+		(size 3 1.4)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(options
+			(clearance outline)
+			(anchor rect)
+		)
+		(primitives
+			(gr_poly
+				(pts
+					(xy -1.5 -0.15) (xy -6 -0.15) (xy -6 -0.7) (xy -1.5 -0.7)
+				)
+				(width 0)
+				(fill yes)
+			)
+		)
+		(uuid "e574efd9-a40a-4525-beea-2cc553e64d0a")
+	)
+	(pad "2" smd custom
+		(at 2.25 1.6)
+		(size 3 1.4)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(options
+			(clearance outline)
+			(anchor rect)
+		)
+		(primitives
+			(gr_poly
+				(pts
+					(xy -1.5 0.7) (xy -6 0.7) (xy -6 0.15) (xy -1.5 0.15)
+				)
+				(width 0)
+				(fill yes)
+			)
+		)
+		(uuid "78780a28-3c5d-4d53-9dc3-fba602dd9bc0")
+	)
+	(embedded_fonts no)
+	(model "${KICAD10_3DMODEL_DIR}/Connector_Coaxial.3dshapes/MMCX_Molex_73415-0961_Horizontal.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

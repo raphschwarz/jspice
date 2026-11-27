@@ -94,6 +94,40 @@ final class FootprintEditorTests: XCTestCase {
         XCTAssertGreaterThan(n, 0)
     }
 
+    /// Boards' footprints (turned, on the back, on nets, locked) saved into a library as FootprintSave saves a board's
+    /// (footprints.py boardsave, of Fixtures/clipboard/random-2-43-pasted and flashing/random-flashing-20261126-21):
+    /// a copy turned to 0° and onto the front, on no net, each under its reference: the same text as KiCad's, byte for
+    /// byte, the ids KiCad made anew aside
+    func testBoardFootprintsSavedAsKiCadSavesThem() throws {
+        let root = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures", withExtension: nil))
+        let boards = ["clipboard/random-2-43-pasted", "flashing/random-flashing-20261126-21"]
+        var checked = 0
+        for path in boards {
+            let text = try String(contentsOf: root.appendingPathComponent(path + ".kicad_pcb"), encoding: .utf8)
+            let board = try KiCadBoard(text: text)
+            let lib = try Self.folder().appendingPathComponent("boardsave/\((path as NSString).lastPathComponent).pretty")
+            // (a reference twice: the last one saved is the library's)
+            var byReference: [String: SExpr] = [:]
+            for fp in board.footprints { byReference[fp.reference] = fp.node }
+            for (reference, node) in byReference.sorted(by: { $0.key < $1.key }) {
+                let fp = node.copy()
+                fp.items[1] = SExpr(string: reference)
+                let ours = FootprintFormat.libraryText(fp, boardCopper: BoardEditing.boardLayers(board).filter { $0.hasSuffix(".Cu") })
+                var theirs = try String(contentsOf: FootprintEditor.fileURL(reference, in: lib), encoding: .utf8)
+                // (a text's angle KiCad's arithmetic leaves a hair off 0°, on a footprint turned by a tenth of a degree
+                // and turned over: 180° less 180.00000000000003°, which the port, keeping angles to a millionth of a
+                // degree, has as 0)
+                theirs = theirs.replacingOccurrences(of: #"\(at (-?[0-9.]+) (-?[0-9.]+) -?[0-9.]+e-1[0-9]\)"#, with: "(at $1 $2 0)",
+                                                     options: .regularExpression)
+                let (same, why) = Self.same(ours, theirs, source: text)
+                XCTAssertTrue(same, "\(path) \(reference): \(why)")
+                Self.dump(ours, "boardsave/\((path as NSString).lastPathComponent).pretty/\(reference).kicad_mod")
+                checked += 1
+            }
+        }
+        XCTAssertGreaterThan(checked, 0)
+    }
+
     /// KICAD_FOOTPRINT_DUMP: a folder the port's footprints are written into, for footprints.py readback
     static func dump(_ text: String, _ path: String) {
         guard let folder = ProcessInfo.processInfo.environment["KICAD_FOOTPRINT_DUMP"] else { return }

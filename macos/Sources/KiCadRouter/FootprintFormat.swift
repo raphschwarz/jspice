@@ -24,21 +24,26 @@ public enum FootprintFormat {
 
     /// The text of `footprint` as FootprintSave writes it into a library's .kicad_mod (its copy turned to 0° and put on
     /// the front, CTL_FOR_LIBRARY)
-    public static func libraryText(_ footprint: SExpr) -> String {
-        libraryFootprint(footprint).formatted()
+    public static func libraryText(_ footprint: SExpr, boardCopper: [String]? = nil) -> String {
+        libraryFootprint(footprint, boardCopper: boardCopper).formatted()
     }
 
     /// The footprint FootprintSave writes: a copy of `footprint` (FOOTPRINT::Clone: its mandatory fields' ids new),
     /// turned to 0° and onto the front (FLIP_DIRECTION::TOP_BOTTOM, the PCB editor's default) where it is not, on no
-    /// net, formatted for a library (no id, no place, its name without its library's)
-    public static func libraryFootprint(_ footprint: SExpr) -> SExpr {
+    /// net, formatted for a library (no id, no place, its name without its library's). `boardCopper`, for a board's
+    /// footprint, the board's copper layers: a pad turned over on the board keeps only those of all KiCad's
+    /// (PAD::Flip: FlipLayerMask of its layers with the board's copper layer count).
+    public static func libraryFootprint(_ footprint: SExpr, boardCopper: [String]? = nil) -> SExpr {
         let fp = footprint.copy()
         let view = KiCadFootprint(fp, board: KiCadBoard(SExpr(list: [SExpr(symbol: "kicad_pcb"), fp])))
         // (FootprintSave: SetOrientation( ANGLE_0 ), then Flip where it is not on F.Cu)
         if view.rotation != 0 {
             BoardItems.rotateFootprint(fp, about: BoardItems.position(fp), degrees: -view.rotation, keepUpright: [])
         }
-        if view.layer != "F.Cu" { view.flip(leftRight: false) }
+        if view.layer != "F.Cu" {
+            if let boardCopper { expandCopper(fp, boardCopper) }
+            view.flip(leftRight: false)
+        }
         // (ClearAllNets)
         for item in fp.items where item.head == "pad" || item.head == "zone" || BoardWorld.footprintShapeHeads.contains(item.head ?? "") {
             item.remove("net")
@@ -115,6 +120,9 @@ public enum FootprintFormat {
         if library {
             for pad in pads {
                 for name in ["net", "pinfunction", "pintype"] { pad.remove(name) }
+                if let layers = pad["layers"] { layers.items = [layers.items[0]] + libraryLayers(pad).map { SExpr(string: $0) } }
+                // (its layers' zone connections are a board's: none in a library)
+                pad.remove("zone_layer_connections")
             }
             for item in drawings + zones { item.remove("net") }
         }
@@ -153,6 +161,44 @@ public enum FootprintFormat {
         if let files = fp["embedded_files"] { tail.append(files) }
         tail += fp.all("model").filter { !($0.text(at: 0) ?? "").isEmpty }
         return SExpr(list: head + body + tail)
+    }
+
+    // MARK: - Layers
+
+    /// A footprint's pads' layers of every copper layer ("*.Cu") made those of a board (`boardCopper`), "F&B.Cu" the
+    /// outer two
+    public static func expandCopper(_ fp: SExpr, _ boardCopper: [String]) {
+        for pad in fp.all("pad") {
+            guard let layers = pad["layers"] else { continue }
+            var names: [String] = []
+            for n in layers.arguments.map(\.text) {
+                switch n {
+                case "*.Cu": names += boardCopper
+                case "F&B.Cu": names += ["F.Cu", "B.Cu"]
+                default: names.append(n)
+                }
+            }
+            layers.items = [layers.items[0]] + names.map { SExpr(string: $0) }
+        }
+    }
+
+    /// A pad's layers as formatLayers writes them with no board (a library's): "*.Cu" for every copper layer of
+    /// KiCad's, or for the outer two alone; both sides' adhesive, paste, silkscreen, mask, courtyard and fabrication
+    /// layers each as one; then each other layer by name, in the order of their ids
+    static func libraryLayers(_ pad: SExpr) -> [String] {
+        var ids = Set(layerSeq(pad))
+        var out: [String] = []
+        let copper = ids.filter { $0 == 0 || $0 == 2 || ($0 >= 4 && $0 % 2 == 0) }
+        if copper.count == 32 || copper == [0, 2] {
+            out.append("*.Cu")
+            ids.subtract(copper)
+        }
+        for (kind, f, b) in [("Adhes", 9, 11), ("Paste", 13, 15), ("SilkS", 5, 7), ("Mask", 1, 3), ("CrtYd", 31, 29), ("Fab", 35, 33)]
+            where ids.contains(f) && ids.contains(b) {
+            out.append("*.\(kind)")
+            ids.subtract([f, b])
+        }
+        return out + ids.sorted().compactMap(layerName)
     }
 
     // MARK: - Ids

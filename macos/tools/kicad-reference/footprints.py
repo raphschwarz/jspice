@@ -325,6 +325,7 @@ def edits(outdir):
 # MARK: - Board footprints saved to a library
 
 def boardsave(outdir, boards):
+    os.makedirs(outdir, exist_ok=True)
     for path in boards:
         board = pcbnew.LoadBoard(path)
         lib = os.path.join(outdir, os.path.splitext(os.path.basename(path))[0] + ".pretty")
@@ -332,9 +333,9 @@ def boardsave(outdir, boards):
             shutil.rmtree(lib)
         io().CreateLibrary(lib)
         for fp in board.Footprints():
-            copy = fp.Duplicate(False) if False else pcbnew.Cast_to_FOOTPRINT(fp.Clone())
-            copy.SetFPID(pcbnew.LIB_ID("", fp.GetReference()))
-            io().FootprintSave(lib, copy)
+            # (FootprintSave saves a copy of its own: the board's, renamed, is what it is given)
+            fp.SetFPID(pcbnew.LIB_ID("", fp.GetReference()))
+            io().FootprintSave(lib, fp)
         print(path, len(board.Footprints()))
 
 
