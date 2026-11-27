@@ -33,12 +33,23 @@ inner layers, over each other; saved with its zones filled, then filled again fr
     fills.py --draw-flashing OUT.kicad_pcb
 """
 
+import ctypes
 import json
 import math
 import os
 import sys
 
 import pcbnew
+
+# KiCad's own programs (the board editor, kicad-cli) report a failed wxASSERT and go on; in the pcbnew module, with
+# no program of KiCad's round it, wxWidgets' default handler stops the process. A board's rules can ask what KiCad
+# asserts on (A.Width of a drawing other than a rectangle: EDA_SHAPE::GetRectangleWidth, UNIMPLEMENTED_FOR, then 0),
+# so the asserts are let go by, as KiCad's programs let them go by (wxSetAssertHandler( NULL ), the handler in
+# libwx_baseu).
+try:
+    ctypes.c_void_p.in_dll(ctypes.CDLL("libwx_baseu-3.2.so.0"), "wxTheAssertHandler").value = None
+except (OSError, ValueError):
+    pass
 
 MM = 1_000_000
 
