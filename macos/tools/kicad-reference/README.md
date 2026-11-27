@@ -562,6 +562,30 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   blind vias, plated and unplated holes, a custom pad, a footprint's zone, a rule area) and filled polygons with spikes
   sharper and blunter than the sliver check's limit, then `drc.py` on it. `Tests/KiCadRouterTests/Fixtures/copper`
   holds `drawn` (`--draw`), and the boards of `Fixtures/boards` have theirs too.
+- `board3d.py`: the board as KiCad's 3D viewer builds it (`board3d.py BOARD.kicad_pcb...`): through KiCad's `pcbnew`
+  module, `BOARD_ADAPTER::createLayers`' polygons made by KiCad's own functions in its order (the board's outline by
+  `GetBoardPolygonOutlines( poly, true, nullptr, false, true )`; each copper layer's tracks and flashed vias, its
+  footprints' pads (`TransformPadsToPolySet`), texts and fields shown (`TransformTextToPolySet`) and drawings, the
+  board's drawings and texts, its zones' fills; the technical layers', with the masks' and pastes' margins, the masks'
+  openings over vias not tented and over tracks with a mask of their own as `createTrackWithMargin` draws them, and pads
+  on the silkscreen as `buildPadOutlineAsPolygon` outlines them; the holes' polygons), each simplified, then clipped
+  and holed as `RENDER_3D_OPENGL::reload` clips the layers, with the board body, the masks and the plated holes' walls,
+  written next to the board as `BOARD.board3d` (JSON). The script puts KiCad's functions together in `createLayers`'
+  order, read off `board_adapter.cpp` and `create_layer_items.cpp`. `Board3DTests` checks the port's (`Board3D`)
+  against it, point for point. With `--draw OUT.kicad_pcb`, a board of what random boards do not have (pads with mask
+  and paste margins of their own and their footprint's, absolute, relative and negative; pads on the silkscreen; tracks
+  and an arc with mask openings of their own; vias tented and not on each side, a blind and a buried via on four
+  layers; plated and unplated holes and slots; a zone on a mask layer; texts and drawings on every layer; a footprint on
+  the back; a stackup with colours of its own, named and `#RRGGBBAA`, and an ENIG finish). With `--render
+  BOARD.kicad_pcb...`, kicad-cli's renders of each board from the top and the bottom (`kicad-cli pcb render`: KiCad's
+  3D viewer itself, orthographic, basic quality, which draws its colours flat, the stackup's colours, the layers the
+  board's plot settings plot), each pixel taken to the nearest of the few colours the render is made of, with where
+  the board's outline falls in it, as `BOARD.render`; `Board3DTests` compares what the port's slabs show at each
+  pixel. With `--models OUT.kicad_pcb`, a board of footprints with a model of our own (`models/part.wrl`) placed every
+  way, and kicad-cli's VRML export of it with the models in it (`OUT-kicad.wrl`), which `Board3DTests` compares the
+  port's models with, triangle by triangle. `Tests/KiCadRouterTests/Fixtures/board3d` holds `drawn` (`--draw`, and
+  `--render`) and `models` (`--models`); `Fixtures/boards`, `copper`, `silk` and `flashing` hold their boards'
+  `.board3d`, and `random-2-43`, `random-2-82` and `copper/drawn` their `.render`.
 - `fills.py`: KiCad's zone fills of boards (`fills.py [--twice] BOARD.kicad_pcb...`): through KiCad's `pcbnew` module,
   each board's zones filled by `pcbnew.ZONE_FILLER(board).Fill(board.Zones())` (its footprints' zones are not
   filled, and keep what they were read with), and each zone's filled polygons on each of its layers (outline and
