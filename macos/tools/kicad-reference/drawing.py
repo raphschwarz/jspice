@@ -499,6 +499,11 @@ def act(s):
             json.dump(out, f)
 
 
+def prepare_dialog(w):
+    """Whether the dialog `w` KiCad opened may now be OK'd (a plugin of its own may fill it in first: snapping.py's)"""
+    return True
+
+
 def tick():
     try:
         state["ticks"] += 1
@@ -513,6 +518,9 @@ def tick():
         for w in wx.GetTopLevelWindows():
             if state["phase"] != "load" and w is not f and w.IsShown() and isinstance(w, wx.Dialog) \
                     and w.GetTitle() != "Load PCB":
+                if not prepare_dialog(w):
+                    state["wait"] = 6
+                    return
                 out.setdefault("dialogs", []).append(w.GetTitle())
                 ok = w.FindWindow(wx.ID_OK)
                 if ok is not None:

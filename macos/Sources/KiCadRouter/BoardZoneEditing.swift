@@ -87,6 +87,8 @@ extension BoardEditing {
         var angleSnapActive = false
         var angleSnapPos = IPoint.zero
         var moved = false
+        /// The point editor's grid helper, where it snaps the handle as KiCad's does
+        var snap: PointEditorSnap?
     }
 
     /// EC_CONVERGING: an edge dragged parallel to itself, its neighbours keeping their directions
@@ -280,9 +282,11 @@ extension BoardEditing {
 
     /// Starts dragging a corner or an edge of the zone, as the point editor starts when the button goes down on one of
     /// its handles: nil where the point editor would not edit the zone (canEditZoneOutline) or it has no such handle;
-    /// else the outline as it is (mm)
+    /// else the outline as it is (mm). With `view`, the drag snaps as the point editor's grid helper snaps it in that
+    /// view (PointEditorSnap: the board's items' anchors, by the Magnetic Points, the zone itself skipped), the grid's
+    /// auxiliary axes through where a corner began.
     @discardableResult
-    public func startZoneDrag(_ uuid: String, handle: ZoneHandle) -> [[KiCadPoint]]? {
+    public func startZoneDrag(_ uuid: String, handle: ZoneHandle, view: SnapView? = nil) -> [[KiCadPoint]]? {
         guard canEditZoneOutline(uuid), let contours = zoneContours(uuid) else { return nil }
         let (points, ends) = Self.editPoints(contours)
         switch handle {
@@ -291,6 +295,11 @@ extension BoardEditing {
         }
         var drag = ZoneDrag(uuid: uuid, handle: handle, original: contours, points: points, contourEnds: ends)
         if case .edge(let i) = handle { drag.converging = Self.converging(i, points, ends) }
+        if let view {
+            var snap = PointEditorSnap(board: SnapBoard(board: router.board, project: project), item: uuid, magnetic: magnetic, view: view)
+            if case .corner(let i) = handle { snap.dragBegun(at: points[i]) }
+            drag.snap = snap
+        }
         zoneDrag = drag
         return contours.map { $0.map(Self.mm) }
     }
@@ -301,13 +310,28 @@ extension BoardEditing {
     /// corner put where `snap` puts the pointer (the grid's and the items' anchors, KiCad's BestSnapAnchor; as it is
     /// if nil), or, unless `shift`, where it sees its neighbours at a multiple of 45° when within 2° of one (sticky
     /// until the pointer goes `stickyDistance` (mm, KiCad's five pixels) from it). The outline as it now goes (mm).
+    ///
+    /// Where the drag was started with a view, the grid helper snaps the handle instead of `snap`, as the point editor
+    /// asks it: a corner to the anchors of the items on the zone's layers, else the grid's point; an edge by the grid
+    /// of the zone's kind (none with `ctrl`, KiCad's Ctrl taking the grid away too), then through an anchor of them
+    /// its constraint lets it reach (not with `shift`); a corner held at 45° to its neighbours on the grid helper's
+    /// point there of no layer's items.
     @discardableResult
     public func dragZonePoint(to p: KiCadPoint, ctrl: Bool = false, shift: Bool = false, grid: Double? = nil,
                               stickyDistance: Double = 0, snap: ((KiCadPoint) -> KiCadPoint)? = nil) -> [[KiCadPoint]]? {
         guard var d = zoneDrag else { return nil }
         let raw = Self.nm(p)
         var pos = raw
-        let snapped = { (q: IPoint) -> IPoint in snap.map { Self.nm($0(Self.mm(q))) } ?? q }
+        var helper = d.snap
+        helper?.modifiers(shift: shift, ctrl: ctrl)
+        let grid = helper.map { $0.usesGrid ? Double($0.gridSize.x) / 1e6 : nil } ?? grid
+        // (the grid helper's BestSnapAnchor, of the zone's layers or of none; else `snap`, or nothing)
+        func anchor(_ q: IPoint, _ layers: PointEditorSnap.Layers) -> IPoint {
+            if helper != nil { return helper!.snap(q, layers) }
+            return snap.map { Self.nm($0(Self.mm(q))) } ?? q
+        }
+        let snapped = { (q: IPoint) -> IPoint in anchor(q, .item) }
+        let snaps = helper.map(\.snaps) ?? (snap != nil)
         if case .edge = d.handle, let grid, grid > 0, let c = d.converging {
             // (an edge moves across itself only: its move across quantized on the grid, so that each step is one place)
             let perp = DPoint(c.perpVector)
@@ -341,8 +365,8 @@ extension BoardEditing {
             let snapAng = 45 * (ang / 45).rounded(.toNearestOrAwayFromZero)
             if abs(ang - snapAng) < 2 {
                 var s = Self.snapCorner(prev, next, pos, snapAng)
-                if snap != nil {
-                    let gridded = snapped(s)
+                if snaps {
+                    let gridded = anchor(s, .none)
                     s = abs(Self.segAngle(Seg(gridded, prev), Seg(gridded, next)) - snapAng) < 2 ? gridded : pos
                 }
                 if s != pos {
@@ -361,7 +385,7 @@ extension BoardEditing {
                 d.points[c.end] += pos - mid
                 Self.applyConverging(c, handle: Self.midpoint(d.points[i], d.points[c.end]), fixedLength: ctrl,
                                      points: &d.points)
-                if snap != nil {
+                if snaps {
                     // (an anchor the edge's line passes near: the edge put through it, if the constraint leaves it
                     // within KiCad's five pixels of it)
                     let constrained = d.points
@@ -383,8 +407,9 @@ extension BoardEditing {
                 d.points[end] += pos - mid
             }
         case .corner(let i):
-            d.points[i] = !d.angleSnapActive && snap != nil ? snapped(pos) : pos
+            d.points[i] = !d.angleSnapActive && (snap != nil || helper != nil) ? snapped(pos) : pos
         }
+        d.snap = helper
         d.moved = true
         zoneDrag = d
         return Self.contours(d.points, d.contourEnds).map { $0.map(Self.mm) }

@@ -1057,11 +1057,18 @@ public struct ShapePointEditor: Sendable {
     }
 
     /// The handle at `p` held to the angle, then to the grid's point nearest that (BestSnapAnchor, `grid` with the
-    /// auxiliary axes it has) held to the angle again, where that is within `tolerance` of the grid's point
-    private func heldAndSnapped(_ p: IPoint, from c: IPoint, grid: PointGrid?, toGrid: Bool, tolerance: Int) -> IPoint {
+    /// auxiliary axes it has; `anchor`'s, the grid helper's, where given, and only where it snaps) held to the angle
+    /// again, where that is within `tolerance` of the grid's point
+    private func heldAndSnapped(_ p: IPoint, from c: IPoint, grid: PointGrid?, toGrid: Bool, tolerance: Int,
+                                anchor: ((IPoint) -> IPoint)? = nil) -> IPoint {
         let held = heldToAngle(p, from: c, grid: grid, toGrid: toGrid)
-        guard let grid else { return held }
-        let snap = grid.align(held)
+        let snap: IPoint
+        if let anchor {
+            snap = anchor(held)
+        } else {
+            guard let grid else { return held }
+            snap = grid.align(held)
+        }
         guard snap != held else { return held }
         let again = heldToAngle(snap, from: c, grid: grid, toGrid: toGrid)
         return (again - snap).norm > tolerance ? held : again
@@ -1071,13 +1078,49 @@ public struct ShapePointEditor: Sendable {
     var dragOrigin: IPoint?
 
     /// A drag event: `handle` dragged with the pointer at `pointer`, as PCB_POINT_EDITOR moves the edited point (a
-    /// point to the grid, a line by whole grid steps; KiCad's magnetic snapping to other items is not made here) and
-    /// then the graphic (UpdateItem) and the points again (UpdatePoints). `grid` nil: no grid. `stickyLimit` is how
-    /// far (nm) the pointer may go from a polygon's corner held at a multiple of 45° before it lets go, and how far a
-    /// point held to the angle snap mode's angles may be from the grid's point it is taken to (five pixels at the
+    /// point to the grid, a line by whole grid steps; the grid helper's snapping to other items is the other drag's)
+    /// and then the graphic (UpdateItem) and the points again (UpdatePoints). `grid` nil: no grid. `stickyLimit` is
+    /// how far (nm) the pointer may go from a polygon's corner held at a multiple of 45° before it lets go, and how far
+    /// a point held to the angle snap mode's angles may be from the grid's point it is taken to (five pixels at the
     /// view's scale); `free` (Shift) lets it go, and holds none; `ctrl` lets a point off the angle snap mode's angles.
     public mutating func drag(_ handle: Handle, to pointer: IPoint, grid: PointGrid? = nil, stickyLimit: Int = 0, free: Bool = false,
                               ctrl: Bool = false) {
+        drag(handle, to: pointer, grid: grid, stickyLimit: stickyLimit, free: free, ctrl: ctrl, snaps: true, anchor: nil)
+    }
+
+    /// A drag event, the edited point snapped as PCB_POINT_EDITOR snaps it with its grid helper (`snap`: its
+    /// BestSnapAnchor, the graphic itself skipped): a point to the anchors of the items on the graphic's layers near it
+    /// (OBJECT_LAYERS), else to the grid's point (its auxiliary axes through where the drag began); a line (a
+    /// rectangle's side) by as many whole grid steps as the grid helper's points (of no layer's items) under the
+    /// pointer and under the line differ by, then through an anchor its constraint lets it reach within `stickyLimit`;
+    /// a point held to the angle snap mode's angles through an anchor so too; a polygon's corner held at 45° to its
+    /// neighbours on the grid helper's point (of no layer's items) there. `free` (Shift) snaps to no items, `ctrl`
+    /// (Ctrl) to no grid, as KiCad's grid helper takes them.
+    public mutating func drag(_ handle: Handle, to pointer: IPoint, snap: inout PointEditorSnap, stickyLimit: Int = 0, free: Bool = false,
+                              ctrl: Bool = false) {
+        if dragOrigin == nil { beginDrag(handle) }
+        snap.modifiers(shift: free, ctrl: ctrl)
+        // (SetAuxAxes through where a point's drag began; a line's, SNAP_BY_GRID, has none set)
+        if case .point = handle, let o = dragOrigin { snap.dragBegun(at: o) }
+        // (updateSnapLineDirections as the drag starts and as the point comes to be held to the angle snap mode's
+        // angles or let go: their snap lines through where it is held from)
+        let toAngle = angleSnap != .direct && !ctrl
+        if !snap.linesSet || toAngle != (altConstrainer != nil) {
+            snap.snapLines(toAngle ? angleSnap : .direct, from: toAngle ? constrainer(handle) : nil)
+        }
+        let grid = snap.usesGrid ? PointGrid(size: snap.view.grid, origin: snap.view.gridOrigin) : nil
+        var s = snap
+        drag(handle, to: pointer, grid: grid, stickyLimit: stickyLimit, free: free, ctrl: ctrl, snaps: s.snaps,
+             anchor: { s.snap($0, $1) })
+        if let c = altConstrainer {
+            // (put there by the constraint, unless a polygon's corner is held at 45° to its neighbours)
+            s.snapLinesFollow(from: c, to: angleSnapPos == nil ? position(handle) : nil)
+        }
+        snap = s
+    }
+
+    private mutating func drag(_ handle: Handle, to pointer: IPoint, grid: PointGrid?, stickyLimit: Int, free: Bool, ctrl: Bool,
+                               snaps: Bool, anchor: ((IPoint, PointEditorSnap.Layers) -> IPoint)?) {
         if dragOrigin == nil { beginDrag(handle) }
         rawPointer = pointer
         var pos = pointer
@@ -1087,23 +1130,44 @@ public struct ShapePointEditor: Sendable {
         switch handle {
         case .line(let i):
             if let grid {
-                // (SNAP_BY_GRID: the line moves by whole grid steps from where it is)
+                // (SNAP_BY_GRID: the line moves by whole grid steps from where it is, as the grid helper's points of
+                // no layer's items under the pointer and under the line differ)
                 let last = linePosition(i)
                 let delta = pos - last
-                let deltaGrid = grid.align(pos) - grid.align(last)
+                let deltaGrid: IPoint
+                if let anchor {
+                    let a = anchor(pos, .none)
+                    deltaGrid = a - anchor(last, .none)
+                } else {
+                    deltaGrid = grid.align(pos) - grid.align(last)
+                }
                 pos = IPoint(abs(delta.x) > grid.size.x / 2 ? last.x + deltaGrid.x : last.x,
                              abs(delta.y) > grid.size.y / 2 ? last.y + deltaGrid.y : last.y)
             }
             if let c = altConstrainer {
                 // (held to the angle from where it began instead of to its perpendicular)
-                setLine(i, heldAndSnapped(pos, from: c, grid: grid, toGrid: false, tolerance: stickyLimit))
+                let toAnchor: ((IPoint) -> IPoint)? = anchor.map { a in { snaps ? a($0, .item) : $0 } }
+                setLine(i, heldAndSnapped(pos, from: c, grid: grid, toGrid: false, tolerance: stickyLimit, anchor: toAnchor))
                 break
             }
             // the line moved, then held to the perpendicular through its middle (EC_PERPLINE)
-            setLine(i, pos)
             let (mid, dir) = perpLines[i]
-            let here = linePosition(i)
-            if let x = Seg(here, here + dir.perpendicular).intersectLines(Seg(mid, mid + dir)) { setLine(i, x) }
+            func constrain(_ p: IPoint) {
+                setLine(i, p)
+                let here = linePosition(i)
+                if let x = Seg(here, here + dir.perpendicular).intersectLines(Seg(mid, mid + dir)) { setLine(i, x) }
+            }
+            constrain(pos)
+            if let anchor, snaps {
+                // (an anchor of the items on the graphic's layers near where the constraint put it: the line through
+                // it, if the constraint keeps it within five pixels of it)
+                let constrained = linePosition(i)
+                let at = anchor(constrained, .item)
+                if at != constrained {
+                    constrain(at)
+                    if (linePosition(i) - at).norm > stickyLimit { setLine(i, constrained) }
+                }
+            }
         case .point(let i):
             var aligned = grid
             aligned?.aux = dragOrigin
@@ -1123,7 +1187,10 @@ public struct ShapePointEditor: Sendable {
                 let snapAng = 45.0 * (ang / 45.0).rounded()
                 if abs(ang - snapAng) < 2.0 {
                     var s = Self.snapCorner(prev, next, pos, snapAng)
-                    if let aligned {
+                    if let anchor {
+                        let gridded = anchor(s, .none)
+                        s = abs(Self.angle(Seg(gridded, prev), Seg(gridded, next)).degrees - snapAng) < 2.0 ? gridded : pos
+                    } else if let aligned {
                         let gridded = aligned.align(s)
                         s = abs(Self.angle(Seg(gridded, prev), Seg(gridded, next)).degrees - snapAng) < 2.0 ? gridded : pos
                     }
@@ -1135,7 +1202,10 @@ public struct ShapePointEditor: Sendable {
                 }
             }
             if !held, let c = altConstrainer {
-                points[i] = heldAndSnapped(pos, from: c, grid: aligned, toGrid: true, tolerance: stickyLimit)
+                let toAnchor: ((IPoint) -> IPoint)? = anchor.map { a in { snaps ? a($0, .item) : $0 } }
+                points[i] = heldAndSnapped(pos, from: c, grid: aligned, toGrid: true, tolerance: stickyLimit, anchor: toAnchor)
+            } else if let anchor {
+                points[i] = held ? pos : anchor(pos, .item)
             } else {
                 points[i] = held ? pos : aligned?.align(pos) ?? pos
             }

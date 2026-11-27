@@ -9,7 +9,15 @@
 // (INTERSECTION_VISITOR), nearest.cpp (GetNearestPoint), shape_utils.cpp (GetCircleKeyPoints, BoxToSegs), oval.cpp
 // (GetOvalKeyPoints), shape_segment.cpp (BySizeAndCenter) and shape_arc.cpp (Intersect, IntersectLine,
 // sliceContainsPoint), and pcbnew/router/pns_tool_base.cpp (TOOL_BASE::checkSnap: the router's magnetic pads and
-// tracks).
+// tracks); and the tools that snap with it: pcbnew/tools/edit_tool_move_fct.cpp (EDIT_TOOL::doMoveSelection: a
+// move's pick-up point, PCB_GRID_HELPER::BestDragOrigin, its auxiliary axes and the items it skips),
+// pcbnew/tools/pcb_grid_helper.cpp's GetItemGrid and GetGridSize and common/tool/grid_helper.cpp's GetSelectionGrid
+// (the grid of each kind of item), pcbnew/tools/drawing_tool.cpp (DRAWING_TOOL::DrawZone, PlaceText),
+// common/preview_items/polygon_geom_manager.cpp (AddPoint, NewPointClosesOutline) and
+// pcbnew/tools/zone_create_helper.cpp (OnComplete: a zone's outline drawn), pcbnew/tools/board_editor_control.cpp
+// (PlaceFootprint: no grid helper, the cursor's grid point, common/gal/graphics_abstraction_layer.cpp's
+// GetGridPoint) and pcbnew/tools/pcb_point_editor.cpp (the point editor's drag: the BestSnapAnchor of each edit
+// point, its layers, its snap lines).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -257,6 +265,8 @@ public struct SnapView: Sendable {
     public var gridOrigin = IPoint.zero
     /// Whether the grid is snapped to (the GAL's grid snapping)
     public var gridSnapping = true
+    /// The grid overrides (the grid settings' overrides, where enabled): a grid of its own for what a tool asks
+    public var overrides: [GridKind: IPoint] = [:]
 
     public init(appearance: KiCadBoardAppearance, enabledLayers: Set<Int>, worldPerPixel: Double, grid: IPoint,
                 gridOrigin: IPoint = .zero) {
@@ -274,6 +284,11 @@ public struct SnapView: Sendable {
         let threshold = 10.0 * worldPerPixel
         while min(size.x, size.y) <= threshold { size = size * 10 }
         return size
+    }
+
+    /// PCB_GRID_HELPER::GetGridSize: the grid of the kind asked for, its override's if it has one, else the view's
+    public func gridSize(_ kind: GridKind) -> IPoint {
+        kind == .current ? grid : overrides[kind] ?? grid
     }
 
     var isHighContrast: Bool { appearance.highContrast != .normal }
@@ -304,6 +319,12 @@ public struct SnapView: Sendable {
 }
 
 // MARK: - The grid helper
+
+/// GRID_HELPER_GRIDS: the grid a tool snaps to, of the kind of what it places or moves (the view's own grid unless
+/// the grid overrides give that kind one of its own)
+public enum GridKind: Sendable, Hashable {
+    case current, connectable, wires, vias, text, graphics
+}
 
 /// KiCad's PCB_GRID_HELPER as a tool uses it to snap the pointer (BestSnapAnchor): to the nearest of the anchors of
 /// the items the view shows near it, the magnetic points (pads and tracks where the Magnetic Points preferences say
@@ -371,12 +392,15 @@ public struct PCBGridHelper: Sendable {
         self.magnetic = magnetic
     }
 
-    /// GRID_HELPER::FullReset: the anchor and snap line forgotten
+    /// GRID_HELPER::FullReset: the snap line forgotten (SNAP_MANAGER::Clear; the anchors found, which the next
+    /// BestSnapAnchor finds again); the anchor snapped to and the skip point kept, as KiCad keeps them
     public mutating func fullReset() {
-        snapItem = nil
         clearSnapLine()
-        skipPoint = nil
+        anchors = []
     }
+
+    /// ClearSkipPoint
+    public mutating func clearSkipPoint() { skipPoint = nil }
 
     // MARK: Snap lines (SNAP_LINE_MANAGER)
 
@@ -559,10 +583,11 @@ public struct PCBGridHelper: Sendable {
 
     func canUseGrid(_ view: SnapView) -> Bool { enableGrid && view.gridSnapping }
 
-    /// GRID_HELPER::Align: the grid's point nearest `p` (its auxiliary axes where nearer); `p` with no grid
-    public func align(_ p: IPoint, view: SnapView) -> IPoint {
+    /// GRID_HELPER::Align: the point of the grid of `kind` nearest `p` (its auxiliary axes where nearer); `p` with
+    /// no grid
+    public func align(_ p: IPoint, view: SnapView, grid kind: GridKind = .current) -> IPoint {
         guard canUseGrid(view) else { return p }
-        let g = view.grid, o = view.gridOrigin
+        let g = view.gridSize(kind), o = view.gridOrigin
         var n = IPoint(KiMath.round(Double(p.x - o.x) / Double(g.x)) * g.x + o.x, KiMath.round(Double(p.y - o.y) / Double(g.y)) * g.y + o.y)
         if let aux = auxAxis {
             if abs(aux.x - p.x) < abs(n.x - p.x) { n.x = aux.x }
@@ -574,8 +599,10 @@ public struct PCBGridHelper: Sendable {
     // MARK: BestSnapAnchor
 
     /// PCB_GRID_HELPER::BestSnapAnchor: where the pointer at `origin` goes, snapping to the items on `layers` (KiCad
-    /// ids; all of them with the Magnetic Points' all layers) but those of `skip` (their uuids, with what is in them)
-    public mutating func bestSnapAnchor(_ origin: IPoint, layers: Set<Int>, view: SnapView, skip: Set<String> = []) -> IPoint {
+    /// ids; all of them with the Magnetic Points' all layers; none of them, empty) but those of `skip` (their uuids,
+    /// with what is in them), else to the grid of `grid`'s kind
+    public mutating func bestSnapAnchor(_ origin: IPoint, layers: Set<Int>, view: SnapView, grid kind: GridKind = .current,
+                                        skip: Set<String> = []) -> IPoint {
         let snapSize = 25.0
         let snapScale = view.worldPerPixel * snapSize
         let snapRange = KiMath.round(enableGrid ? min(snapScale, view.visibleGrid.x) : snapScale)
@@ -585,8 +612,8 @@ public struct PCBGridHelper: Sendable {
         let visible = queryVisible(horizon, view: view, skip: skip)
         computeAnchors(visible, origin, view: view, layers: layers)
         let nearest = nearestAnchor(origin, .snappable)
-        let nearestGrid = align(origin, view: view)
-        let gridSize = DPoint(view.grid)
+        let nearestGrid = align(origin, view: view, grid: kind)
+        let gridSize = DPoint(view.gridSize(kind))
         // (SnapHysteresis: 5 pixels)
         let hysteresis = KiMath.round(view.worldPerPixel * 5)
         let snapIn = max(0, snapRange - hysteresis), snapOut = snapRange + hysteresis
@@ -984,5 +1011,308 @@ public struct PCBGridHelper: Sendable {
             }
         }
         return best
+    }
+}
+
+// MARK: - The point a selection is picked up by
+
+extension PCBGridHelper {
+    /// PCB_GRID_HELPER::GetItemGrid: the grid an item snaps to, by its kind (a footprint's or pad's the connectable
+    /// items', a graphic's the graphics', a track's the wires', a via's the vias')
+    public func itemGrid(_ i: Int) -> GridKind {
+        switch board.items[i].kind {
+        case .footprint, .pad: return .connectable
+        case .shape: return .graphics
+        case .track, .arc: return .wires
+        case .via: return .vias
+        default: return .current
+        }
+    }
+
+    /// GRID_HELPER::GetSelectionGrid: of the items' grids, the first item's, or another's that is coarser
+    public func selectionGrid(_ indices: [Int], view: SnapView) -> GridKind {
+        guard let first = indices.first else { return .current }
+        var grid = itemGrid(first)
+        for i in indices {
+            let g = itemGrid(i)
+            // (VECTOR2D's operator >: the longer)
+            if view.gridSize(g).squaredNorm > view.gridSize(grid).squaredNorm { grid = g }
+        }
+        return grid
+    }
+
+    /// The board's items of these uuids, by index
+    public func indices(of uuids: [String]) -> [Int] {
+        uuids.compactMap { u in board.items.firstIndex { $0.uuid == u } }
+    }
+
+    /// PCB_GRID_HELPER::BestDragOrigin: the point of the items (by index; a footprint's pads among them as a move has
+    /// them) nearest `mouse` to pick them up by: the nearest of their origins (footprints' positions and centres, the
+    /// centres of their pads the mouse is on, pads', vias', tracks' middles), else of their corners if nearer, else,
+    /// farther than `lineSnapMinCornerDistance` (KiCad's 50 pixels, nm) from both, the nearest point of their
+    /// outlines if nearer; the mouse itself where they have none
+    public mutating func bestDragOrigin(_ mouse: IPoint, items: [Int], view: SnapView, lineSnapMinCornerDistance: Double) -> IPoint {
+        anchors = []
+        // (computeAnchors( aFrom, aForDrag ): every item's anchors as a drag's, no layers matched, no intersections)
+        for i in items { dragAnchors(i, mouse, view: view) }
+        pointOnLineCandidates = []
+        let outline = nearestAnchor(mouse, .outline), corner = nearestAnchor(mouse, .corner), origin = nearestAnchor(mouse, .origin)
+        var best: Anchor?
+        var minDist = Double.greatestFiniteMagnitude
+        if let origin {
+            minDist = origin.distance(mouse)
+            best = origin
+        }
+        if let corner, corner.distance(mouse) < minDist {
+            minDist = corner.distance(mouse)
+            best = corner
+        }
+        if let outline, minDist > lineSnapMinCornerDistance && outline.distance(mouse) < minDist { best = outline }
+        return best?.pos ?? mouse
+    }
+
+    /// computeAnchors of one item for picking it up by (aFrom true, KiCad's selection filter letting everything
+    /// through): pads' centres only, an arc's ends and middle but not its centre, a footprint's position whether it is
+    /// shown on the active layer or not (not where its side's footprints are hidden)
+    mutating func dragAnchors(_ i: Int, _ refPos: IPoint, view: SnapView) {
+        let item = board.items[i]
+        let a = view.appearance
+        // (checkVisibility of an item being moved: the view's flags not asked, it is on an active layer)
+        func checkVisibility(_ it: SnapBoard.Item) -> Bool { !view.isHighContrast || it.layers.contains(a.activeLayer) }
+        func padCentre(_ p: Int) {
+            guard let pad = board.items[p].pad else { return }
+            if !view.isHighContrast || KiCadLayers.isCopper(a.activeLayer) { addAnchor(pad.pos, [.origin, .snappable], p) }
+        }
+        switch item.kind {
+        case .footprint:
+            for p in item.pads where board.items[p].ownBox?.contains(refPos) ?? false {
+                guard checkVisibility(board.items[p]) else { continue }
+                padCentre(p)
+            }
+            for q in item.points { addAnchor(q, [.origin, .snappable], i) }
+            guard item.side == 2 ? a.isVisible(.footprintsBack) : a.isVisible(.footprintsFront) else { break }
+            addAnchor(item.start, [.origin, .snappable], i)
+            let g = view.grid
+            if (item.center - item.start).squaredNorm > g.x * g.x + g.y * g.y { addAnchor(item.center, [.origin, .snappable], i) }
+        case .pad:
+            if checkVisibility(item) { padCentre(i) }
+        case .shape:
+            guard checkVisibility(item), let d = item.drawing else { break }
+            shapeAnchors(d, item.mid, i, refPos)
+        case .track, .arc:
+            guard checkVisibility(item) else { break }
+            addAnchor(item.start, [.corner, .snappable], i)
+            addAnchor(item.end, [.corner, .snappable], i)
+            if item.kind == .arc {
+                addAnchor(item.mid, [.corner, .snappable], i)
+            } else {
+                addAnchor(IBox(item.start, item.end).center, .origin, i)
+            }
+        case .target:
+            addAnchor(item.start, [.origin, .corner, .snappable], i)
+        case .via:
+            if checkVisibility(item) { addAnchor(item.start, [.origin, .corner, .snappable], i) }
+        case .zone:
+            guard checkVisibility(item) else { break }
+            for q in item.points { addAnchor(q, [.corner, .snappable], i) }
+            addAnchor(LineChain(item.points, closed: true).nearestPoint(refPos), .outline, i)
+        case .point:
+            if checkVisibility(item) { addAnchor(item.start, [.origin, .snappable], i) }
+        }
+    }
+
+    /// GAL::GetGridPoint: the grid's point nearest `p` (where KiCad's view controls put the cursor, which a tool that
+    /// asks no grid helper takes: Add Footprint's)
+    public static func gridPoint(_ p: DPoint, view: SnapView) -> IPoint {
+        let g = view.grid, o = view.gridOrigin
+        return IPoint(KiMath.round(Double(KiMath.round((p.x - Double(o.x)) / Double(g.x)) * g.x) + Double(o.x)),
+                      KiMath.round(Double(KiMath.round((p.y - Double(o.y)) / Double(g.y)) * g.y) + Double(o.y)))
+    }
+}
+
+// MARK: - Moving a selection
+
+/// KiCad's Move (EDIT_TOOL::doMoveSelection) as it snaps: the selection picked up by the point of it nearest the
+/// mouse (BestDragOrigin), which the pointer goes to (the Move Warps Cursor preference, KiCad's default) and the
+/// grid's auxiliary axes go through; then at each motion the pointer snapped (BestSnapAnchor, on the active layer, the
+/// selection's grid, the selection itself and what is in it skipped; Shift no snapping to items, Ctrl no grid) and the
+/// selection moved by as much as the snapped pointer moved. The angle snap mode's lines (45° or 90°) run from where it
+/// was picked up; with its direct mode there are none.
+public struct SelectionMove: Sendable {
+    public private(set) var helper: PCBGridHelper
+    /// Where the selection is picked up (the selection's reference point)
+    public let dragOrigin: IPoint
+    /// m_cursor: the snapped pointer, and where it was when the move began
+    public private(set) var cursor: IPoint
+    public let start: IPoint
+    let skip: Set<String>
+    let grid: GridKind
+
+    /// The move of the items of `uuids` (a footprint's pads with it) begun with the mouse at `mouse`; `cursor`, where
+    /// the cursor was then, is where the pointer stays if the move does not warp it there (warpsCursor false)
+    public init(board: SnapBoard, items uuids: [String], mouse: IPoint, view: SnapView, magnetic: MagneticSettings,
+                angleSnap: LeaderMode = .direct, warpsCursor: Bool = true, cursor: IPoint? = nil) {
+        var helper = PCBGridHelper(board: board, magnetic: magnetic)
+        let chosen = helper.indices(of: uuids)
+        var indices = chosen
+        // (sel_items: each footprint's pads after the items selected)
+        for i in chosen where board.items[i].kind == .footprint { indices += board.items[i].pads }
+        skip = Set(indices.map { board.items[$0].uuid })
+        grid = helper.selectionGrid(chosen, view: view)
+        let originalCursor = cursor ?? helper.align(mouse, view: view)
+        // (configureAngleSnap: the angle snap mode's directions, from where the cursor is)
+        switch angleSnap {
+        case .deg45: helper.setSnapLineDirections([IPoint(1, 0), IPoint(0, 1), IPoint(1, 1), IPoint(1, -1)])
+        case .deg90: helper.setSnapLineDirections([IPoint(1, 0), IPoint(0, 1)])
+        case .direct: helper.setSnapLineDirections([])
+        }
+        if angleSnap == .direct { helper.clearSnapLine() } else { helper.setSnapLineOrigin(originalCursor) }
+        // (the drag started: picked up by its point nearest the mouse)
+        let origin = helper.bestDragOrigin(mouse, items: indices, view: view, lineSnapMinCornerDistance: 50 * view.worldPerPixel)
+        if angleSnap != .direct { helper.setSnapLineOrigin(origin) }
+        helper.auxAxis = origin
+        dragOrigin = origin
+        self.cursor = warpsCursor ? origin : originalCursor
+        start = self.cursor
+        self.helper = helper
+    }
+
+    /// The mouse moved to `mouse` (where the pointer is, warped to the drag origin when the move began): the snapped
+    /// pointer, on the active layer's items (`layers`); `shift` snaps to no items, `ctrl` to no grid
+    @discardableResult
+    public mutating func moved(to mouse: IPoint, layers: Set<Int>, view: SnapView, shift: Bool = false, ctrl: Bool = false) -> IPoint {
+        helper.enableSnap = !shift
+        helper.enableGrid = !ctrl
+        cursor = helper.bestSnapAnchor(mouse, layers: layers, view: view, grid: grid, skip: skip)
+        return cursor
+    }
+
+    /// How far the selection has moved
+    public var offset: IPoint { cursor - start }
+}
+
+// MARK: - The point editor's snapping
+
+/// PCB_POINT_EDITOR's grid helper as the point editor asks it to snap an edit point being dragged: BestSnapAnchor of
+/// the item's grid, the item itself skipped, snapping to the items on the item's own layers (OBJECT_LAYERS, an edit
+/// point's default), on all of them (ALL_LAYERS, a dimension's ends) or on none (an empty layer set: the grid alone,
+/// but with the Magnetic Points' all layers); its auxiliary axes through where a drag of a point began
+public struct PointEditorSnap: Sendable {
+    public enum Layers: Sendable { case none, item, all }
+
+    public var helper: PCBGridHelper
+    public var view: SnapView
+    /// The item's layers, its grid, and its uuid
+    public var itemLayers: Set<Int>
+    public var grid: GridKind
+    public var skip: Set<String>
+
+    /// Whether the drag has set its snap lines (updateSnapLineDirections)
+    public private(set) var linesSet = false
+
+    public init(helper: PCBGridHelper, view: SnapView, itemLayers: Set<Int>, grid: GridKind, skip: Set<String>) {
+        self.helper = helper
+        self.view = view
+        self.itemLayers = itemLayers
+        self.grid = grid
+        self.skip = skip
+        // (updateSnapLineDirections as a drag starts with the point held to no angle: no snap lines)
+        self.helper.setSnapLineDirections([])
+    }
+
+    /// The point editor's snapping of the item of `uuid` on `board`, as the item's kind has it (a graphic's grid is
+    /// the graphics')
+    public init(board: SnapBoard, item uuid: String, magnetic: MagneticSettings, view: SnapView) {
+        let helper = PCBGridHelper(board: board, magnetic: magnetic)
+        let i = helper.indices(of: [uuid]).first
+        self.init(helper: helper, view: view, itemLayers: Set(i.map { board.items[$0].layers } ?? []),
+                  grid: i.map(helper.itemGrid) ?? .current, skip: [uuid])
+    }
+
+    /// BestSnapAnchor of `p`
+    public mutating func snap(_ p: IPoint, _ layers: Layers) -> IPoint {
+        let set: Set<Int>
+        switch layers {
+        case .none: set = []
+        case .item: set = itemLayers
+        case .all: set = Set(helper.board.items.flatMap(\.layers))
+        }
+        return helper.bestSnapAnchor(p, layers: set, view: view, grid: grid, skip: skip)
+    }
+
+    /// The Shift and Ctrl of the event: no snapping to items, no grid
+    public mutating func modifiers(shift: Bool, ctrl: Bool) {
+        helper.enableSnap = !shift
+        helper.enableGrid = !ctrl
+    }
+
+    /// SetAuxAxes at the start of a drag of a point (not of a line moved by whole grid steps, SNAP_BY_GRID)
+    public mutating func dragBegun(at p: IPoint) { helper.auxAxis = p }
+
+    /// updateSnapLineDirections: the snap lines of a point held to the angle snap mode's angles from `origin` (where
+    /// it is held from: EC_45DEGREE's four directions, EC_90DEGREE's two); none for a point not held so
+    public mutating func snapLines(_ mode: LeaderMode, from origin: IPoint?) {
+        linesSet = true
+        var directions: [IPoint] = []
+        if origin != nil {
+            switch mode {
+            case .deg45: directions = [IPoint(1, 0), IPoint(0, 1), IPoint(1, 1), IPoint(1, -1)]
+            case .deg90: directions = [IPoint(1, 0), IPoint(0, 1)]
+            case .direct: break
+            }
+        }
+        helper.setSnapLineDirections(directions)
+        if let origin, !directions.isEmpty { helper.setSnapLineOrigin(origin) }
+        helper.setSnapLineEnd(nil)
+    }
+
+    /// After a drag event of a point held to the angle snap mode's angles: the snap lines from where it is held from,
+    /// ending where the constraint put it (`end`; none where it was not the constraint that put it there)
+    public mutating func snapLinesFollow(from origin: IPoint, to end: IPoint?) {
+        helper.setSnapLineOrigin(origin)
+        helper.setSnapLineEnd(end)
+    }
+
+    /// The grid helper's GetUseGrid, GetGrid and GetSnap
+    public var usesGrid: Bool { helper.canUseGrid(view) }
+    public var gridSize: IPoint { view.gridSize(grid) }
+    public var snaps: Bool { helper.enableSnap }
+}
+
+// MARK: - Drawing a zone's outline
+
+/// POLYGON_GEOM_MANAGER as DRAWING_TOOL::DrawZone uses it with no angle snap (the DIRECT leader mode): each click at
+/// the snapped pointer locks in a corner (none where it is the last again: SHAPE_LINE_CHAIN::Append), one on the first
+/// corner closes the outline (NewPointClosesOutline), as a double click does
+public struct PolygonDrawing: Sendable {
+    public private(set) var corners: [IPoint] = []
+
+    public init() {}
+
+    /// A click at `p` (snapped): whether it closes the outline
+    public mutating func click(_ p: IPoint) -> Bool {
+        if let first = corners.first, first == p { return true }
+        if corners.last != p { corners.append(p) }
+        return false
+    }
+
+    /// DeleteLastCorner
+    public mutating func deleteLastCorner() {
+        if !corners.isEmpty { corners.removeLast() }
+    }
+
+    /// ZONE_CREATE_HELPER::OnComplete's outline of the corners: none for fewer than three; else closed and
+    /// simplified (SHAPE_LINE_CHAIN::Simplify( true ): its tolerance the bool's one, a nanometre), the first corner
+    /// left out where it lies within a nanometre of the line through its neighbours
+    public var outline: [IPoint]? {
+        guard corners.count >= 3 else { return nil }
+        var chain = LineChain(corners, closed: true)
+        chain.simplify(1)
+        var pts = chain.points
+        if pts.count >= 3 {
+            let seg = Seg(pts[pts.count - 1], pts[1])
+            if seg.lineDistance(pts[0]) <= 1 { pts.removeFirst() }
+        }
+        return pts
     }
 }

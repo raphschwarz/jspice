@@ -467,7 +467,15 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   writes `BOARD.snapped`: every event, the lines each step drew and their ends. `SnappingTests` gives the port the
   same pointer positions in the same order, a grid helper of its own for each line, the board as it then was, and
   checks each line's ends against KiCad's, to the nanometre (`Tests/KiCadRouterTests/Fixtures/snapping`;
-  `KICAD_SNAPPING_REFERENCE` names a folder of more).
+  `KICAD_SNAPPING_REFERENCE` names a folder of more). `snapping.py tools OUTDIR BOARD.kicad_pcb...` writes each board
+  a plan of KiCad's other tools that snap (`BOARD.tplan`): footprints moved with M (`EDIT_TOOL::doMoveSelection`),
+  zones and a rule area drawn (`DrawZone`), texts and a footprint placed (`PlaceText`, `PlaceFootprint`), graphics'
+  and zones' corners dragged with the point editor, the pointer near the board's anchors, now and then with Shift or
+  Ctrl held; `snapping.py use BOARD.kicad_pcb...` does them in KiCad and writes `BOARD.used`: every event and what
+  each step changed. `SnappingTests` does the same with the port (`SelectionMove`, `PolygonDrawing`,
+  `PointEditorSnap`, the grid helper's grid kinds) on the board as each step found it, and checks every footprint's
+  place, zone's corners, text's place and edited point against KiCad's, to the nanometre (where Ctrl took the grid
+  away and nothing was snapped to, within the half micrometre the view's transform knows the pointer to).
 - `rules.py`: random design rules for boards (`rules.py [--fills] [--all] [--seed SEED] BOARD.kicad_pcb...`): a
   rules file beside each board (`BOARD.kicad_dru`, where KiCad's DRC engine finds it, and the port's `BoardDRC`,
   `ZoneFiller` and `BoardRouter` with it), of one to six rules of random conditions on what the board has: its net
