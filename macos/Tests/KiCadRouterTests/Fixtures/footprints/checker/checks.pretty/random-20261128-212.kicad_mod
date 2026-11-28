@@ -1,0 +1,8 @@
+(footprint "random-20261128-212" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "b4b26d1d-2268-4a2b-aed9-53f372f1b96a") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "random-20261128-212" (at 0 4 0) (layer "F.Fab") (uuid "e6acd93c-2bfc-4b18-9dc5-fac9a9db1015") (effects (font (size 1 1) (thickness 0.15))))
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "78698028-9ff7-4c8c-b00a-a5cbc9287212"))
+(pad "1" thru_hole rect (at 1.75 -3 270) (size 0.43 1.78) (drill 0.39) (layers "*.Cu" "*.Mask") (uuid "d510bc76-a5c7-44a0-8654-81eef6c7171b"))
+(pad "2" thru_hole custom (at -2.5 2) (size 0.69 0.69) (drill 1.45) (layers "*.Mask") (options (clearance outline) (anchor circle)) (primitives (gr_rect (start 0.43 -0.26) (end 0.95 -0.01) (width 0) (fill yes)) (gr_poly (pts (xy 0.62 -0.145) (xy 0.459 0.005) (xy 0.249 -0.06) (xy 0.2 -0.275) (xy 0.361 -0.425) (xy 0.571 -0.36)) (width 0.1) (fill yes))) (uuid "a9f34bc6-7e6e-4921-8b07-342befe0c40d"))
+(pad "3" connect circle (at -2.25 2.25 45) (size 1.61 1.61) (layers "In2.Cu") (uuid "fbc5fc70-4917-4688-9efe-153b6b16cf4a"))
+(embedded_fonts no))

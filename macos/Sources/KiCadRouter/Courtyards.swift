@@ -122,29 +122,53 @@ extension BoardWorld {
     /// true at most, ends 20 µm apart chained), shrunk by 5 µm (Inflate, chamfering acute corners) and cut into
     /// triangles (CacheTriangulation( false )), or marked malformed
     public func courtyards(_ footprint: SExpr, errorHandler: ((String) -> Void)? = nil) -> Courtyards {
+        courtyards(footprint, outlineErrorHandler: errorHandler.map { h in { message, _, _, _ in h(message) } })
+    }
+
+    /// The same, each complaint with the ids of the drawings it is about (OUTLINE_ERROR_HANDLER's items, nil for
+    /// none) and where
+    public func courtyards(_ footprint: SExpr, outlineErrorHandler: ((String, String?, String?, IPoint) -> Void)?) -> Courtyards {
         var out = Courtyards()
         let placement = FootprintPlacement(footprint)
         var listFront: [OutlineShape] = [], listBack: [OutlineShape] = []
+        var nodesFront: [SExpr] = [], nodesBack: [SExpr] = []
         var frontHistogram: [Int: Int] = [:], backHistogram: [Int: Int] = [:]
         for node in footprint.items where Self.footprintShapeHeads.contains(node.head ?? "") {
             let layer = node.value("layer")
             guard layer == "F.CrtYd" || layer == "B.CrtYd", let s = outlineShape(node, placement: placement) else { continue }
             if layer == "B.CrtYd" {
                 listBack.append(s)
+                nodesBack.append(node)
                 backHistogram[Self.strokeWidth(node), default: 0] += 1
             } else {
                 listFront.append(s)
+                nodesFront.append(node)
                 frontHistogram[Self.strokeWidth(node), default: 0] += 1
             }
         }
         if listFront.isEmpty && listBack.isEmpty { return out }
         let maxError = Self.iuMM(0.005), chainingEpsilon = Self.iuMM(0.02)
-        func build(_ list: [OutlineShape], _ histogram: [Int: Int], _ polygons: inout PolySet, _ width: inout Int) -> Bool {
+        func build(_ list: [OutlineShape], _ nodes: [SExpr], _ histogram: [Int: Int], _ polygons: inout PolySet, _ width: inout Int) -> Bool {
             // (a malformed courtyard's first outline keeps its first shape's width)
+            let ids = nodes.map { $0.value("uuid") ?? "" }
+            let handler = outlineErrorHandler.map { h in
+                { (message: String, a: Int?, b: Int?, p: IPoint) in h(message, a.map { ids[$0] }, b.map { ids[$0] }, p) }
+            }
+            // (a gap reported half way between the nearest points of the two drawings' effective shapes, PCB_SHAPE::
+            // GetEffectiveShape, rounded as VECTOR2I / 2 rounds)
+            var effective: [Int: [Shape]] = [:]
+            func shapes(_ i: Int) -> [Shape] {
+                if let s = effective[i] { return s }
+                let s = readDrawing(nodes[i], placement: placement).flatMap { effectiveShapes($0) } ?? []
+                effective[i] = s
+                return s
+            }
+            let midpoint = { (a: Int, b: Int) -> IPoint? in
+                Shape.nearestPoints(shapes(a), shapes(b)).map { ($0.0 + $0.1).divided(by: 2) }
+            }
             guard Outlines.convertOutlineToPolygon(list, &polygons, maxError: maxError, chainingEpsilon: chainingEpsilon,
-                                                   allowDisjoint: true,
-                                                   errorHandler: errorHandler.map { h in { message, _, _, _ in h(message) } },
-                                                   firstOutlineWidth: &width) else {
+                                                   allowDisjoint: true, errorHandler: handler,
+                                                   firstOutlineWidth: &width, gapMidpoint: midpoint) else {
                 return false
             }
             polygons.inflate(-maxError, .chamferAcuteCorners, maxError: maxError)
@@ -156,8 +180,8 @@ extension BoardWorld {
             width = polygons.outlineCount > 0 ? w : 0
             return true
         }
-        if !build(listFront, frontHistogram, &out.front, &out.frontWidth) { out.malformedFront = true }
-        if !build(listBack, backHistogram, &out.back, &out.backWidth) { out.malformedBack = true }
+        if !build(listFront, nodesFront, frontHistogram, &out.front, &out.frontWidth) { out.malformedFront = true }
+        if !build(listBack, nodesBack, backHistogram, &out.back, &out.backWidth) { out.malformedBack = true }
         return out
     }
 }

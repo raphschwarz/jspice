@@ -1,0 +1,8 @@
+(footprint "pth-front-only" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "c5ceb3ff-c6cc-41fa-a744-6a9b964a67b5") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "pth-front-only" (at 0 4 0) (layer "F.Fab") (uuid "39e945c4-7930-4939-990a-32582ffd45c8") (effects (font (size 1 1) (thickness 0.15))))
+(attr through_hole)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "7415863f-e291-478b-b9fd-8732b93bcaf6"))
+(pad "1" thru_hole circle (at 0 0) (size 2 2) (drill 0.6) (layers "F.Cu" "F.Mask") (uuid "6d0cd928-3cb7-43eb-9803-e821cb1a7a2c"))
+(pad "2" thru_hole circle (at 1.2 0) (size 2 2) (drill 0.6) (layers "F.Cu" "F.Mask") (uuid "5a4bd0dc-3922-4825-bd2d-e9f840fbf50d"))
+(embedded_fonts no))

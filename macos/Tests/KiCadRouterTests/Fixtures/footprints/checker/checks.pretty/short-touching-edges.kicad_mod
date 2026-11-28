@@ -1,0 +1,8 @@
+(footprint "short-touching-edges" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "56e2dd0c-1988-4a57-85b1-59d566253c6e") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "short-touching-edges" (at 0 4 0) (layer "F.Fab") (uuid "6ffc17fa-a829-4f80-a18f-e8285d514b62") (effects (font (size 1 1) (thickness 0.15))))
+(attr smd)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "965cd79f-5022-4542-a418-a4dada2ee462"))
+(pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask" "F.Paste") (uuid "5240c49e-2b05-455a-b2dc-24dab18fb25b"))
+(pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu" "F.Mask" "F.Paste") (uuid "480ee24f-3ae5-4e89-bdba-05b218c8f8c1"))
+(embedded_fonts no))

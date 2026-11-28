@@ -1,0 +1,8 @@
+(footprint "random-20261128-208" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "ab3b024f-034b-4aa2-97bd-6ae6290e392b") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "random-20261128-208" (at 0 4 0) (layer "F.Fab") (uuid "c9abecad-b4fc-4126-8945-5b86e654065b") (effects (font (size 1 1) (thickness 0.15))))
+(attr through_hole)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "c2055248-3736-4d78-a371-c53d4493af11"))
+(pad "1" smd roundrect (at -0.5 -2 45) (size 0.94 1.95) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.25) (chamfer_ratio 0.2) (chamfer top_left bottom_left bottom_right top_right) (uuid "13a0db02-4b86-4135-9b0d-9f58e6770a93"))
+(pad "2" thru_hole circle (at -1 2.5) (size 1.01 1.01) (drill 0.26) (layers "*.Mask") (uuid "86e77815-e7b4-4b74-be0c-6f1f449c6b06"))
+(embedded_fonts no))

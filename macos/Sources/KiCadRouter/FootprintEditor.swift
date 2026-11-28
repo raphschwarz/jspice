@@ -2,8 +2,11 @@
 // footprint, ReloadFootprint, updateEnabledLayers; pcbnew/footprint_editor_utils.cpp, LoadFootprintFromLibrary;
 // pcbnew/load_select_footprint.cpp, LoadFootprintFromBoard and PCB_BASE_FRAME::loadFootprint; pcbnew/
 // footprint_libraries_utils.cpp, SaveFootprint, SaveFootprintInLibrary, SaveFootprintAs, SaveFootprintToBoard and
-// RevertFootprint; pcbnew/tools/pad_tool.cpp, PAD_TOOL::PlacePad and EnumeratePads, with pcbnew/footprint.cpp,
-// FOOTPRINT::GetNextPadNumber, and pcbnew/pad.cpp, PAD's constructor (the master pad) and ImportSettingsFrom; the
+// RevertFootprint; pcbnew/tools/pad_tool.cpp, PAD_TOOL::PlacePad and EnumeratePads, with pcbnew/collectors.cpp,
+// GENERAL_COLLECTOR::Collect and Inspect of pads, pcbnew/pad.cpp, PAD::HitTest and CanHaveNumber, and pcbnew/
+// footprint.cpp, FOOTPRINT::GetNextPadNumber, with common/string_utils.cpp, GetTrailingInt, and common/refdes_utils.cpp,
+// GetRefDesPrefix; pcbnew/pcb_io/kicad_sexpr/pcb_io_kicad_sexpr_parser.cpp, parsePAD, clearing the numbers of pads
+// that can have none; pcbnew/pad.cpp, PAD's constructor (the master pad) and ImportSettingsFrom; the
 // footprint's items moved, turned and taken away as pcbnew/pcb_shape.cpp, pad.cpp, pcb_text.cpp and zone.cpp's Move and
 // Rotate move and turn them, and copied as pcbnew/tools/edit_tool.cpp's EDIT_TOOL::Duplicate and pcbnew/footprint.cpp's
 // FOOTPRINT::DuplicateItem copy them). Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public
@@ -30,6 +33,9 @@ public final class FootprintEditor {
     public private(set) var original: SExpr
     /// The number the last pad placed or renumbered was given (PAD_TOOL's m_lastPadNumber)
     public var lastPadNumber = "1"
+    /// The pads the last Renumber Pads run left renumbered (selected, as EnumeratePads leaves them while it runs),
+    /// by id
+    public private(set) var renumberedPads: [String] = []
     /// The pad new pads are made from (BOARD_DESIGN_SETTINGS::m_Pad_Master: a PAD as its constructor makes one, then
     /// each pad placed)
     public private(set) var masterPad: SExpr = FootprintEditor.defaultMasterPad()
@@ -94,6 +100,7 @@ public final class FootprintEditor {
         for field in fp.all("property") where FootprintFormat.mandatory.contains(field.text(at: 0) ?? "") { field.remove("uuid") }
         let formatted = FootprintFormat.formatted(fp, library: false, sorted: false)
         Self.clearNets(formatted)
+        Self.clearNumbers(formatted)
         let view = KiCadFootprint(formatted, board: KiCadBoard(SExpr(list: [SExpr(symbol: "kicad_pcb"), formatted])))
         if view.reference.isEmpty { view.reference = "Ref**" }
         if view.value.isEmpty { view.value = "Val**" }
@@ -128,6 +135,7 @@ public final class FootprintEditor {
             for i in 1..<members.items.count { members.items[i] = SExpr(string: renamed[members.items[i].text] ?? members.items[i].text) }
         }
         Self.clearNets(fp)
+        Self.clearNumbers(fp)
         let view = KiCadFootprint(fp, board: KiCadBoard(SExpr(list: [SExpr(symbol: "kicad_pcb"), fp])))
         // (PlaceFootprint, then SetPosition( 0, 0 ))
         BoardItems.translate(fp, by: IPoint(0, 0) - BoardItems.position(fp))
@@ -136,6 +144,14 @@ public final class FootprintEditor {
             BoardItems.rotateFootprint(fp, about: IPoint(0, 0), degrees: -view.rotation, keepUpright: ["fp_text"])
         }
         self.init(footprint: fp, link: uuid, boardUUIDs: ids)
+    }
+
+    /// The numbers of its pads that can have none (PAD::CanHaveNumber: unplated holes, apertures) made none, as
+    /// KiCad's parser (parsePAD) makes them as it reads a footprint, of a library or of a board
+    static func clearNumbers(_ fp: SExpr) {
+        for pad in fp.all("pad") where !canHaveNumber(pad) && pad.items.count > 1 && pad.items[1].text != "" {
+            pad.items[1] = SExpr(string: "")
+        }
     }
 
     /// FOOTPRINT::ClearAllNets: its pads', zones' and drawings' nets let go of
@@ -369,14 +385,20 @@ public final class FootprintEditor {
         let used = Set(fp.all("pad").compactMap { $0.text(at: 0) })
         let prefix = BoardClipboard.refDesPrefix(last)
         var number = trailingInt(last)
-        while used.contains("\(prefix)\(number)") { number += 1 }
+        while used.contains("\(prefix)\(number)") { number &+= 1 }
         return "\(prefix)\(number)"
     }
 
-    /// GetTrailingInt: the number the text ends with, 0 if none
-    static func trailingInt(_ text: String) -> Int {
-        let digits = text.reversed().prefix { $0.isASCII && $0.isNumber }
-        return Int(String(digits.reversed())) ?? 0
+    /// GetTrailingInt: the number the text ends with (its code points from the last back while they are ASCII
+    /// digits), 0 if none, in an int that wraps round as KiCad's does where the digits are too many for it
+    static func trailingInt(_ text: String) -> Int32 {
+        var number: Int32 = 0, base: Int32 = 1
+        for ch in text.unicodeScalars.reversed() {
+            guard ch.value >= 0x30 && ch.value <= 0x39 else { break }
+            number &+= Int32(ch.value - 0x30) &* base
+            base &*= 10
+        }
+        return number
     }
 
     /// A pad placed at `position` (mm), as PAD_TOOL::PlacePad places one: made from the master pad
@@ -415,36 +437,127 @@ public final class FootprintEditor {
         masterPad = master
     }
 
-    /// The footprint's pads renumbered as PAD_TOOL::EnumeratePads renumbers them clicked in `order` (their ids, each
-    /// click one pad; a pad clicked again given back the number it had, that number then the next given): `prefix`
-    /// and numbers from `start` by `step` (DIALOG_ENUM_PADS' settings); pads that can have no number are passed over
+    /// What the Renumber Pads tool is told of the pointer, as KiCad's TOOL_DISPATCHER tells it (each with where the
+    /// pointer is then, nm): the pointer moved, the left button pressed, moved with it held (once past the drag
+    /// threshold), let go after a drag, or clicked (pressed and let go without a drag)
+    public enum PadEnumerationEvent: Hashable, Sendable {
+        case motion(IPoint), down(IPoint), drag(IPoint), up(IPoint), click(IPoint)
+
+        var position: IPoint {
+            switch self {
+            case .motion(let p), .down(let p), .drag(let p), .up(let p), .click(let p): return p
+            }
+        }
+    }
+
+    /// The pads under a point as the Renumber Pads tool's GENERAL_COLLECTOR collects them (Collect of PCB_PAD_T with
+    /// the frame's guide, whose accuracy is five pixels): each pad PAD::HitTest finds at `p` within `accuracy`, those
+    /// on the active layer first, then the others, each in the order the footprint holds them; their indexes
+    public func padsHit(at p: IPoint, accuracy: Int, activeLayer: String) -> [Int] {
+        padHitTester(accuracy: accuracy, activeLayer: activeLayer)(p)
+    }
+
+    /// padsHit, the pads' shapes made once
+    func padHitTester(accuracy: Int, activeLayer: String) -> (IPoint) -> [Int] {
+        let drc = BoardDRC(board: board)
+        let nodes = footprint.all("pad")
+        let pads = drc.footprints.first?.pads ?? []
+        let world = drc.world
+        let radii = pads.map { Teardrops.boundingRadius($0, world) }
+        let polygons = pads.map { world.padPolygon($0.pad, primitives: $0.primitives, errorLocation: .inside) ?? PolySet() }
+        let onLayer = nodes.map { Self.padIsOnLayer($0, activeLayer) }
+        return { p in
+            var primary: [Int] = [], secondary: [Int] = []
+            for i in pads.indices where Teardrops.padHitTest(pads[i], p, accuracy, nil, world, boundingRadius: radii[i], polygon: { polygons[i] }) {
+                if onLayer[i] { primary.append(i) } else { secondary.append(i) }
+            }
+            return primary + secondary
+        }
+    }
+
+    /// PAD::IsOnLayer: its layer set (its file's names, *.Cu every copper layer, *.Mask both masks and the like) holds
+    /// `layer`
+    static func padIsOnLayer(_ pad: SExpr, _ layer: String) -> Bool {
+        for name in pad["layers"]?.arguments.map(\.text) ?? [] {
+            if name == layer { return true }
+            if name == "F&B.Cu" && (layer == "F.Cu" || layer == "B.Cu") { return true }
+            if name == "*.Cu" && layer.hasSuffix(".Cu") { return true }
+            if name == "*In.Cu" && layer.hasPrefix("In") && layer.hasSuffix(".Cu") { return true }
+            if name.hasPrefix("*."), name != "*.Cu", layer == "F" + name.dropFirst() || layer == "B" + name.dropFirst() { return true }
+        }
+        return false
+    }
+
+    /// The footprint's pads renumbered as PAD_TOOL::EnumeratePads renumbers them, the pointer doing what `events` say,
+    /// DIALOG_ENUM_PADS' prefix, start and step given (KiCad's dialog takes 0 to 999 for each), as one change: at each
+    /// click or drag, the pads under the points every 0.1 mm along the way from where the pointer was at the event
+    /// before back to where it is (padsHit, from where it is now), but those that can have no number
+    /// (CanHaveNumber), a pad met twice in a row once; each of them not yet renumbered in the run given the prefix and
+    /// the next number (one given back first, then from the start by the step), and each renumbered already, where the
+    /// event is a click, given back the number it had (the number it was given then the next given back). Each number
+    /// given or given back is the last pad number (PAD_TOOL's, which pads placed next go on from). False if nothing
+    /// changed
     @discardableResult
-    public func renumberPads(clicked order: [String], start: Int = 1, step: Int = 1, prefix: String = "") -> Bool {
-        change("Renumber Pads") { fp in
+    public func enumeratePads(_ events: [PadEnumerationEvent], start: Int = 1, step: Int = 1, prefix: String = "",
+                              accuracy: Int, activeLayer: String = "F.SilkS") -> Bool {
+        guard !footprint.all("pad").isEmpty else { return false }
+        let hit = padHitTester(accuracy: accuracy, activeLayer: activeLayer)
+        return change("Renumber Pads") { fp in
+            let pads = fp.all("pad")
             var next = start
             var stored: [Int] = []
             var old: [String: (Int, String)] = [:]
-            var selected = Set<String>()
-            for id in order {
-                guard let pad = fp.all("pad").first(where: { $0.value("uuid") == id }), Self.canHaveNumber(pad) else { continue }
-                if !selected.contains(id) {
-                    let value: Int
-                    if !stored.isEmpty { value = stored.removeFirst() } else { value = next; next += step }
-                    let number = "\(prefix)\(value)"
-                    old[number] = (value, pad.text(at: 0) ?? "")
-                    pad.items[1] = SExpr(string: number)
-                    lastPadNumber = number
-                    selected.insert(id)
-                } else {
-                    if let (value, was) = old[pad.text(at: 0) ?? ""] {
-                        old[pad.text(at: 0) ?? ""] = nil
-                        stored.append(value)
-                        pad.items[1] = SExpr(string: was)
-                        lastPadNumber = was
+            var selected = Set<Int>()
+            var oldMousePos = IPoint.zero
+            var isFirstPoint = true
+            for event in events {
+                let mousePos = event.position
+                defer { oldMousePos = mousePos }
+                let isClick: Bool
+                switch event {
+                case .click: isClick = true
+                case .drag: isClick = false
+                default: continue
+                }
+                if isFirstPoint {
+                    oldMousePos = mousePos
+                    isFirstPoint = false
+                }
+                // (a line of test points 0.1 mm apart back to where the pointer was: the distance an int, the step
+                // VECTOR2I / int, rounded)
+                let distance = (mousePos - oldMousePos).norm
+                let segments = distance / 100_000 + 1
+                let lineStep = (mousePos - oldMousePos).divided(by: Double(segments))
+                var collected: [Int] = []
+                for j in 0..<segments {
+                    let testPoint = IPoint(mousePos.x - j * lineStep.x, mousePos.y - j * lineStep.y)
+                    for i in hit(testPoint) where Self.canHaveNumber(pads[i]) { collected.append(i) }
+                }
+                // (std::list::unique: those met twice in a row once)
+                var unique: [Int] = []
+                for i in collected where unique.last != i { unique.append(i) }
+                for i in unique {
+                    let pad = pads[i]
+                    if !selected.contains(i) {
+                        let value: Int
+                        if !stored.isEmpty { value = stored.removeFirst() } else { value = next; next += step }
+                        let number = "\(prefix)\(value)"
+                        old[number] = (value, pad.text(at: 0) ?? "")
+                        pad.items[1] = SExpr(string: number)
+                        lastPadNumber = number
+                        selected.insert(i)
+                    } else if isClick {
+                        if let (value, was) = old[pad.text(at: 0) ?? ""] {
+                            old[pad.text(at: 0) ?? ""] = nil
+                            stored.append(value)
+                            pad.items[1] = SExpr(string: was)
+                            lastPadNumber = was
+                        }
+                        selected.remove(i)
                     }
-                    selected.remove(id)
                 }
             }
+            renumberedPads = selected.sorted().map { pads[$0].value("uuid") ?? "" }
         }
     }
 

@@ -1,0 +1,8 @@
+(footprint "holes-near-wide" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "ea16d68b-6af1-491e-ac62-4bb2a05deb65") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "holes-near-wide" (at 0 4 0) (layer "F.Fab") (uuid "13e8e17d-0b1d-46ae-8049-3463965c8e59") (effects (font (size 1 1) (thickness 0.15))))
+(attr through_hole)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "278db255-1203-40d2-86b1-9cbf00ffea3e"))
+(pad "1" thru_hole circle (at 0 0) (size 1.2 1.2) (drill 1) (layers "*.Cu" "*.Mask") (uuid "4352428f-bec4-4ee2-806c-a2fcc8ad28b6"))
+(pad "2" thru_hole circle (at 0.5 0) (size 1.2 1.2) (drill 0.2) (layers "*.Cu" "*.Mask") (uuid "0346acb8-7c7c-4022-86e1-347b4d486494"))
+(embedded_fonts no))

@@ -235,7 +235,7 @@ final class FootprintEditorTests: XCTestCase {
     /// The footprint checks KiCad's board DRC makes as its footprint checker does (DRC_TEST_PROVIDER_FOOTPRINT_CHECKS'
     /// CheckFootprintAttributes, CheckPads, CheckNetTiePadGroups and a net tie's CheckNetTies; the courtyards'
     /// provider's malformed and missing courtyards); not CheckShortingPads, which the DRC leaves to its clearance checks
-    static let drcFootprintChecks: Set<String> = ["footprint_type_mismatch", "pad_th_with_no_hole", "padstack",
+    static let drcFootprintChecks: Set<String> = ["footprint_type_mismatch", "through_hole_pad_without_hole", "padstack",
                                                   "padstack_invalid", "footprint", "malformed_courtyard", "missing_courtyard",
                                                   "shorting_items"]
 
@@ -267,11 +267,16 @@ final class FootprintEditorTests: XCTestCase {
                 theirs.append(key(type, detail, items))
             }
             let drc = BoardDRC(board: board)
-            let shorting = Set(FootprintChecks.shortingPads(fp, drc))
+            let shorting = Set(FootprintChecks.shortingPads(fp, drc, drc.makeCopper()))
             var checked = FootprintChecks.run(board).filter { !shorting.contains($0) && Self.drcFootprintChecks.contains($0.type) }
             // (the checker reports a courtyard both malformed and so missing, the DRC's courtyard checks the first alone)
             if checked.contains(where: { $0.type == "malformed_courtyard" }) { checked.removeAll { $0.type == "missing_courtyard" } }
-            let ours = checked.map { key($0.type, $0.detail, $0.items) }
+            // (the DRC's courtyard check names the footprint where the checker names the drawings, and its report a net
+            // tie's short by the first two of the checker's three items)
+            let fpID = fp.value("uuid") ?? ""
+            let ours = checked.map { v in
+                key(v.type, v.detail, v.type == "malformed_courtyard" ? [fpID] : v.type == "shorting_items" ? Array(v.items.prefix(2)) : v.items)
+            }
             XCTAssertEqual(ours.sorted(), theirs.sorted(), url.lastPathComponent)
             found += theirs.count
         }

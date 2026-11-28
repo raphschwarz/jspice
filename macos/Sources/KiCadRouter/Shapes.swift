@@ -1,4 +1,5 @@
-// Ported from KiCad 10.0.8: libs/kimath/src/geometry/shape_collisions.cpp (the arc cases in Arc.swift), libs/kimath/src/geometry/shape_rect.cpp,
+// Ported from KiCad 10.0.8: libs/kimath/src/geometry/shape_collisions.cpp (the arc cases in Arc.swift),
+// libs/kimath/src/geometry/shape_nearest_points.cpp (of segments and arcs), libs/kimath/src/geometry/shape_rect.cpp,
 // libs/kimath/include/geometry/shape_circle.h and shape_segment.h, and pcbnew/router/pns_utils.cpp (the hulls).
 // Copyright (C) 2013-2015 CERN; Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
@@ -104,8 +105,9 @@ public enum Shape: Hashable, Sendable {
         }
     }
 
-    /// Half way between two points, as a VECTOR2I divided by two (cut towards zero)
-    static func halfway(_ a: IPoint, _ b: IPoint) -> IPoint { IPoint((a.x + b.x) / 2, (a.y + b.y) / 2) }
+    /// Half way between two points, as a VECTOR2I divided by two (VECTOR2::operator/( double ): each coordinate
+    /// KiROUNDed)
+    static func halfway(_ a: IPoint, _ b: IPoint) -> IPoint { (a + b).divided(by: 2) }
 
     /// An arc against any shape (shape_collisions.cpp's arc cases, the arc first)
     static func arcCollide(_ a: ShapeArc, _ b: Shape, _ clearance: Int, _ wantActual: Bool, _ actual: inout Int?) -> Bool {
@@ -694,5 +696,54 @@ public enum Shape: Hashable, Sendable {
             if ipp.valid { out.append(ipp) }
         }
         return out
+    }
+}
+
+extension Shape {
+    /// SHAPE::NearestPoints of two compounds (nearestPoints: each pair of their pieces, the nearest pair, the first
+    /// of those as near), of pieces that are segments and arcs (nearestPointsSingleShapes' SEGMENT and ARC cases):
+    /// nil where a piece is of another kind, which the port does not work out
+    static func nearestPoints(_ a: [Shape], _ b: [Shape]) -> (IPoint, IPoint)? {
+        var best: (IPoint, IPoint)?
+        var minDistSq = Int.max
+        for sa in a {
+            for sb in b {
+                guard let (pa, pb) = nearestPoints(sa, sb) else { return nil }
+                let d = (pb - pa).squaredNorm
+                if d < minDistSq {
+                    minDistSq = d
+                    best = (pa, pb)
+                }
+            }
+        }
+        return best
+    }
+
+    /// The nearest points of two pieces (NearestPoints of SHAPE_SEGMENT and SHAPE_ARC, either way round: a
+    /// segment's moved half its width towards the other's, an arc's by its own NearestPoints)
+    static func nearestPoints(_ a: Shape, _ b: Shape) -> (IPoint, IPoint)? {
+        switch (a, b) {
+        case let (.segment(s1, w1), .segment(s2, w2)):
+            // (SEG::NearestPoint of the other, then the other's nearest to that)
+            var pa = s1.nearestPoint(s2)
+            var pb = s2.nearestPoint(pa)
+            pa = pa + (pb - pa).resized(w1 / 2)
+            pb = pb + (pa - pb).resized(w2 / 2)
+            return (pa, pb)
+        case let (.arc(arc), .segment(s, w)):
+            var (pa, pb, _) = arc.nearestPoints(s)
+            pb = pb + (pa - pb).resized(w / 2)
+            return (pa, pb)
+        case let (.segment(s, w), .arc(arc)):
+            // (NearestPointsCaseReversed: the arc's case, its points the other way round)
+            var (pb, pa, _) = arc.nearestPoints(s)
+            pa = pa + (pb - pa).resized(w / 2)
+            return (pa, pb)
+        case let (.arc(a1), .arc(a2)):
+            let (pa, pb, _) = a1.nearestPoints(a2)
+            return (pa, pb)
+        default:
+            return nil
+        }
     }
 }

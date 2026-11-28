@@ -1,24 +1,30 @@
-// The footprint editor's checks, as KiCad 10.0.8's footprint checker runs them (pcbnew/dialogs/
+// The footprint editor's checks, as KiCad 10.0.8's footprint checker runs and reports them (pcbnew/dialogs/
 // dialog_footprint_checker.cpp, DIALOG_FOOTPRINT_CHECKER::runChecks: BuildCourtyardCaches' malformed courtyards, a
 // missing courtyard, then pcbnew/footprint.cpp's FOOTPRINT::CheckFootprintAttributes with GetLikelyAttribute and
-// GetTypeName, CheckPads with pcbnew/pad.cpp's PAD::CheckPad and doCheckPad, CheckShortingPads with GetNetTiePads and
-// MapPadNumbersToNetTieGroups, CheckNetTiePadGroups and CheckNetTies). Copyright The KiCad Developers, see KiCad's
-// AUTHORS.txt. GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
+// GetTypeName, CheckPads with pcbnew/pad.cpp's PAD::CheckPad and doCheckPad, CheckShortingPads with GetNetTiePads,
+// MapPadNumbersToNetTieGroups, pcbnew/pad.cpp's PAD::GetEffectiveShape, FlashLayer and GetBoundingBox and
+// pcbnew/padstack.cpp's RelevantShapeLayers, CheckNetTiePadGroups, CheckNetTies and CheckClippedSilk; its markers
+// listed as pcbnew/drc/drc_item.cpp's DRC_ITEMS_PROVIDER::SetSeverities lists them, of the severities pcbnew/
+// board_design_settings.cpp's BOARD_DESIGN_SETTINGS gives them, worded as common/rc_item.cpp's
+// RC_TREE_MODEL::GetValue words them). Copyright The KiCad Developers, see KiCad's AUTHORS.txt. GNU General Public
+// License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
 import Foundation
 import KiCadKit
 
 /// What the footprint checker finds of a footprint
 public enum FootprintChecks {
-    /// One of its markers: the check's key (DRC_ITEM's, as KiCad's reports name it), what KiCad says of it (the
-    /// error's detail, "" for none), the items it is about (their ids, in KiCad's order)
+    /// One of its markers: the check's key (DRC_ITEM's settings key, as KiCad's reports name it), what KiCad says of
+    /// it (the error's detail, "" for none), the items it is about (their ids, in KiCad's order) and where its marker
+    /// is put
     public struct Violation: Hashable, Sendable {
         public var type: String
         public var detail: String
         public var items: [String]
+        public var position: IPoint
 
-        public init(type: String, detail: String = "", items: [String]) {
-            (self.type, self.detail, self.items) = (type, detail, items)
+        public init(type: String, detail: String = "", items: [String], position: IPoint = .zero) {
+            (self.type, self.detail, self.items, self.position) = (type, detail, items, position)
         }
     }
 
@@ -26,11 +32,42 @@ public enum FootprintChecks {
     public static let titles: [String: String] = [
         "malformed_courtyard": "Footprint has malformed courtyard", "missing_courtyard": "Footprint has no courtyard defined",
         "footprint_type_mismatch": "Footprint component type doesn't match footprint pads",
-        "pad_th_with_no_hole": "Through hole pad has no hole", "padstack": "Pad is not properly defined",
-        "padstack_invalid": "Invalid padstack", "holes_co_located": "Drilled holes co-located",
+        "through_hole_pad_without_hole": "Through hole pad has no hole", "padstack": "Padstack is questionable",
+        "padstack_invalid": "Padstack is not valid", "holes_co_located": "Drilled holes co-located",
         "hole_to_hole": "Drilled hole too close to other hole", "shorting_items": "Items shorting two nets",
-        "footprint": "Footprint is not valid",
+        "footprint": "Footprint is not valid", "silk_over_copper": "Silkscreen clipped by solder mask",
     ]
+
+    /// The severity the footprint editor gives a check (its BOARD_DESIGN_SETTINGS', KiCad's defaults, which the
+    /// footprint editor's settings keep none of their own of): "error", "warning" or "ignore"
+    public static func severity(_ type: String) -> String {
+        switch type {
+        case "holes_co_located", "hole_to_hole", "padstack", "silk_over_copper": return "warning"
+        case "missing_courtyard", "footprint_type_mismatch": return "ignore"
+        default: return "error"
+        }
+    }
+
+    /// A marker as the checker's dialog lists it: its severity and its line
+    public struct Listed: Hashable, Sendable {
+        public var violation: Violation
+        public var severity: String
+        /// "Error: " or "Warning: ", the check's title, then its detail (RC_TREE_MODEL::GetValue of the marker)
+        public var text: String
+    }
+
+    /// The markers as the dialog lists them with its errors and warnings shown (DRC_ITEMS_PROVIDER::SetSeverities):
+    /// the ignored left out, errors before warnings, each kept in the order the checks found them
+    public static func reported(_ violations: [Violation], errors: Bool = true, warnings: Bool = true) -> [Listed] {
+        let listed = violations.compactMap { v -> Listed? in
+            let s = severity(v.type)
+            guard (s == "error" && errors) || (s == "warning" && warnings) else { return nil }
+            let title = titles[v.type] ?? v.type
+            return Listed(violation: v, severity: s,
+                          text: (s == "error" ? "Error: " : "Warning: ") + title + (v.detail.isEmpty ? "" : " " + v.detail))
+        }
+        return listed.filter { $0.severity == "error" } + listed.filter { $0.severity == "warning" }
+    }
 
     /// DIALOG_FOOTPRINT_CHECKER::runChecks of the footprint editor's footprint (or of a board's: the first one of
     /// `board`): its markers in the order the checker adds them
@@ -39,11 +76,11 @@ public enum FootprintChecks {
         let drc = BoardDRC(board: board)
         let uuid = fp.value("uuid") ?? ""
         var out: [Violation] = []
-        // BuildCourtyardCaches: its complaints, each a malformed courtyard; none at all a missing one
-        var messages: [String] = []
-        let yards = drc.world.courtyards(fp) { messages.append($0) }
-        if yards.malformedFront || yards.malformedBack {
-            for m in messages { out.append(Violation(type: "malformed_courtyard", detail: m, items: [uuid])) }
+        // BuildCourtyardCaches: each of its complaints a malformed courtyard, about the drawings it names (the one
+        // first, where it names one alone); none at all a missing one
+        let yards = drc.world.courtyards(fp) { message, a, b, at in
+            out.append(Violation(type: "malformed_courtyard", detail: message, items: [a ?? b, a == nil ? nil : b].compactMap { $0 },
+                                 position: at))
         }
         let attributes = Set(fp["attr"]?.arguments.map(\.text) ?? [])
         if !attributes.contains("allow_missing_courtyard") && yards.front.polygons.isEmpty && yards.back.polygons.isEmpty {
@@ -53,18 +90,19 @@ public enum FootprintChecks {
         let pads = drc.footprints.first?.pads ?? []
         for (node, pad) in zip(fp.all("pad"), pads) {
             for (type, msg) in checkPad(node, pad.pad, pad.primitives, drc.world) {
-                out.append(Violation(type: type, detail: msg, items: [node.value("uuid") ?? ""]))
+                out.append(Violation(type: type, detail: msg, items: [node.value("uuid") ?? ""], position: pad.pad.pos))
             }
         }
-        out += shortingPads(fp, drc)
+        let copper = drc.makeCopper()
+        out += shortingPads(fp, drc, copper)
         if isNetTie(fp) {
             for msg in netTiePadGroupsProblems(fp) { out.append(Violation(type: "footprint", detail: msg, items: [uuid])) }
-            var report = BoardDRC.Report(settings: drc.settings, limited: false)
-            drc.checkNetTies(&report, drc.makeCopper())
-            out += report.violations.map { Violation(type: $0.type, detail: "", items: $0.items) }
+            for short in drc.netTieShorts(0, copper) { out.append(Violation(type: "shorting_items", items: short.items, position: short.at)) }
         }
+        out += clippedSilk(drc, copper)
         return out
     }
+
 
     /// FOOTPRINT::IsNetTie: it has net tie pad groups
     static func isNetTie(_ fp: SExpr) -> Bool { !(fp["net_tie_pad_groups"]?.arguments.isEmpty ?? true) }
@@ -198,7 +236,7 @@ public enum FootprintChecks {
         let on = { (l: String) in layers.contains(l) || (l.hasSuffix(".Cu") && layers.contains("*.Cu")) }
         switch p.attribute {
         case .npth, .pth:
-            if drill.x <= 0 || (drill.y <= 0 && p.oblong) { error("pad_th_with_no_hole", "") }
+            if drill.x <= 0 || (drill.y <= 0 && p.oblong) { error("through_hole_pad_without_hole", "") }
         case .conn, .smd:
             if p.attribute == .conn && (on("F.Paste") || on("B.Paste")) {
                 error("padstack", "(connector pads normally have no solder paste; use a SMD pad instead)")
@@ -220,25 +258,28 @@ public enum FootprintChecks {
         return out
     }
 
+
     // MARK: - Shorting pads
 
     /// FOOTPRINT::MapPadNumbersToNetTieGroups: each pad number's group (-1 for none), its groups' numbers split at
-    /// commas (a backslash escaping the next character), trimmed
+    /// commas (a backslash escaping the next character), trimmed of white space (wxString::Trim's, ASCII's alone)
     static func netTieGroups(_ fp: SExpr) -> [String: Int] {
         var map: [String: Int] = [:]
         for pad in fp.all("pad") { map[pad.text(at: 0) ?? ""] = -1 }
+        let space = CharacterSet(charactersIn: " \t\n\r\u{0B}\u{0C}")
         for (i, group) in (fp["net_tie_pad_groups"]?.arguments ?? []).enumerated() {
             var esc = false, pad = ""
             func process() {
-                let t = pad.trimmingCharacters(in: .whitespaces)
+                let t = pad.trimmingCharacters(in: space)
                 if !t.isEmpty { map[t] = i }
             }
-            for ch in group.text {
-                if esc { esc = false; pad.append(ch); continue }
+            // (character by character as wxString holds them, code points)
+            for ch in group.text.unicodeScalars {
+                if esc { esc = false; pad.unicodeScalars.append(ch); continue }
                 switch ch {
                 case "\\": esc = true
                 case ",": process(); pad = ""
-                default: pad.append(ch)
+                default: pad.unicodeScalars.append(ch)
                 }
             }
             process()
@@ -247,11 +288,14 @@ public enum FootprintChecks {
     }
 
     /// FOOTPRINT::CheckNetTiePadGroups: a pad number a group names that no pad has, or one in more than one group
+    /// (which no number can be: each is once in the map), in the order of the map's numbers (std::map's, by code
+    /// points)
     static func netTiePadGroupsProblems(_ fp: SExpr) -> [String] {
         var out: [String] = []
         var seen = Set<String>()
         let numbers = Set(fp.all("pad").compactMap { $0.text(at: 0) })
-        for (number, _) in netTieGroups(fp).sorted(by: { $0.key < $1.key }) {
+        let sorted = netTieGroups(fp).keys.sorted { $0.unicodeScalars.lexicographicallyPrecedes($1.unicodeScalars) }
+        for number in sorted {
             if !numbers.contains(number) {
                 out.append("(net-tie pad group contains unknown pad number \(number))")
             } else if !seen.insert(number).inserted {
@@ -261,14 +305,45 @@ public enum FootprintChecks {
         return out
     }
 
-    /// FOOTPRINT::CheckShortingPads: each pair of its pads once, in the order the footprint holds them: two drilled
-    /// round holes at the same place, or touching; then, but for two pads of one number or of one net tie group, two
-    /// pads on a copper layer both are on whose boxes meet and whose shapes touch
-    static func shortingPads(_ fp: SExpr, _ drc: BoardDRC) -> [Violation] {
-        let copper = drc.makeCopper()
+    /// A pad's copper layers as its LSET has them (PAD::GetLayerSet & LSET::AllCuMask: every copper layer KiCad has,
+    /// whether the board has it or not), by name
+    static func copperLayers(_ pad: SExpr) -> Set<String> {
+        let inner = (1...30).map { "In\($0).Cu" }
+        var out = Set<String>()
+        for name in pad["layers"]?.arguments.map(\.text) ?? [] {
+            switch name {
+            case "*.Cu": out.formUnion(["F.Cu", "B.Cu"] + inner)
+            case "*In.Cu": out.formUnion(inner)
+            case "F&B.Cu": out.formUnion(["F.Cu", "B.Cu"])
+            case _ where name.hasSuffix(".Cu") && !name.hasPrefix("*"): out.insert(name)
+            default: break
+            }
+        }
+        return out
+    }
+
+    /// PAD::GetEffectiveShape( F_Cu ), the one layer CheckShortingPads asks of two padstacks of one shape on every
+    /// layer (RelevantShapeLayers: ALL_LAYERS): a plated pad not flashed there (FlashLayer: not on F.Cu, or its
+    /// unconnected layers removed but its ends') its hole, else its shape. (KiCad frees that hole's compound before it
+    /// asks what it collides with, reading freed memory, footprint-checker.py's footprints have no such pad where it is
+    /// asked; the port takes the hole, as KiCad means to.)
+    static func frontShapes(_ item: BoardDRC.CopperItem, _ node: SExpr) -> [Shape] {
+        guard let p = item.pad, p.pad.attribute == .pth else { return item.outline }
+        let flashed = copperLayers(node).contains("F.Cu") && p.unconnectedLayers != .removeAll
+        if !flashed, let hole = item.hole { return [hole] }
+        return item.outline
+    }
+
+    /// FOOTPRINT::CheckShortingPads: each pair of its pads once, in the order the footprint holds them, the first's
+    /// position the marker's for its holes: two drilled holes of one diameter (HasDrilledHole) at the same place, or
+    /// the first's hole touching the second's middle line (SHAPE_SEGMENT::Collide of its SEG); then, but for two pads
+    /// of one number or of one net tie group (the first's), two pads on a copper layer both are on (of all KiCad's
+    /// copper layers, the board's or not) whose boxes meet and whose shapes on F.Cu touch, where they touch
+    static func shortingPads(_ fp: SExpr, _ drc: BoardDRC, _ copper: BoardDRC.Copper) -> [Violation] {
         let items = copper.footprintPads.first ?? []
         let nodes = fp.all("pad")
         let groups = netTieGroups(fp)
+        let layers = nodes.map(copperLayers)
         var out: [Violation] = []
         func drilled(_ p: BoardWorld.Pad) -> Bool { p.drill.x > 0 && p.drill.y > 0 && p.drill.x == p.drill.y }
         for i in items.indices {
@@ -278,22 +353,63 @@ public enum FootprintChecks {
                 let ida = nodes[i].value("uuid") ?? "", idb = nodes[j].value("uuid") ?? ""
                 if drilled(pa) && drilled(pb) {
                     if pa.pos == pb.pos {
-                        out.append(Violation(type: "holes_co_located", items: [ida, idb]))
-                    } else if let ha = a.hole, let hb = b.hole, case let .segment(seg, _) = hb, ha.collide(.segment(seg, width: 0), clearance: 0) {
-                        out.append(Violation(type: "hole_to_hole", items: [ida, idb]))
+                        out.append(Violation(type: "holes_co_located", items: [ida, idb], position: pa.pos))
+                    } else if case let .segment(sa, wa)? = a.hole, case let .segment(sb, _)? = b.hole {
+                        let minDist = (wa + 1) / 2
+                        let d = sb.a == sb.b ? sa.squaredDistance(sb.a) : sa.squaredDistance(sb)
+                        if d == 0 || d < minDist * minDist {
+                            out.append(Violation(type: "hole_to_hole", items: [ida, idb], position: pa.pos))
+                        }
                     }
                 }
                 let na = nodes[i].text(at: 0) ?? "", nb = nodes[j].text(at: 0) ?? ""
                 if !na.isEmpty && na == nb { continue }
                 if let g = groups[na], g >= 0, groups[nb] == g { continue }
-                let la = Set(drc.world.copper(pa.layers)), lb = Set(drc.world.copper(pb.layers))
-                guard !la.isDisjoint(with: lb) else { continue }
+                guard !layers[i].isDisjoint(with: layers[j]) else { continue }
                 guard a.bbox.intersects(b.bbox) else { continue }
-                let shapesA = a.outline, shapesB = b.outline
-                if shapesA.contains(where: { s in shapesB.contains { s.collide($0, clearance: 0) } }) {
-                    out.append(Violation(type: "shorting_items", items: [ida, idb]))
+                if let at = firstCollision(frontShapes(a, nodes[i]), frontShapes(b, nodes[j])) {
+                    out.append(Violation(type: "shorting_items", items: [ida, idb], position: at))
                 }
             }
+        }
+        return out
+    }
+
+    /// SHAPE_COMPOUND::Collide of two compounds at no clearance asked where but not how close (collideShapes: its
+    /// canExit, which goes on past the first pieces that collide only to find how close): where the first pieces
+    /// that collide do (each pair asked how close and where)
+    static func firstCollision(_ a: [Shape], _ b: [Shape]) -> IPoint? {
+        for sa in a {
+            for sb in b {
+                var actual: Int?, location: IPoint?
+                if sa.collide(sb, clearance: 0, actual: &actual, location: &location) { return location ?? .zero }
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Silk clipped by the solder mask
+
+    /// FOOTPRINT::CheckClippedSilk: each of its drawings and texts (m_drawings, in the order it holds them) against
+    /// each of its other drawings and texts, then each of its pads: on the front and then the back, one on the silk
+    /// whose shape there touches the other's on that side's mask (GetEffectiveShape: a pad's shape, no margin), where
+    /// they touch
+    static func clippedSilk(_ drc: BoardDRC, _ copper: BoardDRC.Copper) -> [Violation] {
+        let items = drc.boardItems(copper).filter { $0.footprint == 0 }
+        let drawings = items.filter { $0.kind == .shape || $0.kind == .text }
+        let pads = items.filter { $0.kind == .pad }
+        var out: [Violation] = []
+        func check(_ item: BoardDRC.BoardItem, _ other: BoardDRC.BoardItem) {
+            for (silk, mask) in [("F.SilkS", "F.Mask"), ("B.SilkS", "B.Mask")] {
+                guard item.isOnLayer(silk), other.isOnLayer(mask) else { continue }
+                if let hit = BoardDRC.collideAt(item.shapes(on: silk), other.shapes(on: mask), 0) {
+                    out.append(Violation(type: "silk_over_copper", items: [item.uuid, other.uuid], position: hit.location))
+                }
+            }
+        }
+        for item in drawings {
+            for other in drawings where other !== item { check(item, other) }
+            for pad in pads { check(item, pad) }
         }
         return out
     }

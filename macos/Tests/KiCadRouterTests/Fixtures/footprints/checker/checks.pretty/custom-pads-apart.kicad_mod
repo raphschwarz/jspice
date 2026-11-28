@@ -1,0 +1,8 @@
+(footprint "custom-pads-apart" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "bdbefeba-8811-4f9e-b287-2debe307d6e7") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "custom-pads-apart" (at 0 4 0) (layer "F.Fab") (uuid "573ab414-8a88-4422-bb0d-f13634ae4ca8") (effects (font (size 1 1) (thickness 0.15))))
+(attr smd)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "bcd67140-8b2e-4ce9-aa19-0108f4cedeeb"))
+(pad "1" smd custom (at 0 0) (size 0.5 0.5) (layers "F.Cu" "F.Mask") (options (clearance outline) (anchor rect)) (primitives (gr_circle (center 1 1) (end 1.2 1) (width 0) (fill yes))) (uuid "7523c039-e89b-404f-90e3-5352d13397ab"))
+(pad "2" smd circle (at 1 -0.6) (size 0.4 0.4) (layers "F.Cu" "F.Mask" "F.Paste") (uuid "b02d3052-a810-4a00-9576-522b9aca2917"))
+(embedded_fonts no))

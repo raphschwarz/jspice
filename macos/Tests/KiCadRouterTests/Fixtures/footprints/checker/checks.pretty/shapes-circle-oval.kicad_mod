@@ -1,0 +1,8 @@
+(footprint "shapes-circle-oval" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "22528463-e857-4c5b-93bb-826f26fc9c53") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "shapes-circle-oval" (at 0 4 0) (layer "F.Fab") (uuid "e2bd32c0-baf3-4acb-9096-3271f5f71f6c") (effects (font (size 1 1) (thickness 0.15))))
+(attr smd)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "ac4446ed-487f-416b-8db2-72594d1ec514"))
+(pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask" "F.Paste") (uuid "0da87aed-4d87-42b9-a68e-003ee6f53a32"))
+(pad "2" smd oval (at 1.2 0 30) (size 2 0.6) (layers "F.Cu" "F.Mask" "F.Paste") (uuid "ea115ec6-c497-405a-8be3-36d2f822534b"))
+(embedded_fonts no))

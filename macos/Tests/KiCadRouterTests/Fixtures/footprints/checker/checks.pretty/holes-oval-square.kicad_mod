@@ -1,0 +1,8 @@
+(footprint "holes-oval-square" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "73bc3ddd-1284-41cb-812b-d8e8c19e4c27") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "holes-oval-square" (at 0 4 0) (layer "F.Fab") (uuid "6c75a6d4-be79-4868-8bb2-d68e20181ae8") (effects (font (size 1 1) (thickness 0.15))))
+(attr through_hole)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "c6570fa3-248d-4417-ab10-f22a845c2dfd"))
+(pad "1" thru_hole circle (at 0 0) (size 1.2 1.2) (drill oval 0.8 0.8) (layers "*.Cu" "*.Mask") (uuid "eac5d7f6-85e5-4130-a8ce-bc29f92081e8"))
+(pad "2" thru_hole circle (at 0 0) (size 1.2 1.2) (drill 0.8) (layers "*.Cu" "*.Mask") (uuid "a208547d-7052-4615-9926-ef5a439d236a"))
+(embedded_fonts no))

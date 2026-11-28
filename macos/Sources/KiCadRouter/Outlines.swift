@@ -65,9 +65,11 @@ public enum Outlines {
 
     /// The same, and the width the first outline it adds keeps (each contour has its first shape's width, a
     /// polygon made by Clipper2 none), which KiCad's courtyards keep when they are malformed
+    /// (`gapMidpoint`: where a gap between two of the shapes is reported, half way between their nearest points,
+    /// nil for the end the gap is at)
     static func convertOutlineToPolygon(_ shapes: [OutlineShape], _ polygons: inout PolySet, maxError: Int,
                                         chainingEpsilon: Int, allowDisjoint: Bool, errorHandler: ErrorHandler?,
-                                        firstOutlineWidth: inout Int) -> Bool {
+                                        firstOutlineWidth: inout Int, gapMidpoint: ((Int, Int) -> IPoint?)? = nil) -> Bool {
         if shapes.isEmpty { return true }
         var remaining = Set(shapes.indices)
         var nextSeed = 0
@@ -143,13 +145,14 @@ public enum Outlines {
                 contour.setClosed(true)
             } else if let errorHandler {
                 // (each end's shape and the nearest other shape, among the eight ends nearest it, a lone shape with
-                // itself: each pair once; where the gap is, the ends themselves here, not the nearest points)
+                // itself: each pair once; where the gap is, half way between the two shapes' nearest points where the
+                // caller works them out, else the end)
                 func reportGap(_ pt: IPoint) {
                     let found = tree.knnSearch(pt, 8)
                     guard let a = found.first.map({ tree.ends[$0].shape }) else { return }
                     let b = found.dropFirst().map { tree.ends[$0].shape }.first { $0 != a } ?? a
                     guard reportedGaps.insert([min(a, b), max(a, b)]).inserted else { return }
-                    errorHandler("(not a closed shape)", a, b, pt)
+                    errorHandler("(not a closed shape)", a, b, gapMidpoint?(a, b) ?? pt)
                 }
                 reportGap(contour.point(0))
                 reportGap(contour.lastPoint)
@@ -175,10 +178,12 @@ public enum Outlines {
 
     // MARK: - Chaining
 
-    /// A segment's ends, the key KiCad's shape owners are kept by
+    /// A key of the shapes' owners' map (a std::map of std::pair< VECTOR2I, VECTOR2I >), which tells its keys apart
+    /// by VECTOR2::operator<, comparing the points' lengths: two segments whose ends are as far from the origin are
+    /// one key there, a lookup of either finding the owner last put under either
     struct SegKey: Hashable {
-        let a: IPoint, b: IPoint
-        init(_ a: IPoint, _ b: IPoint) { (self.a, self.b) = (a, b) }
+        let a: Int, b: Int
+        init(_ a: IPoint, _ b: IPoint) { (self.a, self.b) = (a.squaredNorm, b.squaredNorm) }
     }
 
     /// close_enough: whether two points are no further apart than `limit`

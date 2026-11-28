@@ -1,0 +1,8 @@
+(footprint "shapes-chamfered" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "4f3b2bd9-9d15-4960-bd50-c08b428548dc") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "shapes-chamfered" (at 0 4 0) (layer "F.Fab") (uuid "27936d22-f064-4c13-9659-384c03ec5b4f") (effects (font (size 1 1) (thickness 0.15))))
+(attr smd)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "935b36eb-60fe-49fb-a79a-03a4a5aa784c"))
+(pad "1" smd roundrect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0) (chamfer_ratio 0.3) (chamfer bottom_right) (uuid "2e250e4b-c5a0-4902-8368-4e9f1c39c6e7"))
+(pad "2" smd roundrect (at 0.9 0.9) (size 1 1) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0) (chamfer_ratio 0.3) (chamfer top_left) (uuid "584c5030-c9c4-418b-bb35-1ef68e06f5b3"))
+(embedded_fonts no))

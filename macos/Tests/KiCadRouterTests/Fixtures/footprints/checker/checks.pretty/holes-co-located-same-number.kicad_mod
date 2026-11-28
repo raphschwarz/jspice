@@ -1,0 +1,8 @@
+(footprint "holes-co-located-same-number" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "546f4479-8a55-4a46-bf81-6be07f2e481c") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "holes-co-located-same-number" (at 0 4 0) (layer "F.Fab") (uuid "000f64d7-6929-4e2f-85f0-fd40b58a2bb3") (effects (font (size 1 1) (thickness 0.15))))
+(attr through_hole)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "58e9a481-6b4d-49b2-9fa6-2afc9dcd2b77"))
+(pad "1" thru_hole circle (at 0 0) (size 1.5 1.5) (drill 0.8) (layers "*.Cu" "*.Mask") (uuid "4ae1dff6-9a28-43d2-89cb-fbc0de892fcb"))
+(pad "1" thru_hole circle (at 0 0) (size 1.2 1.2) (drill 0.6) (layers "*.Cu" "*.Mask") (uuid "f5e6ed1e-a918-45c2-94d7-729d7157abd2"))
+(embedded_fonts no))

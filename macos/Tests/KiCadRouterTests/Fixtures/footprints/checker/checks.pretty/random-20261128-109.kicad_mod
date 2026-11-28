@@ -1,0 +1,8 @@
+(footprint "random-20261128-109" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "5068c47c-26e2-4b49-953f-78dd992ee928") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "random-20261128-109" (at 0 4 0) (layer "F.Fab") (uuid "c0b9b75d-26bb-4bf6-a73f-73f8c13a7b8d") (effects (font (size 1 1) (thickness 0.15))))
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "5bf1c1e5-8dde-4f24-95a3-55f863f5d26b"))
+(pad "1" smd oval (at 0.75 -0.75) (size 0.71 1.55) (layers "F.Cu" "B.Cu") (uuid "52cd0c63-3b5e-468f-960e-378b3be6dbe5"))
+(pad "2" smd roundrect (at -2.5 -0.25 45) (size 1.18 0.79) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.15) (uuid "75c4f0f8-1b8f-421f-907a-2dfc5568c8a4"))
+(pad "1" smd rect (at -1.5 -2.25 45) (size 1.14 1.52) (layers "F.Cu" "F.Mask") (uuid "b9753095-3c0e-4a7b-8a70-dd322de63a5f"))
+(embedded_fonts no))

@@ -1,0 +1,7 @@
+(footprint "courtyard-crossing-one-owner" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "7ccf4cc1-1c79-45dd-b196-5393bee4bfc5") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "courtyard-crossing-one-owner" (at 0 4 0) (layer "F.Fab") (uuid "eea1caf4-952f-4ed3-af8e-f08543b4fe45") (effects (font (size 1 1) (thickness 0.15))))
+(attr smd)
+(pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask" "F.Paste") (uuid "ec75c36a-ca2a-4520-9516-d35e64723c25"))
+(fp_poly (pts (xy 0 0) (xy 4 0) (xy 4 4) (xy 2 -2)) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "0d4b625e-34b5-4468-bce9-841bca7aae24"))
+(embedded_fonts no))

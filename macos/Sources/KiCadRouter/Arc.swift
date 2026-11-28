@@ -233,7 +233,8 @@ public struct ShapeArc: Hashable, Sendable, CustomStringConvertible {
             }
         }
         guard dist <= minDist else { return false }
-        location = nearest.rounded
+        // (a VECTOR2D handed back as a VECTOR2I: cut, not rounded)
+        location = nearest.truncated
         actual = max(0, dist - width / 2)
         return true
     }

@@ -1,0 +1,8 @@
+(footprint "holes-offset" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "8b952a9a-4ac9-4bf5-b77e-ca6ef77b5145") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "holes-offset" (at 0 4 0) (layer "F.Fab") (uuid "6fd9d486-016d-40b8-a6fa-cd465ebaf928") (effects (font (size 1 1) (thickness 0.15))))
+(attr through_hole)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "50ac4e26-83da-4ea3-a2d2-a4f3365a69e0"))
+(pad "1" thru_hole circle (at 0 0) (size 2 2) (drill 0.6 (offset 0.5 0)) (layers "*.Cu" "*.Mask") (uuid "530d719f-cd64-4781-b8ed-766c64628db1"))
+(pad "2" thru_hole circle (at 1.2 0) (size 1 1) (drill 0.6) (layers "*.Cu" "*.Mask") (uuid "b8a55d63-4332-4370-aedb-993b338d7c87"))
+(embedded_fonts no))

@@ -727,8 +727,8 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   board of its own, and kicad-cli's DRC of each, its footprint checks made errors: the footprint checker's markers
   where the DRC's footprint checks make the same checks (`CheckFootprintAttributes`, `CheckPads`,
   `CheckNetTiePadGroups`, a net tie's `CheckNetTies`, the courtyards': the checker reports a malformed courtyard both
-  malformed and missing, the DRC malformed only); `CheckShortingPads`, which only the checker runs, is not checked
-  against KiCad. `update`: a board of footprints of KiCad's libraries (turned, on the back, locked, on nets, their
+  malformed and missing, the DRC malformed only); `CheckShortingPads`, which only the checker runs, and the rest of
+  what the checker reports, are `footprint-checker.py`'s. `update`: a board of footprints of KiCad's libraries (turned, on the back, locked, on nets, their
   texts moved and restyled, fields and texts added, attributes and clearances overridden) and changed copies of their
   libraries in its project's fp-lib-table, and KiCad's own PCB editor under Xvfb (an action plugin of its own, as
   `editing.py`'s) running Tools ▸ Update Footprints from Library... with its own options, with every text kept but
@@ -739,6 +739,43 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   board's footprints each opened in KiCad's footprint editor from the board (clicked, Ctrl+E) and saved straight back
   onto it (File ▸ Save), which the port's `FootprintEditor(board:footprint:)` and `saveToBoard` must leave the same
   (R2, small and on the back, which the plugin's click does not select, is left out).
+- `footprint-checker.py`: KiCad's footprint checker and pad numbering, for `FootprintCheckerTests` (the port's
+  `FootprintChecks.swift` and `FootprintEditor.swift`), on `Tests/KiCadRouterTests/Fixtures/footprints/checker`.
+  `checks OUTDIR [COUNT [SEED]]`: footprints made to fail the checks (hand-made ones for `CheckShortingPads`' corners:
+  pads over each other and touching of different numbers, of one number, of no number, of one net tie group, on
+  other sides and inner layers, every shape, custom ones, holes at one place, touching and near, unplated ones,
+  apertures and unplated holes given numbers; net ties bridged by copper; open, crossing and lone courtyards; silk
+  over pads and mask drawings; `footprints.py`'s faulty footprints; COUNT random ones, pads of every kind crowded
+  together with drawings and texts on the silk, mask and copper layers, courtyards closed, open and none, net tie
+  groups; forty of KiCad's libraries as they are), each `checks.pretty/CASE.kicad_mod`, and what KiCad's checker finds
+  of each, read with `FootprintLoad` onto a board of its own: `DIALOG_FOOTPRINT_CHECKER::runChecks`' calls one by one
+  (`BuildCourtyardCaches` and a missing courtyard, `CheckFootprintAttributes`, `CheckPads`, `CheckShortingPads`, a net
+  tie's `CheckNetTiePadGroups` and `CheckNetTies`, `CheckClippedSilk`), through KiCad's Python module. Those take a
+  `std::function`, which the module's SWIG wrappers take only as a pointer of a SWIG type of its own and make none
+  of: `callbacks.cpp` (built with g++ as the script starts) makes them, calling a ctypes callback with what KiCad
+  gives (items as their addresses, positions, messages as UTF-8, a `wxString` read as the `std::wstring` it holds
+  first), and the script hands each to KiCad in a SWIG object of the type's name. `checks.json` holds each marker
+  as the dialog adds it: its check (the settings key), the severity the footprint editor's design settings give it
+  (`BOARD_DESIGN_SETTINGS`' defaults), its detail, its items' ids (the footprint's, new each load, `footprint`) and
+  its position. A footprint where `CheckShortingPads` asks the shape of a plated pad not flashed on F.Cu (not on it,
+  or its unconnected layers removed) of another whose box meets it is left out: `GetEffectiveShape` hands that hole
+  back in a compound only the temporary `shared_ptr` it returns holds, which `CheckShortingPads` keeps only the raw
+  pointer of, so KiCad reads freed memory there (and now and then crashes); the port takes the hole, as KiCad means
+  to. `checks.json` of the fixture is `checks OUTDIR 400` (498 footprints after those left out). `numbers OUTDIR
+  [COUNT [SEED]]`: `FOOTPRINT::GetNextPadNumber` of footprints of random pad numbers after random last numbers
+  (prefixes, question marks, leading zeros, numbers too long for an int, which KiCad's `GetTrailingInt` wraps
+  round, characters not ASCII), `numbers.json`. `renumber OUTDIR`: KiCad's footprint editor itself (the PCB editor
+  under Xvfb with an action plugin of its own, as `footprints.py editboard`'s, the board's footprint clicked and opened
+  with Ctrl+E) running Renumber Pads from its Edit menu for each of `RENUMBER_CASES`: the dialog's start, step and
+  prefix set (its ranges written down), then the pointer moved, pressed, dragged and clicked as each case says on a
+  footprint of two rows of pads, an unplated hole and an aperture among them, two pads over each other (one on
+  F.SilkS, the editor's active layer, which the collector takes first) and a through-hole pad; the run ended with a
+  double click on nothing and the footprint saved back onto the board (File ▸ Save): `renumber-N.kicad_pcb`,
+  `edited-N.kicad_pcb` and `renumber.json` (each run's settings, the pointer's events in the editor's coordinates as
+  the view's scale read from the status bar makes them, that scale, and KiCad's pad numbers by the pads' places:
+  saving onto the board gives each pad the board's id of its number, so ids do not follow a pad renumbered). Each run
+  takes a display of its own picked at random (`xvfb-run -a` gives runs started together one display, where each
+  one's pointer moves the other's windows), and the plugin starts one timer however many times KiCad imports it.
 - `newstroke.py`: writes `Sources/KiCadRouter/StrokeFontData.swift`, the KiCad font's glyphs, from KiCad's
   `common/newstroke_font.cpp` (`newstroke.py KICAD/common/newstroke_font.cpp OUT.swift`).
 - `scenes.py`: random boards for `router.cpp` (two and four layers, sparse and crowded; rectangular, round, oval and

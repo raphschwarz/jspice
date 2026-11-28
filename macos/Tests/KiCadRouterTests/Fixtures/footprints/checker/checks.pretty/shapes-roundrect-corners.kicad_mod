@@ -1,0 +1,8 @@
+(footprint "shapes-roundrect-corners" (version 20260206) (generator "pcbnew") (generator_version "10.0") (layer "F.Cu")
+(property "Reference" "REF**" (at 0 -4 0) (layer "F.SilkS") (uuid "97f97853-4f11-4209-9a50-d794796fa66b") (effects (font (size 1 1) (thickness 0.15))))
+(property "Value" "shapes-roundrect-corners" (at 0 4 0) (layer "F.Fab") (uuid "221b78ac-a29a-4935-8173-445384a777c6") (effects (font (size 1 1) (thickness 0.15))))
+(attr smd)
+(fp_rect (start -6 -6) (end 6 6) (stroke (width 0.05) (type solid)) (fill no) (layer "F.CrtYd") (uuid "1ab772e9-a8ad-404f-b3d5-f13b5d41723f"))
+(pad "1" smd roundrect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.25) (uuid "cd993285-96ad-4652-9d54-012795ac3486"))
+(pad "2" smd roundrect (at 0.95 0.95) (size 1 1) (layers "F.Cu" "F.Mask" "F.Paste") (roundrect_rratio 0.25) (uuid "2b3e041a-a3f6-48d3-8233-a7f70162dcae"))
+(embedded_fonts no))
