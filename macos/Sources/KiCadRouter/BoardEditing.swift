@@ -211,7 +211,7 @@ public final class BoardEditing {
     /// The board's copper layers, front to back
     public var layers: [String] { router.world.layerIndex.sorted { $0.value < $1.value }.map(\.key) }
 
-    static func nm(_ p: KiCadPoint) -> IPoint { IPoint(Int((p.x * 1e6).rounded()), Int((p.y * 1e6).rounded())) }
+    public static func nm(_ p: KiCadPoint) -> IPoint { IPoint(Int((p.x * 1e6).rounded()), Int((p.y * 1e6).rounded())) }
     static func mm(_ p: IPoint) -> KiCadPoint { KiCadPoint(Double(p.x) / 1e6, Double(p.y) / 1e6) }
 
     /// Where the pointer at `p` routes to, as KiCad's router tool snaps it (its magnetic pads and tracks): starting,
