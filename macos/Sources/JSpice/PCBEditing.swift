@@ -173,6 +173,11 @@ final class PCBEditing: ObservableObject {
     /// The zone being drawn: its corners so far (mm), and where the pointer is, for the side still to place
     @Published private(set) var zoneCorners: [KiCadPoint] = []
     @Published private(set) var zonePointer: KiCadPoint?
+    /// The zone's outline as the zone tool's preview shows it (mm): its corners, then the leader to the pointer (two
+    /// lines at 45° or 90° in those line modes) and the loop back to the first corner
+    @Published private(set) var zonePreview: [KiCadPoint] = []
+    /// The zone tool's polygon (POLYGON_GEOM_MANAGER, in the line mode)
+    private var zoneDrawing = PolygonDrawing()
     /// What the zone tool draws, the net of a copper zone (nil: the board's ground net), and what a rule area
     /// keeps out
     @Published var zoneKind = ZoneKind.copper
@@ -318,8 +323,8 @@ final class PCBEditing: ObservableObject {
 
     private func toolChanged() {
         message = nil
-        zoneCorners = []
-        zonePointer = nil
+        zoneDrawing = PolygonDrawing(leaderMode: graphics.angleSnap)
+        zoneShown()
         // (each of KiCad's tools has a grid helper of its own while it runs)
         gridHelpersLetGo()
         if tuning != nil { cancelTuning() }
@@ -397,7 +402,11 @@ final class PCBEditing: ObservableObject {
         if graphics.pointerMoved(p) { return }
         if tool == .zone {
             let q = zoneSnapped(p)
-            if !zoneCorners.isEmpty { zonePointer = q }
+            if !zoneCorners.isEmpty {
+                zoneDrawing.move(to: PCBGraphicsEditing.nm(q), ctrl: NSEvent.modifierFlags.contains(.control))
+                zonePointer = q
+                zoneShown()
+            }
         }
         if tool == .text { _ = textSnapped(p) }
         if tool == .tune && tuning != nil { return tuneMoved(to: p) }
@@ -1162,6 +1171,7 @@ final class PCBEditing: ObservableObject {
     func gridHelpersLetGo() {
         zoneGridHelper = nil
         textGridHelper = nil
+        graphics.clearConstruction()
     }
 
     /// Where the zone tool puts the pointer at `p` (mm), as DrawZone does: BestSnapAnchor of the items on the zone's
@@ -1172,27 +1182,65 @@ final class PCBEditing: ObservableObject {
         let layers: Set<Int> = KiCadLayers.ids[layer].map { Set([$0]) } ?? Set<Int>()
         let q = h.bestSnapAnchor(PCBGraphicsEditing.nm(p), layers: layers, view: view, grid: .graphics)
         zoneGridHelper = h
+        graphics.noteConstruction(h, .zone)
         return PCBGraphicsEditing.mm(q)
     }
 
+    /// The zone being drawn as its polygon now has it, for the view
+    private func zoneShown() {
+        zoneCorners = zoneDrawing.corners.map(PCBGraphicsEditing.mm)
+        zonePreview = zoneDrawing.preview.map(PCBGraphicsEditing.mm)
+        if zoneCorners.isEmpty { zonePointer = nil }
+    }
+
+    /// The line mode changed: the zone being drawn takes it (as KiCad's DrawZone sets its leader mode at each event)
+    func lineModeChanged() {
+        zoneDrawing.leaderMode = graphics.angleSnap
+    }
+
+    /// KiCad's activation timer went off for the construction geometry a tool of these proposed: what is pending
+    /// taken, as the pointer has rested
+    func constructionRested(_ owner: PCBGraphicsEditing.ConstructionOwner) {
+        switch owner {
+        case .zone:
+            guard var h = zoneGridHelper else { return }
+            h.rested()
+            zoneGridHelper = h
+            graphics.noteConstruction(h, owner)
+        case .text:
+            guard var h = textGridHelper else { return }
+            h.rested()
+            textGridHelper = h
+            graphics.noteConstruction(h, owner)
+        case .move:
+            guard var (move, mouse) = selectionMove else { return }
+            move.rested()
+            selectionMove = (move, mouse)
+            graphics.noteConstruction(move.helper, owner)
+        case .tool, .pointEditor:
+            break
+        }
+    }
+
     /// A click with the zone tool at `p`: a corner of the zone being drawn where the zone tool puts the pointer
-    /// (POLYGON_GEOM_MANAGER, no corner where it is the last again); a click on the first corner, or a double click,
-    /// finishes it: the zone (or rule area) then made on the layer chosen, filled as it is made
+    /// (POLYGON_GEOM_MANAGER: the leader's end, and its bend in the 45° and 90° line modes; no corner where it is the
+    /// last again); a click on the first corner, or a double click, finishes it: the zone (or rule area) then made on
+    /// the layer chosen, filled as it is made
     func zoneClick(at p: KiCadPoint, double: Bool) {
         guard tool == .zone, !isRouting else { return }
         let corner = zoneSnapped(p)
-        let closes = double || (zoneCorners.count > 0 && zoneCorners.first.map(PCBGraphicsEditing.nm) == PCBGraphicsEditing.nm(corner))
-        if !closes && zoneCorners.last != corner { zoneCorners.append(corner) }
+        zoneDrawing.leaderMode = graphics.angleSnap
+        let closes = double || zoneDrawing.click(PCBGraphicsEditing.nm(corner), ctrl: NSEvent.modifierFlags.contains(.control))
         zonePointer = corner
+        zoneShown()
         guard closes else { return }
         // (ZONE_CREATE_HELPER::OnComplete's outline: simplified, as KiCad makes it)
-        var drawn = PolygonDrawing()
-        for c in zoneCorners { _ = drawn.click(PCBGraphicsEditing.nm(c)) }
-        let outline = (drawn.outline ?? []).map(PCBGraphicsEditing.mm)
-        zoneCorners = []
-        zonePointer = nil
+        let outline = (zoneDrawing.outline ?? []).map(PCBGraphicsEditing.mm)
+        zoneDrawing = PolygonDrawing(leaderMode: graphics.angleSnap)
+        zoneShown()
         // (the tool done: the next zone drawn with a grid helper of its own)
         zoneGridHelper = nil
+        graphics.clearConstruction()
         guard outline.count >= 3 else {
             NSSound.beep()
             message = "A zone needs three corners or more: click them, then double-click the last."
@@ -1222,9 +1270,9 @@ final class PCBEditing: ObservableObject {
     @discardableResult
     func undoZoneCorner() -> Bool {
         guard tool == .zone, !zoneCorners.isEmpty else { return false }
-        zoneCorners.removeLast()
+        zoneDrawing.deleteLastCorner()
         zoneGridHelper?.fullReset()
-        if zoneCorners.isEmpty { zonePointer = nil }
+        zoneShown()
         return true
     }
 
@@ -1233,8 +1281,9 @@ final class PCBEditing: ObservableObject {
     func cancelZone() -> Bool {
         guard !zoneCorners.isEmpty else { return false }
         zoneGridHelper?.fullReset()
-        zoneCorners = []
-        zonePointer = nil
+        zoneDrawing = PolygonDrawing(leaderMode: graphics.angleSnap)
+        zoneShown()
+        graphics.clearConstruction()
         return true
     }
 
@@ -1316,6 +1365,7 @@ final class PCBEditing: ObservableObject {
             move.moved(to: move.dragOrigin + (PCBGraphicsEditing.nm(now) - mouse), layers: layers, view: view,
                        shift: flags.contains(.shift), ctrl: flags.contains(.control))
             selectionMove = (move, mouse)
+            graphics.noteConstruction(move.helper, .move)
             dragging?.delta = PCBGraphicsEditing.mm(move.offset)
             return
         }
@@ -1338,6 +1388,7 @@ final class PCBEditing: ObservableObject {
             Task { await fixFootprintDrag(at: p, force: force) }
             return
         }
+        if selectionMove != nil { graphics.clearConstruction() }
         selectionMove = nil
         guard let (uuids, delta) = dragging else { return }
         dragging = nil
@@ -1522,6 +1573,7 @@ final class PCBEditing: ObservableObject {
         let layers: Set<Int> = KiCadLayers.ids[textLayer].map { Set([$0]) } ?? Set<Int>()
         let q = h.bestSnapAnchor(PCBGraphicsEditing.nm(p), layers: layers, view: view, grid: .text)
         textGridHelper = h
+        graphics.noteConstruction(h, .text)
         return PCBGraphicsEditing.mm(q)
     }
 

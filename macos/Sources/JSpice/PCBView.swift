@@ -476,7 +476,7 @@ struct PCBBoardCanvas: View {
             PCBEditPainter(picture: picture, view: view, preview: editing.preview, drag: editing.dragPreview ?? editing.footprintDragTracks, pair: editing.pairPreview,
                            selection: editing.selection,
                            dragging: editing.dragging, airwire: editing.tool == .select ? editing.hoveredAirwire : nil,
-                           zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePointer, editing.layer, editing.zoneKind == .keepout) : nil,
+                           zone: editing.tool == .zone ? (editing.zoneCorners, editing.zonePreview, editing.layer, editing.zoneKind == .keepout) : nil,
                            tuning: editing.tuning, pattern: editing.tool == .select ? editing.selectedPattern : nil)
                 .draw(context)
             // the zone selected, and the point editor's handles on it
@@ -747,7 +747,7 @@ struct PCBEditPainter {
     /// The connection still to route under the pointer, which a click routes
     var airwire: KiCadConnectivity.Airwire?
     /// The zone being drawn: its corners, the pointer, its layer, and whether it is a rule area
-    var zone: (corners: [KiCadPoint], pointer: KiCadPoint?, layer: String, keepout: Bool)?
+    var zone: (corners: [KiCadPoint], preview: [KiCadPoint], layer: String, keepout: Bool)?
     /// The length tuning under way
     var tuning: BoardEditing.TuningPreview?
     /// The tuning pattern selected
@@ -783,13 +783,14 @@ struct PCBEditPainter {
             }
         }
         if let zone, !zone.corners.isEmpty {
-            // its sides so far, the next to the pointer and the last back to the first dashed, its corners marked
+            // its sides so far, the leader to the pointer and the loop back to the first dashed (at 45° or 90° in
+            // those line modes), its corners marked
             let color = zone.keepout ? Color.red : PCBPainter.color(zone.layer)
             let placed = view.path(zone.corners, closed: false)
-            context.fill(view.path(zone.corners + (zone.pointer.map { [$0] } ?? []), closed: true), with: .color(color.opacity(0.18)))
+            context.fill(view.path(zone.preview, closed: true), with: .color(color.opacity(0.18)))
             context.stroke(placed, with: .color(color), lineWidth: 1.5)
-            if let pointer = zone.pointer, let last = zone.corners.last, let first = zone.corners.first {
-                context.stroke(view.path([last, pointer, first], closed: false), with: .color(color),
+            if zone.preview.count > zone.corners.count, let last = zone.corners.last, let first = zone.corners.first {
+                context.stroke(view.path([last] + zone.preview.dropFirst(zone.corners.count) + [first], closed: false), with: .color(color),
                                style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
             }
             for corner in zone.corners {

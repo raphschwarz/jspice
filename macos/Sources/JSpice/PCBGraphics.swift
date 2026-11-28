@@ -10,7 +10,7 @@ import KiCadRouter
 /// board's outline), each as one change; dimensions of each kind; a graphic selected shows its edit points, each
 /// dragged as KiCad's point editor drags it; the ruler shows a distance, its x and y and its angle, and changes
 /// nothing. The pointer goes where KiCad's grid helper puts it (PCBGridHelper: the magnetic points of the items near
-/// it, the snap lines, the 0.05 mm grid).
+/// it, the snap lines, KiCad 10's construction geometry of the items it snaps to or rests on, the 0.05 mm grid).
 @MainActor
 final class PCBGraphicsEditing: ObservableObject {
     /// What the draw tool draws (KiCad's Draw Lines, Draw Arcs, Draw Rectangles, Draw Circles, Draw Polygons)
@@ -68,13 +68,78 @@ final class PCBGraphicsEditing: ObservableObject {
             dimensionTool?.setLayer(layer)
         }
     }
-    /// The editor's angle snap mode (KiCad's: lines and polygons held to 45° or 90°; Ctrl lets them go free, and off
-    /// the grid)
-    @Published var angleSnap = LeaderMode.direct {
+    /// The editor's line mode (KiCad's angle snap mode, its Line Modes: lines, polygons, zones and dimensions drawn,
+    /// and points and footprints dragged, held to 45° or 90°; Ctrl lets them go free, and off the grid), kept as
+    /// KiCad keeps it (pcbnew.json's editing.pcb_angle_snap_mode)
+    @Published var angleSnap = PCBGraphicsEditing.savedLineMode() {
         didSet {
             tool?.angleSnap = angleSnap
             dimensionTool?.angleSnap = angleSnap
             editor?.editor.angleSnap = angleSnap
+            editing?.lineModeChanged()
+            UserDefaults.standard.set(angleSnap.rawValue, forKey: "pcbLineMode")
+        }
+    }
+
+    static func savedLineMode() -> LeaderMode {
+        LeaderMode(rawValue: UserDefaults.standard.integer(forKey: "pcbLineMode")) ?? .direct
+    }
+
+    // MARK: - Construction geometry
+
+    /// Whose grid helper the construction geometry shown is of, for the activation timer to rest the right one
+    enum ConstructionOwner { case tool, pointEditor, zone, text, move }
+
+    /// The construction geometry the tool working shows (KiCad's CONSTRUCTION_GEOM: the extensions of what the
+    /// pointer snapped to or rested on), each with whether it is the point editor's item as it was
+    @Published private(set) var construction: [(drawable: ConstructionDrawable, persistent: Bool)] = []
+    /// KiCad's activation timer (ExtensionSnapTimeoutMs, half a second): started again for each proposal a grid
+    /// helper has no room for yet; when it goes off, the pointer has rested and what is pending is taken
+    private var constructionTimer: Timer?
+    private var timedProposals = -1
+
+    /// A grid helper has snapped the pointer: its construction geometry shown (none with Shift, as KiCad hides it),
+    /// the activation timer started for a proposal new since, stopped where none is pending
+    func noteConstruction(_ helper: PCBGridHelper, _ owner: ConstructionOwner) {
+        construction = helper.enableSnap ? helper.shownConstruction : []
+        guard helper.hasPendingConstruction else {
+            constructionTimer?.invalidate()
+            constructionTimer = nil
+            return
+        }
+        guard helper.construction.proposals != timedProposals else { return }
+        timedProposals = helper.construction.proposals
+        constructionTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.constructionTimerFired(owner) }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        constructionTimer = timer
+    }
+
+    /// No construction geometry shown (the tool done with, its grid helper let go)
+    func clearConstruction() {
+        construction = []
+        constructionTimer?.invalidate()
+        constructionTimer = nil
+        timedProposals = -1
+    }
+
+    private func constructionTimerFired(_ owner: ConstructionOwner) {
+        constructionTimer = nil
+        switch owner {
+        case .tool:
+            guard var g = gridHelper else { return }
+            g.rested()
+            gridHelper = g
+            noteConstruction(g, owner)
+        case .pointEditor:
+            guard var s = pointSnap else { return }
+            s.helper.rested()
+            pointSnap = s
+            noteConstruction(s.helper, owner)
+        case .zone, .text, .move:
+            editing?.constructionRested(owner)
         }
     }
     /// The words a leader shows (its properties dialog's, in KiCad)
@@ -126,6 +191,7 @@ final class PCBGraphicsEditing: ObservableObject {
         tool = nil
         dimensionTool = nil
         gridHelper = nil
+        clearConstruction()
         switch currentTool {
         case .draw:
             tool = GraphicTool(kind.tool, layer: layer, widths: widths, angleSnap: angleSnap)
@@ -153,6 +219,7 @@ final class PCBGraphicsEditing: ObservableObject {
         var g = PCBGridHelper(board: snapBoard, magnetic: editing?.magnetic ?? MagneticSettings())
         g.skipPoint = start
         gridHelper = g
+        clearConstruction()
     }
 
     /// The view as KiCad's grid helper snaps in it: the board's appearance, the view's scale, the 0.05 mm grid
@@ -185,6 +252,7 @@ final class PCBGraphicsEditing: ObservableObject {
         let q = g.bestSnapAnchor(Self.nm(p), layers: layers, view: view, grid: currentTool == .measure ? .current : .graphics)
         let onGraphic = g.snapped.map { snapBoard.items[$0].kind == .shape } ?? false
         gridHelper = g
+        noteConstruction(g, .tool)
         return (Self.mm(q), onGraphic)
     }
 
@@ -255,7 +323,11 @@ final class PCBGraphicsEditing: ObservableObject {
     /// Esc: what is being drawn dropped, or the ruler taken away; whether there was something
     func escape() -> Bool {
         switch currentTool {
-        case .draw: return tool?.cancel() ?? false
+        case .draw:
+            // (what was drawn dropped, the next drawn with a grid helper of its own, as KiCad's drawShape starts again)
+            let was = tool?.cancel() ?? false
+            if was { restartGridHelper() }
+            return was
         case .dimension: return dimensionTool?.cancel() ?? false
         case .measure: return ruler.cancel()
         default: return false
@@ -300,6 +372,7 @@ final class PCBGraphicsEditing: ObservableObject {
         Task {
             snapBoard = await editing?.withSession { SnapBoard(board: $0.board, project: $0.projectSettings) }
             gridHelper = nil
+            clearConstruction()
             editing?.gridHelpersLetGo()
         }
         guard let uuid = editor?.uuid, draggedHandle == nil else { return }
@@ -347,6 +420,7 @@ final class PCBGraphicsEditing: ObservableObject {
             if let view = snapView() { snap.view = view }
             e.editor.drag(h, to: Self.nm(now), snap: &snap, stickyLimit: sticky, free: flags.contains(.shift), ctrl: flags.contains(.control))
             pointSnap = snap
+            noteConstruction(snap.helper, .pointEditor)
         } else {
             e.editor.drag(h, to: Self.nm(now), grid: flags.contains(.control) ? nil : PointGrid(size: IPoint(50_000, 50_000)),
                           stickyLimit: sticky, free: flags.contains(.shift), ctrl: flags.contains(.control))
@@ -360,6 +434,7 @@ final class PCBGraphicsEditing: ObservableObject {
         guard draggedHandle != nil, var e = editor else { return false }
         draggedHandle = nil
         pointSnap = nil
+        clearConstruction()
         e.editor.endDrag()
         editor = e
         let (uuid, shape) = (e.uuid, e.editor.shape)
@@ -474,6 +549,43 @@ struct PCBGraphicsPainter {
         }
     }
 
+    /// The construction geometry the grid helper snaps to (KiCad's CONSTRUCTION_GEOM, drawn in its anchors' colour):
+    /// lines and rays across the view, circles, arcs, points as small crosses; the point editor's item as it was
+    /// solid, the extensions of what the pointer snapped to or rested on dashed
+    private func drawConstruction(_ context: GraphicsContext) {
+        let color = Color(red: 0.4, green: 0.75, blue: 1.0)
+        func mm(_ p: IPoint) -> KiCadPoint { PCBGraphicsEditing.mm(p) }
+        for (d, persistent) in graphics.construction {
+            let style = StrokeStyle(lineWidth: 1, dash: persistent ? [] : [6, 4])
+            let shade = GraphicsContext.Shading.color(color.opacity(persistent ? 0.8 : 0.6))
+            switch d {
+            case .line(let seg), .halfLine(let seg):
+                let a = mm(seg.a), b = mm(seg.b)
+                let length = hypot(b.x - a.x, b.y - a.y)
+                guard length > 0 else { continue }
+                // (two metres each way: across any view of a board)
+                let ux = (b.x - a.x) / length * 2000, uy = (b.y - a.y) / length * 2000
+                var from = a
+                if case .line = d { from = KiCadPoint(a.x - ux, a.y - uy) }
+                context.stroke(view.path([from, KiCadPoint(a.x + ux, a.y + uy)], closed: false), with: shade, style: style)
+            case .circle(let c):
+                let pts = KiCadPolygon.circle(center: mm(c.center), radius: Double(c.radius) / 1e6, segments: 96)
+                context.stroke(view.path(pts, closed: true), with: shade, style: style)
+            case .arc(let arc):
+                context.stroke(view.path(KiCadPolygon.arc(start: mm(arc.start), mid: mm(arc.mid), end: mm(arc.end)), closed: false),
+                               with: shade, style: style)
+            case .point(let p):
+                let c = view.point(mm(p))
+                var cross = Path()
+                cross.move(to: CGPoint(x: c.x - 4, y: c.y - 4))
+                cross.addLine(to: CGPoint(x: c.x + 4, y: c.y + 4))
+                cross.move(to: CGPoint(x: c.x - 4, y: c.y + 4))
+                cross.addLine(to: CGPoint(x: c.x + 4, y: c.y - 4))
+                context.stroke(cross, with: shade, lineWidth: 1)
+            }
+        }
+    }
+
     private func drawDimension(_ d: BoardDimension, color: Color, in context: GraphicsContext, offset: KiCadPoint = .zero) {
         for line in d.lines {
             let pts = line.map { KiCadPoint(Double($0.x) / 1e6 + offset.x, Double($0.y) / 1e6 + offset.y) }
@@ -505,6 +617,7 @@ struct PCBGraphicsPainter {
             let color = selection.contains(d.uuid) ? Color.accentColor : Self.color(d.layer)
             drawDimension(made, color: color, in: context, offset: moving.contains(d.uuid) ? delta : .zero)
         }
+        drawConstruction(context)
         // what is being drawn
         if let tool = graphics.tool, let s = tool.drawing {
             let (pts, closed) = shapeLines(s)
@@ -605,14 +718,18 @@ struct PCBGraphicsBar: View {
             .labelsHidden()
             .fixedSize()
             .help("The layer it goes on (Board Outline: the board's edge, drawn as KiCad's Edge.Cuts)")
-            Picker("Angles", selection: $graphics.angleSnap) {
+        }
+        if ([.draw, .dimension, .zone, .select] as [PCBEditing.Tool]).contains(editing.tool) {
+            // (KiCad's Line Modes: draw and drag at any angle; constrain drawing and dragging to horizontal or
+            // vertical motions; or to horizontal, vertical, or 45-degree angle motions)
+            Picker("Line Mode", selection: $graphics.angleSnap) {
                 Text("Any Angle").tag(LeaderMode.direct)
-                Text("45°").tag(LeaderMode.deg45)
                 Text("90°").tag(LeaderMode.deg90)
+                Text("45°").tag(LeaderMode.deg45)
             }
             .labelsHidden()
             .fixedSize()
-            .help("Lines, polygons and dimensions held to 45° or 90° (KiCad's angle snap mode); ⌃ lets them go free, and holds a rectangle square")
+            .help("KiCad's line modes: lines, polygons, zones and dimensions drawn, points and footprints dragged, at any angle, held to horizontal or vertical, or to 45°; ⌃ lets them go free (and off the grid), and holds a rectangle square")
         }
         if ([.draw, .dimension, .measure, .route, .zone, .text, .select] as [PCBEditing.Tool]).contains(editing.tool) {
             Menu("Magnetic") {
