@@ -63,7 +63,8 @@ final class PCBFootprintEditorModel: ObservableObject, Identifiable {
 
     let library: KiCadFootprintLibrary?
     weak var editing: PCBEditing?
-    private var renumbered: [String] = []
+    /// What the Renumber Pads tool has been told of the pointer since it started (its run, one change)
+    private var renumbering: [FootprintEditor.PadEnumerationEvent] = []
 
     static let layers = ["F.Cu", "B.Cu", "F.SilkS", "B.SilkS", "F.Fab", "B.Fab", "F.CrtYd", "B.CrtYd", "F.Mask", "B.Mask",
                          "F.Paste", "B.Paste", "Dwgs.User", "Cmts.User", "Edge.Cuts"]
@@ -121,7 +122,9 @@ final class PCBFootprintEditorModel: ObservableObject, Identifiable {
 
     private func finishTool() {
         started = nil
-        renumbered = []
+        renumbering = []
+        renumberChanged = false
+        dragging = false
     }
 
     func click(at point: KiCadPoint, slop: Double, extending: Bool) {
@@ -151,15 +154,45 @@ final class PCBFootprintEditorModel: ObservableObject, Identifiable {
         case .text:
             selection = [editor.addText(textToPlace, at: p, layer: layer)]
         case .renumber:
-            // (EnumeratePads: each pad clicked given the next number, the whole run one change)
-            guard let id = editor.item(at: point, slop: slop), editor.padNumbers[id] != nil else { return }
-            if !renumbered.isEmpty { editor.undo() }
-            renumbered.append(id)
-            editor.renumberPads(clicked: renumbered, start: renumberStart, step: renumberStep, prefix: renumberPrefix)
-            selection = Set(renumbered)
+            // (EnumeratePads: the pointer moved there, then clicked)
+            let p = BoardEditing.nm(point)
+            // (the collector's five pixels, of the slop's four)
+            renumber([.motion(p), .click(p)], slop: slop * 5 / 4)
+            return
         }
         refresh()
     }
+
+    /// The Renumber Pads tool told of the pointer's `events` (EnumeratePads: the pads under a click or a drag each
+    /// given the next number, one clicked again given back the one it had), the whole run one change, the pads it
+    /// renumbered selected; `slop` (mm) the five pixels KiCad's collector finds pads within
+    func renumber(_ events: [FootprintEditor.PadEnumerationEvent], slop: Double) {
+        guard let editor else { return }
+        // (the run so far taken back, and made again with these events too: one change)
+        if renumberChanged { editor.undo() }
+        renumbering += events
+        renumberChanged = editor.enumeratePads(renumbering, start: renumberStart, step: renumberStep, prefix: renumberPrefix,
+                                               accuracy: Int((slop * 1e6).rounded()), activeLayer: layer)
+        selection = Set(editor.renumberedPads)
+        refresh()
+    }
+
+    /// A drag of the Renumber Pads tool: pressed at `start`, held past the drag threshold to `point` (mm)
+    func renumberDrag(from start: KiCadPoint, to point: KiCadPoint, ended: Bool, slop: Double) {
+        let p = BoardEditing.nm(point)
+        var events: [FootprintEditor.PadEnumerationEvent] = []
+        if !dragging {
+            let s = BoardEditing.nm(start)
+            events += [.motion(s), .down(s)]
+            dragging = true
+        }
+        events.append(ended ? .up(p) : .drag(p))
+        if ended { dragging = false }
+        renumber(events, slop: slop)
+    }
+
+    private var dragging = false
+    private var renumberChanged = false
 
     func moveSelection(by delta: KiCadPoint) {
         guard let editor, !selection.isEmpty else { return }
@@ -191,8 +224,8 @@ final class PCBFootprintEditorModel: ObservableObject, Identifiable {
         refresh()
     }
 
-    func undo() { editor?.undo(); selection = []; refresh() }
-    func redo() { editor?.redo(); selection = []; refresh() }
+    func undo() { finishTool(); editor?.undo(); selection = []; refresh() }
+    func redo() { finishTool(); editor?.redo(); selection = []; refresh() }
 
     func check() {
         violations = editor?.check()
@@ -342,8 +375,9 @@ struct PCBFootprintEditorSheet: View {
                 }
                 if model.tool == .renumber {
                     TextField("Prefix", text: $model.renumberPrefix).frame(width: 50)
-                    Stepper("From \(model.renumberStart)", value: $model.renumberStart, in: 0...9999)
-                    Stepper("By \(model.renumberStep)", value: $model.renumberStep, in: 1...100)
+                    // (DIALOG_ENUM_PADS' spin controls: 0 to 999 each)
+                    Stepper("From \(model.renumberStart)", value: $model.renumberStart, in: 0...999)
+                    Stepper("By \(model.renumberStep)", value: $model.renumberStep, in: 0...999)
                 }
                 Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                     .disabled(!(model.editor?.canUndo ?? false)).help("Undo")
@@ -406,7 +440,18 @@ struct PCBFootprintEditorSheet: View {
                 }
                 .frame(width: max(view.size.width, geometry.size.width), height: max(view.size.height, geometry.size.height))
                 .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .local)
+                    .onChanged { drag in
+                        // (Renumber Pads: the pads dragged over numbered as the pointer goes)
+                        guard model.tool == .renumber else { return }
+                        model.renumberDrag(from: view.board(drag.startLocation), to: view.board(drag.location), ended: false,
+                                           slop: 5 / Double(scale))
+                    }
                     .onEnded { drag in
+                        if model.tool == .renumber {
+                            model.renumberDrag(from: view.board(drag.startLocation), to: view.board(drag.location), ended: true,
+                                               slop: 5 / Double(scale))
+                            return
+                        }
                         guard model.tool == .select else { return }
                         let a = view.board(drag.startLocation), b = view.board(drag.location)
                         if model.selection.isEmpty || model.editor?.item(at: a, slop: 4 / Double(scale)).map({ model.selection.contains($0) }) != true {
@@ -543,19 +588,22 @@ private struct PCBFootprintEditorPanel: View {
                 Text("Checks").font(.headline)
                 Spacer()
                 Button("Check Footprint") { model.check() }
-                    .help("The checks KiCad's footprint checker makes: courtyards, attributes, pads, shorting pads, net ties")
+                    .help("The checks KiCad's footprint checker makes: courtyards, attributes, pads, shorting pads, net ties, silkscreen clipped by the mask")
             }
             if let violations = model.violations {
-                if violations.isEmpty {
+                // (as the checker's dialog lists them: errors, then warnings, those its severities ignore left out)
+                let listed = FootprintChecks.reported(violations)
+                if listed.isEmpty {
                     Text("No problems found.").font(.callout).foregroundStyle(.secondary)
                 }
-                ForEach(violations.indices, id: \.self) { i in
-                    let v = violations[i]
+                ForEach(listed.indices, id: \.self) { i in
+                    let v = listed[i]
                     Button {
-                        model.selection = Set(v.items)
+                        model.selection = Set(v.violation.items)
                     } label: {
-                        Text((FootprintChecks.titles[v.type] ?? v.type) + (v.detail.isEmpty ? "" : " " + v.detail))
+                        Text(v.text)
                             .font(.callout).multilineTextAlignment(.leading)
+                            .foregroundStyle(v.severity == "error" ? Color.red : Color.orange)
                     }
                     .buttonStyle(.borderless)
                 }
