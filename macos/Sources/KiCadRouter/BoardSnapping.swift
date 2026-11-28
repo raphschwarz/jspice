@@ -13,11 +13,11 @@
 // move's pick-up point, PCB_GRID_HELPER::BestDragOrigin, its auxiliary axes and the items it skips),
 // pcbnew/tools/pcb_grid_helper.cpp's GetItemGrid and GetGridSize and common/tool/grid_helper.cpp's GetSelectionGrid
 // (the grid of each kind of item), pcbnew/tools/drawing_tool.cpp (DRAWING_TOOL::DrawZone, PlaceText),
-// common/preview_items/polygon_geom_manager.cpp (AddPoint, NewPointClosesOutline) and
+// common/preview_items/polygon_geom_manager.cpp (AddPoint, SetLeaderMode, SetCursorPosition, NewPointClosesOutline) and
 // pcbnew/tools/zone_create_helper.cpp (OnComplete: a zone's outline drawn), pcbnew/tools/board_editor_control.cpp
 // (PlaceFootprint: no grid helper, the cursor's grid point, common/gal/graphics_abstraction_layer.cpp's
 // GetGridPoint) and pcbnew/tools/pcb_point_editor.cpp (the point editor's drag: the BestSnapAnchor of each edit
-// point, its layers, its snap lines).
+// point, its layers, its snap lines, the construction geometry of its item's copy).
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -88,8 +88,15 @@ public struct SnapBoard: Sendable {
         var pads: [Int] = []
         /// A footprint's side: F.Cu (0), B.Cu (2)
         var side = 0
-        /// A pad's own box (PAD::GetBoundingBox)
+        /// A pad's own box (PAD::GetBoundingBox), a footprint's (GetBoundingBox( false ))
         var ownBox: IBox?
+        /// A track's or arc's width, a via's diameter, a target's size (for hit testing)
+        var width = 0
+        /// A zone's outlines and holes (its m_Poly's chains)
+        var rings: [[IPoint]] = []
+        /// A pad's effective polygon (ERROR_INSIDE) and its hole's shape
+        var hitPolygon: PolySet?
+        var hole: Shape?
     }
 
     public private(set) var items: [Item] = []
@@ -172,6 +179,7 @@ public struct SnapBoard: Sendable {
                     item.box.merge(item.mid)
                 }
                 item.box = item.box.inflated(w / 2 + 2 * biggestClearance)
+                item.width = w
                 items.append(item)
             case "via":
                 let at = BoardWorld.point(node["at"]), r = BoardWorld.iu(node["size"], 0) / 2
@@ -180,9 +188,11 @@ public struct SnapBoard: Sendable {
                 let span = ids(names).filter(KiCadLayers.isCopper).map(KiCadLayers.stackOrder)
                 let all = [0, 2] + (1...30).map { 2 + 2 * $0 }
                 let layers = all.filter { span.isEmpty || (span.min()! ... span.max()!).contains(KiCadLayers.stackOrder($0)) }
-                items.append(Item(kind: .via, uuid: uuid, layers: layers,
-                                  box: IBox(minX: at.x - r, minY: at.y - r, maxX: at.x + r, maxY: at.y + r).inflated(2 * biggestClearance),
-                                  start: at))
+                var via = Item(kind: .via, uuid: uuid, layers: layers,
+                               box: IBox(minX: at.x - r, minY: at.y - r, maxX: at.x + r, maxY: at.y + r).inflated(2 * biggestClearance),
+                               start: at)
+                via.width = 2 * r
+                items.append(via)
             case "gr_line", "gr_rect", "gr_circle", "gr_arc", "gr_poly", "gr_curve":
                 if let item = drawingItem(node, nil, footprint: nil) { items.append(item) }
             case "zone":
@@ -191,10 +201,13 @@ public struct SnapBoard: Sendable {
                 guard let box = IBox(points: corners) else { continue }
                 var item = Item(kind: .zone, uuid: uuid, layers: ids(layerNames(node)), box: box)
                 item.points = corners
+                item.rings = polygons.flatMap { $0.map(\.points) }
                 items.append(item)
             case "target":
                 let at = BoardWorld.point(node["at"])
-                items.append(Item(kind: .target, uuid: uuid, layers: ids(layerNames(node)), box: IBox(at, at), start: at))
+                var target = Item(kind: .target, uuid: uuid, layers: ids(layerNames(node)), box: IBox(at, at), start: at)
+                target.width = BoardWorld.iu(node["size"], 0)
+                items.append(target)
             default:
                 break
             }
@@ -208,6 +221,7 @@ public struct SnapBoard: Sendable {
             var footprint = Item(kind: .footprint, uuid: fp.value("uuid") ?? "", layers: [side], box: fpBox.inflated(maxClearance),
                                  start: placement.position, center: fpBox.center)
             footprint.side = side
+            footprint.ownBox = fpBox
             let index = items.count
             items.append(footprint)
             var children: [Int] = []
@@ -229,10 +243,13 @@ public struct SnapBoard: Sendable {
                                 footprint: index, start: p.pos)
                 item.pad = p
                 item.ownBox = box
-                if p.kind == .custom, let poly = world.padPolygon(p, primitives: primitives, errorLocation: .inside) {
+                let effective = world.padPolygon(p, primitives: primitives, errorLocation: .inside)
+                if p.kind == .custom, let poly = effective {
                     // (GetEffectivePolygon( ERROR_INSIDE )'s first outline)
                     item.points = poly.polygons.first?.first?.points ?? []
                 }
+                item.hitPolygon = effective
+                item.hole = hole
                 children.append(items.count)
                 items.append(item)
             }
@@ -267,6 +284,12 @@ public struct SnapView: Sendable {
     public var gridSnapping = true
     /// The grid overrides (the grid settings' overrides, where enabled): a grid of its own for what a tool asks
     public var overrides: [GridKind: IPoint] = [:]
+    /// KiCad 10's extension snaps (ADVANCED_CFG's EnableExtensionSnaps, on by default): the construction geometry of
+    /// the items the pointer snaps to (and rests on) snapped to, and a crossing of items only where each is involved
+    /// in it
+    public var extensionSnaps = true
+    /// Its activation by hovering over an item, off any anchor (ExtensionSnapActivateOnHover, on by default)
+    public var extensionSnapsOnHover = true
 
     public init(appearance: KiCadBoardAppearance, enabledLayers: Set<Int>, worldPerPixel: Double, grid: IPoint,
                 gridOrigin: IPoint = .zero) {
@@ -331,11 +354,13 @@ public enum GridKind: Sendable, Hashable {
 /// always, graphics where they say so, footprints' origins; on the layers given, or all of them), within 25 pixels
 /// of it (the visible grid's step at most), let go 5 pixels farther than it was caught (the snap hysteresis); else
 /// to a snap line through the point last snapped to, horizontal or vertical, where the pointer is near it; else to
-/// the grid. Kept from one pointer event to the next, as a tool keeps its grid helper: the anchor snapped to and the
-/// snap line. The extension lines KiCad 10 draws from the items the pointer rests on (its construction geometry,
-/// activated after the pointer rests half a second: ADVANCED_CFG's EnableExtensionSnaps) are not made here: this
-/// snaps as KiCad does with them turned off (anchors made of crossing items are always snapped to, the snap lines
-/// are).
+/// the grid. Kept from one pointer event to the next, as a tool keeps its grid helper: the anchor snapped to, the
+/// snap line, and KiCad 10's construction geometry (CONSTRUCTION_MANAGER, BoardConstruction.swift): the extensions
+/// of the items the pointer snaps to (a line's rays on from its ends, the rest of an arc's circle and its centre, a
+/// circle's or rectangle's centre) or hovers over, taken at once for the first two and then where the pointer rests
+/// (`rested`, KiCad's timer), their crossings with each other, with the snap lines and with the items near the
+/// pointer snapped to (and the crossings of items only where each was so involved). The view's `extensionSnaps` off
+/// snaps as KiCad does with ADVANCED_CFG's EnableExtensionSnaps off.
 public struct PCBGridHelper: Sendable {
     /// ANCHOR_FLAGS
     public struct Flags: OptionSet, Sendable, Hashable {
@@ -360,6 +385,8 @@ public struct PCBGridHelper: Sendable {
     enum Geometry: Sendable {
         case seg(Seg)
         case line(Seg)
+        /// HALF_LINE: from `a` through `b` and on
+        case halfLine(Seg)
         case circle(Circle)
         case arc(ShapeArc)
         case box(IBox)
@@ -386,16 +413,22 @@ public struct PCBGridHelper: Sendable {
     /// The anchors the last BestSnapAnchor found (for showing them), and m_pointOnLineCandidates
     public private(set) var anchors: [Anchor] = []
     var pointOnLineCandidates: [Geometry] = []
+    /// The construction geometry (SNAP_MANAGER's CONSTRUCTION_MANAGER), and the points of it the pointer does not snap
+    /// to but a snap line may go through (SetReferenceOnlyPoints: the ends of the point editor's item)
+    public internal(set) var construction = ConstructionManager()
+    public internal(set) var referenceOnlyPoints: [IPoint] = []
 
     public init(board: SnapBoard, magnetic: MagneticSettings = MagneticSettings()) {
         self.board = board
         self.magnetic = magnetic
     }
 
-    /// GRID_HELPER::FullReset: the snap line forgotten (SNAP_MANAGER::Clear; the anchors found, which the next
-    /// BestSnapAnchor finds again); the anchor snapped to and the skip point kept, as KiCad keeps them
+    /// GRID_HELPER::FullReset: the snap line and the construction geometry forgotten (SNAP_MANAGER::Clear; the
+    /// anchors found, which the next BestSnapAnchor finds again); the anchor snapped to, the skip point and the
+    /// reference-only points kept, as KiCad keeps them
     public mutating func fullReset() {
         clearSnapLine()
+        construction.clear()
         anchors = []
     }
 
@@ -611,7 +644,7 @@ public struct PCBGridHelper: Sendable {
                            maxY: KiMath.round(Double(origin.y) - Double(snapRange) / 2 + Double(snapRange)))
         let visible = queryVisible(horizon, view: view, skip: skip)
         computeAnchors(visible, origin, view: view, layers: layers)
-        let nearest = nearestAnchor(origin, .snappable)
+        let nearest = nearestAnchor(origin, .snappable, involvedOnly: view.extensionSnaps)
         let nearestGrid = align(origin, view: view, grid: kind)
         let gridSize = DPoint(view.gridSize(kind))
         // (SnapHysteresis: 5 pixels)
@@ -622,7 +655,11 @@ public struct PCBGridHelper: Sendable {
             let existing = Int(s.distance(origin))
             if snapDist == nil || existing < snapDist! { snapDist = existing }
         }
+        // (a point of the construction geometry not snapped to, a snap line going through it)
+        func referenceOnly(_ p: IPoint) -> Bool { referenceOnlyPoints.contains(p) }
+        var snapValid = false
         if enableSnap {
+            // (existing snap lines before new snaps)
             if enableSnapLine {
                 var lineSnap = nearestSnapLinePoint(origin, nearestGrid: nearestGrid, distToNearest: snapDist, snapRange: snapRange,
                                                     gridSize: gridSize, gridOrigin: view.gridOrigin)
@@ -630,39 +667,61 @@ public struct PCBGridHelper: Sendable {
                     lineSnap = snapToConstructionLines(origin, nearestGrid: nearestGrid, grid: gridSize, snapRange: Double(snapRange), view: view)
                 }
                 if let l = lineSnap, l != skipPoint {
+                    // (an anchor near enough before a grid point along the line)
                     let preferAnchor = nearest.map { $0.distance(origin) <= Double(snapIn) } ?? false
                     if !preferAnchor {
                         setSnapLineEnd(l)
-                        // (no reference-only points: those come from construction geometry, not made here)
-                        return l
+                        snapValid = true
+                        if !referenceOnly(l) { return l }
                     }
                 }
             }
             if let s = snapItem {
                 if Int(s.distance(origin)) <= snapOut {
+                    if let n = nearest, referenceOnly(n.pos), n.distance(origin) <= Double(snapRange) { setSnapLineOrigin(n.pos) }
                     setSnappedAnchor(s.pos)
                     return s.pos
                 }
                 snapItem = nil
             }
             if let n = nearest, n.distance(origin) <= Double(snapIn) {
-                snapItem = n
-                setSnappedAnchor(n.pos)
-                return n.pos
+                if referenceOnly(n.pos) {
+                    // (not snapped to, but the snap line from it)
+                    setSnapLineOrigin(n.pos)
+                } else {
+                    // (an item's own point, not a crossing, proposes the item's construction geometry)
+                    if !n.flags.contains(.constructed) { proposeConstruction(for: n.items, layers: layers, view: view) }
+                    snapItem = n
+                    setSnappedAnchor(n.pos)
+                    return n.pos
+                }
+                snapValid = true
+            } else if view.extensionSnapsOnHover {
+                // (an exact hit on an item, off its points, proposes it too)
+                for i in visible where board.hitTest(i, origin) {
+                    proposeConstruction(for: [i], layers: layers, view: view)
+                    snapValid = true
+                    break
+                }
             }
             // (on-element snaps where there is no grid to snap to)
             if !enableGrid, let p = Self.nearestPoint(pointOnLineCandidates, origin), DPoint(p - origin).norm <= Double(snapRange) {
+                // (the snap line's end cleared, its origin kept)
                 setSnapLineEnd(nil)
                 return p
             }
         }
         snapItem = nil
+        if !snapValid { construction.cancelProposal() }
         setSnapLineEnd(nil)
         return nearestGrid
     }
 
-    /// The item an anchor snapped to is of (GetSnapped), by index
-    public var snapped: Int? { snapItem?.items.first ?? nil }
+    /// The item an anchor snapped to is of (GetSnapped), by index (the item itself for the point editor's copy of it)
+    public var snapped: Int? {
+        guard let first = snapItem?.items.first, let i = first else { return nil }
+        return i >= 0 ? i : -1 - i
+    }
 
     // MARK: The items near the pointer, and their anchors
 
@@ -693,10 +752,20 @@ public struct PCBGridHelper: Sendable {
             computeAnchors(i, refPos, view: view)
             if let g = Self.intersectable(item) { intersectables.append((i, g)) }
         }
-        // (the construction items: SNAP_MANAGER::GetConstructionItems' snap lines, a line through the snap line's
-        // origin in each of its directions, of no item; KiCad 10's extension lines are not made here)
-        if let o = snapLineOrigin {
-            for d in directions { intersectables.append((nil, .line(Seg(o, o + IPoint(d.x * 100_000, d.y * 100_000))))) }
+        // (the construction items, SNAP_MANAGER::GetConstructionItems: the construction geometry taken, then the snap
+        // lines through the snap line's origin, of no item; their points snapped to as they are)
+        for batch in constructionItems() {
+            for c in batch {
+                for d in c.constructions {
+                    switch d {
+                    case .line(let l): intersectables.append((c.item, .line(l)))
+                    case .halfLine(let h): intersectables.append((c.item, .halfLine(h)))
+                    case .circle(let circle): intersectables.append((c.item, .circle(circle)))
+                    case .arc(let arc): intersectables.append((c.item, .arc(arc)))
+                    case .point(let p): anchors.append(Anchor(pos: p, flags: [.snappable, .constructed], items: [c.item]))
+                    }
+                }
+            }
         }
         for a in intersectables.indices {
             for b in (a + 1)..<max(a + 1, intersectables.count) where b < intersectables.count {
@@ -751,13 +820,23 @@ public struct PCBGridHelper: Sendable {
             guard let p = s.intersect(line, lines: true), s.contains(p) else { return [] }
             return [p]
         }
+        func halfLineSeg(_ h: Seg, _ s: Seg) -> [IPoint] { halfLineIntersect(h, s).map { [$0] } ?? [] }
+        func onHalfLine(_ h: Seg, _ pts: [IPoint]) -> [IPoint] { pts.filter { halfLineContains(h, $0) } }
         // (the visitor's dispatch: `a` the visited geometry, `b` the other)
         switch (a, b) {
         case (.line(let l), .seg(let s)), (.seg(let s), .line(let l)): return lineSeg(l, s)
-        case (.line(let l), .line(let m)): return m.intersect(l, lines: true).map { [$0] } ?? []
+        // (LINE::Intersect( LINE ) of the other with the visited: the visited's segment's, as lines)
+        case (.line(let l), .line(let m)): return l.intersect(m, lines: true).map { [$0] } ?? []
         case (.line(let l), .circle(let c)), (.circle(let c), .line(let l)): return c.intersectLine(l)
         case (.line(let l), .arc(let arc)), (.arc(let arc), .line(let l)): return arc.intersectLine(l)
         case (.line(let l), .box(let r)): return sides(r).flatMap { lineSeg(l, $0) }
+        case (.halfLine(let h), .seg(let s)), (.seg(let s), .halfLine(let h)): return halfLineSeg(h, s)
+        // (HALF_LINE::Intersect( HALF_LINE ) of the other with the visited)
+        case (.halfLine(let h), .halfLine(let other)): return halfLineIntersect(other, halfLine: h).map { [$0] } ?? []
+        case (.halfLine(let h), .line(let l)), (.line(let l), .halfLine(let h)): return lineHalfLineIntersect(l, h).map { [$0] } ?? []
+        case (.halfLine(let h), .circle(let c)), (.circle(let c), .halfLine(let h)): return onHalfLine(h, c.intersectLine(h))
+        case (.halfLine(let h), .arc(let arc)), (.arc(let arc), .halfLine(let h)): return onHalfLine(h, arc.intersectLine(h))
+        case (.halfLine(let h), .box(let r)): return sides(r).flatMap { halfLineSeg(h, $0) }
         case (.seg(let s), .box(let r)): return sides(r).flatMap { segSeg(s, $0) }
         case (.seg(let s), .seg(let t)): return segSeg(s, t)
         case (.seg(let s), .circle(let c)): return segCircle(s, c)
@@ -774,13 +853,13 @@ public struct PCBGridHelper: Sendable {
         }
     }
 
-    /// GetNearestPoint of the geometries: the nearest point on any of them
+    /// GetNearestPoint of the geometries: the nearest point on any of them (their distances cut to whole nanometres)
     static func nearestPoint(_ geoms: [Geometry], _ p: IPoint) -> IPoint? {
         var best: IPoint?
         var bestDistance = Int.max
         for g in geoms {
             let n = nearest(g, p)
-            let d = Int(DPoint(n - p).norm.rounded())
+            let d = Int(DPoint(n - p).norm)
             if best == nil || d < bestDistance {
                 best = n
                 bestDistance = d
@@ -792,7 +871,10 @@ public struct PCBGridHelper: Sendable {
     /// GetNearestPoint of one geometry (a rectangle's: the nearest of its sides' nearest points, the last of equals)
     static func nearest(_ g: Geometry, _ p: IPoint) -> IPoint {
         switch g {
-        case .seg(let s), .line(let s): return s.nearestPoint(p)
+        case .seg(let s): return s.nearestPoint(p)
+        // (LINE::NearestPoint: on the whole line; HALF_LINE's: from its start on)
+        case .line(let l): return l.lineProject(p)
+        case .halfLine(let h): return halfLineNearest(h, p)
         case .circle(let c): return c.nearestPoint(p)
         case .arc(let a): return a.nearestPoint(p)
         case .box(let r):
@@ -800,7 +882,7 @@ public struct PCBGridHelper: Sendable {
             var nearest = IPoint.zero, best = Int.max
             for i in 0..<4 {
                 let n = Seg(c[i], c[(i + 1) % 4]).nearestPoint(p)
-                let d = Int(DPoint(n - p).norm.rounded())
+                let d = Int(DPoint(n - p).norm)
                 if d <= best {
                     nearest = n
                     best = d
@@ -978,9 +1060,11 @@ public struct PCBGridHelper: Sendable {
         return pts.map { KiMath.rotate($0, -rotation) + seg.center }
     }
 
-    /// nearestAnchor: the nearest anchor of the flags; of several at the same place, the one of the item nearest
-    /// the pointer (FindSquareDistanceToItem: its geometry's nearest point; else the anchor's own distance)
-    func nearestAnchor(_ pos: IPoint, _ flags: Flags) -> Anchor? {
+    /// nearestAnchor: the nearest anchor of the flags (with extension snaps, `involvedOnly`: one made of crossing
+    /// geometry not where an item of it is not involved in the construction geometry taken: then, if it is the
+    /// nearest, none); of several at the same place, the one of the item nearest the pointer (FindSquareDistanceToItem:
+    /// its geometry's nearest point; else the anchor's own distance)
+    func nearestAnchor(_ pos: IPoint, _ flags: Flags, involvedOnly: Bool = false) -> Anchor? {
         var minDist = Double.greatestFiniteMagnitude
         var atMin: [Anchor] = []
         for a in anchors where a.flags.isSuperset(of: flags) {
@@ -994,12 +1078,15 @@ public struct PCBGridHelper: Sendable {
                 }
             }
         }
+        if involvedOnly {
+            atMin.removeAll { $0.flags.contains(.constructed) && !construction.involvesAll($0.items) }
+        }
         var minToItem = Double.greatestFiniteMagnitude
         var best: Anchor?
         for a in atMin {
             var toItem = Double.greatestFiniteMagnitude
             for case let i? in a.items {
-                if let g = Self.intersectable(board.items[i]) {
+                if let g = Self.intersectable(boardItem(i)) {
                     let n = Self.nearest(g, pos)
                     toItem = min(toItem, DPoint(n - pos).squaredNorm)
                 }
@@ -1189,6 +1276,9 @@ public struct SelectionMove: Sendable {
 
     /// How far the selection has moved
     public var offset: IPoint { cursor - start }
+
+    /// The pointer rested long enough for the construction geometry proposed to be taken (PCBGridHelper.rested)
+    public mutating func rested() { helper.rested() }
 }
 
 // MARK: - The point editor's snapping
@@ -1221,12 +1311,15 @@ public struct PointEditorSnap: Sendable {
     }
 
     /// The point editor's snapping of the item of `uuid` on `board`, as the item's kind has it (a graphic's grid is
-    /// the graphics')
+    /// the graphics'), its drag begun: a copy of the item as it was its persistent construction geometry (a line's
+    /// line, an arc's circle and centre, their ends a snap line goes through but the pointer does not snap to)
     public init(board: SnapBoard, item uuid: String, magnetic: MagneticSettings, view: SnapView) {
         let helper = PCBGridHelper(board: board, magnetic: magnetic)
         let i = helper.indices(of: [uuid]).first
         self.init(helper: helper, view: view, itemLayers: Set(i.map { board.items[$0].layers } ?? []),
                   grid: i.map(helper.itemGrid) ?? .current, skip: [uuid])
+        // (AddConstructionItems( { clone }, false, true ) as the drag starts)
+        if let i { self.helper.addConstructionItems([-1 - i], extensionOnly: false, persistent: true, view: view) }
     }
 
     /// BestSnapAnchor of `p`
@@ -1281,38 +1374,60 @@ public struct PointEditorSnap: Sendable {
 
 // MARK: - Drawing a zone's outline
 
-/// POLYGON_GEOM_MANAGER as DRAWING_TOOL::DrawZone uses it with no angle snap (the DIRECT leader mode): each click at
-/// the snapped pointer locks in a corner (none where it is the last again: SHAPE_LINE_CHAIN::Append), one on the first
-/// corner closes the outline (NewPointClosesOutline), as a double click does
+/// POLYGON_GEOM_MANAGER as DRAWING_TOOL::DrawZone uses it: the pointer's moves (SetCursorPosition) draw the leader
+/// from the last corner to the snapped pointer, in the line mode (the angle snap mode, LEADER_MODE: free, or two lines
+/// at 45° or at 90°; Ctrl lets it go free); each click at the snapped pointer locks in the leader's end as a corner
+/// (and its bend before it; none where it is the last again: SHAPE_LINE_CHAIN::Append), one on the first corner
+/// closes the outline (NewPointClosesOutline), as a double click does. A click with no move given since the last
+/// is taken as made where the pointer moved to it.
 public struct PolygonDrawing: Sendable {
-    public private(set) var corners: [IPoint] = []
+    var geometry = PolygonGeometry()
+    /// The line mode (the editor's angle snap mode)
+    public var leaderMode: LeaderMode
+    private var moved = false
 
-    public init() {}
+    public init(leaderMode: LeaderMode = .direct) {
+        self.leaderMode = leaderMode
+    }
+
+    /// The corners locked in so far
+    public var corners: [IPoint] { geometry.locked.points }
+
+    /// The outline as the preview shows it: the corners, the leader to the pointer and, at 45° and 90°, the loop back
+    /// to the first corner
+    public var preview: [IPoint] {
+        var pts = geometry.locked.points
+        pts += geometry.leader.points.dropFirst()
+        pts += geometry.loop.points.dropFirst().dropLast()
+        return pts
+    }
+
+    /// The pointer moved to `p` (snapped), `ctrl` (Ctrl) letting the leader go free (SetLeaderMode, SetCursorPosition)
+    public mutating func move(to p: IPoint, ctrl: Bool = false) {
+        geometry.leaderMode = ctrl ? .direct : leaderMode
+        geometry.setCursor(p)
+        moved = true
+    }
 
     /// A click at `p` (snapped): whether it closes the outline
-    public mutating func click(_ p: IPoint) -> Bool {
-        if let first = corners.first, first == p { return true }
-        if corners.last != p { corners.append(p) }
+    public mutating func click(_ p: IPoint, ctrl: Bool = false) -> Bool {
+        geometry.leaderMode = ctrl ? .direct : leaderMode
+        if geometry.closesOutline(p) { return true }
+        if !moved { geometry.setCursor(p) }
+        geometry.addPoint(p)
+        moved = false
         return false
     }
 
     /// DeleteLastCorner
     public mutating func deleteLastCorner() {
-        if !corners.isEmpty { corners.removeLast() }
+        _ = geometry.deleteLastCorner()
+        if !geometry.inProgress { geometry.reset() }
     }
 
-    /// ZONE_CREATE_HELPER::OnComplete's outline of the corners: none for fewer than three; else closed and
-    /// simplified (SHAPE_LINE_CHAIN::Simplify( true ): its tolerance the bool's one, a nanometre), the first corner
-    /// left out where it lies within a nanometre of the line through its neighbours
-    public var outline: [IPoint]? {
-        guard corners.count >= 3 else { return nil }
-        var chain = LineChain(corners, closed: true)
-        chain.simplify(1)
-        var pts = chain.points
-        if pts.count >= 3 {
-            let seg = Seg(pts[pts.count - 1], pts[1])
-            if seg.lineDistance(pts[0]) <= 1 { pts.removeFirst() }
-        }
-        return pts
-    }
+    /// ZONE_CREATE_HELPER::OnComplete's outline: none for fewer than three corners; else the corners (and at 45° and
+    /// 90° the leader's and the loop's), closed and simplified (SHAPE_LINE_CHAIN::Simplify( true ): its tolerance the
+    /// bool's one, a nanometre), the first corner left out where it lies within a nanometre of the line through its
+    /// neighbours
+    public var outline: [IPoint]? { geometry.completed() }
 }

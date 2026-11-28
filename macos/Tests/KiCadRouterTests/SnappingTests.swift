@@ -74,6 +74,8 @@ final class SnappingTests: XCTestCase {
                     let appearance = KiCadAppearanceControls(opening: local.board, boardLayers: layers).appearance
                     view = SnapView(appearance: appearance, enabledLayers: layers, worldPerPixel: abs(t["sx"] ?? 0) * 1e6,
                                     grid: IPoint(1_000, 1_000))
+                    // (KiCad run with its extension snaps off)
+                    view?.extensionSnaps = false
                     helper = PCBGridHelper(board: SnapBoard(board: board, project: project), magnetic: magnetic)
                     clicks = []
                     clickRaws = []
@@ -407,6 +409,7 @@ extension SnappingTests {
                     let layers = Set(KiCadLayers.enabled(b).map(\.id))
                     let appearance = KiCadAppearanceControls(opening: KiCadLocalSettings(text: nil).board, boardLayers: layers).appearance
                     view = SnapView(appearance: appearance, enabledLayers: layers, worldPerPixel: pixel, grid: IPoint(1_000, 1_000))
+                    view?.extensionSnaps = false
                     snapBoard = SnapBoard(board: b, project: project)
                     skippedStep = false
                     raws = []

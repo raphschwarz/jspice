@@ -34,6 +34,19 @@ helper put the pointer.
         the tools plan of each board done in KiCad; BOARD.used (JSON): every event (the pixel KiCad's move warped the
         pointer to among them), and what each step changed (footprints' places, zones' outlines, texts' places,
         graphics' points) as KiCad had it after the step.
+    snapping.py extend OUTDIR COUNT [SEED]
+        boards for KiCad 10's extension snaps and line modes (OUTDIR/ext-SEED-N.kicad_pcb: graphics on F.Cu, tracks, a
+        via, footprints, a zone) and beside each BOARD.xplan: its line mode (free, 45°, 90°, the boards in turn) and
+        the lines to draw, each after the pointer has gone to (and rested on, or not) points of one to three items,
+        from one of them along their extensions, to their crossings with each other, with the snap lines and with
+        other items, to anchors or anywhere, some with Ctrl or Shift held.
+    snapping.py extended BOARD.kicad_pcb...
+        the extension plan of each board done in KiCad with its extension snaps on (EXT_TIMEOUT_MS, TIMER_SHIM: the
+        activation timer set off where the plan rests the pointer, deterministically) in the plan's line mode;
+        BOARD.extended (JSON): every event (each rest with whether KiCad's timer had a proposal pending), the lines
+        each step drew and their ends, as the board had them then (not as KiCad saves it: its writer keeps the
+        board's drawings in a set ordered by BOARD::cmp_drawings, their geometry, so of two lines the same it writes
+        one).
 
 KiCad 10's pcbnew, Xvfb (xvfb-run) and a KiCad configuration made by running KiCad once (it is copied).
 """
@@ -184,10 +197,11 @@ def events(plan):
     return steps
 
 
-def drive(board, plan, fresh, ticks=9000, steps=None, plugin=None, setup=None, extra=None):
+def drive(board, plan, fresh, ticks=9000, steps=None, plugin=None, setup=None, extra=None, extensions=False, angle_mode=0):
     """KiCad's PCB editor run on `board` doing `steps` (the plan's lines drawn, by default) with `plugin` (drawing.py's,
     by default); `setup` given the folder of the configuration copied, before KiCad starts; `extra`: more for the
-    plugin's job"""
+    plugin's job; `extensions`: KiCad 10's extension snaps on, their timer the plugin's to fire (TIMER_SHIM);
+    `angle_mode`: the line mode (pcb_angle_snap_mode: 0 free, 1 45°, 2 90°)"""
     with tempfile.TemporaryDirectory() as tmp:
         share = os.path.join(tmp, "share")
         plugins = os.path.join(share, "kicad", "10.0", "scripting", "plugins")
@@ -210,10 +224,13 @@ def drive(board, plan, fresh, ticks=9000, steps=None, plugin=None, setup=None, e
         editing["magnetic_pads"] = 2
         editing["magnetic_tracks"] = 2
         editing["magnetic_all_layers"] = False
-        editing["pcb_angle_snap_mode"] = 0
+        editing["pcb_angle_snap_mode"] = angle_mode
         json.dump(cfg, open(pj, "w"))
         with open(os.path.join(config, "10.0", "kicad_advanced"), "w") as f:
-            f.write("EnableExtensionSnaps=0\n")
+            if extensions:
+                f.write(f"EnableExtensionSnaps=1\nExtensionSnapTimeoutMs={EXT_TIMEOUT_MS}\n")
+            else:
+                f.write("EnableExtensionSnaps=0\n")
         if setup:
             setup(os.path.join(config, "10.0"), tmp)
         job = {"steps": steps if steps is not None else events(plan), "log": os.path.join(tmp, "log.txt"), "out": os.path.join(tmp, "out.json"),
@@ -223,6 +240,12 @@ def drive(board, plan, fresh, ticks=9000, steps=None, plugin=None, setup=None, e
         with open(os.path.join(tmp, "job.json"), "w") as f:
             json.dump(job, f)
         env = dict(os.environ, XDG_DATA_HOME=share, KICAD_CONFIG_HOME=config, JSPICE_DRAWING_JOB=os.path.join(tmp, "job.json"))
+        if extensions:
+            shim = os.path.join(tmp, "timer_shim.so")
+            with open(os.path.join(tmp, "timer_shim.c"), "w") as f:
+                f.write(TIMER_SHIM)
+            subprocess.run(["cc", "-shared", "-fPIC", "-O2", "-o", shim, os.path.join(tmp, "timer_shim.c"), "-ldl"], check=True)
+            env.update(LD_PRELOAD=shim, JSPICE_TIMER_MAGIC=str(EXT_TIMEOUT_MS))
         text = ""
         for attempt in range(4):
             for p in (job["log"], job["out"]):
@@ -803,6 +826,509 @@ def use(paths):
         print(base, len(done["events"]), "events", file=sys.stderr)
 
 
+# MARK: - KiCad 10's extension snaps, and the line modes
+
+# (the extension snaps' timer, ExtensionSnapTimeoutMs: a day, which no run comes near, so that it never goes off by
+# itself; the plugin sets it off where the plan rests the pointer, through TIMER_SHIM)
+EXT_TIMEOUT_MS = 86400000
+
+# (preloaded into KiCad: notes the GLib timeout wxWidgets' wxTimer starts for the construction manager's activation
+# timer, the one of EXT_TIMEOUT_MS milliseconds, and lets the plugin call its callback, as GLib would when it expired:
+# the proposal pending then taken, as KiCad takes it after the pointer has rested that long)
+TIMER_SHIM = r"""
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdlib.h>
+typedef int (*source_func)(void *);
+static unsigned (*real_add)(unsigned, source_func, void *);
+static unsigned last_id, magic;
+static source_func last_fn;
+static void *last_data;
+static int started, read_magic;
+unsigned g_timeout_add(unsigned interval, source_func fn, void *data) {
+    if (!real_add) real_add = (unsigned (*)(unsigned, source_func, void *))dlsym(RTLD_NEXT, "g_timeout_add");
+    if (!read_magic) {
+        const char *m = getenv("JSPICE_TIMER_MAGIC");
+        magic = m ? (unsigned)strtoul(m, 0, 10) : 0;
+        read_magic = 1;
+    }
+    unsigned id = real_add(interval, fn, data);
+    if (magic && interval == magic) { last_id = id; last_fn = fn; last_data = data; started++; }
+    return id;
+}
+int jspice_timer_started(void) { return started; }
+int jspice_timer_alive(void) {
+    if (!last_id) return 0;
+    void *(*find)(void *, unsigned) = (void *(*)(void *, unsigned))dlsym(RTLD_DEFAULT, "g_main_context_find_source_by_id");
+    int (*destroyed)(void *) = (int (*)(void *))dlsym(RTLD_DEFAULT, "g_source_is_destroyed");
+    void *s = find(0, last_id);
+    return s && !destroyed(s);
+}
+int jspice_timer_fire(void) {
+    if (!jspice_timer_alive()) { last_id = 0; return 0; }
+    last_id = 0;
+    last_fn(last_data);
+    return 1;
+}
+"""
+
+# (the plugin's steps for the extension plans, on drawing.py's)
+EXT_PLUGIN = r'''
+
+import ctypes
+
+_ext_base_act = act
+
+
+def act(s):
+    kind = s[0]
+    ev = {"ev": kind}
+    if kind == "rest":
+        # (the pointer rested long enough: the construction manager's timer, if it runs, gone off)
+        lib = ctypes.CDLL(None)
+        ev["alive"] = bool(lib.jspice_timer_alive())
+        ev["fired"] = bool(lib.jspice_timer_fire())
+        ev["started"] = lib.jspice_timer_started()
+        state["wait"] = 6
+    elif kind in ("hold", "release"):
+        code = {"shift": wx.WXK_SHIFT, "ctrl": wx.WXK_CONTROL}[s[1]]
+        (sim.KeyDown if kind == "hold" else sim.KeyUp)(code)
+        ev["key"] = s[1]
+        state["wait"] = 4
+    elif kind == "made":
+        # (the lines the step made as the board has them now: KiCad's file leaves out a line the same as another,
+        # the board's drawings written from a set ordered by their geometry, so the board saved may not have them
+        # all)
+        _ext_base_act(s)
+        now = drawings()
+        for u in out["made"][str(s[1])]:
+            d = pcbnew.Cast_to_PCB_SHAPE(now[u])
+            out.setdefault("lines", {})[u] = {"start": [d.GetStart().x, d.GetStart().y], "end": [d.GetEnd().x, d.GetEnd().y],
+                                              "width": d.GetWidth(), "layer": d.GetLayerName()}
+        return
+    else:
+        return _ext_base_act(s)
+    out["events"].append(ev)
+'''
+
+EXT_FOOTPRINTS = [("/usr/share/kicad/footprints/Resistor_SMD.pretty", "R_0603_1608Metric"),
+                  ("/usr/share/kicad/footprints/Package_SO.pretty", "SOIC-8_3.9x4.9mm_P1.27mm")]
+
+
+def ext_board(rng, base):
+    """A board of graphics on F.Cu to extend (lines at any angle and at 0°, 45° and 90°, arcs, a circle, a rectangle),
+    tracks and a via, a footprint or two and a zone, in a 100 by 70 mm outline"""
+    import pcbnew
+    board = pcbnew.NewBoard(base + ".kicad_pcb")
+    W, H = 100.0, 70.0
+    nm = lambda v: int(round(v * 1e3)) * 1000
+    pt = lambda x, y: pcbnew.VECTOR2I(nm(x), nm(y))
+    edge = pcbnew.PCB_SHAPE(board)
+    edge.SetShape(pcbnew.SHAPE_T_RECTANGLE)
+    edge.SetLayer(pcbnew.Edge_Cuts)
+    edge.SetStart(pt(0, 0))
+    edge.SetEnd(pt(W, H))
+    edge.SetWidth(100000)
+    board.Add(edge)
+
+    def shape(kind):
+        s = pcbnew.PCB_SHAPE(board)
+        s.SetShape(kind)
+        s.SetLayer(pcbnew.F_Cu)
+        s.SetWidth(200000)
+        return s
+    for k in range(7):
+        s = shape(pcbnew.SHAPE_T_SEGMENT)
+        x, y = rng.uniform(15, W - 15), rng.uniform(12, H - 12)
+        ang = rng.choice([0, 45, 90, 135, rng.uniform(0, 180), rng.uniform(0, 180), rng.uniform(0, 180)])
+        length = rng.uniform(6, 18)
+        dx, dy = math.cos(math.radians(ang)) * length / 2, math.sin(math.radians(ang)) * length / 2
+        s.SetStart(pt(x - dx, y - dy))
+        s.SetEnd(pt(x + dx, y + dy))
+        board.Add(s)
+    for k in range(2):
+        s = shape(pcbnew.SHAPE_T_ARC)
+        cx, cy, r = rng.uniform(20, W - 20), rng.uniform(18, H - 18), rng.uniform(4, 9)
+        a0 = rng.uniform(0, 360)
+        sweep = rng.uniform(60, 200)
+        at = lambda a: pt(cx + r * math.cos(math.radians(a)), cy + r * math.sin(math.radians(a)))
+        s.SetArcGeometry(at(a0), at(a0 + sweep / 2), at(a0 + sweep))
+        board.Add(s)
+    s = shape(pcbnew.SHAPE_T_CIRCLE)
+    c = pt(rng.uniform(20, W - 20), rng.uniform(18, H - 18))
+    s.SetStart(c)
+    s.SetEnd(pcbnew.VECTOR2I(c.x + nm(rng.uniform(3, 6)), c.y))
+    board.Add(s)
+    s = shape(pcbnew.SHAPE_T_RECTANGLE)
+    x, y = rng.uniform(10, W - 30), rng.uniform(10, H - 25)
+    s.SetStart(pt(x, y))
+    s.SetEnd(pt(x + rng.uniform(8, 18), y + rng.uniform(6, 12)))
+    board.Add(s)
+    for k in range(2):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetLayer(pcbnew.F_Cu)
+        t.SetWidth(250000)
+        x, y = rng.uniform(10, W - 10), rng.uniform(10, H - 10)
+        ang = rng.choice([0, 45, 90, rng.uniform(0, 180)])
+        length = rng.uniform(6, 14)
+        t.SetStart(pt(x, y))
+        t.SetEnd(pt(x + length * math.cos(math.radians(ang)), y + length * math.sin(math.radians(ang))))
+        board.Add(t)
+    v = pcbnew.PCB_VIA(board)
+    v.SetPosition(pt(rng.uniform(10, W - 10), rng.uniform(10, H - 10)))
+    v.SetDrill(300000)
+    v.SetWidth(600000)
+    board.Add(v)
+    for lib, name in EXT_FOOTPRINTS:
+        fp = pcbnew.FootprintLoad(lib, name)
+        fp.SetPosition(pt(rng.uniform(10, W - 10), rng.uniform(8, H - 8)))
+        board.Add(fp)
+    z = pcbnew.ZONE(board)
+    z.SetLayer(pcbnew.F_Cu)
+    o = z.Outline()
+    o.NewOutline()
+    x, y = rng.choice([(3, 3), (W - 15, 3), (3, H - 12), (W - 15, H - 12)])
+    for px, py in [(x, y), (x + 12, y), (x + 12, y + 9), (x, y + 9)]:
+        o.Append(nm(px), nm(py))
+    board.Add(z)
+    pcbnew.SaveBoard(base + ".kicad_pcb", board)
+
+
+def ext_geometry(board):
+    """The board's items on F.Cu as the plan aims at them (mm): segments (graphics and tracks), arcs, circles,
+    rectangles, and points the grid helper snaps to on each (with the item's index)"""
+    import pcbnew
+    mm = lambda v: (v.x / 1e6, v.y / 1e6)
+    items = []
+    for d in board.GetDrawings():
+        if d.GetClass() != "PCB_SHAPE" or d.GetLayer() != pcbnew.F_Cu:
+            continue
+        s = pcbnew.Cast_to_PCB_SHAPE(d)
+        k = s.GetShape()
+        if k == pcbnew.SHAPE_T_SEGMENT:
+            a, b = mm(s.GetStart()), mm(s.GetEnd())
+            items.append({"kind": "seg", "a": a, "b": b, "points": [a, b, ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)]})
+        elif k == pcbnew.SHAPE_T_ARC:
+            items.append({"kind": "arc", "a": mm(s.GetStart()), "b": mm(s.GetEnd()), "m": mm(s.GetArcMid()), "c": mm(s.GetCenter()),
+                          "r": s.GetRadius() / 1e6, "points": [mm(s.GetStart()), mm(s.GetEnd()), mm(s.GetArcMid()), mm(s.GetCenter())]})
+        elif k == pcbnew.SHAPE_T_CIRCLE:
+            c, r = mm(s.GetCenter()), s.GetRadius() / 1e6
+            items.append({"kind": "circle", "c": c, "r": r, "points": [c, (c[0] + r, c[1]), (c[0], c[1] - r)]})
+        elif k == pcbnew.SHAPE_T_RECTANGLE:
+            a, b = mm(s.GetStart()), mm(s.GetEnd())
+            corners = [a, (b[0], a[1]), b, (a[0], b[1])]
+            items.append({"kind": "rect", "corners": corners, "points": corners + [((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)]})
+    for t in board.GetTracks():
+        if t.GetClass() == "PCB_VIA":
+            items.append({"kind": "via", "points": [mm(t.GetPosition())]})
+        elif t.GetLayer() == pcbnew.F_Cu:
+            a, b = mm(t.GetStart()), mm(t.GetEnd())
+            items.append({"kind": "track", "a": a, "b": b, "points": [a, b]})
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            if pad.IsOnLayer(pcbnew.F_Cu):
+                items.append({"kind": "pad", "points": [mm(pad.GetPosition())]})
+    return items
+
+
+def ext_ambiguous(board, p, margin=0.35):
+    """Whether the pointer at `p` (mm), or a pixel or so from it, may be over two of the board's items at once, or over
+    a text (KiCad's hover activation takes the first it hits, in an order of its own, which the port cannot know; and
+    the port has no texts): any two hit within `margin`, or a footprint (its box, its texts)"""
+    import pcbnew
+    q = pcbnew.VECTOR2I(int(round(p[0] * 1e6)), int(round(p[1] * 1e6)))
+    acc = int(margin * 1e6)
+    hits = 0
+    for fp in board.GetFootprints():
+        box = fp.GetBoundingBox(True)
+        box.Inflate(acc)
+        if box.Contains(q):
+            return True
+    for t in board.GetTracks():
+        hits += t.HitTest(q, acc)
+    for d in board.GetDrawings():
+        if d.HitTest(q, acc):
+            if d.GetClass() != "PCB_SHAPE":
+                return True
+            hits += 1
+    for z in board.Zones():
+        hits += z.HitTest(q, acc)
+    return hits >= 2
+
+
+def ext_plan(rng, board, mode):
+    """The plan of a board: lines drawn with Draw Lines, each after the pointer rests (or not) on points of the board's
+    items, from one of them, along their extensions, to where they cross each other, the snap line or other items, or
+    anywhere; some with Ctrl (no grid: the pointer on the extension itself) or Shift (no snapping); in line mode `mode`"""
+    geo = ext_geometry(board)
+    lines = []
+    W, H = 100.0, 70.0
+
+    def inside(p, m=1.5):
+        return m <= p[0] <= W - m and m <= p[1] <= H - m
+
+    def near(p, ds=(0.0, 0.0, 0.02, 0.05, 0.1, 0.2)):
+        d = rng.choice(ds)
+        a = rng.uniform(0, 2 * math.pi)
+        return [p[0] + d * math.cos(a), p[1] + d * math.sin(a)]
+
+    def clear(p):
+        return inside(p) and not ext_ambiguous(board, p)
+
+    def rays(item, point):
+        """The extensions of an item (from the point it was activated at): a line's two rays, an arc's circle"""
+        if item["kind"] in ("seg",):
+            a, b = item["a"], item["b"]
+            return [("ray", b, (b[0] - a[0], b[1] - a[1])), ("ray", a, (a[0] - b[0], a[1] - b[1]))]
+        if item["kind"] == "arc":
+            return [("circle", item["c"], item["r"])]
+        return []
+
+    def along(ext, t):
+        if ext[0] == "ray":
+            o, d = ext[1], ext[2]
+            n = math.hypot(*d)
+            return (o[0] + d[0] / n * t, o[1] + d[1] / n * t)
+        c, r = ext[1], ext[2]
+        return (c[0] + r * math.cos(t), c[1] + r * math.sin(t))
+
+    def ray_hits(ext, other):
+        """Where a ray crosses another ray, a segment or a circle, or the horizontal or vertical through a point"""
+        out = []
+        o, d = ext[1], ext[2]
+        n = math.hypot(*d)
+        u = (d[0] / n, d[1] / n)
+        if other[0] in ("ray", "seg", "hv"):
+            if other[0] == "hv":
+                q, v = other[1], other[2]
+            elif other[0] == "ray":
+                q, v = other[1], other[2]
+            else:
+                q, v = other[1], (other[2][0] - other[1][0], other[2][1] - other[1][1])
+            den = u[0] * v[1] - u[1] * v[0]
+            if abs(den) < 1e-9:
+                return out
+            w = (q[0] - o[0], q[1] - o[1])
+            t = (w[0] * v[1] - w[1] * v[0]) / den
+            s_ = (w[0] * u[1] - w[1] * u[0]) / den
+            ok = t > 0.5 and (other[0] == "hv" or (other[0] == "ray" and s_ > 0) or (other[0] == "seg" and 0 <= s_ <= 1))
+            if ok:
+                out.append((o[0] + u[0] * t, o[1] + u[1] * t))
+        elif other[0] == "circle":
+            c, r = other[1], other[2]
+            w = (o[0] - c[0], o[1] - c[1])
+            b = w[0] * u[0] + w[1] * u[1]
+            disc = b * b - (w[0] ** 2 + w[1] ** 2 - r * r)
+            if disc >= 0:
+                for t in (-b - math.sqrt(disc), -b + math.sqrt(disc)):
+                    if t > 0.5:
+                        out.append((o[0] + u[0] * t, o[1] + u[1] * t))
+        return out
+
+    def others_of(g):
+        """An item's lines and circles, as the plan crosses them"""
+        if g["kind"] in ("seg", "track"):
+            return [("seg", g["a"], g["b"])]
+        if g["kind"] in ("circle", "arc"):
+            return [("circle", g["c"], g["r"])]
+        if g["kind"] == "rect":
+            c = g["corners"]
+            return [("seg", c[i], c[(i + 1) % 4]) for i in range(4)]
+        return []
+
+    extendable = [g for g in geo if g["kind"] in ("seg", "arc")]
+    for n in range(22):
+        steps = []
+        # the pointer rested on points of one to three items (a line's or an arc's most of the time)
+        acts = []
+        for _ in range(rng.choice([1, 1, 2, 2, 3])):
+            segs = [x for x in extendable if x["kind"] == "seg"]
+            r = rng.random()
+            g = rng.choice(segs if r < 0.7 else extendable if r < 0.85 else geo)
+            if g in acts:
+                continue
+            acts.append(g)
+            p = list(rng.choice(g["points"]))
+            steps.append({"at": near(p), "rest": rng.random() < 0.75, "mods": [], "kind": "rest"})
+        # the line's start: the last of them, another item's point, or anywhere clear
+        k = rng.random()
+        if k < 0.6:
+            start = steps[-1]["at"]
+            start_anchor = start
+        elif k < 0.8:
+            g = rng.choice(geo)
+            start_anchor = list(rng.choice(g["points"]))
+            start = near(start_anchor)
+        else:
+            start_anchor = None
+            start = None
+            for _ in range(50):
+                c = [rng.uniform(5, W - 5), rng.uniform(5, H - 5)]
+                if clear(c):
+                    start = c
+                    break
+            if start is None:
+                start = steps[-1]["at"]
+                start_anchor = start
+        start_step = {"at": start, "rest": rng.random() < 0.3, "mods": [], "click": True}
+        # then where it goes: along an extension of an item it rested on, to where one crosses another, a snap
+        # line through the start or another item (that one rested on first, now and then, for the crossing to be
+        # snapped to), to an anchor or anywhere
+        path = []
+        exts = [e for g in acts for e in rays(g, None)]
+
+        def free_target():
+            for _ in range(50):
+                c = [rng.uniform(5, W - 5), rng.uniform(5, H - 5)]
+                if clear(c):
+                    return c
+            return None
+        for _ in range(rng.choice([1, 2, 2, 3])):
+            kind = rng.choice(["along", "along", "cross", "cross", "cross", "cross", "item", "item", "item", "item", "ctrl", "ctrl",
+                               "anchor", "free"])
+            target, mods, before = None, [], None
+            for attempt in range(20):
+                if kind in ("along", "ctrl") and exts:
+                    e = rng.choice(exts)
+                    t = rng.uniform(1.5, 20) if e[0] == "ray" else rng.uniform(0, 2 * math.pi)
+                    q = along(e, t)
+                    off = rng.choice([0.0, 0.0, 0.01, 0.03, 0.08, 0.2, 0.5])
+                    a = rng.uniform(0, 2 * math.pi)
+                    target = [q[0] + off * math.cos(a), q[1] + off * math.sin(a)]
+                    if kind == "ctrl":
+                        mods = ["ctrl"]
+                elif kind in ("cross", "item") and any(x[0] == "ray" for x in exts):
+                    e = rng.choice([x for x in exts if x[0] == "ray"])
+                    owner = next(g for g in acts if e in rays(g, None))
+                    cands = []
+                    if kind == "cross":
+                        for f in exts:
+                            if f is not e:
+                                cands += ray_hits(e, f) if f[0] == "ray" else ray_hits(e, ("circle", f[1], f[2]))
+                        if start_anchor is not None:
+                            cands += ray_hits(e, ("hv", start_anchor, (1, 0))) + ray_hits(e, ("hv", start_anchor, (0, 1)))
+                        cands = [(c, None) for c in cands]
+                    else:
+                        for g in geo:
+                            if g is owner or g["kind"] in ("via", "pad"):
+                                continue
+                            for other in others_of(g):
+                                cands += [(c, g) for c in ray_hits(e, other)]
+                    cands = [c for c in cands if inside(c[0])]
+                    if cands:
+                        c, g = rng.choice(cands)
+                        target = near(c, ds=(0.0, 0.0, 0.02, 0.05, 0.1, 0.3))
+                        if g is not None and g not in acts and rng.random() < 0.7:
+                            before = {"at": near(list(rng.choice(g["points"]))), "rest": True, "mods": [], "kind": "activate"}
+                elif kind == "anchor":
+                    target = near(list(rng.choice(rng.choice(geo)["points"])))
+                if kind == "anchor" or (target is not None and clear(target)):
+                    break
+                target = None
+            if target is None and exts and kind not in ("along", "ctrl"):
+                # (no such crossing clear of other items: along an extension instead)
+                for attempt in range(20):
+                    e = rng.choice(exts)
+                    q = along(e, rng.uniform(1.5, 20) if e[0] == "ray" else rng.uniform(0, 2 * math.pi))
+                    if clear(list(q)):
+                        kind, target = "along", list(q)
+                        break
+            if target is None:
+                kind = "free"
+                target = free_target()
+            if target is None:
+                continue
+            if rng.random() < 0.1 and not mods:
+                mods = ["shift"]
+            if before is not None:
+                path.append(before)
+            path.append({"at": target, "rest": rng.random() < 0.3, "mods": mods, "kind": kind})
+        if not path:
+            continue
+        lines.append({"rests": steps, "start": start_step, "path": path})
+    return {"lines": lines, "neutral": [-3, -3], "mode": mode}
+
+
+def ext_events(plan):
+    """The plugin's steps for an extension plan"""
+    steps = [["zoom"], ["calibrate"]]
+    held = set()
+
+    def go(p):
+        nonlocal held
+        out = []
+        for m in sorted(held - set(p["mods"])):
+            out.append(["release", m])
+        for m in sorted(set(p["mods"]) - held):
+            out.append(["hold", m])
+        held = set(p["mods"])
+        out += [["move", p["at"]], ["check"]]
+        if p.get("rest"):
+            out += [["rest"], ["check"]]
+        return out
+
+    def release():
+        nonlocal held
+        out = [["release", m] for m in sorted(held)]
+        held = set()
+        return out
+    for i, line in enumerate(plan["lines"]):
+        steps += [["move", plan["neutral"]], ["mark", i], ["menu", drawing.TOOLS["line"]]]
+        for p in line["rests"]:
+            steps += go(p)
+        steps += go(line["start"]) + release() + [["click"]]
+        for p in line["path"]:
+            steps += go(p)
+        steps += release() + [["click"], ["key", "escape"], ["key", "escape"], ["made", i]]
+    return steps
+
+
+def extend(out, count, seed):
+    """Boards and plans for the extension snaps and the line modes"""
+    import pcbnew
+    os.makedirs(out, exist_ok=True)
+    for n in range(count):
+        rng = random.Random(zlib.crc32(f"extend {seed} {n}".encode()))
+        base = os.path.join(out, f"ext-{seed}-{n}")
+        ext_board(rng, base)
+        board = pcbnew.LoadBoard(base + ".kicad_pcb")
+        plan = ext_plan(rng, board, n % 3)
+        with open(base + ".xplan", "w") as f:
+            json.dump(plan, f, indent=1)
+        print(base + ".kicad_pcb", len(plan["lines"]), "lines", file=sys.stderr)
+
+
+def extended(paths):
+    """The extension plan of each board done in KiCad: BOARD.extended"""
+    for board in paths:
+        base = board[:-len(".kicad_pcb")]
+        plan = json.load(open(base + ".xplan"))
+        work = base + "-work.kicad_pcb"
+
+        def fresh():
+            shutil.copy(board, work)
+            if os.path.exists(base + ".kicad_pro"):
+                shutil.copy(base + ".kicad_pro", work[:-len(".kicad_pcb")] + ".kicad_pro")
+            prl = work[:-len(".kicad_pcb")] + ".kicad_prl"
+            if os.path.exists(prl):
+                os.remove(prl)
+        done = drive(work, plan, fresh, ticks=30000, steps=ext_events(plan), plugin=drawing.PLUGIN + EXT_PLUGIN,
+                     extensions=True, angle_mode=plan["mode"])
+        wbase = work[:-len(".kicad_pcb")]
+        for ext in (".kicad_pcb", ".kicad_pro", ".kicad_prl"):
+            if os.path.exists(wbase + ext):
+                os.remove(wbase + ext)
+        lines = done.get("lines", {})
+        record = {"plan": plan, "transform": done.get("transform"), "events": done["events"], "made": done.get("made", {}),
+                  "lines": lines, "dialogs": done.get("dialogs", [])}
+        with open(base + ".extended", "w") as f:
+            json.dump(record, f, indent=1)
+        if os.environ.get("JSPICE_SNAPPING_DEBUG"):
+            with open(base + ".log", "w") as f:
+                f.write(done.get("log", ""))
+        print(base, len(done["events"]), "events", file=sys.stderr)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         sys.exit(__doc__)
@@ -814,5 +1340,9 @@ if __name__ == "__main__":
         tools(sys.argv[2], sys.argv[3:])
     elif sys.argv[1] == "use":
         use(sys.argv[2:])
+    elif sys.argv[1] == "extend":
+        extend(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else 20261128)
+    elif sys.argv[1] == "extended":
+        extended(sys.argv[2:])
     else:
         sys.exit(__doc__)

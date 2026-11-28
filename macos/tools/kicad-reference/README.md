@@ -476,6 +476,23 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   `PointEditorSnap`, the grid helper's grid kinds) on the board as each step found it, and checks every footprint's
   place, zone's corners, text's place and edited point against KiCad's, to the nanometre (where Ctrl took the grid
   away and nothing was snapped to, within the half micrometre the view's transform knows the pointer to).
+  KiCad 10's extension snaps and its line modes: `snapping.py extend OUTDIR COUNT [SEED]` makes boards of graphics on
+  F.Cu (lines at any angle and at 0°, 45° and 90°, arcs, a circle, a rectangle), tracks, a via, two footprints and a
+  zone, each with a plan (`BOARD.xplan`) of lines to draw in one of the line modes (free, 45°, 90°: the boards in
+  turn): the pointer moved to the points of one to three items, resting there or not, then to the line's start, then
+  along the extensions of the items it rested on, to where they cross each other, the snap lines through the start
+  or another item (that one rested on first, now and then), to an anchor or anywhere, some moves with Ctrl or Shift
+  held; every place the pointer goes but those near an item's point is kept clear of where KiCad's hover activation
+  could hit two items, or a text (the port has none), at once. `snapping.py extended BOARD.kicad_pcb...` draws them
+  with KiCad's extension snaps on, and writes `BOARD.extended` (the lines each step made as the live board has them:
+  KiCad 10.0.8's saved file leaves out a line the same as another, which a plan's lines can be). The construction
+  manager's activation timer runs on
+  the clock, so `ExtensionSnapTimeoutMs` is set to a day and a shim preloaded into pcbnew (`TIMER_SHIM`, built with
+  `cc`) notes the GLib timeout wxWidgets starts for it; where the plan rests the pointer, the plugin calls that
+  timeout's callback, as GLib would at its expiry, and notes whether one was pending. `SnappingTests`
+  (`ExtensionSnappingTests.swift`) gives the port the same moves and rests (`PCBGridHelper.rested`) and a `GraphicTool`
+  in the line mode, and checks that it had a proposal pending at the same rests as KiCad, and each line's ends, to the
+  nanometre.
 - `rules.py`: random design rules for boards (`rules.py [--fills] [--all] [--seed SEED] BOARD.kicad_pcb...`): a
   rules file beside each board (`BOARD.kicad_dru`, where KiCad's DRC engine finds it, and the port's `BoardDRC`,
   `ZoneFiller` and `BoardRouter` with it), of one to six rules of random conditions on what the board has: its net
