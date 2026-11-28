@@ -591,9 +591,25 @@ are under KiCad's license, the GNU General Public License version 3 or later (se
   the board's outline falls in it, as `BOARD.render`; `Board3DTests` compares what the port's slabs show at each
   pixel. With `--models OUT.kicad_pcb`, a board of footprints with a model of our own (`models/part.wrl`) placed every
   way, and kicad-cli's VRML export of it with the models in it (`OUT-kicad.wrl`), which `Board3DTests` compares the
-  port's models with, triangle by triangle. `Tests/KiCadRouterTests/Fixtures/board3d` holds `drawn` (`--draw`, and
-  `--render`) and `models` (`--models`); `Fixtures/boards`, `copper`, `silk` and `flashing` hold their boards'
-  `.board3d`, and `random-2-43`, `random-2-82` and `copper/drawn` their `.render`.
+  port's models with, triangle by triangle. With `--step-models OUT.kicad_pcb`, a board of footprints with STEP
+  models of our own (`models/a.step`, an L-shaped body with a round hole, and `models/b.step`, a body with two pads
+  in another colour, each a small board exported by `kicad-cli pcb export step`) placed every way (turned, moved,
+  scaled, rotated about each axis, on the back, two on one footprint), each footprint's courtyard the box round its
+  models' boxes as they are placed and 0.1 mm more, with a footprint of a VRML model, one not fitted and one whose
+  model is missing; `STEPModelTests` has KiCad's exporter make the models triangles (`kicad-cli pcb export glb`, as
+  the 3D view does) and checks them placed against KiCad's export of the whole board and within the courtyards.
+  `Tests/KiCadRouterTests/Fixtures/board3d` holds `drawn` (`--draw`, and `--render`) and `models` (`--models`),
+  `Fixtures/stepmodels` the STEP models' board (`--step-models`); `Fixtures/boards`, `copper`, `silk` and `flashing`
+  hold their boards' `.board3d`, and `random-2-43`, `random-2-82` and `copper/drawn` their `.render`.
+- `glb.py`: a binary glTF 2.0 file (`kicad-cli pcb export glb`'s) read with Python's standard library alone
+  (`glb.py FILE.glb`), as the glTF 2.0 specification has it, not as the port reads it: each node's name, mesh,
+  children and world matrix (its parents' times its own: a matrix, or translation, rotation and scale), each mesh
+  primitive's mode, vertices, normals, material and triangles (indexed or not; triangles, strips and fans) with the
+  box round each node's triangles where its matrix puts them, and each material's factors, written as JSON with every
+  number as `float.hex()` writes it. `STEPModelTests` reads the same files with the port's reader (`GLTFAsset`) and
+  must get every number the same, to the last bit: the models' own export, KiCad's export of the whole board, and a
+  file the test makes to take the reader where kicad-cli's files do not (matrices, scales, nested nodes, byte, short
+  and int indices, interleaved vertices, strips, fans and lines).
 - `fills.py`: KiCad's zone fills of boards (`fills.py [--twice] BOARD.kicad_pcb...`): through KiCad's `pcbnew` module,
   each board's zones filled by `pcbnew.ZONE_FILLER(board).Fill(board.Zones())` (its footprints' zones are not
   filled, and keep what they were read with), and each zone's filled polygons on each of its layers (outline and

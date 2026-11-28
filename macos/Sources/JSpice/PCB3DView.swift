@@ -2,8 +2,10 @@
 // and RENDER_3D_OPENGL's reload), drawn in SceneKit with materials after RENDER_3D_OPENGL::setupMaterials and
 // setLayerMaterial (3d-viewer/3d_rendering/opengl/render_3d_opengl.cpp: the copper's specular colour and shininess
 // from its colour, the mask's transparency from its colour's alpha, the board's epoxy), lit by a headlight and lights
-// above and below the board as init_lights sets them, on the background's gradient, with the footprints' VRML models
-// placed as get3dModelsFromFootprint places them.
+// above and below the board as init_lights sets them, on the background's gradient, with the footprints' models
+// placed as get3dModelsFromFootprint places them: VRML models read by the port, STEP and IGES ones made triangles by
+// KiCad's own exporter (kicad-cli's glTF export, KiCadRouter's STEPModels.swift) in the appearance
+// plugins/3d/oce/loadmodel.cpp gives them.
 // Copyright The KiCad Developers, see KiCad's AUTHORS.txt.
 // GNU General Public License version 3 or later, as KiCad (see KICAD-NOTICE.md).
 
@@ -199,8 +201,10 @@ final class PCB3DScene: ObservableObject {
 
     // MARK: - The models
 
-    /// Each footprint's VRML models, found as KiCad finds them and read on another thread; STEP models (and the other
-    /// kinds KiCad's other plugins read) are not read, and said so
+    /// Each footprint's models, found as KiCad finds them and read on another thread: VRML models by the port's own
+    /// reader, shown first; then STEP and IGES models made triangles by KiCad's own code, kicad-cli's glTF export
+    /// (MeshModel.export, which keeps what it exported in the caches folder), where KiCad is installed; what is not
+    /// shown, and why, said in the window
     private func loadModels(_ content: PCB3DContent, boardFile: URL?) {
         let project = boardFile?.deletingLastPathComponent()
         let models = content.models
@@ -209,7 +213,8 @@ final class PCB3DScene: ObservableObject {
         Task.detached(priority: .userInitiated) {
             var vars: [String: String] = [:]
             var libraryFolders: [String: URL] = [:]
-            if let installation = KiCadInstallation.find() {
+            let installation = KiCadInstallation.find()
+            if let installation {
                 vars = installation.variables()
                 let table = KiCadFootprintLibrary(installation: installation, projectFolder: project)
                 for (name, lib) in table.libraries { libraryFolders[name] = lib.folder }
@@ -217,6 +222,7 @@ final class PCB3DScene: ObservableObject {
             let resolver = ModelResolver(variables: vars, projectFolder: project)
             var cache: [URL: VRMLModel] = [:]
             var placed: [(VRMLModel, [Double], Double)] = []
+            var exported: [(URL, [Double], Double)] = []
             var notFound = 0, notRead: [String: Int] = [:], failed = 0
             for m in models {
                 let folder = libraries[m.footprint].flatMap { libraryFolders[$0] }
@@ -225,6 +231,10 @@ final class PCB3DScene: ObservableObject {
                     continue
                 }
                 let ext = url.pathExtension.lowercased()
+                if MeshModel.isExported(url) {
+                    exported.append((url.standardizedFileURL, m.transform, m.opacity))
+                    continue
+                }
                 guard ext == "wrl" else {
                     notRead[ext.isEmpty ? "?" : ext, default: 0] += 1
                     continue
@@ -236,69 +246,139 @@ final class PCB3DScene: ObservableObject {
                 }
                 placed.append((model, m.transform, m.opacity))
             }
-            var notes: [String] = []
-            notes.append("\(placed.count) of \(models.count) footprint models shown")
-            for (ext, n) in notRead.sorted(by: { $0.key < $1.key }) {
-                notes.append("\(n) .\(ext) not shown (only VRML models are read: STEP is not)")
+            let (unread, missing, unreadable) = (notRead, notFound, failed)
+            func notes(shown: Int, more: [String]) -> String {
+                var notes = ["\(shown) of \(models.count) footprint models shown"] + more
+                for (ext, n) in unread.sorted(by: { $0.key < $1.key }) { notes.append("\(n) .\(ext) not shown (only VRML, STEP and IGES models are read)") }
+                if missing > 0 { notes.append("\(missing) not found") }
+                if unreadable > 0 { notes.append("\(unreadable) could not be read") }
+                if !unsupported.isEmpty { notes.append("not made as KiCad makes them: " + unsupported.joined(separator: ", ")) }
+                return notes.joined(separator: "; ")
             }
-            if notFound > 0 { notes.append("\(notFound) not found") }
-            if failed > 0 { notes.append("\(failed) could not be read") }
-            if !unsupported.isEmpty { notes.append("not made as KiCad makes them: " + unsupported.joined(separator: ", ")) }
-            let text = notes.joined(separator: "; ")
             let built = placed.map { Self.modelNode($0.0, transform: $0.1, opacity: $0.2) }
+            let stepFiles = Set(exported.map(\.0))
+            let waiting = exported.isEmpty ? [] : ["\(exported.count) STEP models being made by KiCad (kicad-cli)…"]
+            let first = notes(shown: placed.count, more: waiting)
             await MainActor.run {
                 for n in built { self.modelsNode.addChildNode(n) }
+                self.status = first
+            }
+            guard !exported.isEmpty else { return }
+            // the STEP models, by KiCad's exporter: each file once
+            var more: [String] = []
+            var meshes: [URL: MeshModel] = [:]
+            var stepFailed = 0
+            if let installation, installation.problem == nil {
+                do {
+                    let export = try MeshModel.export(Array(stepFiles), installation: installation, cache: MeshModel.defaultCache)
+                    meshes = export.models
+                } catch {
+                    more.append("STEP models not shown: \(error)")
+                }
+            } else {
+                let why = installation?.problem ?? "KiCad is not installed"
+                more.append("\(exported.count) STEP models not shown (KiCad's kicad-cli makes them: \(why))")
+            }
+            var stepNodes: [SCNNode] = []
+            if !meshes.isEmpty || more.isEmpty {
+                for (url, transform, opacity) in exported {
+                    guard let mesh = meshes[url] else {
+                        stepFailed += 1
+                        continue
+                    }
+                    stepNodes.append(Self.modelNode(mesh, transform: transform, opacity: opacity))
+                }
+                if stepFailed > 0 { more.append("\(stepFailed) STEP models KiCad could not read") }
+            }
+            let text = notes(shown: placed.count + stepNodes.count, more: more)
+            let shown = stepNodes
+            await MainActor.run {
+                for n in shown { self.modelsNode.addChildNode(n) }
                 self.status = text
             }
         }
     }
 
-    nonisolated static func modelNode(_ model: VRMLModel, transform t: [Double], opacity: Double) -> SCNNode {
+    /// A model's node: Board3D's transform, column-major (SceneKit's rows are its columns)
+    nonisolated static func placedNode(_ t: [Double]) -> SCNNode {
         let node = SCNNode()
-        // (Board3D's column-major matrix: SceneKit's rows are its columns)
         node.transform = SCNMatrix4(m11: CGFloat(t[0]), m12: CGFloat(t[1]), m13: CGFloat(t[2]), m14: CGFloat(t[3]),
                                     m21: CGFloat(t[4]), m22: CGFloat(t[5]), m23: CGFloat(t[6]), m24: CGFloat(t[7]),
                                     m31: CGFloat(t[8]), m32: CGFloat(t[9]), m33: CGFloat(t[10]), m34: CGFloat(t[11]),
                                     m41: CGFloat(t[12]), m42: CGFloat(t[13]), m43: CGFloat(t[14]), m44: CGFloat(t[15]))
-        for mesh in model.meshes {
-            var vertices: [SCNVector3] = [], normals: [SCNVector3] = []
-            let p = mesh.positions
-            var k = 0
-            while k + 8 < p.count {
-                let a = SIMD3<Float>(p[k], p[k + 1], p[k + 2]), b = SIMD3<Float>(p[k + 3], p[k + 4], p[k + 5])
-                let c = SIMD3<Float>(p[k + 6], p[k + 7], p[k + 8])
-                var n = simd_cross(b - a, c - a)
-                let len = simd_length(n)
-                if len > 0 { n /= len }
-                for v in [a, b, c] {
-                    vertices.append(SCNVector3(CGFloat(v.x), CGFloat(v.y), CGFloat(v.z)))
+        return node
+    }
+
+    /// A mesh's geometry: its triangles' corners (x, y, z each), their normals (or each triangle's own), their
+    /// colours where it has them
+    nonisolated static func geometry(positions p: [Float], normals given: [Float]?, colors: [Float]?) -> SCNGeometry {
+        var vertices: [SCNVector3] = [], normals: [SCNVector3] = []
+        vertices.reserveCapacity(p.count / 3)
+        normals.reserveCapacity(p.count / 3)
+        var k = 0
+        while k + 8 < p.count {
+            let a = SIMD3<Float>(p[k], p[k + 1], p[k + 2]), b = SIMD3<Float>(p[k + 3], p[k + 4], p[k + 5])
+            let c = SIMD3<Float>(p[k + 6], p[k + 7], p[k + 8])
+            var n = simd_cross(b - a, c - a)
+            let len = simd_length(n)
+            if len > 0 { n /= len }
+            for (j, v) in [a, b, c].enumerated() {
+                vertices.append(SCNVector3(CGFloat(v.x), CGFloat(v.y), CGFloat(v.z)))
+                if let given, k + 3 * j + 2 < given.count {
+                    let o = k + 3 * j
+                    normals.append(SCNVector3(CGFloat(given[o]), CGFloat(given[o + 1]), CGFloat(given[o + 2])))
+                } else {
                     normals.append(SCNVector3(CGFloat(n.x), CGFloat(n.y), CGFloat(n.z)))
                 }
-                k += 9
             }
-            var sources = [SCNGeometrySource(vertices: vertices), SCNGeometrySource(normals: normals)]
-            if let colors = mesh.colors {
-                let data = colors.withUnsafeBufferPointer { Data(buffer: $0) }
-                sources.append(SCNGeometrySource(data: data, semantic: .color, vectorCount: colors.count / 3, usesFloatComponents: true,
-                                                 componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0,
-                                                 dataStride: 3 * MemoryLayout<Float>.size))
-            }
-            let element = SCNGeometryElement(indices: (0..<Int32(vertices.count)).map { $0 }, primitiveType: .triangles)
-            let geometry = SCNGeometry(sources: sources, elements: [element])
-            let material = SCNMaterial()
-            material.lightingModel = .blinn
-            material.diffuse.contents = NSColor(srgbRed: CGFloat(mesh.diffuse.0), green: CGFloat(mesh.diffuse.1), blue: CGFloat(mesh.diffuse.2),
-                                                alpha: 1)
-            material.specular.contents = NSColor(srgbRed: CGFloat(mesh.specular.0), green: CGFloat(mesh.specular.1),
-                                                 blue: CGFloat(mesh.specular.2), alpha: 1)
-            material.emission.contents = NSColor(srgbRed: CGFloat(mesh.emissive.0), green: CGFloat(mesh.emissive.1),
-                                                 blue: CGFloat(mesh.emissive.2), alpha: 1)
-            material.shininess = CGFloat(mesh.shininess)
-            // (the model's transparency, and the footprint's opacity for it)
-            material.transparency = CGFloat((1 - Double(mesh.transparency)) * opacity)
-            material.isDoubleSided = true
-            geometry.materials = [material]
-            node.addChildNode(SCNNode(geometry: geometry))
+            k += 9
+        }
+        var sources = [SCNGeometrySource(vertices: vertices), SCNGeometrySource(normals: normals)]
+        if let colors {
+            let data = colors.withUnsafeBufferPointer { Data(buffer: $0) }
+            sources.append(SCNGeometrySource(data: data, semantic: .color, vectorCount: colors.count / 3, usesFloatComponents: true,
+                                             componentsPerVector: 3, bytesPerComponent: MemoryLayout<Float>.size, dataOffset: 0,
+                                             dataStride: 3 * MemoryLayout<Float>.size))
+        }
+        let element = SCNGeometryElement(indices: (0..<Int32(vertices.count)).map { $0 }, primitiveType: .triangles)
+        return SCNGeometry(sources: sources, elements: [element])
+    }
+
+    /// A model's material: its diffuse, specular and emissive colours (sRGB) and shininess, its transparency and the
+    /// footprint's opacity for it, both sides drawn
+    nonisolated static func material(diffuse: (Float, Float, Float), specular: (Float, Float, Float), emissive: (Float, Float, Float),
+                                     shininess: Float, transparency: Float, opacity: Double) -> SCNMaterial {
+        func color(_ c: (Float, Float, Float)) -> NSColor { NSColor(srgbRed: CGFloat(c.0), green: CGFloat(c.1), blue: CGFloat(c.2), alpha: 1) }
+        let material = SCNMaterial()
+        material.lightingModel = .blinn
+        material.diffuse.contents = color(diffuse)
+        material.specular.contents = color(specular)
+        material.emission.contents = color(emissive)
+        material.shininess = CGFloat(shininess)
+        material.transparency = CGFloat((1 - Double(transparency)) * opacity)
+        material.isDoubleSided = true
+        return material
+    }
+
+    nonisolated static func modelNode(_ model: VRMLModel, transform t: [Double], opacity: Double) -> SCNNode {
+        let node = placedNode(t)
+        for mesh in model.meshes {
+            let g = Self.geometry(positions: mesh.positions, normals: nil, colors: mesh.colors)
+            g.materials = [Self.material(diffuse: mesh.diffuse, specular: mesh.specular, emissive: mesh.emissive, shininess: mesh.shininess,
+                                    transparency: mesh.transparency, opacity: opacity)]
+            node.addChildNode(SCNNode(geometry: g))
+        }
+        return node
+    }
+
+    /// A STEP model as KiCad made it triangles, with its normals and the appearance KiCad's viewer gives it
+    nonisolated static func modelNode(_ model: MeshModel, transform t: [Double], opacity: Double) -> SCNNode {
+        let node = placedNode(t)
+        for mesh in model.meshes {
+            let g = Self.geometry(positions: mesh.positions, normals: mesh.normals, colors: nil)
+            g.materials = [Self.material(diffuse: mesh.diffuse, specular: mesh.specular, emissive: (0, 0, 0), shininess: mesh.shininess,
+                                    transparency: mesh.transparency, opacity: opacity)]
+            node.addChildNode(SCNNode(geometry: g))
         }
         return node
     }

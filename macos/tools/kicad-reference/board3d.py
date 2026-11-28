@@ -27,10 +27,12 @@ footprint on the back, and a stackup with colours and a finish.
 
 With --render, kicad-cli's renders of boards from the top and the bottom, for comparing what the port shows at each
 pixel (render()); with --models, a board of footprints with a model of our own and KiCad's VRML export of it with the
-models in it (models()).
+models in it (models()); with --step-models, a board of footprints with STEP models of our own, made by kicad-cli's
+STEP export (step_models()).
 
     board3d.py --render BOARD.kicad_pcb...
     board3d.py --models OUT.kicad_pcb
+    board3d.py --step-models OUT.kicad_pcb
 """
 
 import json
@@ -588,6 +590,139 @@ def models(path):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+# MARK: - footprints' STEP models
+
+def step_part(folder, name, outline, holes, thickness, pads=()):
+    """A STEP model of our own: a small board (its outline, holes and pads) exported by kicad-cli pcb export step, its
+    body from z 0 up (the pads, where it has them, on its top), about its origin; written as folder/NAME.step"""
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, name + ".kicad_pcb")
+        board = pcbnew.NewBoard(path)
+        board.GetDesignSettings().SetBoardThickness(int(thickness * MM))
+        for i in range(len(outline)):
+            a, b_ = outline[i], outline[(i + 1) % len(outline)]
+            s = pcbnew.PCB_SHAPE(board, pcbnew.SHAPE_T_SEGMENT)
+            s.SetLayer(pcbnew.Edge_Cuts)
+            s.SetWidth(int(0.05 * MM))
+            s.SetStart(vec(a[0] * MM, a[1] * MM))
+            s.SetEnd(vec(b_[0] * MM, b_[1] * MM))
+            board.Add(s)
+        for cx, cy, r in holes:
+            s = pcbnew.PCB_SHAPE(board, pcbnew.SHAPE_T_CIRCLE)
+            s.SetLayer(pcbnew.Edge_Cuts)
+            s.SetWidth(int(0.05 * MM))
+            s.SetCenter(vec(cx * MM, cy * MM))
+            s.SetEnd(vec((cx + r) * MM, cy * MM))
+            board.Add(s)
+        if pads:
+            fp = pcbnew.FOOTPRINT(board)
+            fp.SetReference("P")
+            fp.SetAttributes(pcbnew.FP_SMD)
+            for n, (x, y, w, h) in enumerate(pads):
+                p = pcbnew.PAD(fp)
+                p.SetNumber(str(n + 1))
+                p.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
+                p.SetShape(pcbnew.F_Cu, pcbnew.PAD_SHAPE_RECT)
+                p.SetSize(pcbnew.F_Cu, vec(w * MM, h * MM))
+                p.SetLayerSet(pcbnew.PAD.SMDMask())
+                p.SetPosition(vec(x * MM, y * MM))
+                fp.Add(p)
+            board.Add(fp)
+        board.Save(path)
+        args = ["kicad-cli", "pcb", "export", "step", "--include-pads" if pads else "--board-only", "--user-origin", "0x0mm",
+                "-f", "-o", os.path.join(folder, name + ".step"), path]
+        subprocess.run(args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def placed(p, offset, rotation, scale):
+    """A model's point in its footprint's frame (x right, y up, z up), as get3dModelsFromFootprint places it: scaled,
+    turned about x, y, then z by its rotation negated, moved by its offset"""
+    import math
+    x, y, z = p[0] * scale[0], p[1] * scale[1], p[2] * scale[2]
+    c, s = math.cos(-math.radians(rotation[0])), math.sin(-math.radians(rotation[0]))
+    y, z = y * c - z * s, y * s + z * c
+    c, s = math.cos(-math.radians(rotation[1])), math.sin(-math.radians(rotation[1]))
+    x, z = x * c + z * s, -x * s + z * c
+    c, s = math.cos(-math.radians(rotation[2])), math.sin(-math.radians(rotation[2]))
+    x, y = x * c - y * s, x * s + y * c
+    return x + offset[0], y + offset[1], z + offset[2]
+
+
+def step_models(path):
+    """A board of footprints with STEP models of our own (models/a.step: an L-shaped body with a round hole, a 0.5 mm
+    board; models/b.step: a body with two pads on it, in two colours), placed every way (turned, moved, scaled,
+    rotated about each axis, on the back, two on one footprint), each footprint's courtyard the box round its models'
+    boxes (their outlines' boxes from 0 to the part's thickness, placed as above) and 0.1 mm more; with a footprint of
+    a VRML model (models/part.wrl), one not fitted (which the 3D viewer leaves out, but the exporter does not) and one
+    whose model is not there."""
+    folder = os.path.dirname(os.path.abspath(path))
+    models_ = os.path.join(folder, "models")
+    os.makedirs(models_, exist_ok=True)
+    parts = {
+        "a": ([(-1, -0.6), (1, -0.6), (1, 0.6), (0, 0.6), (0, 0), (-1, 0)], [(0.5, 0, 0.2)], 0.5, ()),
+        "b": ([(-0.8, -0.4), (0.8, -0.4), (0.8, 0.4), (-0.8, 0.4)], [], 0.3, [(-0.6, 0, 0.3, 0.6), (0.6, 0, 0.3, 0.6)]),
+    }
+    for name, (outline, holes, thickness, pads) in parts.items():
+        step_part(models_, name, outline, holes, thickness, pads)
+    with open(os.path.join(models_, "part.wrl"), "w") as f:
+        f.write(MODEL)
+    board = pcbnew.NewBoard(path)
+    edge = pcbnew.PCB_SHAPE(board, pcbnew.SHAPE_T_RECTANGLE)
+    edge.SetLayer(pcbnew.Edge_Cuts)
+    edge.SetWidth(int(0.1 * MM))
+    edge.SetStart(vec(100 * MM, 50 * MM))
+    edge.SetEnd(vec(140 * MM, 80 * MM))
+    board.Add(edge)
+    none = ((0, 0, 0), (0, 0, 0), (1, 1, 1))
+    placements = [
+        ("S1", 110, 58, 0, False, "", [("a", *none)]),
+        ("S2", 120, 58, 30, False, "", [("b", (1, -0.5, 0.2), (0, 0, 45), (1, 1, 1))]),
+        ("S3", 130, 58, -60, False, "", [("a", (0.5, 0.5, 0), (20, 10, -30), (1.5, 1, 0.5))]),
+        ("S4", 110, 70, 90, True, "", [("a", *none)]),
+        ("S5", 125, 70, 120, True, "", [("b", (0.5, -1, 0.3), (0, 0, 15), (1, 2, 1))]),
+        ("S6", 134, 70, 0, False, "", [("a", *none), ("b", (0, 0, 0.5), (0, 0, 90), (1, 1, 1))]),
+        ("W1", 104, 76, 0, False, "", [("part.wrl", *none)]),
+        ("D1", 136, 54, 0, False, "dnp", [("a", *none)]),
+        ("X1", 104, 54, 0, False, "", [("missing", *none)]),
+    ]
+    for ref, x, y, angle, back, attr, models in placements:
+        fp = pcbnew.FOOTPRINT(board)
+        fp.SetReference(ref)
+        fp.SetPosition(vec(x * MM, y * MM))
+        fp.SetAttributes(pcbnew.FP_SMD)
+        if attr == "dnp":
+            fp.SetDNP(True)
+        lo, hi = [1e9, 1e9], [-1e9, -1e9]
+        for name, offset, rotation, scale in models:
+            m = pcbnew.FP_3DMODEL()
+            m.m_Filename = "${KIPRJMOD}/models/" + (name if "." in name else name + ".step")
+            m.m_Offset = pcbnew.VECTOR3D(*offset)
+            m.m_Rotation = pcbnew.VECTOR3D(*rotation)
+            m.m_Scale = pcbnew.VECTOR3D(*scale)
+            fp.Add3DModel(m)
+            outline, _, thickness, _ = parts.get(name, ([(-1, -1), (1, 1)], [], 0.5, ()))
+            for px in (min(p[0] for p in outline), max(p[0] for p in outline)):
+                for py in (min(p[1] for p in outline), max(p[1] for p in outline)):
+                    for pz in (0, thickness):
+                        q = placed((px, py, pz), offset, rotation, scale)
+                        # (the footprint's frame on the board: y down)
+                        lo = [min(lo[0], q[0]), min(lo[1], -q[1])]
+                        hi = [max(hi[0], q[0]), max(hi[1], -q[1])]
+        crt = pcbnew.PCB_SHAPE(fp, pcbnew.SHAPE_T_RECTANGLE)
+        crt.SetLayer(pcbnew.F_CrtYd)
+        crt.SetWidth(int(0.05 * MM))
+        crt.SetStart(vec((x + lo[0] - 0.1) * MM, (y + lo[1] - 0.1) * MM))
+        crt.SetEnd(vec((x + hi[0] + 0.1) * MM, (y + hi[1] + 0.1) * MM))
+        fp.Add(crt)
+        board.Add(fp)
+        fp.SetOrientationDegrees(angle)
+        if back:
+            fp.Flip(fp.GetPosition(), pcbnew.FLIP_DIRECTION_TOP_BOTTOM)
+    board.Save(path)
+
+
 # MARK: - KiCad's renders
 
 def render(path, width=2000, height=1600):
@@ -692,6 +827,9 @@ def main():
         return
     if args and args[0] == "--models":
         models(args[1])
+        return
+    if args and args[0] == "--step-models":
+        step_models(args[1])
         return
     if args and args[0] == "--render":
         for path in args[1:]:

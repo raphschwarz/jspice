@@ -1,0 +1,19 @@
+#VRML V2.0 utf8
+# a test part for board3d.py
+Shape { appearance Appearance { material DEF BODY Material {
+  ambientIntensity 0.3 diffuseColor 0.2 0.25 0.3 specularColor 0.1 0.1 0.1 emissiveColor 0 0 0 transparency 0.0 shininess 0.4 } } }
+Shape { appearance Appearance { material DEF PIN Material {
+  diffuseColor 0.8 0.75 0.6 transparency 0.2 shininess 0.7 } } }
+Shape { geometry IndexedFaceSet { creaseAngle 0.5
+  coordIndex [0,1,2,3,-1, 7,6,5,4,-1, 0,4,5,1,-1, 1,5,6,2,-1, 2,6,7,3,-1, 3,7,4,0,-1]
+  coord Coordinate { point [-0.2 -0.1 0.01, 0.2 -0.1 0.01, 0.2 0.1 0.01, -0.2 0.1 0.01,
+                            -0.2 -0.1 0.08, 0.2 -0.1 0.1, 0.2 0.1 0.1, -0.2 0.1 0.08] } }
+  appearance Appearance { material USE BODY } }
+Shape { geometry IndexedFaceSet { ccw FALSE
+  coordIndex [0,1,2,3,4,-1, 4,3,2,1,0,-1]
+  coord Coordinate { point [0.25 -0.03 0, 0.3 -0.03 0, 0.32 0 0.02, 0.3 0.03 0, 0.25 0.03 0] } }
+  appearance Appearance { material USE PIN } }
+Transform { translation -0.3 0 0.02 rotation 0 0 1 0.5236 scale 1 1 2
+  children [ Shape { geometry IndexedFaceSet { coordIndex [0,1,2,-1, 0,2,3,-1]
+    coord Coordinate { point [-0.03 -0.03 0, 0.03 -0.03 0, 0.03 0.03 0, -0.03 0.03 0] } }
+    appearance Appearance { material USE PIN } } ] }
